@@ -127,8 +127,10 @@ async def _forget_document(project_id: str, document_id: str) -> dict[str, int]:
     sessionmaker = make_sessionmaker(engine)
     try:
         scope = Principal(id="cli", type=PrincipalType.HUMAN, can_curate=True).scope_for(project_id)
-        deleted = await PgRelationalStore(sessionmaker).knowledge().hard_delete_document(
-            scope, document_id
+        deleted = (
+            await PgRelationalStore(sessionmaker)
+            .knowledge()
+            .hard_delete_document(scope, document_id)
         )
         tombstoned = await AgeGraphStore(sessionmaker).tombstone_document(scope, document_id)
         async with session_scope(sessionmaker) as session:

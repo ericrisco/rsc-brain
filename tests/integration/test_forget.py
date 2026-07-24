@@ -40,7 +40,13 @@ async def test_forget_document_removes_all_traces_and_is_idempotent(migrated_dsn
         await repo.add_chunk(scope, document_id=doc.document_id, text="body")
         await graph.upsert_nodes(
             scope,
-            [GraphNode(id="n1", labels=frozenset({"Entity"}), properties={"source_document_id": doc.document_id})],
+            [
+                GraphNode(
+                    id="n1",
+                    labels=frozenset({"Entity"}),
+                    properties={"source_document_id": doc.document_id},
+                )
+            ],
         )
         assert await repo.count_documents(scope) == 1
         assert await repo.count_chunks(scope) == 1
@@ -66,6 +72,9 @@ async def test_forget_document_removes_all_traces_and_is_idempotent(migrated_dsn
             assert audited and audited >= 1
 
         # Idempotent: a second forget deletes/tombstones nothing.
-        assert await _forget_document(project_id, doc.document_id) == {"deleted": 0, "tombstoned": 0}
+        assert await _forget_document(project_id, doc.document_id) == {
+            "deleted": 0,
+            "tombstoned": 0,
+        }
     finally:
         await engine.dispose()

@@ -131,7 +131,9 @@ class AgeGraphStore:
                 cypher = f"MERGE (n:{label} {{id: $id}})"
                 if set_frag:
                     cypher += f" SET {set_frag}"
-                await self._cypher(session, graph, cypher, {"id": node.id, **set_params}, "v agtype")
+                await self._cypher(
+                    session, graph, cypher, {"id": node.id, **set_params}, "v agtype"
+                )
             await session.commit()
 
     async def upsert_edges(self, scope: ProjectScope, edges: Sequence[GraphEdge]) -> None:
