@@ -26,5 +26,9 @@ All notable changes to this project are documented here. The format follows
   structured completion with validate → repair → fallback; embedding dimension anchoring
   (1024); a real per-capability `healthcheck`. Routing (model/endpoint/credentials/timeout/
   fallback) is immutable from call data and provider errors are redacted (AUDIT-005).
+- **Data-service Compose** stack: Postgres 16 + Apache AGE 1.6.0 + pgvector 0.8.5 in one
+  image. Base pinned by digest, pgvector built from a verified commit; ports loopback-bound;
+  `POSTGRES_PASSWORD` required and re-validated before boot; runs as non-root (uid 999);
+  healthchecked. Verified: image builds and both extensions load (AUDIT-007).
 
 [Unreleased]: https://github.com/ericrisco/rsc-brain/commits/main

@@ -1,0 +1,62 @@
+# rsc-brain — development data + inference stack.
+#
+# Security defaults (AUDIT-007):
+#   * every published port binds to loopback (127.0.0.1) unless you deliberately change the
+#     *_BIND variable; this stack is NOT meant to be exposed to a shared network as-is;
+#   * POSTGRES_PASSWORD is required (compose fails fast if unset) and re-validated inside the
+#     container before Postgres listens;
+#   * the data image pins its base by digest and builds pgvector from a verified commit.
+#
+# Profiles: `db` runs by default; `ollama` / `vllm` are opt-in local-inference backends
+# (`docker compose --profile ollama up`). Production/TLS topology is SPEC-18; this is dev only.
+name: rsc-brain
+
+services:
+  db:
+    build:
+      context: .
+      dockerfile: docker/db.Dockerfile
+    image: rsc-brain/db:pg16-age-pgvector
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rsc_brain}
+      POSTGRES_DB: ${POSTGRES_DB:-rsc_brain}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set — copy .env.example to .env and set a strong password}
+    ports:
+      - "${RSC_BRAIN_DB_BIND:-127.0.0.1}:${RSC_BRAIN_DB_PORT:-5432}:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rsc_brain} -d ${POSTGRES_DB:-rsc_brain}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  # --- Optional local-inference backends (D8), loopback-bound, opt-in via profile ---
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:0.6.8
+    ports:
+      - "${RSC_BRAIN_OLLAMA_BIND:-127.0.0.1}:11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  vllm:
+    profiles: ["vllm"]
+    image: vllm/vllm-openai:v0.8.5
+    ports:
+      - "${RSC_BRAIN_VLLM_BIND:-127.0.0.1}:8000:8000"
+    ipc: host
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  ollama_data:

@@ -21,8 +21,9 @@ capability layer.
 > - ✅ **Model gateway** (`rsc_brain.gateway`) over LiteLLM: per-capability routing, structured
 >   completion with validate → repair → fallback, embedding dimension anchoring, redacted
 >   errors — routing is immutable from call data (AUDIT-005).
-> - ⏳ Next in this bootstrap: the **data-service Compose** stack (Postgres 16 + AGE + pgvector)
->   and **CI**.
+> - ✅ **Data-service Compose** stack (Postgres 16 + Apache AGE 1.6.0 + pgvector 0.8.5):
+>   loopback-bound, password-guarded, digest-pinned, non-root, healthchecked (AUDIT-007).
+> - ⏳ Next in this bootstrap: **CI** (GitHub Actions).
 >
 > Product capabilities (ingestion, recall, MCP serving, console, …) land in later SPECs; the
 > CLI subcommands for them exit non-zero with a `not_implemented` payload until then.
@@ -54,6 +55,22 @@ uv run brain doctor --json  # -> {"status": "not_implemented", "command": "docto
 Configuration is a YAML file overlaid by environment variables (env wins). Copy
 [`config.example.yaml`](config.example.yaml) and override secrets **only** via env / Docker
 secrets — never commit real keys (`RSC_BRAIN_<SECTION>__<KEY>` sets nested values).
+
+## Local data service (Postgres 16 + Apache AGE + pgvector)
+
+The single data service is defined in [`docker-compose.yml`](docker-compose.yml). It binds to
+loopback by default and refuses to start with a blank or placeholder password (see
+[`docker/README.md`](docker/README.md) for the full security posture).
+
+```bash
+cp .env.example .env                      # then set a strong POSTGRES_PASSWORD
+docker compose up -d --wait db            # build + start; waits until healthy
+docker compose exec -u postgres -T db \
+  psql -U rsc_brain -d rsc_brain -c "SELECT extname, extversion FROM pg_extension;"
+```
+
+> Building the AGE + pgvector image compiles pgvector from source and can take a few minutes
+> on first run.
 
 ## License
 
