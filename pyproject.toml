@@ -53,6 +53,10 @@ security = [
     "pip-audit>=2.7",       # SCA gate; run in CI + locally
     "pip-licenses>=5",      # AGPL-compat license audit (NFR-10)
 ]
+evals = [
+    "reportlab>=4",         # render corpus documents to native PDFs (SPEC-02)
+    "pillow>=10",           # rasterize "scanned" documents into image-only PDFs (no text layer)
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -97,7 +101,8 @@ extend-immutable-calls = ["typer.Option", "typer.Argument"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "evals"]
+mypy_path = "."
 plugins = ["pydantic.mypy"]
 warn_unreachable = true
 warn_redundant_casts = true
@@ -110,7 +115,7 @@ module = ["litellm", "litellm.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["pgvector.*", "asyncpg", "asyncpg.*", "testcontainers.*"]
+module = ["pgvector.*", "asyncpg", "asyncpg.*", "testcontainers.*", "reportlab.*", "PIL.*"]
 ignore_missing_imports = true
 
 # Alembic env/migrations are infra glue against untyped alembic runtime objects.
@@ -124,6 +129,7 @@ ignore_errors = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]  # make the repo-root `evals` package importable in tests
 # Integration tests (real Postgres via testcontainers) are opt-in: `pytest -m integration`.
 # The default run excludes them so the unit gate needs no Docker image.
 addopts = "-q -m 'not integration'"

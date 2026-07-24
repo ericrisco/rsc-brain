@@ -9,6 +9,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added — Sprint 0 / SPEC-02 (foundational content)
+
+- **Prompts v1** (`src/rsc_brain/prompts/`): extractor cascade (entities → relations → claims),
+  topicalizer, and the LLM contradiction judge — English with a language-preservation instruction
+  (D5), ≥3 ES/EN few-shot each, and an explicit **untrusted-data precedence block** so document
+  content can never inject instructions (AUDIT-008).
+- **Hunting templates** (4 × ES/EN) at the canonical `src/rsc_brain/hunting/templates/` (AUDIT-009).
+- **Eval corpus** (`evals/`): a 2-project synthetic taxonomy; 27 documents (prose/tables/scanned/
+  sensitive, all four D13 policies incl. retained-sensitive, temporal fact-with-history, exact-id
+  invoice/NIF); `golden.yaml` (44 cases across hit/abstain/denied/cross_project/exact_id/temporal/
+  injection); `contradictions.yaml` (32 ES/EN pairs, all verdicts). A pydantic-backed validator
+  checks paths + manifest completeness; a generator renders the corpus to PDFs.
+- The **PRD-§12 `brain eval` rule** documented in `evals/README.md`. (Local-model prompt
+  iteration is `blocked-by-resource` — no Ollama on this host.)
+
 ### Added — v0.1 / SPEC-04 (identity, permissions, audit)
 
 - **Credentials**: argon2id passwords; `ck_`/`inv_` bearer tokens stored only as SHA-256 hashes

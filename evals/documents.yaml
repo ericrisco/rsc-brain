@@ -1,0 +1,278 @@
+# Synthetic eval corpus (SPEC-02 E12.3) — the SOURCE of truth for the two fictional projects.
+# `body` is the document content; `evals/generate_pdfs.py` renders each to a PDF (native, or a
+# rasterized "scanned" page with no text layer to force OCR). Deliberately includes broken
+# tables, scanned pages, and sensitive HR content so gates predict real data (PRD gap #36).
+documents:
+  # ---------------- Project A: Acme Corp (software) ----------------
+  - id: acme-overview-en
+    project: acme
+    source: handbook
+    policy: source_tags
+    tags: [general]
+    kind: prose
+    lang: en
+    body: >
+      Acme Corp is a software company founded in 2015, headquartered in Barcelona. It builds
+      developer tooling. The company handbook is public to all employees.
+  - id: acme-eng-deploy-en
+    project: acme
+    source: wiki
+    policy: source_tags
+    tags: [engineering]
+    kind: prose
+    lang: en
+    body: >
+      The Acme deployment pipeline builds containers and runs on GitHub Actions. Production runs
+      on PostgreSQL 16. Deployments require two approvals.
+  - id: acme-eng-arch-es
+    project: acme
+    source: wiki
+    policy: source_tags
+    tags: [engineering]
+    kind: prose
+    lang: es
+    body: >
+      La arquitectura de Acme usa PostgreSQL como único servicio de datos. El proyecto Fénix,
+      liderado por María López, centraliza la ingesta.
+  - id: acme-sla-2023-en
+    project: acme
+    source: wiki
+    policy: source_tags
+    tags: [engineering, general]
+    kind: prose
+    lang: en
+    valid_from: "2023-01-01"
+    body: >
+      As of January 2023, the standard support SLA is 24 hours. This policy is effective from
+      2023-01-01.
+  - id: acme-sla-2024-en
+    project: acme
+    source: wiki
+    policy: source_tags
+    tags: [engineering, general]
+    kind: prose
+    lang: en
+    valid_from: "2024-01-01"
+    body: >
+      Effective 2024-01-01, the standard support SLA is reduced to 12 hours, superseding the
+      previous 24-hour policy.
+  - id: acme-pricing-en
+    project: acme
+    source: sales-drive
+    policy: source_tags
+    tags: [sales]
+    kind: prose
+    lang: en
+    body: >
+      Acme Cloud costs 49 EUR per seat per month. Premium support customers receive a 4-hour SLA.
+  - id: acme-invoice-table-en
+    project: acme
+    source: sales-drive
+    policy: source_tags
+    tags: [sales]
+    kind: table
+    lang: en
+    body: |
+      Invoice | Customer | Amount
+      F-2024-118 | Globex | 3400 EUR
+      F-2024-119 | Initech | 1250 EUR
+  - id: acme-invoice-nif-es
+    project: acme
+    source: sales-drive
+    policy: source_tags
+    tags: [sales]
+    kind: prose
+    lang: es
+    body: >
+      La factura F-2024-118 asciende a 3.400 €. El NIF del cliente Globex es B-12345678.
+  - id: acme-hr-reviews-en
+    project: acme
+    source: hr-drive
+    policy: llm
+    tags: [hr]
+    kind: prose
+    lang: en
+    body: >
+      2024 performance reviews: Jane Doe rated "exceeds". Individual review scores are
+      confidential to HR.
+  - id: acme-payroll-bands-es
+    project: acme
+    source: hr-drive
+    policy: llm_review
+    tags: [payroll, hr]
+    kind: prose
+    lang: es
+    retained: true
+    body: >
+      Bandas salariales 2024: dirección 90.000–120.000 €; ingeniería 45.000–70.000 €. Documento
+      sensible de nóminas.
+  - id: acme-hr-manual-en
+    project: acme
+    source: hr-inbox
+    policy: manual
+    tags: [hr]
+    kind: prose
+    lang: en
+    retained: true
+    body: >
+      Draft HR grievance procedure. Not yet approved — must not be recallable until an HR curator
+      approves it.
+  - id: acme-broken-table-en
+    project: acme
+    source: sales-drive
+    policy: source_tags
+    tags: [sales]
+    kind: table
+    lang: en
+    body: |
+      2024 3400 Globex paid
+      2023 1200 Initech pending
+      (no clear header row — should fall to needs_review)
+  - id: acme-scanned-en
+    project: acme
+    source: scans
+    policy: source_tags
+    tags: [general]
+    kind: scanned
+    lang: en
+    body: >
+      Scanned memo: the office moves to a new building on 2024-09-01. All-hands at 10:00.
+  - id: acme-scanned-es
+    project: acme
+    source: scans
+    policy: source_tags
+    tags: [general]
+    kind: scanned
+    lang: es
+    body: >
+      Memo escaneado: la política de vacaciones es de 25 días laborables al año.
+  - id: acme-vacation-es
+    project: acme
+    source: handbook
+    policy: source_tags
+    tags: [general]
+    kind: prose
+    lang: es
+    body: >
+      La política de vacaciones de Acme es de 25 días al año. Se solicitan con dos semanas de
+      antelación.
+  - id: acme-llm-note-en
+    project: acme
+    source: inbox
+    policy: llm
+    tags: [engineering]
+    kind: prose
+    lang: en
+    body: >
+      Incident note: the 2024-03 outage was caused by a connection-pool exhaustion; fixed by
+      raising PgBouncer limits.
+
+  # ---------------- Project B: Globex Consulting ----------------
+  - id: globex-overview-en
+    project: globex
+    source: intranet
+    policy: source_tags
+    tags: [corp]
+    kind: prose
+    lang: en
+    body: >
+      Globex Consulting is headquartered in Andorra. It advises on digital transformation.
+  - id: globex-hq-es
+    project: globex
+    source: intranet
+    policy: source_tags
+    tags: [corp]
+    kind: prose
+    lang: es
+    body: >
+      La sede de Globex Consulting está en Andorra. Fundada en 2010.
+  - id: globex-delivery-es
+    project: globex
+    source: wiki
+    policy: source_tags
+    tags: [delivery]
+    kind: prose
+    lang: es
+    body: >
+      La metodología de entrega de Globex es iterativa, con revisiones quincenales con el cliente.
+  - id: globex-contract-en
+    project: globex
+    source: legal-drive
+    policy: source_tags
+    tags: [legal]
+    kind: prose
+    lang: en
+    body: >
+      Globex standard contracts include a 30-day termination notice and a confidentiality clause.
+  - id: globex-sla-table-en
+    project: globex
+    source: legal-drive
+    policy: source_tags
+    tags: [legal, delivery]
+    kind: table
+    lang: en
+    body: |
+      Tier | Response | Penalty
+      Standard | 2 business days | none
+      Priority | 4 hours | 5% credit
+  - id: globex-rate-2022-en
+    project: globex
+    source: legal-drive
+    policy: source_tags
+    tags: [corp]
+    kind: prose
+    lang: en
+    valid_from: "2022-01-01"
+    body: >
+      As of 2022, the consulting day rate is 100 EUR per hour.
+  - id: globex-rate-2024-en
+    project: globex
+    source: legal-drive
+    policy: source_tags
+    tags: [corp]
+    kind: prose
+    lang: en
+    valid_from: "2024-01-01"
+    body: >
+      Effective 2024, the consulting day rate increases to 120 EUR per hour, superseding the 2022
+      rate.
+  - id: globex-personnel-es
+    project: globex
+    source: hr-drive
+    policy: llm_review
+    tags: [personnel]
+    kind: prose
+    lang: es
+    retained: true
+    body: >
+      Datos de personal: contactos de emergencia y evaluaciones. Documento sensible de personal.
+  - id: globex-legal-manual-en
+    project: globex
+    source: legal-inbox
+    policy: manual
+    tags: [legal]
+    kind: prose
+    lang: en
+    retained: true
+    body: >
+      Draft NDA template pending counsel approval. Not recallable until approved.
+  - id: globex-scanned-en
+    project: globex
+    source: scans
+    policy: source_tags
+    tags: [corp]
+    kind: scanned
+    lang: en
+    body: >
+      Scanned notice: the Q3 partner meeting is on 2024-07-15 in Andorra la Vella.
+  - id: globex-delivery-table-en
+    project: globex
+    source: wiki
+    policy: source_tags
+    tags: [delivery]
+    kind: table
+    lang: en
+    body: |
+      Phase | Duration
+      Discovery | 2 weeks
+      Delivery | 8 weeks
