@@ -136,8 +136,13 @@ ignore_missing_imports = true
 # docling + transformers are operator-installed extras (never in the locked graph); procrastinate
 # ships no type stubs. All ignored for missing imports so the default install type-checks cleanly.
 [[tool.mypy.overrides]]
-module = ["docling.*", "procrastinate.*", "transformers", "transformers.*"]
+module = ["docling.*", "procrastinate.*", "transformers", "transformers.*", "authlib.*"]
 ignore_missing_imports = true
+
+# Authlib's grant/server base classes are untyped (Any); subclassing them is intentional glue.
+[[tool.mypy.overrides]]
+module = ["rsc_brain.api.oauth.server"]
+disallow_subclassing_any = false
 
 # Alembic env/migrations are infra glue against untyped alembic runtime objects.
 [[tool.mypy.overrides]]

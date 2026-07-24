@@ -140,6 +140,27 @@ class OAuthToken(Base):
     revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class OAuthAuthorizationCode(Base):
+    """A short-lived OAuth 2.1 authorization code (SPEC-10). Issued at the consent screen, bound to
+    a client + membership (the chosen user+project) + PKCE challenge, single-use at the token
+    endpoint. The code itself is only stored hashed."""
+
+    __tablename__ = "oauth_authorization_codes"
+    id: Mapped[uuid.UUID] = _pk()
+    code_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    client_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("oauth_clients.id", ondelete="CASCADE"))
+    membership_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("project_memberships.id", ondelete="CASCADE")
+    )
+    redirect_uri: Mapped[str | None] = mapped_column(Text)
+    scope: Mapped[str | None] = mapped_column(Text)
+    code_challenge: Mapped[str | None] = mapped_column(Text)
+    code_challenge_method: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = _created_at()
+    expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Invitation(Base):
     __tablename__ = "invitations"
     id: Mapped[uuid.UUID] = _pk()
@@ -147,6 +168,7 @@ class Invitation(Base):
     token_hash: Mapped[str] = mapped_column(Text, nullable=False)
     expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    kind: Mapped[str] = mapped_column(Text, server_default="invitation", nullable=False)
 
 
 class ConsoleSession(Base):
