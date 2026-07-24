@@ -60,7 +60,9 @@ def _wrap(text: str, width: int = 90) -> list[str]:
 
 
 def generate() -> int:
-    corpus = Corpus(**yaml.safe_load((Path(__file__).resolve().parent / "documents.yaml").read_text()))
+    corpus = Corpus(
+        **yaml.safe_load((Path(__file__).resolve().parent / "documents.yaml").read_text())
+    )
     OUT_DIR.mkdir(exist_ok=True)
     for document in corpus.documents:
         path = OUT_DIR / f"{document.id}.pdf"
