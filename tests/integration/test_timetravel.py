@@ -222,11 +222,19 @@ async def test_as_of_latency_benchmark_runs(build_harness: Callable[..., Harness
 
 
 async def test_bitemporal_index_is_used(build_harness: Callable[..., Harness]) -> None:
-    # AC#5: the (project_id, valid_from, valid_to) index backs the time-travel query.
+    # AC#5: the (project_id, valid_from, valid_to) index exists and backs the time-travel query.
     harness = build_harness()
     project_id = await harness.setup_project(unique_slug("acme"), TOPICS)
     await _seed_three_eras(harness, project_id, with_chunk=False)
     async with harness.sm() as session:
+        exists = await session.scalar(
+            text("SELECT 1 FROM pg_indexes WHERE indexname = 'ix_claims_project_id_valid'")
+        )
+        assert exists == 1  # created in SPEC-13's migration, reused here
+        # It is *applicable* to the project + valid_from query. On a fresh DB the table is tiny, so
+        # the cost planner prefers a seq scan; disabling that proves the index can serve the filter
+        # + sort (which is what AC#5 asserts — the index would carry the query at scale).
+        await session.execute(text("SET LOCAL enable_seqscan = off"))
         plan = await session.execute(
             text(
                 "EXPLAIN SELECT id FROM claims WHERE project_id = :pid "
