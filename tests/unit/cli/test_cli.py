@@ -28,10 +28,10 @@ def test_version_flag() -> None:
 
 def test_unimplemented_command_exits_nonzero_with_json_after_subcommand() -> None:
     # The spec's literal example: `brain doctor --json`.
-    result = runner.invoke(app, ["doctor", "--json"])
+    result = runner.invoke(app, ["plan", "--json"])
     assert result.exit_code == 2
     payload = json.loads(result.stdout)
-    assert payload == {"status": "not_implemented", "command": "doctor"}
+    assert payload == {"status": "not_implemented", "command": "plan"}
 
 
 def test_global_json_before_subcommand_also_works() -> None:

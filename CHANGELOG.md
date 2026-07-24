@@ -9,6 +9,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added — v0.1 / SPEC-04 (identity, permissions, audit)
+
+- **Credentials**: argon2id passwords; `ck_`/`inv_` bearer tokens stored only as SHA-256 hashes
+  (`security.py`).
+- **Identity service**: projects (bootstrap `default`, not deletable), invitation → argon2
+  activation (single-use), memberships + topics, PATs, and **service-account agents** with their
+  own identity + service PAT. Migration **0002** adds the `agents` table and lets a PAT reference
+  a membership **or** an agent (exactly-one).
+- **Scope resolution** (`resolve_scope`): a bearer token maps to a `ProjectScope` via a direct DB
+  lookup (no cache), so revoking/disabling a token/user/agent takes effect immediately (<5s).
+  The project is never taken from client input (FR-12.3).
+- **Permission enforcement** (`recall/permissions.py`): the FR-4.14 restrictive rule is applied
+  **in the query** — a chunk carrying a sensitive tag (`sensitivity >= threshold`) the caller
+  does not own is excluded (overlap is not enough). Denied ≡ nonexistent (FR-4.3).
+- **Audit** (`audit.py`): one row per action with the agent fields (`principal_type`,
+  `principal_id`, `on_behalf_of`, `trace_id`); `brain audit` query + CSV export.
+- **`brain doctor`**: hardcoded-secret scan of config (FR-4.7).
+- **Admin CLI**: `brain projects` / `users` / `topics` / `audit` / `doctor`.
+- **Isolation suite** (`tests/permissions_suite/`): synthetic 2-project seed proving FR-4.14 and
+  hard cross-project isolation against a real container; re-run against MCP in SPEC-06 for the
+  full gate-v0.1 "0 leaks".
+
 ### Added — v0.1 / SPEC-03 (data layer)
 
 - **Schema + migrations**: SQLAlchemy 2.0 async models for the full PRD §5.2 data model
