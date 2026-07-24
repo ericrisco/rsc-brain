@@ -6,9 +6,8 @@ import asyncio
 
 import asyncpg
 import pytest
-from alembic import command
 
-from rsc_brain.cli.data import alembic_config
+from rsc_brain.stores.relational.migrations import upgrade_to_head
 
 pytestmark = pytest.mark.integration
 
@@ -101,7 +100,7 @@ async def test_documents_unique_project_checksum(migrated_dsn: str) -> None:
 async def test_migrate_is_idempotent(migrated_dsn: str) -> None:
     # Re-running upgrade head against an at-head database is a clean no-op. Run in a worker
     # thread because Alembic's async env calls asyncio.run(), which cannot nest in this loop.
-    await asyncio.to_thread(command.upgrade, alembic_config(), "head")
+    await asyncio.to_thread(upgrade_to_head)
     conn = await _connect(migrated_dsn)
     try:
         version = await conn.fetchval("SELECT version_num FROM alembic_version")

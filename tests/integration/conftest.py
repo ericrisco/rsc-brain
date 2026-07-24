@@ -10,11 +10,10 @@ import os
 from collections.abc import Iterator
 
 import pytest
-from alembic import command
 from testcontainers.postgres import PostgresContainer
 
-from rsc_brain.cli.data import alembic_config
 from rsc_brain.stores.relational.database import DSN_ENV_VAR
+from rsc_brain.stores.relational.migrations import upgrade_to_head
 
 _IMAGE = "rsc-brain/db:pg16-age-pgvector"
 # >=16 chars and not a placeholder, so the image's password guard accepts it.
@@ -39,7 +38,7 @@ def migrated_dsn(pg_dsn: str) -> Iterator[str]:
     previous = os.environ.get(DSN_ENV_VAR)
     os.environ[DSN_ENV_VAR] = pg_dsn
     try:
-        command.upgrade(alembic_config(), "head")
+        upgrade_to_head()
         yield pg_dsn
     finally:
         if previous is None:
