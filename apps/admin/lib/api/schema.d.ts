@@ -28,8 +28,33 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Audit */
+        /**
+         * List Audit
+         * @description Filterable audit log (SPEC-26 FR-13.7). Project-scoped in-query (a project-admin sees only
+         *     their project); `query_text` is NULL when `query_text_logging` is OFF (FR-13.9).
+         */
         get: operations["list_audit_api_v1_admin_audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/audit/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Audit
+         * @description CSV export of the filtered audit log (SPEC-26 FR-13.7, parity with `brain audit --export`).
+         *     The export itself is audited (FR-4.5).
+         */
+        get: operations["export_audit_api_v1_admin_audit_export_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -272,6 +297,27 @@ export interface paths {
          * @description Promote an agent gap to a hunt (FR-14.6 — agent gaps never trigger automatically).
          */
         post: operations["promote_gap_api_v1_admin_gaps__gap_id__promote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/graph/entity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Entity Graph Endpoint
+         * @description A bounded, paginated neighborhood of one entity (SPEC-26 FR-13.8). Permission-scoped: an
+         *     entity with no visible claims is indistinguishable from a non-existent one (404, FR-4.3).
+         */
+        get: operations["entity_graph_endpoint_api_v1_admin_graph_entity_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -705,6 +751,27 @@ export interface paths {
         put?: never;
         /** Create Topic */
         post: operations["create_topic_api_v1_admin_topics_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Usage Endpoint
+         * @description Per-capability/day token + call usage (SPEC-26 FR-13.7). Same source as `brain usage`, so
+         *     the console figures always match the CLI. Counters are instance-global (SPEC-22 schema).
+         */
+        get: operations["usage_endpoint_api_v1_admin_usage_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1194,7 +1261,15 @@ export interface operations {
     list_audit_api_v1_admin_audit_get: {
         parameters: {
             query?: {
+                action?: string | null;
+                tool?: string | null;
+                principal_type?: string | null;
+                principal_id?: string | null;
+                denied?: boolean | null;
+                since?: string | null;
+                until?: string | null;
                 limit?: number;
+                project?: string | null;
             };
             header?: never;
             path?: never;
@@ -1212,6 +1287,43 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_audit_api_v1_admin_audit_export_get: {
+        parameters: {
+            query?: {
+                action?: string | null;
+                tool?: string | null;
+                principal_type?: string | null;
+                principal_id?: string | null;
+                denied?: boolean | null;
+                since?: string | null;
+                until?: string | null;
+                limit?: number;
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -1609,6 +1721,42 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    entity_graph_endpoint_api_v1_admin_graph_entity_get: {
+        parameters: {
+            query?: {
+                name?: string;
+                limit?: number;
+                offset?: number;
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2600,6 +2748,40 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    usage_endpoint_api_v1_admin_usage_get: {
+        parameters: {
+            query?: {
+                days?: number;
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -95,22 +95,31 @@ class PgUsageRecorder:
 
     async def usage(self, *, days: int = 7) -> list[dict[str, object]]:
         """Recent per-capability/day usage (for ``brain usage``)."""
-        since = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=days)
-        async with self._sm() as session:
-            rows = await session.scalars(
-                select(models.TokenUsage)
-                .where(models.TokenUsage.day >= since)
-                .order_by(models.TokenUsage.day.desc(), models.TokenUsage.capability)
-            )
-            return [
-                {
-                    "capability": r.capability,
-                    "day": r.day.isoformat(),
-                    "tokens": r.tokens,
-                    "calls": r.calls,
-                }
-                for r in rows
-            ]
+        return await usage_by_day(self._sm, days=days)
+
+
+async def usage_by_day(
+    sessionmaker: async_sessionmaker[AsyncSession], *, days: int = 7
+) -> list[dict[str, object]]:
+    """Recent per-capability/day token + call usage. The single source of truth shared by
+    ``brain usage`` (CLI) and the console usage view (SPEC-26 FR-13.7), so the two always agree.
+    The counters are instance-global per capability/day (SPEC-22 schema — no per-project column)."""
+    since = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=days)
+    async with sessionmaker() as session:
+        rows = await session.scalars(
+            select(models.TokenUsage)
+            .where(models.TokenUsage.day >= since)
+            .order_by(models.TokenUsage.day.desc(), models.TokenUsage.capability)
+        )
+        return [
+            {
+                "capability": r.capability,
+                "day": r.day.isoformat(),
+                "tokens": r.tokens,
+                "calls": r.calls,
+            }
+            for r in rows
+        ]
 
 
 class PgEmbeddingCache:

@@ -10,6 +10,7 @@ never leaks content. This module also serves the SPEC-14 read-observability aggr
 from __future__ import annotations
 
 import csv
+import datetime as dt
 import io
 import uuid
 from collections.abc import Sequence
@@ -94,16 +95,47 @@ def _row_to_dict(row: models.AuditLog) -> dict[str, object]:
     }
 
 
+def _parse_date(value: str | None) -> dt.datetime | None:
+    """Accept a date (YYYY-MM-DD) or an ISO timestamp; None passes through. Naive dates are UTC."""
+    if not value:
+        return None
+    parsed = dt.datetime.fromisoformat(value)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.UTC)
+
+
 async def query_audit(
     sessionmaker: async_sessionmaker[AsyncSession],
     project_id: str,
     *,
     action: str | None = None,
+    tool: str | None = None,
+    principal_type: str | None = None,
+    principal_id: str | None = None,
+    denied: bool | None = None,
+    since: str | None = None,
+    until: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, object]]:
+    """Filterable audit query (SPEC-26 FR-13.7). All filters AND together; the project scope is
+    always applied in-query (FR-12.5). Ordered newest-first. ``query_text`` is NULL unless the
+    project's ``query_text_logging`` is ON, so no filter can surface query content (FR-13.9)."""
     conditions = [models.AuditLog.project_id == uuid.UUID(project_id)]
     if action is not None:
         conditions.append(models.AuditLog.action == action)
+    if tool is not None:
+        conditions.append(models.AuditLog.tool == tool)
+    if principal_type is not None:
+        conditions.append(models.AuditLog.principal_type == principal_type)
+    if principal_id is not None:
+        conditions.append(models.AuditLog.principal_id == principal_id)
+    if denied is not None:
+        conditions.append(models.AuditLog.denied.is_(denied))
+    since_ts = _parse_date(since)
+    if since_ts is not None:
+        conditions.append(models.AuditLog.ts >= since_ts)
+    until_ts = _parse_date(until)
+    if until_ts is not None:
+        conditions.append(models.AuditLog.ts <= until_ts)
     statement = (
         select(models.AuditLog).where(*conditions).order_by(models.AuditLog.ts.desc()).limit(limit)
     )

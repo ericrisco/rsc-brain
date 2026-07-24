@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import type {
   Activity,
+  AuditFilters,
+  AuditRow,
   Correction,
   CorrectionMetrics,
   CreatedPat,
@@ -12,11 +14,14 @@ import type {
   Hunt,
   IngestRun,
   Me,
+  Neighborhood,
   PatList,
   PendingDoc,
+  ProductMetrics,
   RecallRow,
   Resolution,
   ReviewQueue,
+  UsageRow,
 } from "./types";
 
 /** The authenticated user + their memberships (drives the project selector + role gating). */
@@ -352,5 +357,69 @@ export function useResolveMerge(project: string) {
       if (error) throw new Error("failed to resolve merge");
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["review"] }),
+  });
+}
+
+
+// --- SPEC-26 console release ----------------------------------------------------------------
+
+/** Per-capability/day token usage (SPEC-26 FR-13.7). Same source as `brain usage`. */
+export function useUsage(project: string, days: number) {
+  return useQuery({
+    queryKey: ["usage", project, days],
+    enabled: !!project,
+    queryFn: async (): Promise<{ usage: UsageRow[] }> => {
+      const { data, error } = await api.GET("/api/v1/admin/usage", {
+        params: { query: { project, days } },
+      });
+      if (error) throw new Error("failed to load usage");
+      return data as unknown as { usage: UsageRow[] };
+    },
+  });
+}
+
+/** Filterable audit log (SPEC-26 FR-13.7). */
+export function useAudit(project: string, filters: AuditFilters, limit = 200) {
+  return useQuery({
+    queryKey: ["audit", project, filters, limit],
+    enabled: !!project,
+    queryFn: async (): Promise<{ audit: AuditRow[] }> => {
+      const { data, error } = await api.GET("/api/v1/admin/audit", {
+        params: { query: { project, limit, ...filters } },
+      });
+      if (error) throw new Error("failed to load audit log");
+      return data as unknown as { audit: AuditRow[] };
+    },
+  });
+}
+
+/** The four PRD §8 metric families (SPEC-26 E11.3), straight from the API. */
+export function useProductMetrics(project: string, windowDays = 30) {
+  return useQuery({
+    queryKey: ["metrics", project, windowDays],
+    enabled: !!project,
+    queryFn: async (): Promise<ProductMetrics> => {
+      const { data, error } = await api.GET("/api/v1/admin/metrics/product", {
+        params: { query: { project, window_days: windowDays } },
+      });
+      if (error) throw new Error("failed to load product metrics");
+      return data as unknown as ProductMetrics;
+    },
+  });
+}
+
+/** A bounded, paginated entity neighborhood (SPEC-26 FR-13.8). Null center ⇒ not found/invisible. */
+export function useEntityGraph(project: string, name: string, offset: number, limit = 25) {
+  return useQuery({
+    queryKey: ["graph", project, name, offset, limit],
+    enabled: !!project && !!name,
+    retry: false,
+    queryFn: async (): Promise<Neighborhood | null> => {
+      const { data, error } = await api.GET("/api/v1/admin/graph/entity", {
+        params: { query: { project, name, offset, limit } },
+      });
+      if (error) return null; // 404 ≡ absent/invisible (FR-4.3)
+      return data as unknown as Neighborhood;
+    },
   });
 }

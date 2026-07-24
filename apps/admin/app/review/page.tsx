@@ -6,12 +6,14 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useMe, useResolveChunk, useResolveMerge, useReviewQueue } from "@/lib/api/hooks";
+import { useT } from "@/lib/i18n/context";
 
 /** SPEC-21 — the unified needs_review queue: one inbox over ambiguous tables, guardrail-flagged
  * chunks, quarantined agent submissions, low-confidence entity merges, and agent correction
  * suggestions. Chunk + merge items resolve inline (server enforces the minimum role). */
 export default function ReviewPage() {
   const router = useRouter();
+  const t = useT();
   const { data: me, isError } = useMe();
   const [project, setProject] = useState("");
 
@@ -22,14 +24,14 @@ export default function ReviewPage() {
     if (me && !project && me.memberships[0]) setProject(me.memberships[0].project);
   }, [me, project]);
 
-  if (!me) return <main className="p-6 text-sm text-neutral-500">Loading…</main>;
+  if (!me) return <main className="p-6 text-sm text-neutral-500">{t("common.loading")}</main>;
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
       <header className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Review queue</h1>
+        <h1 className="text-xl font-semibold">{t("review.title")}</h1>
         <select
-          aria-label="Project"
+          aria-label={t("common.project")}
           className="h-9 rounded-md border border-neutral-300 bg-transparent px-2 text-sm dark:border-neutral-700"
           value={project}
           onChange={(e) => setProject(e.target.value)}
@@ -41,12 +43,17 @@ export default function ReviewPage() {
           ))}
         </select>
       </header>
-      {project ? <Queue project={project} /> : <p className="text-sm text-neutral-500">Select a project.</p>}
+      {project ? (
+        <Queue project={project} />
+      ) : (
+        <p className="text-sm text-neutral-500">{t("common.selectProject")}</p>
+      )}
     </main>
   );
 }
 
 function Queue({ project }: { project: string }) {
+  const t = useT();
   const { data } = useReviewQueue(project);
   const resolveChunk = useResolveChunk(project);
   const resolveMerge = useResolveMerge(project);
@@ -56,15 +63,15 @@ function Queue({ project }: { project: string }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Pending items</CardTitle>
+        <CardTitle>{t("review.pending")}</CardTitle>
         <CardDescription>
           {Object.entries(counts)
             .map(([source, n]) => `${source}: ${n}`)
-            .join(" · ") || "empty"}
+            .join(" · ") || t("review.countsEmpty")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
-        {items.length === 0 && <p className="text-neutral-500">Nothing to review.</p>}
+        {items.length === 0 && <p className="text-neutral-500">{t("review.nothingToReview")}</p>}
         {items.map((item) => {
           const isChunk = ["ambiguous_table", "guardrail", "agent_submission"].includes(item.source);
           const isMerge = item.source === "entity_merge";
@@ -89,7 +96,7 @@ function Queue({ project }: { project: string }) {
                         : resolveMerge.mutate({ proposalId: item.id, approve: true })
                     }
                   >
-                    Approve
+                    {t("review.approve")}
                   </Button>
                   <Button
                     variant="outline"
@@ -99,7 +106,7 @@ function Queue({ project }: { project: string }) {
                         : resolveMerge.mutate({ proposalId: item.id, approve: false })
                     }
                   >
-                    Reject
+                    {t("review.reject")}
                   </Button>
                 </span>
               )}

@@ -145,17 +145,41 @@ def audit(
     ctx: typer.Context,
     project_id: str = typer.Option(..., "--project-id", help="Project to audit."),
     action: str | None = typer.Option(None, "--action", help="Filter by action."),
+    tool: str | None = typer.Option(None, "--tool", help="Filter by tool."),
+    principal_type: str | None = typer.Option(
+        None, "--principal-type", help="Filter by principal type (human|agent)."
+    ),
+    principal_id: str | None = typer.Option(None, "--principal-id", help="Filter by principal id."),
+    denied: bool | None = typer.Option(
+        None, "--denied/--not-denied", help="Filter by denied flag."
+    ),
+    since: str | None = typer.Option(None, "--since", help="Only entries at/after this date/time."),
+    until: str | None = typer.Option(
+        None, "--until", help="Only entries at/before this date/time."
+    ),
     limit: int = typer.Option(100, "--limit"),
     export: Path | None = typer.Option(None, "--export", help="Write CSV to this path."),
     json_output: bool = JSON_OPTION,
 ) -> None:
-    """Show the audit log for a project (`--json`) or export it to CSV (`--export`)."""
+    """Show the audit log for a project (`--json`) or export it to CSV (`--export`), with filters
+    (SPEC-26 FR-13.7 — parity with the console audit view)."""
 
     async def _query() -> list[dict[str, object]]:
         engine = make_engine()
         sessionmaker = make_sessionmaker(engine)
         try:
-            return await audit_mod.query_audit(sessionmaker, project_id, action=action, limit=limit)
+            return await audit_mod.query_audit(
+                sessionmaker,
+                project_id,
+                action=action,
+                tool=tool,
+                principal_type=principal_type,
+                principal_id=principal_id,
+                denied=denied,
+                since=since,
+                until=until,
+                limit=limit,
+            )
         finally:
             await engine.dispose()
 

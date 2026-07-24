@@ -8,8 +8,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { login } from "@/lib/api/auth";
+import { useT } from "@/lib/i18n/context";
 
 export default function LoginPage() {
+  const t = useT();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -24,7 +26,7 @@ export default function LoginPage() {
       await login(email, password);
       router.push("/");
     } catch {
-      setError("Invalid credentials");
+      setError(t("login.invalidCredentials"));
     } finally {
       setBusy(false);
     }
@@ -34,13 +36,13 @@ export default function LoginPage() {
     <main className="grid min-h-screen place-items-center p-6">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Sign in</CardTitle>
-          <CardDescription>rsc-brain console</CardDescription>
+          <CardTitle>{t("login.title")}</CardTitle>
+          <CardDescription>{t("login.subtitle")}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="flex flex-col gap-4">
             <div className="flex flex-col gap-1">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">{t("login.email")}</Label>
               <Input
                 id="email"
                 type="email"
@@ -50,7 +52,7 @@ export default function LoginPage() {
               />
             </div>
             <div className="flex flex-col gap-1">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">{t("login.password")}</Label>
               <Input
                 id="password"
                 type="password"
@@ -61,7 +63,7 @@ export default function LoginPage() {
             </div>
             {error ? <p className="text-sm text-red-600">{error}</p> : null}
             <Button type="submit" disabled={busy}>
-              {busy ? "Signing in…" : "Sign in"}
+              {busy ? t("login.signingIn") : t("login.title")}
             </Button>
           </form>
         </CardContent>

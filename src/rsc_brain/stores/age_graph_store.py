@@ -26,6 +26,9 @@ from rsc_brain.stores.graph_store import GraphEdge, GraphNode
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SET_SEARCH_PATH = 'SET search_path = ag_catalog, "$user", public'
+# Safety ceiling on how many neighbours a single subgraph query scans before Python paginates,
+# so even a pathologically high-degree node can't unbound the fetch (SPEC-26 FR-13.8).
+_NEIGHBORHOOD_SCAN_CAP = 5000
 
 
 class UnsafeIdentifierError(ValueError):
@@ -189,6 +192,81 @@ class AgeGraphStore:
                 )
             )
         return nodes
+
+    async def neighborhood(
+        self, scope: ProjectScope, start_id: str, *, limit: int, offset: int
+    ) -> tuple[list[GraphNode], list[GraphEdge], int]:
+        """A bounded, paginated 1-hop neighborhood of one node (SPEC-26 FR-13.8, the Gurú lesson:
+        never render the whole graph). Returns (neighbor nodes for this page, edges between the
+        centre and those neighbours, total neighbour count). The hard per-page cap lives HERE in the
+        query (SKIP/LIMIT), not in the client, so a high-degree node can never overwhelm the UI."""
+        graph = graph_name(scope.project_id)
+        page = max(1, min(int(limit), 200))  # hard ceiling regardless of the caller
+        skip = max(0, int(offset))
+        if not await self._graph_exists_by_name(graph):
+            return [], [], 0
+        async with self._sm() as session:
+            await self._prepare(session)
+            total_rows = await self._cypher(
+                session,
+                graph,
+                "MATCH (a)-[]-(b) WHERE a.id = $start AND b.suppressed IS NULL "
+                "RETURN count(DISTINCT b.id) AS c",
+                {"start": start_id},
+                "c agtype",
+            )
+            total_value = _parse_agtype(total_rows[0][0]) if total_rows else 0
+            total = int(total_value) if isinstance(total_value, int | float) else 0
+            # AGE can't ORDER BY inside a WITH/DISTINCT projection, so fetch the distinct neighbours
+            # (bounded by a safety cap) and sort+paginate deterministically in Python. The response
+            # cap (`page`) is the guarantee that matters for FR-13.8 — the UI never gets more than it.
+            node_rows = await self._cypher(
+                session,
+                graph,
+                "MATCH (a)-[]-(b) WHERE a.id = $start AND b.suppressed IS NULL "
+                "RETURN DISTINCT b.id AS id, labels(b) AS labels, properties(b) AS props "
+                f"LIMIT {_NEIGHBORHOOD_SCAN_CAP}",
+                {"start": start_id},
+                "id agtype, labels agtype, props agtype",
+            )
+            all_nodes = sorted((self._node_from_row(row) for row in node_rows), key=lambda n: n.id)
+            nodes = all_nodes[skip : skip + page]
+            ids = [n.id for n in nodes]
+            edges: list[GraphEdge] = []
+            if ids:
+                edge_rows = await self._cypher(
+                    session,
+                    graph,
+                    "MATCH (a)-[r]->(b) WHERE (a.id = $start AND b.id IN $ids) "
+                    "OR (b.id = $start AND a.id IN $ids) "
+                    "RETURN a.id AS s, type(r) AS t, b.id AS o",
+                    {"start": start_id, "ids": ids},
+                    "s agtype, t agtype, o agtype",
+                )
+                edges = [
+                    GraphEdge(
+                        source_id=str(_parse_agtype(s)),
+                        target_id=str(_parse_agtype(o)),
+                        type=str(_parse_agtype(t)),
+                    )
+                    for s, t, o in edge_rows
+                ]
+        return nodes, edges, total
+
+    def _node_from_row(self, row: Sequence[object]) -> GraphNode:
+        node_id, labels, props = row
+        parsed_labels = _parse_agtype(labels)
+        parsed_props = _parse_agtype(props)
+        return GraphNode(
+            id=str(_parse_agtype(node_id)),
+            labels=frozenset(parsed_labels) if isinstance(parsed_labels, list) else frozenset(),
+            properties=parsed_props if isinstance(parsed_props, dict) else {},
+        )
+
+    async def _graph_exists_by_name(self, graph: str) -> bool:
+        async with self._sm() as session:
+            await self._prepare(session)
+            return await self._graph_exists(session, graph)
 
     async def _graph_exists(self, session: AsyncSession, graph: str) -> bool:
         count = await session.scalar(
