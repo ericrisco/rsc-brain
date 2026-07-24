@@ -16,6 +16,7 @@ import type {
   PendingDoc,
   RecallRow,
   Resolution,
+  ReviewQueue,
 } from "./types";
 
 /** The authenticated user + their memberships (drives the project selector + role gating). */
@@ -303,5 +304,53 @@ export function useRevertCorrection(project: string) {
       if (error) throw new Error("revert failed (are you an admin or the tag owner?)");
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["kb"] }),
+  });
+}
+
+
+// --- SPEC-21 unified needs_review queue -----------------------------------------------------
+
+/** The unified needs_review queue (4 sources); optionally filtered by source. */
+export function useReviewQueue(project: string, source?: string) {
+  return useQuery({
+    queryKey: ["review", project, source ?? "all"],
+    enabled: !!project,
+    refetchInterval: LIVE_MS,
+    queryFn: async (): Promise<ReviewQueue> => {
+      const { data, error } = await api.GET("/api/v1/admin/review-queue", {
+        params: { query: { project, source } },
+      });
+      if (error) throw new Error("failed to load the review queue");
+      return data as unknown as ReviewQueue;
+    },
+  });
+}
+
+/** Resolve a needs_review chunk (approve → recallable, or reject). */
+export function useResolveChunk(project: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { chunkId: string; approve: boolean; tags?: string[] }) => {
+      const { error } = await api.POST("/api/v1/admin/review-queue/chunks/{chunk_id}/resolve", {
+        params: { path: { chunk_id: input.chunkId }, query: { project, approve: input.approve } },
+        body: { tags: input.tags ?? null },
+      });
+      if (error) throw new Error("failed to resolve chunk");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["review"] }),
+  });
+}
+
+/** Resolve an entity-merge proposal (approve → merge applied, or reject). */
+export function useResolveMerge(project: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { proposalId: string; approve: boolean }) => {
+      const { error } = await api.POST("/api/v1/admin/review-queue/merges/{proposal_id}/resolve", {
+        params: { path: { proposal_id: input.proposalId }, query: { project, approve: input.approve } },
+      });
+      if (error) throw new Error("failed to resolve merge");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["review"] }),
   });
 }

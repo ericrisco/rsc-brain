@@ -92,6 +92,18 @@ export default function DashboardPage() {
             </Link>
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Review queue</CardTitle>
+            <CardDescription>Tables, merges, agent submissions &amp; suggestions</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/review" className="text-sm underline">
+              Open queue →
+            </Link>
+          </CardContent>
+        </Card>
       </div>
     </main>
   );

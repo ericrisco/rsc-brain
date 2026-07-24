@@ -467,6 +467,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/review-queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Review Queue
+         * @description The unified needs_review queue (SPEC-21, FR-13.6): all four sources, filterable by source.
+         */
+        get: operations["review_queue_api_v1_admin_review_queue_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/review-queue/chunks/{chunk_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Chunk Item
+         * @description Approve (embed + curator tags + recallable) or reject a needs_review chunk (FR-1.5/4.4/14.4).
+         */
+        post: operations["resolve_chunk_item_api_v1_admin_review_queue_chunks__chunk_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/review-queue/merges/{proposal_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resolve Merge Item
+         * @description Approve (apply the merge) or reject an entity-merge proposal (FR-1.9).
+         */
+        post: operations["resolve_merge_item_api_v1_admin_review_queue_merges__proposal_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/settings/query-text-logging": {
         parameters: {
             query?: never;
@@ -876,6 +936,11 @@ export interface components {
             file: string;
             /** Source */
             source?: string | null;
+        };
+        /** ChunkApprove */
+        ChunkApprove: {
+            /** Tags */
+            tags?: string[] | null;
         };
         /** CreatePatRequest */
         CreatePatRequest: {
@@ -1884,6 +1949,114 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    review_queue_api_v1_admin_review_queue_get: {
+        parameters: {
+            query?: {
+                source?: string | null;
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_chunk_item_api_v1_admin_review_queue_chunks__chunk_id__resolve_post: {
+        parameters: {
+            query: {
+                approve: boolean;
+            };
+            header?: never;
+            path: {
+                chunk_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChunkApprove"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_merge_item_api_v1_admin_review_queue_merges__proposal_id__resolve_post: {
+        parameters: {
+            query: {
+                approve: boolean;
+            };
+            header?: never;
+            path: {
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

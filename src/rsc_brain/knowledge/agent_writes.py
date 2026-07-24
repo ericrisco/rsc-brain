@@ -32,7 +32,8 @@ from rsc_brain.stores.relational.database import session_scope
 
 QUARANTINE_CREDIBILITY = 0.5
 DIRECT_CREDIBILITY_CAP = 0.6
-_SUBMISSION_LOGICAL_ID = "__agent_submissions__"
+AGENT_SUBMISSION_LOGICAL_ID = "__agent_submissions__"
+_SUBMISSION_LOGICAL_ID = AGENT_SUBMISSION_LOGICAL_ID  # backward-compatible alias
 
 WritePolicy = Literal["quarantine", "direct", "off"]
 

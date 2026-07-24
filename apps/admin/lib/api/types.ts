@@ -161,3 +161,17 @@ export interface CorrectionMetrics {
   correction_wars: number;
   ownership_coverage: number;
 }
+
+// --- SPEC-21 unified needs_review queue -----------------------------------------------------
+
+export interface ReviewItem {
+  source: string;
+  id: string;
+  preview: string;
+  detail: Record<string, unknown>;
+}
+
+export interface ReviewQueue {
+  items: ReviewItem[];
+  counts: Record<string, number>;
+}
