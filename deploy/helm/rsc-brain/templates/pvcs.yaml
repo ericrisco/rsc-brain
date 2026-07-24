@@ -1,0 +1,40 @@
+{{- /*
+The two shared persistent volumes from the compose (inbox = PDF drop zone FR-1.13, model-cache =
+Ollama/HF weights). db_data lives in the StatefulSet's volumeClaimTemplate; caddy_* has no k8s
+equivalent (the Ingress terminates TLS). resource-policy:keep so `helm uninstall`/upgrade never
+drops data. Default access mode is RWO (fine on a single node / kind); set an RWX storageClass for
+a multi-node cluster where api and worker land on different nodes.
+*/ -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "rsc-brain.fullname" . }}-inbox
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.persistence.inbox.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.inbox.size | quote }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "rsc-brain.fullname" . }}-model-cache
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.persistence.modelCache.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.modelCache.size | quote }}

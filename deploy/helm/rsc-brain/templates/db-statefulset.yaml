@@ -1,0 +1,88 @@
+{{- /* Postgres+AGE+pgvector (the single D1 image) as a StatefulSet with a PVC — compose `db`. */ -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "rsc-brain.db.fullname" . }}
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+spec:
+  serviceName: {{ include "rsc-brain.db.fullname" . }}
+  replicas: 1 # self-hosted single-org; no Postgres HA in v1 (see chart README / SPEC-25 §2.2)
+  selector:
+    matchLabels:
+      {{- include "rsc-brain.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: db
+  template:
+    metadata:
+      labels:
+        {{- include "rsc-brain.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: db
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: db
+          image: {{ include "rsc-brain.image" (dict "root" . "repository" .Values.image.db.repository "tag" .Values.image.db.tag) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.user | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rsc-brain.secretName" . }}
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}, "-d", {{ .Values.postgres.database | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}, "-d", {{ .Values.postgres.database | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: db-data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.persistence.db.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.db.size | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rsc-brain.db.fullname" . }}
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+spec:
+  clusterIP: None # headless: the StatefulSet pod is reachable at <db-fullname>:5432
+  selector:
+    {{- include "rsc-brain.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

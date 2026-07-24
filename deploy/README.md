@@ -43,6 +43,23 @@ Paste `docker-compose.prod.yml` + `docker-compose.dokploy.yml`. Set `POSTGRES_PA
 `RSC_BRAIN_DOMAIN` in the Dokploy env UI; Traefik labels on `api` provide TLS + routing (Caddy
 dropped). Log in as the admin from the `migrate` logs.
 
+## Kubernetes / Helm (v1.0)
+
+A Helm chart derived 1:1 from this canonical compose (principle D18 — the third thin delta after
+Coolify/Dokploy) lives in [`helm/rsc-brain/`](helm/rsc-brain/). StatefulSet Postgres+AGE+pgvector,
+Deployments for api/worker/console, Ingress + cert-manager for TLS, and a migrate-on-boot Job.
+
+```bash
+helm install rsc-brain deploy/helm/rsc-brain --namespace rsc-brain --create-namespace \
+  --set ingress.domain=brain.acme.com --set ingress.clusterIssuer=letsencrypt-prod \
+  --set image.registry=ghcr.io/ericrisco --set image.tag=v1.0.0
+```
+
+See the [chart README](helm/rsc-brain/README.md) (prerequisites: ingress controller, cert-manager,
+storage class; GPU as a host precondition D8) and the [compose↔chart parity table](helm/PARITY.md).
+A CI drift guard ([`helm/check-parity.sh`](helm/check-parity.sh)) fails if this compose changes
+without the chart being reconciled.
+
 ## Upgrades (NFR-8)
 
 `git pull` a new image tag and `docker compose … up -d`: the one-shot `migrate` re-runs
@@ -55,3 +72,8 @@ The one-click deploys on **real Coolify and Dokploy instances** (AC#3/#4) and th
 Claude/ChatGPT MCP connect over HTTPS (AC#8) are executed against provisioned instances per release
 — they need infrastructure this repo can't stand up in CI. The deterministic pieces (compose
 structure + anti-drift, the `brain init` bootstrap, migrate idempotence) are covered automatically.
+
+For the **Kubernetes** target the same split applies (SPEC-25): CI runs `helm lint`, schema
+validation of every rendered manifest (kubeconform), and the compose↔chart drift guard; the live
+`helm install` on a clean cluster with real cert-manager TLS + OAuth is a per-release step, with
+[`helm/e2e.sh`](helm/e2e.sh) as the reproducible kind recipe.

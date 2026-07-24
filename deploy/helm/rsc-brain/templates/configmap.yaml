@@ -1,0 +1,12 @@
+{{- /* Non-secret app config (parity with the compose x-app-env; the DSN + admin live in the Secret). */ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "rsc-brain.configName" . }}
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+data:
+  RSC_BRAIN_DOMAIN: {{ .Values.ingress.domain | quote }}
+  RSC_BRAIN_CAPABILITIES__EMBEDDER__PROVIDER: {{ .Values.gateway.embedder.provider | quote }}
+  RSC_BRAIN_CAPABILITIES__EMBEDDER__MODEL: {{ .Values.gateway.embedder.model | quote }}
+  RSC_BRAIN_CAPABILITIES__EMBEDDER__API_BASE: {{ .Values.gateway.embedder.apiBase | quote }}

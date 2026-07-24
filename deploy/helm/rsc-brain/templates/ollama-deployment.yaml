@@ -1,0 +1,85 @@
+{{- /*
+OPTIONAL in-cluster Ollama (D8). Off by default — the gateway normally points at an external model
+endpoint. Enable ONLY if the cluster already has an operative GPU: the device plugin + drivers are
+the host's responsibility (D8), never installed here. When enabled, point the gateway at it with
+  --set gateway.embedder.apiBase=http://<release>-ollama:11434
+*/ -}}
+{{- if .Values.ollama.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rsc-brain.fullname" . }}-ollama
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rsc-brain.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ollama
+  template:
+    metadata:
+      labels:
+        {{- include "rsc-brain.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ollama
+    spec:
+      {{- with .Values.ollama.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.ollama.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: ollama
+          image: {{ .Values.ollama.image }}
+          ports:
+            - name: http
+              containerPort: 11434
+          {{- if .Values.ollama.gpu.enabled }}
+          resources:
+            limits:
+              {{ .Values.ollama.gpu.resourceName }}: {{ .Values.ollama.gpu.count }}
+          {{- end }}
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+      volumes:
+        - name: ollama-data
+          persistentVolumeClaim:
+            claimName: {{ include "rsc-brain.fullname" . }}-ollama
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "rsc-brain.fullname" . }}-ollama
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.ollama.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.ollama.persistence.size | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rsc-brain.fullname" . }}-ollama
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "rsc-brain.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ollama
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434
+{{- end }}

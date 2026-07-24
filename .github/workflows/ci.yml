@@ -107,3 +107,34 @@ jobs:
           npm run lint
           npm run typecheck
           npm run build
+
+  helm:
+    name: helm chart (lint · schema · compose-drift)
+    runs-on: ubuntu-latest
+    env:
+      HELM_VERSION: v3.16.4
+      KUBECONFORM_VERSION: v0.6.7
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install helm + kubeconform (pinned binaries)
+        run: |
+          curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" | tar -xz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar -xz
+          sudo mv kubeconform /usr/local/bin/kubeconform
+      # The chart is DERIVED from the canonical compose (D18): fail if the compose changed without it.
+      - name: Compose ↔ chart drift guard
+        run: bash deploy/helm/check-parity.sh
+      - name: helm lint
+        run: helm lint deploy/helm/rsc-brain
+      # Render both the default and a production-like values set, and schema-validate every manifest.
+      - name: helm template + kubeconform (default values)
+        run: helm template rb deploy/helm/rsc-brain | kubeconform -strict -summary -kubernetes-version 1.29.0 -ignore-missing-schemas
+      - name: helm template + kubeconform (production values)
+        run: |
+          helm template rb deploy/helm/rsc-brain \
+            --set ingress.domain=brain.example.com \
+            --set ingress.clusterIssuer=letsencrypt-prod \
+            --set image.registry=ghcr.io/ericrisco --set image.tag=v1.0.0 \
+            --set ollama.enabled=true --set ollama.gpu.enabled=true \
+            | kubeconform -strict -summary -kubernetes-version 1.29.0 -ignore-missing-schemas
