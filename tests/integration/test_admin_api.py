@@ -1,8 +1,9 @@
-"""REST admin API (FR-10.2) against the real container: admin-gated parity endpoints + OpenAPI.
+"""REST admin API (FR-10.2) against the real container: role-gated parity endpoints + OpenAPI.
 
-A curator/admin PAT reaches the admin surface; a plain member is 403; no token is 401. Confirms
-the console-facing endpoints (projects, topics, sources, pending docs, gaps, audit) exist and are
-documented in the OpenAPI (which SPEC-07 consumes).
+A **project-admin** PAT reaches the management surface; a curator-member, a plain member and a
+missing token do not (AUDIT-020/R03/R54 — curation authorizes knowledge-review decisions only,
+never administration). Confirms the console-facing endpoints (projects, topics, sources, pending
+docs, gaps, audit) exist and are documented in the OpenAPI (which SPEC-07 consumes).
 """
 
 from __future__ import annotations
@@ -23,7 +24,21 @@ pytestmark = pytest.mark.integration
 TOPICS = [("general", 0), ("engineering", 0)]
 
 
-async def _mint_pat(harness: Harness, project_id: str, *, can_curate: bool, role: str) -> str:
+async def _mint_pat(
+    harness: Harness,
+    project_id: str,
+    *,
+    can_curate: bool,
+    role: str,
+    project_role: str = "member",
+    topics: tuple[str, ...] = ("general",),
+) -> str:
+    """Mint a PAT for a principal with an explicit global role AND project role (AUDIT-020).
+
+    ``role`` is the platform role (owner|admin|member); ``project_role`` is the membership role
+    (project-admin|member|viewer). The management matrix is a function of the project role and
+    topic authority — never of ``can_curate``, which authorizes only knowledge-review decisions.
+    """
     user = (
         await PgRelationalStore(harness.sm)
         .users()
@@ -31,9 +46,25 @@ async def _mint_pat(harness: Harness, project_id: str, *, can_curate: bool, role
     )
     identity = IdentityService(harness.sm)
     membership = await identity.add_membership(
-        user.user_id, project_id, allowed_topics=("general",), can_curate=can_curate
+        user.user_id,
+        project_id,
+        role=project_role,
+        allowed_topics=topics,
+        can_curate=can_curate,
     )
     return (await identity.issue_pat(membership)).token
+
+
+async def _project_admin_pat(harness: Harness, project_id: str) -> str:
+    """The least principal the ratified matrix admits to the management surface."""
+    return await _mint_pat(
+        harness,
+        project_id,
+        can_curate=False,
+        role="member",
+        project_role="project-admin",
+        topics=("general", "engineering"),
+    )
 
 
 def _client(harness: Harness, tmp_path: Path) -> httpx.AsyncClient:
@@ -43,33 +74,74 @@ def _client(harness: Harness, tmp_path: Path) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
 
-async def test_admin_endpoints_reachable_by_curator(
+MANAGEMENT_READS = (
+    "/api/v1/admin/projects",
+    "/api/v1/admin/sources",
+    "/api/v1/admin/documents/pending",
+    "/api/v1/admin/gaps",
+    "/api/v1/admin/audit",
+)
+
+
+async def test_project_admin_reaches_the_management_surface(
     build_harness: Callable[..., Harness], tmp_path: Path
 ) -> None:
+    """R04 allow-side: the least ratified management role is admitted.
+
+    A project administrator with topic authority is the principal the matrix assigns to this
+    surface. It must work without curation capability — an authorization repair that locks the
+    legitimate owner out is as much a defect as one that admits a curator.
+    """
     harness = build_harness()
     project = await harness.setup_project(unique_slug("acme"), TOPICS)
-    token = await _mint_pat(harness, project, can_curate=True, role="member")
+    headers = {"Authorization": f"Bearer {await _project_admin_pat(harness, project)}"}
+
+    async with _client(harness, tmp_path) as client:
+        created = await client.post(
+            "/api/v1/admin/topics",
+            json={"slug": "finance", "name": "Finance", "sensitivity": 0},
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+
+        for path in MANAGEMENT_READS:
+            response = await client.get(path, headers=headers)
+            assert response.status_code == 200, f"{path}: {response.text}"
+
+
+async def test_curator_member_is_denied_the_management_surface(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    """R03/R54 deny-side: ``can_curate`` is knowledge-review authority, never administration.
+
+    Ratified 2026-07-24 (AUDIT-020): ``can_curate`` grants no project, ontology, logging, gap,
+    export, document-lifecycle or platform authority. This test previously asserted the opposite
+    and so canonized the escalation as expected behaviour.
+    """
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    token = await _mint_pat(harness, project, can_curate=True, role="member", project_role="member")
     headers = {"Authorization": f"Bearer {token}"}
 
     async with _client(harness, tmp_path) as client:
-        projects = await client.get("/api/v1/admin/projects", headers=headers)
-        assert projects.status_code == 200, projects.text
+        for path in MANAGEMENT_READS:
+            response = await client.get(path, headers=headers)
+            assert response.status_code == 403, f"{path} admitted a curator-member: {response.text}"
 
         created = await client.post(
             "/api/v1/admin/topics",
             json={"slug": "finance", "name": "Finance", "sensitivity": 0},
             headers=headers,
         )
-        assert created.status_code == 201
+        assert created.status_code == 403, created.text
 
-        for path in (
-            "/api/v1/admin/sources",
-            "/api/v1/admin/documents/pending",
-            "/api/v1/admin/gaps",
-            "/api/v1/admin/audit",
-        ):
-            response = await client.get(path, headers=headers)
-            assert response.status_code == 200, f"{path}: {response.text}"
+    # Denied means no side effect: the rejected topic was never created.
+    async with _client(harness, tmp_path) as client:
+        admin = {"Authorization": f"Bearer {await _project_admin_pat(harness, project)}"}
+        topics = await client.get("/api/v1/admin/topics", headers=admin)
+        if topics.status_code == 200:
+            slugs = {t["slug"] for t in topics.json().get("topics", [])}
+            assert "finance" not in slugs, "denied mutation still created the topic"
 
 
 async def test_hunting_endpoints_round_trip(
@@ -78,8 +150,7 @@ async def test_hunting_endpoints_round_trip(
     """Persons CRUD → manual hunt (routed to the person) → hunts list/show → gaps audience view."""
     harness = build_harness()
     project = await harness.setup_project(unique_slug("acme"), TOPICS)
-    token = await _mint_pat(harness, project, can_curate=True, role="member")
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"Bearer {await _project_admin_pat(harness, project)}"}
 
     async with _client(harness, tmp_path) as client:
         created = await client.post(
@@ -130,8 +201,7 @@ async def test_timeline_endpoint_has_contract_parity(
     """SPEC-17: the MCP `timeline` tool is mirrored by GET /admin/timeline (for the console lane)."""
     harness = build_harness()
     project = await harness.setup_project(unique_slug("acme"), TOPICS)
-    token = await _mint_pat(harness, project, can_curate=True, role="member")
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"Bearer {await _project_admin_pat(harness, project)}"}
     async with _client(harness, tmp_path) as client:
         response = await client.get("/api/v1/admin/timeline?topic=general", headers=headers)
     assert response.status_code == 200, response.text
