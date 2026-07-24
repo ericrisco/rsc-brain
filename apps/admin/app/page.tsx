@@ -4,14 +4,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 
+import { LanguageSelector } from "@/components/language-selector";
 import { ProjectSelector } from "@/components/project-selector";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { logout } from "@/lib/api/auth";
 import { useMe } from "@/lib/api/hooks";
+import { useT } from "@/lib/i18n/context";
 
 export default function DashboardPage() {
   const router = useRouter();
+  const t = useT();
   const { data: me, isLoading, isError } = useMe();
 
   useEffect(() => {
@@ -19,7 +22,7 @@ export default function DashboardPage() {
   }, [isError, router]);
 
   if (isLoading || !me) {
-    return <main className="p-6 text-sm text-neutral-500">Loading…</main>;
+    return <main className="p-6 text-sm text-neutral-500">{t("common.loading")}</main>;
   }
 
   async function onLogout() {
@@ -27,83 +30,49 @@ export default function DashboardPage() {
     router.replace("/login");
   }
 
+  const cards: { href: string; title: string; desc: string }[] = [
+    { href: "/connections", title: t("nav.connections"), desc: t("nav.connectionsDesc") },
+    { href: "/observability", title: t("nav.observability"), desc: t("nav.observabilityDesc") },
+    { href: "/knowledge", title: t("nav.knowledge"), desc: t("nav.knowledgeDesc") },
+    { href: "/review", title: t("nav.review"), desc: t("nav.reviewDesc") },
+    { href: "/usage", title: t("nav.usage"), desc: t("nav.usageDesc") },
+    { href: "/audit", title: t("nav.audit"), desc: t("nav.auditDesc") },
+    { href: "/metrics", title: t("nav.metrics"), desc: t("nav.metricsDesc") },
+    { href: "/graph", title: t("nav.graph"), desc: t("nav.graphDesc") },
+  ];
+
   return (
     <main className="mx-auto max-w-4xl p-6">
       <header className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">rsc-brain console</h1>
+          <h1 className="text-xl font-semibold">{t("nav.title")}</h1>
           <p className="text-sm text-neutral-500">
             {me.user.email} · {me.user.role}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <ProjectSelector me={me} />
+          <LanguageSelector />
           <Button variant="outline" size="sm" onClick={onLogout}>
-            Log out
+            {t("common.logOut")}
           </Button>
         </div>
       </header>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>My connections</CardTitle>
-            <CardDescription>Personal access tokens</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Link href="/connections" className="text-sm underline">
-              Manage tokens →
-            </Link>
-          </CardContent>
-        </Card>
-
-        {me.is_owner ? (
-          <Card>
+        {cards.map((card) => (
+          <Card key={card.href}>
             <CardHeader>
-              <CardTitle>Global view</CardTitle>
-              <CardDescription>Owner only</CardDescription>
+              <CardTitle>{card.title}</CardTitle>
+              <CardDescription>{card.desc}</CardDescription>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-neutral-500">All projects — arrives in v0.2 (E13.2).</p>
+              <Link href={card.href} className="text-sm underline">
+                {card.title} →
+              </Link>
             </CardContent>
           </Card>
-        ) : null}
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Observability</CardTitle>
-            <CardDescription>Activity, recalls, ingest &amp; approvals</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Link href="/observability" className="text-sm underline">
-              Open dashboard →
-            </Link>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Living knowledge</CardTitle>
-            <CardDescription>Gaps, hunts, disputes &amp; corrections</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Link href="/knowledge" className="text-sm underline">
-              Open view →
-            </Link>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Review queue</CardTitle>
-            <CardDescription>Tables, merges, agent submissions &amp; suggestions</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Link href="/review" className="text-sm underline">
-              Open queue →
-            </Link>
-          </CardContent>
-        </Card>
+        ))}
       </div>
     </main>
   );

@@ -175,3 +175,69 @@ export interface ReviewQueue {
   items: ReviewItem[];
   counts: Record<string, number>;
 }
+
+// --- SPEC-26 console release ----------------------------------------------------------------
+
+export interface UsageRow {
+  capability: string;
+  day: string;
+  tokens: number;
+  calls: number;
+}
+
+export interface AuditRow {
+  id: string;
+  ts: string | null;
+  principal_type: string | null;
+  principal_id: string | null;
+  action: string | null;
+  tool: string | null;
+  query_hash: string | null;
+  query_text: string | null;
+  topics_used: string[];
+  result_count: number | null;
+  denied: boolean;
+}
+
+export interface AuditFilters {
+  action?: string;
+  tool?: string;
+  principal_type?: string;
+  principal_id?: string;
+  denied?: boolean;
+  since?: string;
+  until?: string;
+}
+
+export interface ProductMetrics {
+  adoption: { recalls: number; active_principals: number; recalls_per_day: unknown[] };
+  quality: { abstention_rate: number; hunts_answered_pct: number };
+  knowledge: { claims: number; disputed: number; open_gaps: number };
+  health: {
+    extraction_errors: number;
+    recall_p95_ms: number | null;
+    tokens_by_capability: Record<string, number>;
+  };
+}
+
+export interface GraphNodeView {
+  id: string;
+  name: string;
+  type: string;
+  anchored: boolean;
+}
+
+export interface GraphEdgeView {
+  source: string;
+  target: string;
+  type: string;
+}
+
+export interface Neighborhood {
+  center: GraphNodeView;
+  neighbors: GraphNodeView[];
+  edges: GraphEdgeView[];
+  total: number;
+  offset: number;
+  limit: number;
+}

@@ -16,12 +16,14 @@ import {
   useResolutions,
   useRevertCorrection,
 } from "@/lib/api/hooks";
+import { useT } from "@/lib/i18n/context";
 
 /** SPEC-19 — the living-knowledge view: gaps, hunts, disputed claims + resolutions, and the
  * Learning-Layer corrections feed with the pending queue + revert. Read-only except the two
  * actions the gate requires (promote a gap, revert a correction); the server enforces authz. */
 export default function KnowledgePage() {
   const router = useRouter();
+  const t = useT();
   const { data: me, isError } = useMe();
   const [project, setProject] = useState("");
 
@@ -32,14 +34,14 @@ export default function KnowledgePage() {
     if (me && !project && me.memberships[0]) setProject(me.memberships[0].project);
   }, [me, project]);
 
-  if (!me) return <main className="p-6 text-sm text-neutral-500">Loading…</main>;
+  if (!me) return <main className="p-6 text-sm text-neutral-500">{t("common.loading")}</main>;
 
   return (
     <main className="mx-auto max-w-5xl space-y-6 p-6">
       <header className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Living knowledge</h1>
+        <h1 className="text-xl font-semibold">{t("knowledge.title")}</h1>
         <select
-          aria-label="Project"
+          aria-label={t("common.project")}
           className="h-9 rounded-md border border-neutral-300 bg-transparent px-2 text-sm dark:border-neutral-700"
           value={project}
           onChange={(e) => setProject(e.target.value)}
@@ -61,7 +63,7 @@ export default function KnowledgePage() {
           <Corrections project={project} />
         </>
       ) : (
-        <p className="text-sm text-neutral-500">Select a project.</p>
+        <p className="text-sm text-neutral-500">{t("common.selectProject")}</p>
       )}
     </main>
   );
@@ -69,15 +71,16 @@ export default function KnowledgePage() {
 
 function Metrics({ project }: { project: string }) {
   const { data } = useCorrectionMetrics(project);
+  const t = useT();
   if (!data) return null;
   const cards: [string, string][] = [
-    ["Corrections", String(data.total)],
-    ["Applied", String(data.applied)],
-    ["Routed to hunt", String(data.routed_hunt)],
-    ["Rejected", String(data.rejected)],
-    ["Revert rate", `${Math.round(data.revert_rate * 100)}%`],
-    ["Correction wars", String(data.correction_wars)],
-    ["Ownership coverage", `${Math.round(data.ownership_coverage * 100)}%`],
+    [t("knowledge.metricCorrections"), String(data.total)],
+    [t("knowledge.metricApplied"), String(data.applied)],
+    [t("knowledge.metricRoutedHunt"), String(data.routed_hunt)],
+    [t("knowledge.metricRejected"), String(data.rejected)],
+    [t("knowledge.metricRevertRate"), `${Math.round(data.revert_rate * 100)}%`],
+    [t("knowledge.metricCorrectionWars"), String(data.correction_wars)],
+    [t("knowledge.metricOwnershipCoverage"), `${Math.round(data.ownership_coverage * 100)}%`],
   ];
   return (
     <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -94,6 +97,7 @@ function Metrics({ project }: { project: string }) {
 }
 
 function Gaps({ project }: { project: string }) {
+  const t = useT();
   const [agents, setAgents] = useState(false);
   const { data } = useGaps(project, agents);
   const promote = usePromoteGap(project);
@@ -102,24 +106,24 @@ function Gaps({ project }: { project: string }) {
     <Card>
       <CardHeader className="flex-row items-center justify-between">
         <div>
-          <CardTitle>Gaps</CardTitle>
-          <CardDescription>{agents ? "Agent gaps (never auto-hunted)" : "Human gaps"}</CardDescription>
+          <CardTitle>{t("knowledge.gapsTitle")}</CardTitle>
+          <CardDescription>{agents ? t("knowledge.gapsAgentDesc") : t("knowledge.gapsHumanDesc")}</CardDescription>
         </div>
         <Button variant="outline" onClick={() => setAgents((v) => !v)}>
-          {agents ? "Show human gaps" : "Show agent gaps"}
+          {agents ? t("knowledge.showHumanGaps") : t("knowledge.showAgentGaps")}
         </Button>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
-        {gaps.length === 0 && <p className="text-neutral-500">No gaps.</p>}
+        {gaps.length === 0 && <p className="text-neutral-500">{t("knowledge.noGaps")}</p>}
         {gaps.map((g) => (
           <div key={g.id} className="flex items-center justify-between border-b py-1 dark:border-neutral-800">
             <span>
               <span className="font-mono text-xs text-neutral-500">×{g.count}</span>{" "}
-              {g.query_text ?? "(query text hidden)"} <span className="text-neutral-400">{g.topics.join(", ")}</span>
+              {g.query_text ?? t("knowledge.queryTextHidden")} <span className="text-neutral-400">{g.topics.join(", ")}</span>
             </span>
             {agents && (
               <Button variant="outline" onClick={() => promote.mutate(g.id)} disabled={promote.isPending}>
-                Promote to hunt
+                {t("knowledge.promoteToHunt")}
               </Button>
             )}
           </div>
@@ -130,23 +134,24 @@ function Gaps({ project }: { project: string }) {
 }
 
 function Hunts({ project }: { project: string }) {
+  const t = useT();
   const { data } = useHunts(project);
   const hunts = data?.hunts ?? [];
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Hunts</CardTitle>
-        <CardDescription>Live state machine (FR-6.3)</CardDescription>
+        <CardTitle>{t("knowledge.huntsTitle")}</CardTitle>
+        <CardDescription>{t("knowledge.huntsDesc")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-1 text-sm">
-        {hunts.length === 0 && <p className="text-neutral-500">No hunts.</p>}
+        {hunts.length === 0 && <p className="text-neutral-500">{t("knowledge.noHunts")}</p>}
         {hunts.map((h) => (
           <div key={h.id} className="flex items-center justify-between border-b py-1 dark:border-neutral-800">
             <span>
               <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-xs dark:bg-neutral-800">{h.state}</span>{" "}
               <span className="text-neutral-400">{h.type}</span> {h.question ?? ""}
             </span>
-            <span className="text-xs text-neutral-400">{h.retries > 0 ? `retries ${h.retries}` : ""}</span>
+            <span className="text-xs text-neutral-400">{h.retries > 0 ? t("knowledge.retries", { n: h.retries }) : ""}</span>
           </div>
         ))}
       </CardContent>
@@ -155,18 +160,19 @@ function Hunts({ project }: { project: string }) {
 }
 
 function Disputed({ project }: { project: string }) {
+  const t = useT();
   const { data } = useDisputed(project);
   const claims = data?.claims ?? [];
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Disputed claims</CardTitle>
+        <CardTitle>{t("knowledge.disputedTitle")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-1 text-sm">
-        {claims.length === 0 && <p className="text-neutral-500">Nothing disputed.</p>}
+        {claims.length === 0 && <p className="text-neutral-500">{t("knowledge.nothingDisputed")}</p>}
         {claims.map((c) => (
           <div key={c.id} className="border-b py-1 dark:border-neutral-800">
-            {c.text} <span className="text-neutral-400">cred {c.credibility.toFixed(2)}</span>
+            {c.text} <span className="text-neutral-400">{t("knowledge.cred", { value: c.credibility.toFixed(2) })}</span>
           </div>
         ))}
       </CardContent>
@@ -175,22 +181,23 @@ function Disputed({ project }: { project: string }) {
 }
 
 function Resolutions({ project }: { project: string }) {
+  const t = useT();
   const { data } = useResolutions(project);
   const resolutions = data?.resolutions ?? [];
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Contradiction resolutions</CardTitle>
-        <CardDescription>Who won, by what score</CardDescription>
+        <CardTitle>{t("knowledge.resolutionsTitle")}</CardTitle>
+        <CardDescription>{t("knowledge.resolutionsDesc")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
-        {resolutions.length === 0 && <p className="text-neutral-500">No resolutions yet.</p>}
+        {resolutions.length === 0 && <p className="text-neutral-500">{t("knowledge.noResolutions")}</p>}
         {resolutions.map((r, i) => (
           <div key={i} className="border-b py-1 dark:border-neutral-800">
             <span className="text-green-700 dark:text-green-400">✓ {r.winner.text}</span>{" "}
-            <span className="text-neutral-400">({r.winner.credibility.toFixed(2)})</span> vs{" "}
+            <span className="text-neutral-400">({r.winner.credibility.toFixed(2)})</span> {t("knowledge.vs")}{" "}
             <span className="text-red-700 line-through dark:text-red-400">{r.loser.text}</span>{" "}
-            <span className="text-neutral-400">({r.loser.credibility.toFixed(2)}) — judge {r.confidence.toFixed(2)}</span>
+            <span className="text-neutral-400">({r.loser.credibility.toFixed(2)}) — {t("knowledge.judge")} {r.confidence.toFixed(2)}</span>
           </div>
         ))}
       </CardContent>
@@ -199,6 +206,7 @@ function Resolutions({ project }: { project: string }) {
 }
 
 function Corrections({ project }: { project: string }) {
+  const t = useT();
   const [pendingOnly, setPendingOnly] = useState(false);
   const { data } = useCorrections(project, pendingOnly ? "pending_confirmation" : undefined);
   const revert = useRevertCorrection(project);
@@ -207,16 +215,16 @@ function Corrections({ project }: { project: string }) {
     <Card>
       <CardHeader className="flex-row items-center justify-between">
         <div>
-          <CardTitle>Corrections</CardTitle>
-          <CardDescription>{pendingOnly ? "Pending confirmation queue" : "Feed"}</CardDescription>
+          <CardTitle>{t("knowledge.correctionsTitle")}</CardTitle>
+          <CardDescription>{pendingOnly ? t("knowledge.pendingQueueDesc") : t("knowledge.feedDesc")}</CardDescription>
         </div>
         <Button variant="outline" onClick={() => setPendingOnly((v) => !v)}>
-          {pendingOnly ? "Show all" : "Pending only"}
+          {pendingOnly ? t("knowledge.showAll") : t("knowledge.pendingOnly")}
         </Button>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
         {revert.isError && <p className="text-red-600">{(revert.error as Error).message}</p>}
-        {corrections.length === 0 && <p className="text-neutral-500">No corrections.</p>}
+        {corrections.length === 0 && <p className="text-neutral-500">{t("knowledge.noCorrections")}</p>}
         {corrections.map((c) => (
           <div key={c.id} className="flex items-center justify-between border-b py-1 dark:border-neutral-800">
             <span>
@@ -226,7 +234,7 @@ function Corrections({ project }: { project: string }) {
             </span>
             {c.status === "applied" && (
               <Button variant="outline" onClick={() => revert.mutate(c.id)} disabled={revert.isPending}>
-                Revert
+                {t("knowledge.revert")}
               </Button>
             )}
           </div>

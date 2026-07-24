@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -566,14 +566,117 @@ async def project_timeline(
 
 @router.get("/audit")
 async def list_audit(
-    request: Request, scope: ProjectScope = Depends(_admin_scope), limit: int = 100
+    request: Request,
+    scope: ProjectScope = Depends(_obs_scope),
+    action: str | None = None,
+    tool: str | None = None,
+    principal_type: str | None = None,
+    principal_id: str | None = None,
+    denied: bool | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 100,
 ) -> dict[str, object]:
+    """Filterable audit log (SPEC-26 FR-13.7). Project-scoped in-query (a project-admin sees only
+    their project); `query_text` is NULL when `query_text_logging` is OFF (FR-13.9)."""
     rows = await audit_mod.query_audit(
         _deps(request).sessionmaker,  # type: ignore[attr-defined]
         scope.project_id,
+        action=action,
+        tool=tool,
+        principal_type=principal_type,
+        principal_id=principal_id,
+        denied=denied,
+        since=since,
+        until=until,
         limit=limit,
     )
     return {"audit": rows}
+
+
+@router.get("/audit/export", response_class=Response)
+async def export_audit(
+    request: Request,
+    scope: ProjectScope = Depends(_obs_scope),
+    action: str | None = None,
+    tool: str | None = None,
+    principal_type: str | None = None,
+    principal_id: str | None = None,
+    denied: bool | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 10000,
+) -> Response:
+    """CSV export of the filtered audit log (SPEC-26 FR-13.7, parity with `brain audit --export`).
+    The export itself is audited (FR-4.5)."""
+    sessionmaker = _deps(request).sessionmaker  # type: ignore[attr-defined]
+    rows = await audit_mod.query_audit(
+        sessionmaker,
+        scope.project_id,
+        action=action,
+        tool=tool,
+        principal_type=principal_type,
+        principal_id=principal_id,
+        denied=denied,
+        since=since,
+        until=until,
+        limit=limit,
+    )
+    await audit_mod.record_audit(sessionmaker, scope, action="audit_export", tool="console")
+    return Response(
+        content=audit_mod.to_csv(rows),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="audit.csv"'},
+    )
+
+
+@router.get("/usage")
+async def usage_endpoint(
+    request: Request, scope: ProjectScope = Depends(_obs_scope), days: int = 7
+) -> dict[str, object]:
+    """Per-capability/day token + call usage (SPEC-26 FR-13.7). Same source as `brain usage`, so
+    the console figures always match the CLI. Counters are instance-global (SPEC-22 schema)."""
+    from rsc_brain.gateway.usage import usage_by_day
+
+    rows = await usage_by_day(_deps(request).sessionmaker, days=days)  # type: ignore[attr-defined]
+    return {"usage": rows}
+
+
+@router.get("/graph/entity")
+async def entity_graph_endpoint(
+    request: Request,
+    scope: ProjectScope = Depends(_obs_scope),
+    name: str = "",
+    limit: int = 25,
+    offset: int = 0,
+) -> dict[str, object]:
+    """A bounded, paginated neighborhood of one entity (SPEC-26 FR-13.8). Permission-scoped: an
+    entity with no visible claims is indistinguishable from a non-existent one (404, FR-4.3)."""
+    from rsc_brain.knowledge.entity_graph import entity_neighborhood
+    from rsc_brain.stores.age_graph_store import AgeGraphStore
+
+    sessionmaker = _deps(request).sessionmaker  # type: ignore[attr-defined]
+    view = await entity_neighborhood(
+        sessionmaker, AgeGraphStore(sessionmaker), scope, name=name, limit=limit, offset=offset
+    )
+    if view is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="entity not found")
+    return {
+        "center": {
+            "id": view.center.id,
+            "name": view.center.name,
+            "type": view.center.type,
+            "anchored": view.center.anchored,
+        },
+        "neighbors": [
+            {"id": n.id, "name": n.name, "type": n.type, "anchored": n.anchored}
+            for n in view.neighbors
+        ],
+        "edges": [{"source": e.source, "target": e.target, "type": e.type} for e in view.edges],
+        "total": view.total,
+        "offset": view.offset,
+        "limit": view.limit,
+    }
 
 
 @router.delete("/connections/{connection_id}")

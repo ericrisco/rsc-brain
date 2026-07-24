@@ -9,8 +9,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useCreatePat, useMe, usePats, useRevokePat } from "@/lib/api/hooks";
+import { useT } from "@/lib/i18n/context";
 
 export default function ConnectionsPage() {
+  const t = useT();
   const router = useRouter();
   const { data: me, isError } = useMe();
   const { data: patList } = usePats();
@@ -30,7 +32,7 @@ export default function ConnectionsPage() {
   }, [me, project]);
 
   if (!me) {
-    return <main className="p-6 text-sm text-neutral-500">Loading…</main>;
+    return <main className="p-6 text-sm text-neutral-500">{t("common.loading")}</main>;
   }
 
   async function onCreate(event: FormEvent) {
@@ -44,23 +46,23 @@ export default function ConnectionsPage() {
     <main className="mx-auto max-w-3xl p-6">
       <header className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">My connections</h1>
-          <p className="text-sm text-neutral-500">Personal access tokens (shown once on creation)</p>
+          <h1 className="text-xl font-semibold">{t("connections.title")}</h1>
+          <p className="text-sm text-neutral-500">{t("connections.subtitle")}</p>
         </div>
         <Link href="/" className="text-sm underline">
-          ← Back
+          ← {t("connections.back")}
         </Link>
       </header>
 
       <Card className="mb-6">
         <CardHeader>
-          <CardTitle>Create a token</CardTitle>
-          <CardDescription>Scoped to a project you belong to</CardDescription>
+          <CardTitle>{t("connections.createTitle")}</CardTitle>
+          <CardDescription>{t("connections.createDesc")}</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={onCreate} className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
-              <Label htmlFor="project">Project</Label>
+              <Label htmlFor="project">{t("common.project")}</Label>
               <select
                 id="project"
                 className="h-9 rounded-md border border-neutral-300 bg-transparent px-2 text-sm dark:border-neutral-700"
@@ -75,22 +77,22 @@ export default function ConnectionsPage() {
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <Label htmlFor="name">Name</Label>
+              <Label htmlFor="name">{t("connections.name")}</Label>
               <Input
                 id="name"
                 value={name}
-                placeholder="e.g. laptop"
+                placeholder={t("connections.namePlaceholder")}
                 onChange={(event) => setName(event.target.value)}
               />
             </div>
             <Button type="submit" disabled={createPat.isPending || !project}>
-              Create
+              {t("connections.create")}
             </Button>
           </form>
 
           {freshToken ? (
             <div className="mt-4 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm dark:bg-amber-950">
-              <p className="mb-1 font-medium">Copy this token now — it is shown only once:</p>
+              <p className="mb-1 font-medium">{t("connections.copyNow")}</p>
               <code className="break-all">{freshToken}</code>
             </div>
           ) : null}
@@ -99,7 +101,7 @@ export default function ConnectionsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Active tokens</CardTitle>
+          <CardTitle>{t("connections.activeTitle")}</CardTitle>
         </CardHeader>
         <CardContent>
           <ul className="flex flex-col gap-2">
@@ -109,8 +111,9 @@ export default function ConnectionsPage() {
                 className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800"
               >
                 <span>
-                  <span className="font-medium">{pat.name ?? "(unnamed)"}</span> · {pat.project}
-                  {pat.revoked ? " · revoked" : ""}
+                  <span className="font-medium">{pat.name ?? t("connections.unnamed")}</span> ·{" "}
+                  {pat.project}
+                  {pat.revoked ? ` · ${t("connections.revoked")}` : ""}
                 </span>
                 <Button
                   variant="destructive"
@@ -118,12 +121,12 @@ export default function ConnectionsPage() {
                   disabled={pat.revoked || revokePat.isPending}
                   onClick={() => revokePat.mutate(pat.id)}
                 >
-                  Revoke
+                  {t("connections.revoke")}
                 </Button>
               </li>
             ))}
             {(patList?.pats ?? []).length === 0 ? (
-              <li className="text-sm text-neutral-500">No tokens yet.</li>
+              <li className="text-sm text-neutral-500">{t("connections.empty")}</li>
             ) : null}
           </ul>
         </CardContent>
@@ -131,13 +134,11 @@ export default function ConnectionsPage() {
 
       <Card className="mt-6 opacity-60">
         <CardHeader>
-          <CardTitle>OAuth connections</CardTitle>
-          <CardDescription>Available in v0.2</CardDescription>
+          <CardTitle>{t("connections.oauthTitle")}</CardTitle>
+          <CardDescription>{t("connections.oauthDesc")}</CardDescription>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-neutral-500">
-            OAuth-based connections arrive with the OAuth server (SPEC-10).
-          </p>
+          <p className="text-sm text-neutral-500">{t("connections.oauthBody")}</p>
         </CardContent>
       </Card>
     </main>
