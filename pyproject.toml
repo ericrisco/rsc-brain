@@ -97,7 +97,8 @@ extend-immutable-calls = ["typer.Option", "typer.Argument"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "evals"]
+mypy_path = "."
 plugins = ["pydantic.mypy"]
 warn_unreachable = true
 warn_redundant_casts = true
@@ -124,6 +125,7 @@ ignore_errors = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]  # make the repo-root `evals` package importable in tests
 # Integration tests (real Postgres via testcontainers) are opt-in: `pytest -m integration`.
 # The default run excludes them so the unit gate needs no Docker image.
 addopts = "-q -m 'not integration'"

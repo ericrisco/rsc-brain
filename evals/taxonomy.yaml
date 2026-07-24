@@ -1,0 +1,19 @@
+# Example topic taxonomy for the two fictional eval projects (E12.4, FR-1.7).
+# Topics are per-project (D9); each project has >=1 sensitive topic (sensitivity >= 3, the
+# FR-4.14 restrictive threshold); slugs never overlap between projects.
+projects:
+  acme:  # Project A — a fictional software company
+    name: "Acme Corp"
+    topics:
+      - {slug: general, name_en: General, name_es: General, sensitivity: 0}
+      - {slug: engineering, name_en: Engineering, name_es: Ingeniería, sensitivity: 0}
+      - {slug: sales, name_en: Sales, name_es: Ventas, sensitivity: 1}
+      - {slug: hr, name_en: Human Resources, name_es: Recursos Humanos, sensitivity: 3}
+      - {slug: payroll, name_en: Payroll, name_es: Nóminas, sensitivity: 4}
+  globex:  # Project B — a fictional consulting firm (disjoint slugs)
+    name: "Globex Consulting"
+    topics:
+      - {slug: corp, name_en: Corporate, name_es: Corporativo, sensitivity: 0}
+      - {slug: delivery, name_en: Delivery, name_es: Entrega, sensitivity: 0}
+      - {slug: legal, name_en: Legal, name_es: Legal, sensitivity: 2}
+      - {slug: personnel, name_en: Personnel, name_es: Personal, sensitivity: 3}
