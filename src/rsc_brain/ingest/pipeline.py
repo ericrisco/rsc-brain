@@ -266,10 +266,19 @@ class IngestionPipeline:
             await self._repo.set_status(scope, document_id, DocStatus.PROCESSED.value)
             return
         chunk_rows = await self._repo.load_chunks(scope, document_id)
-        embeddable = [c for c in chunk_rows if not c.needs_review and c.text.strip()]
+        # A new version only re-materialises what changed: unchanged chunks (text seen in the prior
+        # version) are neither re-embedded nor re-extracted, so their prior claims keep serving with
+        # their id + credibility intact (D6, AC#2). The prior version is superseded afterwards.
+        prior_doc, reuse_texts = await self._version_baseline(scope, document_id)
+        current_texts = {c.text for c in chunk_rows}
+        embeddable = [
+            c
+            for c in chunk_rows
+            if not c.needs_review and c.text.strip() and c.text not in reuse_texts
+        ]
         embeddings = await self._embed(embeddable)
 
-        claims: list[ClaimSpec] = list(self._table_claims(parsed, chunk_rows))
+        claims: list[ClaimSpec] = list(self._table_claims(parsed, chunk_rows, reuse_texts))
         entities: list[EntitySpec] = []
         errors: list[IngestErrorSpec] = []
         nodes: list[GraphNode] = []
@@ -279,6 +288,8 @@ class IngestionPipeline:
         for row in chunk_rows:
             if row.kind != ChunkKind.PROSE.value or row.needs_review:
                 continue
+            if row.text in reuse_texts:
+                continue  # unchanged prose: skip extraction (0 LLM calls); prior claim stays live
             try:
                 graph = await self._extractor.extract(row.text)
             except ExtractionDiscarded as exc:
@@ -310,11 +321,30 @@ class IngestionPipeline:
             await self._graph.upsert_nodes(scope, nodes)
         if edges:
             await self._graph.upsert_edges(scope, edges)
+        # Supersede the prior version: changed/removed chunks lose their embedding + have their
+        # claims closed (valid_to=now); unchanged chunks are left intact so their claims persist
+        # with the same id/credibility (D6, AC#3). Never deletes; idempotent.
+        if prior_doc is not None:
+            await self._repo.supersede_prior_version(scope, prior_doc.id, current_texts)
         await self._repo.mark_stage(
             scope, document_id, PipelineStage.PERSIST, phase=DocStatus.PROCESSED.value
         )
         await self._repo.set_status(scope, document_id, DocStatus.PROCESSED.value)
         await self._detect_contradictions_on_ingest(scope, document_id)
+
+    async def _version_baseline(
+        self, scope: ProjectScope, document_id: str
+    ) -> tuple[DocRow | None, set[str]]:
+        """For a version > 1 document, return the prior published version + the set of its chunk
+        texts (the "unchanged" set). Version-1 documents get ``(None, set())`` — unchanged path."""
+        doc = await self._require_document(scope, document_id)
+        if doc.version <= 1:
+            return None, set()
+        prior = await self._repo.latest_prior_published_document(scope, doc.logical_id, doc.version)
+        if prior is None:
+            return None, set()
+        prior_chunks = await self._repo.load_chunks(scope, prior.id)
+        return prior, {c.text for c in prior_chunks}
 
     async def _detect_contradictions_on_ingest(self, scope: ProjectScope, document_id: str) -> None:
         """On-ingest contradiction detection over the document's new claims (SPEC-08 FR-5.2).
@@ -351,10 +381,15 @@ class IngestionPipeline:
         return {chunk.id: vector for chunk, vector in zip(chunks, vectors, strict=True)}
 
     def _table_claims(
-        self, parsed: ParsedDocument, chunk_rows: Sequence[ChunkRow]
+        self,
+        parsed: ParsedDocument,
+        chunk_rows: Sequence[ChunkRow],
+        reuse_texts: set[str] | None = None,
     ) -> list[ClaimSpec]:
         """Recover the deterministic table-row claims and bind them to their persisted chunk by
-        text (table_row text is unique per row, so the mapping is unambiguous)."""
+        text (table_row text is unique per row, so the mapping is unambiguous). Rows whose text is
+        unchanged from the prior version are skipped — their prior claims persist (D6, AC#2)."""
+        unchanged = reuse_texts or set()
         by_text: dict[str, ChunkRow] = {
             c.text: c for c in chunk_rows if c.kind == ChunkKind.TABLE_ROW.value
         }
@@ -362,6 +397,8 @@ class IngestionPipeline:
         claims: list[ClaimSpec] = []
         for spec in specs:
             if spec.kind is not ChunkKind.TABLE_ROW or spec.needs_review or not spec.claims:
+                continue
+            if spec.text in unchanged:
                 continue
             row = by_text.get(spec.text)
             if row is None:

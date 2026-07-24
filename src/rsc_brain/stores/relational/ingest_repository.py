@@ -61,6 +61,7 @@ class DocRow:
     lang: str | None
     status: str
     doc_tags: tuple[str, ...]
+    version: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +212,7 @@ class IngestRepository:
         pages: int | None = None,
         status: str = "received",
         doc_tags: Sequence[str] = (),
+        version: int = 1,
     ) -> str:
         async with session_scope(self._sm) as session:
             doc = models.Document(
@@ -224,10 +226,85 @@ class IngestRepository:
                 pages=pages,
                 status=status,
                 doc_tags=list(doc_tags),
+                version=version,
             )
             session.add(doc)
             await session.flush()
             return str(doc.id)
+
+    async def latest_version_for_logical_id(self, scope: ProjectScope, logical_id: str) -> int:
+        """Highest existing version for a logical id in this project (0 if none). A re-upload of
+        the same logical id with a new checksum becomes ``latest + 1`` (SPEC-09 D6, AC#1)."""
+        async with self._sm() as session:
+            latest = await session.scalar(
+                select(func.max(models.Document.version)).where(
+                    models.Document.project_id == _pid(scope),
+                    models.Document.logical_id == logical_id,
+                )
+            )
+            return int(latest or 0)
+
+    async def latest_prior_published_document(
+        self, scope: ProjectScope, logical_id: str, version: int
+    ) -> DocRow | None:
+        """The highest-version *processed* document of ``logical_id`` older than ``version`` — the
+        baseline a new version diffs against."""
+        async with self._sm() as session:
+            doc = await session.scalar(
+                select(models.Document)
+                .where(
+                    models.Document.project_id == _pid(scope),
+                    models.Document.logical_id == logical_id,
+                    models.Document.version < version,
+                    models.Document.status == "processed",
+                )
+                .order_by(models.Document.version.desc())
+                .limit(1)
+            )
+            return _doc_row(doc) if doc else None
+
+    async def supersede_prior_version(
+        self, scope: ProjectScope, prior_document_id: str, current_texts: set[str]
+    ) -> int:
+        """Supersede a prior version against the new one's chunk texts (SPEC-09 D6, AC#3).
+
+        A prior chunk whose text is **absent** from the new version (changed or removed content)
+        has its embedding nulled (stops being vector-recallable) and its active claims closed
+        (``valid_to=now``). A prior chunk whose text is **unchanged** (present in the new version)
+        is left completely untouched, so its claims keep their id + credibility across versions
+        (AC#2). Nothing is deleted (FR-5.5). Idempotent (only touches still-live rows). Returns the
+        number of claims closed."""
+        async with session_scope(self._sm) as session:
+            prior_chunks = (
+                await session.scalars(
+                    select(models.Chunk).where(
+                        models.Chunk.document_id == uuid.UUID(prior_document_id),
+                        models.Chunk.project_id == _pid(scope),
+                    )
+                )
+            ).all()
+            superseded = [c.id for c in prior_chunks if c.text not in current_texts]
+            if not superseded:
+                return 0
+            await session.execute(
+                update(models.Chunk).where(models.Chunk.id.in_(superseded)).values(embedding=None)
+            )
+            claim_ids = (
+                await session.scalars(
+                    select(models.Claim.id).where(
+                        models.Claim.project_id == _pid(scope),
+                        models.Claim.chunk_id.in_(superseded),
+                        models.Claim.valid_to.is_(None),
+                    )
+                )
+            ).all()
+            if claim_ids:
+                await session.execute(
+                    update(models.Claim)
+                    .where(models.Claim.id.in_(claim_ids))
+                    .values(valid_to=_now())
+                )
+            return len(claim_ids)
 
     async def get_document(self, scope: ProjectScope, document_id: str) -> DocRow | None:
         async with self._sm() as session:
@@ -740,6 +817,7 @@ def _doc_row(doc: models.Document) -> DocRow:
         lang=doc.lang,
         status=doc.status,
         doc_tags=tuple(doc.doc_tags),
+        version=doc.version,
     )
 
 

@@ -280,6 +280,11 @@ class Entity(Base):
     normalized_name: Mapped[str] = mapped_column(Text, nullable=False)
     type: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    # Alias-merge (SPEC-09): a merged duplicate points at its canonical entity instead of being
+    # deleted (reversible, FR-5.5 spirit). NULL = a live/canonical entity.
+    merged_into: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("entities.id", ondelete="SET NULL")
+    )
     __table_args__ = (
         UniqueConstraint("project_id", "normalized_name", "type"),
         Index("ix_entities_project_id_id", "project_id", "id"),
@@ -509,4 +514,33 @@ class FeedbackDailyImpact(Base):
     __table_args__ = (
         UniqueConstraint("project_id", "principal_id", "claim_id", "day"),
         Index("ix_feedback_daily_impact_project_id_id", "project_id", "id"),
+    )
+
+
+class EntityMergeProposal(Base):
+    """A proposed alias-merge of a duplicate entity into a canonical one (SPEC-09, FR-1.9 P1).
+
+    High-confidence proposals are ``auto_applied``; low-confidence ones wait as ``needs_review``
+    for an owner to ``confirm`` (→ ``applied``) or ``reject``. Never crosses project (FR-12.4)."""
+
+    __tablename__ = "entity_merge_proposals"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    canonical_entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"), nullable=False
+    )
+    duplicate_entity_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("entities.id", ondelete="CASCADE"), nullable=False
+    )
+    confidence: Mapped[float] = mapped_column(Numeric, server_default="0.5", nullable=False)
+    method: Mapped[str] = mapped_column(Text, nullable=False)  # deterministic|llm
+    status: Mapped[str] = mapped_column(Text, nullable=False)  # needs_review|auto_applied|...
+    reason: Mapped[str | None] = mapped_column(Text)
+    resolved_by: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = _created_at()
+    resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("project_id", "canonical_entity_id", "duplicate_entity_id"),
+        Index("ix_entity_merge_proposals_project_id_id", "project_id", "id"),
+        Index("ix_entity_merge_proposals_project_id_status", "project_id", "status"),
     )

@@ -21,6 +21,7 @@ from rsc_brain.cli.data import backup as _backup
 from rsc_brain.cli.data import forget as _forget
 from rsc_brain.cli.data import migrate as _migrate
 from rsc_brain.cli.data import restore as _restore
+from rsc_brain.cli.entities import entities_app
 from rsc_brain.cli.ingest import docs_app, sources_app
 from rsc_brain.cli.ingest import ingest as _ingest
 from rsc_brain.cli.ingest import status as _status
@@ -124,6 +125,8 @@ app.add_typer(docs_app, name="docs", help="Review, approve, and reject ingested 
 app.add_typer(sources_app, name="sources", help="Manage ingestion sources and their policy.")
 # `corrections` (Learning Layer revert/list) is introduced by SPEC-08.
 app.add_typer(corrections_app, name="corrections", help="List and revert corrections.")
+# `entities` (alias-merge propose + review queue) is introduced by SPEC-09.
+app.add_typer(entities_app, name="entities", help="Entity dedup and alias-merge review.")
 # `eval` (golden-set evaluation) is introduced by SPEC-06 (beyond the original FR-10.1 list).
 app.command("eval", help="Report the golden-set composition (full run needs an ingested corpus).")(
     _eval
