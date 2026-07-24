@@ -500,6 +500,63 @@
         ]
       }
     },
+    "/api/v1/admin/claims/disputed": {
+      "get": {
+        "description": "Claims currently flagged disputed (SPEC-19, FR-13.5).",
+        "operationId": "list_disputed_claims_api_v1_admin_claims_disputed_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Disputed Claims Api V1 Admin Claims Disputed Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Disputed Claims",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/connections/{connection_id}": {
       "delete": {
         "description": "Admin revokes any user's OAuth connection (FR-4.13 admin part). Stops resolving <5s.",
@@ -545,6 +602,291 @@
           }
         ],
         "summary": "Admin Revoke Connection",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/contradictions/resolutions": {
+      "get": {
+        "description": "Resolved contradictions \u2014 who won, by what score (SPEC-19, FR-13.5/FR-5.3).",
+        "operationId": "list_contradiction_resolutions_api_v1_admin_contradictions_resolutions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Contradiction Resolutions Api V1 Admin Contradictions Resolutions Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Contradiction Resolutions",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/corrections": {
+      "get": {
+        "description": "Corrections feed (SPEC-19, FR-15.12): feed / by-claim / by-person; the ``pending_confirmation``\nqueue is ``status_filter=pending_confirmation``.",
+        "operationId": "list_corrections_api_v1_admin_corrections_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status_filter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status Filter"
+            }
+          },
+          {
+            "in": "query",
+            "name": "target_claim",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Target Claim"
+            }
+          },
+          {
+            "in": "query",
+            "name": "author",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Author"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Corrections Api V1 Admin Corrections Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Corrections",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/corrections/metrics": {
+      "get": {
+        "description": "The Learning-Layer \u00a77 metrics (SPEC-19, FR-15.12/\u00a73.3).",
+        "operationId": "correction_metrics_api_v1_admin_corrections_metrics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Correction Metrics Api V1 Admin Corrections Metrics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Correction Metrics",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/corrections/{correction_id}/revert": {
+      "post": {
+        "description": "Revert a correction (FR-15.8). Authorised **server-side** for an admin OR the owner of the\ntarget claim's tags \u2014 never trusted from the UI. A 403 for anyone else is audited.",
+        "operationId": "revert_correction_api_v1_admin_corrections__correction_id__revert_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "correction_id",
+            "required": true,
+            "schema": {
+              "title": "Correction Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Revert Correction Api V1 Admin Corrections  Correction Id  Revert Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revert Correction",
         "tags": [
           "admin"
         ]
@@ -807,6 +1149,22 @@
               ],
               "title": "Audience"
             }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
           }
         ],
         "responses": {
@@ -857,6 +1215,22 @@
               "title": "Gap Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
           }
         ],
         "responses": {
@@ -906,6 +1280,22 @@
               "default": false,
               "title": "Open Only",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
             }
           }
         ],
@@ -1004,6 +1394,22 @@
             "schema": {
               "title": "Hunt Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
             }
           }
         ],

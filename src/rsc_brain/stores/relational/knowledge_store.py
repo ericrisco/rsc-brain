@@ -10,9 +10,10 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import aliased
 
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
@@ -35,6 +36,31 @@ def _maybe_uuid(value: str | None) -> uuid.UUID | None:
         return uuid.UUID(value)
     except ValueError:
         return None
+
+
+def _resolution_row(
+    verdict: models.ClaimPairVerdict, a: models.Claim, b: models.Claim
+) -> dict[str, object]:
+    """Present a contradiction verdict as a resolution: the winner is the still-open claim, the
+    loser the superseded one (valid_to set) — with the credibilities that decided it (FR-5.3)."""
+    winner, loser = (a, b) if a.valid_to is None else (b, a)
+
+    def _side(claim: models.Claim) -> dict[str, object]:
+        return {
+            "claim_id": str(claim.id),
+            "text": claim.text,
+            "credibility": float(claim.credibility) if claim.credibility is not None else 0.0,
+            "valid_to": claim.valid_to.isoformat() if claim.valid_to else None,
+        }
+
+    return {
+        "verdict": verdict.verdict,
+        "confidence": float(verdict.confidence) if verdict.confidence is not None else 0.0,
+        "judge_version": verdict.judge_version,
+        "winner": _side(winner),
+        "loser": _side(loser),
+        "created_at": verdict.created_at.isoformat() if verdict.created_at else None,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,15 +379,31 @@ class KnowledgeStore:
             return correction
 
     async def list_corrections(
-        self, scope: ProjectScope, *, limit: int = 100
+        self,
+        scope: ProjectScope,
+        *,
+        status: str | None = None,
+        target_claim: str | None = None,
+        author: str | None = None,
+        limit: int = 100,
     ) -> list[dict[str, object]]:
+        """Corrections feed (SPEC-19): newest first, filterable by status (the
+        ``pending_confirmation`` queue is just ``status='pending_confirmation'``), target claim, or
+        author — the console's feed / by-claim / by-person views."""
+        query = (
+            select(models.Correction)
+            .where(models.Correction.project_id == _pid(scope))
+            .order_by(models.Correction.created_at.desc())
+            .limit(limit)
+        )
+        if status is not None:
+            query = query.where(models.Correction.status == status)
+        if target_claim is not None:
+            query = query.where(models.Correction.target_claim == uuid.UUID(target_claim))
+        if author is not None:
+            query = query.where(models.Correction.author_id == uuid.UUID(author))
         async with self._sm() as session:
-            rows = await session.scalars(
-                select(models.Correction)
-                .where(models.Correction.project_id == _pid(scope))
-                .order_by(models.Correction.created_at.desc())
-                .limit(limit)
-            )
+            rows = await session.scalars(query)
             return [
                 {
                     "id": str(c.id),
@@ -369,12 +411,112 @@ class KnowledgeStore:
                     "new_claim": str(c.new_claim) if c.new_claim else None,
                     "status": c.status,
                     "role_applied": c.role_applied,
+                    "author_id": str(c.author_id) if c.author_id else None,
+                    "on_behalf_of": str(c.on_behalf_of) if c.on_behalf_of else None,
+                    "hunt_id": str(c.hunt_id) if c.hunt_id else None,
                     "before_text": c.before_text,
                     "after_text": c.after_text,
                     "created_at": c.created_at.isoformat() if c.created_at else None,
+                    "resolved_at": c.resolved_at.isoformat() if c.resolved_at else None,
                 }
                 for c in rows
             ]
+
+    async def list_disputed_claims(
+        self, scope: ProjectScope, *, limit: int = 100
+    ) -> list[dict[str, object]]:
+        """Claims currently flagged ``disputed`` (contradiction ties + expired correction reviews,
+        FR-15.6) — the console's disputed list (SPEC-19)."""
+        async with self._sm() as session:
+            rows = await session.scalars(
+                select(models.Claim)
+                .where(
+                    models.Claim.project_id == _pid(scope),
+                    models.Claim.disputed.is_(True),
+                )
+                .order_by(models.Claim.id)
+                .limit(limit)
+            )
+            return [
+                {
+                    "id": str(c.id),
+                    "text": c.text,
+                    "tags": list(c.tags),
+                    "credibility": float(c.credibility) if c.credibility is not None else 0.0,
+                    "valid_to": c.valid_to.isoformat() if c.valid_to else None,
+                }
+                for c in rows
+            ]
+
+    async def list_contradiction_resolutions(
+        self, scope: ProjectScope, *, limit: int = 100
+    ) -> list[dict[str, object]]:
+        """Resolved contradictions (FR-5.3): for each ``contradict`` verdict, the two claims with
+        their current credibility + validity — the loser is the one whose ``valid_to`` was set
+        (superseded), the winner the one still open. Shows "who won, by what score" (SPEC-19)."""
+        pid = _pid(scope)
+        claim_a = aliased(models.Claim)
+        claim_b = aliased(models.Claim)
+        async with self._sm() as session:
+            rows = (
+                await session.execute(
+                    select(models.ClaimPairVerdict, claim_a, claim_b)
+                    .join(claim_a, models.ClaimPairVerdict.claim_a == claim_a.id)
+                    .join(claim_b, models.ClaimPairVerdict.claim_b == claim_b.id)
+                    .where(
+                        models.ClaimPairVerdict.project_id == pid,
+                        models.ClaimPairVerdict.verdict == "contradict",
+                    )
+                    .order_by(models.ClaimPairVerdict.created_at.desc())
+                    .limit(limit)
+                )
+            ).all()
+        return [_resolution_row(verdict, a, b) for verdict, a, b in rows]
+
+    async def correction_metrics(self, scope: ProjectScope) -> dict[str, object]:
+        """The Learning-Layer §7 metrics (SPEC-19): status ratios, revert rate, correction-wars
+        (disputed ties), and ownership coverage (% of topics with a registered owner)."""
+        pid = _pid(scope)
+        async with self._sm() as session:
+            status_rows = (
+                await session.execute(
+                    select(models.Correction.status, func.count())
+                    .where(models.Correction.project_id == pid)
+                    .group_by(models.Correction.status)
+                )
+            ).all()
+            by_status = {str(s): int(n) for s, n in status_rows}
+            total = sum(by_status.values())
+            reverted = by_status.get("reverted", 0)
+            wars = await session.scalar(
+                select(func.count())
+                .select_from(models.Claim)
+                .where(models.Claim.project_id == pid, models.Claim.disputed.is_(True))
+            )
+            topics = await session.scalars(
+                select(models.Topic.slug).where(models.Topic.project_id == pid)
+            )
+            topic_slugs = set(topics)
+            owned = 0
+            if topic_slugs:
+                persons = await session.scalars(
+                    select(models.Person.topics).where(models.Person.project_id == pid)
+                )
+                covered: set[str] = set()
+                for person_topics in persons:
+                    covered.update(person_topics or [])
+                owned = len(topic_slugs & covered)
+        coverage = (owned / len(topic_slugs)) if topic_slugs else 0.0
+        return {
+            "total": total,
+            "by_status": by_status,
+            "applied": by_status.get("applied", 0),
+            "routed_hunt": by_status.get("routed_hunt", 0),
+            "rejected": by_status.get("rejected", 0),
+            "revert_rate": (reverted / total) if total else 0.0,
+            "correction_wars": int(wars or 0),
+            "ownership_coverage": round(coverage, 3),
+        }
 
     async def revert_correction(
         self,

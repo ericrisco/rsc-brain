@@ -23,6 +23,7 @@ from rsc_brain.recall.gaps import list_gaps
 from rsc_brain.scope import Principal, PrincipalType, ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.ingest_repository import IngestRepository
+from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
 
 _bearer = HTTPBearer(auto_error=False)
 _ADMIN_ROLES = {"owner", "admin"}
@@ -285,7 +286,7 @@ async def list_pending_documents(
 @router.get("/gaps")
 async def list_project_gaps(
     request: Request,
-    scope: ProjectScope = Depends(_admin_scope),
+    scope: ProjectScope = Depends(_obs_scope),
     audience: str | None = None,
 ) -> dict[str, object]:
     """Project gaps. ``audience=agent`` returns the separate agent-gap view (FR-14.6); ``human``
@@ -296,6 +297,92 @@ async def list_project_gaps(
         audience=audience if audience in {"human", "agent"} else None,
     )
     return {"gaps": gaps}
+
+
+def _knowledge_store(request: Request) -> KnowledgeStore:
+    return KnowledgeStore(_deps(request).sessionmaker)  # type: ignore[attr-defined]
+
+
+@router.get("/corrections")
+async def list_corrections(
+    request: Request,
+    scope: ProjectScope = Depends(_obs_scope),
+    status_filter: str | None = None,
+    target_claim: str | None = None,
+    author: str | None = None,
+) -> dict[str, object]:
+    """Corrections feed (SPEC-19, FR-15.12): feed / by-claim / by-person; the ``pending_confirmation``
+    queue is ``status_filter=pending_confirmation``."""
+    rows = await _knowledge_store(request).list_corrections(
+        scope, status=status_filter, target_claim=target_claim, author=author
+    )
+    return {"corrections": rows}
+
+
+@router.get("/corrections/metrics")
+async def correction_metrics(
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """The Learning-Layer §7 metrics (SPEC-19, FR-15.12/§3.3)."""
+    return await _knowledge_store(request).correction_metrics(scope)
+
+
+@router.post("/corrections/{correction_id}/revert")
+async def revert_correction(
+    correction_id: str, request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """Revert a correction (FR-15.8). Authorised **server-side** for an admin OR the owner of the
+    target claim's tags — never trusted from the UI. A 403 for anyone else is audited."""
+    from rsc_brain.knowledge.corrections import CorrectionService
+    from rsc_brain.stores.age_graph_store import AgeGraphStore
+
+    deps = _deps(request)
+    sessionmaker = deps.sessionmaker  # type: ignore[attr-defined]
+    store = KnowledgeStore(sessionmaker)
+    correction = await store.get_correction(scope, correction_id)
+    if correction is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="correction not found")
+    target = await store.get_claim(scope, str(correction.target_claim))
+    tags = list(target.tags) if target is not None else []
+    is_admin = await _is_admin(sessionmaker, scope)
+    is_owner = await store.person_owns_any_tag(scope, scope.principal_id, tags)
+    if not (is_admin or is_owner):
+        await audit_mod.record_audit(
+            sessionmaker,
+            scope,
+            action="correct_knowledge:revert_denied",
+            tool="console",
+            denied=True,
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin or tag owner only")
+    service = CorrectionService(
+        store=store,
+        graph=AgeGraphStore(sessionmaker),
+        gateway=deps.gateway,  # type: ignore[attr-defined]
+    )
+    outcome = await service.revert(scope, correction_id)
+    await audit_mod.record_audit(
+        sessionmaker, scope, action=f"correct_knowledge:{outcome.status}", tool="console"
+    )
+    return {"status": outcome.status, "explanation": outcome.explanation}
+
+
+@router.get("/claims/disputed")
+async def list_disputed_claims(
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """Claims currently flagged disputed (SPEC-19, FR-13.5)."""
+    rows = await _knowledge_store(request).list_disputed_claims(scope)
+    return {"claims": rows}
+
+
+@router.get("/contradictions/resolutions")
+async def list_contradiction_resolutions(
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """Resolved contradictions — who won, by what score (SPEC-19, FR-13.5/FR-5.3)."""
+    rows = await _knowledge_store(request).list_contradiction_resolutions(scope)
+    return {"resolutions": rows}
 
 
 @router.get("/timeline")
@@ -628,7 +715,7 @@ async def delete_person(
 @router.get("/hunts")
 async def list_hunts(
     request: Request,
-    scope: ProjectScope = Depends(_admin_scope),
+    scope: ProjectScope = Depends(_obs_scope),
     open_only: bool = False,
 ) -> dict[str, object]:
     hunts = await _hunts(request).list_hunts(scope, open_only=open_only)  # type: ignore[attr-defined]
@@ -637,7 +724,7 @@ async def list_hunts(
 
 @router.get("/hunts/{hunt_id}")
 async def get_hunt(
-    hunt_id: str, request: Request, scope: ProjectScope = Depends(_admin_scope)
+    hunt_id: str, request: Request, scope: ProjectScope = Depends(_obs_scope)
 ) -> dict[str, object]:
     hunt = await _hunts(request).get_hunt(scope, hunt_id)  # type: ignore[attr-defined]
     if hunt is None:
@@ -663,7 +750,7 @@ async def ask_hunt(
 
 @router.post("/gaps/{gap_id}/promote", status_code=status.HTTP_201_CREATED)
 async def promote_gap(
-    gap_id: str, request: Request, scope: ProjectScope = Depends(_admin_scope)
+    gap_id: str, request: Request, scope: ProjectScope = Depends(_obs_scope)
 ) -> dict[str, object]:
     """Promote an agent gap to a hunt (FR-14.6 — agent gaps never trigger automatically)."""
     outcome = await _hunts(request).promote_agent_gap(scope, gap_id)  # type: ignore[attr-defined]

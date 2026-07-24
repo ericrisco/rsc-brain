@@ -83,3 +83,81 @@ export interface IngestRun {
   discarded_chunks: number;
   error: string | null;
 }
+
+// --- SPEC-19 living knowledge ---------------------------------------------------------------
+
+export interface Gap {
+  id: string;
+  query_text: string | null;
+  topics: string[];
+  count: number;
+  status: string;
+  last_seen_at: string | null;
+}
+
+export interface Hunt {
+  id: string;
+  type: string;
+  state: string;
+  question: string | null;
+  person_id: string | null;
+  gap_id: string | null;
+  correction_id: string | null;
+  channel: string | null;
+  retries: number;
+  created_at: string | null;
+  asked_at: string | null;
+  answered_at: string | null;
+  expires_at: string | null;
+  resolved_at: string | null;
+}
+
+export interface DisputedClaim {
+  id: string;
+  text: string;
+  tags: string[];
+  credibility: number;
+  valid_to: string | null;
+}
+
+export interface ResolutionSide {
+  claim_id: string;
+  text: string;
+  credibility: number;
+  valid_to: string | null;
+}
+
+export interface Resolution {
+  verdict: string;
+  confidence: number;
+  judge_version: string;
+  winner: ResolutionSide;
+  loser: ResolutionSide;
+  created_at: string | null;
+}
+
+export interface Correction {
+  id: string;
+  target_claim: string;
+  new_claim: string | null;
+  status: string;
+  role_applied: string | null;
+  author_id: string | null;
+  on_behalf_of: string | null;
+  hunt_id: string | null;
+  before_text: string | null;
+  after_text: string | null;
+  created_at: string | null;
+  resolved_at: string | null;
+}
+
+export interface CorrectionMetrics {
+  total: number;
+  by_status: Record<string, number>;
+  applied: number;
+  routed_hunt: number;
+  rejected: number;
+  revert_rate: number;
+  correction_wars: number;
+  ownership_coverage: number;
+}
