@@ -198,6 +198,28 @@ class KnowledgeStore:
                 .values(disputed=True, hunting_candidate=hunting_candidate)
             )
 
+    async def flag_claims_needs_review(self, scope: ProjectScope, claim_ids: Sequence[str]) -> None:
+        """Mark the chunks behind the given claims ``needs_review`` (SPEC-20 FR-4.4 guardrail: a
+        mislabeled fragment the secondary classifier dropped). Excludes them from recall until
+        re-approved; surfaced in the SPEC-21 review queue."""
+        if not claim_ids:
+            return
+        async with session_scope(self._sm) as session:
+            chunk_ids = await session.scalars(
+                select(models.Claim.chunk_id).where(
+                    models.Claim.id.in_([uuid.UUID(i) for i in claim_ids]),
+                    models.Claim.project_id == _pid(scope),
+                    models.Claim.chunk_id.is_not(None),
+                )
+            )
+            ids = [c for c in chunk_ids if c is not None]
+            if ids:
+                await session.execute(
+                    update(models.Chunk)
+                    .where(models.Chunk.id.in_(ids), models.Chunk.project_id == _pid(scope))
+                    .values(needs_review=True)
+                )
+
     async def set_disputed(
         self, scope: ProjectScope, claim_ids: Sequence[str], *, disputed: bool
     ) -> None:

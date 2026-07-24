@@ -13,7 +13,7 @@ import datetime as dt
 import time
 import uuid
 from collections.abc import Sequence
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -26,7 +26,11 @@ from rsc_brain.recall.permissions import chunk_visibility_clause, sensitive_tags
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.recall.timeline import build_timeline
 from rsc_brain.scope import ProjectScope
+from rsc_brain.skills.store import SkillStore
 from rsc_brain.stores.relational import models
+
+if TYPE_CHECKING:
+    from rsc_brain.recall.guardrail import TopicClassifier
 
 FeedbackSignal = Literal["helpful", "wrong", "outdated"]
 
@@ -86,6 +90,31 @@ class TimelineOutput(BaseModel):
     topic: str | None = None
     entity: str | None = None
     entries: list[TimelineEntry] = Field(default_factory=list)
+
+
+class SkillSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    slug: str
+    title: str
+    when_to_use: str | None = None
+    stale: bool = False
+
+
+class ListSkillsOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    skills: list[SkillSummary] = Field(default_factory=list)
+
+
+class RunSkillOutput(BaseModel):
+    """`run_skill` output (§5.8): the markdown instructions + supporting fragments (like recall)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    found: bool
+    instructions: str = ""
+    context_fragments: list[RecallFragment] = Field(default_factory=list)
 
 
 class GetDocumentOutput(BaseModel):
@@ -242,6 +271,102 @@ async def do_timeline(
         denied=not entries,
     )
     return output
+
+
+async def do_list_skills(
+    sessionmaker: async_sessionmaker[AsyncSession], scope: ProjectScope
+) -> ListSkillsOutput:
+    """Active skills whose tags the caller may see (SPEC-20, FR-7.1). Audited."""
+    forbidden = await sensitive_tags(sessionmaker, scope.project_id)
+    skills = await SkillStore(sessionmaker).list_visible(scope, forbidden)
+    await audit.record_audit(
+        sessionmaker, scope, action="list_skills", tool="list_skills", result_count=len(skills)
+    )
+    return ListSkillsOutput(
+        skills=[
+            SkillSummary(slug=s.slug, title=s.title, when_to_use=s.when_to_use, stale=s.stale)
+            for s in skills
+        ]
+    )
+
+
+async def do_run_skill(
+    retriever: PgRetriever,
+    sessionmaker: async_sessionmaker[AsyncSession],
+    scope: ProjectScope,
+    *,
+    slug: str,
+    args: dict[str, object] | None = None,
+    classifier: TopicClassifier | None = None,
+) -> RunSkillOutput:
+    """Return a skill's instructions + its supporting fragments (built with the SPEC-06 retriever
+    over the skill's tags — 'like recall', same in-query permission filter). A skill the caller
+    can't see is indistinguishable from nonexistent (FR-4.3). Every call is audited (FR-4.5). When a
+    ``classifier`` is supplied, the FR-4.4 secondary guardrail screens the final context."""
+    del args  # v0.4 skills are not yet parameterized (FR-7.3); accepted for forward-compat
+    started = time.monotonic()
+    forbidden = await sensitive_tags(sessionmaker, scope.project_id)
+    visible = {s.slug: s for s in await SkillStore(sessionmaker).list_visible(scope, forbidden)}
+    skill = visible.get(slug)
+    if skill is None:
+        await audit.record_audit(
+            sessionmaker, scope, action="run_skill", tool="run_skill", denied=True, result_count=0
+        )
+        return RunSkillOutput(found=False)
+    query = " ".join(filter(None, [skill.title, skill.when_to_use])) or skill.slug
+    result = await retriever.recall(scope, query, top_k=8, topics_hint=list(skill.tags))
+    fragments = to_recall_output(result).fragments
+    if classifier is not None:
+        fragments = await _apply_guardrail(sessionmaker, scope, fragments, classifier)
+    duration_ms = int((time.monotonic() - started) * 1000)
+    await audit.record_audit(
+        sessionmaker,
+        scope,
+        action="run_skill",
+        tool="run_skill",
+        query_hash=query_hash(f"skill:{slug}"),
+        duration_ms=duration_ms,
+        topics_used=sorted(scope.allowed_topics),
+        result_count=len(fragments),
+    )
+    return RunSkillOutput(found=True, instructions=skill.body or "", context_fragments=fragments)
+
+
+async def _apply_guardrail(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    scope: ProjectScope,
+    fragments: list[RecallFragment],
+    classifier: TopicClassifier,
+) -> list[RecallFragment]:
+    """FR-4.4: drop mislabeled fragments, mark their chunks needs_review, alert the admin."""
+    from rsc_brain.recall.guardrail import screen_fragments
+    from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+
+    async with sessionmaker() as session:
+        topics = list(
+            await session.scalars(
+                select(models.Topic.slug).where(
+                    models.Topic.project_id == uuid.UUID(scope.project_id)
+                )
+            )
+        )
+    result = await screen_fragments(
+        fragments,
+        allowed_topics=scope.allowed_topics,
+        project_topics=topics,
+        classifier=classifier,
+    )
+    if result.dropped:
+        await KnowledgeStore(sessionmaker).flag_claims_needs_review(scope, result.flagged_claim_ids)
+        await audit.record_audit(
+            sessionmaker,
+            scope,
+            action="guardrail:dropped_mislabeled",
+            tool="guardrail",
+            result_count=len(result.dropped),
+            denied=True,
+        )
+    return result.kept
 
 
 async def do_get_document(

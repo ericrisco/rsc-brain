@@ -488,6 +488,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Skills Admin
+         * @description List a project's skills (SPEC-20, FR-7.1). Read — console-consumable.
+         */
+        get: operations["list_skills_admin_api_v1_admin_skills_get"];
+        put?: never;
+        /**
+         * Create Skill Admin
+         * @description Create a skill from its markdown (OKF frontmatter + body).
+         */
+        post: operations["create_skill_admin_api_v1_admin_skills_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/skills/{slug}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Skill Admin */
+        post: operations["archive_skill_admin_api_v1_admin_skills__slug__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/sources": {
         parameters: {
             query?: never;
@@ -910,6 +951,11 @@ export interface components {
         RejectDoc: {
             /** Reason */
             reason: string;
+        };
+        /** SkillUpsert */
+        SkillUpsert: {
+            /** Markdown */
+            markdown: string;
         };
         /** SourceCreate */
         SourceCreate: {
@@ -1905,6 +1951,108 @@ export interface operations {
                 "application/json": components["schemas"]["QueryTextLogging"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_skills_admin_api_v1_admin_skills_get: {
+        parameters: {
+            query?: {
+                state?: string | null;
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_skill_admin_api_v1_admin_skills_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_skill_admin_api_v1_admin_skills__slug__archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

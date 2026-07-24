@@ -23,14 +23,18 @@ from rsc_brain.mcp.tools import (
     CorrectKnowledgeOutput,
     FeedbackSignal,
     GetDocumentOutput,
+    ListSkillsOutput,
     RecallOutput,
     ReportFeedbackOutput,
+    RunSkillOutput,
     SubmitKnowledgeOutput,
     TimelineOutput,
     do_correct_knowledge,
     do_get_document,
+    do_list_skills,
     do_recall,
     do_report_feedback,
+    do_run_skill,
     do_submit_knowledge,
     do_timeline,
 )
@@ -135,6 +139,25 @@ def build_mcp_server(
         return await do_timeline(
             sessionmaker, scope, topic=topic, entity=entity, as_of=as_of, top_k=top_k
         )
+
+    @server.tool(description="List the skills (reusable procedures) visible to you.")
+    async def list_skills(
+        ctx: Context[Any, Any, Any], on_behalf_of: str | None = None
+    ) -> ListSkillsOutput:
+        scope = await _scope(ctx, on_behalf_of)
+        return await do_list_skills(sessionmaker, scope)
+
+    @server.tool(
+        description="Run a skill: its instructions plus supporting fragments (like recall)."
+    )
+    async def run_skill(
+        slug: str,
+        ctx: Context[Any, Any, Any],
+        args: dict[str, Any] | None = None,
+        on_behalf_of: str | None = None,
+    ) -> RunSkillOutput:
+        scope = await _scope(ctx, on_behalf_of)
+        return await do_run_skill(retriever, sessionmaker, scope, slug=slug, args=args)
 
     @server.tool(description="Fetch a document's visible page text and metadata (traceability).")
     async def get_document(

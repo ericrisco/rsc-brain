@@ -412,6 +412,13 @@ class Skill(Base):
         ForeignKey("persons.id", ondelete="SET NULL")
     )
     version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
+    # SPEC-20: the markdown instructions, the entity/topic ids the skill's context is built from
+    # (graph-sync key), and the stale marker set when that subgraph changes (FR-7.1/7.2).
+    body: Mapped[str | None] = mapped_column(Text)
+    depends_on: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(Uuid), server_default="{}")
+    stale: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    stale_reason: Mapped[str | None] = mapped_column(Text)
+    stale_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         UniqueConstraint("project_id", "slug"),
         Index("ix_skills_project_id_id", "project_id", "id"),
