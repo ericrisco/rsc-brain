@@ -75,3 +75,26 @@ async def get_gap_count(
             )
         )
         return int(count or 0)
+
+
+async def list_gaps(
+    sessionmaker: async_sessionmaker[AsyncSession], scope: ProjectScope, *, limit: int = 100
+) -> list[dict[str, object]]:
+    """The project's recorded gaps, most-frequent first (for the admin API / console)."""
+    async with sessionmaker() as session:
+        rows = await session.scalars(
+            select(models.Gap)
+            .where(models.Gap.project_id == uuid.UUID(scope.project_id))
+            .order_by(models.Gap.count.desc(), models.Gap.last_seen_at.desc())
+            .limit(limit)
+        )
+        return [
+            {
+                "query_text": gap.query_text,
+                "topics": list(gap.topics),
+                "count": gap.count,
+                "status": gap.status,
+                "last_seen_at": gap.last_seen_at.isoformat() if gap.last_seen_at else None,
+            }
+            for gap in rows
+        ]

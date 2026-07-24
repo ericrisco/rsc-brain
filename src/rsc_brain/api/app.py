@@ -106,6 +106,9 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     # the injected stores available for the REST endpoints.
     app.state.deps = deps
     _register_routes(app)
+    from rsc_brain.api.admin import router as admin_router
+
+    app.include_router(admin_router)
     app.mount("/mcp", mcp_server.streamable_http_app())
     return app
 
