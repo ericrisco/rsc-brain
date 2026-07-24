@@ -11,6 +11,7 @@ CORRECTION_REVIEW) is orthogonal to the state.
 
 from __future__ import annotations
 
+from collections import deque
 from enum import StrEnum
 
 
@@ -76,6 +77,30 @@ def can_transition(src: HuntState, dst: HuntState) -> bool:
 def check_transition(src: HuntState, dst: HuntState) -> None:
     if not can_transition(src, dst):
         raise IllegalTransitionError(src, dst)
+
+
+def path_to(src: HuntState, dst: HuntState) -> list[HuntState]:
+    """Shortest legal lifecycle path from ``src`` to ``dst`` (inclusive), or ``[]`` if unreachable.
+
+    Lets a synchronous action collapse several legal hops into one — an owner *confirming* a
+    correction walks ``AWAITING_ANSWER → ANSWERED → INGESTED → RESOLVED`` in a single click — while
+    still refusing any jump the transition table forbids.
+    """
+    if src == dst:
+        return [src]
+    seen = {src}
+    queue: deque[list[HuntState]] = deque([[src]])
+    while queue:
+        path = queue.popleft()
+        for nxt in _TRANSITIONS.get(path[-1], frozenset()):
+            if nxt in seen:
+                continue
+            extended = [*path, nxt]
+            if nxt == dst:
+                return extended
+            seen.add(nxt)
+            queue.append(extended)
+    return []
 
 
 def is_terminal(state: HuntState) -> bool:

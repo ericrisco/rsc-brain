@@ -13,6 +13,7 @@ from rsc_brain.hunting.state_machine import (
     check_transition,
     is_open,
     is_terminal,
+    path_to,
 )
 
 
@@ -43,6 +44,25 @@ def test_expiry_retry_and_terminals() -> None:
     assert is_terminal(HuntState.RESOLVED)
     assert is_terminal(HuntState.NO_OWNER)
     assert is_terminal(HuntState.DECLINED)
+
+
+def test_path_to_collapses_legal_multi_hop() -> None:
+    # An owner confirming a correction walks the full happy path in one action.
+    assert path_to(HuntState.AWAITING_ANSWER, HuntState.RESOLVED) == [
+        HuntState.AWAITING_ANSWER,
+        HuntState.ANSWERED,
+        HuntState.INGESTED,
+        HuntState.RESOLVED,
+    ]
+    # Every consecutive hop the BFS returns is itself a legal transition.
+    for src, dst in pairwise(path_to(HuntState.AWAITING_ANSWER, HuntState.RESOLVED)):
+        assert can_transition(src, dst)
+    assert path_to(HuntState.AWAITING_ANSWER, HuntState.DECLINED) == [
+        HuntState.AWAITING_ANSWER,
+        HuntState.DECLINED,
+    ]
+    assert path_to(HuntState.RESOLVED, HuntState.RESOLVED) == [HuntState.RESOLVED]  # identity
+    assert path_to(HuntState.RESOLVED, HuntState.AWAITING_ANSWER) == []  # unreachable from terminal
 
 
 def test_open_states_count_for_anti_spam() -> None:

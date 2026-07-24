@@ -172,6 +172,41 @@ class KnowledgeStore:
                 .values(disputed=True, hunting_candidate=hunting_candidate)
             )
 
+    async def set_disputed(
+        self, scope: ProjectScope, claim_ids: Sequence[str], *, disputed: bool
+    ) -> None:
+        """Set/clear the ``disputed`` flag (SPEC-15: a rejected correction review restores the
+        claim by clearing it)."""
+        if not claim_ids:
+            return
+        async with session_scope(self._sm) as session:
+            await session.execute(
+                update(models.Claim)
+                .where(
+                    models.Claim.id.in_([uuid.UUID(i) for i in claim_ids]),
+                    models.Claim.project_id == _pid(scope),
+                )
+                .values(disputed=disputed)
+            )
+
+    async def set_correction_status(
+        self, scope: ProjectScope, correction_id: str, *, status: str, new_claim: str | None = None
+    ) -> None:
+        """Advance a correction record's status (SPEC-15 CORRECTION_REVIEW: routed_hunt → applied |
+        rejected | expired)."""
+        values: dict[str, object] = {"status": status, "resolved_at": _now()}
+        if new_claim is not None:
+            values["new_claim"] = uuid.UUID(new_claim)
+        async with session_scope(self._sm) as session:
+            await session.execute(
+                update(models.Correction)
+                .where(
+                    models.Correction.id == uuid.UUID(correction_id),
+                    models.Correction.project_id == _pid(scope),
+                )
+                .values(**values)
+            )
+
     async def get_claim(self, scope: ProjectScope, claim_id: str) -> ClaimData | None:
         async with self._sm() as session:
             claim = await session.get(models.Claim, uuid.UUID(claim_id))
