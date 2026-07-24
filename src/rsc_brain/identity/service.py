@@ -110,8 +110,12 @@ class IdentityService:
             return str(user.id)
 
     async def deactivate_user(self, user_id: str) -> None:
-        """Disable a user and revoke all PATs on their memberships (<5s effective)."""
+        """Disable a user and revoke ALL their credentials — PATs, OAuth tokens, and console
+        sessions — in one transaction (FR-4.12). The disabled status alone already stops every
+        credential resolving in <5s (the resolver re-checks it per request); marking ``revoked_at``
+        makes the revocation explicit + durable + auditable."""
         uid = uuid.UUID(user_id)
+        now = _now()
         async with session_scope(self._sm) as session:
             await session.execute(
                 update(models.User).where(models.User.id == uid).values(status="disabled")
@@ -127,8 +131,63 @@ class IdentityService:
                 await session.execute(
                     update(models.PersonalAccessToken)
                     .where(models.PersonalAccessToken.membership_id.in_(membership_ids))
-                    .values(revoked_at=_now())
+                    .values(revoked_at=now)
                 )
+                await session.execute(
+                    update(models.OAuthToken)
+                    .where(models.OAuthToken.membership_id.in_(membership_ids))
+                    .values(revoked_at=now)
+                )
+            await session.execute(
+                update(models.ConsoleSession)
+                .where(models.ConsoleSession.user_id == uid)
+                .values(revoked_at=now)
+            )
+
+    async def request_password_reset(self, email: str) -> Issued | None:
+        """Issue a single-use password-reset token for an active user (same mechanism as an
+        invitation, ``kind='password_reset'``). Returns ``None`` for an unknown/inactive email so
+        the caller cannot probe which addresses exist."""
+        token = security.mint_token(security.INVITATION_PREFIX)
+        async with session_scope(self._sm) as session:
+            user = await session.scalar(select(models.User).where(models.User.email == email))
+            if user is None or user.status != "active":
+                return None
+            session.add(
+                models.Invitation(
+                    user_id=user.id,
+                    token_hash=security.token_hash(token),
+                    expires_at=_now() + dt.timedelta(hours=1),
+                    kind="password_reset",
+                )
+            )
+            return Issued(id=str(user.id), token=token)
+
+    async def reset_password(self, token: str, new_password: str) -> str:
+        """Consume a single-use reset token, set the new argon2 password, and revoke the user's
+        console sessions (a reset invalidates old logins). Returns the user id."""
+        async with session_scope(self._sm) as session:
+            reset = await session.scalar(
+                select(models.Invitation).where(
+                    models.Invitation.token_hash == security.token_hash(token),
+                    models.Invitation.kind == "password_reset",
+                )
+            )
+            if reset is None or reset.used_at is not None:
+                raise ValueError("invalid or already-used reset token")
+            if reset.expires_at is not None and reset.expires_at < _now():
+                raise ValueError("reset token expired")
+            reset.used_at = _now()
+            user = await session.get(models.User, reset.user_id)
+            if user is None or user.status != "active":
+                raise ValueError("reset user missing or inactive")
+            user.password_hash = security.hash_password(new_password)
+            await session.execute(
+                update(models.ConsoleSession)
+                .where(models.ConsoleSession.user_id == user.id)
+                .values(revoked_at=_now())
+            )
+            return str(user.id)
 
     # --- memberships & topics ------------------------------------------------
 

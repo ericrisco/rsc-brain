@@ -1,6 +1,24 @@
 {
   "components": {
     "schemas": {
+      "Body_authorize_post_oauth_authorize_post": {
+        "properties": {
+          "consent": {
+            "title": "Consent",
+            "type": "string"
+          },
+          "membership_project_id": {
+            "title": "Membership Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "consent",
+          "membership_project_id"
+        ],
+        "title": "Body_authorize_post_oauth_authorize_post",
+        "type": "object"
+      },
       "Body_reject_document_api_v1_documents__document_id__reject_post": {
         "properties": {
           "reason": {
@@ -243,6 +261,25 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/.well-known/oauth-authorization-server": {
+      "get": {
+        "operationId": "authorization_server_metadata__well_known_oauth_authorization_server_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Authorization Server Metadata",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
     "/api/v1/admin/audit": {
       "get": {
         "operationId": "list_audit_api_v1_admin_audit_get",
@@ -288,6 +325,56 @@
           }
         ],
         "summary": "List Audit",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/connections/{connection_id}": {
+      "delete": {
+        "description": "Admin revokes any user's OAuth connection (FR-4.13 admin part). Stops resolving <5s.",
+        "operationId": "admin_revoke_connection_api_v1_admin_connections__connection_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Admin Revoke Connection Api V1 Admin Connections  Connection Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Admin Revoke Connection",
         "tags": [
           "admin"
         ]
@@ -865,6 +952,84 @@
         ]
       }
     },
+    "/api/v1/me/connections": {
+      "get": {
+        "description": "The user's OAuth connections (FR-4.13) \u2014 what Claude/ChatGPT connections exist.",
+        "operationId": "list_connections_api_v1_me_connections_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Connections Api V1 Me Connections Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Connections",
+        "tags": [
+          "console-me"
+        ]
+      }
+    },
+    "/api/v1/me/connections/{connection_id}": {
+      "delete": {
+        "operationId": "revoke_connection_api_v1_me_connections__connection_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection_id",
+            "required": true,
+            "schema": {
+              "title": "Connection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Revoke Connection Api V1 Me Connections  Connection Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revoke Connection",
+        "tags": [
+          "console-me"
+        ]
+      }
+    },
     "/api/v1/me/pats": {
       "get": {
         "operationId": "list_pats_api_v1_me_pats_get",
@@ -1042,6 +1207,101 @@
           }
         ],
         "summary": "Upload Document"
+      }
+    },
+    "/oauth/authorize": {
+      "get": {
+        "operationId": "authorize_get_oauth_authorize_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Authorize Get",
+        "tags": [
+          "oauth"
+        ]
+      },
+      "post": {
+        "operationId": "authorize_post_oauth_authorize_post",
+        "requestBody": {
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_authorize_post_oauth_authorize_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Authorize Post",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/oauth/register": {
+      "post": {
+        "description": "Dynamic Client Registration (RFC 7591) \u2014 Claude/ChatGPT register here before connecting.",
+        "operationId": "register_client_oauth_register_post",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Register Client",
+        "tags": [
+          "oauth"
+        ]
+      }
+    },
+    "/oauth/token": {
+      "post": {
+        "operationId": "token_oauth_token_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Token",
+        "tags": [
+          "oauth"
+        ]
       }
     }
   }

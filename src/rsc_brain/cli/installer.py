@@ -31,14 +31,17 @@ def doctor(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
         "status": "ok" if report.ok else "secrets_found",
         "recommended_profile": report.recommended_profile,
         "host": report.host,
+        "tls": report.tls,
         "secret_findings": [
             {"path": f.path, "line": f.line, "reason": f.reason} for f in report.secret_findings
         ],
     }
+    tls_note = report.tls.get("warning") or f"TLS domain={report.tls.get('domain')}"
     human = (
         f"doctor: profile={report.recommended_profile}, docker={report.host['docker']}, "
         f"gpu={report.host['has_gpu']}, ram_gb={report.host['ram_gb']}; "
-        + ("no hardcoded secrets." if report.ok else f"{len(report.secret_findings)} secret(s)!")
+        + ("no hardcoded secrets. " if report.ok else f"{len(report.secret_findings)} secret(s)! ")
+        + str(tls_note)
     )
     emit_result(ctx, json_output, payload, human)
     if not report.ok:

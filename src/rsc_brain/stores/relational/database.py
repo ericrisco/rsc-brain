@@ -10,12 +10,14 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import Session, sessionmaker
 
 DSN_ENV_VAR = "RSC_BRAIN_DATABASE__DSN"
 
@@ -54,6 +56,25 @@ def make_engine(dsn: str | None = None, *, echo: bool = False) -> AsyncEngine:
 
 def make_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False)
+
+
+def sync_dsn(dsn: str | None = None) -> str:
+    """The synchronous (psycopg) form of the DSN — Authlib's authorization server (SPEC-10) is
+    sync, so its callbacks run over a sync engine. Swaps the asyncpg driver for psycopg."""
+    resolved = resolve_dsn(dsn)
+    return resolved.replace("+asyncpg", "+psycopg").replace(
+        "postgresql://", "postgresql+psycopg://"
+    )
+
+
+def make_sync_engine(dsn: str | None = None, *, echo: bool = False) -> Engine:
+    """Create a synchronous engine (psycopg) for the OAuth authorization server. Caller owns
+    disposal (`engine.dispose()`)."""
+    return create_engine(sync_dsn(dsn), echo=echo, pool_pre_ping=True)
+
+
+def make_sync_sessionmaker(engine: Engine) -> sessionmaker[Session]:
+    return sessionmaker(engine, expire_on_commit=False)
 
 
 @asynccontextmanager

@@ -19,6 +19,8 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session
+from sqlalchemy.orm import sessionmaker as SyncSessionmaker
 
 from rsc_brain.config.models import RecallConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
@@ -42,6 +44,9 @@ class ApiDeps:
     data_dir: str = "data"
     config: PipelineConfig | None = None
     recall_config: RecallConfig | None = None
+    # Sync sessionmaker for the Authlib OAuth server (SPEC-10) — Authlib is synchronous, so its
+    # callbacks run over a sync session inside a threadpool. None until OAuth is configured.
+    sync_sessionmaker: SyncSessionmaker[Session] | None = None
 
     def service(self) -> tuple[IngestService, IngestRepository]:
         repo = IngestRepository(self.sessionmaker)
@@ -64,7 +69,12 @@ class ApiDeps:
 
 def _deps_from_config() -> tuple[ApiDeps, AsyncEngine]:
     from rsc_brain.config import load_settings
-    from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
+    from rsc_brain.stores.relational.database import (
+        make_engine,
+        make_sessionmaker,
+        make_sync_engine,
+        make_sync_sessionmaker,
+    )
 
     settings = load_settings()
     engine = make_engine()
@@ -78,6 +88,7 @@ def _deps_from_config() -> tuple[ApiDeps, AsyncEngine]:
             default_tag=settings.ingest.default_tag,
         ),
         recall_config=settings.recall,
+        sync_sessionmaker=make_sync_sessionmaker(make_sync_engine()),
     )
     return deps, engine
 
@@ -114,6 +125,9 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     app.include_router(admin_router)
     app.include_router(auth_router)
     app.include_router(me_router)
+    from rsc_brain.api.oauth.routes import router as oauth_router
+
+    app.include_router(oauth_router)
     app.mount("/mcp", mcp_server.streamable_http_app())
     return app
 

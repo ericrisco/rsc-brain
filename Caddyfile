@@ -1,0 +1,13 @@
+# Caddy reverse proxy for the rsc-brain MCP/API (SPEC-10, FR-4.8 — TLS prerequisite of OAuth).
+#
+# Automatic HTTPS: set RSC_BRAIN_DOMAIN to a public domain and Caddy provisions + renews a
+# Let's Encrypt certificate. For a private/self-signed certificate instead, replace the site
+# address with your domain and add a `tls /path/cert.pem /path/key.pem` directive.
+#
+# Caddy terminates TLS and forwards to the app over http, setting X-Forwarded-Proto=https, so the
+# OAuth authorization server (which MUST see https, FR-4.10) builds correct https discovery URLs.
+# Run the app (uvicorn) with --proxy-headers so it trusts the forwarded scheme.
+
+{$RSC_BRAIN_DOMAIN:localhost} {
+	reverse_proxy {$RSC_BRAIN_APP_UPSTREAM:host.docker.internal:8080}
+}

@@ -110,3 +110,24 @@ async def revoke_pat(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     await IdentityService(sessionmaker).revoke_pat(pat_id)
     return {"ok": True, "revoked": pat_id}
+
+
+@me_router.get("/connections")
+async def list_connections(
+    request: Request, user: SessionUser = Depends(_session_user)
+) -> dict[str, object]:
+    """The user's OAuth connections (FR-4.13) — what Claude/ChatGPT connections exist."""
+    return {
+        "connections": await sessions.list_user_connections(_sessionmaker(request), user.user_id)
+    }
+
+
+@me_router.delete("/connections/{connection_id}")
+async def revoke_connection(
+    connection_id: str, request: Request, user: SessionUser = Depends(_session_user)
+) -> dict[str, object]:
+    sessionmaker = _sessionmaker(request)
+    if not await sessions.owns_connection(sessionmaker, user.user_id, connection_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    await sessions.revoke_connection(sessionmaker, connection_id)
+    return {"ok": True, "revoked": connection_id}
