@@ -30,5 +30,11 @@ All notable changes to this project are documented here. The format follows
   image. Base pinned by digest, pgvector built from a verified commit; ports loopback-bound;
   `POSTGRES_PASSWORD` required and re-validated before boot; runs as non-root (uid 999);
   healthchecked. Verified: image builds and both extensions load (AUDIT-007).
+- **CI/release** (GitHub Actions): lint + types + tests, `pip-audit` SCA, AGPL license audit,
+  ephemeral-compose AGE/pgvector smoke; release SBOM (syft) + CVE scan (grype). Every action
+  is pinned to a full commit SHA, workflow tokens are least-privilege, and Dependabot proposes
+  SHA bumps (AUDIT-006).
+- **OSS health**: SECURITY.md (honest scanner inventory), CONTRIBUTING.md, issue/PR templates,
+  and the development runbook (`docs/AGENTS.md` / `docs/CLAUDE.md`).
 
 [Unreleased]: https://github.com/ericrisco/rsc-brain/commits/main

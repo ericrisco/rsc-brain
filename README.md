@@ -23,7 +23,10 @@ capability layer.
 >   errors — routing is immutable from call data (AUDIT-005).
 > - ✅ **Data-service Compose** stack (Postgres 16 + Apache AGE 1.6.0 + pgvector 0.8.5):
 >   loopback-bound, password-guarded, digest-pinned, non-root, healthchecked (AUDIT-007).
-> - ⏳ Next in this bootstrap: **CI** (GitHub Actions).
+> - ✅ **CI** (GitHub Actions): lint/types/tests, `pip-audit` + AGPL license audit,
+>   ephemeral-compose data-service smoke; SHA-pinned actions, least-privilege tokens
+>   (AUDIT-006). Release SBOM (syft) + CVE scan (grype).
+> - ✅ **OSS health**: SECURITY, CONTRIBUTING, issue/PR templates, dev runbook (`docs/AGENTS.md`).
 >
 > Product capabilities (ingestion, recall, MCP serving, console, …) land in later SPECs; the
 > CLI subcommands for them exit non-zero with a `not_implemented` payload until then.
@@ -71,6 +74,11 @@ docker compose exec -u postgres -T db \
 
 > Building the AGE + pgvector image compiles pgvector from source and can take a few minutes
 > on first run.
+
+## Contributing & security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to get started and [`docs/AGENTS.md`](docs/AGENTS.md)
+for the development runbook. Report vulnerabilities privately per [SECURITY.md](SECURITY.md).
 
 ## License
 
