@@ -101,10 +101,21 @@ def build_mcp_server(
         top_k: int = 8,
         topics_hint: list[str] | None = None,
         on_behalf_of: str | None = None,
+        as_of: str | None = None,
+        include_historical: bool = False,
+        include_superseded: bool = False,
     ) -> RecallOutput:
         scope = await _scope(ctx, on_behalf_of)
         return await do_recall(
-            retriever, sessionmaker, scope, query=query, top_k=top_k, topics_hint=topics_hint
+            retriever,
+            sessionmaker,
+            scope,
+            query=query,
+            top_k=top_k,
+            topics_hint=topics_hint,
+            as_of=as_of,
+            include_historical=include_historical,
+            include_superseded=include_superseded,
         )
 
     @server.tool(description="Fetch a document's visible page text and metadata (traceability).")

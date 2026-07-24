@@ -15,8 +15,9 @@ import datetime as dt
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.config.models import RecallConfig
@@ -26,6 +27,7 @@ from rsc_brain.recall.gaps import register_gap
 from rsc_brain.recall.interfaces import Fragment, RecallResult
 from rsc_brain.recall.permissions import chunk_visibility_clause, sensitive_tags
 from rsc_brain.recall.scoring import score_fragment
+from rsc_brain.recall.temporal_intent import TemporalKind, TemporalMode, classify
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore, graph_name
 from rsc_brain.stores.relational import models
@@ -37,6 +39,9 @@ class _ClaimAggregate:
     credibility: float | None
     importance: float | None
     valid_from: dt.date | None
+    valid_to: dt.date | None = None
+    is_current: bool = True
+    had_claims: bool = False  # the chunk had claims BEFORE the temporal window was applied
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,10 +57,17 @@ class _Candidate:
     credibility: float | None
     importance: float | None
     valid_from: dt.date | None
+    valid_to: dt.date | None = None
+    is_current: bool = True
 
 
 def _mean(values: Sequence[float]) -> float | None:
     return sum(values) / len(values) if values else None
+
+
+def _midnight(day: dt.date) -> dt.datetime:
+    """UTC midnight for a date — the ``valid_from``/``valid_to`` columns are tz-aware datetimes."""
+    return dt.datetime.combine(day, dt.time.min, tzinfo=dt.UTC)
 
 
 def _rrf_fuse(ranked_lists: Sequence[Sequence[str]], *, k: int, limit: int) -> list[str]:
@@ -119,12 +131,14 @@ class PgRetriever:
         include_historical: bool = False,
         include_superseded: bool = False,
     ) -> RecallResult:
-        # Temporal window (include_historical/as_of) is honored in SPEC-13/17; here recall returns
-        # current knowledge. `include_superseded` surfaces valid_to-set claims in the provenance,
-        # but ONLY for an admin (curator) — otherwise it is ignored (FR-5.5, admin-only).
-        del include_historical
+        # Temporal intent (FR-16.1): default `current` (only knowledge valid now); a query or the
+        # explicit params can widen to historical/as_of/range. `include_superseded` surfaces
+        # valid_to-set claims in the provenance, but ONLY for an admin (curator) — otherwise it is
+        # ignored (FR-5.5, admin-only). The window is applied IN the SQL (FR-16.2), never post-hoc.
+        now = dt.datetime.now(dt.UTC).date()
+        mode = classify(query, as_of=as_of, include_historical=include_historical)
         show_superseded = include_superseded and scope.can_curate
-        as_of = as_of or dt.datetime.now(dt.UTC).date()
+        score_as_of = mode.as_of or now  # freshness anchor stays inside the filtered set (FR-3.2)
         # A caller with no topic access can match nothing (fail closed → indistinguishable).
         if not scope.allowed_topics:
             await register_gap(self._sm, scope, query, topics=topics_hint or ())
@@ -132,6 +146,7 @@ class PgRetriever:
 
         vector = (await self._gateway.embed([query]))[0]
         forbidden = await sensitive_tags(self._sm, scope.project_id)
+        hard_windows = await self._hard_window_map(scope)
 
         vector_ids = await self._vector_candidates(scope, vector, forbidden, top_k)
         if self._config.hybrid_enabled:
@@ -145,7 +160,13 @@ class PgRetriever:
             candidate_ids = vector_ids
         candidate_ids = await self._expand_k_hop(scope, forbidden, candidate_ids)
         candidates = await self._load_candidates(
-            scope, vector, candidate_ids, show_superseded=show_superseded
+            scope,
+            vector,
+            candidate_ids,
+            show_superseded=show_superseded,
+            mode=mode,
+            now=now,
+            hard_windows=hard_windows,
         )
         await self._detect_on_consume(scope, candidates)
 
@@ -154,7 +175,7 @@ class PgRetriever:
             return RecallResult(found=False, gap_registered=True)
 
         scored = sorted(
-            (self._score(candidate, as_of) for candidate in candidates),
+            (self._score(candidate, score_as_of) for candidate in candidates),
             key=lambda item: item[1],
             reverse=True,
         )
@@ -273,6 +294,17 @@ class PgRetriever:
             )
             return [str(c) for c in rows]
 
+    async def _hard_window_map(self, scope: ProjectScope) -> dict[str, int]:
+        """`{topic_slug: hard_window_days}` for the project's topics that set a horizon (FR-16.3)."""
+        async with self._sm() as session:
+            rows = await session.execute(
+                select(models.Topic.slug, models.Topic.hard_window_days).where(
+                    models.Topic.project_id == uuid.UUID(scope.project_id),
+                    models.Topic.hard_window_days.is_not(None),
+                )
+            )
+            return {slug: days for slug, days in rows.all() if days is not None}
+
     async def _load_candidates(
         self,
         scope: ProjectScope,
@@ -280,9 +312,15 @@ class PgRetriever:
         candidate_ids: list[str],
         *,
         show_superseded: bool = False,
+        mode: TemporalMode | None = None,
+        now: dt.date | None = None,
+        hard_windows: dict[str, int] | None = None,
     ) -> list[_Candidate]:
         if not candidate_ids:
             return []
+        mode = mode or TemporalMode(TemporalKind.CURRENT)
+        now = now or dt.datetime.now(dt.UTC).date()
+        hard_windows = hard_windows or {}
         distance = models.Chunk.embedding.cosine_distance(list(vector))
         async with self._sm() as session:
             rows = await session.execute(
@@ -303,9 +341,22 @@ class PgRetriever:
             )
             candidates: list[_Candidate] = []
             for cid, text, tags, page, document_id, title, sim in rows.all():
+                # The strictest horizon among this chunk's tagged topics (only bites in `current`).
+                windows = [hard_windows[t] for t in tags if t in hard_windows]
+                window = min(windows) if windows else None
                 claim = await self._claim_aggregate(
-                    session, scope, cid, show_superseded=show_superseded
+                    session,
+                    scope,
+                    cid,
+                    show_superseded=show_superseded,
+                    mode=mode,
+                    now=now,
+                    hard_window_days=window,
                 )
+                # Drop a chunk only if it HAD claims that the temporal window all removed (e.g. an
+                # obsolete price). A chunk that never had claims (plain prose) stays recallable.
+                if claim.had_claims and not claim.claim_ids:
+                    continue
                 candidates.append(
                     _Candidate(
                         chunk_id=str(cid),
@@ -319,6 +370,8 @@ class PgRetriever:
                         credibility=claim.credibility,
                         importance=claim.importance,
                         valid_from=claim.valid_from,
+                        valid_to=claim.valid_to,
+                        is_current=claim.is_current,
                     )
                 )
             return candidates
@@ -330,42 +383,96 @@ class PgRetriever:
         chunk_id: uuid.UUID,
         *,
         show_superseded: bool = False,
+        mode: TemporalMode | None = None,
+        now: dt.date | None = None,
+        hard_window_days: int | None = None,
     ) -> _ClaimAggregate:
-        conditions = [
+        mode = mode or TemporalMode(TemporalKind.CURRENT)
+        # The real current instant — a claim superseded earlier TODAY (valid_to a timestamp today)
+        # must count as expired, so we compare against now, not midnight (the `now` date param only
+        # anchors the classifier/score elsewhere).
+        del now
+        now_ts = dt.datetime.now(dt.UTC)
+        # The permission boundary (project + pending) is always in the query; the temporal window
+        # is a per-claim relevance cut on this already-authorized, chunk-scoped set (FR-16.2).
+        base: list[Any] = [
             models.Claim.chunk_id == chunk_id,
             models.Claim.project_id == uuid.UUID(scope.project_id),
             models.Claim.pending_confirmation.is_(False),  # never surface unconfirmed claims
         ]
-        if not show_superseded:
-            # Exclude superseded (valid_to set) claims from the provenance (FR-5.5, admin-only).
-            conditions.append(models.Claim.valid_to.is_(None))
-        rows = await session.execute(
-            select(
-                models.Claim.id,
-                models.Claim.credibility,
-                models.Claim.importance,
-                models.Claim.valid_from,
-            ).where(*conditions)
-        )
+        conditions: list[Any] = [
+            *base,
+            *self._temporal_conditions(mode, now_ts, show_superseded, hard_window_days),
+        ]
+        rows = (
+            await session.execute(
+                select(
+                    models.Claim.id,
+                    models.Claim.credibility,
+                    models.Claim.importance,
+                    models.Claim.valid_from,
+                    models.Claim.valid_to,
+                ).where(*conditions)
+            )
+        ).all()
+        had_claims = bool(await session.scalar(select(models.Claim.id).where(*base).limit(1)))
+
         claim_ids: list[str] = []
         credibilities: list[float] = []
         importances: list[float] = []
         valid_from: dt.date | None = None
-        for cid, credibility, importance, claim_valid_from in rows.all():
+        valid_to: dt.date | None = None
+        any_open = False
+        for cid, credibility, importance, cvf, cvt in rows:
             claim_ids.append(str(cid))
             if credibility is not None:
                 credibilities.append(float(credibility))
             if importance is not None:
                 importances.append(float(importance))
-            if claim_valid_from is not None:
-                claim_date = claim_valid_from.date()
-                valid_from = claim_date if valid_from is None else min(valid_from, claim_date)
+            if cvf is not None:
+                cvf_d = cvf.date()
+                valid_from = cvf_d if valid_from is None else min(valid_from, cvf_d)
+            if cvt is None:
+                any_open = True
+            else:
+                cvt_d = cvt.date()
+                valid_to = cvt_d if valid_to is None else max(valid_to, cvt_d)
+        # is_current: at least one surviving claim is still open (or ends in the future).
+        is_current = any_open or (valid_to is not None and _midnight(valid_to) > now_ts)
         return _ClaimAggregate(
             claim_ids=tuple(claim_ids),
             credibility=_mean(credibilities),
             importance=_mean(importances),
             valid_from=valid_from,
+            valid_to=None if any_open else valid_to,
+            is_current=is_current,
+            had_claims=had_claims,
         )
+
+    @staticmethod
+    def _temporal_conditions(
+        mode: TemporalMode, now_ts: dt.datetime, show_superseded: bool, hard_window_days: int | None
+    ) -> list[Any]:
+        vf, vt = models.Claim.valid_from, models.Claim.valid_to
+        if mode.kind is TemporalKind.AS_OF and mode.as_of is not None:
+            anchor = _midnight(mode.as_of)
+            return [or_(vf.is_(None), vf <= anchor), or_(vt.is_(None), vt > anchor)]
+        if mode.kind is TemporalKind.RANGE and mode.start and mode.end:
+            return [
+                or_(vf.is_(None), vf <= _midnight(mode.end)),
+                or_(vt.is_(None), vt > _midnight(mode.start)),
+            ]
+        if mode.kind is TemporalKind.HISTORICAL:
+            return []  # the whole timeline (expired claims included, labelled by valid_to)
+        # CURRENT (default): exclude expired/superseded unless an admin asked to see them, and
+        # apply the per-topic hard horizon (FR-16.3).
+        conds: list[Any] = []
+        if not show_superseded:
+            conds.append(or_(vt.is_(None), vt > now_ts))
+        if hard_window_days is not None:
+            cutoff = now_ts - dt.timedelta(days=hard_window_days)
+            conds.append(or_(vf.is_(None), vf >= cutoff))
+        return conds
 
     def _score(self, candidate: _Candidate, as_of: dt.date) -> tuple[_Candidate, float]:
         score = score_fragment(
@@ -405,6 +512,8 @@ class PgRetriever:
                         "tags": list(candidate.tags),
                     },
                     valid_from=candidate.valid_from,
+                    valid_to=candidate.valid_to,
+                    is_current=candidate.is_current,
                     untrusted_data=True,
                 )
             )

@@ -9,6 +9,7 @@ hash).
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from collections.abc import Sequence
 from typing import Literal, cast
@@ -19,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import audit
 from rsc_brain.recall.gaps import query_hash
-from rsc_brain.recall.interfaces import RecallResult
+from rsc_brain.recall.interfaces import Fragment, RecallResult
 from rsc_brain.recall.permissions import chunk_visibility_clause, sensitive_tags
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import ProjectScope
@@ -42,6 +43,10 @@ class RecallFragment(BaseModel):
     credibility: float
     tags: list[str] = Field(default_factory=list)
     content_type: str = UNTRUSTED
+    # Temporal metadata (SPEC-13, FR-16.5) so a client never presents stale knowledge as current.
+    valid_from: str | None = None
+    valid_to: str | None = None
+    is_current: bool = True
 
 
 class RecallOutput(BaseModel):
@@ -90,22 +95,23 @@ class CorrectKnowledgeOutput(BaseModel):
     reverted_hint: str | None = None
 
 
-def _fragment_from_provenance(
-    text: str, provenance: object, credibility_fallback: float
-) -> RecallFragment:
-    prov = cast("dict[str, object]", provenance)
+def _fragment_from_provenance(fragment: Fragment, credibility_fallback: float) -> RecallFragment:
+    prov = cast("dict[str, object]", fragment.provenance)
     return RecallFragment(
-        text=text,
+        text=fragment.text,
         claim_ids=[str(c) for c in cast("list[object]", prov.get("claim_ids", []))],
         document=str(prov.get("document", "")),
         page=cast("int | None", prov.get("page")),
         credibility=float(cast("float", prov.get("credibility", credibility_fallback))),
         tags=[str(t) for t in cast("list[object]", prov.get("tags", []))],
+        valid_from=fragment.valid_from.isoformat() if fragment.valid_from else None,
+        valid_to=fragment.valid_to.isoformat() if fragment.valid_to else None,
+        is_current=fragment.is_current,
     )
 
 
 def to_recall_output(result: RecallResult) -> RecallOutput:
-    fragments = [_fragment_from_provenance(f.text, f.provenance, 0.5) for f in result.fragments]
+    fragments = [_fragment_from_provenance(f, 0.5) for f in result.fragments]
     return RecallOutput(
         found=result.found, fragments=fragments, gap_registered=result.gap_registered
     )
@@ -119,8 +125,22 @@ async def do_recall(
     query: str,
     top_k: int = 8,
     topics_hint: Sequence[str] | None = None,
+    as_of: str | None = None,
+    include_historical: bool = False,
+    include_superseded: bool = False,
 ) -> RecallOutput:
-    result = await retriever.recall(scope, query, top_k=top_k, topics_hint=topics_hint)
+    # Temporal params (SPEC-13, FR-16.7): as_of is an ISO date; include_superseded is honoured only
+    # for an admin (the retriever gates it on scope.can_curate, scope-from-token).
+    as_of_date = dt.date.fromisoformat(as_of) if as_of else None
+    result = await retriever.recall(
+        scope,
+        query,
+        top_k=top_k,
+        topics_hint=topics_hint,
+        as_of=as_of_date,
+        include_historical=include_historical,
+        include_superseded=include_superseded,
+    )
     output = to_recall_output(result)
     await audit.record_audit(
         sessionmaker,
