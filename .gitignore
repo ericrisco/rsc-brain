@@ -1,0 +1,56 @@
+# =============================================================================
+# rsc-brain — product repository publication boundary
+# =============================================================================
+# The product repo IS the workspace root; Eric's personal harness shares this
+# root and is kept LOCAL-ONLY by explicit instruction (2026-07-23). Harness paths
+# are root-anchored (leading "/") so a product file of the same basename deeper in
+# the tree (e.g. docs/AGENTS.md) stays trackable. This file is the durable,
+# worktree-inherited boundary required by AUDIT-010 — but it is NOT a substitute
+# for secret scanning, which remains a separate mandatory gate.
+
+# --- Local-only harness (never published) ---
+/.claude/
+/.codex/
+/.rsc/
+/01-TOOLS/
+/02-DOCS/
+/AGENTS.md
+/CLAUDE.md
+
+# --- Git worktrees live under the product root ---
+/.worktrees/
+
+# --- Secrets: real env files never enter history; example templates DO ---
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# --- Python: virtualenvs, caches, build + coverage artifacts ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+
+# --- Node / Next.js console (apps/admin) ---
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+
+# --- OS / editor cruft ---
+.DS_Store
+*.swp
