@@ -404,6 +404,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Project Timeline
+         * @description Contract parity for the MCP `timeline` tool (SPEC-17, FR-16.6): the ordered evolution of a
+         *     topic/entity, permission + project scoped (FR-4.3/12.5). For the console lane (SPEC-19).
+         */
+        get: operations["project_timeline_api_v1_admin_timeline_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/topics": {
         parameters: {
             query?: never;
@@ -1666,6 +1687,42 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    project_timeline_api_v1_admin_timeline_get: {
+        parameters: {
+            query?: {
+                topic?: string | null;
+                entity?: string | null;
+                as_of?: string | null;
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

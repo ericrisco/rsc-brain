@@ -26,11 +26,13 @@ from rsc_brain.mcp.tools import (
     RecallOutput,
     ReportFeedbackOutput,
     SubmitKnowledgeOutput,
+    TimelineOutput,
     do_correct_knowledge,
     do_get_document,
     do_recall,
     do_report_feedback,
     do_submit_knowledge,
+    do_timeline,
 )
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import ProjectScope
@@ -116,6 +118,22 @@ def build_mcp_server(
             as_of=as_of,
             include_historical=include_historical,
             include_superseded=include_superseded,
+        )
+
+    @server.tool(
+        description="Show the ordered evolution of claims for a topic or entity (time-travel)."
+    )
+    async def timeline(
+        ctx: Context[Any, Any, Any],
+        topic: str | None = None,
+        entity: str | None = None,
+        as_of: str | None = None,
+        top_k: int = 50,
+        on_behalf_of: str | None = None,
+    ) -> TimelineOutput:
+        scope = await _scope(ctx, on_behalf_of)
+        return await do_timeline(
+            sessionmaker, scope, topic=topic, entity=entity, as_of=as_of, top_k=top_k
         )
 
     @server.tool(description="Fetch a document's visible page text and metadata (traceability).")

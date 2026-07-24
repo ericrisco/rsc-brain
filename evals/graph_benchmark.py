@@ -8,10 +8,12 @@ The verdict (keep AGE / activate Kuzu) is recorded in the harness ``decisions.md
 
 from __future__ import annotations
 
+import datetime as dt
 import random
 import time
 from dataclasses import dataclass
 
+from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.graph_store import GraphEdge, GraphNode
@@ -102,6 +104,47 @@ async def benchmark_khop(
         n_edges=spec.edge_count,
         n_nodes=len(spec.node_ids),
         k=k,
+        iterations=iterations,
+        p50_ms=_percentile(timings, 50),
+        p95_ms=_percentile(timings, 95),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class AsOfBenchmarkResult:
+    """`as_of` reconstruction latency (SPEC-17, FR-16.4) — measured on the same footing as the D1
+    k-hop benchmark (NFR-1: p95 ≤1.5s GPU / ≤4s CPU). The 1M-edge run is the same documented
+    manual/nightly job; CI runs a scaled-down history to prove the measurement is reproducible."""
+
+    iterations: int
+    p50_ms: float
+    p95_ms: float
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "iterations": self.iterations,
+            "p50_ms": round(self.p50_ms, 2),
+            "p95_ms": round(self.p95_ms, 2),
+        }
+
+
+async def benchmark_as_of(
+    retriever: PgRetriever,
+    scope: ProjectScope,
+    *,
+    query: str,
+    as_of: dt.date,
+    iterations: int = 10,
+) -> AsOfBenchmarkResult:
+    """Time the `as_of` reconstruction path (vector + k-hop within the as-of subgraph) over
+    ``iterations`` runs. The bitemporal index backs the validity cut (verified by EXPLAIN in the
+    time-travel integration suite)."""
+    timings: list[float] = []
+    for _ in range(iterations):
+        began = time.monotonic()
+        await retriever.recall(scope, query, as_of=as_of)
+        timings.append((time.monotonic() - began) * 1000.0)
+    return AsOfBenchmarkResult(
         iterations=iterations,
         p50_ms=_percentile(timings, 50),
         p95_ms=_percentile(timings, 95),
