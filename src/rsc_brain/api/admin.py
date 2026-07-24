@@ -54,6 +54,26 @@ class UserInvite(BaseModel):
     role: str = "member"
 
 
+class PersonCreate(BaseModel):
+    name: str
+    topics: list[str] = Field(default_factory=list)
+    channels: dict[str, str] = Field(default_factory=dict)
+    quiet_hours: dict[str, str] = Field(default_factory=dict)
+    language: str | None = None
+
+
+class PersonUpdate(BaseModel):
+    topics: list[str] | None = None
+    channels: dict[str, str] | None = None
+    quiet_hours: dict[str, str] | None = None
+    language: str | None = None
+
+
+class HuntAsk(BaseModel):
+    question: str
+    topics: list[str] = Field(default_factory=list)
+
+
 def _deps(request: Request) -> object:
     return request.app.state.deps
 
@@ -264,9 +284,18 @@ async def list_pending_documents(
 
 @router.get("/gaps")
 async def list_project_gaps(
-    request: Request, scope: ProjectScope = Depends(_admin_scope)
+    request: Request,
+    scope: ProjectScope = Depends(_admin_scope),
+    audience: str | None = None,
 ) -> dict[str, object]:
-    return {"gaps": await list_gaps(_deps(request).sessionmaker, scope)}  # type: ignore[attr-defined]
+    """Project gaps. ``audience=agent`` returns the separate agent-gap view (FR-14.6); ``human``
+    the human-driven gaps eligible for the trigger; omitted returns all."""
+    gaps = await list_gaps(
+        _deps(request).sessionmaker,  # type: ignore[attr-defined]
+        scope,
+        audience=audience if audience in {"human", "agent"} else None,
+    )
+    return {"gaps": gaps}
 
 
 @router.get("/audit")
@@ -496,3 +525,126 @@ async def reject_document(
     except DocumentNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
     return {"document_id": document_id, "phase": run.phase}
+
+
+# --- hunting: persons, hunts, gap promotion (SPEC-15, FR-6.1/6.2/6.6) -----------------------
+
+
+def _directory(request: Request) -> object:
+    from rsc_brain.hunting.directory import PersonDirectory
+
+    return PersonDirectory(_deps(request).sessionmaker)  # type: ignore[attr-defined]
+
+
+def _hunts(request: Request) -> object:
+    from rsc_brain.hunting.service import HuntService
+
+    return HuntService(_deps(request).sessionmaker)  # type: ignore[attr-defined]
+
+
+@router.get("/persons")
+async def list_persons(
+    request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    rows = await _directory(request).list(scope)  # type: ignore[attr-defined]
+    return {
+        "persons": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "topics": list(p.topics),
+                "channels": p.channels,
+                "quiet_hours": p.quiet_hours,
+                "language": p.language,
+            }
+            for p in rows
+        ]
+    }
+
+
+@router.post("/persons", status_code=status.HTTP_201_CREATED)
+async def create_person(
+    body: PersonCreate, request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    person_id = await _directory(request).add(  # type: ignore[attr-defined]
+        scope,
+        name=body.name,
+        channels=body.channels,
+        topics=body.topics,
+        quiet_hours=body.quiet_hours,
+        language=body.language,
+    )
+    return {"person_id": person_id, "name": body.name}
+
+
+@router.patch("/persons/{person_id}")
+async def update_person(
+    person_id: str,
+    body: PersonUpdate,
+    request: Request,
+    scope: ProjectScope = Depends(_admin_scope),
+) -> dict[str, object]:
+    await _directory(request).update(  # type: ignore[attr-defined]
+        scope,
+        person_id,
+        topics=body.topics,
+        channels=body.channels,
+        quiet_hours=body.quiet_hours,
+        language=body.language,
+    )
+    return {"person_id": person_id, "updated": True}
+
+
+@router.delete("/persons/{person_id}")
+async def delete_person(
+    person_id: str, request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    await _directory(request).remove(scope, person_id)  # type: ignore[attr-defined]
+    return {"person_id": person_id, "removed": True}
+
+
+@router.get("/hunts")
+async def list_hunts(
+    request: Request,
+    scope: ProjectScope = Depends(_admin_scope),
+    open_only: bool = False,
+) -> dict[str, object]:
+    hunts = await _hunts(request).list_hunts(scope, open_only=open_only)  # type: ignore[attr-defined]
+    return {"hunts": hunts}
+
+
+@router.get("/hunts/{hunt_id}")
+async def get_hunt(
+    hunt_id: str, request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    hunt = await _hunts(request).get_hunt(scope, hunt_id)  # type: ignore[attr-defined]
+    if hunt is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="hunt not found")
+    return {"hunt": hunt}
+
+
+@router.post("/hunts/ask", status_code=status.HTTP_201_CREATED)
+async def ask_hunt(
+    body: HuntAsk, request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    """Open a MANUAL hunt (FR-6.2c) routed by topic overlap (NO_OWNER if unowned)."""
+    outcome = await _hunts(request).create_manual(  # type: ignore[attr-defined]
+        scope, question=body.question, topics=body.topics
+    )
+    return {
+        "hunt_id": outcome.hunt_id,
+        "state": str(outcome.state),
+        "person_id": outcome.person_id,
+        "throttled": outcome.throttled,
+    }
+
+
+@router.post("/gaps/{gap_id}/promote", status_code=status.HTTP_201_CREATED)
+async def promote_gap(
+    gap_id: str, request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    """Promote an agent gap to a hunt (FR-14.6 — agent gaps never trigger automatically)."""
+    outcome = await _hunts(request).promote_agent_gap(scope, gap_id)  # type: ignore[attr-defined]
+    if outcome is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="gap not found")
+    return {"hunt_id": outcome.hunt_id, "state": str(outcome.state)}

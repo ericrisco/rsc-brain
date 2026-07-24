@@ -348,6 +348,9 @@ class Person(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     channels: Mapped[dict[str, object]] = mapped_column(JSONB, server_default="{}")
     topics: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    # Hunting directory (SPEC-15, FR-6.1): quiet_hours {tz, start, end} + preferred language.
+    quiet_hours: Mapped[dict[str, object]] = mapped_column(JSONB, server_default="{}")
+    language: Mapped[str | None] = mapped_column(Text)
     __table_args__ = (Index("ix_persons_project_id_id", "project_id", "id"),)
 
 
@@ -380,6 +383,17 @@ class Hunt(Base):
     answer: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = _created_at()
     resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    # Lifecycle (SPEC-15): type, the one-time magic-link token hash, retry count, per-transition
+    # timestamps, the escalation deadline, the reviewed correction, and the resulting claim.
+    hunt_type: Mapped[str] = mapped_column(Text, server_default="GAP", nullable=False)
+    magic_token_hash: Mapped[str | None] = mapped_column(Text)
+    retries: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    correction_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    consent_requested_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    asked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    answered_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    claim_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     __table_args__ = (Index("ix_hunts_project_id_state", "project_id", "state"),)
 
 

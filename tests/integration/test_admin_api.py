@@ -72,6 +72,58 @@ async def test_admin_endpoints_reachable_by_curator(
             assert response.status_code == 200, f"{path}: {response.text}"
 
 
+async def test_hunting_endpoints_round_trip(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    """Persons CRUD → manual hunt (routed to the person) → hunts list/show → gaps audience view."""
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    token = await _mint_pat(harness, project, can_curate=True, role="member")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with _client(harness, tmp_path) as client:
+        created = await client.post(
+            "/api/v1/admin/persons",
+            json={"name": "Owner", "topics": ["engineering"], "channels": {"email": "o@x"}},
+            headers=headers,
+        )
+        assert created.status_code == 201, created.text
+        person_id = created.json()["person_id"]
+
+        listed = await client.get("/api/v1/admin/persons", headers=headers)
+        assert listed.status_code == 200
+        assert any(p["id"] == person_id for p in listed.json()["persons"])
+
+        patched = await client.patch(
+            f"/api/v1/admin/persons/{person_id}",
+            json={"language": "en"},
+            headers=headers,
+        )
+        assert patched.status_code == 200
+
+        asked = await client.post(
+            "/api/v1/admin/hunts/ask",
+            json={"question": "who owns deploys?", "topics": ["engineering"]},
+            headers=headers,
+        )
+        assert asked.status_code == 201, asked.text
+        body = asked.json()
+        assert body["state"] == "AWAITING_ANSWER" and body["person_id"] == person_id
+
+        hunts = await client.get("/api/v1/admin/hunts", headers=headers)
+        assert hunts.status_code == 200
+        assert len(hunts.json()["hunts"]) == 1
+        one = await client.get(f"/api/v1/admin/hunts/{body['hunt_id']}", headers=headers)
+        assert one.status_code == 200 and one.json()["hunt"]["type"] == "MANUAL"
+
+        # The separate agent-gap view is empty (no agent gaps recorded); it never 500s.
+        agent_gaps = await client.get("/api/v1/admin/gaps?audience=agent", headers=headers)
+        assert agent_gaps.status_code == 200 and agent_gaps.json()["gaps"] == []
+
+        removed = await client.delete(f"/api/v1/admin/persons/{person_id}", headers=headers)
+        assert removed.status_code == 200
+
+
 async def test_non_admin_is_forbidden(
     build_harness: Callable[..., Harness], tmp_path: Path
 ) -> None:

@@ -21,9 +21,7 @@ _OUTPUT = Path("apps/admin/openapi.json")
 
 def _dummy_capabilities() -> CapabilitiesConfig:
     cap = CapabilityConfig(provider="none", model="none")
-    return CapabilitiesConfig(
-        extractor=cap, judge=cap, topicalizer=cap, embedder=cap, reranker=cap
-    )
+    return CapabilitiesConfig(extractor=cap, judge=cap, topicalizer=cap, embedder=cap, reranker=cap)
 
 
 def build_openapi() -> dict[str, object]:
