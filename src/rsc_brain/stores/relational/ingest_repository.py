@@ -82,6 +82,7 @@ class ClaimSpec:
     object: str | None = None
     tags: tuple[str, ...] = ()
     extraction_confidence: float | None = None
+    credibility: float | None = None  # cred0 (SPEC-08 FR-5.1); None → DDL default
 
 
 @dataclass(frozen=True, slots=True)
@@ -575,6 +576,7 @@ class IngestRepository:
                         tags=list(claim.tags),
                         extraction_confidence=claim.extraction_confidence,
                         source_document_id=uuid.UUID(document_id),
+                        **({} if claim.credibility is None else {"credibility": claim.credibility}),
                     )
                 )
             entity_ids = await self._upsert_entities(session, scope, entities)

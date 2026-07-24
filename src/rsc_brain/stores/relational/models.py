@@ -20,6 +20,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Identity,
@@ -260,6 +261,14 @@ class Claim(Base):
     extraction_confidence: Mapped[float | None] = mapped_column(Numeric)
     source_document_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
+    # Living-graph state (SPEC-08). A superseded claim keeps valid_to set (not deleted);
+    # disputed = an unresolved contradiction; pending_confirmation = awaiting a second owner
+    # (sensitive correction) and invisible to recall; hunting_candidate = flagged for SPEC-15.
+    disputed: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    pending_confirmation: Mapped[bool] = mapped_column(
+        Boolean, server_default="false", nullable=False
+    )
+    hunting_candidate: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
     __table_args__ = (Index("ix_claims_project_id_chunk_id", "project_id", "chunk_id"),)
 
 
@@ -430,4 +439,74 @@ class IngestRun(Base):
     __table_args__ = (
         UniqueConstraint("document_id"),
         Index("ix_ingest_runs_project_id_id", "project_id", "id"),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Living graph (SPEC-08): credibility, contradictions, corrections
+# --------------------------------------------------------------------------- #
+
+
+class ClaimPairVerdict(Base):
+    """Cached contradiction verdict for an ordered claim pair (FR-5.2). Keyed by
+    (project_id, claim_a, claim_b, judge_version) so a judge change invalidates the cache."""
+
+    __tablename__ = "claim_pair_verdicts"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    claim_a: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
+    )
+    claim_b: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
+    )
+    judge_version: Mapped[str] = mapped_column(Text, nullable=False)
+    verdict: Mapped[str] = mapped_column(Text, nullable=False)  # agree|contradict|unrelated
+    confidence: Mapped[float] = mapped_column(Numeric, server_default="0.5", nullable=False)
+    created_at: Mapped[dt.datetime] = _created_at()
+    __table_args__ = (
+        UniqueConstraint("project_id", "claim_a", "claim_b", "judge_version"),
+        Index("ix_claim_pair_verdicts_project_id_id", "project_id", "id"),
+    )
+
+
+class Correction(Base):
+    """A Learning-Layer correction (FR-15.7, DDL §3.8). Auditable + reversible."""
+
+    __tablename__ = "corrections"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    target_claim: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
+    )
+    new_claim: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    author_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    on_behalf_of: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    role_applied: Mapped[str | None] = mapped_column(Text)  # owner_direct|second_owner|reverted
+    status: Mapped[str] = mapped_column(Text, nullable=False)  # applied|pending_confirmation|...
+    before_text: Mapped[str | None] = mapped_column(Text)
+    after_text: Mapped[str | None] = mapped_column(Text)
+    hunt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = _created_at()
+    resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (Index("ix_corrections_project_id_id", "project_id", "id"),)
+
+
+class FeedbackDailyImpact(Base):
+    """Consumed feedback budget per (principal, claim, day) — the cap that stops agent spam
+    from moving a claim more than the daily limit (FR-5.4/14.5)."""
+
+    __tablename__ = "feedback_daily_impact"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    principal_id: Mapped[str] = mapped_column(Text, nullable=False)
+    claim_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
+    )
+    day: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    impact: Mapped[float] = mapped_column(Numeric, server_default="0", nullable=False)
+    __table_args__ = (
+        UniqueConstraint("project_id", "principal_id", "claim_id", "day"),
+        Index("ix_feedback_daily_impact_project_id_id", "project_id", "id"),
     )

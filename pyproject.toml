@@ -132,10 +132,10 @@ ignore_missing_imports = true
 module = ["pgvector.*", "asyncpg", "asyncpg.*", "testcontainers.*", "reportlab.*", "PIL.*"]
 ignore_missing_imports = true
 
-# docling is an operator-installed extra (never in the locked graph); procrastinate ships no
-# type stubs. Both are ignored for missing imports so the default install type-checks cleanly.
+# docling + transformers are operator-installed extras (never in the locked graph); procrastinate
+# ships no type stubs. All ignored for missing imports so the default install type-checks cleanly.
 [[tool.mypy.overrides]]
-module = ["docling.*", "procrastinate.*"]
+module = ["docling.*", "procrastinate.*", "transformers", "transformers.*"]
 ignore_missing_imports = true
 
 # Alembic env/migrations are infra glue against untyped alembic runtime objects.

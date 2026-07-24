@@ -68,11 +68,28 @@ class PgRetriever:
         gateway: ModelGateway,
         graph_store: AgeGraphStore,
         config: RecallConfig | None = None,
+        contradiction_resolver: object | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._gateway = gateway
         self._graph = graph_store
         self._config = config or RecallConfig()
+        # Optional on-consume contradiction re-check (FR-3.4). None keeps SPEC-06 behaviour.
+        self._resolver = contradiction_resolver
+
+    async def _detect_on_consume(
+        self, scope: ProjectScope, candidates: Sequence[_Candidate]
+    ) -> None:
+        """FR-3.4: run recovered-context claim pairs through the resolver (cache → only unseen
+        pairs judged). No-op unless a resolver is configured (opt-in)."""
+        if self._resolver is None:
+            return
+        claim_ids = [cid for candidate in candidates for cid in candidate.claim_ids]
+        if claim_ids:
+            from rsc_brain.knowledge.contradictions import ContradictionResolver
+
+            assert isinstance(self._resolver, ContradictionResolver)
+            await self._resolver.resolve_ids(scope, claim_ids)
 
     async def recall(
         self,
@@ -85,10 +102,11 @@ class PgRetriever:
         include_historical: bool = False,
         include_superseded: bool = False,
     ) -> RecallResult:
-        # Temporal params (include_historical/include_superseded) are honored in SPEC-13/17; here
-        # recall returns current knowledge only. Accepted to stay compatible with the frozen
-        # Retriever protocol (SPEC-01).
-        del include_historical, include_superseded
+        # Temporal window (include_historical/as_of) is honored in SPEC-13/17; here recall returns
+        # current knowledge. `include_superseded` surfaces valid_to-set claims in the provenance,
+        # but ONLY for an admin (curator) — otherwise it is ignored (FR-5.5, admin-only).
+        del include_historical
+        show_superseded = include_superseded and scope.can_curate
         as_of = as_of or dt.datetime.now(dt.UTC).date()
         # A caller with no topic access can match nothing (fail closed → indistinguishable).
         if not scope.allowed_topics:
@@ -100,7 +118,10 @@ class PgRetriever:
 
         candidate_ids = await self._vector_candidates(scope, vector, forbidden, top_k)
         candidate_ids = await self._expand_k_hop(scope, forbidden, candidate_ids)
-        candidates = await self._load_candidates(scope, vector, candidate_ids)
+        candidates = await self._load_candidates(
+            scope, vector, candidate_ids, show_superseded=show_superseded
+        )
+        await self._detect_on_consume(scope, candidates)
 
         if not candidates:
             await register_gap(self._sm, scope, query, topics=topics_hint or ())
@@ -197,7 +218,12 @@ class PgRetriever:
             return [str(c) for c in rows]
 
     async def _load_candidates(
-        self, scope: ProjectScope, vector: Sequence[float], candidate_ids: list[str]
+        self,
+        scope: ProjectScope,
+        vector: Sequence[float],
+        candidate_ids: list[str],
+        *,
+        show_superseded: bool = False,
     ) -> list[_Candidate]:
         if not candidate_ids:
             return []
@@ -221,7 +247,9 @@ class PgRetriever:
             )
             candidates: list[_Candidate] = []
             for cid, text, tags, page, document_id, title, sim in rows.all():
-                claim = await self._claim_aggregate(session, scope, cid)
+                claim = await self._claim_aggregate(
+                    session, scope, cid, show_superseded=show_superseded
+                )
                 candidates.append(
                     _Candidate(
                         chunk_id=str(cid),
@@ -240,18 +268,28 @@ class PgRetriever:
             return candidates
 
     async def _claim_aggregate(
-        self, session: AsyncSession, scope: ProjectScope, chunk_id: uuid.UUID
+        self,
+        session: AsyncSession,
+        scope: ProjectScope,
+        chunk_id: uuid.UUID,
+        *,
+        show_superseded: bool = False,
     ) -> _ClaimAggregate:
+        conditions = [
+            models.Claim.chunk_id == chunk_id,
+            models.Claim.project_id == uuid.UUID(scope.project_id),
+            models.Claim.pending_confirmation.is_(False),  # never surface unconfirmed claims
+        ]
+        if not show_superseded:
+            # Exclude superseded (valid_to set) claims from the provenance (FR-5.5, admin-only).
+            conditions.append(models.Claim.valid_to.is_(None))
         rows = await session.execute(
             select(
                 models.Claim.id,
                 models.Claim.credibility,
                 models.Claim.importance,
                 models.Claim.valid_from,
-            ).where(
-                models.Claim.chunk_id == chunk_id,
-                models.Claim.project_id == uuid.UUID(scope.project_id),
-            )
+            ).where(*conditions)
         )
         claim_ids: list[str] = []
         credibilities: list[float] = []
