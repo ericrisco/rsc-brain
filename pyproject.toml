@@ -45,6 +45,7 @@ dev = [
 ]
 security = [
     "pip-audit>=2.7",       # SCA gate; run in CI + locally
+    "pip-licenses>=5",      # AGPL-compat license audit (NFR-10)
 ]
 
 [build-system]

@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+  push:
+    tags: ["v*"]
+
+# Nothing by default; each job grants only the token scope it demonstrably needs (AUDIT-006).
+# Neither job needs contents:write — they only read the source to produce evidence.
+permissions: {}
+
+jobs:
+  sbom:
+    name: SBOM (syft)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: rsc-brain.sbom.spdx.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom
+          path: rsc-brain.sbom.spdx.json
+
+  vuln-scan:
+    name: CVE scan (grype)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          path: .
+          fail-build: true
+          severity-cutoff: high

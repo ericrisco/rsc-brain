@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege by default: the whole workflow can only read the repo (AUDIT-006).
+# Untrusted fork PRs therefore get no secrets and no write-capable token.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: lint · types · tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --all-groups
+      - run: uv run ruff check .
+      - run: uv run ruff format --check src tests
+      - run: uv run mypy
+      - run: uv run pytest --cov=rsc_brain --cov-report=term-missing --cov-fail-under=70
+
+  licenses:
+    name: AGPL license audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --all-groups
+      - run: uv run python scripts/check_licenses.py
+
+  integration:
+    name: data service (ephemeral compose)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build + smoke-test AGE/pgvector
+        env:
+          POSTGRES_PASSWORD: ci-ephemeral-strong-pw-${{ github.run_id }}
+        run: |
+          docker compose up -d --wait --wait-timeout 300 db
+          docker compose exec -u postgres -T db \
+            psql -U rsc_brain -d rsc_brain \
+            -c "CREATE EXTENSION IF NOT EXISTS age; CREATE EXTENSION IF NOT EXISTS vector;" \
+            -c "SELECT extname, extversion FROM pg_extension WHERE extname IN ('age','vector');"
+          docker compose down -v
