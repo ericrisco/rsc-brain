@@ -24,10 +24,12 @@ from rsc_brain.mcp.tools import (
     GetDocumentOutput,
     RecallOutput,
     ReportFeedbackOutput,
+    SubmitKnowledgeOutput,
     do_correct_knowledge,
     do_get_document,
     do_recall,
     do_report_feedback,
+    do_submit_knowledge,
 )
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import ProjectScope
@@ -67,9 +69,7 @@ def build_mcp_server(
         stateless_http=stateless,
     )
 
-    async def _scope(
-        ctx: Context[Any, Any, Any], on_behalf_of: str | None = None
-    ) -> ProjectScope:
+    async def _scope(ctx: Context[Any, Any, Any], on_behalf_of: str | None = None) -> ProjectScope:
         request = ctx.request_context.request
         authorization = request.headers.get("authorization") if request is not None else None
         try:
@@ -108,9 +108,7 @@ def build_mcp_server(
         scope = await _scope(ctx, on_behalf_of)
         return await do_get_document(sessionmaker, scope, document_id=document_id, page=page)
 
-    @server.tool(
-        description="Report feedback on claims (audited; credibility loop from SPEC-08)."
-    )
+    @server.tool(description="Report feedback on claims (audited; credibility loop from SPEC-08).")
     async def report_feedback(
         claim_ids: list[str],
         signal: FeedbackSignal,
@@ -121,6 +119,29 @@ def build_mcp_server(
         scope = await _scope(ctx, on_behalf_of)
         return await do_report_feedback(
             sessionmaker, scope, claim_ids=claim_ids, signal=signal, note=note
+        )
+
+    @server.tool(
+        description="Submit knowledge (agents + humans): idempotency_key required; the project's "
+        "agent_writes policy governs quarantine/direct/off (FR-14.4)."
+    )
+    async def submit_knowledge(
+        text: str,
+        idempotency_key: str,
+        ctx: Context[Any, Any, Any],
+        entities: list[str] | None = None,
+        tags: list[str] | None = None,
+        on_behalf_of: str | None = None,
+    ) -> SubmitKnowledgeOutput:
+        scope = await _scope(ctx, on_behalf_of)
+        return await do_submit_knowledge(
+            sessionmaker,
+            gateway,
+            scope,
+            text=text,
+            idempotency_key=idempotency_key,
+            entities=entities,
+            tags=tags,
         )
 
     @server.tool(

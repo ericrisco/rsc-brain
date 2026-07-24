@@ -566,3 +566,44 @@ class EntityMergeProposal(Base):
         Index("ix_entity_merge_proposals_project_id_id", "project_id", "id"),
         Index("ix_entity_merge_proposals_project_id_status", "project_id", "status"),
     )
+
+
+class AgentWriteIdempotency(Base):
+    """Idempotency ledger for ``submit_knowledge`` (SPEC-11, FR-14.4): a retry with the same
+    ``(project, principal, idempotency_key)`` returns the original claim ids, never duplicates."""
+
+    __tablename__ = "agent_write_idempotency"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    principal_id: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    claim_ids: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)  # quarantined|active|rejected
+    created_at: Mapped[dt.datetime] = _created_at()
+    __table_args__ = (UniqueConstraint("project_id", "principal_id", "idempotency_key"),)
+
+
+class PrincipalDailyUsage(Base):
+    """Per-principal daily recall/write counters (SPEC-11, FR-14.7) — the daily budget ledger +
+    the data FR-13.7 surfaces later (SPEC-26)."""
+
+    __tablename__ = "principal_daily_usage"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    principal_id: Mapped[str] = mapped_column(Text, nullable=False)
+    day: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    recalls: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    writes: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    __table_args__ = (UniqueConstraint("project_id", "principal_id", "day"),)
+
+
+class PrincipalRateWindow(Base):
+    """Sliding per-minute request counter per principal (SPEC-11, FR-14.7), shared across workers
+    via Postgres — no Redis. One row per (principal, minute-truncated window)."""
+
+    __tablename__ = "principal_rate_window"
+    id: Mapped[uuid.UUID] = _pk()
+    principal_id: Mapped[str] = mapped_column(Text, nullable=False)
+    window_start: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    count: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    __table_args__ = (UniqueConstraint("principal_id", "window_start"),)
