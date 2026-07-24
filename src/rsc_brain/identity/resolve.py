@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from dataclasses import replace
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -81,6 +82,41 @@ async def _resolve_oauth(
     if oauth.expires_at is not None and oauth.expires_at < now:
         return None
     return await _membership_scope(session, oauth.membership_id)
+
+
+async def resolve_delegated_scope(
+    sessionmaker: async_sessionmaker[AsyncSession], agent_scope: ProjectScope, user_id: str
+) -> ProjectScope | None:
+    """Resolve an agent's ``on_behalf_of`` delegation (SPEC-11, FR-14.2).
+
+    The delegated user must exist, be active, and be a member of the **agent's project**;
+    otherwise ``None`` (the caller maps that to ``AUTH_INVALID``). Effective permissions are the
+    **intersection** ``topics(agent) ∩ topics(user)`` — never a broadening, never a project change.
+    The principal stays the agent (audit records both the agent and ``on_behalf_of``)."""
+    if agent_scope.principal_type is not PrincipalType.AGENT:
+        return None
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError:
+        return None
+    async with sessionmaker() as session:
+        user = await session.get(models.User, uid)
+        if user is None or user.status != "active":
+            return None
+        membership = await session.scalar(
+            select(models.ProjectMembership).where(
+                models.ProjectMembership.user_id == uid,
+                models.ProjectMembership.project_id == uuid.UUID(agent_scope.project_id),
+            )
+        )
+        if membership is None:
+            return None
+        return replace(
+            agent_scope,
+            allowed_topics=agent_scope.allowed_topics & frozenset(membership.allowed_topics),
+            can_curate=agent_scope.can_curate and membership.can_curate,
+            on_behalf_of=user_id,
+        )
 
 
 async def _membership_scope(session: AsyncSession, membership_id: uuid.UUID) -> ProjectScope | None:

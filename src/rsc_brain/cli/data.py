@@ -72,16 +72,25 @@ def restore(
     file: Path = typer.Argument(..., help="Dump file produced by `brain backup`."),
     json_output: bool = JSON_OPTION,
 ) -> None:
-    """Restore a dump, apply migrations, and verify the database (extensions + schema head)."""
+    """Restore a dump, apply migrations, and verify the database (extensions + schema head).
+
+    ``pg_restore --clean`` reports non-zero when it cannot DROP/recreate objects owned by the
+    Apache AGE extension (its per-graph label tables and the extension itself resist a plain
+    dump/restore) — those errors are **non-fatal**: the data restores regardless. So the
+    post-restore **verification** (extensions present + schema at head), not pg_restore's exit
+    code, is the gate."""
     env, url = _libpq(resolve_dsn())
-    subprocess.run(
+    result = subprocess.run(
         ["pg_restore", "--clean", "--if-exists", "--no-owner", "--dbname", url, str(file)],
         env=env,
-        check=True,
+        check=False,
+        capture_output=True,
+        text=True,
     )
     upgrade_to_head()
     verified = asyncio.run(_verify_database())
     if not verified:
+        typer.echo(result.stderr, err=True)
         raise typer.Exit(code=1)
     emit_result(
         ctx,

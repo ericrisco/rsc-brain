@@ -66,6 +66,16 @@ class ReportFeedbackOutput(BaseModel):
     ok: bool
 
 
+class SubmitKnowledgeOutput(BaseModel):
+    """`submit_knowledge` output (§5.8, FR-14.4)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    status: str  # quarantined | active | rejected
+    claim_ids: list[str] = Field(default_factory=list)
+
+
 class CorrectKnowledgeOutput(BaseModel):
     """`correct_knowledge` output (§3.5)."""
 
@@ -197,6 +207,45 @@ async def do_report_feedback(
         result_count=result.applied,
     )
     return ReportFeedbackOutput(ok=True)
+
+
+async def do_submit_knowledge(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    gateway: object,
+    scope: ProjectScope,
+    *,
+    text: str,
+    idempotency_key: str,
+    entities: Sequence[str] | None = None,
+    tags: Sequence[str] | None = None,
+) -> SubmitKnowledgeOutput:
+    """Agent/human knowledge write (SPEC-11 FR-14.4). `idempotency_key` is required; the project's
+    `agent_writes` policy decides quarantine/direct/off. Audited (agent + on_behalf_of via scope)."""
+    from rsc_brain.gateway.model_gateway import ModelGateway
+    from rsc_brain.knowledge.agent_writes import AgentWriteService
+
+    assert isinstance(gateway, ModelGateway)
+    if not idempotency_key:
+        # Writes require an idempotency key (retries must not duplicate) — reject without one.
+        return SubmitKnowledgeOutput(ok=False, status="rejected", claim_ids=[])
+    result = await AgentWriteService(sessionmaker, gateway).submit(
+        scope,
+        text=text,
+        idempotency_key=idempotency_key,
+        entities=list(entities) if entities else None,
+        tags=list(tags) if tags else None,
+    )
+    await audit.record_audit(
+        sessionmaker,
+        scope,
+        action=f"submit_knowledge:{result.status}",
+        tool="submit_knowledge",
+        result_count=len(result.claim_ids),
+        denied=result.status == "rejected",
+    )
+    return SubmitKnowledgeOutput(
+        ok=result.status != "rejected", status=result.status, claim_ids=result.claim_ids
+    )
 
 
 async def do_correct_knowledge(

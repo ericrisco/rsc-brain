@@ -16,17 +16,21 @@ from mcp.server.fastmcp.exceptions import ToolError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.gateway.model_gateway import ModelGateway
-from rsc_brain.mcp.auth import MCPToolError, authenticate
+from rsc_brain.identity.resolve import resolve_delegated_scope
+from rsc_brain.mcp.auth import AuthInvalidError, MCPToolError, RateLimitedError, authenticate
+from rsc_brain.mcp.quotas import Kind, QuotaConfig, QuotaService
 from rsc_brain.mcp.tools import (
     CorrectKnowledgeOutput,
     FeedbackSignal,
     GetDocumentOutput,
     RecallOutput,
     ReportFeedbackOutput,
+    SubmitKnowledgeOutput,
     do_correct_knowledge,
     do_get_document,
     do_recall,
     do_report_feedback,
+    do_submit_knowledge,
 )
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import ProjectScope
@@ -57,20 +61,36 @@ def build_mcp_server(
     retriever: PgRetriever,
     gateway: ModelGateway,
     stateless: bool = True,
+    quota_config: QuotaConfig | None = None,
 ) -> FastMCP:
     """Build the FastMCP server wired to the retriever + stores."""
     graph = AgeGraphStore(sessionmaker)
+    quotas = QuotaService(sessionmaker, quota_config)
     server = FastMCP(
         name="rsc-brain",
         instructions=ANTI_INJECTION_GUIDE,
         stateless_http=stateless,
     )
 
-    async def _scope(ctx: Context[Any, Any, Any]) -> ProjectScope:
+    async def _scope(
+        ctx: Context[Any, Any, Any], on_behalf_of: str | None = None, *, kind: Kind = "recall"
+    ) -> ProjectScope:
         request = ctx.request_context.request
         authorization = request.headers.get("authorization") if request is not None else None
         try:
-            return await authenticate(sessionmaker, authorization)
+            scope = await authenticate(sessionmaker, authorization)
+            if on_behalf_of is not None:
+                # Agent delegation (FR-14.2): effective topics = agent ∩ delegated user, same
+                # project. Invalid delegation is AUTH_INVALID (indistinguishable from a bad token).
+                delegated = await resolve_delegated_scope(sessionmaker, scope, on_behalf_of)
+                if delegated is None:
+                    raise AuthInvalidError("invalid delegation")
+                scope = delegated
+            # Per-principal quota (FR-14.7): counts this call; over the limit → RATE_LIMITED.
+            await quotas.consume(scope, kind)
+            return scope
+        except RateLimitedError as exc:
+            raise ToolError(f"{exc.code}: {exc} (retry_after={exc.retry_after})") from exc
         except MCPToolError as exc:
             raise ToolError(f"{exc.code}: {exc}") from exc
 
@@ -80,31 +100,57 @@ def build_mcp_server(
         ctx: Context[Any, Any, Any],
         top_k: int = 8,
         topics_hint: list[str] | None = None,
+        on_behalf_of: str | None = None,
     ) -> RecallOutput:
-        scope = await _scope(ctx)
+        scope = await _scope(ctx, on_behalf_of)
         return await do_recall(
             retriever, sessionmaker, scope, query=query, top_k=top_k, topics_hint=topics_hint
         )
 
     @server.tool(description="Fetch a document's visible page text and metadata (traceability).")
     async def get_document(
-        document_id: str, ctx: Context[Any, Any, Any], page: int | None = None
+        document_id: str,
+        ctx: Context[Any, Any, Any],
+        page: int | None = None,
+        on_behalf_of: str | None = None,
     ) -> GetDocumentOutput:
-        scope = await _scope(ctx)
+        scope = await _scope(ctx, on_behalf_of)
         return await do_get_document(sessionmaker, scope, document_id=document_id, page=page)
 
-    @server.tool(
-        description="Report feedback on claims (stub: audited; credibility loop is SPEC-08)."
-    )
+    @server.tool(description="Report feedback on claims (audited; credibility loop from SPEC-08).")
     async def report_feedback(
         claim_ids: list[str],
         signal: FeedbackSignal,
         ctx: Context[Any, Any, Any],
         note: str | None = None,
+        on_behalf_of: str | None = None,
     ) -> ReportFeedbackOutput:
-        scope = await _scope(ctx)
+        scope = await _scope(ctx, on_behalf_of)
         return await do_report_feedback(
             sessionmaker, scope, claim_ids=claim_ids, signal=signal, note=note
+        )
+
+    @server.tool(
+        description="Submit knowledge (agents + humans): idempotency_key required; the project's "
+        "agent_writes policy governs quarantine/direct/off (FR-14.4)."
+    )
+    async def submit_knowledge(
+        text: str,
+        idempotency_key: str,
+        ctx: Context[Any, Any, Any],
+        entities: list[str] | None = None,
+        tags: list[str] | None = None,
+        on_behalf_of: str | None = None,
+    ) -> SubmitKnowledgeOutput:
+        scope = await _scope(ctx, on_behalf_of, kind="write")
+        return await do_submit_knowledge(
+            sessionmaker,
+            gateway,
+            scope,
+            text=text,
+            idempotency_key=idempotency_key,
+            entities=entities,
+            tags=tags,
         )
 
     @server.tool(
