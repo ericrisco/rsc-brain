@@ -12,11 +12,12 @@ the whole flow is deterministic in tests. ``CORRECTION_REVIEW`` hunts are handle
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import security
@@ -31,6 +32,34 @@ from rsc_brain.stores.relational.database import session_scope
 HUNT_ANSWER_CREDIBILITY = 0.95
 _EXPIRY = dt.timedelta(hours=72)
 _HUNT_LOGICAL_ID = "__hunting__"
+_OPEN_STATES = tuple(state for state in HuntState if is_open(state))
+
+
+def _advisory_key(project_id: str, person_id: str) -> int:
+    """A stable signed 64-bit key for ``pg_advisory_xact_lock`` per (project, person), so all
+    concurrent opens for one person serialise and the anti-spam caps hold under concurrency."""
+    digest = hashlib.sha256(f"{project_id}:{person_id}".encode()).digest()
+    return int.from_bytes(digest[:8], "big", signed=True)
+
+
+def _hunt_public(hunt: models.Hunt) -> dict[str, object]:
+    """Serialise a hunt row for the CLI / admin API (never leaks the magic-token hash)."""
+    return {
+        "id": str(hunt.id),
+        "type": hunt.hunt_type,
+        "state": hunt.state,
+        "question": hunt.question,
+        "person_id": str(hunt.person_id) if hunt.person_id else None,
+        "gap_id": str(hunt.gap_id) if hunt.gap_id else None,
+        "correction_id": str(hunt.correction_id) if hunt.correction_id else None,
+        "channel": hunt.channel,
+        "retries": hunt.retries,
+        "created_at": hunt.created_at.isoformat() if hunt.created_at else None,
+        "asked_at": hunt.asked_at.isoformat() if hunt.asked_at else None,
+        "answered_at": hunt.answered_at.isoformat() if hunt.answered_at else None,
+        "expires_at": hunt.expires_at.isoformat() if hunt.expires_at else None,
+        "resolved_at": hunt.resolved_at.isoformat() if hunt.resolved_at else None,
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +151,31 @@ class HuntService:
             scope, hunt_type=HuntType.GAP, question=question, topics=topics, gap_id=gap_id
         )
 
+    # --- read models (CLI / admin API, FR-6.6 partial) -----------------------
+
+    async def list_hunts(
+        self, scope: ProjectScope, *, open_only: bool = False, limit: int = 100
+    ) -> list[dict[str, object]]:
+        """The project's hunts, newest first — for ``brain hunts list`` and the admin API."""
+        query = (
+            select(models.Hunt)
+            .where(models.Hunt.project_id == _pid(scope))
+            .order_by(models.Hunt.created_at.desc())
+            .limit(limit)
+        )
+        if open_only:
+            query = query.where(models.Hunt.state.in_([s.value for s in _OPEN_STATES]))
+        async with self._sm() as session:
+            rows = await session.scalars(query)
+            return [_hunt_public(hunt) for hunt in rows]
+
+    async def get_hunt(self, scope: ProjectScope, hunt_id: str) -> dict[str, object] | None:
+        async with self._sm() as session:
+            hunt = await session.get(models.Hunt, uuid.UUID(hunt_id))
+            if hunt is None or hunt.project_id != _pid(scope):
+                return None
+            return _hunt_public(hunt)
+
     # --- lifecycle -----------------------------------------------------------
 
     async def _open(
@@ -142,17 +196,14 @@ class HuntService:
             )
             await self._alert_admin(scope, f"hunt {hunt_id}: no owner for topics {list(topics)}")
             return HuntOutcome(hunt_id=hunt_id, state=HuntState.NO_OWNER, person_id=None)
-        # Anti-spam (FR-6.5): don't open beyond the per-person / weekly caps.
-        if await self._over_limit(scope, person.id, now):
-            hunt_id = await self._persist_no_owner(
-                scope, hunt_type, question, gap_id, correction_id, state=HuntState.ROUTED
-            )
-            return HuntOutcome(
-                hunt_id=hunt_id, state=HuntState.ROUTED, person_id=person.id, throttled=True
-            )
         token = security.mint_token("hunt_")
         quiet = _in_quiet_hours(person, now)
         async with session_scope(self._sm) as session:
+            # Serialise all concurrent opens for this person, then check the caps in the SAME
+            # transaction as the insert — so 3 open / 5 per week hold even under concurrent
+            # creation (FR-6.5, AC#7); a throttled hunt is parked ROUTED and never sent (§7.1).
+            await self._lock_person(session, scope, person.id)
+            throttled = await self._over_limit(session, scope, person.id, now)
             hunt = models.Hunt(
                 project_id=_pid(scope),
                 hunt_type=hunt_type.value,
@@ -160,22 +211,36 @@ class HuntService:
                 person_id=uuid.UUID(person.id),
                 correction_id=uuid.UUID(correction_id) if correction_id else None,
                 channel=_preferred_channel(person),
-                state=HuntState.AWAITING_ANSWER.value,  # DETECTED→ROUTED→CONSENT_REQUESTED→AWAITING
+                # DETECTED→ROUTED→CONSENT_REQUESTED→AWAITING (parked at ROUTED when throttled).
+                state=(HuntState.ROUTED if throttled else HuntState.AWAITING_ANSWER).value,
                 question=question,
-                magic_token_hash=security.token_hash(token),
+                magic_token_hash=None if throttled else security.token_hash(token),
                 consent_requested_at=now,
-                asked_at=None if quiet else now,
-                expires_at=now + _EXPIRY,
+                asked_at=None if (throttled or quiet) else now,
+                expires_at=None if throttled else now + _EXPIRY,
+                created_at=now,
             )
             session.add(hunt)
             await session.flush()
             hunt_id = str(hunt.id)
+        if throttled:
+            return HuntOutcome(
+                hunt_id=hunt_id, state=HuntState.ROUTED, person_id=person.id, throttled=True
+            )
         # A message is NEVER sent during quiet_hours — it waits for the next window (FR-6.5/3.4).
         if not quiet:
             await self._send_question(person, question, token)
         await self._audit(scope, "hunt_opened", person.id)
         return HuntOutcome(
             hunt_id=hunt_id, state=HuntState.AWAITING_ANSWER, person_id=person.id, magic_token=token
+        )
+
+    async def _lock_person(
+        self, session: AsyncSession, scope: ProjectScope, person_id: str
+    ) -> None:
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": _advisory_key(scope.project_id, person_id)},
         )
 
     async def answer_via_magic_link(self, token: str, answer: str) -> HuntOutcome | None:
@@ -308,28 +373,31 @@ class HuntService:
         )
         return existing is not None
 
-    async def _over_limit(self, scope: ProjectScope, person_id: str, now: dt.datetime) -> bool:
+    async def _over_limit(
+        self, session: AsyncSession, scope: ProjectScope, person_id: str, now: dt.datetime
+    ) -> bool:
+        """Count this person's open + weekly hunts against the caps. Runs on the caller's locked
+        transaction (see :meth:`_lock_person`) so the read is consistent with the pending insert."""
         open_states = [s.value for s in HuntState if is_open(s)]
         week_ago = now - dt.timedelta(days=7)
-        async with self._sm() as session:
-            open_count = await session.scalar(
-                select(func.count())
-                .select_from(models.Hunt)
-                .where(
-                    models.Hunt.project_id == _pid(scope),
-                    models.Hunt.person_id == uuid.UUID(person_id),
-                    models.Hunt.state.in_(open_states),
-                )
+        open_count = await session.scalar(
+            select(func.count())
+            .select_from(models.Hunt)
+            .where(
+                models.Hunt.project_id == _pid(scope),
+                models.Hunt.person_id == uuid.UUID(person_id),
+                models.Hunt.state.in_(open_states),
             )
-            week_count = await session.scalar(
-                select(func.count())
-                .select_from(models.Hunt)
-                .where(
-                    models.Hunt.project_id == _pid(scope),
-                    models.Hunt.person_id == uuid.UUID(person_id),
-                    models.Hunt.created_at >= week_ago,
-                )
+        )
+        week_count = await session.scalar(
+            select(func.count())
+            .select_from(models.Hunt)
+            .where(
+                models.Hunt.project_id == _pid(scope),
+                models.Hunt.person_id == uuid.UUID(person_id),
+                models.Hunt.created_at >= week_ago,
             )
+        )
         return int(open_count or 0) >= self._max_open or int(week_count or 0) >= self._max_week
 
     async def _ingest_answer(

@@ -11,6 +11,7 @@ import datetime as dt
 import hashlib
 import uuid
 from collections.abc import Sequence
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -77,19 +78,53 @@ async def get_gap_count(
         return int(count or 0)
 
 
+def _denied_recall_exists(scope: ProjectScope, principal_type: str) -> Any:
+    """EXISTS a denied recall of the same query by a principal of ``principal_type`` (the gap/audit
+    join that separates human-driven gaps from agent-driven ones, FR-14.6)."""
+    return (
+        select(models.AuditLog.id)
+        .where(
+            models.AuditLog.project_id == uuid.UUID(scope.project_id),
+            models.AuditLog.action == "recall",
+            models.AuditLog.denied.is_(True),
+            models.AuditLog.query_hash == models.Gap.query_hash,
+            models.AuditLog.principal_type == principal_type,
+        )
+        .exists()
+    )
+
+
 async def list_gaps(
-    sessionmaker: async_sessionmaker[AsyncSession], scope: ProjectScope, *, limit: int = 100
+    sessionmaker: async_sessionmaker[AsyncSession],
+    scope: ProjectScope,
+    *,
+    audience: str | None = None,
+    limit: int = 100,
 ) -> list[dict[str, object]]:
-    """The project's recorded gaps, most-frequent first (for the admin API / console)."""
+    """The project's recorded gaps, most-frequent first (for the admin API / console).
+
+    ``audience`` filters by who drove the gap (FR-14.6, derived from the audit trail so no gap row
+    conflates the two): ``"human"`` keeps gaps with ≥1 human denied recall (the default hunting
+    audience); ``"agent"`` keeps gaps with agent denied recalls but **no** human one — the separate
+    agent view that never triggers hunting. ``None`` returns every gap.
+    """
     async with sessionmaker() as session:
-        rows = await session.scalars(
+        query = (
             select(models.Gap)
             .where(models.Gap.project_id == uuid.UUID(scope.project_id))
             .order_by(models.Gap.count.desc(), models.Gap.last_seen_at.desc())
             .limit(limit)
         )
+        if audience == "human":
+            query = query.where(_denied_recall_exists(scope, "human"))
+        elif audience == "agent":
+            query = query.where(
+                _denied_recall_exists(scope, "agent"), ~_denied_recall_exists(scope, "human")
+            )
+        rows = await session.scalars(query)
         return [
             {
+                "id": str(gap.id),
                 "query_text": gap.query_text,
                 "topics": list(gap.topics),
                 "count": gap.count,

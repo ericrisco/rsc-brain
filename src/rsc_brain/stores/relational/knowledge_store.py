@@ -207,6 +207,20 @@ class KnowledgeStore:
                 .values(**values)
             )
 
+    async def link_correction_hunt(
+        self, scope: ProjectScope, correction_id: str, hunt_id: str
+    ) -> None:
+        """Record which CORRECTION_REVIEW hunt owns a routed correction (SPEC-15 §8.1)."""
+        async with session_scope(self._sm) as session:
+            await session.execute(
+                update(models.Correction)
+                .where(
+                    models.Correction.id == uuid.UUID(correction_id),
+                    models.Correction.project_id == _pid(scope),
+                )
+                .values(hunt_id=uuid.UUID(hunt_id))
+            )
+
     async def get_claim(self, scope: ProjectScope, claim_id: str) -> ClaimData | None:
         async with self._sm() as session:
             claim = await session.get(models.Claim, uuid.UUID(claim_id))

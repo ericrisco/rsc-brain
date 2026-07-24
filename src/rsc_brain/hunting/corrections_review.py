@@ -66,13 +66,16 @@ class CorrectionReviewService:
             f"Review a proposed correction to claim {correction.target_claim}: "
             f"{correction.after_text!r}"
         )
-        return await self._hunts._open(
+        outcome = await self._hunts._open(
             scope,
             hunt_type=HuntType.CORRECTION_REVIEW,
             question=question,
             topics=tags,
             correction_id=correction_id,
         )
+        if outcome.hunt_id:
+            await self._store.link_correction_hunt(scope, correction_id, outcome.hunt_id)
+        return outcome
 
     async def confirm(self, scope: ProjectScope, hunt_id: str) -> HuntOutcome:
         """Owner confirms ⇒ apply the correction transactionally (FR-15.4) + close the hunt."""
@@ -81,11 +84,14 @@ class CorrectionReviewService:
             return HuntOutcome(hunt_id=hunt_id, state=HuntState.EXPIRED)
         correction = await self._store.get_correction(scope, str(hunt.correction_id))
         assert correction is not None
+        # The corrected claim inherits the target's tags (FR-15.4) so topic permissions are
+        # preserved — never strip them to an untagged claim.
+        target = await self._store.get_claim(scope, str(correction.target_claim))
         new_claim_id = await self._store.apply_owner_correction(
             scope,
             old_claim_id=str(correction.target_claim),
             new_text=correction.after_text or "",
-            new_tags=[],
+            new_tags=list(target.tags) if target is not None else [],
             cred_old=self._config.superseded_credibility,
             cred_new=self._config.correction_credibility,
             pending=False,

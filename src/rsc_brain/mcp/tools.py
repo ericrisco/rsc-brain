@@ -316,6 +316,19 @@ async def do_correct_knowledge(
         tool="correct_knowledge",
         result_count=1 if outcome.new_claim_id else 0,
     )
+    # Non-owner route (FR-15.3b/15.6): the correction is parked as `routed_hunt`; open a
+    # CORRECTION_REVIEW hunt to the tag owner (NO_OWNER + admin alert if the tag is unowned).
+    if outcome.correction_id:
+        correction_row = await KnowledgeStore(sessionmaker).get_correction(
+            scope, outcome.correction_id
+        )
+        if correction_row is not None and correction_row.status == "routed_hunt":
+            from rsc_brain.hunting.corrections_review import CorrectionReviewService
+            from rsc_brain.hunting.service import HuntService
+
+            await CorrectionReviewService(
+                sessionmaker, hunts=HuntService(sessionmaker)
+            ).open_review(scope, outcome.correction_id)
     hint = (
         f"use corrections revert {outcome.correction_id}"
         if outcome.status in {"applied", "pending_confirmation"} and outcome.correction_id

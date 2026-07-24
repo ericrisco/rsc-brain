@@ -114,6 +114,26 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HuntAsk": {
+        "properties": {
+          "question": {
+            "title": "Question",
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "HuntAsk",
+        "type": "object"
+      },
       "LoginRequest": {
         "properties": {
           "email": {
@@ -130,6 +150,110 @@
           "password"
         ],
         "title": "LoginRequest",
+        "type": "object"
+      },
+      "PersonCreate": {
+        "properties": {
+          "channels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Channels",
+            "type": "object"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "quiet_hours": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Quiet Hours",
+            "type": "object"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "PersonCreate",
+        "type": "object"
+      },
+      "PersonUpdate": {
+        "properties": {
+          "channels": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channels"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "quiet_hours": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiet Hours"
+          },
+          "topics": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topics"
+          }
+        },
+        "title": "PersonUpdate",
         "type": "object"
       },
       "ProjectCreate": {
@@ -665,7 +789,26 @@
     },
     "/api/v1/admin/gaps": {
       "get": {
+        "description": "Project gaps. ``audience=agent`` returns the separate agent-gap view (FR-14.6); ``human``\nthe human-driven gaps eligible for the trigger; omitted returns all.",
         "operationId": "list_project_gaps_api_v1_admin_gaps_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "audience",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Audience"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -678,6 +821,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -686,6 +839,204 @@
           }
         ],
         "summary": "List Project Gaps",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/gaps/{gap_id}/promote": {
+      "post": {
+        "description": "Promote an agent gap to a hunt (FR-14.6 \u2014 agent gaps never trigger automatically).",
+        "operationId": "promote_gap_api_v1_admin_gaps__gap_id__promote_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "gap_id",
+            "required": true,
+            "schema": {
+              "title": "Gap Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Promote Gap Api V1 Admin Gaps  Gap Id  Promote Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Promote Gap",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/hunts": {
+      "get": {
+        "operationId": "list_hunts_api_v1_admin_hunts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "open_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Open Only",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Hunts Api V1 Admin Hunts Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Hunts",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/hunts/ask": {
+      "post": {
+        "description": "Open a MANUAL hunt (FR-6.2c) routed by topic overlap (NO_OWNER if unowned).",
+        "operationId": "ask_hunt_api_v1_admin_hunts_ask_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HuntAsk"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ask Hunt Api V1 Admin Hunts Ask Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ask Hunt",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/hunts/{hunt_id}": {
+      "get": {
+        "operationId": "get_hunt_api_v1_admin_hunts__hunt_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "hunt_id",
+            "required": true,
+            "schema": {
+              "title": "Hunt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Hunt Api V1 Admin Hunts  Hunt Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Hunt",
         "tags": [
           "admin"
         ]
@@ -956,6 +1307,186 @@
           }
         ],
         "summary": "Observability Recalls",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/persons": {
+      "get": {
+        "operationId": "list_persons_api_v1_admin_persons_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Persons Api V1 Admin Persons Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Persons",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "create_person_api_v1_admin_persons_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Person Api V1 Admin Persons Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Person",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/persons/{person_id}": {
+      "delete": {
+        "operationId": "delete_person_api_v1_admin_persons__person_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Person Api V1 Admin Persons  Person Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Person",
+        "tags": [
+          "admin"
+        ]
+      },
+      "patch": {
+        "operationId": "update_person_api_v1_admin_persons__person_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PersonUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Person Api V1 Admin Persons  Person Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Person",
         "tags": [
           "admin"
         ]

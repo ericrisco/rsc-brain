@@ -22,6 +22,7 @@ from rsc_brain.cli.data import forget as _forget
 from rsc_brain.cli.data import migrate as _migrate
 from rsc_brain.cli.data import restore as _restore
 from rsc_brain.cli.entities import entities_app
+from rsc_brain.cli.hunting import gaps_app, hunt_app, hunts_app, persons_app
 from rsc_brain.cli.ingest import docs_app, sources_app
 from rsc_brain.cli.ingest import ingest as _ingest
 from rsc_brain.cli.ingest import status as _status
@@ -74,6 +75,9 @@ _IMPLEMENTED_COMMANDS: dict[str, tuple[Callable[..., None], str]] = {
 _IMPLEMENTED_GROUPS: dict[str, tuple[typer.Typer, str]] = {
     "users": (users_app, "Manage users and invitations."),
     "topics": (topics_app, "Manage a project's topics."),
+    "persons": (persons_app, "Manage the hunting person directory (FR-6.1)."),
+    "gaps": (gaps_app, "List and promote knowledge gaps (FR-6.6/14.6)."),
+    "hunts": (hunts_app, "Inspect hunts (FR-6.6)."),
 }
 
 app = typer.Typer(
@@ -127,6 +131,9 @@ app.add_typer(sources_app, name="sources", help="Manage ingestion sources and th
 app.add_typer(corrections_app, name="corrections", help="List and revert corrections.")
 # `entities` (alias-merge propose + review queue) is introduced by SPEC-09.
 app.add_typer(entities_app, name="entities", help="Entity dedup and alias-merge review.")
+# `hunt ask` (manual hunt) is introduced by SPEC-15 (the plural `hunts`/`gaps`/`persons` groups
+# fill in FR-10.1 stubs above).
+app.add_typer(hunt_app, name="hunt", help="Ask a responsible person a question by hand (FR-6.2c).")
 # `eval` (golden-set evaluation) is introduced by SPEC-06 (beyond the original FR-10.1 list).
 app.command("eval", help="Report the golden-set composition (full run needs an ingested corpus).")(
     _eval
