@@ -48,6 +48,71 @@ def doctor(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
         raise typer.Exit(code=1)
 
 
+def _doctor_facts() -> tuple[str, bool, dict[int, bool]]:
+    """Consume `brain doctor` for the profile + host facts the plan is built from (SPEC-16)."""
+    from typing import cast
+
+    report = doctor_mod.run_doctor(_CONFIG_CANDIDATES)
+    free_ports = cast("dict[int, bool]", report.host["free_ports"])
+    return report.recommended_profile, bool(report.host["docker"]), free_ports
+
+
+def plan(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
+    """Dry-run: turn `brain doctor` into the concrete phase plan `brain apply` would execute
+    (unmet host preconditions are listed as blockers, never resolved — D8)."""
+    from rsc_brain.installer.plan import build_plan
+
+    profile, docker, free_ports = _doctor_facts()
+    install_plan = build_plan(profile=profile, docker=docker, free_ports=free_ports)
+    payload = {
+        "status": "blocked" if install_plan.blocked else "ok",
+        "plan": install_plan.to_dict(),
+    }
+    lines = [f"plan: profile={install_plan.profile}, {len(install_plan.phases)} phases"]
+    for blocker in install_plan.blockers:
+        lines.append(f"  [BLOCKER] {blocker.detail} -> {blocker.remediation}")
+    for phase in install_plan.phases:
+        lines.append(f"  - {phase.id}: {phase.title}")
+    emit_result(ctx, json_output, payload, "\n".join(lines))
+    if install_plan.blocked:
+        raise typer.Exit(code=1)
+
+
+def apply(
+    ctx: typer.Context,
+    json_output: bool = JSON_OPTION,
+    yes: bool = typer.Option(
+        False, "--yes", help="Skip all confirmations. UNSAFE — for CI/automation only (FR-11.4)."
+    ),
+) -> None:
+    """Execute the install plan phase by phase: idempotent (re-run = no-op), resumable from the last
+    checkpoint, with per-phase rollback. Asks for confirmation before starting and before any
+    destructive action unless --yes (FR-11.3/11.4)."""
+    from rsc_brain.installer.apply import (
+        CheckpointStore,
+        CommandVerifier,
+        SubprocessActionRunner,
+        apply_plan,
+    )
+    from rsc_brain.installer.plan import build_plan
+
+    profile, docker, free_ports = _doctor_facts()
+    install_plan = build_plan(profile=profile, docker=docker, free_ports=free_ports)
+    report = apply_plan(
+        install_plan,
+        runner=SubprocessActionRunner(),
+        verifier=CommandVerifier(),
+        checkpoints=CheckpointStore(),
+        confirm=None if yes else typer.confirm,
+        assume_yes=yes,
+    )
+    payload = {"status": "ok" if report.ok else "failed", "apply": report.to_dict()}
+    human = "\n".join(f"  [{r.status}] {r.id}: {r.detail}" for r in report.results)
+    emit_result(ctx, json_output, payload, human)
+    if not report.ok:
+        raise typer.Exit(code=1)
+
+
 def verify(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
     """Smoke-test the running system: gateway probe + database (extensions + schema at head)."""
 
