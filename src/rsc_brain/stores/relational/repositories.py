@@ -12,8 +12,9 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import CursorResult, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.scope import ProjectScope
@@ -120,6 +121,21 @@ class KnowledgeRepository:
                 .where(models.Chunk.project_id == _pid(scope))
             )
             return int(total or 0)
+
+    async def hard_delete_document(self, scope: ProjectScope, document_id: str) -> int:
+        """Hard-delete a document within ``scope``; chunks/claims/embeddings cascade. Returns
+        the number of documents removed (0 if absent/other-project — idempotent)."""
+        async with session_scope(self._sm) as session:
+            result = cast(
+                "CursorResult[Any]",
+                await session.execute(
+                    delete(models.Document).where(
+                        models.Document.id == uuid.UUID(document_id),
+                        models.Document.project_id == _pid(scope),
+                    )
+                ),
+            )
+            return int(result.rowcount or 0)
 
 
 class UserRepository:

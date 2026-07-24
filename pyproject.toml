@@ -86,6 +86,10 @@ ignore = ["E501"]    # line length handled by the formatter
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B011"]
 
+[tool.ruff.lint.flake8-bugbear]
+# Typer's Option/Argument must be called in parameter defaults — that is the framework idiom.
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
 # ----------------------------------------------------------------------------
 # mypy — strict typing (F.4)
 # ----------------------------------------------------------------------------

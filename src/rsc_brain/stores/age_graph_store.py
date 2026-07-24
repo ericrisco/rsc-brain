@@ -188,8 +188,15 @@ class AgeGraphStore:
             )
         return nodes
 
+    async def _graph_exists(self, session: AsyncSession, graph: str) -> bool:
+        count = await session.scalar(
+            text("SELECT count(*) FROM ag_catalog.ag_graph WHERE name = :n"), {"n": graph}
+        )
+        return bool(count)
+
     async def tombstone_document(self, scope: ProjectScope, document_id: str) -> int:
-        """Mark all nodes derived from a document as suppressed. Returns the count."""
+        """Mark all nodes derived from a document as suppressed. Returns the count (0 if the
+        project graph does not exist yet — a safe no-op for forget)."""
         graph = graph_name(scope.project_id)
         cypher = (
             "MATCH (n) WHERE n.source_document_id = $doc AND n.suppressed IS NULL "
@@ -197,6 +204,8 @@ class AgeGraphStore:
         )
         async with self._sm() as session:
             await self._prepare(session)
+            if not await self._graph_exists(session, graph):
+                return 0
             rows = await self._cypher(session, graph, cypher, {"doc": document_id}, "c agtype")
             await session.commit()
         if not rows:

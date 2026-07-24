@@ -13,7 +13,10 @@ import typer
 
 from rsc_brain import __version__
 from rsc_brain.cli._common import JSON_OPTION, State, emit_not_implemented, json_enabled
+from rsc_brain.cli.data import backup as _backup
+from rsc_brain.cli.data import forget as _forget
 from rsc_brain.cli.data import migrate as _migrate
+from rsc_brain.cli.data import restore as _restore
 
 # FR-10.1 subcommands, in the order the spec lists them.
 COMMANDS: tuple[str, ...] = (
@@ -44,6 +47,9 @@ COMMANDS: tuple[str, ...] = (
 # Subcommands with real behaviour registered from their own modules (skip the stub for these).
 _IMPLEMENTED: dict[str, tuple[Callable[..., None], str]] = {
     "migrate": (_migrate, "Apply pending database migrations to head (idempotent)."),
+    "backup": (_backup, "Back up the database to a single dump artifact."),
+    "restore": (_restore, "Restore a dump, apply migrations, and verify."),
+    "forget": (_forget, "Hard-delete a document and tombstone its graph nodes."),
 }
 
 app = typer.Typer(
