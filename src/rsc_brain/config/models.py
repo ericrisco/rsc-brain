@@ -60,6 +60,11 @@ class CapabilityConfig(BaseModel):
     dimension: int | None = Field(
         default=None, description="Embedding dimension anchor (embedder only)."
     )
+    daily_token_budget: int | None = Field(
+        default=None,
+        ge=0,
+        description="Max tokens/day for this capability (FR-9.5); None = unlimited.",
+    )
 
     @property
     def litellm_model(self) -> str:

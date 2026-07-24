@@ -37,6 +37,7 @@ from rsc_brain.gateway.errors import (
     UnknownCapabilityError,
 )
 from rsc_brain.gateway.options import GenerationOptions
+from rsc_brain.gateway.usage import EmbeddingCache, UsageRecorder, text_hash
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -81,6 +82,19 @@ def _extract_content(response: Any) -> str:
     return content
 
 
+def _usage_tokens(response: Any) -> int:
+    """Best-effort total token count from a provider response (0 when the provider omits usage)."""
+    usage = getattr(response, "usage", None)
+    if usage is None and isinstance(response, dict):
+        usage = response.get("usage")
+    if usage is None:
+        return 0
+    total = getattr(usage, "total_tokens", None)
+    if total is None and isinstance(usage, dict):
+        total = usage.get("total_tokens")
+    return int(total or 0)
+
+
 def _extract_embeddings(response: Any) -> list[list[float]]:
     try:
         data = response.data if hasattr(response, "data") else response["data"]
@@ -114,11 +128,16 @@ class ModelGateway:
         completion_fn: CompletionFn | None = None,
         embedding_fn: EmbeddingFn | None = None,
         max_repair_attempts: int = 2,
+        usage_recorder: UsageRecorder | None = None,
+        embedding_cache: EmbeddingCache | None = None,
     ) -> None:
         self._caps = capabilities
         self._completion = completion_fn or _default_completion
         self._embedding = embedding_fn or _default_embedding
         self._max_repair = max_repair_attempts
+        # SPEC-22 (FR-9.5/9.6): optional, injected — the gateway works without them.
+        self._usage = usage_recorder
+        self._cache = embedding_cache
 
     def _cap(self, capability: Capability) -> CapabilityConfig:
         try:
@@ -143,6 +162,8 @@ class ModelGateway:
     ) -> str:
         """Free-text completion for ``capability``. Provider failure → redacted typed error."""
         cap = self._cap(capability)
+        if self._usage is not None:
+            await self._usage.enforce_budget(str(capability))
         try:
             response = await self._completion(
                 messages=list(messages),
@@ -151,6 +172,8 @@ class ModelGateway:
             )
         except Exception:
             raise GatewayUnavailableError("provider_unavailable", _new_ref()) from None
+        if self._usage is not None:
+            await self._usage.record(str(capability), _usage_tokens(response))
         return _extract_content(response)
 
     async def complete_structured(
@@ -162,15 +185,25 @@ class ModelGateway:
     ) -> T:
         """Structured completion with validate → repair → fallback → typed error (FR-9.2)."""
         cap = self._cap(capability)
+        if self._usage is not None:
+            await self._usage.enforce_budget(str(capability))
         attempt = await self._attempt_structured(cap, cap.litellm_model, messages, schema, options)
         if attempt.value is not None:
+            await self._record_call(capability)
             return attempt.value
         if cap.fallback_model is not None:
             fb = await self._attempt_structured(cap, cap.fallback_model, messages, schema, options)
             if fb.value is not None:
+                await self._record_call(capability)
                 return fb.value
             attempt = fb
         raise attempt.error or GatewayValidationError("structured_failed", _new_ref())
+
+    async def _record_call(self, capability: Capability) -> None:
+        # Structured completions don't surface token usage through the attempt wrapper; count the
+        # call (budget is enforced pre-call). Free-text `complete` records real token totals.
+        if self._usage is not None:
+            await self._usage.record(str(capability), 0)
 
     async def _attempt_structured(
         self,
@@ -202,12 +235,35 @@ class ModelGateway:
         return _Attempt(error=GatewayValidationError("structured_validation_failed", _new_ref()))
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        """Embed ``texts`` and enforce the anchored dimension (FR-9.4)."""
+        """Embed ``texts`` and enforce the anchored dimension (FR-9.4). When an embedding cache is
+        configured (FR-9.6) the same text (by SHA-256) is served from cache, never re-embedded."""
         cap = self._cap(Capability.EMBEDDER)
+        ordered = list(texts)
+        if self._cache is None:
+            return await self._embed_raw(cap, ordered)
+        model, dim = cap.litellm_model, cap.effective_dimension
+        hashes = [text_hash(t) for t in ordered]
+        cached = await self._cache.get_many(model, dim, list(dict.fromkeys(hashes)))
+        miss_texts: list[str] = []
+        miss_hashes: list[str] = []
+        for text, digest in zip(ordered, hashes, strict=True):
+            if digest not in cached and digest not in miss_hashes:
+                miss_texts.append(text)
+                miss_hashes.append(digest)
+        if miss_texts:
+            vectors = await self._embed_raw(cap, miss_texts)
+            fresh = dict(zip(miss_hashes, vectors, strict=True))
+            await self._cache.put_many(model, dim, fresh)
+            cached = {**cached, **fresh}
+        return [cached[digest] for digest in hashes]
+
+    async def _embed_raw(self, cap: CapabilityConfig, texts: list[str]) -> list[list[float]]:
+        if self._usage is not None:
+            await self._usage.enforce_budget(str(Capability.EMBEDDER))
         try:
             response = await self._embedding(
                 model=cap.litellm_model,
-                input=list(texts),
+                input=texts,
                 api_base=cap.api_base,
                 api_key=cap.api_key.get_secret_value() if cap.api_key else None,
                 timeout=cap.timeout_s,
@@ -218,6 +274,10 @@ class ModelGateway:
         for vector in vectors:
             if len(vector) != cap.effective_dimension:
                 raise GatewayDimensionError("embedding_dimension_mismatch", _new_ref())
+        if self._usage is not None:
+            await self._usage.record(
+                str(Capability.EMBEDDER), _usage_tokens(response) or len(texts)
+            )
         return vectors
 
     async def healthcheck(self) -> dict[str, HealthStatus]:

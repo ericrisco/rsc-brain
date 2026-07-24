@@ -32,6 +32,7 @@ from rsc_brain.cli.installer import doctor as _doctor
 from rsc_brain.cli.installer import eval_command as _eval
 from rsc_brain.cli.installer import init as _init
 from rsc_brain.cli.installer import plan as _plan
+from rsc_brain.cli.installer import usage as _usage
 from rsc_brain.cli.installer import verify as _verify
 from rsc_brain.cli.skills import skills_app
 
@@ -76,6 +77,7 @@ _IMPLEMENTED_COMMANDS: dict[str, tuple[Callable[..., None], str]] = {
     "apply": (_apply, "Execute the install plan (idempotent, checkpointed, per-phase rollback)."),
     "verify": (_verify, "Smoke-test the running system (gateway + database)."),
     "calibrate": (_calibrate, "Report the calibration set + default τ."),
+    "usage": (_usage, "Report per-capability token + call usage by day (FR-9.5)."),
 }
 
 # Command groups (sub-apps) with real behaviour.
