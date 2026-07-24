@@ -48,6 +48,56 @@ def doctor(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
         raise typer.Exit(code=1)
 
 
+def init(
+    ctx: typer.Context,
+    json_output: bool = JSON_OPTION,
+    admin_email: str = typer.Option(
+        None, "--admin-email", envvar="RSC_BRAIN_ADMIN_EMAIL", help="First-admin email."
+    ),
+    admin_password: str = typer.Option(
+        None,
+        "--admin-password",
+        envvar="RSC_BRAIN_ADMIN_PASSWORD",
+        help="First-admin password (generated + shown once if omitted).",
+    ),
+) -> None:
+    """Bootstrap a deployment (SPEC-18): apply migrations, then create the first admin if none
+    exists. Idempotent — safe as a migrate-on-boot one-shot (re-run does not reset the admin)."""
+    from rsc_brain.deploy.bootstrap import DEFAULT_ADMIN_EMAIL, ensure_first_admin
+    from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
+    from rsc_brain.stores.relational.migrations import upgrade_to_head
+
+    upgrade_to_head()  # migrate-on-boot (NFR-8): idempotent, before serving traffic
+
+    async def _bootstrap() -> tuple[str, bool, str | None]:
+        engine = make_engine()
+        try:
+            result = await ensure_first_admin(
+                make_sessionmaker(engine),
+                email=admin_email or DEFAULT_ADMIN_EMAIL,
+                password=admin_password or None,
+            )
+        finally:
+            await engine.dispose()
+        return result.email, result.created, result.generated_password
+
+    email, created, generated = asyncio.run(_bootstrap())
+    payload: dict[str, object] = {
+        "status": "ok",
+        "migrated": True,
+        "admin": {"email": email, "created": created},
+    }
+    human_admin = (
+        f"first admin created: {email}"
+        + (f" (generated password: {generated})" if generated else "")
+        if created
+        else f"admin already present ({email})"
+    )
+    if generated:
+        payload["admin_password"] = generated  # shown once (FR-18.x); never stored
+    emit_result(ctx, json_output, payload, f"migrations applied; {human_admin}")
+
+
 def _doctor_facts() -> tuple[str, bool, dict[int, bool]]:
     """Consume `brain doctor` for the profile + host facts the plan is built from (SPEC-16)."""
     from typing import cast

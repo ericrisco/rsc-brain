@@ -1,0 +1,23 @@
+# Coolify overlay (SPEC-18, E15.2) — a THIN delta on docker-compose.prod.yml.
+#   docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.coolify.yml up
+#
+# Coolify injects its "magic" env: SERVICE_PASSWORD_* (auto-generated secrets) and
+# SERVICE_FQDN_<SERVICE>_<PORT> (auto domain + its proxy terminates TLS). So we drop our own Caddy
+# and map the one secret (Postgres password) to Coolify's generator. No hand-editing.
+name: rsc-brain
+
+services:
+  db:
+    environment:
+      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES}
+  # api/worker/migrate derive their DSN from POSTGRES_PASSWORD (see the canonical app-env), so only
+  # the api's public FQDN needs declaring — Coolify's proxy routes it to :8080 with TLS.
+  api:
+    environment:
+      SERVICE_FQDN_API_8080: /
+  console:
+    environment:
+      SERVICE_FQDN_CONSOLE_3000: /
+  # Coolify's proxy does TLS + domain — our Caddy is not used on this target.
+  caddy:
+    profiles: ["donotstart"]

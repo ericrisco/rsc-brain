@@ -1,0 +1,19 @@
+# Dokploy overlay (SPEC-18, E15.2) — a THIN delta on docker-compose.prod.yml, sibling of Coolify.
+#   docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.dokploy.yml up
+#
+# Dokploy fronts services with Traefik: TLS + domain come from Traefik labels on the api service, so
+# we drop our own Caddy. POSTGRES_PASSWORD + RSC_BRAIN_DOMAIN are set in the Dokploy env UI (the DSN
+# derives from POSTGRES_PASSWORD via the canonical app-env). No hand-editing of these files.
+name: rsc-brain
+
+services:
+  api:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rsc-api.rule=Host(`${RSC_BRAIN_DOMAIN}`)"
+      - "traefik.http.routers.rsc-api.entrypoints=websecure"
+      - "traefik.http.routers.rsc-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.rsc-api.loadbalancer.server.port=8080"
+  # Traefik terminates TLS — our Caddy is not used on this target.
+  caddy:
+    profiles: ["donotstart"]
