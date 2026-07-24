@@ -72,6 +72,19 @@ async def forget_entity(
     return {"deleted_entities": len(entity_ids), "tombstoned": tombstoned}
 
 
+async def hard_delete_project(
+    sessionmaker: async_sessionmaker[AsyncSession], scope: ProjectScope
+) -> None:
+    """Hard-delete an entire project (SPEC-22, FR-12.7): drop its AGE graph, then delete the
+    ``projects`` row — every project-scoped table cascades (``ondelete=CASCADE``). The caller
+    enforces the double-confirmation; the ``default`` project is protected there."""
+    await AgeGraphStore(sessionmaker).drop_graph(scope)
+    async with session_scope(sessionmaker) as session:
+        await session.execute(
+            delete(models.Project).where(models.Project.id == uuid.UUID(scope.project_id))
+        )
+
+
 async def purge_audit(
     sessionmaker: async_sessionmaker[AsyncSession],
     *,
