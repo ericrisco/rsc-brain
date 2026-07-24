@@ -9,11 +9,15 @@
 # for secret scanning, which remains a separate mandatory gate.
 
 # --- Local-only harness (never published) ---
-/.claude/
-/.codex/
-/.rsc/
-/01-TOOLS/
-/02-DOCS/
+# No trailing slash: these paths may be real directories OR symlinks into a
+# synced store (e.g. Google Drive). A trailing slash matches directories only,
+# so a symlink of the same name would leak into git — matching both forms keeps
+# the harness ignored regardless of layout.
+/.claude
+/.codex
+/.rsc
+/01-TOOLS
+/02-DOCS
 /AGENTS.md
 /CLAUDE.md
 
