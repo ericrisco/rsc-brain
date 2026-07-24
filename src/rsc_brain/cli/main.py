@@ -26,9 +26,11 @@ from rsc_brain.cli.hunting import gaps_app, hunt_app, hunts_app, persons_app
 from rsc_brain.cli.ingest import docs_app, sources_app
 from rsc_brain.cli.ingest import ingest as _ingest
 from rsc_brain.cli.ingest import status as _status
+from rsc_brain.cli.installer import apply as _apply
 from rsc_brain.cli.installer import calibrate as _calibrate
 from rsc_brain.cli.installer import doctor as _doctor
 from rsc_brain.cli.installer import eval_command as _eval
+from rsc_brain.cli.installer import plan as _plan
 from rsc_brain.cli.installer import verify as _verify
 
 # FR-10.1 subcommands, in the order the spec lists them.
@@ -67,6 +69,8 @@ _IMPLEMENTED_COMMANDS: dict[str, tuple[Callable[..., None], str]] = {
     "forget": (_forget, "Hard-delete a document and tombstone its graph nodes."),
     "audit": (_audit, "Show or export the audit log for a project."),
     "doctor": (_doctor, "Detect host + recommend profile + scan config for secrets."),
+    "plan": (_plan, "Dry-run the install: the phase plan `apply` would execute (SPEC-16)."),
+    "apply": (_apply, "Execute the install plan (idempotent, checkpointed, per-phase rollback)."),
     "verify": (_verify, "Smoke-test the running system (gateway + database)."),
     "calibrate": (_calibrate, "Report the calibration set + default τ."),
 }
