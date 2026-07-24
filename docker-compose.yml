@@ -57,6 +57,29 @@ services:
       - no-new-privileges:true
     restart: unless-stopped
 
+  # TLS front (FR-4.8): a hard prerequisite of the OAuth server — Claude/ChatGPT will not connect
+  # without HTTPS. `docker compose --profile tls up` serves the app over automatic HTTPS.
+  caddy:
+    profiles: ["tls"]
+    image: caddy:2.8-alpine
+    ports:
+      - "${RSC_BRAIN_TLS_BIND:-0.0.0.0}:80:80"
+      - "${RSC_BRAIN_TLS_BIND:-0.0.0.0}:443:443"
+    environment:
+      RSC_BRAIN_DOMAIN: "${RSC_BRAIN_DOMAIN:-localhost}"
+      RSC_BRAIN_APP_UPSTREAM: "${RSC_BRAIN_APP_UPSTREAM:-host.docker.internal:8080}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
 volumes:
   db_data:
   ollama_data:
+  caddy_data:
+  caddy_config:

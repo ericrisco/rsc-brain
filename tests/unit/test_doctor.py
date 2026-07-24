@@ -4,7 +4,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rsc_brain.installer.doctor import scan_paths, scan_text
+from rsc_brain.installer.doctor import detect_tls, scan_paths, scan_text
+
+
+def test_detect_tls_warns_without_a_public_domain() -> None:
+    absent = detect_tls({})
+    assert absent["configured"] is False
+    assert absent["warning"]  # tells the operator Claude/ChatGPT will not connect
+    localhost = detect_tls({"RSC_BRAIN_DOMAIN": "localhost"})
+    assert localhost["configured"] is False
+    configured = detect_tls({"RSC_BRAIN_DOMAIN": "brain.example.com"})
+    assert configured["configured"] is True
+    assert configured["warning"] is None
+    assert configured["domain"] == "brain.example.com"
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

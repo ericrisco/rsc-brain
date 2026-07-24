@@ -200,6 +200,67 @@ async def membership_for(
         return str(membership_id) if membership_id is not None else None
 
 
+async def list_user_connections(
+    sessionmaker: async_sessionmaker[AsyncSession], user_id: str
+) -> list[dict[str, object]]:
+    """The user's OAuth connections (across their memberships) — the 'connected apps' view
+    (FR-4.13). One row per issued OAuth token, with the client + project it binds to."""
+    async with sessionmaker() as session:
+        rows = await session.execute(
+            select(
+                models.OAuthToken.id,
+                models.OAuthClient.client_metadata,
+                models.OAuthClient.client_id,
+                models.Project.slug,
+                models.OAuthToken.expires_at,
+                models.OAuthToken.revoked_at,
+            )
+            .join(models.OAuthClient, models.OAuthToken.client_id == models.OAuthClient.id)
+            .join(
+                models.ProjectMembership,
+                models.OAuthToken.membership_id == models.ProjectMembership.id,
+            )
+            .join(models.Project, models.ProjectMembership.project_id == models.Project.id)
+            .where(models.ProjectMembership.user_id == uuid.UUID(user_id))
+            .order_by(models.OAuthToken.id.desc())
+        )
+        return [
+            {
+                "id": str(token_id),
+                "client": (metadata or {}).get("client_name") or client_id,
+                "project": slug,
+                "expires_at": expires_at.isoformat() if expires_at else None,
+                "revoked": revoked_at is not None,
+            }
+            for token_id, metadata, client_id, slug, expires_at, revoked_at in rows.all()
+        ]
+
+
+async def owns_connection(
+    sessionmaker: async_sessionmaker[AsyncSession], user_id: str, connection_id: str
+) -> bool:
+    """True iff the OAuth token ``connection_id`` binds to a membership of ``user_id``."""
+    async with sessionmaker() as session:
+        owner = await session.scalar(
+            select(models.ProjectMembership.user_id)
+            .join(models.OAuthToken, models.OAuthToken.membership_id == models.ProjectMembership.id)
+            .where(models.OAuthToken.id == uuid.UUID(connection_id))
+        )
+        return owner is not None and str(owner) == user_id
+
+
+async def revoke_connection(
+    sessionmaker: async_sessionmaker[AsyncSession], connection_id: str
+) -> None:
+    """Revoke an OAuth connection (stops resolving in <5s). Idempotent."""
+    async with session_scope(sessionmaker) as session:
+        await session.execute(
+            update(models.OAuthToken)
+            .where(models.OAuthToken.id == uuid.UUID(connection_id))
+            .values(revoked_at=_now())
+        )
+
+
 def memberships_payload(memberships: Sequence[MembershipInfo]) -> list[dict[str, object]]:
     return [
         {

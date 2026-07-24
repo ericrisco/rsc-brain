@@ -8,8 +8,9 @@ hygiene check, NOT a full secret scanner (that gate is SPEC-22).
 
 from __future__ import annotations
 
+import os
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,6 +51,23 @@ def scan_paths(paths: Iterable[Path]) -> list[SecretFinding]:
     return findings
 
 
+def detect_tls(env: Mapping[str, str] | None = None) -> dict[str, object]:
+    """Report the TLS front (FR-4.8). A public ``RSC_BRAIN_DOMAIN`` ⇒ Caddy can serve HTTPS
+    (`--profile tls`); its absence ⇒ Claude/ChatGPT will NOT connect (HTTPS is a hard OAuth
+    prerequisite, D11) — surfaced as a warning, not a secret finding."""
+    source = os.environ if env is None else env
+    domain = source.get("RSC_BRAIN_DOMAIN", "").strip()
+    configured = bool(domain) and domain != "localhost"
+    return {
+        "domain": domain or None,
+        "configured": configured,
+        "warning": None
+        if configured
+        else "No public RSC_BRAIN_DOMAIN set: run `docker compose --profile tls up` with a "
+        "domain, or Claude/ChatGPT cannot connect (HTTPS is required for OAuth).",
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class DoctorReport:
     """Combined host detection + secret scan (FR-11.1). ``ok`` is false if secrets were found."""
@@ -57,6 +75,7 @@ class DoctorReport:
     recommended_profile: str
     host: dict[str, object]
     secret_findings: list[SecretFinding]
+    tls: dict[str, object]
 
     @property
     def ok(self) -> bool:
@@ -64,7 +83,7 @@ class DoctorReport:
 
 
 def run_doctor(config_paths: Iterable[Path]) -> DoctorReport:
-    """Detect the host, recommend a profile, and scan config for hardcoded secrets."""
+    """Detect the host, recommend a profile, scan config for hardcoded secrets, report TLS mode."""
     from rsc_brain.installer.host import detect_host
 
     host = detect_host()
@@ -80,4 +99,5 @@ def run_doctor(config_paths: Iterable[Path]) -> DoctorReport:
             "free_ports": host.free_ports,
         },
         secret_findings=findings,
+        tls=detect_tls(),
     )

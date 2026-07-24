@@ -212,3 +212,14 @@ async def list_audit(
         limit=limit,
     )
     return {"audit": rows}
+
+
+@router.delete("/connections/{connection_id}")
+async def admin_revoke_connection(
+    connection_id: str, request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    """Admin revokes any user's OAuth connection (FR-4.13 admin part). Stops resolving <5s."""
+    from rsc_brain.identity import sessions
+
+    await sessions.revoke_connection(_deps(request).sessionmaker, connection_id)  # type: ignore[attr-defined]
+    return {"ok": True, "revoked": connection_id}
