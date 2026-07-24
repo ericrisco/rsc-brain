@@ -300,6 +300,19 @@
         "title": "RejectDoc",
         "type": "object"
       },
+      "SkillUpsert": {
+        "properties": {
+          "markdown": {
+            "title": "Markdown",
+            "type": "string"
+          }
+        },
+        "required": [
+          "markdown"
+        ],
+        "title": "SkillUpsert",
+        "type": "object"
+      },
       "SourceCreate": {
         "properties": {
           "default_tags": {
@@ -2088,6 +2101,175 @@
           }
         ],
         "summary": "Put Query Text Logging",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/skills": {
+      "get": {
+        "description": "List a project's skills (SPEC-20, FR-7.1). Read \u2014 console-consumable.",
+        "operationId": "list_skills_admin_api_v1_admin_skills_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Skills Admin Api V1 Admin Skills Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Skills Admin",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "description": "Create a skill from its markdown (OKF frontmatter + body).",
+        "operationId": "create_skill_admin_api_v1_admin_skills_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Skill Admin Api V1 Admin Skills Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Skill Admin",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/skills/{slug}/archive": {
+      "post": {
+        "operationId": "archive_skill_admin_api_v1_admin_skills__slug__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Archive Skill Admin Api V1 Admin Skills  Slug  Archive Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Archive Skill Admin",
         "tags": [
           "admin"
         ]

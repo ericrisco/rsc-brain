@@ -33,6 +33,7 @@ from rsc_brain.cli.installer import eval_command as _eval
 from rsc_brain.cli.installer import init as _init
 from rsc_brain.cli.installer import plan as _plan
 from rsc_brain.cli.installer import verify as _verify
+from rsc_brain.cli.skills import skills_app
 
 # FR-10.1 subcommands, in the order the spec lists them.
 COMMANDS: tuple[str, ...] = (
@@ -84,6 +85,7 @@ _IMPLEMENTED_GROUPS: dict[str, tuple[typer.Typer, str]] = {
     "persons": (persons_app, "Manage the hunting person directory (FR-6.1)."),
     "gaps": (gaps_app, "List and promote knowledge gaps (FR-6.6/14.6)."),
     "hunts": (hunts_app, "Inspect hunts (FR-6.6)."),
+    "skills": (skills_app, "Manage skills (reusable procedures, FR-7.1)."),
 }
 
 app = typer.Typer(

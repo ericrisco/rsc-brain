@@ -75,6 +75,10 @@ class HuntAsk(BaseModel):
     topics: list[str] = Field(default_factory=list)
 
 
+class SkillUpsert(BaseModel):
+    markdown: str  # the full skill file: OKF frontmatter + body
+
+
 def _deps(request: Request) -> object:
     return request.app.state.deps
 
@@ -383,6 +387,57 @@ async def list_contradiction_resolutions(
     """Resolved contradictions — who won, by what score (SPEC-19, FR-13.5/FR-5.3)."""
     rows = await _knowledge_store(request).list_contradiction_resolutions(scope)
     return {"resolutions": rows}
+
+
+def _skill_store(request: Request) -> object:
+    from rsc_brain.skills.store import SkillStore
+
+    return SkillStore(_deps(request).sessionmaker)  # type: ignore[attr-defined]
+
+
+@router.get("/skills")
+async def list_skills_admin(
+    request: Request, scope: ProjectScope = Depends(_obs_scope), state: str | None = None
+) -> dict[str, object]:
+    """List a project's skills (SPEC-20, FR-7.1). Read — console-consumable."""
+    rows = await _skill_store(request).list_all(scope, state=state)  # type: ignore[attr-defined]
+    return {
+        "skills": [
+            {
+                "slug": s.slug,
+                "title": s.title,
+                "state": s.state,
+                "stale": s.stale,
+                "tags": list(s.tags),
+            }
+            for s in rows
+        ]
+    }
+
+
+@router.post("/skills", status_code=status.HTTP_201_CREATED)
+async def create_skill_admin(
+    body: SkillUpsert, request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    """Create a skill from its markdown (OKF frontmatter + body)."""
+    from rsc_brain.skills.frontmatter import SkillFrontmatterError, parse_skill
+
+    try:
+        frontmatter, skill_body = parse_skill(body.markdown)
+    except SkillFrontmatterError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    skill_id = await _skill_store(request).create(scope, frontmatter, skill_body)  # type: ignore[attr-defined]
+    return {"skill_id": skill_id, "slug": frontmatter.slug}
+
+
+@router.post("/skills/{slug}/archive")
+async def archive_skill_admin(
+    slug: str, request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    await _skill_store(request).set_state(scope, slug, "archived")  # type: ignore[attr-defined]
+    return {"slug": slug, "archived": True}
 
 
 @router.get("/timeline")
