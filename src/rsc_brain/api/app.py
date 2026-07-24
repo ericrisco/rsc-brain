@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import sessionmaker as SyncSessionmaker
+from starlette.responses import Response
 
 from rsc_brain.config.models import RecallConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
@@ -122,7 +123,19 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
                 if engine is not None:
                     await engine.dispose()
 
+    from rsc_brain.observability.logging_setup import configure_logging, trace_middleware
+    from rsc_brain.observability.metrics import render_metrics
+
+    configure_logging()
     app = FastAPI(title="rsc-brain", version="0.1.0", lifespan=lifespan)
+    app.middleware("http")(trace_middleware)  # bind trace_id per request (SPEC-23, FR-14.3)
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> Response:
+        """Prometheus scrape endpoint (SPEC-23, NFR-6) — not part of the typed admin contract."""
+        body, content_type = await render_metrics(app.state.deps.sessionmaker)
+        return Response(content=body, media_type=content_type)
+
     # Set eagerly too, so a test harness (ASGITransport) that does not run the lifespan still has
     # the injected stores available for the REST endpoints.
     app.state.deps = deps

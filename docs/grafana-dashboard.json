@@ -1,0 +1,46 @@
+{
+  "__comment": "rsc-brain example Grafana dashboard (SPEC-23, NFR-6). Import against a Prometheus datasource scraping the app's /metrics. Live import is a per-release manual check (blocked-by-resource).",
+  "title": "rsc-brain — observability (NFR-6)",
+  "schemaVersion": 39,
+  "version": 1,
+  "tags": ["rsc-brain"],
+  "timezone": "utc",
+  "time": {"from": "now-24h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "title": "Recall p95 latency (s)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [{"expr": "recall_latency_p95_seconds", "legendFormat": "p95"}]
+    },
+    {
+      "id": 2,
+      "title": "LLM tokens by capability",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "targets": [{"expr": "llm_tokens_total", "legendFormat": "{{capability}}"}]
+    },
+    {
+      "id": 3,
+      "title": "Ingest runs by phase",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
+      "targets": [{"expr": "ingest_runs_total", "legendFormat": "{{phase}}"}]
+    },
+    {
+      "id": 4,
+      "title": "Extraction errors",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 8},
+      "targets": [{"expr": "extraction_errors_total"}]
+    },
+    {
+      "id": 5,
+      "title": "Gaps recorded",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 8},
+      "targets": [{"expr": "gaps_created_total"}]
+    }
+  ]
+}

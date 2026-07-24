@@ -23,6 +23,7 @@ dependencies = [
     "typer>=0.12",               # CLI (FR-10.1); Click underneath
     "pyyaml>=6",                 # config.yaml loading
     "structlog>=24",             # JSON logging hook (formal wiring: SPEC-23)
+    "prometheus-client>=0.20",   # /metrics endpoint (NFR-6, SPEC-23)
     "sqlalchemy[asyncio]>=2.0,<3", # relational store (FR-2.1/2.2), async
     "asyncpg>=0.29",             # async Postgres driver
     "alembic>=1.13",             # migrations (FR-2.3)
