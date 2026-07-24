@@ -20,7 +20,7 @@ from rsc_brain import audit as audit_mod
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.ingest.sources import SourceService
 from rsc_brain.recall.gaps import list_gaps
-from rsc_brain.scope import PrincipalType, ProjectScope
+from rsc_brain.scope import Principal, PrincipalType, ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.ingest_repository import IngestRepository
 
@@ -86,6 +86,72 @@ async def _is_admin(sessionmaker: object, scope: ProjectScope) -> bool:
             select(models.User.role).where(models.User.id == uuid.UUID(scope.principal_id))
         )
     return role in _ADMIN_ROLES
+
+
+async def _console_scope_for(
+    sessionmaker: object, user_id: str, role: str, project_slug: str
+) -> ProjectScope | None:
+    """Scope a console-session user to a project they may observe (SPEC-14). A global owner/admin
+    reaches any project; anyone else must have a membership in it — a project-admin therefore cannot
+    reach another project (FR-12.5). None ⇒ denied ≡ absent (FR-4.3)."""
+    async with sessionmaker() as session:  # type: ignore[operator]
+        project_id = await session.scalar(
+            select(models.Project.id).where(models.Project.slug == project_slug)
+        )
+        if project_id is None:
+            return None
+        if role in _ADMIN_ROLES:
+            return Principal(id=user_id, type=PrincipalType.HUMAN, can_curate=True).scope_for(
+                str(project_id)
+            )
+        membership = await session.scalar(
+            select(models.ProjectMembership).where(
+                models.ProjectMembership.user_id == uuid.UUID(user_id),
+                models.ProjectMembership.project_id == project_id,
+            )
+        )
+        if membership is None:
+            return None
+        return Principal(
+            id=user_id,
+            type=PrincipalType.HUMAN,
+            allowed_topics=frozenset(membership.allowed_topics),
+            can_curate=membership.can_curate,
+        ).scope_for(str(project_id))
+
+
+async def _obs_scope(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> ProjectScope:
+    """Auth for the console read-observability endpoints: a project-scoped **PAT/OAuth** token
+    (project from the token, parity with the rest of the admin API) OR a **console session** plus a
+    ``?project=<slug>`` the user is authorized for. Both resolve to a single project (FR-12.3/12.5)."""
+    from rsc_brain.identity.resolve import resolve_scope
+    from rsc_brain.identity.sessions import resolve_session
+
+    sessionmaker = _deps(request).sessionmaker  # type: ignore[attr-defined]
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing bearer token")
+    token = credentials.credentials
+    scope = await resolve_scope(sessionmaker, token)
+    if scope is not None:
+        if not await _is_admin(sessionmaker, scope):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin role required")
+        return scope
+    user = await resolve_session(sessionmaker, token)
+    if user is not None:
+        project_slug = request.query_params.get("project")
+        scoped = (
+            await _console_scope_for(sessionmaker, user.user_id, user.role, project_slug)
+            if project_slug
+            else None
+        )
+        if scoped is None:
+            # No/unauthorized project → denied ≡ absent (never reveal another project exists).
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+        return scoped
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
 
 
 def _identity(request: Request) -> IdentityService:
@@ -234,7 +300,7 @@ class QueryTextLogging(BaseModel):
 
 @router.get("/observability/activity")
 async def observability_activity(
-    request: Request, scope: ProjectScope = Depends(_admin_scope)
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
 ) -> dict[str, object]:
     """Activity dashboard aggregates (FR-13.2): recalls/day, active principals, p95, denied."""
     return await audit_mod.activity_summary(
@@ -246,7 +312,7 @@ async def observability_activity(
 @router.get("/observability/recalls")
 async def observability_recalls(
     request: Request,
-    scope: ProjectScope = Depends(_admin_scope),
+    scope: ProjectScope = Depends(_obs_scope),
     principal_type: str | None = None,
     denied: bool | None = None,
     limit: int = 100,
@@ -266,7 +332,7 @@ async def observability_recalls(
 
 @router.get("/observability/health")
 async def observability_health(
-    request: Request, scope: ProjectScope = Depends(_admin_scope)
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
 ) -> dict[str, object]:
     """Service health (FR-13.2): the pending-approval queue depth + extraction error count."""
     sm = _deps(request).sessionmaker  # type: ignore[attr-defined]
@@ -291,7 +357,7 @@ async def observability_health(
 
 @router.get("/settings/query-text-logging")
 async def get_query_text_logging(
-    request: Request, scope: ProjectScope = Depends(_admin_scope)
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
 ) -> dict[str, object]:
     enabled = await audit_mod.query_text_logging_enabled(
         _deps(request).sessionmaker,  # type: ignore[attr-defined]
@@ -302,7 +368,7 @@ async def get_query_text_logging(
 
 @router.put("/settings/query-text-logging")
 async def put_query_text_logging(
-    body: QueryTextLogging, request: Request, scope: ProjectScope = Depends(_admin_scope)
+    body: QueryTextLogging, request: Request, scope: ProjectScope = Depends(_obs_scope)
 ) -> dict[str, object]:
     """Toggle FR-13.9 for the project. OFF ⇒ the query text stops being persisted (server-side)."""
     await audit_mod.set_query_text_logging(
