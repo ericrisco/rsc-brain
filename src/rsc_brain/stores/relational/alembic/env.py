@@ -29,6 +29,10 @@ _MIGRATION_ONLY_INDEXES = {"ix_chunks_embedding_hnsw", "ix_claims_embedding_hnsw
 def _include_object(obj, name, type_, reflected, compare_to):
     if type_ == "index" and name in _MIGRATION_ONLY_INDEXES:
         return False
+    # procrastinate owns its own tables/indexes (applied by migration 0003 from its packaged
+    # schema); they are not SQLAlchemy models, so exclude them from drift comparison.
+    if name is not None and name.startswith("procrastinate"):
+        return False
     return True
 
 

@@ -146,6 +146,28 @@ class VisionConfig(BaseModel):
     enabled: bool = False  # FR-1.11 reserved
 
 
+class IngestConfig(BaseModel):
+    """Ingestion pipeline tuning (SPEC-05)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    data_dir: str = Field(
+        default="data", description="Root for stored document blobs + the watched inbox."
+    )
+    sensitivity_threshold: int = Field(
+        default=3,
+        ge=0,
+        description="Topic sensitivity ≥ this holds an LLM-tagged doc for review (D13/FR-4.14).",
+    )
+    default_tag: str = Field(
+        default="general", description="Fallback tag when nothing else applies (FR-1.7)."
+    )
+    watch_interval_s: float = Field(default=2.0, gt=0, description="Folder-watcher poll interval.")
+    watch_settle_s: float = Field(
+        default=1.0, ge=0, description="Debounce: ignore files modified within this window."
+    )
+
+
 class DatabaseConfig(BaseModel):
     """Data-service connection. The DSN carries a secret and is env-only (12-factor)."""
 
@@ -173,5 +195,6 @@ class AppConfig(BaseModel):
     recall: RecallConfig = Field(default_factory=RecallConfig)
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
+    ingest: IngestConfig = Field(default_factory=IngestConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

@@ -216,10 +216,16 @@ class Chunk(Base):
     page: Mapped[int | None] = mapped_column(Integer)
     bbox: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     kind: Mapped[str] = mapped_column(Text, nullable=False)  # prose|table_row
+    cut_type: Mapped[str | None] = mapped_column(
+        Text
+    )  # heading|paragraph|sentence|table_row (SPEC-05)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM))
     extraction_confidence: Mapped[float | None] = mapped_column(Numeric)
+    # A table with no clear header is retained (auditable) but never embedded/extracted, so it
+    # can never surface in vector or graph results (FR-1.5, SPEC-05).
+    needs_review: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
     __table_args__ = (Index("ix_chunks_project_id_document_id", "project_id", "document_id"),)
 
 
@@ -377,4 +383,36 @@ class IngestError(Base):
     created_at: Mapped[dt.datetime] = _created_at()
     __table_args__ = (
         Index("ix_ingest_errors_project_id_document_id", "project_id", "document_id"),
+    )
+
+
+class IngestRun(Base):
+    """Per-document ingestion run with stage checkpoints (FR-1.10, SPEC-05).
+
+    ``completed_stages`` is appended to *in the same transaction* as each stage's writes, so a
+    worker that crashes mid-run resumes from the last checkpoint without re-doing completed work
+    or leaving the stores inconsistent (NFR-4). One run per document (re-ingest of the same
+    checksum is a registered no-op; a new version gets a new run in SPEC-09)."""
+
+    __tablename__ = "ingest_runs"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    )
+    phase: Mapped[str] = mapped_column(Text, nullable=False)  # mirrors documents.status
+    completed_stages: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), server_default="{}", nullable=False
+    )
+    chunks_created: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    claims_generated: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    tables_converted: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    tables_needs_review: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    discarded_chunks: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[dt.datetime] = _created_at()
+    updated_at: Mapped[dt.datetime] = _created_at()
+    __table_args__ = (
+        UniqueConstraint("document_id"),
+        Index("ix_ingest_runs_project_id_id", "project_id", "id"),
     )

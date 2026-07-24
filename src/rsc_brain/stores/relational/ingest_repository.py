@@ -1,0 +1,756 @@
+"""Project-scoped persistence for the ingestion pipeline (SPEC-05).
+
+Every method takes a :class:`~rsc_brain.scope.ProjectScope` first and filters by
+``scope.project_id`` in the query (FR-12.4 / AUDIT-003). Stage-oriented writers bundle their
+data writes and the run checkpoint into a **single transaction**, so a worker that dies
+mid-stage rolls back cleanly and re-runs without duplicating work (FR-1.10, NFR-4). Re-runnable
+stages are additionally idempotent (delete-then-insert for chunks/claims; ON CONFLICT for
+entities), so even a redo of an uncheckpointed stage cannot create duplicates.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import uuid
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any
+
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from rsc_brain.ingest.entity_resolution import normalize_name
+from rsc_brain.ingest.types import PipelineStage, ProposedChunk, RunStatus, TopicRule
+from rsc_brain.scope import ProjectScope
+from rsc_brain.stores.relational import models
+from rsc_brain.stores.relational.database import session_scope
+
+NEEDS_REVIEW_TAG = "__needs_review__"
+DEFAULT_SOURCE_NAME = "default"
+
+
+def _pid(scope: ProjectScope) -> uuid.UUID:
+    return uuid.UUID(scope.project_id)
+
+
+def _now() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRow:
+    id: str
+    name: str
+    type: str
+    policy: str
+    default_tags: tuple[str, ...]
+    review_if_sensitive: bool
+    curators: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DocRow:
+    id: str
+    project_id: str
+    source_id: str | None
+    logical_id: str
+    checksum: str
+    title: str | None
+    path: str | None
+    lang: str | None
+    status: str
+    doc_tags: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ChunkRow:
+    id: str
+    kind: str
+    text: str
+    tags: tuple[str, ...]
+    needs_review: bool
+    extraction_confidence: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimSpec:
+    chunk_id: str
+    text: str
+    subject: str | None = None
+    predicate: str | None = None
+    object: str | None = None
+    tags: tuple[str, ...] = ()
+    extraction_confidence: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EntitySpec:
+    name: str
+    type: str
+    aliases: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Counters:
+    chunks_created: int = 0
+    claims_generated: int = 0
+    tables_converted: int = 0
+    tables_needs_review: int = 0
+    discarded_chunks: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class IngestErrorSpec:
+    chunk_ref: str | None
+    stage: str
+    error: str
+
+
+class IngestRepository:
+    """Ingestion persistence. Concrete, project-scoped, transaction-atomic per stage."""
+
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+        self._sm = sessionmaker
+
+    # --- sources -------------------------------------------------------------
+
+    async def create_source(
+        self,
+        scope: ProjectScope,
+        *,
+        name: str,
+        type_: str,
+        policy: str,
+        default_tags: Sequence[str] = (),
+        review_if_sensitive: bool = True,
+        curators: Sequence[str] = (),
+    ) -> str:
+        async with session_scope(self._sm) as session:
+            source = models.Source(
+                project_id=_pid(scope),
+                name=name,
+                type=type_,
+                policy=policy,
+                default_tags=list(default_tags),
+                review_if_sensitive=review_if_sensitive,
+                curators=[uuid.UUID(c) for c in curators],
+            )
+            session.add(source)
+            await session.flush()
+            return str(source.id)
+
+    async def get_source(self, scope: ProjectScope, source_id: str) -> SourceRow | None:
+        async with self._sm() as session:
+            source = await session.get(models.Source, uuid.UUID(source_id))
+            if source is None or source.project_id != _pid(scope):
+                return None
+            return _source_row(source)
+
+    async def get_source_by_name(self, scope: ProjectScope, name: str) -> SourceRow | None:
+        async with self._sm() as session:
+            source = await session.scalar(
+                select(models.Source).where(
+                    models.Source.project_id == _pid(scope), models.Source.name == name
+                )
+            )
+            return _source_row(source) if source else None
+
+    async def list_sources(self, scope: ProjectScope) -> list[SourceRow]:
+        async with self._sm() as session:
+            rows = await session.scalars(
+                select(models.Source)
+                .where(models.Source.project_id == _pid(scope))
+                .order_by(models.Source.name)
+            )
+            return [_source_row(s) for s in rows]
+
+    async def ensure_default_source(self, scope: ProjectScope) -> SourceRow:
+        """Return the project's ``default`` source, creating it (folder + llm policy) if absent.
+
+        The default policy is ``llm`` with ``review_if_sensitive=true`` (D13): publish
+        automatically unless the LLM proposes a sensitive tag, in which case it holds for review.
+        """
+        existing = await self.get_source_by_name(scope, DEFAULT_SOURCE_NAME)
+        if existing is not None:
+            return existing
+        source_id = await self.create_source(
+            scope,
+            name=DEFAULT_SOURCE_NAME,
+            type_="folder",
+            policy="llm",
+            review_if_sensitive=True,
+        )
+        row = await self.get_source(scope, source_id)
+        assert row is not None  # just created within this scope
+        return row
+
+    # --- documents -----------------------------------------------------------
+
+    async def find_document_by_checksum(self, scope: ProjectScope, checksum: str) -> DocRow | None:
+        async with self._sm() as session:
+            doc = await session.scalar(
+                select(models.Document).where(
+                    models.Document.project_id == _pid(scope),
+                    models.Document.checksum == checksum,
+                )
+            )
+            return _doc_row(doc) if doc else None
+
+    async def create_document(
+        self,
+        scope: ProjectScope,
+        *,
+        logical_id: str,
+        checksum: str,
+        source_id: str | None,
+        title: str | None = None,
+        path: str | None = None,
+        lang: str | None = None,
+        pages: int | None = None,
+        status: str = "received",
+        doc_tags: Sequence[str] = (),
+    ) -> str:
+        async with session_scope(self._sm) as session:
+            doc = models.Document(
+                project_id=_pid(scope),
+                source_id=uuid.UUID(source_id) if source_id else None,
+                logical_id=logical_id,
+                checksum=checksum,
+                title=title,
+                path=path,
+                lang=lang,
+                pages=pages,
+                status=status,
+                doc_tags=list(doc_tags),
+            )
+            session.add(doc)
+            await session.flush()
+            return str(doc.id)
+
+    async def get_document(self, scope: ProjectScope, document_id: str) -> DocRow | None:
+        async with self._sm() as session:
+            doc = await session.get(models.Document, uuid.UUID(document_id))
+            if doc is None or doc.project_id != _pid(scope):
+                return None
+            return _doc_row(doc)
+
+    async def list_documents_by_status(self, scope: ProjectScope, status: str) -> list[DocRow]:
+        async with self._sm() as session:
+            rows = await session.scalars(
+                select(models.Document)
+                .where(
+                    models.Document.project_id == _pid(scope),
+                    models.Document.status == status,
+                )
+                .order_by(models.Document.ingested_at)
+            )
+            return [_doc_row(d) for d in rows]
+
+    async def set_status(
+        self,
+        scope: ProjectScope,
+        document_id: str,
+        status: str,
+        *,
+        approved_by: str | None = None,
+        reject_reason: str | None = None,
+        doc_tags: Sequence[str] | None = None,
+    ) -> None:
+        values: dict[str, Any] = {"status": status}
+        if approved_by is not None:
+            values["approved_at"] = _now()
+            # A real user id is stored; a system/CLI label (not a UUID) records the approval time
+            # without a user reference.
+            try:
+                values["approved_by"] = uuid.UUID(approved_by)
+            except ValueError:
+                values["approved_by"] = None
+        if reject_reason is not None:
+            values["reject_reason"] = reject_reason
+        if doc_tags is not None:
+            values["doc_tags"] = list(doc_tags)
+        async with session_scope(self._sm) as session:
+            await session.execute(
+                update(models.Document)
+                .where(
+                    models.Document.id == uuid.UUID(document_id),
+                    models.Document.project_id == _pid(scope),
+                )
+                .values(**values)
+            )
+            await self._touch_run_phase(session, scope, document_id, status)
+
+    # --- runs & checkpoints --------------------------------------------------
+
+    async def ensure_run(self, scope: ProjectScope, document_id: str, *, phase: str) -> None:
+        async with session_scope(self._sm) as session:
+            statement = (
+                pg_insert(models.IngestRun)
+                .values(project_id=_pid(scope), document_id=uuid.UUID(document_id), phase=phase)
+                .on_conflict_do_nothing(index_elements=["document_id"])
+            )
+            await session.execute(statement)
+
+    async def _get_run(
+        self, session: AsyncSession, scope: ProjectScope, document_id: str
+    ) -> models.IngestRun | None:
+        run: models.IngestRun | None = await session.scalar(
+            select(models.IngestRun).where(
+                models.IngestRun.project_id == _pid(scope),
+                models.IngestRun.document_id == uuid.UUID(document_id),
+            )
+        )
+        return run
+
+    async def is_stage_complete(
+        self, scope: ProjectScope, document_id: str, stage: PipelineStage
+    ) -> bool:
+        async with self._sm() as session:
+            run = await self._get_run(session, scope, document_id)
+            return bool(run and stage.value in run.completed_stages)
+
+    async def get_run_status(self, scope: ProjectScope, document_id: str) -> RunStatus | None:
+        async with self._sm() as session:
+            run = await self._get_run(session, scope, document_id)
+            return _run_status(run) if run else None
+
+    async def list_run_statuses(self, scope: ProjectScope) -> list[RunStatus]:
+        async with self._sm() as session:
+            rows = await session.scalars(
+                select(models.IngestRun)
+                .where(models.IngestRun.project_id == _pid(scope))
+                .order_by(models.IngestRun.started_at)
+            )
+            return [_run_status(r) for r in rows]
+
+    async def _mark_stages(
+        self,
+        session: AsyncSession,
+        scope: ProjectScope,
+        document_id: str,
+        stages: Sequence[PipelineStage],
+        *,
+        phase: str | None,
+        counters: Counters | None,
+    ) -> None:
+        run = await self._get_run(session, scope, document_id)
+        if run is None:
+            run = models.IngestRun(
+                project_id=_pid(scope), document_id=uuid.UUID(document_id), phase=phase or "parsed"
+            )
+            session.add(run)
+            await session.flush()
+        completed = list(run.completed_stages)
+        for stage in stages:
+            if stage.value not in completed:
+                completed.append(stage.value)
+        run.completed_stages = completed
+        if phase is not None:
+            run.phase = phase
+        if counters is not None:
+            run.chunks_created += counters.chunks_created
+            run.claims_generated += counters.claims_generated
+            run.tables_converted += counters.tables_converted
+            run.tables_needs_review += counters.tables_needs_review
+            run.discarded_chunks += counters.discarded_chunks
+        run.updated_at = _now()
+
+    async def _touch_run_phase(
+        self, session: AsyncSession, scope: ProjectScope, document_id: str, phase: str
+    ) -> None:
+        run = await self._get_run(session, scope, document_id)
+        if run is not None:
+            run.phase = phase
+            run.updated_at = _now()
+
+    async def mark_stage(
+        self,
+        scope: ProjectScope,
+        document_id: str,
+        stage: PipelineStage,
+        *,
+        phase: str | None = None,
+        counters: Counters | None = None,
+    ) -> None:
+        async with session_scope(self._sm) as session:
+            await self._mark_stages(
+                session, scope, document_id, [stage], phase=phase, counters=counters
+            )
+
+    async def set_run_error(self, scope: ProjectScope, document_id: str, error: str) -> None:
+        async with session_scope(self._sm) as session:
+            run = await self._get_run(session, scope, document_id)
+            if run is not None:
+                run.error = error
+                run.updated_at = _now()
+
+    # --- chunk persistence (parse phase) -------------------------------------
+
+    async def persist_chunks(
+        self,
+        scope: ProjectScope,
+        document_id: str,
+        specs: Sequence[ProposedChunk],
+        *,
+        counters: Counters,
+    ) -> list[ChunkRow]:
+        """Idempotently replace a document's chunks and checkpoint PARSE/TABLES/CHUNK (one tx).
+
+        No embeddings are written here: nothing is vector-recallable until publish (D13). A
+        ``needs_review`` chunk gets the reserved tag and stays embedding-less forever."""
+        async with session_scope(self._sm) as session:
+            await session.execute(
+                delete(models.Chunk).where(
+                    models.Chunk.document_id == uuid.UUID(document_id),
+                    models.Chunk.project_id == _pid(scope),
+                )
+            )
+            rows: list[ChunkRow] = []
+            for spec in specs:
+                tags = (NEEDS_REVIEW_TAG,) if spec.needs_review else spec.tags
+                chunk = models.Chunk(
+                    project_id=_pid(scope),
+                    document_id=uuid.UUID(document_id),
+                    page=spec.page,
+                    bbox=spec.bbox,
+                    kind=spec.kind.value,
+                    cut_type=spec.cut_type,
+                    text=spec.text,
+                    tags=list(tags),
+                    extraction_confidence=spec.extraction_confidence,
+                    needs_review=spec.needs_review,
+                )
+                session.add(chunk)
+                await session.flush()
+                rows.append(
+                    ChunkRow(
+                        id=str(chunk.id),
+                        kind=chunk.kind,
+                        text=chunk.text,
+                        tags=tuple(tags),
+                        needs_review=spec.needs_review,
+                        extraction_confidence=spec.extraction_confidence,
+                    )
+                )
+            await self._mark_stages(
+                session,
+                scope,
+                document_id,
+                [PipelineStage.PARSE, PipelineStage.TABLES, PipelineStage.CHUNK],
+                phase="parsed",
+                counters=counters,
+            )
+            return rows
+
+    async def load_chunks(self, scope: ProjectScope, document_id: str) -> list[ChunkRow]:
+        async with self._sm() as session:
+            rows = await session.scalars(
+                select(models.Chunk)
+                .where(
+                    models.Chunk.document_id == uuid.UUID(document_id),
+                    models.Chunk.project_id == _pid(scope),
+                )
+                .order_by(models.Chunk.id)
+            )
+            return [
+                ChunkRow(
+                    id=str(c.id),
+                    kind=c.kind,
+                    text=c.text,
+                    tags=tuple(c.tags),
+                    needs_review=c.needs_review,
+                    extraction_confidence=(
+                        float(c.extraction_confidence)
+                        if c.extraction_confidence is not None
+                        else None
+                    ),
+                )
+                for c in rows
+            ]
+
+    async def apply_topics(
+        self,
+        scope: ProjectScope,
+        document_id: str,
+        *,
+        chunk_tags: Mapping[str, Sequence[str]],
+        doc_tags: Sequence[str],
+        status: str,
+    ) -> None:
+        """Write per-chunk tags + the document's proposed tags + its post-policy status, and
+        checkpoint TOPICALIZE (one tx)."""
+        async with session_scope(self._sm) as session:
+            for chunk_id, tags in chunk_tags.items():
+                await session.execute(
+                    update(models.Chunk)
+                    .where(
+                        models.Chunk.id == uuid.UUID(chunk_id),
+                        models.Chunk.project_id == _pid(scope),
+                    )
+                    .values(tags=list(tags))
+                )
+            await session.execute(
+                update(models.Document)
+                .where(
+                    models.Document.id == uuid.UUID(document_id),
+                    models.Document.project_id == _pid(scope),
+                )
+                .values(doc_tags=list(doc_tags), status=status)
+            )
+            await self._mark_stages(
+                session, scope, document_id, [PipelineStage.TOPICALIZE], phase=status, counters=None
+            )
+
+    async def propagate_doc_tags(self, scope: ProjectScope, document_id: str) -> None:
+        """Union the document's tags into every non-needs_review chunk (FR-1.15 inheritance);
+        the chunk keeps its own finer tags. Used on approve and on re-categorize."""
+        async with session_scope(self._sm) as session:
+            doc = await session.get(models.Document, uuid.UUID(document_id))
+            if doc is None or doc.project_id != _pid(scope):
+                return
+            chunks = await session.scalars(
+                select(models.Chunk).where(
+                    models.Chunk.document_id == uuid.UUID(document_id),
+                    models.Chunk.project_id == _pid(scope),
+                    models.Chunk.needs_review.is_(False),
+                )
+            )
+            for chunk in chunks:
+                merged = list(dict.fromkeys([*chunk.tags, *doc.doc_tags]))
+                chunk.tags = merged
+
+    # --- publish (post-approval) ---------------------------------------------
+
+    async def record_publish(
+        self,
+        scope: ProjectScope,
+        document_id: str,
+        *,
+        embeddings: Mapping[str, Sequence[float]],
+        claims: Sequence[ClaimSpec],
+        entities: Sequence[EntitySpec],
+        errors: Sequence[IngestErrorSpec],
+        counters: Counters,
+    ) -> dict[str, str]:
+        """Persist the publish phase relationally (one tx): chunk embeddings, claims (replacing
+        any prior), entities/aliases (idempotent), ingest_errors, and the EXTRACT/RESOLVE
+        checkpoints. Returns a map of ``normalized_name|type`` → entity id. Graph writes and the
+        final PERSIST checkpoint happen in the caller (graph MERGE is idempotent)."""
+        async with session_scope(self._sm) as session:
+            # Replace this document's claims so a redo cannot duplicate them.
+            chunk_ids = (
+                await session.scalars(
+                    select(models.Chunk.id).where(
+                        models.Chunk.document_id == uuid.UUID(document_id),
+                        models.Chunk.project_id == _pid(scope),
+                    )
+                )
+            ).all()
+            if chunk_ids:
+                await session.execute(
+                    delete(models.Claim).where(
+                        models.Claim.project_id == _pid(scope),
+                        models.Claim.chunk_id.in_(chunk_ids),
+                    )
+                )
+            for chunk_id, vector in embeddings.items():
+                await session.execute(
+                    update(models.Chunk)
+                    .where(
+                        models.Chunk.id == uuid.UUID(chunk_id),
+                        models.Chunk.project_id == _pid(scope),
+                    )
+                    .values(embedding=list(vector))
+                )
+            for claim in claims:
+                session.add(
+                    models.Claim(
+                        project_id=_pid(scope),
+                        chunk_id=uuid.UUID(claim.chunk_id),
+                        text=claim.text,
+                        subject=claim.subject,
+                        predicate=claim.predicate,
+                        object=claim.object,
+                        tags=list(claim.tags),
+                        extraction_confidence=claim.extraction_confidence,
+                        source_document_id=uuid.UUID(document_id),
+                    )
+                )
+            entity_ids = await self._upsert_entities(session, scope, entities)
+            for err in errors:
+                session.add(
+                    models.IngestError(
+                        project_id=_pid(scope),
+                        document_id=uuid.UUID(document_id),
+                        chunk_ref=err.chunk_ref,
+                        stage=err.stage,
+                        error=err.error,
+                    )
+                )
+            await self._mark_stages(
+                session,
+                scope,
+                document_id,
+                [PipelineStage.EXTRACT, PipelineStage.RESOLVE],
+                phase="approved",
+                counters=counters,
+            )
+            return entity_ids
+
+    async def _upsert_entities(
+        self, session: AsyncSession, scope: ProjectScope, entities: Sequence[EntitySpec]
+    ) -> dict[str, str]:
+        ids: dict[str, str] = {}
+        for entity in entities:
+            norm = normalize_name(entity.name)
+            key = f"{norm}|{entity.type}"
+            if key in ids:
+                continue
+            statement = (
+                pg_insert(models.Entity)
+                .values(
+                    project_id=_pid(scope),
+                    name=entity.name,
+                    normalized_name=norm,
+                    type=entity.type,
+                )
+                .on_conflict_do_nothing(index_elements=["project_id", "normalized_name", "type"])
+            )
+            await session.execute(statement)
+            entity_id = await session.scalar(
+                select(models.Entity.id).where(
+                    models.Entity.project_id == _pid(scope),
+                    models.Entity.normalized_name == norm,
+                    models.Entity.type == entity.type,
+                )
+            )
+            if entity_id is None:
+                continue
+            ids[key] = str(entity_id)
+            await self._insert_new_aliases(session, scope, str(entity_id), entity.aliases)
+        return ids
+
+    async def _insert_new_aliases(
+        self,
+        session: AsyncSession,
+        scope: ProjectScope,
+        entity_id: str,
+        aliases: Sequence[str],
+    ) -> None:
+        if not aliases:
+            return
+        existing = set(
+            (
+                await session.scalars(
+                    select(models.EntityAlias.alias).where(
+                        models.EntityAlias.entity_id == uuid.UUID(entity_id),
+                        models.EntityAlias.project_id == _pid(scope),
+                    )
+                )
+            ).all()
+        )
+        for alias in dict.fromkeys(aliases):
+            if alias and alias not in existing:
+                session.add(
+                    models.EntityAlias(
+                        project_id=_pid(scope),
+                        entity_id=uuid.UUID(entity_id),
+                        alias=alias,
+                    )
+                )
+
+    async def count_claims(self, scope: ProjectScope, document_id: str) -> int:
+        async with self._sm() as session:
+            total = await session.scalar(
+                select(func.count())
+                .select_from(models.Claim)
+                .join(models.Chunk, models.Claim.chunk_id == models.Chunk.id)
+                .where(
+                    models.Chunk.document_id == uuid.UUID(document_id),
+                    models.Claim.project_id == _pid(scope),
+                )
+            )
+            return int(total or 0)
+
+    async def list_topics(self, scope: ProjectScope) -> list[tuple[str, int]]:
+        """The project's taxonomy: ``(slug, sensitivity)`` pairs (SPEC-02/04 topics)."""
+        async with self._sm() as session:
+            rows = await session.execute(
+                select(models.Topic.slug, models.Topic.sensitivity).where(
+                    models.Topic.project_id == _pid(scope)
+                )
+            )
+            return [(slug, int(sens)) for slug, sens in rows.all()]
+
+    async def get_topic_rules(self, scope: ProjectScope) -> list[TopicRule]:
+        """Admin regex/keyword topic rules from ``projects.settings['topic_rules']`` (FR-1.7).
+
+        Each rule is ``{"pattern": <regex>, "tag": <slug>}``; malformed entries are skipped."""
+        async with self._sm() as session:
+            settings = await session.scalar(
+                select(models.Project.settings).where(models.Project.id == _pid(scope))
+            )
+        raw = (settings or {}).get("topic_rules", [])
+        rules: list[TopicRule] = []
+        if isinstance(raw, list):
+            for entry in raw:
+                if isinstance(entry, Mapping) and "pattern" in entry and "tag" in entry:
+                    rules.append(TopicRule(pattern=str(entry["pattern"]), tag=str(entry["tag"])))
+        return rules
+
+    async def list_ingest_errors(
+        self, scope: ProjectScope, document_id: str
+    ) -> list[IngestErrorSpec]:
+        async with self._sm() as session:
+            rows = await session.scalars(
+                select(models.IngestError).where(
+                    models.IngestError.project_id == _pid(scope),
+                    models.IngestError.document_id == uuid.UUID(document_id),
+                )
+            )
+            return [
+                IngestErrorSpec(chunk_ref=e.chunk_ref, stage=e.stage, error=e.error) for e in rows
+            ]
+
+
+def _source_row(source: models.Source) -> SourceRow:
+    return SourceRow(
+        id=str(source.id),
+        name=source.name,
+        type=source.type,
+        policy=source.policy,
+        default_tags=tuple(source.default_tags),
+        review_if_sensitive=source.review_if_sensitive,
+        curators=tuple(str(c) for c in source.curators),
+    )
+
+
+def _doc_row(doc: models.Document) -> DocRow:
+    return DocRow(
+        id=str(doc.id),
+        project_id=str(doc.project_id),
+        source_id=str(doc.source_id) if doc.source_id else None,
+        logical_id=doc.logical_id,
+        checksum=doc.checksum,
+        title=doc.title,
+        path=doc.path,
+        lang=doc.lang,
+        status=doc.status,
+        doc_tags=tuple(doc.doc_tags),
+    )
+
+
+def _run_status(run: models.IngestRun) -> RunStatus:
+    return RunStatus(
+        document_id=str(run.document_id),
+        project_id=str(run.project_id),
+        phase=run.phase,
+        completed_stages=tuple(run.completed_stages),
+        chunks_created=run.chunks_created,
+        claims_generated=run.claims_generated,
+        tables_converted=run.tables_converted,
+        tables_needs_review=run.tables_needs_review,
+        discarded_chunks=run.discarded_chunks,
+        error=run.error,
+    )

@@ -26,6 +26,7 @@ KNOWLEDGE_TABLES = [
     "skills",
     "audit_log",
     "ingest_errors",
+    "ingest_runs",
 ]
 
 
