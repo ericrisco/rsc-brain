@@ -69,6 +69,7 @@ class ApiDeps:
 
 def _deps_from_config() -> tuple[ApiDeps, AsyncEngine]:
     from rsc_brain.config import load_settings
+    from rsc_brain.gateway.usage import PgEmbeddingCache, PgUsageRecorder
     from rsc_brain.stores.relational.database import (
         make_engine,
         make_sessionmaker,
@@ -78,9 +79,16 @@ def _deps_from_config() -> tuple[ApiDeps, AsyncEngine]:
 
     settings = load_settings()
     engine = make_engine()
+    sessionmaker = make_sessionmaker(engine)
     deps = ApiDeps(
-        sessionmaker=make_sessionmaker(engine),
-        gateway=ModelGateway(settings.capabilities),
+        sessionmaker=sessionmaker,
+        # SPEC-22 (FR-9.5/9.6): enforce daily token budgets + reuse cached embeddings in the
+        # running service (the gateway works without these; they're wired here for production).
+        gateway=ModelGateway(
+            settings.capabilities,
+            usage_recorder=PgUsageRecorder(sessionmaker, settings.capabilities),
+            embedding_cache=PgEmbeddingCache(sessionmaker),
+        ),
         data_dir=settings.ingest.data_dir,
         config=PipelineConfig(
             hardware_profile=settings.hardware_profile,

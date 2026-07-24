@@ -98,6 +98,32 @@ def init(
     emit_result(ctx, json_output, payload, f"migrations applied; {human_admin}")
 
 
+def usage(
+    ctx: typer.Context,
+    json_output: bool = JSON_OPTION,
+    days: int = typer.Option(7, "--days", help="How many days back to report."),
+) -> None:
+    """Report per-capability token + call usage by day (SPEC-22, FR-9.5)."""
+    from rsc_brain.config import load_settings
+    from rsc_brain.gateway.usage import PgUsageRecorder
+    from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
+
+    async def _run() -> list[dict[str, object]]:
+        settings = load_settings()
+        engine = make_engine()
+        try:
+            recorder = PgUsageRecorder(make_sessionmaker(engine), settings.capabilities)
+            return await recorder.usage(days=days)
+        finally:
+            await engine.dispose()
+
+    rows = asyncio.run(_run())
+    human = "\n".join(
+        f"{r['day']} {r['capability']}: {r['tokens']} tok / {r['calls']} calls" for r in rows
+    )
+    emit_result(ctx, json_output, {"usage": rows}, human or "no usage recorded")
+
+
 def _doctor_facts() -> tuple[str, bool, dict[int, bool]]:
     """Consume `brain doctor` for the profile + host facts the plan is built from (SPEC-16)."""
     from typing import cast

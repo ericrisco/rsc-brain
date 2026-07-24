@@ -36,14 +36,14 @@ def test_unimplemented_command_exits_nonzero_with_json_after_subcommand() -> Non
 
 
 def test_global_json_before_subcommand_also_works() -> None:
-    # `usage` is still a declared stub (implemented by a later SPEC); `ingest` is now real.
-    result = runner.invoke(app, ["--json", "usage"])
+    # `down` is still a declared stub (start/stop the stack land with a later SPEC).
+    result = runner.invoke(app, ["--json", "down"])
     assert result.exit_code == 2
     payload = json.loads(result.stdout)
-    assert payload == {"status": "not_implemented", "command": "usage"}
+    assert payload == {"status": "not_implemented", "command": "down"}
 
 
 def test_unimplemented_command_human_message_goes_to_stderr() -> None:
-    result = runner.invoke(app, ["usage"])
+    result = runner.invoke(app, ["down"])
     assert result.exit_code == 2
     assert "not implemented" in result.output

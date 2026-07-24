@@ -22,6 +22,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Float,
     ForeignKey,
     Identity,
     Index,
@@ -423,6 +424,30 @@ class Skill(Base):
         UniqueConstraint("project_id", "slug"),
         Index("ix_skills_project_id_id", "project_id", "id"),
     )
+
+
+class TokenUsage(Base):
+    """Per-capability, per-day token + call counters (SPEC-22, FR-9.5)."""
+
+    __tablename__ = "token_usage"
+    id: Mapped[uuid.UUID] = _pk()
+    capability: Mapped[str] = mapped_column(Text, nullable=False)
+    day: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    tokens: Mapped[int] = mapped_column(BigInteger, server_default="0", nullable=False)
+    calls: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    __table_args__ = (UniqueConstraint("capability", "day"),)
+
+
+class EmbeddingCache(Base):
+    """Cached embedding by SHA-256(text) + model + dimension (SPEC-22, FR-9.6)."""
+
+    __tablename__ = "embedding_cache"
+    id: Mapped[uuid.UUID] = _pk()
+    text_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    dimension: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(ARRAY(Float), nullable=False)
+    __table_args__ = (UniqueConstraint("text_hash", "model", "dimension"),)
 
 
 class AuditLog(Base):

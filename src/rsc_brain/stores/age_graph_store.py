@@ -215,6 +215,27 @@ class AgeGraphStore:
         parsed = _parse_agtype(rows[0][0])
         return parsed if isinstance(parsed, int) else 0
 
+    async def tombstone_nodes(self, scope: ProjectScope, node_ids: Sequence[str]) -> int:
+        """Suppress specific nodes by id (SPEC-22 GDPR forget --entity). k-hop skips suppressed
+        nodes, and the tombstone means re-resolving the same uuid5 never silently revives it."""
+        if not node_ids:
+            return 0
+        graph = graph_name(scope.project_id)
+        cypher = (
+            "MATCH (n) WHERE n.id IN $ids AND n.suppressed IS NULL "
+            "SET n.suppressed = true RETURN count(n) AS c"
+        )
+        async with self._sm() as session:
+            await self._prepare(session)
+            if not await self._graph_exists(session, graph):
+                return 0
+            rows = await self._cypher(session, graph, cypher, {"ids": list(node_ids)}, "c agtype")
+            await session.commit()
+        if not rows:
+            return 0
+        parsed = _parse_agtype(rows[0][0])
+        return parsed if isinstance(parsed, int) else 0
+
     async def merge_nodes(self, scope: ProjectScope, canonical_id: str, duplicate_id: str) -> int:
         """Re-point every edge of the duplicate node onto the canonical node, then tombstone the
         duplicate (``suppressed = true`` + ``merged_into``). Returns the re-pointed edge count.

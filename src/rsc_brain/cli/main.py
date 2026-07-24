@@ -18,6 +18,8 @@ from rsc_brain.cli.admin import audit as _audit
 from rsc_brain.cli.admin import projects_app, topics_app, users_app
 from rsc_brain.cli.corrections import corrections_app
 from rsc_brain.cli.data import backup as _backup
+from rsc_brain.cli.data import demo as _demo
+from rsc_brain.cli.data import export as _export
 from rsc_brain.cli.data import forget as _forget
 from rsc_brain.cli.data import migrate as _migrate
 from rsc_brain.cli.data import restore as _restore
@@ -32,6 +34,7 @@ from rsc_brain.cli.installer import doctor as _doctor
 from rsc_brain.cli.installer import eval_command as _eval
 from rsc_brain.cli.installer import init as _init
 from rsc_brain.cli.installer import plan as _plan
+from rsc_brain.cli.installer import usage as _usage
 from rsc_brain.cli.installer import verify as _verify
 from rsc_brain.cli.skills import skills_app
 
@@ -76,6 +79,7 @@ _IMPLEMENTED_COMMANDS: dict[str, tuple[Callable[..., None], str]] = {
     "apply": (_apply, "Execute the install plan (idempotent, checkpointed, per-phase rollback)."),
     "verify": (_verify, "Smoke-test the running system (gateway + database)."),
     "calibrate": (_calibrate, "Report the calibration set + default τ."),
+    "usage": (_usage, "Report per-capability token + call usage by day (FR-9.5)."),
 }
 
 # Command groups (sub-apps) with real behaviour.
@@ -145,6 +149,13 @@ app.add_typer(hunt_app, name="hunt", help="Ask a responsible person a question b
 # `eval` (golden-set evaluation) is introduced by SPEC-06 (beyond the original FR-10.1 list).
 app.command("eval", help="Report the golden-set composition (full run needs an ingested corpus).")(
     _eval
+)
+# `export` (OKF bundle, FR-10.6/12.7) and `demo` (FR-10.7) are introduced by SPEC-22.
+app.command("export", help="Export a project's claims + skills as an OKF bundle (FR-10.6/12.7).")(
+    _export
+)
+app.command("demo", help="Seed a fictional company end-to-end; --reset removes it (FR-10.7).")(
+    _demo
 )
 
 
