@@ -17,7 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.identity.resolve import resolve_delegated_scope
-from rsc_brain.mcp.auth import AuthInvalidError, MCPToolError, authenticate
+from rsc_brain.mcp.auth import AuthInvalidError, MCPToolError, RateLimitedError, authenticate
+from rsc_brain.mcp.quotas import Kind, QuotaConfig, QuotaService
 from rsc_brain.mcp.tools import (
     CorrectKnowledgeOutput,
     FeedbackSignal,
@@ -60,16 +61,20 @@ def build_mcp_server(
     retriever: PgRetriever,
     gateway: ModelGateway,
     stateless: bool = True,
+    quota_config: QuotaConfig | None = None,
 ) -> FastMCP:
     """Build the FastMCP server wired to the retriever + stores."""
     graph = AgeGraphStore(sessionmaker)
+    quotas = QuotaService(sessionmaker, quota_config)
     server = FastMCP(
         name="rsc-brain",
         instructions=ANTI_INJECTION_GUIDE,
         stateless_http=stateless,
     )
 
-    async def _scope(ctx: Context[Any, Any, Any], on_behalf_of: str | None = None) -> ProjectScope:
+    async def _scope(
+        ctx: Context[Any, Any, Any], on_behalf_of: str | None = None, *, kind: Kind = "recall"
+    ) -> ProjectScope:
         request = ctx.request_context.request
         authorization = request.headers.get("authorization") if request is not None else None
         try:
@@ -80,8 +85,12 @@ def build_mcp_server(
                 delegated = await resolve_delegated_scope(sessionmaker, scope, on_behalf_of)
                 if delegated is None:
                     raise AuthInvalidError("invalid delegation")
-                return delegated
+                scope = delegated
+            # Per-principal quota (FR-14.7): counts this call; over the limit → RATE_LIMITED.
+            await quotas.consume(scope, kind)
             return scope
+        except RateLimitedError as exc:
+            raise ToolError(f"{exc.code}: {exc} (retry_after={exc.retry_after})") from exc
         except MCPToolError as exc:
             raise ToolError(f"{exc.code}: {exc}") from exc
 
@@ -133,7 +142,7 @@ def build_mcp_server(
         tags: list[str] | None = None,
         on_behalf_of: str | None = None,
     ) -> SubmitKnowledgeOutput:
-        scope = await _scope(ctx, on_behalf_of)
+        scope = await _scope(ctx, on_behalf_of, kind="write")
         return await do_submit_knowledge(
             sessionmaker,
             gateway,

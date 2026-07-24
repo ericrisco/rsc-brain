@@ -29,6 +29,10 @@ class AuthInvalidError(MCPToolError):
 class RateLimitedError(MCPToolError):
     code = "RATE_LIMITED"
 
+    def __init__(self, message: str = "rate limited", *, retry_after: int = 60) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after  # seconds until the caller may retry (FR-14.7)
+
 
 class InternalError(MCPToolError):
     code = "INTERNAL"
