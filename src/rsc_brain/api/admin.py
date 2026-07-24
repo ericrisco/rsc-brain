@@ -83,6 +83,13 @@ class ChunkApprove(BaseModel):
     tags: list[str] | None = None  # curator-corrected tags for an ambiguous table (FR-1.5)
 
 
+class OntologyUpload(BaseModel):
+    name: str
+    format: str = Field(default="turtle", description="owl|rdf|skos|turtle")
+    content: str = Field(description="The full OWL/RDF/SKOS document text.")
+    uri_base: str | None = None
+
+
 def _deps(request: Request) -> object:
     return request.app.state.deps
 
@@ -907,3 +914,66 @@ async def promote_gap(
     if outcome is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="gap not found")
     return {"hunt_id": outcome.hunt_id, "state": str(outcome.state)}
+
+
+# --- ontology (SPEC-24, FR-17.1/17.7 — optional, off by default) -------------
+
+
+def _ontology_store(request: Request) -> object:
+    from rsc_brain.ontology.store import OntologyStore
+
+    return OntologyStore(_deps(request).sessionmaker)  # type: ignore[attr-defined]
+
+
+@router.get("/ontologies")
+async def list_ontologies(
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """List a project's ontologies (SPEC-24, FR-17.1). Read — console-consumable."""
+    rows = await _ontology_store(request).list_all(scope)  # type: ignore[attr-defined]
+    return {
+        "ontologies": [
+            {
+                "id": o.id,
+                "name": o.name,
+                "format": o.format,
+                "version": o.version,
+                "active": o.active,
+                "triples": o.triples,
+            }
+            for o in rows
+        ]
+    }
+
+
+@router.post("/ontologies", status_code=status.HTTP_201_CREATED)
+async def add_ontology(
+    body: OntologyUpload, request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """Validate and store a versioned ontology (SPEC-24, FR-17.1). Invalid RDF → 422."""
+    from rsc_brain.ontology.index import OntologyParseError
+
+    try:
+        ontology_id = await _ontology_store(request).add(  # type: ignore[attr-defined]
+            scope,
+            name=body.name,
+            content=body.content,
+            fmt=body.format,
+            uri_base=body.uri_base,
+        )
+    except OntologyParseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"invalid ontology: {exc}"
+        ) from exc
+    return {"ontology_id": ontology_id, "name": body.name}
+
+
+@router.get("/ontologies/coverage")
+async def ontology_coverage(
+    request: Request, scope: ProjectScope = Depends(_obs_scope), top: int = 10
+) -> dict[str, object]:
+    """Anchoring coverage: % anchored + top unanchored names (SPEC-24, FR-17.7)."""
+    coverage: dict[str, object] = await _ontology_store(request).coverage(  # type: ignore[attr-defined]
+        scope, top_n=top
+    )
+    return coverage

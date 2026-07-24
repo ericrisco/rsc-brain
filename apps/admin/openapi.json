@@ -172,6 +172,42 @@
         "title": "LoginRequest",
         "type": "object"
       },
+      "OntologyUpload": {
+        "properties": {
+          "content": {
+            "description": "The full OWL/RDF/SKOS document text.",
+            "title": "Content",
+            "type": "string"
+          },
+          "format": {
+            "default": "turtle",
+            "description": "owl|rdf|skos|turtle",
+            "title": "Format",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "uri_base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uri Base"
+          }
+        },
+        "required": [
+          "name",
+          "content"
+        ],
+        "title": "OntologyUpload",
+        "type": "object"
+      },
       "PersonCreate": {
         "properties": {
           "channels": {
@@ -1813,6 +1849,195 @@
           }
         ],
         "summary": "Observability Recalls",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/ontologies": {
+      "get": {
+        "description": "List a project's ontologies (SPEC-24, FR-17.1). Read \u2014 console-consumable.",
+        "operationId": "list_ontologies_api_v1_admin_ontologies_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Ontologies Api V1 Admin Ontologies Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Ontologies",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "description": "Validate and store a versioned ontology (SPEC-24, FR-17.1). Invalid RDF \u2192 422.",
+        "operationId": "add_ontology_api_v1_admin_ontologies_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OntologyUpload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Add Ontology Api V1 Admin Ontologies Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Ontology",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/ontologies/coverage": {
+      "get": {
+        "description": "Anchoring coverage: % anchored + top unanchored names (SPEC-24, FR-17.7).",
+        "operationId": "ontology_coverage_api_v1_admin_ontologies_coverage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "top",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "title": "Top",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Ontology Coverage Api V1 Admin Ontologies Coverage Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Ontology Coverage",
         "tags": [
           "admin"
         ]

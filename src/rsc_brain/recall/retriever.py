@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from rsc_brain.config.models import RecallConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.chunker import approx_tokens
+from rsc_brain.ontology.recall import OntologyRecall
 from rsc_brain.recall.gaps import register_gap
 from rsc_brain.recall.interfaces import Fragment, RecallResult
 from rsc_brain.recall.permissions import chunk_visibility_clause, sensitive_tags
@@ -98,6 +99,7 @@ class PgRetriever:
         graph_store: AgeGraphStore,
         config: RecallConfig | None = None,
         contradiction_resolver: object | None = None,
+        ontology: OntologyRecall | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._gateway = gateway
@@ -105,6 +107,9 @@ class PgRetriever:
         self._config = config or RecallConfig()
         # Optional on-consume contradiction re-check (FR-3.4). None keeps SPEC-06 behaviour.
         self._resolver = contradiction_resolver
+        # Optional bounded ontology query-expansion (SPEC-24, FR-17.5). None (default) OR a project
+        # with ontology.enabled=false means no expansion — recall is identical to the base pipeline.
+        self._ontology = ontology
 
     async def _detect_on_consume(
         self, scope: ProjectScope, candidates: Sequence[_Candidate]
@@ -158,6 +163,7 @@ class PgRetriever:
             candidate_ids = _rrf_fuse([vector_ids, lexical_ids], k=self._config.rrf_k, limit=top_k)
         else:
             candidate_ids = vector_ids
+        candidate_ids = await self._ontology_expand(scope, query, forbidden, candidate_ids)
         candidate_ids = await self._expand_k_hop(scope, forbidden, candidate_ids)
         candidates = await self._load_candidates(
             scope,
@@ -238,6 +244,27 @@ class PgRetriever:
         async with self._sm() as session:
             rows = await session.execute(self._lexical_search(scope, query, forbidden, limit))
             return [str(cid) for cid, _ in rows.all()]
+
+    async def _ontology_expand(
+        self, scope: ProjectScope, query: str, forbidden: frozenset[str], seed_ids: list[str]
+    ) -> list[str]:
+        """FR-17.5: fold in chunks matching the query's ontology descendants (e.g. "contracts" →
+        "leases"/"sales"). No-op unless the layer is enabled. Each descendant label is resolved
+        through the SAME visibility-filtered lexical search, so the tag-based permission cut applies
+        to the expansion exactly as to the base set (FR-17.8 — the ontology never widens visibility)."""
+        if self._ontology is None:
+            return seed_ids
+        extra_labels = await self._ontology.expand_query_labels(scope, query)
+        if not extra_labels:
+            return seed_ids
+        expanded = list(seed_ids)
+        for label in extra_labels:
+            expanded.extend(
+                await self._lexical_candidates(
+                    scope, label, forbidden, self._config.lexical_candidates
+                )
+            )
+        return list(dict.fromkeys(expanded))
 
     async def _expand_k_hop(
         self, scope: ProjectScope, forbidden: frozenset[str], seed_ids: list[str]

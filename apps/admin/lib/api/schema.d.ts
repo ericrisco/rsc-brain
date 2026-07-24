@@ -434,6 +434,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/ontologies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Ontologies
+         * @description List a project's ontologies (SPEC-24, FR-17.1). Read — console-consumable.
+         */
+        get: operations["list_ontologies_api_v1_admin_ontologies_get"];
+        put?: never;
+        /**
+         * Add Ontology
+         * @description Validate and store a versioned ontology (SPEC-24, FR-17.1). Invalid RDF → 422.
+         */
+        post: operations["add_ontology_api_v1_admin_ontologies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/ontologies/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ontology Coverage
+         * @description Anchoring coverage: % anchored + top unanchored names (SPEC-24, FR-17.7).
+         */
+        get: operations["ontology_coverage_api_v1_admin_ontologies_coverage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/persons": {
         parameters: {
             query?: never;
@@ -988,6 +1032,24 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+        };
+        /** OntologyUpload */
+        OntologyUpload: {
+            /**
+             * Content
+             * @description The full OWL/RDF/SKOS document text.
+             */
+            content: string;
+            /**
+             * Format
+             * @description owl|rdf|skos|turtle
+             * @default turtle
+             */
+            format: string;
+            /** Name */
+            name: string;
+            /** Uri Base */
+            uri_base?: string | null;
         };
         /** PersonCreate */
         PersonCreate: {
@@ -1810,6 +1872,110 @@ export interface operations {
                 principal_type?: string | null;
                 denied?: boolean | null;
                 limit?: number;
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_ontologies_api_v1_admin_ontologies_get: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_ontology_api_v1_admin_ontologies_post: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OntologyUpload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    ontology_coverage_api_v1_admin_ontologies_coverage_get: {
+        parameters: {
+            query?: {
+                top?: number;
                 project?: string | null;
             };
             header?: never;

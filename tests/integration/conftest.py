@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.pipeline import IngestionPipeline, PipelineConfig, default_parser_factory
 from rsc_brain.ingest.service import IngestService
+from rsc_brain.ontology.ingest import OntologyIngest
 from rsc_brain.scope import Principal, PrincipalType, ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore, graph_name
 from rsc_brain.stores.relational import models
@@ -140,18 +141,23 @@ async def build_harness(
         completion: object | None = None,
         parser_factory: object | None = None,
         config: PipelineConfig | None = None,
+        with_ontology: bool = False,
     ) -> Harness:
         engine = make_engine(migrated_dsn)
         engines.append(engine)
         sm = make_sessionmaker(engine)
         gateway = gateway_factory(completion=completion or make_completion())
         repo = IngestRepository(sm)
+        # SPEC-24: opt-in the ontology seam for tests that exercise anchoring; default off so every
+        # other integration test runs the base pipeline unchanged.
+        ontology = OntologyIngest(sm) if with_ontology else None
         pipeline = IngestionPipeline(
             repository=repo,
             graph_store=AgeGraphStore(sm),
             gateway=gateway,
             parser_factory=parser_factory or default_parser_factory,  # type: ignore[arg-type]
             config=config or PipelineConfig(),
+            ontology=ontology,
         )
         service = IngestService(repo, pipeline, data_dir=tmp_path)
         return Harness(sm=sm, repo=repo, pipeline=pipeline, service=service, gateway=gateway)

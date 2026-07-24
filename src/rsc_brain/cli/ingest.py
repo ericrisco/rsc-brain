@@ -24,6 +24,7 @@ from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.pipeline import IngestionPipeline, PipelineConfig
 from rsc_brain.ingest.service import IngestService
 from rsc_brain.ingest.sources import SourceService
+from rsc_brain.ontology.ingest import OntologyIngest
 from rsc_brain.scope import Principal, PrincipalType, ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational import models
@@ -77,6 +78,7 @@ def _run_with_service[T](slug: str, fn: Callable[[IngestService, ProjectScope], 
                     sensitivity_threshold=settings.ingest.sensitivity_threshold,
                     default_tag=settings.ingest.default_tag,
                 ),
+                ontology=OntologyIngest(sessionmaker),
             )
             service = IngestService(repo, pipeline, data_dir=settings.ingest.data_dir)
             return await fn(service, _cli_scope(project_id))
