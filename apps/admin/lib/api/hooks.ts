@@ -3,13 +3,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./client";
 import type {
   Activity,
+  Correction,
+  CorrectionMetrics,
   CreatedPat,
+  DisputedClaim,
+  Gap,
   Health,
+  Hunt,
   IngestRun,
   Me,
   PatList,
   PendingDoc,
   RecallRow,
+  Resolution,
 } from "./types";
 
 /** The authenticated user + their memberships (drives the project selector + role gating). */
@@ -170,5 +176,132 @@ export function useRejectDoc(project: string) {
       if (error) throw new Error("failed to reject");
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["obs"] }),
+  });
+}
+
+
+// --- SPEC-19 living knowledge ---------------------------------------------------------------
+
+const LIVE_MS = 5000; // FR-13.5 live view (same polling pattern as the observability dashboard)
+
+/** Gaps for a project. `agents` switches to the separate agent-gap view (FR-14.6). */
+export function useGaps(project: string, agents: boolean) {
+  return useQuery({
+    queryKey: ["kb", "gaps", project, agents],
+    enabled: !!project,
+    refetchInterval: LIVE_MS,
+    queryFn: async (): Promise<{ gaps: Gap[] }> => {
+      const { data, error } = await api.GET("/api/v1/admin/gaps", {
+        params: { query: { project, audience: agents ? "agent" : "human" } },
+      });
+      if (error) throw new Error("failed to load gaps");
+      return data as unknown as { gaps: Gap[] };
+    },
+  });
+}
+
+/** Promote an agent gap to a hunt (FR-14.6). */
+export function usePromoteGap(project: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (gapId: string) => {
+      const { error } = await api.POST("/api/v1/admin/gaps/{gap_id}/promote", {
+        params: { path: { gap_id: gapId }, query: { project } },
+      });
+      if (error) throw new Error("failed to promote gap");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["kb"] }),
+  });
+}
+
+/** Hunts for a project (live — follows the FR-6.3 state machine). */
+export function useHunts(project: string) {
+  return useQuery({
+    queryKey: ["kb", "hunts", project],
+    enabled: !!project,
+    refetchInterval: LIVE_MS,
+    queryFn: async (): Promise<{ hunts: Hunt[] }> => {
+      const { data, error } = await api.GET("/api/v1/admin/hunts", {
+        params: { query: { project } },
+      });
+      if (error) throw new Error("failed to load hunts");
+      return data as unknown as { hunts: Hunt[] };
+    },
+  });
+}
+
+/** Claims currently disputed (FR-13.5). */
+export function useDisputed(project: string) {
+  return useQuery({
+    queryKey: ["kb", "disputed", project],
+    enabled: !!project,
+    refetchInterval: LIVE_MS,
+    queryFn: async (): Promise<{ claims: DisputedClaim[] }> => {
+      const { data, error } = await api.GET("/api/v1/admin/claims/disputed", {
+        params: { query: { project } },
+      });
+      if (error) throw new Error("failed to load disputed claims");
+      return data as unknown as { claims: DisputedClaim[] };
+    },
+  });
+}
+
+/** Resolved contradictions — who won, by what score (FR-5.3). */
+export function useResolutions(project: string) {
+  return useQuery({
+    queryKey: ["kb", "resolutions", project],
+    enabled: !!project,
+    queryFn: async (): Promise<{ resolutions: Resolution[] }> => {
+      const { data, error } = await api.GET("/api/v1/admin/contradictions/resolutions", {
+        params: { query: { project } },
+      });
+      if (error) throw new Error("failed to load resolutions");
+      return data as unknown as { resolutions: Resolution[] };
+    },
+  });
+}
+
+/** Corrections feed; `status` filters (e.g. the pending_confirmation queue). */
+export function useCorrections(project: string, status?: string) {
+  return useQuery({
+    queryKey: ["kb", "corrections", project, status ?? "all"],
+    enabled: !!project,
+    refetchInterval: LIVE_MS,
+    queryFn: async (): Promise<{ corrections: Correction[] }> => {
+      const { data, error } = await api.GET("/api/v1/admin/corrections", {
+        params: { query: { project, status_filter: status } },
+      });
+      if (error) throw new Error("failed to load corrections");
+      return data as unknown as { corrections: Correction[] };
+    },
+  });
+}
+
+/** The Learning-Layer §7 metrics. */
+export function useCorrectionMetrics(project: string) {
+  return useQuery({
+    queryKey: ["kb", "metrics", project],
+    enabled: !!project,
+    queryFn: async (): Promise<CorrectionMetrics> => {
+      const { data, error } = await api.GET("/api/v1/admin/corrections/metrics", {
+        params: { query: { project } },
+      });
+      if (error) throw new Error("failed to load metrics");
+      return data as unknown as CorrectionMetrics;
+    },
+  });
+}
+
+/** Revert a correction (server enforces admin-or-tag-owner; FR-15.8). */
+export function useRevertCorrection(project: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (correctionId: string) => {
+      const { error } = await api.POST("/api/v1/admin/corrections/{correction_id}/revert", {
+        params: { path: { correction_id: correctionId }, query: { project } },
+      });
+      if (error) throw new Error("revert failed (are you an admin or the tag owner?)");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["kb"] }),
   });
 }

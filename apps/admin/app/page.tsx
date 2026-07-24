@@ -10,20 +10,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { logout } from "@/lib/api/auth";
 import { useMe } from "@/lib/api/hooks";
 
-function EmptyCard({ title, note }: { title: string; note: string }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>Coming soon</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-neutral-500">{note}</p>
-      </CardContent>
-    </Card>
-  );
-}
-
 export default function DashboardPage() {
   const router = useRouter();
   const { data: me, isLoading, isError } = useMe();
@@ -83,8 +69,29 @@ export default function DashboardPage() {
           </Card>
         ) : null}
 
-        <EmptyCard title="Dashboard" note="Observability arrives in v0.2 (E13.2)." />
-        <EmptyCard title="Ingestion & approvals" note="Approval queue arrives in v0.2 (E13.2)." />
+        <Card>
+          <CardHeader>
+            <CardTitle>Observability</CardTitle>
+            <CardDescription>Activity, recalls, ingest &amp; approvals</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/observability" className="text-sm underline">
+              Open dashboard →
+            </Link>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Living knowledge</CardTitle>
+            <CardDescription>Gaps, hunts, disputes &amp; corrections</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Link href="/knowledge" className="text-sm underline">
+              Open view →
+            </Link>
+          </CardContent>
+        </Card>
       </div>
     </main>
   );
