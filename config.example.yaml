@@ -1,0 +1,66 @@
+# =============================================================================
+# rsc-brain — example configuration
+# =============================================================================
+# Copy to `config.yaml` and adjust. This file is loaded and then OVERLAID by
+# environment variables (env wins): RSC_BRAIN_<SECTION>__<KEY>, "__" nests.
+#
+# SECRETS ARE NEVER STORED HERE. Every credential (api_key, database DSN) is
+# supplied via the environment or Docker secrets only (FR-4.7). The examples
+# below use local Ollama endpoints, which need no key. For a cloud provider,
+# set e.g. RSC_BRAIN_CAPABILITIES__EXTRACTOR__API_KEY in the environment.
+
+hardware_profile: workstation      # workstation | cpu_only
+
+# --- Model capabilities (FR-9.1): each layer is independently configurable ---
+capabilities:
+  extractor:
+    provider: ollama
+    model: qwen2.5:14b-instruct
+    api_base: http://localhost:11434
+    timeout_s: 120
+    fallback_model: llama3.1:8b-instruct
+  judge:
+    provider: ollama
+    model: qwen2.5:14b-instruct
+    api_base: http://localhost:11434
+    timeout_s: 60
+  topicalizer:
+    provider: ollama
+    model: llama3.1:8b-instruct
+    api_base: http://localhost:11434
+    timeout_s: 60
+  embedder:
+    provider: ollama
+    model: bge-m3
+    api_base: http://localhost:11434
+    timeout_s: 60
+    dimension: 1024              # anchored to BGE-M3 (must equal 1024)
+  reranker:
+    provider: ollama
+    model: bge-reranker-v2-m3
+    api_base: http://localhost:11434
+    timeout_s: 30
+
+# --- Recall tuning (FR-3.2 / §5.8) ---
+recall:
+  tau: 0.45                       # abstain below this relevance (D2)
+  weights:
+    similarity: 0.55
+    credibility: 0.25
+    freshness: 0.10
+    importance: 0.10
+  half_life_days: 365
+  answer_token_budget: 2000
+
+reranker:
+  enabled: false                  # FR-3.6 (P2)
+
+vision:
+  enabled: false                  # FR-1.11 reserved
+
+logging:
+  level: INFO
+  json: true
+
+# database:
+#   dsn: supply via env only -> RSC_BRAIN_DATABASE__DSN=postgresql+asyncpg://...
