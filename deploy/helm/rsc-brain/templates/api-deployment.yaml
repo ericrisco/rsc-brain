@@ -1,0 +1,88 @@
+{{- /* api/mcp — compose `api`. Stateless; readiness = `brain verify` (same check as the compose
+healthcheck, FR-11.2), so it goes Ready only once the migrate Job has the schema at head. */ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rsc-brain.fullname" . }}-api
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels:
+      {{- include "rsc-brain.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "rsc-brain.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+      annotations:
+        # Roll pods when the config/secret change (parity with compose env-driven restarts).
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: api
+          image: {{ include "rsc-brain.image" (dict "root" . "repository" .Values.image.app.repository) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: {{ include "rsc-brain.configName" . }}
+            - secretRef:
+                name: {{ include "rsc-brain.secretName" . }}
+          env:
+            - name: RSC_BRAIN_INGEST__DATA_DIR
+              value: /data/inbox
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            exec:
+              command: ["brain", "verify"]
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 15
+            failureThreshold: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: inbox
+              mountPath: /data/inbox
+          {{- with .Values.api.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: inbox
+          persistentVolumeClaim:
+            claimName: {{ include "rsc-brain.fullname" . }}-inbox
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rsc-brain.fullname" . }}-api
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "rsc-brain.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

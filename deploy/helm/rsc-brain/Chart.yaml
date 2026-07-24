@@ -1,0 +1,22 @@
+apiVersion: v2
+name: rsc-brain
+description: >-
+  Self-hosted company memory — a living knowledge graph over MCP. Kubernetes chart derived
+  1:1 from the canonical production docker-compose (SPEC-18/25, principle D18): StatefulSet
+  Postgres+AGE+pgvector, Deployments for api/worker/console, Ingress + cert-manager for TLS,
+  and a migrate-on-boot Job. Plug-and-play (FR-18.x): auto-generated secrets, migrate-on-boot,
+  brain-verify probes, first-admin bootstrap, persistent volumes — zero hand-editing.
+type: application
+# Chart version tracks the chart; appVersion tracks the rsc-brain release the images ship with.
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - knowledge-graph
+  - mcp
+  - self-hosted
+  - kubernetes
+home: https://github.com/ericrisco/rsc-brain
+sources:
+  - https://github.com/ericrisco/rsc-brain
+maintainers:
+  - name: Eric Risco de la Torre

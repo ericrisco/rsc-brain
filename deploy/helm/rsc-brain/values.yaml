@@ -1,0 +1,95 @@
+# rsc-brain Helm values (SPEC-25). The happy path is `helm install` + 2-3 values:
+#   --set ingress.domain=brain.acme.com --set ingress.clusterIssuer=letsencrypt-prod
+# Everything else has a sensible default; nothing below needs hand-editing for a working install.
+
+nameOverride: ""
+fullnameOverride: ""
+
+# --- Container images -------------------------------------------------------
+# Defaults match the names the repo's CI publishes (parity with the canonical compose). Point
+# `registry` at your registry and pin `tag` to a release for production.
+image:
+  registry: "" # e.g. ghcr.io/ericrisco — empty uses the bare repositories below
+  tag: "latest" # pin to a release tag in production
+  pullPolicy: IfNotPresent
+  app:
+    repository: rsc-brain/app # api + worker + migrate (one image, D1/12-factor)
+  console:
+    repository: rsc-brain/console
+  db:
+    repository: rsc-brain/db
+    tag: pg16-age-pgvector # the single Postgres+AGE+pgvector image (D1)
+imagePullSecrets: []
+
+# --- The one secret + first admin (auto-generated when blank; preserved across upgrades) --------
+postgres:
+  user: rsc_brain
+  database: rsc_brain
+  password: "" # blank ⇒ generated once and preserved on upgrade (never rotated)
+database:
+  dsn: "" # set ONLY to target an external Postgres; otherwise derived from postgres.* above
+admin:
+  email: admin@rsc-brain.local
+  password: "" # blank ⇒ generated once, shown in the migrate Job logs + stored in the Secret
+
+# --- Model gateway (D8: GPU is a HOST precondition; the chart never installs drivers) -----------
+# Default: point the gateway at an EXTERNAL endpoint (a GPU host or managed service).
+gateway:
+  embedder:
+    provider: ollama
+    model: nomic-embed-text
+    apiBase: http://ollama:11434 # an in-cluster Service, external URL, or the opt-in ollama below
+
+# Opt-in in-cluster Ollama — only if the cluster ALREADY has an operative GPU (device plugin +
+# drivers are the host's responsibility, D8). Off by default.
+ollama:
+  enabled: false
+  image: ollama/ollama:latest
+  gpu:
+    enabled: false
+    resourceName: nvidia.com/gpu
+    count: 1
+  nodeSelector: {}
+  tolerations: []
+  persistence:
+    size: 20Gi
+    storageClass: ""
+
+# --- Components (all stateless, 12-factor) ---------------------------------
+api:
+  replicas: 1
+  resources: {}
+worker:
+  replicas: 1
+  resources: {}
+console:
+  replicas: 1
+  resources: {}
+
+# --- Persistent volumes (the three FR-18.x volumes; caddy_* is N/A — Ingress does TLS) ----------
+persistence:
+  db:
+    size: 10Gi
+    storageClass: ""
+  inbox: # PDF drop zone (FR-1.13)
+    size: 5Gi
+    storageClass: ""
+  modelCache: # Ollama / HF weights
+    size: 20Gi
+    storageClass: ""
+
+# --- Ingress + TLS (cert-manager is a declared cluster PREREQUISITE, not installed here) --------
+ingress:
+  enabled: true
+  className: nginx
+  domain: rsc-brain.local # your public domain — OAuth to Claude/ChatGPT needs real HTTPS (D11)
+  clusterIssuer: "" # cert-manager ClusterIssuer; blank ⇒ no TLS block emitted (dev only)
+  annotations: {}
+  # api/mcp and console share the domain; the MCP lives at /mcp, the console at /.
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# Extra environment for every app container (escape hatch for uncommon RSC_BRAIN_* overrides).
+extraEnv: []

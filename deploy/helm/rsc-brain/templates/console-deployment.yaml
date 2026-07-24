@@ -1,0 +1,67 @@
+{{- /* console — compose `console` (Next.js admin). Stateless; talks to the api Service. */ -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rsc-brain.fullname" . }}-console
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+spec:
+  replicas: {{ .Values.console.replicas }}
+  selector:
+    matchLabels:
+      {{- include "rsc-brain.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: console
+  template:
+    metadata:
+      labels:
+        {{- include "rsc-brain.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: console
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      containers:
+        - name: console
+          image: {{ include "rsc-brain.image" (dict "root" . "repository" .Values.image.console.repository) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: API_URL
+              value: http://{{ include "rsc-brain.fullname" . }}-api:8080
+            - name: NODE_ENV
+              value: production
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          {{- with .Values.console.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "rsc-brain.fullname" . }}-console
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "rsc-brain.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: console
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000

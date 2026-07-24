@@ -1,0 +1,63 @@
+{{- /*
+Public entrypoint — replaces the compose `caddy` (dropped on k8s, like Coolify/Dokploy: the
+target's proxy does TLS). cert-manager is a DECLARED cluster prerequisite (not installed here, per
+D8): set `ingress.clusterIssuer` and it provisions the certificate. MCP + admin API + OAuth
+discovery route to the api; everything else to the console — one public domain for all projects (D9).
+*/ -}}
+{{- if .Values.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "rsc-brain.fullname" . }}
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+  annotations:
+    {{- if .Values.ingress.clusterIssuer }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer | quote }}
+    {{- end }}
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.clusterIssuer }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.domain | quote }}
+      secretName: {{ include "rsc-brain.fullname" . }}-tls
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.domain | quote }}
+      http:
+        paths:
+          # MCP + admin API + OAuth discovery → api (OAuth to Claude/ChatGPT needs this over HTTPS).
+          - path: /mcp
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "rsc-brain.fullname" . }}-api
+                port:
+                  number: 8080
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "rsc-brain.fullname" . }}-api
+                port:
+                  number: 8080
+          - path: /.well-known
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "rsc-brain.fullname" . }}-api
+                port:
+                  number: 8080
+          # Everything else → the admin console.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "rsc-brain.fullname" . }}-console
+                port:
+                  number: 3000
+{{- end }}
