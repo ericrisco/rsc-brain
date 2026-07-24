@@ -72,3 +72,38 @@ jobs:
       - run: uv sync --frozen --all-groups
       - name: Full suite + coverage gate (unit + integration, testcontainers)
         run: uv run pytest -m "integration or not integration" --cov=rsc_brain --cov-report=term-missing --cov-fail-under=70 -p no:cacheprovider
+
+  console:
+    name: admin console (build · types · lint · contract drift)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --all-groups
+      # Golden rule (D10): the console consumes only the typed client generated from the API's
+      # OpenAPI. Re-export the contract and the types, and fail the build on ANY drift.
+      - name: Export the API OpenAPI and fail on drift
+        run: |
+          uv run python scripts/export_openapi.py
+          git diff --exit-code -- apps/admin/openapi.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/admin/package-lock.json
+      - name: Install console dependencies
+        working-directory: apps/admin
+        run: npm ci
+      - name: Regenerate the typed client and fail on drift
+        working-directory: apps/admin
+        run: |
+          npm run gen:api
+          git diff --exit-code -- lib/api/schema.d.ts
+      - name: Lint · typecheck · build
+        working-directory: apps/admin
+        run: |
+          npm run lint
+          npm run typecheck
+          npm run build

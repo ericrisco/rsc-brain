@@ -1,0 +1,7 @@
+# Next.js / Node build artifacts (belt-and-suspenders with the root .gitignore)
+/node_modules
+/.next
+/out
+next-env.d.ts
+*.tsbuildinfo
+.env.local
