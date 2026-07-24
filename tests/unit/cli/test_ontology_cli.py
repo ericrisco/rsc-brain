@@ -51,6 +51,9 @@ def test_validate_missing_file(tmp_path: Path) -> None:
 
 
 def test_export_has_rdf_flag() -> None:
-    result = runner.invoke(app, ["export", "--help"])
-    assert result.exit_code == 0
-    assert "--rdf" in result.stdout
+    # Assert the parser recognises --rdf (help text is Rich-wrapped and terminal-width dependent).
+    # With --rdf present but the required --project missing, Click errors on the missing option,
+    # never "No such option: --rdf"; an unknown flag would produce the latter.
+    result = runner.invoke(app, ["export", "--rdf"])
+    assert result.exit_code == 2
+    assert "No such option" not in result.output
