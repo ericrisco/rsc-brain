@@ -79,6 +79,10 @@ class SkillUpsert(BaseModel):
     markdown: str  # the full skill file: OKF frontmatter + body
 
 
+class ChunkApprove(BaseModel):
+    tags: list[str] | None = None  # curator-corrected tags for an ambiguous table (FR-1.5)
+
+
 def _deps(request: Request) -> object:
     return request.app.state.deps
 
@@ -438,6 +442,82 @@ async def archive_skill_admin(
 ) -> dict[str, object]:
     await _skill_store(request).set_state(scope, slug, "archived")  # type: ignore[attr-defined]
     return {"slug": slug, "archived": True}
+
+
+@router.get("/review-queue")
+async def review_queue(
+    request: Request, scope: ProjectScope = Depends(_obs_scope), source: str | None = None
+) -> dict[str, object]:
+    """The unified needs_review queue (SPEC-21, FR-13.6): all four sources, filterable by source."""
+    from rsc_brain.review.queue import list_review_queue
+
+    items = await list_review_queue(
+        _deps(request).sessionmaker,  # type: ignore[attr-defined]
+        scope,
+        source=source,
+    )
+    counts: dict[str, int] = {}
+    for item in items:
+        counts[item.source] = counts.get(item.source, 0) + 1
+    return {
+        "items": [
+            {"source": i.source, "id": i.id, "preview": i.preview, "detail": i.detail}
+            for i in items
+        ],
+        "counts": counts,
+    }
+
+
+@router.post("/review-queue/chunks/{chunk_id}/resolve")
+async def resolve_chunk_item(
+    chunk_id: str,
+    body: ChunkApprove,
+    request: Request,
+    approve: bool,
+    scope: ProjectScope = Depends(_admin_scope),
+) -> dict[str, object]:
+    """Approve (embed + curator tags + recallable) or reject a needs_review chunk (FR-1.5/4.4/14.4)."""
+    from rsc_brain.review.resolve import resolve_chunk
+
+    deps = _deps(request)
+    outcome = await resolve_chunk(
+        deps.sessionmaker,  # type: ignore[attr-defined]
+        scope,
+        chunk_id,
+        approve=approve,
+        gateway=deps.gateway,  # type: ignore[attr-defined]
+        tags=body.tags,
+    )
+    await audit_mod.record_audit(
+        deps.sessionmaker,  # type: ignore[attr-defined]
+        scope,
+        action=f"review:chunk:{outcome}",
+        tool="console",
+    )
+    return {"chunk_id": chunk_id, "outcome": outcome}
+
+
+@router.post("/review-queue/merges/{proposal_id}/resolve")
+async def resolve_merge_item(
+    proposal_id: str, request: Request, approve: bool, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    """Approve (apply the merge) or reject an entity-merge proposal (FR-1.9)."""
+    from rsc_brain.review.resolve import resolve_merge
+
+    outcome = await resolve_merge(
+        _deps(request).sessionmaker,  # type: ignore[attr-defined]
+        scope,
+        proposal_id,
+        approve=approve,
+        resolved_by=scope.principal_id,
+    )
+    await audit_mod.record_audit(
+        _deps(request).sessionmaker,  # type: ignore[attr-defined]
+        scope,
+        action=f"review:merge:{outcome}",
+        tool="console",
+    )
+    return {"proposal_id": proposal_id, "outcome": outcome}
 
 
 @router.get("/timeline")

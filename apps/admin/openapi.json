@@ -77,6 +77,26 @@
         "title": "Body_upload_document_api_v1_projects__slug__documents_post",
         "type": "object"
       },
+      "ChunkApprove": {
+        "properties": {
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          }
+        },
+        "title": "ChunkApprove",
+        "type": "object"
+      },
       "CreatePatRequest": {
         "properties": {
           "name": {
@@ -1980,6 +2000,207 @@
           }
         ],
         "summary": "Create Project",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/review-queue": {
+      "get": {
+        "description": "The unified needs_review queue (SPEC-21, FR-13.6): all four sources, filterable by source.",
+        "operationId": "review_queue_api_v1_admin_review_queue_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Review Queue Api V1 Admin Review Queue Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Review Queue",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/review-queue/chunks/{chunk_id}/resolve": {
+      "post": {
+        "description": "Approve (embed + curator tags + recallable) or reject a needs_review chunk (FR-1.5/4.4/14.4).",
+        "operationId": "resolve_chunk_item_api_v1_admin_review_queue_chunks__chunk_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "title": "Chunk Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "approve",
+            "required": true,
+            "schema": {
+              "title": "Approve",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChunkApprove"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Resolve Chunk Item Api V1 Admin Review Queue Chunks  Chunk Id  Resolve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Resolve Chunk Item",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/review-queue/merges/{proposal_id}/resolve": {
+      "post": {
+        "description": "Approve (apply the merge) or reject an entity-merge proposal (FR-1.9).",
+        "operationId": "resolve_merge_item_api_v1_admin_review_queue_merges__proposal_id__resolve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "title": "Proposal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "approve",
+            "required": true,
+            "schema": {
+              "title": "Approve",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Resolve Merge Item Api V1 Admin Review Queue Merges  Proposal Id  Resolve Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Resolve Merge Item",
         "tags": [
           "admin"
         ]
