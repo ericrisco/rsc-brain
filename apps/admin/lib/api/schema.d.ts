@@ -38,6 +38,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/claims/disputed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Disputed Claims
+         * @description Claims currently flagged disputed (SPEC-19, FR-13.5).
+         */
+        get: operations["list_disputed_claims_api_v1_admin_claims_disputed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/connections/{connection_id}": {
         parameters: {
             query?: never;
@@ -53,6 +73,88 @@ export interface paths {
          * @description Admin revokes any user's OAuth connection (FR-4.13 admin part). Stops resolving <5s.
          */
         delete: operations["admin_revoke_connection_api_v1_admin_connections__connection_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/contradictions/resolutions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Contradiction Resolutions
+         * @description Resolved contradictions — who won, by what score (SPEC-19, FR-13.5/FR-5.3).
+         */
+        get: operations["list_contradiction_resolutions_api_v1_admin_contradictions_resolutions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/corrections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Corrections
+         * @description Corrections feed (SPEC-19, FR-15.12): feed / by-claim / by-person; the ``pending_confirmation``
+         *     queue is ``status_filter=pending_confirmation``.
+         */
+        get: operations["list_corrections_api_v1_admin_corrections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/corrections/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Correction Metrics
+         * @description The Learning-Layer §7 metrics (SPEC-19, FR-15.12/§3.3).
+         */
+        get: operations["correction_metrics_api_v1_admin_corrections_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/corrections/{correction_id}/revert": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revert Correction
+         * @description Revert a correction (FR-15.8). Authorised **server-side** for an admin OR the owner of the
+         *     target claim's tags — never trusted from the UI. A 403 for anyone else is audited.
+         */
+        post: operations["revert_correction_api_v1_admin_corrections__correction_id__revert_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -928,12 +1030,182 @@ export interface operations {
             };
         };
     };
+    list_disputed_claims_api_v1_admin_claims_disputed_get: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     admin_revoke_connection_api_v1_admin_connections__connection_id__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_contradiction_resolutions_api_v1_admin_contradictions_resolutions_get: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_corrections_api_v1_admin_corrections_get: {
+        parameters: {
+            query?: {
+                status_filter?: string | null;
+                target_claim?: string | null;
+                author?: string | null;
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    correction_metrics_api_v1_admin_corrections_metrics_get: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revert_correction_api_v1_admin_corrections__correction_id__revert_post: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path: {
+                correction_id: string;
             };
             cookie?: never;
         };
@@ -1098,6 +1370,7 @@ export interface operations {
         parameters: {
             query?: {
                 audience?: string | null;
+                project?: string | null;
             };
             header?: never;
             path?: never;
@@ -1129,7 +1402,9 @@ export interface operations {
     };
     promote_gap_api_v1_admin_gaps__gap_id__promote_post: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path: {
                 gap_id: string;
@@ -1164,6 +1439,7 @@ export interface operations {
         parameters: {
             query?: {
                 open_only?: boolean;
+                project?: string | null;
             };
             header?: never;
             path?: never;
@@ -1230,7 +1506,9 @@ export interface operations {
     };
     get_hunt_api_v1_admin_hunts__hunt_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path: {
                 hunt_id: string;
