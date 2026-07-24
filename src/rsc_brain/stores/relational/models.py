@@ -148,6 +148,20 @@ class Invitation(Base):
     used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ConsoleSession(Base):
+    """A console login session on the single D11 identity (SPEC-07). Resolved on every request
+    like a PAT, so a disabled user or a logout stops resolving in <5s (FR-4.12). User-scoped
+    (spans the user's projects), unlike a project-scoped PAT."""
+
+    __tablename__ = "console_sessions"
+    id: Mapped[uuid.UUID] = _pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    token_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    created_at: Mapped[dt.datetime] = _created_at()
+    expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Agent(Base):
     """A service account (FR-14.1): a non-human principal owned by a user, scoped to one
     project, authenticating with its own service PAT."""

@@ -107,8 +107,11 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     app.state.deps = deps
     _register_routes(app)
     from rsc_brain.api.admin import router as admin_router
+    from rsc_brain.api.console import auth_router, me_router
 
     app.include_router(admin_router)
+    app.include_router(auth_router)
+    app.include_router(me_router)
     app.mount("/mcp", mcp_server.streamable_http_app())
     return app
 
