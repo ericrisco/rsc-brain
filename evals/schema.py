@@ -45,6 +45,7 @@ class Document(BaseModel):
     lang: Literal["en", "es"]
     body: str
     retained: bool = False  # true if it must stay non-recallable until approved (D13)
+    valid_from: str | None = None  # ISO date for temporal (FR-16.9) fact-with-history cases
 
 
 class Corpus(BaseModel):

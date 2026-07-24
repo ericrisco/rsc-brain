@@ -53,6 +53,10 @@ security = [
     "pip-audit>=2.7",       # SCA gate; run in CI + locally
     "pip-licenses>=5",      # AGPL-compat license audit (NFR-10)
 ]
+evals = [
+    "reportlab>=4",         # render corpus documents to native PDFs (SPEC-02)
+    "pillow>=10",           # rasterize "scanned" documents into image-only PDFs (no text layer)
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -111,7 +115,7 @@ module = ["litellm", "litellm.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["pgvector.*", "asyncpg", "asyncpg.*", "testcontainers.*"]
+module = ["pgvector.*", "asyncpg", "asyncpg.*", "testcontainers.*", "reportlab.*", "PIL.*"]
 ignore_missing_imports = true
 
 # Alembic env/migrations are infra glue against untyped alembic runtime objects.

@@ -44,6 +44,9 @@ coverage.xml
 htmlcov/
 .hypothesis/
 
+# --- Generated eval corpus PDFs (source of truth is evals/documents.yaml) ---
+/evals/pdfs/
+
 # --- Node / Next.js console (apps/admin) ---
 node_modules/
 .next/
