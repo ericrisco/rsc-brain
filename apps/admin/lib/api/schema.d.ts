@@ -332,6 +332,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/metrics/product": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Product Metrics Endpoint
+         * @description The four PRD §8 metric families for a project (SPEC-23) — adoption, quality, knowledge,
+         *     health. Project-scoped in-query (FR-12.5); the console consumes this.
+         */
+        get: operations["product_metrics_endpoint_api_v1_admin_metrics_product_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/observability/activity": {
         parameters: {
             query?: never;
@@ -1624,6 +1645,40 @@ export interface operations {
             path: {
                 hunt_id: string;
             };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    product_metrics_endpoint_api_v1_admin_metrics_product_get: {
+        parameters: {
+            query?: {
+                window_days?: number;
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;

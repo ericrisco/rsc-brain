@@ -1481,6 +1481,73 @@
         ]
       }
     },
+    "/api/v1/admin/metrics/product": {
+      "get": {
+        "description": "The four PRD \u00a78 metric families for a project (SPEC-23) \u2014 adoption, quality, knowledge,\nhealth. Project-scoped in-query (FR-12.5); the console consumes this.",
+        "operationId": "product_metrics_endpoint_api_v1_admin_metrics_product_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "window_days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "title": "Window Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Product Metrics Endpoint Api V1 Admin Metrics Product Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Product Metrics Endpoint",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/api/v1/admin/observability/activity": {
       "get": {
         "description": "Activity dashboard aggregates (FR-13.2): recalls/day, active principals, p95, denied.",
