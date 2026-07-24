@@ -1,0 +1,85 @@
+# rsc-brain
+
+**Self-hosted, open-source (AGPL-3.0) company memory.** rsc-brain ingests a company's
+documents into a **living knowledge graph** with per-fact credibility and temporal validity,
+and exposes it over **MCP** to Claude/ChatGPT under deterministic, topic-based permissions.
+When knowledge is missing or contradictory it **asks the responsible human** instead of
+hallucinating. Runs 100% local (Ollama/vLLM) or against any cloud provider, configurable per
+capability layer.
+
+> **Status: Sprint 0 (bootstrap), in progress.** This section is kept honest — it lists only
+> what is in the tree and works today. Building the foundations from **SPEC-01**:
+>
+> - ✅ Project skeleton (PRD §11), packaged with **uv** (Python 3.12); `ruff`, `mypy --strict`,
+>   `pytest`, `pre-commit`.
+> - ✅ Tracked publication boundary inherited by every worktree.
+> - ✅ **12-factor configuration** (`rsc_brain.config`): YAML + environment overlay.
+> - ✅ **Frozen interfaces** (`GraphStore`, `VectorStore`, `RelationalStore`, `Channel`,
+>   `recall`/`ingest` signatures) with an indivisible `ProjectScope` (see
+>   [`docs/interface-freeze.md`](docs/interface-freeze.md)).
+> - ✅ **`brain` CLI** skeleton (all FR-10.1 subcommands, global `--json`).
+> - ✅ **Model gateway** (`rsc_brain.gateway`) over LiteLLM: per-capability routing, structured
+>   completion with validate → repair → fallback, embedding dimension anchoring, redacted
+>   errors — routing is immutable from call data (AUDIT-005).
+> - ✅ **Data-service Compose** stack (Postgres 16 + Apache AGE 1.6.0 + pgvector 0.8.5):
+>   loopback-bound, password-guarded, digest-pinned, non-root, healthchecked (AUDIT-007).
+> - ✅ **CI** (GitHub Actions): lint/types/tests, `pip-audit` + AGPL license audit,
+>   ephemeral-compose data-service smoke; SHA-pinned actions, least-privilege tokens
+>   (AUDIT-006). Release SBOM (syft) + CVE scan (grype).
+> - ✅ **OSS health**: SECURITY, CONTRIBUTING, issue/PR templates, dev runbook (`docs/AGENTS.md`).
+>
+> Product capabilities (ingestion, recall, MCP serving, console, …) land in later SPECs; the
+> CLI subcommands for them exit non-zero with a `not_implemented` payload until then.
+
+## Requirements
+
+- **Python 3.12** and **[uv](https://docs.astral.sh/uv/)**.
+
+## Quickstart (works today)
+
+```bash
+uv sync                     # create the venv and install deps (incl. dev tools)
+uv run brain --help         # list the CLI surface (all 22 subcommands)
+uv run brain --version
+uv run ruff check .         # lint
+uv run ruff format --check .
+uv run mypy                 # strict type check
+uv run pytest               # unit tests
+```
+
+Unimplemented CLI subcommands exit non-zero with a structured payload:
+
+```bash
+uv run brain doctor --json  # -> {"status": "not_implemented", "command": "doctor"} ; exit 2
+```
+
+## Configuration (12-factor)
+
+Configuration is a YAML file overlaid by environment variables (env wins). Copy
+[`config.example.yaml`](config.example.yaml) and override secrets **only** via env / Docker
+secrets — never commit real keys (`RSC_BRAIN_<SECTION>__<KEY>` sets nested values).
+
+## Local data service (Postgres 16 + Apache AGE + pgvector)
+
+The single data service is defined in [`docker-compose.yml`](docker-compose.yml). It binds to
+loopback by default and refuses to start with a blank or placeholder password (see
+[`docker/README.md`](docker/README.md) for the full security posture).
+
+```bash
+cp .env.example .env                      # then set a strong POSTGRES_PASSWORD
+docker compose up -d --wait db            # build + start; waits until healthy
+docker compose exec -u postgres -T db \
+  psql -U rsc_brain -d rsc_brain -c "SELECT extname, extversion FROM pg_extension;"
+```
+
+> Building the AGE + pgvector image compiles pgvector from source and can take a few minutes
+> on first run.
+
+## Contributing & security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to get started and [`docs/AGENTS.md`](docs/AGENTS.md)
+for the development runbook. Report vulnerabilities privately per [SECURITY.md](SECURITY.md).
+
+## License
+
+[AGPL-3.0-or-later](LICENSE).
