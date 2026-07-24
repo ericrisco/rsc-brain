@@ -16,6 +16,7 @@ from argon2.exceptions import InvalidHashError, VerificationError
 
 PAT_PREFIX = "ck_"
 INVITATION_PREFIX = "inv_"
+SESSION_PREFIX = "cks_"  # console session token (SPEC-07)
 _TOKEN_BYTES = 32
 
 _hasher = PasswordHasher()
