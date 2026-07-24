@@ -21,6 +21,9 @@ from rsc_brain.cli.data import backup as _backup
 from rsc_brain.cli.data import forget as _forget
 from rsc_brain.cli.data import migrate as _migrate
 from rsc_brain.cli.data import restore as _restore
+from rsc_brain.cli.ingest import docs_app, sources_app
+from rsc_brain.cli.ingest import ingest as _ingest
+from rsc_brain.cli.ingest import status as _status
 
 # FR-10.1 subcommands, in the order the spec lists them.
 COMMANDS: tuple[str, ...] = (
@@ -51,6 +54,8 @@ COMMANDS: tuple[str, ...] = (
 # Single commands with real behaviour (skip the stub for these).
 _IMPLEMENTED_COMMANDS: dict[str, tuple[Callable[..., None], str]] = {
     "migrate": (_migrate, "Apply pending database migrations to head (idempotent)."),
+    "ingest": (_ingest, "Ingest PDFs/markdown into a project (dedup + D13 approval gate)."),
+    "status": (_status, "Show per-document ingestion runs (phase, claims, errors)."),
     "backup": (_backup, "Back up the database to a single dump artifact."),
     "restore": (_restore, "Restore a dump, apply migrations, and verify."),
     "forget": (_forget, "Hard-delete a document and tombstone its graph nodes."),
@@ -108,6 +113,9 @@ for _name in COMMANDS:
 
 # `projects` is introduced by SPEC-04 (beyond the original FR-10.1 22).
 app.add_typer(projects_app, name="projects", help="Manage projects.")
+# `docs` (D13 approval) and `sources` are introduced by SPEC-05.
+app.add_typer(docs_app, name="docs", help="Review, approve, and reject ingested documents.")
+app.add_typer(sources_app, name="sources", help="Manage ingestion sources and their policy.")
 
 
 if __name__ == "__main__":  # pragma: no cover
