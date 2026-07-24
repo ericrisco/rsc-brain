@@ -520,6 +520,21 @@ async def resolve_merge_item(
     return {"proposal_id": proposal_id, "outcome": outcome}
 
 
+@router.get("/metrics/product")
+async def product_metrics_endpoint(
+    request: Request, scope: ProjectScope = Depends(_obs_scope), window_days: int = 30
+) -> dict[str, object]:
+    """The four PRD §8 metric families for a project (SPEC-23) — adoption, quality, knowledge,
+    health. Project-scoped in-query (FR-12.5); the console consumes this."""
+    from rsc_brain.observability.product import product_metrics
+
+    return await product_metrics(
+        _deps(request).sessionmaker,  # type: ignore[attr-defined]
+        scope,
+        window_days=window_days,
+    )
+
+
 @router.get("/timeline")
 async def project_timeline(
     request: Request,
