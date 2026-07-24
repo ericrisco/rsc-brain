@@ -166,13 +166,20 @@ async def do_report_feedback(
     signal: FeedbackSignal,
     note: str | None = None,
 ) -> ReportFeedbackOutput:
-    """Stub (SPEC-06): record the feedback signal in the audit log; does NOT touch credibility —
-    the real credibility loop (alpha by principal type) lands in SPEC-08."""
+    """Real feedback (SPEC-08, FR-5.4): nudge each claim's credibility by alpha (human 0.1 / agent
+    0.03), capped per (principal, claim) per day; a human negative signal below threshold disputes.
+    Agent feedback never disputes. Every call is audited."""
+    from rsc_brain.knowledge.feedback import apply_report_feedback
+    from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+
+    result = await apply_report_feedback(
+        KnowledgeStore(sessionmaker), scope, claim_ids=claim_ids, signal=signal
+    )
     await audit.record_audit(
         sessionmaker,
         scope,
         action=f"report_feedback:{signal}",
         tool="report_feedback",
-        result_count=len(claim_ids),
+        result_count=result.applied,
     )
     return ReportFeedbackOutput(ok=True)

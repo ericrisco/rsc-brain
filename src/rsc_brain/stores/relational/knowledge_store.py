@@ -168,3 +168,62 @@ class KnowledgeStore:
             if claim is None or claim.project_id != _pid(scope):
                 return None
             return self._to_claim_data(claim)
+
+    async def feedback_budget_remaining(
+        self, scope: ProjectScope, principal_id: str, claim_id: str, day: dt.date, cap: float
+    ) -> float:
+        """Remaining daily |Δcred| budget for this (principal, claim) — the agent-spam guard."""
+        async with self._sm() as session:
+            consumed = await session.scalar(
+                select(models.FeedbackDailyImpact.impact).where(
+                    models.FeedbackDailyImpact.project_id == _pid(scope),
+                    models.FeedbackDailyImpact.principal_id == principal_id,
+                    models.FeedbackDailyImpact.claim_id == uuid.UUID(claim_id),
+                    models.FeedbackDailyImpact.day == day,
+                )
+            )
+            return max(0.0, cap - float(consumed or 0.0))
+
+    async def apply_feedback(
+        self,
+        scope: ProjectScope,
+        *,
+        principal_id: str,
+        claim_id: str,
+        day: dt.date,
+        new_credibility: float,
+        delta: float,
+        disputed: bool = False,
+        hunting_candidate: bool = False,
+    ) -> None:
+        """Set the claim's new credibility, mark disputed/hunting if requested, and add the
+        consumed impact to the daily ledger — one transaction."""
+        values: dict[str, object] = {"credibility": new_credibility}
+        if disputed:
+            values["disputed"] = True
+        if hunting_candidate:
+            values["hunting_candidate"] = True
+        async with session_scope(self._sm) as session:
+            await session.execute(
+                update(models.Claim)
+                .where(
+                    models.Claim.id == uuid.UUID(claim_id),
+                    models.Claim.project_id == _pid(scope),
+                )
+                .values(**values)
+            )
+            statement = (
+                pg_insert(models.FeedbackDailyImpact)
+                .values(
+                    project_id=_pid(scope),
+                    principal_id=principal_id,
+                    claim_id=uuid.UUID(claim_id),
+                    day=day,
+                    impact=delta,
+                )
+                .on_conflict_do_update(
+                    index_elements=["project_id", "principal_id", "claim_id", "day"],
+                    set_={"impact": models.FeedbackDailyImpact.__table__.c.impact + delta},
+                )
+            )
+            await session.execute(statement)

@@ -3,8 +3,8 @@
 Candidates are claim pairs with cosine similarity > threshold AND a shared entity (proxied by a
 shared normalized subject/object) — both required. Each pair's verdict is cached per ordered pair
 + judge version; only uncached pairs hit the judge. On ``contradict`` the higher-credibility claim
-wins (+boost, cap 1.0); the loser is degraded (×factor) and superseded (`valid_to=now`, a
-``SUPERSEDES`` graph edge) — never deleted (FR-5.5). A near-tie (`|Δcred| < tie_delta`) marks both
+wins (+boost, cap 1.0); the loser is degraded (xfactor) and superseded (`valid_to=now`, a
+``SUPERSEDES`` graph edge) — never deleted (FR-5.5). A near-tie (`|deltacred| < tie_delta`) marks both
 ``disputed`` and a hunting candidate (the hunt is SPEC-15).
 """
 
