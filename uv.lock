@@ -1666,7 +1666,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "rdflib", specifier = ">=7" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0,<3" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.51,<3" },
     { name = "structlog", specifier = ">=24" },
     { name = "typer", specifier = ">=0.12" },
 ]
