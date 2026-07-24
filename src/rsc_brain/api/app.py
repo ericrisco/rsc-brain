@@ -18,12 +18,15 @@ from dataclasses import dataclass
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from rsc_brain.config.models import RecallConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.identity.resolve import resolve_scope
 from rsc_brain.ingest.pipeline import DocumentNotFoundError, IngestionPipeline, PipelineConfig
 from rsc_brain.ingest.service import IngestService
+from rsc_brain.mcp.server import build_mcp_server
+from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import CrossProjectScopeError, ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational import models
@@ -38,6 +41,7 @@ class ApiDeps:
     gateway: ModelGateway
     data_dir: str = "data"
     config: PipelineConfig | None = None
+    recall_config: RecallConfig | None = None
 
     def service(self) -> tuple[IngestService, IngestRepository]:
         repo = IngestRepository(self.sessionmaker)
@@ -49,43 +53,60 @@ class ApiDeps:
         )
         return IngestService(repo, pipeline, data_dir=self.data_dir), repo
 
+    def retriever(self) -> PgRetriever:
+        return PgRetriever(
+            sessionmaker=self.sessionmaker,
+            gateway=self.gateway,
+            graph_store=AgeGraphStore(self.sessionmaker),
+            config=self.recall_config or RecallConfig(),
+        )
+
+
+def _deps_from_config() -> tuple[ApiDeps, AsyncEngine]:
+    from rsc_brain.config import load_settings
+    from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
+
+    settings = load_settings()
+    engine = make_engine()
+    deps = ApiDeps(
+        sessionmaker=make_sessionmaker(engine),
+        gateway=ModelGateway(settings.capabilities),
+        data_dir=settings.ingest.data_dir,
+        config=PipelineConfig(
+            hardware_profile=settings.hardware_profile,
+            sensitivity_threshold=settings.ingest.sensitivity_threshold,
+            default_tag=settings.ingest.default_tag,
+        ),
+        recall_config=settings.recall,
+    )
+    return deps, engine
+
 
 def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
-    """Build the ingestion API. Pass ``deps`` to inject stores/gateway (tests); omit to build
-    them from configuration at startup."""
+    """Build the combined REST + MCP app. Pass ``deps`` to inject stores/gateway (tests); omit to
+    build them from configuration. The FastMCP streamable-HTTP server is mounted at ``/mcp`` in
+    the same ASGI app (one process/port), and its session manager runs under the app lifespan."""
+    engine: AsyncEngine | None = None
+    if deps is None:
+        deps, engine = _deps_from_config()
+    mcp_server = build_mcp_server(sessionmaker=deps.sessionmaker, retriever=deps.retriever())
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        if deps is not None:
-            app.state.deps = deps
-            yield
-            return
-        from rsc_brain.config import load_settings
-        from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
-
-        settings = load_settings()
-        engine = make_engine()
-        app.state.deps = ApiDeps(
-            sessionmaker=make_sessionmaker(engine),
-            gateway=ModelGateway(settings.capabilities),
-            data_dir=settings.ingest.data_dir,
-            config=PipelineConfig(
-                hardware_profile=settings.hardware_profile,
-                sensitivity_threshold=settings.ingest.sensitivity_threshold,
-                default_tag=settings.ingest.default_tag,
-            ),
-        )
-        try:
-            yield
-        finally:
-            await engine.dispose()
-
-    app = FastAPI(title="rsc-brain ingestion API", version="0.1.0", lifespan=lifespan)
-    if deps is not None:
-        # Set eagerly too, so a test harness (ASGITransport) that does not run the lifespan still
-        # has the injected stores available.
         app.state.deps = deps
+        async with mcp_server.session_manager.run():
+            try:
+                yield
+            finally:
+                if engine is not None:
+                    await engine.dispose()
+
+    app = FastAPI(title="rsc-brain", version="0.1.0", lifespan=lifespan)
+    # Set eagerly too, so a test harness (ASGITransport) that does not run the lifespan still has
+    # the injected stores available for the REST endpoints.
+    app.state.deps = deps
     _register_routes(app)
+    app.mount("/mcp", mcp_server.streamable_http_app())
     return app
 
 
