@@ -30,6 +30,7 @@ from rsc_brain.cli.installer import apply as _apply
 from rsc_brain.cli.installer import calibrate as _calibrate
 from rsc_brain.cli.installer import doctor as _doctor
 from rsc_brain.cli.installer import eval_command as _eval
+from rsc_brain.cli.installer import init as _init
 from rsc_brain.cli.installer import plan as _plan
 from rsc_brain.cli.installer import verify as _verify
 
@@ -61,6 +62,7 @@ COMMANDS: tuple[str, ...] = (
 
 # Single commands with real behaviour (skip the stub for these).
 _IMPLEMENTED_COMMANDS: dict[str, tuple[Callable[..., None], str]] = {
+    "init": (_init, "Bootstrap a deployment: migrate + create the first admin (idempotent)."),
     "migrate": (_migrate, "Apply pending database migrations to head (idempotent)."),
     "ingest": (_ingest, "Ingest PDFs/markdown into a project (dedup + D13 approval gate)."),
     "status": (_status, "Show per-document ingestion runs (phase, claims, errors)."),
