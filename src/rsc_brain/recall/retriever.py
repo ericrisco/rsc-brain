@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.config.models import RecallConfig
@@ -56,6 +56,23 @@ class _Candidate:
 
 def _mean(values: Sequence[float]) -> float | None:
     return sum(values) / len(values) if values else None
+
+
+def _rrf_fuse(ranked_lists: Sequence[Sequence[str]], *, k: int, limit: int) -> list[str]:
+    """Reciprocal Rank Fusion (FR-3.7): ``score(d) = Σ 1/(k + rank_via(d))`` over each via's
+    ranked ids (rank is 1-based). Returns the top ``limit`` ids by fused score; ties keep the
+    order of first appearance (stable), so a single non-empty list round-trips unchanged."""
+    scores: dict[str, float] = {}
+    order: dict[str, int] = {}
+    seen = 0
+    for ranked in ranked_lists:
+        for rank, doc_id in enumerate(ranked, start=1):
+            scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + rank)
+            if doc_id not in order:
+                order[doc_id] = seen
+                seen += 1
+    fused = sorted(scores, key=lambda d: (-scores[d], order[d]))
+    return fused[:limit]
 
 
 class PgRetriever:
@@ -116,7 +133,16 @@ class PgRetriever:
         vector = (await self._gateway.embed([query]))[0]
         forbidden = await sensitive_tags(self._sm, scope.project_id)
 
-        candidate_ids = await self._vector_candidates(scope, vector, forbidden, top_k)
+        vector_ids = await self._vector_candidates(scope, vector, forbidden, top_k)
+        if self._config.hybrid_enabled:
+            # Hybrid (FR-3.7): fuse the vector list with a lexical (tsvector) list by RRF, so exact
+            # identifiers embeddings miss still surface. Both vias carry the SAME in-query filter.
+            lexical_ids = await self._lexical_candidates(
+                scope, query, forbidden, self._config.lexical_candidates
+            )
+            candidate_ids = _rrf_fuse([vector_ids, lexical_ids], k=self._config.rrf_k, limit=top_k)
+        else:
+            candidate_ids = vector_ids
         candidate_ids = await self._expand_k_hop(scope, forbidden, candidate_ids)
         candidates = await self._load_candidates(
             scope, vector, candidate_ids, show_superseded=show_superseded
@@ -160,6 +186,36 @@ class PgRetriever:
     ) -> list[str]:
         async with self._sm() as session:
             rows = await session.execute(self._visible_search(scope, vector, forbidden, top_k))
+            return [str(cid) for cid, _ in rows.all()]
+
+    def _lexical_search(
+        self, scope: ProjectScope, query: str, forbidden: frozenset[str], limit: int
+    ) -> Select[tuple[uuid.UUID, float]]:
+        # `simple` config: no stemming/stopwords, so exact identifiers survive tokenisation. The
+        # SAME visibility filter as the vector via (project + topics + FR-4.14) is IN the query.
+        tsv = func.to_tsvector("simple", models.Chunk.text)
+        tsq = func.plainto_tsquery("simple", query)
+        return (
+            select(models.Chunk.id, func.ts_rank(tsv, tsq).label("rank"))
+            .where(
+                chunk_visibility_clause(scope, forbidden),
+                # Only published (embedded) chunks are recallable — an unapproved doc's chunks are
+                # unembedded, so this preserves the D13 gate on the lexical via too (SPEC-05).
+                models.Chunk.embedding.is_not(None),
+                models.Chunk.needs_review.is_(False),
+                tsv.op("@@")(tsq),
+            )
+            .order_by(func.ts_rank(tsv, tsq).desc())
+            .limit(limit)
+        )
+
+    async def _lexical_candidates(
+        self, scope: ProjectScope, query: str, forbidden: frozenset[str], limit: int
+    ) -> list[str]:
+        if not query.strip():
+            return []
+        async with self._sm() as session:
+            rows = await session.execute(self._lexical_search(scope, query, forbidden, limit))
             return [str(cid) for cid, _ in rows.all()]
 
     async def _expand_k_hop(
