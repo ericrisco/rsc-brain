@@ -124,6 +124,21 @@ async def test_hunting_endpoints_round_trip(
         assert removed.status_code == 200
 
 
+async def test_timeline_endpoint_has_contract_parity(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    """SPEC-17: the MCP `timeline` tool is mirrored by GET /admin/timeline (for the console lane)."""
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    token = await _mint_pat(harness, project, can_curate=True, role="member")
+    headers = {"Authorization": f"Bearer {token}"}
+    async with _client(harness, tmp_path) as client:
+        response = await client.get("/api/v1/admin/timeline?topic=general", headers=headers)
+    assert response.status_code == 200, response.text
+    body = response.json()["timeline"]
+    assert set(body) == {"found", "topic", "entity", "entries"} and body["topic"] == "general"
+
+
 async def test_non_admin_is_forbidden(
     build_harness: Callable[..., Harness], tmp_path: Path
 ) -> None:

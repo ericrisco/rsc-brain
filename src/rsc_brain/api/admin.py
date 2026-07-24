@@ -298,6 +298,28 @@ async def list_project_gaps(
     return {"gaps": gaps}
 
 
+@router.get("/timeline")
+async def project_timeline(
+    request: Request,
+    scope: ProjectScope = Depends(_obs_scope),
+    topic: str | None = None,
+    entity: str | None = None,
+    as_of: str | None = None,
+) -> dict[str, object]:
+    """Contract parity for the MCP `timeline` tool (SPEC-17, FR-16.6): the ordered evolution of a
+    topic/entity, permission + project scoped (FR-4.3/12.5). For the console lane (SPEC-19)."""
+    from rsc_brain.mcp.tools import do_timeline
+
+    output = await do_timeline(
+        _deps(request).sessionmaker,  # type: ignore[attr-defined]
+        scope,
+        topic=topic,
+        entity=entity,
+        as_of=as_of,
+    )
+    return {"timeline": output.model_dump()}
+
+
 @router.get("/audit")
 async def list_audit(
     request: Request, scope: ProjectScope = Depends(_admin_scope), limit: int = 100

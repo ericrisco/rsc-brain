@@ -55,3 +55,18 @@ def chunk_visibility_clause(
     if forbidden:
         clause = clause & ~models.Chunk.tags.op("&&")(forbidden)
     return clause
+
+
+def claim_visibility_clause(
+    scope: ProjectScope, project_sensitive_tags: frozenset[str]
+) -> ColumnElement[bool]:
+    """The same FR-4.14 visibility predicate as :func:`chunk_visibility_clause`, but over
+    ``claims`` (SPEC-17 ``timeline`` queries claims directly, not chunks)."""
+    allowed = sorted(scope.allowed_topics)
+    forbidden = sorted(project_sensitive_tags - scope.allowed_topics)
+    clause = (models.Claim.project_id == uuid.UUID(scope.project_id)) & models.Claim.tags.op("&&")(
+        allowed
+    )
+    if forbidden:
+        clause = clause & ~models.Claim.tags.op("&&")(forbidden)
+    return clause

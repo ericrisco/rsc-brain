@@ -24,6 +24,7 @@ from rsc_brain.recall.gaps import query_hash
 from rsc_brain.recall.interfaces import Fragment, RecallResult
 from rsc_brain.recall.permissions import chunk_visibility_clause, sensitive_tags
 from rsc_brain.recall.retriever import PgRetriever
+from rsc_brain.recall.timeline import build_timeline
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
 
@@ -56,6 +57,35 @@ class RecallOutput(BaseModel):
     found: bool
     fragments: list[RecallFragment] = Field(default_factory=list)
     gap_registered: bool = False
+
+
+class TimelineEntry(BaseModel):
+    """One point in a topic/entity's evolution (SPEC-17, FR-16.6). Carries the FR-16.5 temporal
+    metadata and is marked untrusted like any served fragment (FR-14.8)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    claim_id: str
+    text: str
+    subject: str | None = None
+    predicate: str | None = None
+    object: str | None = None
+    credibility: float
+    tags: list[str] = Field(default_factory=list)
+    content_type: str = UNTRUSTED
+    valid_from: str | None = None
+    valid_to: str | None = None
+    is_current: bool = True
+    document: str | None = None
+
+
+class TimelineOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    found: bool
+    topic: str | None = None
+    entity: str | None = None
+    entries: list[TimelineEntry] = Field(default_factory=list)
 
 
 class GetDocumentOutput(BaseModel):
@@ -158,6 +188,58 @@ async def do_recall(
         topics_used=sorted(scope.allowed_topics),
         result_count=len(output.fragments),
         denied=not output.found,
+    )
+    return output
+
+
+async def do_timeline(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    scope: ProjectScope,
+    *,
+    topic: str | None = None,
+    entity: str | None = None,
+    as_of: str | None = None,
+    top_k: int = 50,
+) -> TimelineOutput:
+    """The ordered evolution of claims for a topic or entity (SPEC-17, FR-16.6). Permission +
+    project filters run in the query; a topic the caller can't see returns empty (FR-4.3)."""
+    as_of_date = dt.date.fromisoformat(as_of) if as_of else None
+    started = time.monotonic()
+    entries = await build_timeline(
+        sessionmaker, scope, topic=topic, entity=entity, as_of=as_of_date, limit=top_k
+    )
+    duration_ms = int((time.monotonic() - started) * 1000)
+    output = TimelineOutput(
+        found=bool(entries),
+        topic=topic,
+        entity=entity,
+        entries=[
+            TimelineEntry(
+                claim_id=e.claim_id,
+                text=e.text,
+                subject=e.subject,
+                predicate=e.predicate,
+                object=e.object,
+                credibility=e.credibility,
+                tags=list(e.tags),
+                valid_from=e.valid_from.isoformat() if e.valid_from else None,
+                valid_to=e.valid_to.isoformat() if e.valid_to else None,
+                is_current=e.is_current,
+                document=e.document_id,
+            )
+            for e in entries
+        ],
+    )
+    await audit.record_audit(
+        sessionmaker,
+        scope,
+        action="timeline",
+        tool="timeline",
+        query_hash=query_hash(f"timeline:{topic or ''}:{entity or ''}:{as_of or ''}"),
+        duration_ms=duration_ms,
+        topics_used=sorted(scope.allowed_topics),
+        result_count=len(entries),
+        denied=not entries,
     )
     return output
 
