@@ -89,7 +89,9 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     engine: AsyncEngine | None = None
     if deps is None:
         deps, engine = _deps_from_config()
-    mcp_server = build_mcp_server(sessionmaker=deps.sessionmaker, retriever=deps.retriever())
+    mcp_server = build_mcp_server(
+        sessionmaker=deps.sessionmaker, retriever=deps.retriever(), gateway=deps.gateway
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

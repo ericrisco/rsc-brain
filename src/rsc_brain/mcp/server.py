@@ -15,18 +15,22 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.mcp.auth import MCPToolError, authenticate
 from rsc_brain.mcp.tools import (
+    CorrectKnowledgeOutput,
     FeedbackSignal,
     GetDocumentOutput,
     RecallOutput,
     ReportFeedbackOutput,
+    do_correct_knowledge,
     do_get_document,
     do_recall,
     do_report_feedback,
 )
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import ProjectScope
+from rsc_brain.stores.age_graph_store import AgeGraphStore
 
 ANTI_INJECTION_GUIDE = """\
 rsc-brain company memory (MCP).
@@ -51,9 +55,11 @@ def build_mcp_server(
     *,
     sessionmaker: async_sessionmaker[AsyncSession],
     retriever: PgRetriever,
+    gateway: ModelGateway,
     stateless: bool = True,
 ) -> FastMCP:
     """Build the FastMCP server wired to the retriever + stores."""
+    graph = AgeGraphStore(sessionmaker)
     server = FastMCP(
         name="rsc-brain",
         instructions=ANTI_INJECTION_GUIDE,
@@ -99,6 +105,34 @@ def build_mcp_server(
         scope = await _scope(ctx)
         return await do_report_feedback(
             sessionmaker, scope, claim_ids=claim_ids, signal=signal, note=note
+        )
+
+    @server.tool(
+        description="Owner-authority correction of a claim (governed by tag ownership; FR-15.x)."
+    )
+    async def correct_knowledge(
+        correction: str,
+        ctx: Context[Any, Any, Any],
+        claim_id: str | None = None,
+        topic: str | None = None,
+        statement: str | None = None,
+        reason: str | None = None,
+        on_behalf_of: str | None = None,
+        dry_run: bool = False,
+    ) -> CorrectKnowledgeOutput:
+        scope = await _scope(ctx)
+        return await do_correct_knowledge(
+            sessionmaker,
+            graph,
+            gateway,
+            scope,
+            claim_id=claim_id,
+            topic=topic,
+            statement=statement,
+            correction=correction,
+            reason=reason,
+            on_behalf_of=on_behalf_of,
+            dry_run=dry_run,
         )
 
     return server

@@ -66,6 +66,20 @@ class ReportFeedbackOutput(BaseModel):
     ok: bool
 
 
+class CorrectKnowledgeOutput(BaseModel):
+    """`correct_knowledge` output (§3.5)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: (
+        str  # applied | pending_confirmation | routed_to_owner | needs_disambiguation | rejected
+    )
+    explanation: str
+    candidates: list[dict[str, str]] = Field(default_factory=list)
+    correction_id: str | None = None
+    reverted_hint: str | None = None
+
+
 def _fragment_from_provenance(
     text: str, provenance: object, credibility_fallback: float
 ) -> RecallFragment:
@@ -183,3 +197,58 @@ async def do_report_feedback(
         result_count=result.applied,
     )
     return ReportFeedbackOutput(ok=True)
+
+
+async def do_correct_knowledge(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    graph: object,
+    gateway: object,
+    scope: ProjectScope,
+    *,
+    claim_id: str | None,
+    topic: str | None,
+    statement: str | None,
+    correction: str,
+    reason: str | None = None,
+    on_behalf_of: str | None = None,
+    dry_run: bool = False,
+) -> CorrectKnowledgeOutput:
+    """Owner-authority correction (SPEC-08 §3.5). Delegates to the CorrectionService; audits."""
+    from rsc_brain.knowledge.corrections import CorrectionService
+    from rsc_brain.stores.age_graph_store import AgeGraphStore
+    from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+
+    assert isinstance(graph, AgeGraphStore)
+    from rsc_brain.gateway.model_gateway import ModelGateway
+
+    assert isinstance(gateway, ModelGateway)
+    service = CorrectionService(store=KnowledgeStore(sessionmaker), graph=graph, gateway=gateway)
+    outcome = await service.correct(
+        scope,
+        claim_id=claim_id,
+        topic=topic,
+        statement=statement,
+        correction=correction,
+        reason=reason,
+        on_behalf_of=on_behalf_of,
+        dry_run=dry_run,
+    )
+    await audit.record_audit(
+        sessionmaker,
+        scope,
+        action=f"correct_knowledge:{outcome.status}",
+        tool="correct_knowledge",
+        result_count=1 if outcome.new_claim_id else 0,
+    )
+    hint = (
+        f"use corrections revert {outcome.correction_id}"
+        if outcome.status in {"applied", "pending_confirmation"} and outcome.correction_id
+        else None
+    )
+    return CorrectKnowledgeOutput(
+        status=outcome.status,
+        explanation=outcome.explanation,
+        candidates=outcome.candidates,
+        correction_id=outcome.correction_id,
+        reverted_hint=hint,
+    )

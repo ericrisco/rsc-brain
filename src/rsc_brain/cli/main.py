@@ -16,6 +16,7 @@ from rsc_brain import __version__
 from rsc_brain.cli._common import JSON_OPTION, State, emit_not_implemented, json_enabled
 from rsc_brain.cli.admin import audit as _audit
 from rsc_brain.cli.admin import projects_app, topics_app, users_app
+from rsc_brain.cli.corrections import corrections_app
 from rsc_brain.cli.data import backup as _backup
 from rsc_brain.cli.data import forget as _forget
 from rsc_brain.cli.data import migrate as _migrate
@@ -121,6 +122,8 @@ app.add_typer(projects_app, name="projects", help="Manage projects.")
 # `docs` (D13 approval) and `sources` are introduced by SPEC-05.
 app.add_typer(docs_app, name="docs", help="Review, approve, and reject ingested documents.")
 app.add_typer(sources_app, name="sources", help="Manage ingestion sources and their policy.")
+# `corrections` (Learning Layer revert/list) is introduced by SPEC-08.
+app.add_typer(corrections_app, name="corrections", help="List and revert corrections.")
 # `eval` (golden-set evaluation) is introduced by SPEC-06 (beyond the original FR-10.1 list).
 app.command("eval", help="Report the golden-set composition (full run needs an ingested corpus).")(
     _eval

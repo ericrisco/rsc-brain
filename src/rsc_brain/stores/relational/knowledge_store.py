@@ -27,6 +27,16 @@ def _now() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
 
 
+def _maybe_uuid(value: str | None) -> uuid.UUID | None:
+    """Parse a UUID, or None for absent / non-UUID principals (e.g. the CLI 'cli' actor)."""
+    if not value:
+        return None
+    try:
+        return uuid.UUID(value)
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class ClaimData:
     id: str
@@ -168,6 +178,212 @@ class KnowledgeStore:
             if claim is None or claim.project_id != _pid(scope):
                 return None
             return self._to_claim_data(claim)
+
+    # --- corrections (Learning Layer, FR-15.x) -------------------------------
+
+    async def person_owns_any_tag(
+        self, scope: ProjectScope, user_id: str, tags: Sequence[str]
+    ) -> bool:
+        """True iff a Person(user_id) is RESPONSIBLE_FOR (``persons.topics``) any of ``tags``."""
+        if not tags:
+            return False
+        async with self._sm() as session:
+            match = await session.scalar(
+                select(models.Person.id).where(
+                    models.Person.project_id == _pid(scope),
+                    models.Person.user_id == uuid.UUID(user_id),
+                    models.Person.topics.op("&&")(list(tags)),
+                )
+            )
+            return match is not None
+
+    async def sensitive_slugs(self, scope: ProjectScope, *, threshold: int = 3) -> set[str]:
+        """Project topic slugs with ``sensitivity >= threshold`` (FR-4.14/15.5)."""
+        async with self._sm() as session:
+            rows = await session.scalars(
+                select(models.Topic.slug).where(
+                    models.Topic.project_id == _pid(scope),
+                    models.Topic.sensitivity >= threshold,
+                )
+            )
+            return set(rows)
+
+    async def find_candidate_claims(
+        self, scope: ProjectScope, embedding: Sequence[float], *, limit: int = 5
+    ) -> list[ClaimData]:
+        """Active claims most similar to ``embedding`` (for topic+statement target resolution)."""
+        distance = models.Claim.embedding.cosine_distance(list(embedding))
+        async with self._sm() as session:
+            rows = await session.scalars(
+                select(models.Claim)
+                .where(
+                    models.Claim.project_id == _pid(scope),
+                    models.Claim.embedding.is_not(None),
+                    models.Claim.valid_to.is_(None),
+                )
+                .order_by(distance)
+                .limit(limit)
+            )
+            return [self._to_claim_data(c) for c in rows]
+
+    async def apply_owner_correction(
+        self,
+        scope: ProjectScope,
+        *,
+        old_claim_id: str,
+        new_text: str,
+        new_tags: Sequence[str],
+        cred_old: float,
+        cred_new: float,
+        pending: bool,
+    ) -> str:
+        """One transaction: degrade + supersede the old claim (unless pending), create the new
+        claim. Returns the new claim id."""
+        async with session_scope(self._sm) as session:
+            old = await session.get(models.Claim, uuid.UUID(old_claim_id))
+            if old is None or old.project_id != _pid(scope):
+                raise LookupError(old_claim_id)
+            new_claim = models.Claim(
+                project_id=_pid(scope),
+                chunk_id=old.chunk_id,
+                text=new_text,
+                subject=old.subject,
+                predicate=old.predicate,
+                object=old.object,
+                credibility=cred_new,
+                tags=list(new_tags),
+                source_document_id=old.source_document_id,
+                pending_confirmation=pending,
+            )
+            session.add(new_claim)
+            await session.flush()
+            if not pending:
+                old.credibility = cred_old
+                old.valid_to = _now()
+            return str(new_claim.id)
+
+    async def record_correction(
+        self,
+        scope: ProjectScope,
+        *,
+        target_claim: str,
+        new_claim: str | None,
+        author_id: str | None,
+        on_behalf_of: str | None,
+        role_applied: str,
+        status: str,
+        before_text: str | None,
+        after_text: str | None,
+        reason: str | None,
+    ) -> str:
+        async with session_scope(self._sm) as session:
+            correction = models.Correction(
+                project_id=_pid(scope),
+                target_claim=uuid.UUID(target_claim),
+                new_claim=uuid.UUID(new_claim) if new_claim else None,
+                author_id=_maybe_uuid(author_id),
+                on_behalf_of=_maybe_uuid(on_behalf_of),
+                role_applied=role_applied,
+                status=status,
+                before_text=before_text,
+                after_text=after_text,
+                reason=reason,
+                resolved_at=_now() if status in {"applied", "reverted"} else None,
+            )
+            session.add(correction)
+            await session.flush()
+            return str(correction.id)
+
+    async def get_correction(
+        self, scope: ProjectScope, correction_id: str
+    ) -> models.Correction | None:
+        async with self._sm() as session:
+            correction = await session.get(models.Correction, uuid.UUID(correction_id))
+            if correction is None or correction.project_id != _pid(scope):
+                return None
+            return correction
+
+    async def list_corrections(
+        self, scope: ProjectScope, *, limit: int = 100
+    ) -> list[dict[str, object]]:
+        async with self._sm() as session:
+            rows = await session.scalars(
+                select(models.Correction)
+                .where(models.Correction.project_id == _pid(scope))
+                .order_by(models.Correction.created_at.desc())
+                .limit(limit)
+            )
+            return [
+                {
+                    "id": str(c.id),
+                    "target_claim": str(c.target_claim),
+                    "new_claim": str(c.new_claim) if c.new_claim else None,
+                    "status": c.status,
+                    "role_applied": c.role_applied,
+                    "before_text": c.before_text,
+                    "after_text": c.after_text,
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                }
+                for c in rows
+            ]
+
+    async def revert_correction(
+        self,
+        scope: ProjectScope,
+        *,
+        old_claim_id: str,
+        new_claim_id: str | None,
+        cred_restore: float,
+    ) -> None:
+        """Reactivate the old claim (clear valid_to, restore credibility) and supersede the new
+        claim — the reverse of an applied correction (FR-15.8)."""
+        async with session_scope(self._sm) as session:
+            await session.execute(
+                update(models.Claim)
+                .where(
+                    models.Claim.id == uuid.UUID(old_claim_id),
+                    models.Claim.project_id == _pid(scope),
+                )
+                .values(valid_to=None, credibility=cred_restore, disputed=False)
+            )
+            if new_claim_id is not None:
+                await session.execute(
+                    update(models.Claim)
+                    .where(
+                        models.Claim.id == uuid.UUID(new_claim_id),
+                        models.Claim.project_id == _pid(scope),
+                    )
+                    .values(valid_to=_now())
+                )
+
+    async def corrections_by_author_since(
+        self, scope: ProjectScope, author_id: str, since: dt.datetime
+    ) -> int:
+        async with self._sm() as session:
+            from sqlalchemy import func
+
+            total = await session.scalar(
+                select(func.count())
+                .select_from(models.Correction)
+                .where(
+                    models.Correction.project_id == _pid(scope),
+                    models.Correction.author_id == uuid.UUID(author_id),
+                    models.Correction.created_at >= since,
+                )
+            )
+            return int(total or 0)
+
+    async def distinct_correctors_of_claim(self, scope: ProjectScope, claim_id: str) -> int:
+        async with self._sm() as session:
+            from sqlalchemy import func
+
+            total = await session.scalar(
+                select(func.count(func.distinct(models.Correction.author_id))).where(
+                    models.Correction.project_id == _pid(scope),
+                    models.Correction.target_claim == uuid.UUID(claim_id),
+                )
+            )
+            return int(total or 0)
 
     async def feedback_budget_remaining(
         self, scope: ProjectScope, principal_id: str, claim_id: str, day: dt.date, cap: float
