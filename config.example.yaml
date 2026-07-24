@@ -51,6 +51,9 @@ recall:
     importance: 0.10
   half_life_days: 365
   answer_token_budget: 2000
+  hybrid_enabled: true              # fuse lexical (tsvector) + vector by RRF (FR-3.7)
+  rrf_k: 60                         # Reciprocal Rank Fusion constant
+  lexical_candidates: 20            # max lexical candidates per query before fusion
 
 reranker:
   enabled: false                  # FR-3.6 (P2)

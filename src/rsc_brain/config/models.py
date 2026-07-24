@@ -143,6 +143,15 @@ class RecallConfig(BaseModel):
     answer_token_budget: int = Field(
         default=2000, gt=0, description="Response fragment token budget (§5.8)."
     )
+    # Hybrid lexical+vector search (FR-3.7). RRF fuses the two candidate lists; `simple` tsvector
+    # covers exact identifiers embeddings miss. `hybrid_enabled=False` reverts to v0.1 vector-only.
+    hybrid_enabled: bool = Field(
+        default=True, description="Fuse a lexical (tsvector) candidate list with the vector one."
+    )
+    rrf_k: int = Field(default=60, gt=0, description="Reciprocal Rank Fusion constant k (FR-3.7).")
+    lexical_candidates: int = Field(
+        default=20, gt=0, description="Max lexical candidates per query before fusion."
+    )
 
 
 class RerankerConfig(BaseModel):
