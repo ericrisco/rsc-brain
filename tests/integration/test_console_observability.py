@@ -87,6 +87,66 @@ async def test_project_admin_session_cannot_observe_another_project(
         ).status_code == 404
 
 
+async def test_approve_from_console_applies_corrected_tags(
+    build_harness: Callable[..., Harness], make_completion: Callable[..., object], tmp_path: Path
+) -> None:
+    """AC#3: approving a pending doc from the console with corrected tags publishes with the
+    doc→chunk tag inheritance (FR-1.15) — the console only invokes the API."""
+    from sqlalchemy import select
+
+    from rsc_brain.stores.relational import models
+
+    harness = build_harness(
+        completion=make_completion(
+            entities=[{"name": "Acme", "type": "org", "aliases": []}],
+            claims=[{"text": "SLA is 24h", "subject": "Acme", "predicate": "sla", "object": "24h"}],
+            tags=["engineering"],
+        )
+    )
+    slug = unique_slug("acme")
+    project_id = await harness.setup_project(slug, [("engineering", 0), ("finance", 0)])
+    scope = harness.scope(project_id, allowed_topics=["engineering", "finance"])
+    await harness.repo.create_source(
+        scope, name="manual", type_="folder", policy="manual", default_tags=["engineering"]
+    )
+    doc = b"# Handbook\n\nThe standard support SLA is 24 hours for all customers.\n"
+    outcome = await harness.service.ingest_bytes(scope, doc, filename="hb.md", source="manual")
+
+    identity = IdentityService(harness.sm)
+    email = f"{unique_slug('own')}@example.com"
+    invited = await identity.invite_user(email, role="owner")
+    await identity.accept_invitation(invited.token, PASSWORD)
+    session = await login(harness.sm, email, PASSWORD)
+    assert session is not None
+    auth = {"Authorization": f"Bearer {session}"}
+
+    async with _client(harness, tmp_path) as client:
+        resp = await client.post(
+            f"/api/v1/admin/documents/{outcome.document_id}/approve?project={slug}",
+            json={"tags": ["finance"]},
+            headers=auth,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["phase"] == "processed"
+
+    # The corrected tag inherited to the published chunks (FR-1.15).
+    async with harness.sm() as db:
+        tag_rows = await db.execute(
+            select(models.Chunk.tags).where(
+                models.Chunk.document_id == uuid_of(outcome.document_id),
+                models.Chunk.needs_review.is_(False),
+            )
+        )
+        all_tags = {t for (tags,) in tag_rows.all() for t in tags}
+    assert "finance" in all_tags
+
+
+def uuid_of(value: str) -> object:
+    import uuid
+
+    return uuid.UUID(value)
+
+
 async def _pid(harness: Harness, slug: str) -> str:
     from sqlalchemy import select
 

@@ -75,6 +75,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/documents/pending/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Pending Document Previews
+         * @description The D13 queue with a text preview + proposed (editable) tags + source, for the console.
+         */
+        get: operations["pending_document_previews_api_v1_admin_documents_pending_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/documents/{document_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve Document
+         * @description Approve a pending doc from the console (D13); corrected tags inherit to chunks (FR-1.15).
+         */
+        post: operations["approve_document_api_v1_admin_documents__document_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/documents/{document_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject Document
+         * @description Reject a pending doc from the console (D13): nothing reaches the graph.
+         */
+        post: operations["reject_document_api_v1_admin_documents__document_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/gaps": {
         parameters: {
             query?: never;
@@ -124,6 +184,26 @@ export interface paths {
          * @description Service health (FR-13.2): the pending-approval queue depth + extraction error count.
          */
         get: operations["observability_health_api_v1_admin_observability_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/observability/ingest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Observability Ingest
+         * @description Ingest runs per document (stage checkpoints) + extraction errors with their chunk (FR-13.4).
+         */
+        get: operations["observability_ingest_api_v1_admin_observability_ingest_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -495,6 +575,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ApproveDoc */
+        ApproveDoc: {
+            /** Tags */
+            tags?: string[] | null;
+        };
         /** Body_authorize_post_oauth_authorize_post */
         Body_authorize_post_oauth_authorize_post: {
             /** Consent */
@@ -544,6 +629,11 @@ export interface components {
         QueryTextLogging: {
             /** Enabled */
             enabled: boolean;
+        };
+        /** RejectDoc */
+        RejectDoc: {
+            /** Reason */
+            reason: string;
         };
         /** SourceCreate */
         SourceCreate: {
@@ -719,6 +809,117 @@ export interface operations {
             };
         };
     };
+    pending_document_previews_api_v1_admin_documents_pending_preview_get: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_document_api_v1_admin_documents__document_id__approve_post: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApproveDoc"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_document_api_v1_admin_documents__document_id__reject_post: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RejectDoc"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_project_gaps_api_v1_admin_gaps_get: {
         parameters: {
             query?: never;
@@ -743,7 +944,9 @@ export interface operations {
     };
     observability_activity_api_v1_admin_observability_activity_get: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -761,11 +964,22 @@ export interface operations {
                     };
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     observability_health_api_v1_admin_observability_health_get: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -781,6 +995,48 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    observability_ingest_api_v1_admin_observability_ingest_get: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -791,6 +1047,7 @@ export interface operations {
                 principal_type?: string | null;
                 denied?: boolean | null;
                 limit?: number;
+                project?: string | null;
             };
             header?: never;
             path?: never;
@@ -879,7 +1136,9 @@ export interface operations {
     };
     get_query_text_logging_api_v1_admin_settings_query_text_logging_get: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -897,11 +1156,22 @@ export interface operations {
                     };
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     put_query_text_logging_api_v1_admin_settings_query_text_logging_put: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;

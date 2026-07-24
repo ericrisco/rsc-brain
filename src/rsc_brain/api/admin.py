@@ -123,10 +123,12 @@ async def _console_scope_for(
 async def _obs_scope(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    project: str | None = None,
 ) -> ProjectScope:
     """Auth for the console read-observability endpoints: a project-scoped **PAT/OAuth** token
     (project from the token, parity with the rest of the admin API) OR a **console session** plus a
-    ``?project=<slug>`` the user is authorized for. Both resolve to a single project (FR-12.3/12.5)."""
+    ``?project=<slug>`` the user is authorized for. Both resolve to a single project (FR-12.3/12.5).
+    ``project`` is a declared query param so it appears in the OpenAPI for the typed client."""
     from rsc_brain.identity.resolve import resolve_scope
     from rsc_brain.identity.sessions import resolve_session
 
@@ -141,10 +143,9 @@ async def _obs_scope(
         return scope
     user = await resolve_session(sessionmaker, token)
     if user is not None:
-        project_slug = request.query_params.get("project")
         scoped = (
-            await _console_scope_for(sessionmaker, user.user_id, user.role, project_slug)
-            if project_slug
+            await _console_scope_for(sessionmaker, user.user_id, user.role, project)
+            if project
             else None
         )
         if scoped is None:
@@ -377,3 +378,121 @@ async def put_query_text_logging(
         enabled=body.enabled,
     )
     return {"enabled": body.enabled}
+
+
+# --- ingest observability + D13 approval queue (FR-13.4), console-session callable --------------
+
+
+class ApproveDoc(BaseModel):
+    tags: list[str] | None = None  # corrected proposed tags (FR-1.15 inheritance on approve)
+
+
+class RejectDoc(BaseModel):
+    reason: str
+
+
+@router.get("/observability/ingest")
+async def observability_ingest(
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """Ingest runs per document (stage checkpoints) + extraction errors with their chunk (FR-13.4)."""
+    repo = IngestRepository(_deps(request).sessionmaker)  # type: ignore[attr-defined]
+    runs = await repo.list_run_statuses(scope)
+    async with _deps(request).sessionmaker() as session:  # type: ignore[attr-defined]
+        error_rows = await session.execute(
+            select(
+                models.IngestError.document_id,
+                models.IngestError.chunk_ref,
+                models.IngestError.stage,
+                models.IngestError.error,
+            )
+            .where(models.IngestError.project_id == uuid.UUID(scope.project_id))
+            .order_by(models.IngestError.created_at.desc())
+            .limit(200)
+        )
+        errors = [
+            {"document_id": str(doc) if doc else None, "chunk": chunk, "stage": stage, "error": err}
+            for doc, chunk, stage, err in error_rows.all()
+        ]
+    return {
+        "runs": [
+            {
+                "document_id": r.document_id,
+                "phase": r.phase,
+                "completed_stages": list(r.completed_stages),
+                "chunks_created": r.chunks_created,
+                "claims_generated": r.claims_generated,
+                "discarded_chunks": r.discarded_chunks,
+                "error": r.error,
+            }
+            for r in runs
+        ],
+        "errors": errors,
+    }
+
+
+@router.get("/documents/pending/preview")
+async def pending_document_previews(
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """The D13 queue with a text preview + proposed (editable) tags + source, for the console."""
+    repo = IngestRepository(_deps(request).sessionmaker)  # type: ignore[attr-defined]
+    pending = await repo.list_documents_by_status(scope, "pending_approval")
+    out: list[dict[str, object]] = []
+    async with _deps(request).sessionmaker() as session:  # type: ignore[attr-defined]
+        for doc in pending:
+            preview = await session.scalar(
+                select(models.Chunk.text)
+                .where(
+                    models.Chunk.document_id == uuid.UUID(doc.id),
+                    models.Chunk.project_id == uuid.UUID(scope.project_id),
+                )
+                .order_by(models.Chunk.id)
+                .limit(1)
+            )
+            out.append(
+                {
+                    "document_id": doc.id,
+                    "title": doc.title,
+                    "proposed_tags": list(doc.doc_tags),
+                    "source_id": doc.source_id,
+                    "preview": (preview or "")[:280],
+                }
+            )
+    return {"documents": out}
+
+
+@router.post("/documents/{document_id}/approve")
+async def approve_document(
+    document_id: str,
+    body: ApproveDoc,
+    request: Request,
+    scope: ProjectScope = Depends(_obs_scope),
+) -> dict[str, object]:
+    """Approve a pending doc from the console (D13); corrected tags inherit to chunks (FR-1.15)."""
+    from rsc_brain.ingest.pipeline import DocumentNotFoundError
+
+    service, _ = _deps(request).service()  # type: ignore[attr-defined]
+    try:
+        run = await service.approve(scope, document_id, tags=body.tags, approver=scope.principal_id)
+    except DocumentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+    return {"document_id": document_id, "phase": run.phase}
+
+
+@router.post("/documents/{document_id}/reject")
+async def reject_document(
+    document_id: str,
+    body: RejectDoc,
+    request: Request,
+    scope: ProjectScope = Depends(_obs_scope),
+) -> dict[str, object]:
+    """Reject a pending doc from the console (D13): nothing reaches the graph."""
+    from rsc_brain.ingest.pipeline import DocumentNotFoundError
+
+    service, _ = _deps(request).service()  # type: ignore[attr-defined]
+    try:
+        run = await service.reject(scope, document_id, reason=body.reason)
+    except DocumentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+    return {"document_id": document_id, "phase": run.phase}
