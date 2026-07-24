@@ -331,6 +331,9 @@ class Topic(Base):
     slug: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     sensitivity: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    # Per-topic hard horizon (SPEC-13, FR-16.3): in `current` mode, claims older than this many
+    # days are hidden by default; NULL = no window (the D16 default).
+    hard_window_days: Mapped[int | None] = mapped_column(Integer)
     __table_args__ = (
         UniqueConstraint("project_id", "slug"),
         Index("ix_topics_project_id_id", "project_id", "id"),
