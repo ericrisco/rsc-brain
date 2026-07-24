@@ -18,8 +18,11 @@ capability layer.
 >   `recall`/`ingest` signatures) with an indivisible `ProjectScope` (see
 >   [`docs/interface-freeze.md`](docs/interface-freeze.md)).
 > - ✅ **`brain` CLI** skeleton (all FR-10.1 subcommands, global `--json`).
-> - ⏳ Next in this bootstrap: the **model gateway** (LiteLLM), the **data-service Compose**
->   stack (Postgres 16 + AGE + pgvector), and **CI**.
+> - ✅ **Model gateway** (`rsc_brain.gateway`) over LiteLLM: per-capability routing, structured
+>   completion with validate → repair → fallback, embedding dimension anchoring, redacted
+>   errors — routing is immutable from call data (AUDIT-005).
+> - ⏳ Next in this bootstrap: the **data-service Compose** stack (Postgres 16 + AGE + pgvector)
+>   and **CI**.
 >
 > Product capabilities (ingestion, recall, MCP serving, console, …) land in later SPECs; the
 > CLI subcommands for them exit non-zero with a `not_implemented` payload until then.

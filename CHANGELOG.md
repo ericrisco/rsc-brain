@@ -22,5 +22,9 @@ All notable changes to this project are documented here. The format follows
   effect (AUDIT-003). See `docs/interface-freeze.md`.
 - **`brain` CLI** skeleton (Typer): all FR-10.1 subcommands with a global `--json` flag;
   unimplemented commands exit non-zero with a structured `not_implemented` payload.
+- **Model gateway** (`rsc_brain.gateway`) over LiteLLM: per-capability provider config;
+  structured completion with validate → repair → fallback; embedding dimension anchoring
+  (1024); a real per-capability `healthcheck`. Routing (model/endpoint/credentials/timeout/
+  fallback) is immutable from call data and provider errors are redacted (AUDIT-005).
 
 [Unreleased]: https://github.com/ericrisco/rsc-brain/commits/main
