@@ -23,7 +23,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from rsc_brain.config.models import HardwareProfile
+from rsc_brain.config.models import HardwareProfile, KnowledgeConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.chunker import chunk_prose
 from rsc_brain.ingest.entity_resolution import entity_id
@@ -41,6 +41,8 @@ from rsc_brain.ingest.types import (
     RunStatus,
     SourcePolicy,
 )
+from rsc_brain.knowledge.contradictions import ContradictionResolver
+from rsc_brain.knowledge.credibility import authority_for, initial_credibility
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore, safe_identifier
 from rsc_brain.stores.graph_store import GraphEdge, GraphNode
@@ -99,12 +101,18 @@ class IngestionPipeline:
         gateway: ModelGateway,
         parser_factory: Callable[[DocRow], DocumentParser] = default_parser_factory,
         config: PipelineConfig | None = None,
+        knowledge_config: KnowledgeConfig | None = None,
+        contradiction_resolver: ContradictionResolver | None = None,
     ) -> None:
         self._repo = repository
         self._graph = graph_store
         self._gateway = gateway
         self._parser_factory = parser_factory
         self._config = config or PipelineConfig()
+        self._knowledge = knowledge_config or KnowledgeConfig()
+        # Optional (SPEC-08): when set, contradictions are detected on-ingest over the doc's new
+        # claims. Left None keeps the SPEC-05 behaviour, so existing constructors are unaffected.
+        self._resolver = contradiction_resolver
         self._topicalizer = Topicalizer(gateway)
         self._extractor = CascadeExtractor(gateway)
 
@@ -306,6 +314,35 @@ class IngestionPipeline:
             scope, document_id, PipelineStage.PERSIST, phase=DocStatus.PROCESSED.value
         )
         await self._repo.set_status(scope, document_id, DocStatus.PROCESSED.value)
+        await self._detect_contradictions_on_ingest(scope, document_id)
+
+    async def _detect_contradictions_on_ingest(self, scope: ProjectScope, document_id: str) -> None:
+        """On-ingest contradiction detection over the document's new claims (SPEC-08 FR-5.2).
+        No-op unless a resolver is configured (opt-in)."""
+        if self._resolver is None:
+            return
+        await self._resolver.resolve_document(scope, document_id)
+
+    def _claim_credibility(self, row: ChunkRow) -> float:
+        """cred0 (FR-5.1) from the source chunk: table rows are most authoritative, scanned/OCR
+        least; corroboration starts at a single source; freshness defaults to 1.0 at ingest."""
+        if row.kind == ChunkKind.TABLE_ROW.value:
+            source_kind = "table"
+        elif row.extraction_confidence is not None and row.extraction_confidence < 1.0:
+            source_kind = "low_quality_ocr"
+        else:
+            source_kind = "official_prose"
+        authority = authority_for(
+            source_kind,
+            table=self._knowledge.authority_by_source,
+            default=self._knowledge.default_authority,
+        )
+        return initial_credibility(
+            authority=authority,
+            extraction_confidence=row.extraction_confidence,
+            n_independent_sources=1,
+            freshness=1.0,
+        )
 
     async def _embed(self, chunks: Sequence[ChunkRow]) -> dict[str, list[float]]:
         if not chunks:
@@ -329,6 +366,7 @@ class IngestionPipeline:
             row = by_text.get(spec.text)
             if row is None:
                 continue
+            credibility = self._claim_credibility(row)
             for triple in spec.claims:
                 claims.append(
                     ClaimSpec(
@@ -339,6 +377,7 @@ class IngestionPipeline:
                         object=triple.object,
                         tags=row.tags,
                         extraction_confidence=row.extraction_confidence,
+                        credibility=credibility,
                     )
                 )
         return claims
@@ -379,6 +418,7 @@ class IngestionPipeline:
                     properties={"source_document_id": document_id},
                 )
             )
+        credibility = self._claim_credibility(row)
         for triple in graph.claims:
             claims.append(
                 ClaimSpec(
@@ -389,6 +429,7 @@ class IngestionPipeline:
                     object=triple.object,
                     tags=row.tags,
                     extraction_confidence=row.extraction_confidence,
+                    credibility=credibility,
                 )
             )
 

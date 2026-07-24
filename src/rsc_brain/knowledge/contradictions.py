@@ -80,6 +80,16 @@ class ContradictionResolver:
         self._judge = judge
         self._config = config or KnowledgeConfig()
 
+    async def resolve_document(self, scope: ProjectScope, document_id: str) -> ResolutionSummary:
+        """Detect + resolve contradictions among a document's active claims (on-ingest hook)."""
+        return await self.resolve_claims(
+            scope, await self._store.claims_for_document(scope, document_id)
+        )
+
+    async def resolve_ids(self, scope: ProjectScope, claim_ids: Sequence[str]) -> ResolutionSummary:
+        """Detect + resolve among a set of claim ids (on-consume hook, FR-3.4)."""
+        return await self.resolve_claims(scope, await self._store.claims_by_ids(scope, claim_ids))
+
     async def resolve_claims(
         self, scope: ProjectScope, claims: Sequence[ClaimData]
     ) -> ResolutionSummary:
