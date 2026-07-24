@@ -215,6 +215,66 @@ class AgeGraphStore:
         parsed = _parse_agtype(rows[0][0])
         return parsed if isinstance(parsed, int) else 0
 
+    async def merge_nodes(self, scope: ProjectScope, canonical_id: str, duplicate_id: str) -> int:
+        """Re-point every edge of the duplicate node onto the canonical node, then tombstone the
+        duplicate (``suppressed = true`` + ``merged_into``). Returns the re-pointed edge count.
+
+        Self-loops and edges already between the two nodes are dropped (never a canonical→canonical
+        edge). The duplicate is kept (tombstoned, not deleted) so a merge stays reversible and
+        auditable — consistent with the store's tombstone discipline. No-op if the graph is absent.
+        """
+        if canonical_id == duplicate_id:
+            return 0
+        graph = graph_name(scope.project_id)
+        async with self._sm() as session:
+            await self._prepare(session)
+            if not await self._graph_exists(session, graph):
+                return 0
+            out_rows = await self._cypher(
+                session,
+                graph,
+                "MATCH ({id: $dup})-[r]->(b) RETURN type(r) AS t, b.id AS other",
+                {"dup": duplicate_id},
+                "t agtype, other agtype",
+            )
+            in_rows = await self._cypher(
+                session,
+                graph,
+                "MATCH (a)-[r]->({id: $dup}) RETURN type(r) AS t, a.id AS other",
+                {"dup": duplicate_id},
+                "t agtype, other agtype",
+            )
+        edges: list[GraphEdge] = []
+        for etype, other in out_rows:
+            neighbour = str(_parse_agtype(other))
+            if neighbour not in (canonical_id, duplicate_id):
+                edges.append(
+                    GraphEdge(
+                        source_id=canonical_id, target_id=neighbour, type=str(_parse_agtype(etype))
+                    )
+                )
+        for etype, other in in_rows:
+            neighbour = str(_parse_agtype(other))
+            if neighbour not in (canonical_id, duplicate_id):
+                edges.append(
+                    GraphEdge(
+                        source_id=neighbour, target_id=canonical_id, type=str(_parse_agtype(etype))
+                    )
+                )
+        if edges:
+            await self.upsert_edges(scope, edges)
+        async with self._sm() as session:
+            await self._prepare(session)
+            await self._cypher(
+                session,
+                graph,
+                "MATCH (n {id: $dup}) SET n.suppressed = true, n.merged_into = $canon",
+                {"dup": duplicate_id, "canon": canonical_id},
+                "v agtype",
+            )
+            await session.commit()
+        return len(edges)
+
     async def run_cypher(
         self, scope: ProjectScope, cypher: str, params: Mapping[str, object]
     ) -> list[Mapping[str, object]]:

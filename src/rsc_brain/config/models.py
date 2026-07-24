@@ -216,6 +216,13 @@ class KnowledgeConfig(BaseModel):
         default=3, ge=1, description="Back-and-forth corrections before escalating to admin."
     )
     agents_can_correct: bool = Field(default=False, description="FR-15.10: default false.")
+    # Alias-merge (SPEC-09, FR-1.9 P1). Conservative by design: below auto-apply → human review.
+    merge_min_similarity: float = Field(
+        default=0.82, ge=0.0, le=1.0, description="Min name similarity to propose a merge."
+    )
+    merge_auto_apply_confidence: float = Field(
+        default=0.97, ge=0.0, le=1.0, description="At/above this confidence a merge auto-applies."
+    )
 
 
 class DatabaseConfig(BaseModel):
