@@ -9,6 +9,27 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added — v0.1 / SPEC-03 (data layer)
+
+- **Schema + migrations**: SQLAlchemy 2.0 async models for the full PRD §5.2 data model
+  (20 tables); async Alembic with the initial migration creating the `vector`/`age`
+  extensions, every knowledge/operation table with `project_id NOT NULL` + a composite index,
+  and HNSW cosine indexes on chunk/claim embeddings. `brain migrate` applies to head
+  (idempotent).
+- **RelationalStore** + project-scoped `KnowledgeRepository` (`ProjectScope` mandatory on every
+  method — a bare `project_id` is impossible) + global `UserRepository`; forbidden and
+  nonexistent are indistinguishable (FR-4.3).
+- **VectorStore** (pgvector): similarity search with the project + allowed-tags filter embedded
+  in the SQL (cosine over HNSW), never post-hoc (FR-4.2/12.4).
+- **GraphStore** (Apache AGE): one physical graph per project; all node/edge data flows through
+  parameterized Cypher (labels/edge-types are validated identifiers — no data interpolation);
+  k-hop; property tombstone (`suppressed`).
+- **`brain backup` / `restore` / `forget --document`**: single-artifact `pg_dump` backup;
+  restore + migrate + verify; hard-delete a document (chunks/claims/embeddings cascade) + graph
+  tombstone + audit entry, idempotent.
+- All three stores are proven against a real Postgres 16 + Apache AGE + pgvector container
+  (testcontainers), including hard multiproject isolation.
+
 ### Added — Sprint 0 / SPEC-01 (repository bootstrap, in progress)
 
 - Project skeleton following PRD §11, packaged with **uv** (Python 3.12); `ruff` (lint +

@@ -35,10 +35,10 @@ def test_unimplemented_command_exits_nonzero_with_json_after_subcommand() -> Non
 
 
 def test_global_json_before_subcommand_also_works() -> None:
-    result = runner.invoke(app, ["--json", "migrate"])
+    result = runner.invoke(app, ["--json", "ingest"])
     assert result.exit_code == 2
     payload = json.loads(result.stdout)
-    assert payload == {"status": "not_implemented", "command": "migrate"}
+    assert payload == {"status": "not_implemented", "command": "ingest"}
 
 
 def test_unimplemented_command_human_message_goes_to_stderr() -> None:
