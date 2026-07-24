@@ -169,6 +169,14 @@ class VisionConfig(BaseModel):
     enabled: bool = False  # FR-1.11 reserved
 
 
+class TelemetryConfig(BaseModel):
+    """Anonymous opt-in telemetry (SPEC-22, FR-10.5). OFF by default (OSS): nothing is sent unless
+    the operator explicitly enables it. When on, only version + hardware profile + counters."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    enabled: bool = False
+
+
 class IngestConfig(BaseModel):
     """Ingestion pipeline tuning (SPEC-05)."""
 
@@ -266,6 +274,7 @@ class AppConfig(BaseModel):
     recall: RecallConfig = Field(default_factory=RecallConfig)
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     ingest: IngestConfig = Field(default_factory=IngestConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)

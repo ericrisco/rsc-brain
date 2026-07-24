@@ -49,6 +49,13 @@ def test_example_config_loads_with_documented_defaults() -> None:
     )
 
 
+def test_telemetry_and_reranker_are_off_by_default() -> None:
+    # SPEC-22: telemetry OFF by default (FR-10.5, OSS); the optional reranker OFF (FR-3.6, P2).
+    settings = load_settings(EXAMPLE_CONFIG)
+    assert settings.telemetry.enabled is False
+    assert settings.reranker.enabled is False
+
+
 def test_score_weights_default_sum_to_one() -> None:
     settings = load_settings(EXAMPLE_CONFIG)
     w = settings.recall.weights

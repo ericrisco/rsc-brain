@@ -75,6 +75,22 @@ docker compose exec -u postgres -T db \
 > Building the AGE + pgvector image compiles pgvector from source and can take a few minutes
 > on first run.
 
+## Telemetry
+
+**Off by default.** rsc-brain sends no telemetry unless you explicitly opt in
+(`telemetry.enabled: true`). When enabled, it reports only anonymous, non-content signals —
+version, hardware profile, and aggregate counters — never your documents, queries, or claims.
+
+## Privacy & GDPR (self-hosted)
+
+You are the data controller: rsc-brain runs entirely on your infrastructure and never phones home.
+- **Right to erasure** — `brain forget --entity "<name>"` erases an entity (and tombstones its
+  graph node); `brain forget --document <id>` removes a document; `brain forget --whole-project`
+  wipes an entire project (double-confirmed). See [`docs/AGENTS.md`](docs/AGENTS.md).
+- **Retention** — `audit_log` retention defaults to 365 days (configurable); older rows are purged.
+- **Portability** — `brain export --project <slug> --okf` emits an open-format (OKF) bundle of the
+  active claims + skills the exporter is permitted to see.
+
 ## Contributing & security
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to get started and [`docs/AGENTS.md`](docs/AGENTS.md)
