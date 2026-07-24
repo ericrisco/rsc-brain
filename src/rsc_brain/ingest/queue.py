@@ -73,6 +73,7 @@ async def _default_runner(
     from rsc_brain.config import load_settings
     from rsc_brain.gateway.model_gateway import ModelGateway
     from rsc_brain.ingest.pipeline import IngestionPipeline
+    from rsc_brain.ontology.ingest import OntologyIngest
     from rsc_brain.scope import Principal, PrincipalType
     from rsc_brain.stores.age_graph_store import AgeGraphStore
     from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
@@ -86,6 +87,7 @@ async def _default_runner(
             repository=IngestRepository(sessionmaker),
             graph_store=AgeGraphStore(sessionmaker),
             gateway=ModelGateway(settings.capabilities),
+            ontology=OntologyIngest(sessionmaker),
         )
         scope = Principal(id=principal_id, type=PrincipalType.HUMAN, can_curate=True).scope_for(
             project_id

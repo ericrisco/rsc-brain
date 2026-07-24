@@ -29,6 +29,8 @@ from rsc_brain.identity.resolve import resolve_scope
 from rsc_brain.ingest.pipeline import DocumentNotFoundError, IngestionPipeline, PipelineConfig
 from rsc_brain.ingest.service import IngestService
 from rsc_brain.mcp.server import build_mcp_server
+from rsc_brain.ontology.ingest import OntologyIngest
+from rsc_brain.ontology.recall import OntologyRecall
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import CrossProjectScopeError, ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
@@ -56,6 +58,9 @@ class ApiDeps:
             graph_store=AgeGraphStore(self.sessionmaker),
             gateway=self.gateway,
             config=self.config or PipelineConfig(),
+            # SPEC-24: the ontology layer is always constructed but stays inert per project until
+            # that project sets ontology.enabled=true, so a standard install pays nothing for it.
+            ontology=OntologyIngest(self.sessionmaker),
         )
         return IngestService(repo, pipeline, data_dir=self.data_dir), repo
 
@@ -65,6 +70,7 @@ class ApiDeps:
             gateway=self.gateway,
             graph_store=AgeGraphStore(self.sessionmaker),
             config=self.recall_config or RecallConfig(),
+            ontology=OntologyRecall(self.sessionmaker),
         )
 
 

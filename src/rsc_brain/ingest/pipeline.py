@@ -43,6 +43,7 @@ from rsc_brain.ingest.types import (
 )
 from rsc_brain.knowledge.contradictions import ContradictionResolver
 from rsc_brain.knowledge.credibility import authority_for, initial_credibility
+from rsc_brain.ontology.ingest import OntologyIngest
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore, safe_identifier
 from rsc_brain.stores.graph_store import GraphEdge, GraphNode
@@ -103,6 +104,7 @@ class IngestionPipeline:
         config: PipelineConfig | None = None,
         knowledge_config: KnowledgeConfig | None = None,
         contradiction_resolver: ContradictionResolver | None = None,
+        ontology: OntologyIngest | None = None,
     ) -> None:
         self._repo = repository
         self._graph = graph_store
@@ -113,6 +115,9 @@ class IngestionPipeline:
         # Optional (SPEC-08): when set, contradictions are detected on-ingest over the doc's new
         # claims. Left None keeps the SPEC-05 behaviour, so existing constructors are unaffected.
         self._resolver = contradiction_resolver
+        # Optional (SPEC-24): ontology anchoring/merge/relation-check. None (default) OR a project
+        # with ontology.enabled=false means every seam here short-circuits — ingest is identical.
+        self._ontology = ontology
         self._topicalizer = Topicalizer(gateway)
         self._extractor = CascadeExtractor(gateway)
 
@@ -285,6 +290,16 @@ class IngestionPipeline:
         edges: list[GraphEdge] = []
         discarded = 0
 
+        # SPEC-24 seam: load the active ontology once (None ⇒ layer off ⇒ no relation check below).
+        ontology_index = await self._ontology.index_for(scope) if self._ontology else None
+        relation_decider = (
+            self._ontology.relation_decider(
+                ontology_index, await self._ontology.settings_for(scope)
+            )
+            if self._ontology and ontology_index is not None
+            else None
+        )
+
         for row in chunk_rows:
             if row.kind != ChunkKind.PROSE.value or row.needs_review:
                 continue
@@ -302,7 +317,9 @@ class IngestionPipeline:
                 )
                 discarded += 1
                 continue
-            self._collect_extraction(document_id, row, graph, claims, entities, nodes, edges)
+            self._collect_extraction(
+                document_id, row, graph, claims, entities, nodes, edges, errors, relation_decider
+            )
 
         counters = Counters(claims_generated=len(claims), discarded_chunks=discarded)
         await self._repo.record_publish(
@@ -331,6 +348,11 @@ class IngestionPipeline:
         )
         await self._repo.set_status(scope, document_id, DocStatus.PROCESSED.value)
         await self._detect_contradictions_on_ingest(scope, document_id)
+        # SPEC-24 FR-17.2/17.3: anchor the newly-written entities to the ontology and propose merges
+        # for those sharing an IRI. No-op when the layer is off (index is None), so recall never
+        # pays for it — the anchoring latency lives entirely inside this ingest job (FR-17.8).
+        if self._ontology is not None:
+            await self._ontology.anchor_and_merge(scope, ontology_index)
 
     async def _version_baseline(
         self, scope: ProjectScope, document_id: str
@@ -428,6 +450,8 @@ class IngestionPipeline:
         entities: list[EntitySpec],
         nodes: list[GraphNode],
         edges: list[GraphEdge],
+        errors: list[IngestErrorSpec],
+        relation_decider: Callable[[str, str, str], str] | None = None,
     ) -> None:
         type_by_name: dict[str, str] = {}
         for entity in graph.entities:
@@ -447,12 +471,36 @@ class IngestionPipeline:
         for relation in graph.relations:
             if relation.subject not in type_by_name or relation.object not in type_by_name:
                 continue
+            # SPEC-24 FR-17.4: apply the ontology domain/range policy. `drop` skips the edge and
+            # logs it; `flag` keeps the edge but records a needs_review error; `keep` (and the
+            # off-by-default path where decider is None) passes untouched.
+            properties: dict[str, object] = {"source_document_id": document_id}
+            if relation_decider is not None:
+                verdict = relation_decider(relation.predicate, relation.subject, relation.object)
+                if verdict == "drop":
+                    errors.append(
+                        IngestErrorSpec(
+                            chunk_ref=row.id,
+                            stage="ontology_relation_check",
+                            error=f"domain_range_violation:dropped:{relation.predicate}",
+                        )
+                    )
+                    continue
+                if verdict == "flag":
+                    properties["needs_review"] = True
+                    errors.append(
+                        IngestErrorSpec(
+                            chunk_ref=row.id,
+                            stage="ontology_relation_check",
+                            error=f"domain_range_violation:needs_review:{relation.predicate}",
+                        )
+                    )
             edges.append(
                 GraphEdge(
                     source_id=str(entity_id(type_by_name[relation.subject], relation.subject)),
                     target_id=str(entity_id(type_by_name[relation.object], relation.object)),
                     type=_safe_edge_type(relation.predicate),
-                    properties={"source_document_id": document_id},
+                    properties=properties,
                 )
             )
         credibility = self._claim_credibility(row)

@@ -308,10 +308,29 @@ class Entity(Base):
     merged_into: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("entities.id", ondelete="SET NULL")
     )
+    # Optional ontology anchor (SPEC-24, off by default; open-world — NULL = local/unanchored).
+    ontology_uri: Mapped[str | None] = mapped_column(Text)
+    ontology_valid: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
     __table_args__ = (
         UniqueConstraint("project_id", "normalized_name", "type"),
         Index("ix_entities_project_id_id", "project_id", "id"),
     )
+
+
+class Ontology(Base):
+    """A versioned OWL/RDF/SKOS file anchored to a project (SPEC-24, FR-17.1)."""
+
+    __tablename__ = "ontologies"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    format: Mapped[str] = mapped_column(Text, nullable=False)  # owl|rdf|skos|turtle
+    version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
+    uri_base: Mapped[str | None] = mapped_column(Text)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
+    uploaded_at: Mapped[dt.datetime] = _created_at()
+    __table_args__ = (Index("ix_ontologies_project_id_id", "project_id", "id"),)
 
 
 class EntityAlias(Base):

@@ -36,6 +36,7 @@ from rsc_brain.cli.installer import init as _init
 from rsc_brain.cli.installer import plan as _plan
 from rsc_brain.cli.installer import usage as _usage
 from rsc_brain.cli.installer import verify as _verify
+from rsc_brain.cli.ontology import ontology_app
 from rsc_brain.cli.skills import skills_app
 
 # FR-10.1 subcommands, in the order the spec lists them.
@@ -143,6 +144,8 @@ app.add_typer(sources_app, name="sources", help="Manage ingestion sources and th
 app.add_typer(corrections_app, name="corrections", help="List and revert corrections.")
 # `entities` (alias-merge propose + review queue) is introduced by SPEC-09.
 app.add_typer(entities_app, name="entities", help="Entity dedup and alias-merge review.")
+# `ontology` (optional per-project anchoring, off by default) is introduced by SPEC-24.
+app.add_typer(ontology_app, name="ontology", help="Manage optional ontology anchoring (SPEC-24).")
 # `hunt ask` (manual hunt) is introduced by SPEC-15 (the plural `hunts`/`gaps`/`persons` groups
 # fill in FR-10.1 stubs above).
 app.add_typer(hunt_app, name="hunt", help="Ask a responsible person a question by hand (FR-6.2c).")

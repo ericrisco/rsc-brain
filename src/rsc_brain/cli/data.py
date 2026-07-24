@@ -12,7 +12,7 @@ import typer
 from sqlalchemy import select, text
 from sqlalchemy.engine import make_url
 
-from rsc_brain.cli._common import JSON_OPTION, emit_result
+from rsc_brain.cli._common import JSON_OPTION, emit_result, json_enabled
 from rsc_brain.scope import Principal, PrincipalType, ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational import models
@@ -275,21 +275,54 @@ async def _all_topics_scope(sessionmaker: object, project_id: str) -> ProjectSco
     ).scope_for(project_id)
 
 
+async def _export_rdf(sessionmaker: object, scope: ProjectScope) -> str:
+    """Serialize the project's live entities to Turtle (FR-17.6): anchored ones link to their
+    ``ontology_uri`` via owl:sameAs, unanchored ones are minted under the active ontology's
+    ``uri_base``. Round-trips through rdflib. Read-only; respects the exporter's scope."""
+    from rsc_brain.ontology.rdf_export import ExportEntity, export_turtle
+
+    async with sessionmaker() as session:  # type: ignore[operator]
+        rows = list(
+            await session.execute(
+                select(models.Entity.id, models.Entity.name, models.Entity.ontology_uri).where(
+                    models.Entity.project_id == uuid.UUID(scope.project_id),
+                    models.Entity.merged_into.is_(None),
+                )
+            )
+        )
+        uri_base = await session.scalar(
+            select(models.Ontology.uri_base).where(
+                models.Ontology.project_id == uuid.UUID(scope.project_id),
+                models.Ontology.active.is_(True),
+                models.Ontology.uri_base.is_not(None),
+            )
+        )
+    entities = [ExportEntity(id=str(eid), name=name, ontology_uri=uri) for eid, name, uri in rows]
+    return export_turtle(entities, uri_base=uri_base)
+
+
 def export(
     ctx: typer.Context,
     project: str = typer.Option(..., "--project", help="Project slug/id to export."),
     okf: bool = typer.Option(True, "--okf/--no-okf", help="Export as an OKF bundle (FR-10.6)."),
+    rdf: bool = typer.Option(
+        False, "--rdf", help="Export the entity graph as RDF/Turtle (FR-17.6)."
+    ),
     output: Path | None = typer.Option(None, "--output", "-o", help="Write the bundle to a file."),
     json_output: bool = JSON_OPTION,
 ) -> None:
-    """Export a project's active claims + skills as an OKF bundle (FR-10.6/12.7), respecting the
-    exporter's permissions. Read-only."""
+    """Export a project's active claims + skills as an OKF bundle (FR-10.6/12.7) or, with --rdf, the
+    anchored entity graph as RDF/Turtle (FR-17.6). Respects the exporter's permissions. Read-only."""
     import json as _json
 
     from rsc_brain.export.okf import export_okf_bundle
 
-    if not okf:  # OKF is the only supported open format today (RDF export lands in SPEC-24)
-        typer.echo("export: only --okf is supported in this release", err=True)
+    if rdf:
+        _export_rdf_command(ctx, project, output, json_output)
+        return
+
+    if not okf:  # OKF and RDF are the supported open formats.
+        typer.echo("export: pass --okf (default) or --rdf", err=True)
         raise typer.Exit(code=2)
 
     async def _run() -> dict[str, object] | None:
@@ -324,6 +357,45 @@ def export(
         },
         f"brain export: {n_claims} claims + skills as OKF"
         + (f" → {output}" if output else " (stdout)"),
+    )
+
+
+def _export_rdf_command(
+    ctx: typer.Context, project: str, output: Path | None, json_output: bool
+) -> None:
+    async def _run() -> str | None:
+        engine = make_engine()
+        try:
+            sessionmaker = make_sessionmaker(engine)
+            project_id = await _resolve_project(sessionmaker, project)
+            if project_id is None:
+                return None
+            scope = await _all_topics_scope(sessionmaker, project_id)
+            return await _export_rdf(sessionmaker, scope)
+        finally:
+            await engine.dispose()
+
+    turtle = asyncio.run(_run())
+    if turtle is None:
+        emit_result(
+            ctx, json_output, {"error": "not_found", "project": project}, "project not found"
+        )
+        raise typer.Exit(code=1)
+    if output is not None:
+        output.write_text(turtle, encoding="utf-8")
+    elif not json_enabled(ctx, json_output):
+        typer.echo(turtle)
+    emit_result(
+        ctx,
+        json_output,
+        {
+            "status": "ok",
+            "action": "export",
+            "format": "rdf",
+            "written": str(output) if output else None,
+            "turtle": turtle,
+        },
+        "brain export: RDF/Turtle" + (f" → {output}" if output else " (stdout above)"),
     )
 
 
