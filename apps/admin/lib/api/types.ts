@@ -35,3 +35,51 @@ export interface CreatedPat {
   pat_id: string;
   token: string;
 }
+
+// --- SPEC-14 read observability -------------------------------------------------------------
+
+export interface Activity {
+  recalls: number;
+  denied: number;
+  active_principals: number;
+  p95_duration_ms: number | null;
+  recalls_per_day: { day: string; recalls: number }[];
+}
+
+export interface RecallRow {
+  id: number;
+  ts: string | null;
+  principal_type: string | null;
+  principal_id: string | null;
+  on_behalf_of: string | null;
+  query_text: string | null;
+  query_hash: string | null;
+  topics_used: string[];
+  result_count: number | null;
+  duration_ms: number | null;
+  denied: boolean;
+}
+
+export interface Health {
+  database: string;
+  pending_approval: number;
+  ingest_errors: number;
+}
+
+export interface PendingDoc {
+  document_id: string;
+  title: string | null;
+  proposed_tags: string[];
+  source_id: string | null;
+  preview: string;
+}
+
+export interface IngestRun {
+  document_id: string;
+  phase: string;
+  completed_stages: string[];
+  chunks_created: number;
+  claims_generated: number;
+  discarded_chunks: number;
+  error: string | null;
+}

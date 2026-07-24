@@ -10,6 +10,7 @@ hash).
 from __future__ import annotations
 
 import datetime as dt
+import time
 import uuid
 from collections.abc import Sequence
 from typing import Literal, cast
@@ -132,6 +133,7 @@ async def do_recall(
     # Temporal params (SPEC-13, FR-16.7): as_of is an ISO date; include_superseded is honoured only
     # for an admin (the retriever gates it on scope.can_curate, scope-from-token).
     as_of_date = dt.date.fromisoformat(as_of) if as_of else None
+    started = time.monotonic()
     result = await retriever.recall(
         scope,
         query,
@@ -141,13 +143,18 @@ async def do_recall(
         include_historical=include_historical,
         include_superseded=include_superseded,
     )
+    duration_ms = int((time.monotonic() - started) * 1000)
     output = to_recall_output(result)
+    # Store the raw text only when the project opts in (FR-13.9); otherwise just the hash.
+    log_text = await audit.query_text_logging_enabled(sessionmaker, scope.project_id)
     await audit.record_audit(
         sessionmaker,
         scope,
         action="recall",
         tool="recall",
         query_hash=query_hash(query),
+        query_text=query if log_text else None,
+        duration_ms=duration_ms,
         topics_used=sorted(scope.allowed_topics),
         result_count=len(output.fragments),
         denied=not output.found,

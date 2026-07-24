@@ -418,6 +418,10 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(Text, nullable=False)
     tool: Mapped[str | None] = mapped_column(Text)
     query_hash: Mapped[str | None] = mapped_column(Text)
+    # The raw query text, stored ONLY when the project's query_text_logging is ON (FR-13.9); NULL
+    # otherwise. duration_ms feeds the p95 latency dashboard (FR-13.2).
+    query_text: Mapped[str | None] = mapped_column(Text)
+    duration_ms: Mapped[int | None] = mapped_column(Integer)
     topics_used: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     result_count: Mapped[int | None] = mapped_column(Integer)
     denied: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)

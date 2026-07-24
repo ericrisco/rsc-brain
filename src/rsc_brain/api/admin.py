@@ -14,13 +14,13 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from rsc_brain import audit as audit_mod
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.ingest.sources import SourceService
 from rsc_brain.recall.gaps import list_gaps
-from rsc_brain.scope import PrincipalType, ProjectScope
+from rsc_brain.scope import Principal, PrincipalType, ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.ingest_repository import IngestRepository
 
@@ -86,6 +86,73 @@ async def _is_admin(sessionmaker: object, scope: ProjectScope) -> bool:
             select(models.User.role).where(models.User.id == uuid.UUID(scope.principal_id))
         )
     return role in _ADMIN_ROLES
+
+
+async def _console_scope_for(
+    sessionmaker: object, user_id: str, role: str, project_slug: str
+) -> ProjectScope | None:
+    """Scope a console-session user to a project they may observe (SPEC-14). A global owner/admin
+    reaches any project; anyone else must have a membership in it — a project-admin therefore cannot
+    reach another project (FR-12.5). None ⇒ denied ≡ absent (FR-4.3)."""
+    async with sessionmaker() as session:  # type: ignore[operator]
+        project_id = await session.scalar(
+            select(models.Project.id).where(models.Project.slug == project_slug)
+        )
+        if project_id is None:
+            return None
+        if role in _ADMIN_ROLES:
+            return Principal(id=user_id, type=PrincipalType.HUMAN, can_curate=True).scope_for(
+                str(project_id)
+            )
+        membership = await session.scalar(
+            select(models.ProjectMembership).where(
+                models.ProjectMembership.user_id == uuid.UUID(user_id),
+                models.ProjectMembership.project_id == project_id,
+            )
+        )
+        if membership is None:
+            return None
+        return Principal(
+            id=user_id,
+            type=PrincipalType.HUMAN,
+            allowed_topics=frozenset(membership.allowed_topics),
+            can_curate=membership.can_curate,
+        ).scope_for(str(project_id))
+
+
+async def _obs_scope(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    project: str | None = None,
+) -> ProjectScope:
+    """Auth for the console read-observability endpoints: a project-scoped **PAT/OAuth** token
+    (project from the token, parity with the rest of the admin API) OR a **console session** plus a
+    ``?project=<slug>`` the user is authorized for. Both resolve to a single project (FR-12.3/12.5).
+    ``project`` is a declared query param so it appears in the OpenAPI for the typed client."""
+    from rsc_brain.identity.resolve import resolve_scope
+    from rsc_brain.identity.sessions import resolve_session
+
+    sessionmaker = _deps(request).sessionmaker  # type: ignore[attr-defined]
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing bearer token")
+    token = credentials.credentials
+    scope = await resolve_scope(sessionmaker, token)
+    if scope is not None:
+        if not await _is_admin(sessionmaker, scope):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin role required")
+        return scope
+    user = await resolve_session(sessionmaker, token)
+    if user is not None:
+        scoped = (
+            await _console_scope_for(sessionmaker, user.user_id, user.role, project)
+            if project
+            else None
+        )
+        if scoped is None:
+            # No/unauthorized project → denied ≡ absent (never reveal another project exists).
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+        return scoped
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
 
 
 def _identity(request: Request) -> IdentityService:
@@ -223,3 +290,209 @@ async def admin_revoke_connection(
 
     await sessions.revoke_connection(_deps(request).sessionmaker, connection_id)  # type: ignore[attr-defined]
     return {"ok": True, "revoked": connection_id}
+
+
+# --- read observability (SPEC-14, all scoped to the token's project — FR-12.5) ---------------
+
+
+class QueryTextLogging(BaseModel):
+    enabled: bool
+
+
+@router.get("/observability/activity")
+async def observability_activity(
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """Activity dashboard aggregates (FR-13.2): recalls/day, active principals, p95, denied."""
+    return await audit_mod.activity_summary(
+        _deps(request).sessionmaker,  # type: ignore[attr-defined]
+        scope.project_id,
+    )
+
+
+@router.get("/observability/recalls")
+async def observability_recalls(
+    request: Request,
+    scope: ProjectScope = Depends(_obs_scope),
+    principal_type: str | None = None,
+    denied: bool | None = None,
+    limit: int = 100,
+) -> dict[str, object]:
+    """Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only
+    when the project's logging is ON."""
+    return {
+        "recalls": await audit_mod.recall_stream(
+            _deps(request).sessionmaker,  # type: ignore[attr-defined]
+            scope.project_id,
+            principal_type=principal_type,
+            denied=denied,
+            limit=limit,
+        )
+    }
+
+
+@router.get("/observability/health")
+async def observability_health(
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """Service health (FR-13.2): the pending-approval queue depth + extraction error count."""
+    sm = _deps(request).sessionmaker  # type: ignore[attr-defined]
+    pid = uuid.UUID(scope.project_id)
+    async with sm() as session:
+        pending = await session.scalar(
+            select(func.count())
+            .select_from(models.Document)
+            .where(models.Document.project_id == pid, models.Document.status == "pending_approval")
+        )
+        errors = await session.scalar(
+            select(func.count())
+            .select_from(models.IngestError)
+            .where(models.IngestError.project_id == pid)
+        )
+    return {
+        "database": "ok",
+        "pending_approval": int(pending or 0),
+        "ingest_errors": int(errors or 0),
+    }
+
+
+@router.get("/settings/query-text-logging")
+async def get_query_text_logging(
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    enabled = await audit_mod.query_text_logging_enabled(
+        _deps(request).sessionmaker,  # type: ignore[attr-defined]
+        scope.project_id,
+    )
+    return {"enabled": enabled}
+
+
+@router.put("/settings/query-text-logging")
+async def put_query_text_logging(
+    body: QueryTextLogging, request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """Toggle FR-13.9 for the project. OFF ⇒ the query text stops being persisted (server-side)."""
+    await audit_mod.set_query_text_logging(
+        _deps(request).sessionmaker,  # type: ignore[attr-defined]
+        scope.project_id,
+        enabled=body.enabled,
+    )
+    return {"enabled": body.enabled}
+
+
+# --- ingest observability + D13 approval queue (FR-13.4), console-session callable --------------
+
+
+class ApproveDoc(BaseModel):
+    tags: list[str] | None = None  # corrected proposed tags (FR-1.15 inheritance on approve)
+
+
+class RejectDoc(BaseModel):
+    reason: str
+
+
+@router.get("/observability/ingest")
+async def observability_ingest(
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """Ingest runs per document (stage checkpoints) + extraction errors with their chunk (FR-13.4)."""
+    repo = IngestRepository(_deps(request).sessionmaker)  # type: ignore[attr-defined]
+    runs = await repo.list_run_statuses(scope)
+    async with _deps(request).sessionmaker() as session:  # type: ignore[attr-defined]
+        error_rows = await session.execute(
+            select(
+                models.IngestError.document_id,
+                models.IngestError.chunk_ref,
+                models.IngestError.stage,
+                models.IngestError.error,
+            )
+            .where(models.IngestError.project_id == uuid.UUID(scope.project_id))
+            .order_by(models.IngestError.created_at.desc())
+            .limit(200)
+        )
+        errors = [
+            {"document_id": str(doc) if doc else None, "chunk": chunk, "stage": stage, "error": err}
+            for doc, chunk, stage, err in error_rows.all()
+        ]
+    return {
+        "runs": [
+            {
+                "document_id": r.document_id,
+                "phase": r.phase,
+                "completed_stages": list(r.completed_stages),
+                "chunks_created": r.chunks_created,
+                "claims_generated": r.claims_generated,
+                "discarded_chunks": r.discarded_chunks,
+                "error": r.error,
+            }
+            for r in runs
+        ],
+        "errors": errors,
+    }
+
+
+@router.get("/documents/pending/preview")
+async def pending_document_previews(
+    request: Request, scope: ProjectScope = Depends(_obs_scope)
+) -> dict[str, object]:
+    """The D13 queue with a text preview + proposed (editable) tags + source, for the console."""
+    repo = IngestRepository(_deps(request).sessionmaker)  # type: ignore[attr-defined]
+    pending = await repo.list_documents_by_status(scope, "pending_approval")
+    out: list[dict[str, object]] = []
+    async with _deps(request).sessionmaker() as session:  # type: ignore[attr-defined]
+        for doc in pending:
+            preview = await session.scalar(
+                select(models.Chunk.text)
+                .where(
+                    models.Chunk.document_id == uuid.UUID(doc.id),
+                    models.Chunk.project_id == uuid.UUID(scope.project_id),
+                )
+                .order_by(models.Chunk.id)
+                .limit(1)
+            )
+            out.append(
+                {
+                    "document_id": doc.id,
+                    "title": doc.title,
+                    "proposed_tags": list(doc.doc_tags),
+                    "source_id": doc.source_id,
+                    "preview": (preview or "")[:280],
+                }
+            )
+    return {"documents": out}
+
+
+@router.post("/documents/{document_id}/approve")
+async def approve_document(
+    document_id: str,
+    body: ApproveDoc,
+    request: Request,
+    scope: ProjectScope = Depends(_obs_scope),
+) -> dict[str, object]:
+    """Approve a pending doc from the console (D13); corrected tags inherit to chunks (FR-1.15)."""
+    from rsc_brain.ingest.pipeline import DocumentNotFoundError
+
+    service, _ = _deps(request).service()  # type: ignore[attr-defined]
+    try:
+        run = await service.approve(scope, document_id, tags=body.tags, approver=scope.principal_id)
+    except DocumentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+    return {"document_id": document_id, "phase": run.phase}
+
+
+@router.post("/documents/{document_id}/reject")
+async def reject_document(
+    document_id: str,
+    body: RejectDoc,
+    request: Request,
+    scope: ProjectScope = Depends(_obs_scope),
+) -> dict[str, object]:
+    """Reject a pending doc from the console (D13): nothing reaches the graph."""
+    from rsc_brain.ingest.pipeline import DocumentNotFoundError
+
+    service, _ = _deps(request).service()  # type: ignore[attr-defined]
+    try:
+        run = await service.reject(scope, document_id, reason=body.reason)
+    except DocumentNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+    return {"document_id": document_id, "phase": run.phase}
