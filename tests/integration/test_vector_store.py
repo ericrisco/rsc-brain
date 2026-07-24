@@ -43,11 +43,19 @@ async def test_vector_search_is_project_and_tag_scoped(migrated_dsn: str) -> Non
 
         await vectors.upsert(
             scope_a,
-            [VectorRecord(chunk_id=chunk_a, project_id=project_a, embedding=_E1, tags=frozenset({"hr"}))],
+            [
+                VectorRecord(
+                    chunk_id=chunk_a, project_id=project_a, embedding=_E1, tags=frozenset({"hr"})
+                )
+            ],
         )
         await vectors.upsert(
             scope_b,
-            [VectorRecord(chunk_id=chunk_b, project_id=project_b, embedding=_E1, tags=frozenset({"hr"}))],
+            [
+                VectorRecord(
+                    chunk_id=chunk_b, project_id=project_b, embedding=_E1, tags=frozenset({"hr"})
+                )
+            ],
         )
 
         # Each scope only ever sees its own project's chunk (disjoint corpora).

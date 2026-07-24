@@ -137,9 +137,7 @@ class UserRepository:
         display_name: str | None = None,
     ) -> UserRef:
         async with session_scope(self._sm) as session:
-            user = models.User(
-                email=email, role=role, status=status, display_name=display_name
-            )
+            user = models.User(email=email, role=role, status=status, display_name=display_name)
             session.add(user)
             await session.flush()
             return UserRef(user_id=str(user.id), email=user.email)
