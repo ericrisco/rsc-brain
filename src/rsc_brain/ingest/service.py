@@ -54,13 +54,18 @@ class IngestService:
 
         source_row = await self._resolve_source(scope, source)
         path = self._store_blob(scope, checksum, filename, data)
+        logical_id = Path(filename).stem or checksum[:12]
+        # Same logical id + new checksum ⇒ a new version (SPEC-09 D6, AC#1); the pipeline then
+        # diffs unchanged chunks against the prior version so their claims aren't re-extracted.
+        version = await self._repo.latest_version_for_logical_id(scope, logical_id) + 1
         document_id = await self._repo.create_document(
             scope,
-            logical_id=Path(filename).stem or checksum[:12],
+            logical_id=logical_id,
             checksum=checksum,
             source_id=source_row.id,
             title=Path(filename).stem or None,
             path=str(path),
+            version=version,
         )
         await self._repo.ensure_run(scope, document_id, phase=DocStatus.RECEIVED.value)
         if not run:
