@@ -16,7 +16,8 @@ from mcp.server.fastmcp.exceptions import ToolError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.gateway.model_gateway import ModelGateway
-from rsc_brain.mcp.auth import MCPToolError, authenticate
+from rsc_brain.identity.resolve import resolve_delegated_scope
+from rsc_brain.mcp.auth import AuthInvalidError, MCPToolError, authenticate
 from rsc_brain.mcp.tools import (
     CorrectKnowledgeOutput,
     FeedbackSignal,
@@ -66,11 +67,21 @@ def build_mcp_server(
         stateless_http=stateless,
     )
 
-    async def _scope(ctx: Context[Any, Any, Any]) -> ProjectScope:
+    async def _scope(
+        ctx: Context[Any, Any, Any], on_behalf_of: str | None = None
+    ) -> ProjectScope:
         request = ctx.request_context.request
         authorization = request.headers.get("authorization") if request is not None else None
         try:
-            return await authenticate(sessionmaker, authorization)
+            scope = await authenticate(sessionmaker, authorization)
+            if on_behalf_of is not None:
+                # Agent delegation (FR-14.2): effective topics = agent ∩ delegated user, same
+                # project. Invalid delegation is AUTH_INVALID (indistinguishable from a bad token).
+                delegated = await resolve_delegated_scope(sessionmaker, scope, on_behalf_of)
+                if delegated is None:
+                    raise AuthInvalidError("invalid delegation")
+                return delegated
+            return scope
         except MCPToolError as exc:
             raise ToolError(f"{exc.code}: {exc}") from exc
 
@@ -80,29 +91,34 @@ def build_mcp_server(
         ctx: Context[Any, Any, Any],
         top_k: int = 8,
         topics_hint: list[str] | None = None,
+        on_behalf_of: str | None = None,
     ) -> RecallOutput:
-        scope = await _scope(ctx)
+        scope = await _scope(ctx, on_behalf_of)
         return await do_recall(
             retriever, sessionmaker, scope, query=query, top_k=top_k, topics_hint=topics_hint
         )
 
     @server.tool(description="Fetch a document's visible page text and metadata (traceability).")
     async def get_document(
-        document_id: str, ctx: Context[Any, Any, Any], page: int | None = None
+        document_id: str,
+        ctx: Context[Any, Any, Any],
+        page: int | None = None,
+        on_behalf_of: str | None = None,
     ) -> GetDocumentOutput:
-        scope = await _scope(ctx)
+        scope = await _scope(ctx, on_behalf_of)
         return await do_get_document(sessionmaker, scope, document_id=document_id, page=page)
 
     @server.tool(
-        description="Report feedback on claims (stub: audited; credibility loop is SPEC-08)."
+        description="Report feedback on claims (audited; credibility loop from SPEC-08)."
     )
     async def report_feedback(
         claim_ids: list[str],
         signal: FeedbackSignal,
         ctx: Context[Any, Any, Any],
         note: str | None = None,
+        on_behalf_of: str | None = None,
     ) -> ReportFeedbackOutput:
-        scope = await _scope(ctx)
+        scope = await _scope(ctx, on_behalf_of)
         return await do_report_feedback(
             sessionmaker, scope, claim_ids=claim_ids, signal=signal, note=note
         )
