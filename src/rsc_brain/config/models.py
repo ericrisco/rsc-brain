@@ -131,6 +131,15 @@ class RecallConfig(BaseModel):
     half_life_days: int = Field(
         default=365, gt=0, description="Freshness half-life default (FR-3.2)."
     )
+    half_life_by_topic: dict[str, int] = Field(
+        default_factory=dict, description="Per-topic freshness half-life overrides (FR-3.2)."
+    )
+    k_hop: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        description="Graph expansion depth (k=1 default, k=2 config; FR-3.1).",
+    )
     answer_token_budget: int = Field(
         default=2000, gt=0, description="Response fragment token budget (§5.8)."
     )

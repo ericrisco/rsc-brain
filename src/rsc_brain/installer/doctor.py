@@ -48,3 +48,36 @@ def scan_paths(paths: Iterable[Path]) -> list[SecretFinding]:
         if path.is_file():
             findings.extend(scan_text(str(path), path.read_text(encoding="utf-8", errors="ignore")))
     return findings
+
+
+@dataclass(frozen=True, slots=True)
+class DoctorReport:
+    """Combined host detection + secret scan (FR-11.1). ``ok`` is false if secrets were found."""
+
+    recommended_profile: str
+    host: dict[str, object]
+    secret_findings: list[SecretFinding]
+
+    @property
+    def ok(self) -> bool:
+        return not self.secret_findings
+
+
+def run_doctor(config_paths: Iterable[Path]) -> DoctorReport:
+    """Detect the host, recommend a profile, and scan config for hardcoded secrets."""
+    from rsc_brain.installer.host import detect_host
+
+    host = detect_host()
+    findings = scan_paths(config_paths)
+    return DoctorReport(
+        recommended_profile=host.recommended_profile,
+        host={
+            "docker": host.docker,
+            "has_gpu": host.has_gpu,
+            "gpu_name": host.gpu_name,
+            "vram_mb": host.vram_mb,
+            "ram_gb": host.ram_gb,
+            "free_ports": host.free_ports,
+        },
+        secret_findings=findings,
+    )

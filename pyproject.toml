@@ -32,6 +32,7 @@ dependencies = [
     "psycopg[binary]>=3.2",      # procrastinate's Postgres driver (bundled libpq; LGPL, AGPL-ok)
     "fastapi>=0.115,<1",         # ingest API vias (FR-1.1 multipart, FR-1.12 runs)
     "python-multipart>=0.0.9",   # multipart/form-data parsing for document upload
+    "mcp>=1.9",
 ]
 
 [project.scripts]

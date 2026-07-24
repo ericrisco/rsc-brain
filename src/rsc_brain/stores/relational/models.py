@@ -309,7 +309,8 @@ class Gap(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[dt.datetime] = _created_at()
     last_seen_at: Mapped[dt.datetime] = _created_at()
-    __table_args__ = (Index("ix_gaps_project_id_query_hash", "project_id", "query_hash"),)
+    # Unique per (project, query_hash) so gap registration is an atomic upsert (SPEC-06, FR-3.3).
+    __table_args__ = (UniqueConstraint("project_id", "query_hash"),)
 
 
 class Hunt(Base):

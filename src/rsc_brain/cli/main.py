@@ -15,7 +15,6 @@ import typer
 from rsc_brain import __version__
 from rsc_brain.cli._common import JSON_OPTION, State, emit_not_implemented, json_enabled
 from rsc_brain.cli.admin import audit as _audit
-from rsc_brain.cli.admin import doctor as _doctor
 from rsc_brain.cli.admin import projects_app, topics_app, users_app
 from rsc_brain.cli.data import backup as _backup
 from rsc_brain.cli.data import forget as _forget
@@ -24,6 +23,10 @@ from rsc_brain.cli.data import restore as _restore
 from rsc_brain.cli.ingest import docs_app, sources_app
 from rsc_brain.cli.ingest import ingest as _ingest
 from rsc_brain.cli.ingest import status as _status
+from rsc_brain.cli.installer import calibrate as _calibrate
+from rsc_brain.cli.installer import doctor as _doctor
+from rsc_brain.cli.installer import eval_command as _eval
+from rsc_brain.cli.installer import verify as _verify
 
 # FR-10.1 subcommands, in the order the spec lists them.
 COMMANDS: tuple[str, ...] = (
@@ -60,7 +63,9 @@ _IMPLEMENTED_COMMANDS: dict[str, tuple[Callable[..., None], str]] = {
     "restore": (_restore, "Restore a dump, apply migrations, and verify."),
     "forget": (_forget, "Hard-delete a document and tombstone its graph nodes."),
     "audit": (_audit, "Show or export the audit log for a project."),
-    "doctor": (_doctor, "Health checks (hardcoded-secret scan of config)."),
+    "doctor": (_doctor, "Detect host + recommend profile + scan config for secrets."),
+    "verify": (_verify, "Smoke-test the running system (gateway + database)."),
+    "calibrate": (_calibrate, "Report the calibration set + default τ."),
 }
 
 # Command groups (sub-apps) with real behaviour.
@@ -116,6 +121,10 @@ app.add_typer(projects_app, name="projects", help="Manage projects.")
 # `docs` (D13 approval) and `sources` are introduced by SPEC-05.
 app.add_typer(docs_app, name="docs", help="Review, approve, and reject ingested documents.")
 app.add_typer(sources_app, name="sources", help="Manage ingestion sources and their policy.")
+# `eval` (golden-set evaluation) is introduced by SPEC-06 (beyond the original FR-10.1 list).
+app.command("eval", help="Report the golden-set composition (full run needs an ingested corpus).")(
+    _eval
+)
 
 
 if __name__ == "__main__":  # pragma: no cover

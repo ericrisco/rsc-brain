@@ -61,8 +61,10 @@ class Harness:
             return str(project.id)
 
     def scope(self, project_id: str, *, allowed_topics: Sequence[str] = ()) -> ProjectScope:
+        # A valid-UUID principal id: real scopes (from resolve_scope) always carry a user UUID,
+        # which audit logging requires.
         return Principal(
-            id="test",
+            id="11111111-1111-1111-1111-111111111111",
             type=PrincipalType.HUMAN,
             allowed_topics=frozenset(allowed_topics),
             can_curate=True,
