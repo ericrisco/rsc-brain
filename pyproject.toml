@@ -33,6 +33,7 @@ dependencies = [
     "fastapi>=0.115,<1",         # ingest API vias (FR-1.1 multipart, FR-1.12 runs)
     "python-multipart>=0.0.9",   # multipart/form-data parsing for document upload
     "mcp>=1.9",
+    "authlib>=1.6,<2",           # OAuth 2.1 authorization server (FR-4.10) — no artesanal OAuth
 ]
 
 [project.scripts]
