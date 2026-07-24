@@ -10,7 +10,7 @@
 # as root only to fix data-dir ownership, then drops to `postgres` (uid 999) via gosu. That
 # dropped uid is the effective, least-privilege runtime identity (documented for Trivy DS002).
 # ---------------------------------------------------------------------------
-FROM apache/age@sha256:16aa423d20a31aed36a3313244bf7aa00731325862f20ed584510e381f2feaed
+FROM apache/age@sha256:4241e2d8bb86a6b2ea44e9ad06c73856e12b209de295124603a599dd7feb70eb
 
 ARG PGVECTOR_TAG=v0.8.5
 ARG PGVECTOR_SHA=159b79aaad5983fb7459c1e3df2897fbb2d11788
