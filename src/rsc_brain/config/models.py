@@ -177,6 +177,47 @@ class IngestConfig(BaseModel):
     )
 
 
+class KnowledgeConfig(BaseModel):
+    """Living-graph tuning (SPEC-08): credibility, contradictions, feedback, corrections."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # Authority by source kind (FR-5.1, versioned table). Deterministic tables are the most
+    # authoritative document evidence; hunting answers (v0.3) are reserved highest.
+    authority_by_source: dict[str, float] = Field(
+        default_factory=lambda: {
+            "hunting": 0.95,
+            "table": 0.9,
+            "official_prose": 0.7,
+            "prose": 0.6,
+            "low_quality_ocr": 0.4,
+        }
+    )
+    default_authority: float = Field(default=0.6, ge=0.0, le=1.0)
+    # Contradiction detection/resolution (FR-5.2/5.3).
+    contradiction_sim_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    tie_delta: float = Field(default=0.15, ge=0.0, le=1.0)
+    winner_boost: float = Field(default=0.1, ge=0.0, le=1.0)
+    loser_factor: float = Field(default=0.5, ge=0.0, le=1.0)
+    # Feedback (FR-5.4).
+    feedback_alpha_human: float = Field(default=0.1, ge=0.0, le=1.0)
+    feedback_alpha_agent: float = Field(default=0.03, ge=0.0, le=1.0)
+    feedback_daily_cap: float = Field(
+        default=0.1, ge=0.0, le=1.0, description="Max daily |Δcred| per (principal, claim)."
+    )
+    human_wrong_disputed_below: float = Field(
+        default=0.3, ge=0.0, le=1.0, description="Human `wrong` below this credibility ⇒ disputed."
+    )
+    # Corrections (FR-15.x).
+    correction_credibility: float = Field(default=0.9, ge=0.0, le=1.0)
+    superseded_credibility: float = Field(default=0.1, ge=0.0, le=1.0)
+    corrections_per_person_per_day: int = Field(default=20, ge=1)
+    correction_war_threshold: int = Field(
+        default=3, ge=1, description="Back-and-forth corrections before escalating to admin."
+    )
+    agents_can_correct: bool = Field(default=False, description="FR-15.10: default false.")
+
+
 class DatabaseConfig(BaseModel):
     """Data-service connection. The DSN carries a secret and is env-only (12-factor)."""
 
@@ -205,5 +246,6 @@ class AppConfig(BaseModel):
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
     ingest: IngestConfig = Field(default_factory=IngestConfig)
+    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
