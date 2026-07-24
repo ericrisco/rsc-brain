@@ -19,6 +19,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Identity,
@@ -99,14 +100,22 @@ class ProjectMembership(Base):
 class PersonalAccessToken(Base):
     __tablename__ = "personal_access_tokens"
     id: Mapped[uuid.UUID] = _pk()
-    membership_id: Mapped[uuid.UUID] = mapped_column(
+    # Exactly one principal: a human membership OR a service agent (SPEC-04).
+    membership_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("project_memberships.id", ondelete="CASCADE")
     )
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"))
     token_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     name: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = _created_at()
     expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        CheckConstraint(
+            "(membership_id IS NOT NULL) <> (agent_id IS NOT NULL)",
+            name="exactly_one_principal",
+        ),
+    )
 
 
 class OAuthClient(Base):
@@ -137,6 +146,22 @@ class Invitation(Base):
     token_hash: Mapped[str] = mapped_column(Text, nullable=False)
     expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Agent(Base):
+    """A service account (FR-14.1): a non-human principal owned by a user, scoped to one
+    project, authenticating with its own service PAT."""
+
+    __tablename__ = "agents"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    owner_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    allowed_topics: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    status: Mapped[str] = mapped_column(Text, server_default="active", nullable=False)
+    created_at: Mapped[dt.datetime] = _created_at()
+    __table_args__ = (Index("ix_agents_project_id_id", "project_id", "id"),)
 
 
 # --------------------------------------------------------------------------- #

@@ -27,7 +27,9 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check src tests
       - run: uv run mypy
-      - run: uv run pytest --cov=rsc_brain --cov-report=term-missing --cov-fail-under=70
+      # Fast unit pass/fail here; the ≥70% coverage gate runs over the FULL suite (unit +
+      # integration) in the `integration` job below, where the DB-backed code is exercised.
+      - run: uv run pytest
 
   licenses:
     name: AGPL license audit
@@ -68,5 +70,5 @@ jobs:
       - name: Build the AGE+pgvector image testcontainers will use
         run: docker compose build db
       - run: uv sync --frozen --all-groups
-      - name: Integration suite (testcontainers)
-        run: uv run pytest -m integration -p no:cacheprovider
+      - name: Full suite + coverage gate (unit + integration, testcontainers)
+        run: uv run pytest -m "integration or not integration" --cov=rsc_brain --cov-report=term-missing --cov-fail-under=70 -p no:cacheprovider

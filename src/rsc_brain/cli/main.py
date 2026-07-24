@@ -1,8 +1,9 @@
 """The ``brain`` CLI (Typer, FR-10.1).
 
-Every FR-10.1 subcommand is declared with a global ``--json`` flag. Subcommands implemented in
-this SPEC are registered from their modules; the rest remain declared stubs that exit non-zero
-with a structured payload, so docs/tests distinguish "declared but not implemented" from "works".
+Every FR-10.1 subcommand is declared with a global ``--json`` flag. Subcommands implemented so
+far are registered from their modules (as single commands or command groups); the rest remain
+declared stubs that exit non-zero with a structured payload, so docs/tests distinguish
+"declared but not implemented" from "works".
 """
 
 from __future__ import annotations
@@ -13,6 +14,9 @@ import typer
 
 from rsc_brain import __version__
 from rsc_brain.cli._common import JSON_OPTION, State, emit_not_implemented, json_enabled
+from rsc_brain.cli.admin import audit as _audit
+from rsc_brain.cli.admin import doctor as _doctor
+from rsc_brain.cli.admin import projects_app, topics_app, users_app
 from rsc_brain.cli.data import backup as _backup
 from rsc_brain.cli.data import forget as _forget
 from rsc_brain.cli.data import migrate as _migrate
@@ -44,12 +48,20 @@ COMMANDS: tuple[str, ...] = (
     "usage",
 )
 
-# Subcommands with real behaviour registered from their own modules (skip the stub for these).
-_IMPLEMENTED: dict[str, tuple[Callable[..., None], str]] = {
+# Single commands with real behaviour (skip the stub for these).
+_IMPLEMENTED_COMMANDS: dict[str, tuple[Callable[..., None], str]] = {
     "migrate": (_migrate, "Apply pending database migrations to head (idempotent)."),
     "backup": (_backup, "Back up the database to a single dump artifact."),
     "restore": (_restore, "Restore a dump, apply migrations, and verify."),
     "forget": (_forget, "Hard-delete a document and tombstone its graph nodes."),
+    "audit": (_audit, "Show or export the audit log for a project."),
+    "doctor": (_doctor, "Health checks (hardcoded-secret scan of config)."),
+}
+
+# Command groups (sub-apps) with real behaviour.
+_IMPLEMENTED_GROUPS: dict[str, tuple[typer.Typer, str]] = {
+    "users": (users_app, "Manage users and invitations."),
+    "topics": (topics_app, "Manage a project's topics."),
 }
 
 app = typer.Typer(
@@ -83,13 +95,19 @@ def _make_stub(name: str) -> Callable[..., None]:
 
 
 for _name in COMMANDS:
-    if _name in _IMPLEMENTED:
-        _fn, _help = _IMPLEMENTED[_name]
+    if _name in _IMPLEMENTED_COMMANDS:
+        _fn, _help = _IMPLEMENTED_COMMANDS[_name]
         app.command(_name, help=_help)(_fn)
+    elif _name in _IMPLEMENTED_GROUPS:
+        _group, _group_help = _IMPLEMENTED_GROUPS[_name]
+        app.add_typer(_group, name=_name, help=_group_help)
     else:
         app.command(_name, help=f"[{_name}] — not implemented in this SPEC; see the owning SPEC.")(
             _make_stub(_name)
         )
+
+# `projects` is introduced by SPEC-04 (beyond the original FR-10.1 22).
+app.add_typer(projects_app, name="projects", help="Manage projects.")
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -27,6 +27,7 @@ dependencies = [
     "asyncpg>=0.29",             # async Postgres driver
     "alembic>=1.13",             # migrations (FR-2.3)
     "pgvector>=0.3",             # SQLAlchemy Vector type for pgvector columns
+    "argon2-cffi>=23",           # password + invitation hashing (FR-4.12)
 ]
 
 [project.scripts]
