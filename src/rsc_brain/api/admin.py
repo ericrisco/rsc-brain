@@ -14,7 +14,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from rsc_brain import audit as audit_mod
 from rsc_brain.identity.service import IdentityService
@@ -223,3 +223,91 @@ async def admin_revoke_connection(
 
     await sessions.revoke_connection(_deps(request).sessionmaker, connection_id)  # type: ignore[attr-defined]
     return {"ok": True, "revoked": connection_id}
+
+
+# --- read observability (SPEC-14, all scoped to the token's project — FR-12.5) ---------------
+
+
+class QueryTextLogging(BaseModel):
+    enabled: bool
+
+
+@router.get("/observability/activity")
+async def observability_activity(
+    request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    """Activity dashboard aggregates (FR-13.2): recalls/day, active principals, p95, denied."""
+    return await audit_mod.activity_summary(
+        _deps(request).sessionmaker,  # type: ignore[attr-defined]
+        scope.project_id,
+    )
+
+
+@router.get("/observability/recalls")
+async def observability_recalls(
+    request: Request,
+    scope: ProjectScope = Depends(_admin_scope),
+    principal_type: str | None = None,
+    denied: bool | None = None,
+    limit: int = 100,
+) -> dict[str, object]:
+    """Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only
+    when the project's logging is ON."""
+    return {
+        "recalls": await audit_mod.recall_stream(
+            _deps(request).sessionmaker,  # type: ignore[attr-defined]
+            scope.project_id,
+            principal_type=principal_type,
+            denied=denied,
+            limit=limit,
+        )
+    }
+
+
+@router.get("/observability/health")
+async def observability_health(
+    request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    """Service health (FR-13.2): the pending-approval queue depth + extraction error count."""
+    sm = _deps(request).sessionmaker  # type: ignore[attr-defined]
+    pid = uuid.UUID(scope.project_id)
+    async with sm() as session:
+        pending = await session.scalar(
+            select(func.count())
+            .select_from(models.Document)
+            .where(models.Document.project_id == pid, models.Document.status == "pending_approval")
+        )
+        errors = await session.scalar(
+            select(func.count())
+            .select_from(models.IngestError)
+            .where(models.IngestError.project_id == pid)
+        )
+    return {
+        "database": "ok",
+        "pending_approval": int(pending or 0),
+        "ingest_errors": int(errors or 0),
+    }
+
+
+@router.get("/settings/query-text-logging")
+async def get_query_text_logging(
+    request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    enabled = await audit_mod.query_text_logging_enabled(
+        _deps(request).sessionmaker,  # type: ignore[attr-defined]
+        scope.project_id,
+    )
+    return {"enabled": enabled}
+
+
+@router.put("/settings/query-text-logging")
+async def put_query_text_logging(
+    body: QueryTextLogging, request: Request, scope: ProjectScope = Depends(_admin_scope)
+) -> dict[str, object]:
+    """Toggle FR-13.9 for the project. OFF ⇒ the query text stops being persisted (server-side)."""
+    await audit_mod.set_query_text_logging(
+        _deps(request).sessionmaker,  # type: ignore[attr-defined]
+        scope.project_id,
+        enabled=body.enabled,
+    )
+    return {"enabled": body.enabled}

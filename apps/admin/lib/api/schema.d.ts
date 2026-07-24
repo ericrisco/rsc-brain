@@ -92,6 +92,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/observability/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Observability Activity
+         * @description Activity dashboard aggregates (FR-13.2): recalls/day, active principals, p95, denied.
+         */
+        get: operations["observability_activity_api_v1_admin_observability_activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/observability/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Observability Health
+         * @description Service health (FR-13.2): the pending-approval queue depth + extraction error count.
+         */
+        get: operations["observability_health_api_v1_admin_observability_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/observability/recalls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Observability Recalls
+         * @description Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only
+         *     when the project's logging is ON.
+         */
+        get: operations["observability_recalls_api_v1_admin_observability_recalls_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/projects": {
         parameters: {
             query?: never;
@@ -104,6 +165,27 @@ export interface paths {
         put?: never;
         /** Create Project */
         post: operations["create_project_api_v1_admin_projects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/settings/query-text-logging": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Query Text Logging */
+        get: operations["get_query_text_logging_api_v1_admin_settings_query_text_logging_get"];
+        /**
+         * Put Query Text Logging
+         * @description Toggle FR-13.9 for the project. OFF ⇒ the query text stops being persisted (server-side).
+         */
+        put: operations["put_query_text_logging_api_v1_admin_settings_query_text_logging_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -458,6 +540,11 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /** QueryTextLogging */
+        QueryTextLogging: {
+            /** Enabled */
+            enabled: boolean;
+        };
         /** SourceCreate */
         SourceCreate: {
             /** Default Tags */
@@ -654,6 +741,85 @@ export interface operations {
             };
         };
     };
+    observability_activity_api_v1_admin_observability_activity_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    observability_health_api_v1_admin_observability_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    observability_recalls_api_v1_admin_observability_recalls_get: {
+        parameters: {
+            query?: {
+                principal_type?: string | null;
+                denied?: boolean | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_projects_api_v1_admin_projects_get: {
         parameters: {
             query?: never;
@@ -691,6 +857,63 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_query_text_logging_api_v1_admin_settings_query_text_logging_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    put_query_text_logging_api_v1_admin_settings_query_text_logging_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueryTextLogging"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
