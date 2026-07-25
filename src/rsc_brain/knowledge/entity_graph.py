@@ -124,6 +124,32 @@ def _node_name(node: GraphNode) -> str:
     return str(node.properties.get("name", ""))
 
 
+async def _ambiguous_names(
+    session: AsyncSession, scope: ProjectScope, names: list[str]
+) -> set[str]:
+    """Names that more than one entity identity in the PROJECT answers to.
+
+    Deliberately not "more than one of the candidates": if the project holds a second identity with
+    the same normalized name, a keyless claim naming it is evidence about either one, even when only
+    one of them happens to be a neighbour of this centre. Measuring ambiguity over the neighbourhood
+    instead would authorize whichever identity the traversal reached, on evidence that may have been
+    about the other.
+    """
+    if not names:
+        return set()
+    rows = await session.execute(
+        select(models.Entity.normalized_name, func.count())
+        .where(
+            models.Entity.project_id == uuid.UUID(scope.project_id),
+            models.Entity.normalized_name.in_([normalize_name(n) for n in names]),
+        )
+        .group_by(models.Entity.normalized_name)
+        .having(func.count() > 1)
+    )
+    collisions = {normalized for normalized, _ in rows.all()}
+    return {name for name in names if normalize_name(name) in collisions}
+
+
 async def _authorize(
     sessionmaker: async_sessionmaker[AsyncSession],
     scope: ProjectScope,
@@ -133,13 +159,13 @@ async def _authorize(
     """The candidate neighbours this caller may see, in the candidates' deterministic order."""
     if not candidates:
         return []
-    names = [_node_name(n) for n in candidates]
-    ambiguous = {name for name in names if names.count(name) > 1}
+    names = sorted({n for n in (_node_name(node) for node in candidates) if n})
     async with sessionmaker() as session:
         by_key = await _authorized_keys(session, scope, forbidden, [n.id for n in candidates])
-        # A name only speaks for an identity when it names exactly one of the candidates.
+        ambiguous = await _ambiguous_names(session, scope, names)
+        # A name only speaks for an identity when exactly one identity answers to it.
         by_name = await _authorized_names(
-            session, scope, forbidden, sorted({n for n in names if n and n not in ambiguous})
+            session, scope, forbidden, [n for n in names if n not in ambiguous]
         )
     return [n for n in candidates if n.id in by_key or _node_name(n) in by_name]
 
