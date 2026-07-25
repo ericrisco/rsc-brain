@@ -107,6 +107,12 @@ jobs:
           npm run lint
           npm run typecheck
           npm run build
+      # AUDIT-013 / R14: a release-blocking advisory in the console's PRODUCTION graph fails the
+      # workflow. The Python graph already has its own gate (pip-audit); this closes the other half,
+      # which was reviewed locally and never enforced here.
+      - name: Dependency audit (npm, production only)
+        working-directory: apps/admin
+        run: npm audit --omit=dev --audit-level=high
 
   helm:
     name: helm chart (lint · schema · compose-drift)
