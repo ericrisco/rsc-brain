@@ -16,11 +16,14 @@ from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.knowledge.agent_writes import AGENT_SUBMISSION_LOGICAL_ID
+from rsc_brain.review.states import PROPOSAL_OPEN
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.visibility import forbidden_topics, topic_clause
 
-MERGE_PENDING = "pending"
+#: Re-exported for callers that used to import it from here; the vocabulary lives in
+#: :mod:`rsc_brain.review.states` (R25).
+MERGE_PENDING = PROPOSAL_OPEN
 
 
 @dataclass(frozen=True, slots=True)

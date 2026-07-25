@@ -11,10 +11,14 @@ from collections.abc import Callable
 
 import pytest
 
+from rsc_brain.config.models import KnowledgeConfig
 from rsc_brain.knowledge.agent_writes import AGENT_SUBMISSION_LOGICAL_ID
+from rsc_brain.knowledge.entity_merge import DeterministicMergeProposer, EntityMergeService
 from rsc_brain.review.queue import list_review_queue
-from rsc_brain.review.resolve import resolve_chunk, resolve_merge
+from rsc_brain.review.resolve import REJECTED_TAG, resolve_chunk, resolve_merge
+from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational import models
+from rsc_brain.stores.relational.entity_store import EntityStore
 
 from .conftest import Harness, unique_slug
 
@@ -51,35 +55,41 @@ async def _needs_review_chunk(
 
 
 async def _pending_merge(harness: Harness, project_id: str) -> tuple[str, str, str]:
+    """A proposal awaiting a human, created by the service that creates proposals (R55).
+
+    This fixture used to insert the row by hand with ``status="pending"`` — a status no producer
+    writes. That is how R25 survived a green suite: the fixture agreed with the query rather than with
+    the product, so nobody noticed that a real proposal never reached the queue at all.
+    """
     suffix = uuid.uuid4().hex[:8]
+    scope = harness.scope(project_id, allowed_topics=["hr"])
     async with harness.sm() as session:
         canonical = models.Entity(
             project_id=uuid.UUID(project_id),
-            name=f"Acme Inc {suffix}",
-            normalized_name=f"acme inc {suffix}",
+            name=f"Acme Corporation {suffix}",
+            normalized_name=f"acme corporation {suffix}",
             type="org",
         )
         duplicate = models.Entity(
             project_id=uuid.UUID(project_id),
-            name=f"ACME {suffix}",
-            normalized_name=f"acme {suffix}",
+            name=f"Acme Corporaton {suffix}",  # typo → high similarity, below auto-apply
+            normalized_name=f"acme corporaton {suffix}",
             type="org",
         )
         session.add_all([canonical, duplicate])
         await session.flush()
-        proposal = models.EntityMergeProposal(
-            project_id=uuid.UUID(project_id),
-            canonical_entity_id=canonical.id,
-            duplicate_entity_id=duplicate.id,
-            confidence=0.7,
-            method="dice",
-            status="pending",
-        )
-        session.add(proposal)
-        await session.flush()
-        ids = (str(proposal.id), str(canonical.id), str(duplicate.id))
+        ids = (str(canonical.id), str(duplicate.id))
         await session.commit()
-        return ids
+    service = EntityMergeService(
+        store=EntityStore(harness.sm),
+        graph=AgeGraphStore(harness.sm),
+        proposer=DeterministicMergeProposer(min_similarity=0.82),
+        sessionmaker=harness.sm,
+        config=KnowledgeConfig(merge_auto_apply_confidence=1.0),
+    )
+    summary = await service.propose(scope)
+    assert summary.queued, "the proposer queued nothing, so this fixture is not a review item"
+    return (summary.queued[0], ids[0], ids[1])
 
 
 async def test_queue_aggregates_all_sources(build_harness: Callable[..., Harness]) -> None:
@@ -130,7 +140,13 @@ async def test_chunk_approve_makes_it_recallable_reject_does_not(
             and ok.tags == ["hr"]
         )
         no = await session.get(models.Chunk, uuid.UUID(rejected))
-        assert no is not None and no.needs_review is True and no.embedding is None
+        # R26/R55: this used to assert `needs_review is True` — the vulnerable behaviour, written down
+        # as the expectation. Rejecting is terminal (it leaves the queue) and the content stays out of
+        # the index, marked so a publish redo cannot resurrect it.
+        assert no is not None
+        assert no.needs_review is False
+        assert no.embedding is None
+        assert REJECTED_TAG in no.tags
     # Idempotent: re-approving an already-resolved chunk is a no-op.
     assert (
         await resolve_chunk(harness.sm, scope, approved, approve=True, gateway=harness.gateway)

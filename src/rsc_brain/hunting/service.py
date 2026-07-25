@@ -70,6 +70,25 @@ class HuntOutcome:
     person_id: str | None = None
     magic_token: str | None = None  # the plaintext link token, returned once (never stored)
     throttled: bool = False
+    #: Whether a message actually went out. False for a throttled, quiet-hours or undelivered hunt.
+    delivered: bool = True
+
+
+def _is_sent(throttled: bool, quiet: bool, can_deliver: bool) -> bool:
+    """Whether opening the hunt actually put a message in front of a person."""
+    return can_deliver and not throttled and not quiet
+
+
+def _open_state(*, throttled: bool, quiet: bool, can_deliver: bool) -> HuntState:
+    """The state an opened hunt starts in.
+
+    ROUTED covers both "parked by a cap" and "this install cannot deliver"; SCHEDULED covers "waiting
+    for the quiet-hours window to close" — the state existed for exactly that and was never used, so a
+    hunt held back by quiet hours claimed to be awaiting an answer.
+    """
+    if throttled or not can_deliver:
+        return HuntState.ROUTED
+    return HuntState.SCHEDULED if quiet else HuntState.AWAITING_ANSWER
 
 
 def _pid(scope: ProjectScope) -> uuid.UUID:
@@ -77,16 +96,25 @@ def _pid(scope: ProjectScope) -> uuid.UUID:
 
 
 class HuntService:
+    #: Used only when no origin is configured. Kept as a named constant so a link built from it is
+    #: recognisable as "this install never said how it is reached" instead of looking deliberate.
+    UNCONFIGURED_BASE_URL = "https://brain.local"
+
     def __init__(
         self,
         sessionmaker: async_sessionmaker[AsyncSession],
         *,
         channel: Channel | None = None,
         gateway: object | None = None,
-        base_url: str = "https://brain.local",
+        base_url: str = UNCONFIGURED_BASE_URL,
         clock: Callable[[], dt.datetime] | None = None,
         max_open_per_person: int = 3,
         max_per_week: int = 5,
+        # R28: whether the channel can actually reach a person. ``None`` means "infer": a caller that
+        # SUPPLIED a channel intends to deliver through it, and the only way to get no channel is to
+        # pass none, which is what an unconfigured install does. An undelivered hunt is then reported
+        # as such instead of claiming somebody is awaiting an answer.
+        can_deliver: bool | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._channel = channel or NullChannel()
@@ -96,6 +124,20 @@ class HuntService:
         self._clock = clock or (lambda: dt.datetime.now(dt.UTC))
         self._max_open = max_open_per_person
         self._max_week = max_per_week
+        self._can_deliver = channel is not None if can_deliver is None else can_deliver
+
+    @property
+    def channel(self) -> Channel:
+        """The channel this install delivers through (public: operators need to see it)."""
+        return self._channel
+
+    @property
+    def can_deliver(self) -> bool:
+        return self._can_deliver
+
+    def answer_url(self, token: str) -> str:
+        """The one-time reply link. Single definition, shared with the route that serves it."""
+        return f"{self._base_url}/hunt/{token}"
 
     # --- triggers ------------------------------------------------------------
 
@@ -239,12 +281,24 @@ class HuntService:
                 correction_id=uuid.UUID(correction_id) if correction_id else None,
                 channel=_preferred_channel(person),
                 # DETECTED→ROUTED→CONSENT_REQUESTED→AWAITING (parked at ROUTED when throttled).
-                state=(HuntState.ROUTED if throttled else HuntState.AWAITING_ANSWER).value,
+                state=_open_state(
+                    throttled=throttled, quiet=quiet, can_deliver=self._can_deliver
+                ).value,
                 question=question,
-                magic_token_hash=None if throttled else security.token_hash(token),
+                # The token and the 72h deadline belong to the DELIVERY, not to the row: a hunt held
+                # for quiet hours (or by a cap, or by an install that cannot deliver) has told nobody a
+                # token, so storing its hash would leave a live credential nobody received, and
+                # counting down from creation would expire a question never asked.
+                magic_token_hash=(
+                    security.token_hash(token)
+                    if _is_sent(throttled, quiet, self._can_deliver)
+                    else None
+                ),
                 consent_requested_at=now,
-                asked_at=None if (throttled or quiet) else now,
-                expires_at=None if throttled else now + _EXPIRY,
+                asked_at=now if _is_sent(throttled, quiet, self._can_deliver) else None,
+                expires_at=(
+                    now + _EXPIRY if _is_sent(throttled, quiet, self._can_deliver) else None
+                ),
                 created_at=now,
             )
             session.add(hunt)
@@ -254,12 +308,27 @@ class HuntService:
             return HuntOutcome(
                 hunt_id=hunt_id, state=HuntState.ROUTED, person_id=person.id, throttled=True
             )
+        if not self._can_deliver:
+            # R28: nothing was sent and nobody was asked. Saying AWAITING_ANSWER here is what made an
+            # unconfigured install look identical to a working one, with the gap left open behind a
+            # record claiming somebody had been contacted.
+            await self._audit(scope, "hunt_undelivered", person.id)
+            return HuntOutcome(
+                hunt_id=hunt_id,
+                state=HuntState.ROUTED,
+                person_id=person.id,
+                delivered=False,
+            )
         # A message is NEVER sent during quiet_hours — it waits for the next window (FR-6.5/3.4).
         if not quiet:
             await self._send_question(person, question, token)
         await self._audit(scope, "hunt_opened", person.id)
         return HuntOutcome(
-            hunt_id=hunt_id, state=HuntState.AWAITING_ANSWER, person_id=person.id, magic_token=token
+            hunt_id=hunt_id,
+            state=HuntState.SCHEDULED if quiet else HuntState.AWAITING_ANSWER,
+            person_id=person.id,
+            magic_token=token,
+            delivered=not quiet,
         )
 
     async def _lock_person(
@@ -269,6 +338,27 @@ class HuntService:
             text("SELECT pg_advisory_xact_lock(:key)"),
             {"key": _advisory_key(scope.project_id, person_id)},
         )
+
+    async def hunt_for_token(self, token: str) -> dict[str, object] | None:
+        """The hunt a magic-link token opens, or ``None`` for anything that cannot be answered.
+
+        Deliberately narrow: it returns the question and nothing else, and it does not distinguish
+        "unknown token" from "already answered" or "expired" — the reply form is unauthenticated, so a
+        differentiated answer here would let anyone probe which tokens exist (FR-4.3's reasoning applied
+        to a public surface).
+        """
+        async with self._sm() as session:
+            hunt = await session.scalar(
+                select(models.Hunt).where(
+                    models.Hunt.magic_token_hash == security.token_hash(token)
+                )
+            )
+            if hunt is None or hunt.state != HuntState.AWAITING_ANSWER.value:
+                return None
+            expires = hunt.expires_at
+            if expires is not None and expires <= self._clock():
+                return None
+            return {"hunt_id": str(hunt.id), "question": hunt.question}
 
     async def answer_via_magic_link(self, token: str, answer: str) -> HuntOutcome | None:
         """A person answers through the one-time link ⇒ a cred=0.95 claim + gap closed + RESOLVED.
@@ -321,6 +411,54 @@ class HuntService:
             hunt.magic_token_hash = None
             hunt.resolved_at = now
             return HuntOutcome(hunt_id=str(hunt.id), state=HuntState.DECLINED)
+
+    async def send_scheduled(self, scope: ProjectScope) -> list[str]:
+        """Deliver hunts parked for quiet hours whose window has now closed (FR-6.5/3.4).
+
+        The documented machine has always read ``CONSENT_REQUESTED → [SCHEDULED →] AWAITING_ANSWER``
+        and nothing implemented the middle step: a hunt held back by quiet hours was recorded as
+        awaiting an answer, so the 72h clock ran on a question nobody had been asked and the person got
+        no message at all (R28). Returns the hunt ids delivered; a scheduled job calls this the way it
+        calls :meth:`expire_due`.
+
+        The message goes out BEFORE the row is moved to ``AWAITING_ANSWER``: a crash in between resends
+        a duplicate reminder, which is recoverable, whereas the reverse order leaves a hunt claiming to
+        have asked someone who was never contacted — the failure this finding is about.
+        """
+        if not self._can_deliver:
+            return []
+        now = self._clock()
+        delivered: list[str] = []
+        async with self._sm() as session:
+            parked = (
+                await session.scalars(
+                    select(models.Hunt).where(
+                        models.Hunt.project_id == _pid(scope),
+                        models.Hunt.state == HuntState.SCHEDULED.value,
+                    )
+                )
+            ).all()
+            pending = [
+                (str(h.id), str(h.person_id), h.question or "") for h in parked if h.person_id
+            ]
+        for hunt_id, person_id, question in pending:
+            person = await self._directory.get(scope, person_id)
+            if person is None or _in_quiet_hours(person, now):
+                continue
+            token = security.mint_token("hunt_")
+            await self._send_question(person, question, token)
+            async with session_scope(self._sm) as session:
+                hunt = await session.get(models.Hunt, uuid.UUID(hunt_id))
+                if hunt is None or hunt.state != HuntState.SCHEDULED.value:
+                    continue  # someone else delivered or resolved it; the duplicate send is harmless
+                check_transition(HuntState.SCHEDULED, HuntState.AWAITING_ANSWER)
+                hunt.state = HuntState.AWAITING_ANSWER.value
+                hunt.magic_token_hash = security.token_hash(token)
+                hunt.asked_at = now
+                hunt.expires_at = now + _EXPIRY
+            await self._audit(scope, "hunt_opened", person_id)
+            delivered.append(hunt_id)
+        return delivered
 
     async def expire_due(self, scope: ProjectScope) -> list[str]:
         """72h without an answer ⇒ one retry (resend), then escalate to admin (FR-6.3). Returns the
@@ -483,7 +621,7 @@ class HuntService:
         return created.id
 
     async def _send_question(self, person: PersonRow, question: str, token: str) -> None:
-        link = f"{self._base_url}/hunt/{token}"
+        link = self.answer_url(token)
         to = str(person.channels.get("email") or person.channels.get("slack") or person.name)
         await self._channel.send(
             OutboundMessage(

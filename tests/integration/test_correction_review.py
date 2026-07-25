@@ -13,6 +13,7 @@ from collections.abc import Callable
 import pytest
 from sqlalchemy import select
 
+from rsc_brain.hunting.channels import NullChannel
 from rsc_brain.hunting.corrections_review import CorrectionReviewService
 from rsc_brain.hunting.directory import PersonDirectory
 from rsc_brain.hunting.service import HuntService
@@ -71,7 +72,9 @@ async def _review_service(harness: Harness, project_id: str) -> CorrectionReview
     await PersonDirectory(harness.sm).add(
         _scope(project_id), name="Owner", channels={"email": "o@x"}, topics=["hr"]
     )
-    return CorrectionReviewService(harness.sm, hunts=HuntService(harness.sm))
+    # A channel is what an install configures; without one the service cannot deliver and parks
+    # every hunt (R28). The recorder is the test seam for a configured install.
+    return CorrectionReviewService(harness.sm, hunts=HuntService(harness.sm, channel=NullChannel()))
 
 
 async def test_confirm_applies_the_correction(build_harness: Callable[..., Harness]) -> None:
@@ -166,6 +169,8 @@ async def test_correct_knowledge_opens_a_review_hunt(
         topic=None,
         statement=None,
         correction="Corrected fact",
+        # A configured install: the review hunt has to reach the owner for this to be about routing.
+        hunts=HuntService(harness.sm, channel=NullChannel()),
     )
     assert outcome.status == "routed_to_owner"
 
@@ -193,7 +198,9 @@ async def test_no_owner_leaves_claim_disputed(build_harness: Callable[..., Harne
     claim_id = await _seed_claim(harness, project_id, "Fact", ["nobody-owns"])
     correction_id = await _routed_correction(harness, scope, claim_id, "x")
     # No person owns the claim's tag → NO_OWNER, but the claim is still marked disputed.
-    review = CorrectionReviewService(harness.sm, hunts=HuntService(harness.sm))
+    review = CorrectionReviewService(
+        harness.sm, hunts=HuntService(harness.sm, channel=NullChannel())
+    )
     opened = await review.open_review(scope, correction_id)
     assert opened.state == HuntState.NO_OWNER
     async with harness.sm() as session:

@@ -151,10 +151,32 @@ async def test_quiet_hours_defer_the_send(build_harness: Callable[..., Harness])
         quiet_hours={"start": "08:00", "end": "20:00"},  # BASE 15:00 is inside → quiet
     )
     channel = NullChannel()
-    svc = HuntService(harness.sm, channel=channel, clock=Clock(BASE))
+    clock = Clock(BASE)
+    svc = HuntService(harness.sm, channel=channel, clock=clock)
     outcome = await svc.create_manual(scope, question="q", topics=["hr"])
-    assert outcome.state == HuntState.AWAITING_ANSWER
+
+    # R28: parked at SCHEDULED, the state the documented machine always had for this
+    # (`CONSENT_REQUESTED → [SCHEDULED →] AWAITING_ANSWER`) and nothing implemented. It used to be
+    # recorded as AWAITING_ANSWER, so the 72h clock ran on a question nobody had been asked.
+    assert outcome.state == HuntState.SCHEDULED
+    assert outcome.delivered is False
     assert channel.sent == []  # NEVER sent during quiet hours
+    async with harness.sm() as session:
+        parked = await session.get(models.Hunt, uuid.UUID(outcome.hunt_id))
+        assert parked is not None
+        assert parked.magic_token_hash is None, "a token nobody was told must not be live"
+        assert parked.expires_at is None, "the deadline starts when the question is asked"
+
+    # Once the window closes the scheduled send delivers it and the hunt starts awaiting.
+    clock.now = BASE + dt.timedelta(hours=6)  # 21:00, outside 08:00-20:00
+    assert await svc.send_scheduled(scope) == [outcome.hunt_id]
+    assert len(channel.sent) == 1
+    async with harness.sm() as session:
+        sent = await session.get(models.Hunt, uuid.UUID(outcome.hunt_id))
+        assert sent is not None
+        assert sent.state == HuntState.AWAITING_ANSWER.value
+        assert sent.magic_token_hash is not None
+        assert sent.expires_at is not None
 
 
 async def test_expiry_retries_once_then_escalates(build_harness: Callable[..., Harness]) -> None:

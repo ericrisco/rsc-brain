@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.ontology.index import OntologyIndex
 from rsc_brain.ontology.settings import OntologySettings, load_ontology_settings
+from rsc_brain.review.states import PROPOSAL_AUTO_APPLIED
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
@@ -128,7 +129,7 @@ class OntologyIngest:
                     duplicate_id=duplicate,
                     confidence=0.99,
                     method="ontology_sameas",
-                    status="auto_applied",
+                    status=PROPOSAL_AUTO_APPLIED,
                     reason="shared ontology IRI (owl:sameAs / same anchor)",
                 )
                 if created:

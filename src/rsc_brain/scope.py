@@ -44,7 +44,9 @@ PLATFORM_ROLE_MEMBER = "member"
 #: carries ``__needs_review__`` *instead of* its tags (it has not been topicalized yet), so a row
 #: carrying only sentinels has no topic dimension: it is neither authorized by nor withheld from
 #: any topic. Every authorization and visibility decision strips these before comparing.
-NON_TOPIC_TAGS: frozenset[str] = frozenset({"__needs_review__"})
+#: ``__rejected__`` joins it for the same reason (R26): a refused chunk carries the marker as a
+#: record of the decision, and a record is not a topic anyone can be authorized against.
+NON_TOPIC_TAGS: frozenset[str] = frozenset({"__needs_review__", "__rejected__"})
 
 
 class ScopeError(Exception):

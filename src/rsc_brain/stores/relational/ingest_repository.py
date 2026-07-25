@@ -14,9 +14,9 @@ import datetime as dt
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -383,6 +383,28 @@ class IngestRepository:
         reject_reason: str | None = None,
         doc_tags: Sequence[str] | None = None,
     ) -> None:
+        values = self._status_values(
+            status, approved_by=approved_by, reject_reason=reject_reason, doc_tags=doc_tags
+        )
+        async with session_scope(self._sm) as session:
+            await session.execute(
+                update(models.Document)
+                .where(
+                    models.Document.id == uuid.UUID(document_id),
+                    models.Document.project_id == _pid(scope),
+                )
+                .values(**values)
+            )
+            await self._touch_run_phase(session, scope, document_id, status)
+
+    @staticmethod
+    def _status_values(
+        status: str,
+        *,
+        approved_by: str | None,
+        reject_reason: str | None,
+        doc_tags: Sequence[str] | None,
+    ) -> dict[str, Any]:
         values: dict[str, Any] = {"status": status}
         if approved_by is not None:
             values["approved_at"] = _now()
@@ -396,16 +418,50 @@ class IngestRepository:
             values["reject_reason"] = reject_reason
         if doc_tags is not None:
             values["doc_tags"] = list(doc_tags)
+        return values
+
+    async def transition_status(
+        self,
+        scope: ProjectScope,
+        document_id: str,
+        *,
+        expected: Sequence[str],
+        status: str,
+        approved_by: str | None = None,
+        reject_reason: str | None = None,
+        doc_tags: Sequence[str] | None = None,
+    ) -> bool:
+        """Move the document to ``status`` only if it is currently in one of ``expected``.
+
+        Returns whether this caller made the transition. R31: approve and reject each used to READ the
+        status, decide, and then WRITE in a separate transaction, so racing them produced two winners —
+        a document could end up rejected with its claims already published, or approved with an audit
+        trail saying it was refused. The condition lives in the UPDATE, so exactly one caller can win
+        and the loser learns it lost instead of overwriting.
+        """
+        values = self._status_values(
+            status, approved_by=approved_by, reject_reason=reject_reason, doc_tags=doc_tags
+        )
         async with session_scope(self._sm) as session:
-            await session.execute(
-                update(models.Document)
-                .where(
-                    models.Document.id == uuid.UUID(document_id),
-                    models.Document.project_id == _pid(scope),
-                )
-                .values(**values)
+            # `CursorResult.rowcount` is how "did I win?" is answered; the typed `Result` protocol
+            # does not expose it, hence the narrowing cast rather than a second SELECT (which would
+            # reintroduce exactly the read-then-write gap this method exists to close).
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    update(models.Document)
+                    .where(
+                        models.Document.id == uuid.UUID(document_id),
+                        models.Document.project_id == _pid(scope),
+                        models.Document.status.in_(list(expected)),
+                    )
+                    .values(**values)
+                ),
             )
+            if not result.rowcount:
+                return False
             await self._touch_run_phase(session, scope, document_id, status)
+        return True
 
     # --- runs & checkpoints --------------------------------------------------
 
