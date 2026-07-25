@@ -18,13 +18,14 @@ from typing import Any, cast
 
 from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.ingest.entity_resolution import normalize_name
 from rsc_brain.ingest.types import PipelineStage, ProposedChunk, RunStatus, TopicRule
 from rsc_brain.scope import NON_TOPIC_TAGS, ProjectScope
 from rsc_brain.stores.relational import models
-from rsc_brain.stores.relational.database import session_scope
+from rsc_brain.stores.relational.database import maybe_session_scope, session_scope
 from rsc_brain.visibility import forbidden_topics, topic_clause
 
 NEEDS_REVIEW_TAG = next(iter(NON_TOPIC_TAGS))
@@ -116,6 +117,11 @@ class IngestErrorSpec:
     chunk_ref: str | None
     stage: str
     error: str
+
+
+#: How many times admission retries a version conflict before giving up. A conflict means another
+#: caller took the number, so a bounded retry always converges; the bound is a runaway guard.
+_ADMISSION_ATTEMPTS = 5
 
 
 class IngestRepository:
@@ -218,6 +224,79 @@ class IngestRepository:
             )
             return _doc_row(doc) if doc else None
 
+    async def admit_document(
+        self,
+        scope: ProjectScope,
+        *,
+        logical_id: str,
+        checksum: str,
+        source_id: str | None,
+        title: str | None,
+        path: str,
+        lang: str | None = None,
+        pages: int | None = None,
+        status: str = "received",
+        doc_tags: Sequence[str] = (),
+    ) -> tuple[str, bool, int]:
+        """Admit a document atomically. Returns ``(document_id, is_duplicate, version)``.
+
+        R30: admission used to be a read (``find_document_by_checksum``), a decision, and then an
+        insert — three steps a second uploader interleaves with. Both callers saw "not present", both
+        inserted, and the loser got a raw ``IntegrityError`` out of the ingest API: a 500 whose correct
+        answer is "you already have this document", with a blob left on disk that no row references.
+
+        The version has the same shape and a worse consequence: it was ``max(version) + 1`` read outside
+        the insert, so two revisions of one logical document both claimed the same number and the
+        version stopped ordering which prior version the next ingest supersedes. Here the maximum is
+        computed by a sub-select INSIDE the insert, and a unique constraint on
+        ``(project_id, logical_id, version)`` makes a collision a conflict rather than a silent
+        duplicate — the caller retries and reads the new maximum.
+        """
+        pid = _pid(scope)
+        next_version = (
+            select(func.coalesce(func.max(models.Document.version), 0) + 1)
+            .where(models.Document.project_id == pid, models.Document.logical_id == logical_id)
+            .scalar_subquery()
+        )
+        insert = (
+            pg_insert(models.Document)
+            .values(
+                project_id=pid,
+                source_id=uuid.UUID(source_id) if source_id else None,
+                logical_id=logical_id,
+                checksum=checksum,
+                title=title,
+                path=path,
+                lang=lang,
+                pages=pages,
+                status=status,
+                doc_tags=list(doc_tags),
+                version=next_version,
+            )
+            # The checksum conflict is the DUPLICATE case and has one right answer: the document is
+            # already here. Nothing is updated — a duplicate upload must not touch the existing row.
+            .on_conflict_do_nothing(
+                constraint="uq_documents_project_id_checksum",
+            )
+            .returning(models.Document.id, models.Document.version)
+        )
+        for _attempt in range(_ADMISSION_ATTEMPTS):
+            try:
+                async with session_scope(self._sm) as session:
+                    row = (await session.execute(insert)).first()
+            except IntegrityError:
+                # The version conflict: another caller took the number this statement computed. Read
+                # the new maximum by retrying — the checksum is still ours, so this terminates.
+                continue
+            if row is not None:
+                return str(row[0]), False, int(row[1])
+            existing = await self.find_document_by_checksum(scope, checksum)
+            if existing is not None:
+                return existing.id, True, existing.version
+        raise RuntimeError(
+            f"could not admit document {logical_id!r} after repeated version conflicts"
+        )
+
     async def create_document(
         self,
         scope: ProjectScope,
@@ -252,8 +331,11 @@ class IngestRepository:
             return str(doc.id)
 
     async def latest_version_for_logical_id(self, scope: ProjectScope, logical_id: str) -> int:
-        """Highest existing version for a logical id in this project (0 if none). A re-upload of
-        the same logical id with a new checksum becomes ``latest + 1`` (SPEC-09 D6, AC#1)."""
+        """Highest existing version for a logical id in this project (0 if none).
+
+        Read-only reporting. Allocation happens inside :meth:`admit_document`, because `max + 1` read
+        here and used there is precisely the race R30 records.
+        """
         async with self._sm() as session:
             latest = await session.scalar(
                 select(func.max(models.Document.version)).where(
@@ -714,12 +796,18 @@ class IngestRepository:
         entities: Sequence[EntitySpec],
         errors: Sequence[IngestErrorSpec],
         counters: Counters,
+        session: AsyncSession | None = None,
     ) -> dict[str, str]:
-        """Persist the publish phase relationally (one tx): chunk embeddings, claims (replacing
-        any prior), entities/aliases (idempotent), ingest_errors, and the EXTRACT/RESOLVE
-        checkpoints. Returns a map of ``normalized_name|type`` → entity id. Graph writes and the
-        final PERSIST checkpoint happen in the caller (graph MERGE is idempotent)."""
-        async with session_scope(self._sm) as session:
+        """Persist the publish phase relationally: chunk embeddings, claims (replacing any prior),
+        entities/aliases (idempotent), ingest_errors, and the EXTRACT/RESOLVE checkpoints. Returns a
+        map of ``normalized_name|type`` → entity id.
+
+        R35: takes an optional ``session`` so the caller can commit this and the GRAPH half together.
+        They used to be separate transactions, so an interruption between them left claims live in
+        Postgres with no relations in AGE — two readable stores disagreeing, with nothing recording
+        which half happened.
+        """
+        async with maybe_session_scope(self._sm, session) as session:
             # Replace this document's claims so a redo cannot duplicate them.
             chunk_ids = (
                 await session.scalars(

@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
-from rsc_brain.stores.relational.database import session_scope
+from rsc_brain.stores.relational.database import maybe_session_scope, session_scope
 
 
 def _pid(scope: ProjectScope) -> uuid.UUID:
@@ -164,9 +164,15 @@ class EntityStore:
             return [self._to_proposal(r) for r in rows]
 
     async def set_proposal_status(
-        self, scope: ProjectScope, proposal_id: str, *, status: str, resolved_by: str | None
+        self,
+        scope: ProjectScope,
+        proposal_id: str,
+        *,
+        status: str,
+        resolved_by: str | None,
+        session: AsyncSession | None = None,
     ) -> None:
-        async with session_scope(self._sm) as session:
+        async with maybe_session_scope(self._sm, session) as session:
             await session.execute(
                 update(models.EntityMergeProposal)
                 .where(
@@ -177,13 +183,23 @@ class EntityStore:
             )
 
     async def apply_merge(
-        self, scope: ProjectScope, *, canonical_id: str, duplicate_id: str, confidence: float
+        self,
+        scope: ProjectScope,
+        *,
+        canonical_id: str,
+        duplicate_id: str,
+        confidence: float,
+        session: AsyncSession | None = None,
     ) -> MergeResult:
-        """One transaction: move the duplicate's aliases onto the canonical entity, record the
-        duplicate's name as a canonical alias, and tombstone the duplicate (``merged_into``).
-        Refuses a cross-project merge. Idempotent: a second call for an already-merged duplicate
-        just returns the result without further mutation."""
-        async with session_scope(self._sm) as session:
+        """Move the duplicate's aliases onto the canonical entity, record the duplicate's name as a
+        canonical alias, and tombstone the duplicate (``merged_into``). Refuses a cross-project merge.
+        Idempotent: a second call for an already-merged duplicate returns the result unchanged.
+
+        R35: takes an optional ``session`` so the relational merge and the GRAPH merge commit together.
+        Separately, a failure between them left an entity tombstoned as merged while its graph identity
+        never was — and the proposal still open, so a curator was asked to decide it again.
+        """
+        async with maybe_session_scope(self._sm, session) as session:
             canonical = await session.get(models.Entity, uuid.UUID(canonical_id))
             duplicate = await session.get(models.Entity, uuid.UUID(duplicate_id))
             if canonical is None or duplicate is None:

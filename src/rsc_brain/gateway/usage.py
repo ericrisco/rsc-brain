@@ -12,6 +12,9 @@ import datetime as dt
 import hashlib
 import logging
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import dataclass
 from typing import Protocol
 
 from sqlalchemy import ColumnElement, func, select
@@ -33,9 +36,23 @@ class BudgetExceededError(RuntimeError):
         self.capability = capability
 
 
+@dataclass(slots=True)
+class Attempt:
+    """One provider attempt's accounting handle (R29).
+
+    ``held`` is what the attempt reserved before the call; ``spent`` is what the provider reported.
+    Settlement is the difference, applied when the reservation's scope exits — including on failure,
+    because a failed request is not free and an unsettled reservation would leak budget.
+    """
+
+    held: int = 0
+    spent: int = 0
+
+
 class UsageRecorder(Protocol):
     async def enforce_budget(self, capability: str) -> None: ...
     async def record(self, capability: str, tokens: int) -> None: ...
+    def reserve(self, capability: str) -> AbstractAsyncContextManager[Attempt]: ...
 
 
 class EmbeddingCache(Protocol):
@@ -47,6 +64,12 @@ class EmbeddingCache(Protocol):
 
 def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+#: What one attempt reserves before the provider is called, in tokens. The real cost is unknown until
+#: the response arrives, so the reservation is a deliberate over-estimate of a small call: it makes the
+#: ceiling hold under concurrency, and `record` settles the difference immediately afterwards.
+_RESERVATION_TOKENS = 1000
 
 
 class PgUsageRecorder:
@@ -87,19 +110,81 @@ class PgUsageRecorder:
         """Refuse the attempt when THIS project has spent its daily budget for ``capability``.
 
         Another project's traffic cannot exhaust it: the counter it reads is the bound project's.
+
+        A READ, and advisory by construction: it answers "is this project already over" without
+        holding anything. An attempt that intends to spend must go through :meth:`reserve` — R29 is
+        about the gap between asking and spending, and a check that reserved nothing is exactly that
+        gap. Kept because reporting and preflight paths legitimately want to ask.
         """
-        budget = self._caps.get(Capability(capability)).daily_token_budget
+        _reservation, budget = self._reservation(capability)
         if budget is None:
             return
         if await self._today_tokens(capability) >= budget:
             raise BudgetExceededError(capability)
 
+    @asynccontextmanager
+    async def reserve(self, capability: str) -> AsyncIterator[Attempt]:
+        """Hold budget for ONE attempt, then settle it with what the attempt actually spent (R29).
+
+        The hold is applied in the same statement that reads the counter, so concurrent attempts cannot
+        all pass one check and spend anyway — which is how a daily budget used to be exceeded by as many
+        attempts as happened to be in flight. Settlement runs in a ``finally``, so a provider failure
+        still costs what it cost and never leaves a reservation outstanding.
+
+        The hold never exceeds the budget itself, or the first attempt of the day against a small
+        budget would be refused before spending anything.
+        """
+        reservation, budget = self._reservation(capability)
+        if budget is not None:
+            total = await self._add(capability, reservation, calls=0)
+            # `total - reservation` is what the day had spent BEFORE this attempt: the ratified
+            # semantics (refuse an attempt that starts already at or over the ceiling), now atomic.
+            if total - reservation >= budget:
+                await self._add(capability, -reservation, calls=0)
+                raise BudgetExceededError(capability)
+        attempt = Attempt(held=reservation if budget is not None else 0)
+        try:
+            yield attempt
+        finally:
+            await self._add(capability, attempt.spent - attempt.held, calls=1)
+
     async def record(self, capability: str, tokens: int) -> None:
+        """Record what an attempt spent, for a caller that is not using :meth:`reserve`.
+
+        Called once per ATTEMPT — including a repair round, a fallback attempt and a failure — because
+        each one costs the provider's tokens whatever the outcome was. Recording only successes made a
+        failing extraction free, which is exactly backwards: a capability that keeps failing is the one
+        spending most.
+        """
         if self._project_id is None:
             _log.warning(
                 "usage_unattributed",
                 extra={"capability": capability, "tokens": tokens},
             )
+        await self._add(capability, tokens, calls=1)
+
+    def _reservation(self, capability: str) -> tuple[int, int | None]:
+        """``(tokens to reserve, daily budget)`` for ``capability``; budget ``None`` means unlimited.
+
+        The reservation never exceeds the budget itself: a 1000-token hold against a 200-token budget
+        would refuse the first attempt of the day. A capability name outside the configured set (a
+        caller's own label) has no budget and reserves nothing — accounting still records it, because
+        dropping the row would be a worse failure than an unbudgeted one.
+        """
+        try:
+            budget = self._caps.get(Capability(capability)).daily_token_budget
+        except (ValueError, AttributeError, KeyError):
+            return 0, None
+        if budget is None:
+            return 0, None
+        return min(_RESERVATION_TOKENS, budget), budget
+
+    async def _add(self, capability: str, tokens: int, *, calls: int) -> int:
+        """Add ``tokens`` to today's counter for this project and return the new total.
+
+        One statement: the read and the increment cannot be interleaved, which is what makes a budget
+        hold under concurrency.
+        """
         statement = (
             pg_insert(models.TokenUsage)
             .values(
@@ -108,18 +193,20 @@ class PgUsageRecorder:
                 capability=capability,
                 day=dt.datetime.now(dt.UTC).date(),
                 tokens=tokens,
-                calls=1,
+                calls=calls,
             )
             .on_conflict_do_update(
                 index_elements=["project_id", "capability", "day"],
                 set_={
                     "tokens": models.TokenUsage.tokens + tokens,
-                    "calls": models.TokenUsage.calls + 1,
+                    "calls": models.TokenUsage.calls + calls,
                 },
             )
+            .returning(models.TokenUsage.tokens)
         )
         async with session_scope(self._sm) as session:
-            await session.execute(statement)
+            total = await session.scalar(statement)
+        return int(total or 0)
 
     async def _today_tokens(self, capability: str) -> int:
         async with self._sm() as session:

@@ -21,7 +21,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -48,6 +48,10 @@ def _pid(scope: ProjectScope) -> uuid.UUID:
     return uuid.UUID(scope.project_id)
 
 
+class _KeyAlreadyClaimed(Exception):
+    """Internal: another caller owns this idempotency key and its result is the answer (R32)."""
+
+
 class AgentWriteService:
     def __init__(
         self, sessionmaker: async_sessionmaker[AsyncSession], gateway: ModelGateway
@@ -63,26 +67,76 @@ class AgentWriteService:
         return value if value in {"quarantine", "direct", "off"} else "quarantine"
 
     async def _synthetic_document(self, session: AsyncSession, scope: ProjectScope) -> uuid.UUID:
-        doc = await session.scalar(
-            select(models.Document).where(
+        """The project's one agent-submission document, created if absent — atomically (R32).
+
+        This used to SELECT, decide, and INSERT, so two concurrent first submissions both decided to
+        create it and the loser got a unique violation on the checksum: a raw ``IntegrityError`` out of
+        an API whose whole contract is that a retry is safe.
+        """
+        insert = (
+            pg_insert(models.Document)
+            .values(
+                project_id=_pid(scope),
+                logical_id=_SUBMISSION_LOGICAL_ID,
+                checksum=f"agent-submissions:{scope.project_id}",
+                title="Agent submissions",
+                status="processed",
+            )
+            .on_conflict_do_nothing(constraint="uq_documents_project_id_checksum")
+            .returning(models.Document.id)
+        )
+        created = await session.scalar(insert)
+        if created is not None:
+            return created
+        existing = await session.scalar(
+            select(models.Document.id).where(
                 models.Document.project_id == _pid(scope),
                 models.Document.logical_id == _SUBMISSION_LOGICAL_ID,
             )
         )
-        if doc is not None:
-            return doc.id
-        created = models.Document(
-            project_id=_pid(scope),
-            logical_id=_SUBMISSION_LOGICAL_ID,
-            checksum=f"agent-submissions:{scope.project_id}",
-            title="Agent submissions",
-            status="processed",
-        )
-        session.add(created)
-        await session.flush()
-        return created.id
+        assert existing is not None  # the conflict proves the row is there
+        return existing
 
     async def submit(
+        self,
+        scope: ProjectScope,
+        *,
+        text: str,
+        idempotency_key: str,
+        entities: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> SubmitResult:
+        """Submit a fact once, however many times this is called with the same key (FR-14.4)."""
+        try:
+            return await self._submit_once(
+                scope,
+                text=text,
+                idempotency_key=idempotency_key,
+                entities=entities,
+                tags=tags,
+            )
+        except _KeyAlreadyClaimed:
+            # R32: the other caller's transaction has committed (its INSERT held the unique index until
+            # it did), so this read returns its finished result — the whole point of an idempotency key.
+            prior = await self._prior(scope, idempotency_key)
+            if prior is None:  # pragma: no cover - the conflict proves the row exists
+                return SubmitResult(status="rejected", claim_ids=[])
+            return SubmitResult(status=prior.status, claim_ids=list(prior.claim_ids))
+
+    async def _prior(
+        self, scope: ProjectScope, idempotency_key: str
+    ) -> models.AgentWriteIdempotency | None:
+        async with self._sm() as session:
+            row: models.AgentWriteIdempotency | None = await session.scalar(
+                select(models.AgentWriteIdempotency).where(
+                    models.AgentWriteIdempotency.project_id == _pid(scope),
+                    models.AgentWriteIdempotency.principal_id == scope.principal_id,
+                    models.AgentWriteIdempotency.idempotency_key == idempotency_key,
+                )
+            )
+            return row
+
+    async def _submit_once(
         self,
         scope: ProjectScope,
         *,
@@ -130,8 +184,34 @@ class AgentWriteService:
         embedding = (await self._gateway.for_project(scope.project_id).embed([text]))[0]
         tag_list = list(tags or [])
         subject = entities[0] if entities else None
+        status = "quarantined" if quarantined else "active"
 
+        # R32: the ledger row is written FIRST and in the SAME transaction as the claim it describes.
+        # It used to be written afterwards, so it could not claim the key: two retries of one
+        # submission both found no prior row, both did the work, and the corpus got the same fact twice
+        # under two ids — which then corroborated each other and raised the credibility of a single
+        # assertion. Claiming the key first turns the second retry into a conflict; because the claim
+        # and the ledger row commit together, the loser's re-read sees the winner's finished result
+        # rather than a half-written one.
         async with session_scope(self._sm) as session:
+            claimed = await session.scalar(
+                pg_insert(models.AgentWriteIdempotency)
+                .values(
+                    project_id=_pid(scope),
+                    principal_id=principal,
+                    idempotency_key=idempotency_key,
+                    claim_ids=[],
+                    status=status,
+                )
+                .on_conflict_do_nothing(
+                    index_elements=["project_id", "principal_id", "idempotency_key"]
+                )
+                .returning(models.AgentWriteIdempotency.id)
+            )
+            if claimed is None:
+                # Another caller owns this key. Its INSERT blocked ours on the unique index until it
+                # committed, so the row we read next is its final one.
+                raise _KeyAlreadyClaimed
             document_id = await self._synthetic_document(session, scope)
             chunk = models.Chunk(
                 project_id=_pid(scope),
@@ -157,9 +237,14 @@ class AgentWriteService:
             session.add(claim)
             await session.flush()
             claim_ids = [str(claim.id)]
-
-        status = "quarantined" if quarantined else "active"
-        await self._record(scope, idempotency_key, status, claim_ids)
+            await session.execute(
+                update(models.AgentWriteIdempotency)
+                .where(
+                    models.AgentWriteIdempotency.id == claimed,
+                    models.AgentWriteIdempotency.project_id == _pid(scope),
+                )
+                .values(claim_ids=claim_ids)
+            )
         return SubmitResult(status=status, claim_ids=claim_ids)
 
     async def _record(

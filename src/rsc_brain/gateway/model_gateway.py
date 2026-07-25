@@ -22,7 +22,8 @@ health report.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
@@ -37,7 +38,7 @@ from rsc_brain.gateway.errors import (
     UnknownCapabilityError,
 )
 from rsc_brain.gateway.options import GenerationOptions
-from rsc_brain.gateway.usage import EmbeddingCache, UsageRecorder, text_hash
+from rsc_brain.gateway.usage import Attempt, EmbeddingCache, UsageRecorder, text_hash
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -64,6 +65,11 @@ class HealthStatus:
 class _Attempt[V]:
     value: V | None = None
     error: GatewayError | None = None
+    #: Tokens the provider reported across every round of this attempt — the initial call plus any
+    #: repair rounds (R29). Structured completions used to record a flat zero, so extraction,
+    #: topicalization and judging — most of the product's traffic — contributed nothing to any budget
+    #: and a busy project reported spending nothing.
+    tokens: int = 0
 
 
 def _new_ref() -> str:
@@ -185,19 +191,18 @@ class ModelGateway:
     ) -> str:
         """Free-text completion for ``capability``. Provider failure → redacted typed error."""
         cap = self._cap(capability)
-        if self._usage is not None:
-            await self._usage.enforce_budget(str(capability))
-        try:
-            response = await self._completion(
-                messages=list(messages),
-                **self._routing(cap, cap.litellm_model),
-                **(options.to_call_kwargs() if options else {}),
-            )
-        except Exception:
-            raise GatewayUnavailableError("provider_unavailable", _new_ref()) from None
-        if self._usage is not None:
-            await self._usage.record(str(capability), _usage_tokens(response))
-        return _extract_content(response)
+        # R29: the attempt HOLDS budget across the call and settles on the way out, whatever happened.
+        async with self._attempt(capability) as attempt:
+            try:
+                response = await self._completion(
+                    messages=list(messages),
+                    **self._routing(cap, cap.litellm_model),
+                    **(options.to_call_kwargs() if options else {}),
+                )
+            except Exception:
+                raise GatewayUnavailableError("provider_unavailable", _new_ref()) from None
+            attempt.spent = _usage_tokens(response)
+            return _extract_content(response)
 
     async def complete_structured(
         self,
@@ -208,25 +213,37 @@ class ModelGateway:
     ) -> T:
         """Structured completion with validate → repair → fallback → typed error (FR-9.2)."""
         cap = self._cap(capability)
-        if self._usage is not None:
-            await self._usage.enforce_budget(str(capability))
-        attempt = await self._attempt_structured(cap, cap.litellm_model, messages, schema, options)
+        # One reservation per ATTEMPT, the primary and the fallback alike: each is a real provider call.
+        async with self._attempt(capability) as budgeted:
+            attempt = await self._attempt_structured(
+                cap, cap.litellm_model, messages, schema, options
+            )
+            budgeted.spent = attempt.tokens
         if attempt.value is not None:
-            await self._record_call(capability)
             return attempt.value
         if cap.fallback_model is not None:
-            fb = await self._attempt_structured(cap, cap.fallback_model, messages, schema, options)
+            async with self._attempt(capability) as budgeted_fallback:
+                fb = await self._attempt_structured(
+                    cap, cap.fallback_model, messages, schema, options
+                )
+                budgeted_fallback.spent = fb.tokens
             if fb.value is not None:
-                await self._record_call(capability)
                 return fb.value
             attempt = fb
         raise attempt.error or GatewayValidationError("structured_failed", _new_ref())
 
-    async def _record_call(self, capability: Capability) -> None:
-        # Structured completions don't surface token usage through the attempt wrapper; count the
-        # call (budget is enforced pre-call). Free-text `complete` records real token totals.
-        if self._usage is not None:
-            await self._usage.record(str(capability), 0)
+    @asynccontextmanager
+    async def _attempt(self, capability: Capability) -> AsyncIterator[Attempt]:
+        """Budget for one provider attempt: reserved on entry, settled on exit (R29).
+
+        With no recorder configured the handle is a sink, so the call path is identical whether or not
+        an install accounts for its usage.
+        """
+        if self._usage is None:
+            yield Attempt()
+            return
+        async with self._usage.reserve(str(capability)) as attempt:
+            yield attempt
 
     async def _attempt_structured(
         self,
@@ -237,6 +254,7 @@ class ModelGateway:
         options: GenerationOptions | None,
     ) -> _Attempt[T]:
         convo: list[Message] = list(messages)
+        spent = 0  # accumulated across repair rounds: each one is a real provider call (R29)
         for _ in range(self._max_repair + 1):
             try:
                 response = await self._completion(
@@ -246,16 +264,21 @@ class ModelGateway:
                     **(options.to_call_kwargs() if options else {}),
                 )
             except Exception:
-                return _Attempt(error=GatewayUnavailableError("provider_unavailable", _new_ref()))
+                return _Attempt(
+                    error=GatewayUnavailableError("provider_unavailable", _new_ref()), tokens=spent
+                )
+            spent += _usage_tokens(response)
             try:
                 content = _extract_content(response)
-                return _Attempt(value=schema.model_validate_json(content))
+                return _Attempt(value=schema.model_validate_json(content), tokens=spent)
             except (ValidationError, GatewayValidationError) as exc:
                 if isinstance(exc, ValidationError):
                     convo = [*convo, _repair_message(schema, exc)]
                 else:
                     convo = list(messages)
-        return _Attempt(error=GatewayValidationError("structured_validation_failed", _new_ref()))
+        return _Attempt(
+            error=GatewayValidationError("structured_validation_failed", _new_ref()), tokens=spent
+        )
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
         """Embed ``texts`` and enforce the anchored dimension (FR-9.4). When an embedding cache is
@@ -281,27 +304,26 @@ class ModelGateway:
         return [cached[digest] for digest in hashes]
 
     async def _embed_raw(self, cap: CapabilityConfig, texts: list[str]) -> list[list[float]]:
-        if self._usage is not None:
-            await self._usage.enforce_budget(str(Capability.EMBEDDER))
-        try:
-            response = await self._embedding(
-                model=cap.litellm_model,
-                input=texts,
-                api_base=cap.api_base,
-                api_key=cap.api_key.get_secret_value() if cap.api_key else None,
-                timeout=cap.timeout_s,
-            )
-        except Exception:
-            raise GatewayUnavailableError("provider_unavailable", _new_ref()) from None
-        vectors = _extract_embeddings(response)
-        for vector in vectors:
-            if len(vector) != cap.effective_dimension:
-                raise GatewayDimensionError("embedding_dimension_mismatch", _new_ref())
-        if self._usage is not None:
-            await self._usage.record(
-                str(Capability.EMBEDDER), _usage_tokens(response) or len(texts)
-            )
-        return vectors
+        # R29: reserved for the duration of the call and settled on the way out, so a batch that fails
+        # halfway still accounts for what it cost and cannot leave a hold behind.
+        async with self._attempt(Capability.EMBEDDER) as attempt:
+            try:
+                response = await self._embedding(
+                    model=cap.litellm_model,
+                    input=texts,
+                    api_base=cap.api_base,
+                    api_key=cap.api_key.get_secret_value() if cap.api_key else None,
+                    timeout=cap.timeout_s,
+                )
+            except Exception:
+                raise GatewayUnavailableError("provider_unavailable", _new_ref()) from None
+            # Embedding providers often omit a usage block; the text count is the honest floor.
+            attempt.spent = _usage_tokens(response) or len(texts)
+            vectors = _extract_embeddings(response)
+            for vector in vectors:
+                if len(vector) != cap.effective_dimension:
+                    raise GatewayDimensionError("embedding_dimension_mismatch", _new_ref())
+            return vectors
 
     def unresolved_capabilities(self) -> list[str]:
         """Capabilities missing a provider or a model — a local check, no provider contact (R50).

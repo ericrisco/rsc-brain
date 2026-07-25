@@ -78,6 +78,26 @@ def make_sync_sessionmaker(engine: Engine) -> sessionmaker[Session]:
 
 
 @asynccontextmanager
+async def maybe_session_scope(
+    sessionmaker: async_sessionmaker[AsyncSession], session: AsyncSession | None
+) -> AsyncIterator[AsyncSession]:
+    """Join the caller's transaction when given one, otherwise own a fresh one (AUDIT-039 / R35).
+
+    Several operations write to Postgres AND to the AGE graph — which lives in the same database. They
+    used to do it in separate transactions, so an interruption between them left both stores readable
+    and disagreeing, with nothing recording which half happened. Passing the session down lets one
+    logical operation be one transaction; a store called without a session behaves exactly as before.
+
+    The caller owns the commit: this never commits a session it did not open.
+    """
+    if session is not None:
+        yield session
+        return
+    async with session_scope(sessionmaker) as owned:
+        yield owned
+
+
+@asynccontextmanager
 async def session_scope(
     sessionmaker: async_sessionmaker[AsyncSession],
 ) -> AsyncIterator[AsyncSession]:

@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from rsc_brain.config.models import KnowledgeConfig
-from rsc_brain.knowledge.credibility import capped_feedback
+from rsc_brain.knowledge.credibility import capped_feedback, clamp
 from rsc_brain.scope import PrincipalType, ProjectScope
 from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
 
@@ -47,12 +47,25 @@ async def apply_report_feedback(
         claim = await store.get_claim(scope, claim_id)
         if claim is None:
             continue
-        remaining = await store.feedback_budget_remaining(
-            scope, scope.principal_id, claim_id, day, config.feedback_daily_cap
+        # R33: ask for the whole move, then move by exactly what the ledger granted. The budget is
+        # decided and spent in one statement, so N concurrent signals share one cap instead of each
+        # spending it in full.
+        proposed, wanted = capped_feedback(
+            claim.credibility, signal, alpha=alpha, remaining_daily_budget=config.feedback_daily_cap
         )
-        new_cred, delta = capped_feedback(
-            claim.credibility, signal, alpha=alpha, remaining_daily_budget=remaining
+        granted = await store.spend_feedback_budget(
+            scope,
+            principal_id=scope.principal_id,
+            claim_id=claim_id,
+            day=day,
+            cap=config.feedback_daily_cap,
+            requested=wanted,
         )
+        if granted <= 0:
+            continue
+        direction = 1.0 if proposed >= claim.credibility else -1.0
+        new_cred = clamp(claim.credibility + direction * granted)
+        delta = granted
         # Only a human negative signal that drives credibility below the threshold disputes.
         mark = (
             is_human
