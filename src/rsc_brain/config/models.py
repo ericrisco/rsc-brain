@@ -129,6 +129,12 @@ class RecallConfig(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    # R23: how much MORE than the page to retrieve, so the temporal filter has something to remove.
+    # Relevance ranking runs before the filter can (it needs each chunk's claims), so retrieving
+    # exactly the page lets stale-but-similar chunks starve the eligible answer out of it. Bounded by
+    # `retriever.MAX_RETRIEVAL_WIDTH` so a large page cannot turn into an unbounded scan (R38).
+    temporal_refill_factor: int = Field(default=4, ge=1, le=20)
+
     tau: Weight = Field(
         default=0.45, description="Relevance threshold τ below which recall abstains (D2)."
     )

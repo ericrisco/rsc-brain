@@ -26,6 +26,9 @@ class Fragment:
     valid_from: date | None = None
     valid_to: date | None = None
     is_current: bool = True
+    # R24: this claim is contested (an unresolved contradiction, or a correction under review). A
+    # consumer that cannot see it cannot tell a disputed fact from a settled one.
+    disputed: bool = False
     untrusted_data: bool = True
 
 

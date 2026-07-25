@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
@@ -108,6 +108,44 @@ class KnowledgeStore:
         """Active, embedded claims sourced from a document (on-ingest detection set)."""
         return await self._fetch(scope, models.Claim.source_document_id == uuid.UUID(document_id))
 
+    async def contradiction_candidates(
+        self, scope: ProjectScope, document_id: str, *, limit: int = 200
+    ) -> list[ClaimData]:
+        """The document's own claims PLUS eligible prior claims from the rest of the project (R19).
+
+        Detection used to run over ``claims_for_document`` alone, so a new document was only ever
+        compared against itself — a fact contradicting last quarter's handbook was never noticed, which
+        is the entire point of the feature.
+
+        Bounded on purpose: the prior set is the most recent ``limit`` active claims, so ingest cost
+        stays proportional to the page rather than to the corpus (R38). Ordering by newest keeps the
+        comparison against the knowledge most likely to still be believed.
+        """
+        own = await self.claims_for_document(scope, document_id)
+        async with self._sm() as session:
+            rows = await session.scalars(
+                select(models.Claim)
+                .where(
+                    models.Claim.project_id == _pid(scope),
+                    models.Claim.embedding.is_not(None),
+                    models.Claim.valid_to.is_(None),
+                    models.Claim.pending_confirmation.is_(False),
+                    # NULL-safe on purpose: `col != value` evaluates to NULL for a row whose
+                    # `source_document_id` is NULL, so a plain inequality silently drops every claim
+                    # without a source document — agent submissions and corrections among them, which
+                    # are exactly the claims most likely to contradict the corpus.
+                    or_(
+                        models.Claim.source_document_id.is_(None),
+                        models.Claim.source_document_id != uuid.UUID(document_id),
+                    ),
+                )
+                .order_by(models.Claim.id.desc())
+                .limit(limit)
+            )
+            prior = [self._to_claim_data(c) for c in rows]
+        seen = {claim.id for claim in own}
+        return [*own, *(claim for claim in prior if claim.id not in seen)]
+
     async def claims_by_ids(self, scope: ProjectScope, ids: Sequence[str]) -> list[ClaimData]:
         """Active, embedded claims by id (on-consume detection set)."""
         if not ids:
@@ -185,6 +223,65 @@ class KnowledgeStore:
                 )
                 .values(credibility=loser_cred, valid_to=_now())
             )
+
+    async def claim_relation_keys(
+        self, scope: ProjectScope, claim_ids: Sequence[str]
+    ) -> list[tuple[str, str, str]]:
+        """The ``(subject_key, predicate, object_key)`` triple each claim asserts in the graph.
+
+        Only claims with both endpoints resolved to a typed entity produce a graph relation, so a
+        claim missing either key contributes nothing to retire (R27).
+        """
+        if not claim_ids:
+            return []
+        async with self._sm() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        models.Claim.subject_entity_key,
+                        models.Claim.predicate,
+                        models.Claim.object_entity_key,
+                    ).where(
+                        models.Claim.id.in_([uuid.UUID(i) for i in claim_ids]),
+                        models.Claim.project_id == _pid(scope),
+                        models.Claim.subject_entity_key.is_not(None),
+                        models.Claim.object_entity_key.is_not(None),
+                        models.Claim.predicate.is_not(None),
+                    )
+                )
+            ).all()
+        return [(str(r[0]), str(r[1]), str(r[2])) for r in rows]
+
+    async def live_relation_keys(
+        self, scope: ProjectScope, keys: Sequence[tuple[str, str, str]]
+    ) -> set[tuple[str, str, str]]:
+        """Which of ``keys`` some LIVE claim still asserts.
+
+        Two documents can assert the same relation; retiring the edge because one of their claims was
+        superseded would delete a fact the corpus still holds. So retirement asks this first.
+        """
+        if not keys:
+            return set()
+        subjects = {uuid.UUID(k[0]) for k in keys}
+        objects = {uuid.UUID(k[2]) for k in keys}
+        async with self._sm() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        models.Claim.subject_entity_key,
+                        models.Claim.predicate,
+                        models.Claim.object_entity_key,
+                    ).where(
+                        models.Claim.project_id == _pid(scope),
+                        models.Claim.subject_entity_key.in_(subjects),
+                        models.Claim.object_entity_key.in_(objects),
+                        models.Claim.valid_to.is_(None),
+                        models.Claim.pending_confirmation.is_(False),
+                    )
+                )
+            ).all()
+        wanted = set(keys)
+        return {t for r in rows if (t := (str(r[0]), str(r[1]), str(r[2]))) in wanted}
 
     async def mark_disputed(
         self, scope: ProjectScope, claim_ids: Sequence[str], *, hunting_candidate: bool

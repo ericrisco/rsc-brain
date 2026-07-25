@@ -89,6 +89,10 @@ class ClaimSpec:
     tags: tuple[str, ...] = ()
     extraction_confidence: float | None = None
     credibility: float | None = None  # cred0 (SPEC-08 FR-5.1); None → DDL default
+    # R18: contradiction candidates are paired by cosine similarity between CLAIM vectors, so a claim
+    # written without one can never be paired — detection was unreachable for every ingested claim
+    # even once a resolver was wired in. The pipeline embeds claim texts at publish and fills this.
+    embedding: tuple[float, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,6 +123,16 @@ class IngestRepository:
 
     def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
         self._sm = sessionmaker
+
+    @property
+    def sessionmaker(self) -> async_sessionmaker[AsyncSession]:
+        """The repository's sessionmaker, so a collaborator can be built from the same connection.
+
+        Exposed so the pipeline can construct its graph-retirement helper itself instead of taking it
+        as an optional injection — R18 is what optional injections do: the feature exists and no
+        composition root turns it on.
+        """
+        return self._sm
 
     # --- sources -------------------------------------------------------------
 
@@ -270,7 +284,7 @@ class IngestRepository:
 
     async def supersede_prior_version(
         self, scope: ProjectScope, prior_document_id: str, current_texts: set[str]
-    ) -> int:
+    ) -> list[str]:
         """Supersede a prior version against the new one's chunk texts (SPEC-09 D6, AC#3).
 
         A prior chunk whose text is **absent** from the new version (changed or removed content)
@@ -278,7 +292,7 @@ class IngestRepository:
         (``valid_to=now``). A prior chunk whose text is **unchanged** (present in the new version)
         is left completely untouched, so its claims keep their id + credibility across versions
         (AC#2). Nothing is deleted (FR-5.5). Idempotent (only touches still-live rows). Returns the
-        number of claims closed."""
+        ids of the claims closed, so the caller can retire their graph relations too (R27)."""
         async with session_scope(self._sm) as session:
             prior_chunks = (
                 await session.scalars(
@@ -290,7 +304,7 @@ class IngestRepository:
             ).all()
             superseded = [c.id for c in prior_chunks if c.text not in current_texts]
             if not superseded:
-                return 0
+                return []
             await session.execute(
                 update(models.Chunk).where(models.Chunk.id.in_(superseded)).values(embedding=None)
             )
@@ -309,7 +323,7 @@ class IngestRepository:
                     .where(models.Claim.id.in_(claim_ids))
                     .values(valid_to=_now())
                 )
-            return len(claim_ids)
+            return [str(cid) for cid in claim_ids]
 
     async def get_document(self, scope: ProjectScope, document_id: str) -> DocRow | None:
         async with self._sm() as session:
@@ -317,6 +331,27 @@ class IngestRepository:
             if doc is None or doc.project_id != _pid(scope):
                 return None
             return _doc_row(doc)
+
+    async def count_independent_sources(self, scope: ProjectScope, document_id: str) -> int:
+        """How many INDEPENDENT documents in this project already carry active claims (R21).
+
+        Independence is counted per source DOCUMENT, not per claim: a document repeating itself is one
+        source, which is exactly the distinction corroboration is supposed to make. The document being
+        published counts as one, so a first ingest gets 1 and a second independent one gets 2.
+
+        Credibility was previously written with ``n_independent_sources=1`` for every claim, so
+        agreement between independent documents never raised it.
+        """
+        async with self._sm() as session:
+            others = await session.scalar(
+                select(func.count(func.distinct(models.Claim.source_document_id))).where(
+                    models.Claim.project_id == _pid(scope),
+                    models.Claim.source_document_id.is_not(None),
+                    models.Claim.source_document_id != uuid.UUID(document_id),
+                    models.Claim.valid_to.is_(None),
+                )
+            )
+        return 1 + int(others or 0)
 
     async def list_documents_by_status(self, scope: ProjectScope, status: str) -> list[DocRow]:
         """Documents in ``status`` that this caller may see.
@@ -674,6 +709,7 @@ class IngestRepository:
                         tags=list(claim.tags),
                         extraction_confidence=claim.extraction_confidence,
                         source_document_id=uuid.UUID(document_id),
+                        embedding=(None if claim.embedding is None else list(claim.embedding)),
                         **({} if claim.credibility is None else {"credibility": claim.credibility}),
                     )
                 )

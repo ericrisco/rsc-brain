@@ -62,15 +62,27 @@ class ApiDeps:
     queue: object | None = None
 
     def service(self) -> tuple[IngestService, IngestRepository]:
+        from rsc_brain.knowledge.contradictions import ContradictionResolver
+        from rsc_brain.knowledge.judge import LlmJudge
+        from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+
         repo = IngestRepository(self.sessionmaker)
+        graph = AgeGraphStore(self.sessionmaker)
         pipeline = IngestionPipeline(
             repository=repo,
-            graph_store=AgeGraphStore(self.sessionmaker),
+            graph_store=graph,
             gateway=self.gateway,
             config=self.config or PipelineConfig(),
             # SPEC-24: the ontology layer is always constructed but stays inert per project until
             # that project sets ontology.enabled=true, so a standard install pays nothing for it.
             ontology=OntologyIngest(self.sessionmaker),
+            # R18: contradiction detection was opt-in and nothing opted in, so it ran in tests that
+            # injected a resolver and nowhere else.
+            contradiction_resolver=ContradictionResolver(
+                store=KnowledgeStore(self.sessionmaker),
+                graph=graph,
+                judge=LlmJudge(self.gateway),
+            ),
         )
         return (
             IngestService(repo, pipeline, data_dir=self.data_dir, queue=self.queue),  # type: ignore[arg-type]

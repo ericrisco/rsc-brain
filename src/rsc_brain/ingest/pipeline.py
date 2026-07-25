@@ -18,9 +18,8 @@ entities, MERGE graph), so a redo is safe.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from rsc_brain.config.models import HardwareProfile, KnowledgeConfig
@@ -42,10 +41,15 @@ from rsc_brain.ingest.types import (
     SourcePolicy,
 )
 from rsc_brain.knowledge.contradictions import ContradictionResolver
-from rsc_brain.knowledge.credibility import authority_for, initial_credibility
+from rsc_brain.knowledge.credibility import (
+    authority_for,
+    corroborated_authority,
+    initial_credibility,
+)
+from rsc_brain.knowledge.graph_sync import GraphSync
 from rsc_brain.ontology.ingest import OntologyIngest
 from rsc_brain.scope import ProjectScope
-from rsc_brain.stores.age_graph_store import AgeGraphStore, safe_identifier
+from rsc_brain.stores.age_graph_store import AgeGraphStore, edge_type
 from rsc_brain.stores.graph_store import GraphEdge, GraphNode
 from rsc_brain.stores.relational.ingest_repository import (
     ChunkRow,
@@ -57,6 +61,7 @@ from rsc_brain.stores.relational.ingest_repository import (
     IngestRepository,
     SourceRow,
 )
+from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
 
 _ENTITY_LABEL = "Entity"
 
@@ -78,17 +83,6 @@ def default_parser_factory(doc: DocRow) -> DocumentParser:
 
 class DocumentNotFoundError(LookupError):
     """The document does not exist within the caller's project (denied ≡ absent, FR-4.3)."""
-
-
-def _safe_edge_type(predicate: str) -> str:
-    """Sanitize a predicate into a safe Cypher edge type (never interpolates raw text)."""
-    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", predicate.strip()) or "related_to"
-    if not re.match(r"^[A-Za-z_]", cleaned):
-        cleaned = f"r_{cleaned}"
-    try:
-        return safe_identifier(cleaned)
-    except ValueError:  # pragma: no cover - defensive
-        return "related_to"
 
 
 def _entity_key(type_by_name: dict[str, str], name: str | None) -> str | None:
@@ -129,6 +123,11 @@ class IngestionPipeline:
         # Optional (SPEC-08): when set, contradictions are detected on-ingest over the doc's new
         # claims. Left None keeps the SPEC-05 behaviour, so existing constructors are unaffected.
         self._resolver = contradiction_resolver
+        # NOT optional: a superseded claim's relation has to stop being current whoever built this
+        # pipeline (R27). Built here rather than injected for the reason R18 records.
+        self._graph_sync = GraphSync(
+            store=KnowledgeStore(repository.sessionmaker), graph=graph_store
+        )
         # Optional (SPEC-24): ontology anchoring/merge/relation-check. None (default) OR a project
         # with ontology.enabled=false means every seam here short-circuits — ingest is identical.
         self._ontology = ontology
@@ -300,7 +299,22 @@ class IngestionPipeline:
         ]
         embeddings = await self._embed(scope, embeddable)
 
-        claims: list[ClaimSpec] = list(self._table_claims(parsed, chunk_rows, reuse_texts))
+        # R20/R21: credibility is derived from the document's real provenance and from how many
+        # independent sources already assert the same thing — not from chunk layout with a hardcoded
+        # count of one. Both are resolved ONCE per document, before any claim is built.
+        document = await self._require_document(scope, document_id)
+        source = await self._resolve_source(scope, document)
+        corroboration = await self._repo.count_independent_sources(scope, document_id)
+
+        claims: list[ClaimSpec] = list(
+            self._table_claims(
+                parsed,
+                chunk_rows,
+                reuse_texts,
+                source=source,
+                n_independent_sources=corroboration,
+            )
+        )
         entities: list[EntitySpec] = []
         errors: list[IngestErrorSpec] = []
         nodes: list[GraphNode] = []
@@ -337,9 +351,20 @@ class IngestionPipeline:
                 discarded += 1
                 continue
             self._collect_extraction(
-                document_id, row, graph, claims, entities, nodes, edges, errors, relation_decider
+                document_id,
+                row,
+                graph,
+                claims,
+                entities,
+                nodes,
+                edges,
+                errors,
+                relation_decider,
+                source=source,
+                n_independent_sources=corroboration,
             )
 
+        claims = await self._embed_claims(scope, claims)
         counters = Counters(claims_generated=len(claims), discarded_chunks=discarded)
         await self._repo.record_publish(
             scope,
@@ -361,7 +386,12 @@ class IngestionPipeline:
         # claims closed (valid_to=now); unchanged chunks are left intact so their claims persist
         # with the same id/credibility (D6, AC#3). Never deletes; idempotent.
         if prior_doc is not None:
-            await self._repo.supersede_prior_version(scope, prior_doc.id, current_texts)
+            closed = await self._repo.supersede_prior_version(scope, prior_doc.id, current_texts)
+            # R27: a re-ingested document closes the claims its changed chunks used to assert, so
+            # their relations stop being current in the graph as well — unless the new version (or
+            # another document) still asserts the same relation, which `retire_claims` checks.
+            if closed:
+                await self._graph_sync.retire_claims(scope, closed)
         await self._repo.mark_stage(
             scope, document_id, PipelineStage.PERSIST, phase=DocStatus.PROCESSED.value
         )
@@ -394,24 +424,37 @@ class IngestionPipeline:
             return
         await self._resolver.resolve_document(scope, document_id)
 
-    def _claim_credibility(self, row: ChunkRow) -> float:
-        """cred0 (FR-5.1) from the source chunk: table rows are most authoritative, scanned/OCR
-        least; corroboration starts at a single source; freshness defaults to 1.0 at ingest."""
+    def _claim_credibility(
+        self, row: ChunkRow, *, source: SourceRow | None = None, n_independent_sources: int = 1
+    ) -> float:
+        """cred0 (FR-5.1) from the chunk's layout AND the document's real provenance.
+
+        R20: this used to read ``row.kind`` only — a table row was authoritative, a scanned page was
+        not — so an unvetted upload and a manually curated source produced the same number and the
+        ``Source`` the document actually came from never participated.
+
+        R21: ``n_independent_sources`` used to be hardcoded to 1, so agreement between independent
+        documents never raised credibility. The caller counts it; this function only uses it.
+        """
         if row.kind == ChunkKind.TABLE_ROW.value:
             source_kind = "table"
         elif row.extraction_confidence is not None and row.extraction_confidence < 1.0:
             source_kind = "low_quality_ocr"
         else:
             source_kind = "official_prose"
-        authority = authority_for(
+        layout_authority = authority_for(
             source_kind,
             table=self._knowledge.authority_by_source,
             default=self._knowledge.default_authority,
         )
         return initial_credibility(
-            authority=authority,
+            authority=corroborated_authority(
+                layout_authority,
+                source.policy if source is not None else None,
+                default=self._knowledge.default_authority,
+            ),
             extraction_confidence=row.extraction_confidence,
-            n_independent_sources=1,
+            n_independent_sources=n_independent_sources,
             freshness=1.0,
         )
 
@@ -423,11 +466,32 @@ class IngestionPipeline:
         vectors = await self._for(scope).embed([c.text for c in chunks])
         return {chunk.id: vector for chunk, vector in zip(chunks, vectors, strict=True)}
 
+    async def _embed_claims(
+        self, scope: ProjectScope, claims: Sequence[ClaimSpec]
+    ) -> list[ClaimSpec]:
+        """Attach a vector to every claim, in one batched call (R18).
+
+        Chunk embeddings are not usable here: a chunk holding both the current and the retired
+        sentence has one vector for both, which is the same conflation R22 is about. Contradiction
+        detection compares assertions, so it needs a vector per assertion. Costs one embedding per
+        claim; the gateway's cache absorbs re-ingests of unchanged text.
+        """
+        if not claims:
+            return list(claims)
+        vectors = await self._for(scope).embed([c.text for c in claims])
+        return [
+            replace(claim, embedding=tuple(vector))
+            for claim, vector in zip(claims, vectors, strict=True)
+        ]
+
     def _table_claims(
         self,
         parsed: ParsedDocument,
         chunk_rows: Sequence[ChunkRow],
         reuse_texts: set[str] | None = None,
+        *,
+        source: SourceRow | None = None,
+        n_independent_sources: int = 1,
     ) -> list[ClaimSpec]:
         """Recover the deterministic table-row claims and bind them to their persisted chunk by
         text (table_row text is unique per row, so the mapping is unambiguous). Rows whose text is
@@ -446,7 +510,9 @@ class IngestionPipeline:
             row = by_text.get(spec.text)
             if row is None:
                 continue
-            credibility = self._claim_credibility(row)
+            credibility = self._claim_credibility(
+                row, source=source, n_independent_sources=n_independent_sources
+            )
             for triple in spec.claims:
                 claims.append(
                     ClaimSpec(
@@ -473,6 +539,9 @@ class IngestionPipeline:
         edges: list[GraphEdge],
         errors: list[IngestErrorSpec],
         relation_decider: Callable[[str, str, str], str] | None = None,
+        *,
+        source: SourceRow | None = None,
+        n_independent_sources: int = 1,
     ) -> None:
         type_by_name: dict[str, str] = {}
         for entity in graph.entities:
@@ -520,11 +589,13 @@ class IngestionPipeline:
                 GraphEdge(
                     source_id=str(entity_id(type_by_name[relation.subject], relation.subject)),
                     target_id=str(entity_id(type_by_name[relation.object], relation.object)),
-                    type=_safe_edge_type(relation.predicate),
+                    type=edge_type(relation.predicate),
                     properties=properties,
                 )
             )
-        credibility = self._claim_credibility(row)
+        credibility = self._claim_credibility(
+            row, source=source, n_independent_sources=n_independent_sources
+        )
         for triple in graph.claims:
             claims.append(
                 ClaimSpec(

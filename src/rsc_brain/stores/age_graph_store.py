@@ -40,6 +40,22 @@ def graph_name(project_id: str) -> str:
     return "p_" + uuid.UUID(project_id).hex
 
 
+def edge_type(predicate: str) -> str:
+    """Sanitize a predicate into a safe Cypher edge type (never interpolates raw text).
+
+    Shared on purpose: the ingest pipeline writes relations with this transform and the retirement
+    path (R27) has to match the same edge by name. Two copies of it would drift into a retirement
+    that silently matches nothing.
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", predicate.strip()) or "related_to"
+    if not re.match(r"^[A-Za-z_]", cleaned):
+        cleaned = f"r_{cleaned}"
+    try:
+        return safe_identifier(cleaned)
+    except ValueError:  # pragma: no cover - defensive
+        return "related_to"
+
+
 def safe_identifier(value: str) -> str:
     """Return ``value`` if it is a safe Cypher identifier, else raise (no interpolation risk)."""
     if not _IDENTIFIER.match(value):
@@ -158,40 +174,77 @@ class AgeGraphStore:
                 )
             await session.commit()
 
+    async def set_relations_retired(
+        self, scope: ProjectScope, relations: Sequence[GraphEdge], *, retired: bool
+    ) -> None:
+        """Mark (or unmark) relations as superseded, so graph reads stop serving retired facts (R27).
+
+        A superseded claim used to keep a live AGE relation: the graph answered with a fact the
+        relational store had retired, and nothing on either side said which was right. The relation
+        is flagged, never deleted — FR-5.5's never-delete rule applies to the graph too, and reverting
+        a correction has to be able to bring the fact back.
+        """
+        if not relations:
+            return
+        graph = graph_name(scope.project_id)
+        if not await self._graph_exists_by_name(graph):
+            return
+        async with self._sm() as session:
+            await self._prepare(session)
+            for rel in relations:
+                etype = safe_identifier(rel.type)
+                action = "SET r.superseded = true" if retired else "REMOVE r.superseded"
+                await self._cypher(
+                    session,
+                    graph,
+                    f"MATCH (a {{id: $src}})-[r:{etype}]->(b {{id: $dst}}) {action}",
+                    {"src": rel.source_id, "dst": rel.target_id},
+                    "v agtype",
+                )
+            await session.commit()
+
     async def k_hop(
         self, scope: ProjectScope, start_ids: Sequence[str], *, k: int
     ) -> list[GraphNode]:
+        """Nodes reachable within ``k`` directed hops, never through a retired relation (R27).
+
+        Expanded one hop at a time rather than with a variable-length pattern: the filter has to be
+        "this relation is not superseded", and AGE has neither path variables nor ``ALL``/``NONE`` over
+        an edge list, while an inline ``{superseded: false}`` property map would also drop every live
+        relation (they carry no such property — absent is what live MEANS here). ``k`` is small and
+        configured, so the extra round trips are bounded, and each hop carries the same scan cap.
+        """
         graph = graph_name(scope.project_id)
-        depth = int(k)  # validated int; AGE needs the range as a literal
-        if depth < 1:
+        depth = int(k)
+        if depth < 1 or not start_ids:
             return []
         cypher = (
-            f"MATCH (a)-[*1..{depth}]->(b) WHERE a.id IN $ids AND b.suppressed IS NULL "
-            "RETURN DISTINCT b.id AS id, labels(b) AS labels, properties(b) AS props"
+            "MATCH (a)-[r]->(b) WHERE a.id IN $ids AND b.suppressed IS NULL "
+            "AND r.superseded IS NULL "
+            "RETURN DISTINCT b.id AS id, labels(b) AS labels, properties(b) AS props "
+            f"LIMIT {_NEIGHBORHOOD_SCAN_CAP}"
         )
+        seen: dict[str, GraphNode] = {}
+        frontier = list(dict.fromkeys(start_ids))
         async with self._sm() as session:
             await self._prepare(session)
-            rows = await self._cypher(
-                session,
-                graph,
-                cypher,
-                {"ids": list(start_ids)},
-                "id agtype, labels agtype, props agtype",
-            )
-        nodes: list[GraphNode] = []
-        for node_id, labels, props in rows:
-            parsed_labels = _parse_agtype(labels)
-            parsed_props = _parse_agtype(props)
-            nodes.append(
-                GraphNode(
-                    id=str(_parse_agtype(node_id)),
-                    labels=frozenset(parsed_labels)
-                    if isinstance(parsed_labels, list)
-                    else frozenset(),
-                    properties=parsed_props if isinstance(parsed_props, dict) else {},
+            for _ in range(depth):
+                if not frontier:
+                    break
+                rows = await self._cypher(
+                    session,
+                    graph,
+                    cypher,
+                    {"ids": frontier},
+                    "id agtype, labels agtype, props agtype",
                 )
-            )
-        return nodes
+                frontier = []
+                for row in rows:
+                    node = self._node_from_row(row)
+                    if node.id not in seen:
+                        seen[node.id] = node
+                        frontier.append(node.id)
+        return list(seen.values())
 
     async def neighborhood_candidates(self, scope: ProjectScope, start_id: str) -> list[GraphNode]:
         """Every distinct 1-hop neighbour of ``start_id``, unpaginated and deterministically ordered.
@@ -215,7 +268,8 @@ class AgeGraphStore:
             node_rows = await self._cypher(
                 session,
                 graph,
-                "MATCH (a)-[]-(b) WHERE a.id = $start AND b.suppressed IS NULL "
+                "MATCH (a)-[r]-(b) WHERE a.id = $start AND b.suppressed IS NULL "
+                "AND r.superseded IS NULL "
                 "RETURN DISTINCT b.id AS id, labels(b) AS labels, properties(b) AS props "
                 f"LIMIT {_NEIGHBORHOOD_SCAN_CAP}",
                 {"start": start_id},
@@ -242,8 +296,10 @@ class AgeGraphStore:
             edge_rows = await self._cypher(
                 session,
                 graph,
-                "MATCH (a)-[r]->(b) WHERE (a.id = $start AND b.id IN $ids) "
-                "OR (b.id = $start AND a.id IN $ids) "
+                # The direction clause is parenthesised as a whole: AND binds tighter than OR, so
+                # `superseded IS NULL AND (fwd) OR (rev)` would leave the reverse direction unfiltered.
+                "MATCH (a)-[r]->(b) WHERE r.superseded IS NULL "
+                "AND ((a.id = $start AND b.id IN $ids) OR (b.id = $start AND a.id IN $ids)) "
                 "RETURN a.id AS s, type(r) AS t, b.id AS o",
                 {"start": start_id, "ids": ids},
                 "s agtype, t agtype, o agtype",
@@ -336,14 +392,16 @@ class AgeGraphStore:
             out_rows = await self._cypher(
                 session,
                 graph,
-                "MATCH ({id: $dup})-[r]->(b) RETURN type(r) AS t, b.id AS other",
+                "MATCH ({id: $dup})-[r]->(b) WHERE r.superseded IS NULL "
+                "RETURN type(r) AS t, b.id AS other",
                 {"dup": duplicate_id},
                 "t agtype, other agtype",
             )
             in_rows = await self._cypher(
                 session,
                 graph,
-                "MATCH (a)-[r]->({id: $dup}) RETURN type(r) AS t, a.id AS other",
+                "MATCH (a)-[r]->({id: $dup}) WHERE r.superseded IS NULL "
+                "RETURN type(r) AS t, a.id AS other",
                 {"dup": duplicate_id},
                 "t agtype, other agtype",
             )

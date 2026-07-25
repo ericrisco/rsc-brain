@@ -29,6 +29,38 @@ def corroboration(n_independent_sources: int) -> float:
     return min(1.0, max(0, n_independent_sources) / 3.0)
 
 
+#: How much authority a source's POLICY confers, relative to the layout-derived kinds. A manually
+#: curated source is a human saying "this is what we mean"; an LLM-tagged folder is a guess that
+#: nobody has checked. R20: authority used to be inferred from chunk shape alone — a table row was
+#: authoritative and a scanned page was not — so an unvetted upload and a curated source produced the
+#: same number, and the document's real provenance never participated.
+POLICY_AUTHORITY: Mapping[str, float] = {
+    "manual": 0.95,  # a curator chose the tags by hand
+    "source_tags": 0.85,  # the source declares its own tags and a human configured it
+    "llm_review": 0.75,  # the model proposes, a human confirms when sensitive
+    "llm": 0.6,  # the model decides unattended
+}
+
+
+def policy_authority(policy: str | None, *, default: float = 0.6) -> float:
+    """Authority conferred by a source's ingestion policy (R20)."""
+    if not policy:
+        return default
+    return POLICY_AUTHORITY.get(policy, default)
+
+
+def corroborated_authority(
+    layout_authority: float, policy: str | None, *, default: float = 0.6
+) -> float:
+    """Combine what the layout suggests with what the PROVENANCE says.
+
+    The maximum rather than an average: a curated source does not become less authoritative because
+    its text happens to be prose, and a table inside an unvetted upload is not evidence that anyone
+    checked it. Taking the stronger signal keeps both directions honest.
+    """
+    return max(layout_authority, policy_authority(policy, default=default))
+
+
 def authority_for(
     source_kind: str | None,
     *,
