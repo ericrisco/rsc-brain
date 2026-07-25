@@ -149,7 +149,8 @@ class PgRetriever:
             await register_gap(self._sm, scope, query, topics=topics_hint or ())
             return RecallResult(found=False, gap_registered=True)
 
-        vector = (await self._gateway.embed([query]))[0]
+        # Accounting follows the caller's project (R12), never the process.
+        vector = (await self._gateway.for_project(scope.project_id).embed([query]))[0]
         forbidden = await sensitive_tags(self._sm, scope.project_id)
         hard_windows = await self._hard_window_map(scope)
 

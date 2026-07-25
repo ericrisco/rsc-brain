@@ -12,7 +12,7 @@ from collections.abc import Callable
 
 import pytest
 
-from rsc_brain.audit import query_audit
+from rsc_brain.audit import query_audit_raw
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.mcp.auth import AuthInvalidError, authenticate
 from rsc_brain.mcp.tools import (
@@ -98,7 +98,7 @@ async def test_recall_tool_provenance_untrusted_and_schema(
     assert {"text", "claim_ids", "document", "page", "credibility", "tags"} <= fragment_props
 
     # The tool audited the call (query text is never stored — only a hash).
-    rows = await query_audit(harness.sm, project, action="recall")
+    rows = await query_audit_raw(harness.sm, project, action="recall")
     assert rows and rows[0]["tool"] == "recall" and rows[0]["query_hash"]
 
 
@@ -153,7 +153,7 @@ async def test_report_feedback_stub_audits(
         harness.sm, scope, claim_ids=["11111111-1111-1111-1111-111111111111"], signal="helpful"
     )
     assert result.ok is True
-    rows = await query_audit(harness.sm, project, action="report_feedback:helpful")
+    rows = await query_audit_raw(harness.sm, project, action="report_feedback:helpful")
     assert rows and rows[0]["tool"] == "report_feedback"
 
 

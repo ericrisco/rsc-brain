@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import security
-from rsc_brain.scope import PrincipalType, ProjectScope
+from rsc_brain.scope import PROJECT_ROLE_AGENT, PrincipalType, ProjectScope
 from rsc_brain.stores.relational import models
 
 
@@ -64,6 +64,9 @@ async def _resolve_pat(
             project_id=str(agent.project_id),
             allowed_topics=frozenset(agent.allowed_topics),
             can_curate=False,
+            # An agent holds no membership and no platform role: it can never satisfy a
+            # console/management capability (AUDIT-020).
+            role=PROJECT_ROLE_AGENT,
         )
 
     return None
@@ -132,4 +135,7 @@ async def _membership_scope(session: AsyncSession, membership_id: uuid.UUID) -> 
         project_id=str(membership.project_id),
         allowed_topics=frozenset(membership.allowed_topics),
         can_curate=membership.can_curate,
+        # The two authorities travel separately and are never conflated (AUDIT-020/R03).
+        role=membership.role,
+        platform_role=user.role,
     )

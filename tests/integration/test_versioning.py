@@ -14,6 +14,7 @@ from collections.abc import Callable
 import pytest
 from sqlalchemy import select, update
 
+from rsc_brain.ingest.extractor import CascadeExtractor
 from rsc_brain.ingest.types import DocStatus
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
@@ -83,6 +84,7 @@ async def _ingest_and_approve(harness: Harness, scope: ProjectScope, data: bytes
 async def test_new_version_reuses_unchanged_chunks_without_re_extraction(
     build_harness: Callable[..., Harness],
     make_completion: Callable[..., object],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     harness = build_harness(completion=_completion(make_completion))
     project = await harness.setup_project(unique_slug("ver"), TOPICS)
@@ -105,14 +107,18 @@ async def test_new_version_reuses_unchanged_chunks_without_re_extraction(
     alpha_v1 = next(c for c in before if "alpha policy" in str(c["text"]))
 
     # Spy on the extractor from here on: only v2's changed/new sections should reach it.
+    #
+    # Patched on the CLASS, not on a pipeline attribute: the pipeline builds its extractor per stage
+    # so that each one carries a gateway whose token accounting is bound to the project it is running
+    # for (AUDIT-021 / R12), so there is no long-lived instance to attach a spy to.
     extracted: list[str] = []
-    original = harness.pipeline._extractor.extract
+    original = CascadeExtractor.extract
 
-    async def _spy(text: str) -> object:
+    async def _spy(self: CascadeExtractor, text: str) -> object:
         extracted.append(text)
-        return await original(text)
+        return await original(self, text)
 
-    harness.pipeline._extractor.extract = _spy  # type: ignore[method-assign,assignment]
+    monkeypatch.setattr(CascadeExtractor, "extract", _spy)
 
     v2_doc = await _ingest_and_approve(harness, scope, V2)
     assert v2_doc != v1_doc

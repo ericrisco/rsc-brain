@@ -29,8 +29,12 @@ pytestmark = pytest.mark.integration
 
 
 def _scope(project_id: str) -> ProjectScope:
+    """R06: a caller must hold the topic of the claim it acts on — a claim outside its visibility answers exactly like a nonexistent one."""
     return Principal(
-        id="11111111-1111-1111-1111-111111111111", type=PrincipalType.HUMAN, can_curate=True
+        id="11111111-1111-1111-1111-111111111111",
+        type=PrincipalType.HUMAN,
+        can_curate=True,
+        allowed_topics=frozenset({"hr", "general"}),
     ).scope_for(project_id)
 
 
@@ -146,7 +150,11 @@ async def test_correct_knowledge_opens_a_review_hunt(
     )
     claim_id = await _seed_claim(harness, project_id, "Old fact", ["hr"])
     stranger = Principal(
-        id="99999999-9999-9999-9999-999999999999", type=PrincipalType.HUMAN
+        id="99999999-9999-9999-9999-999999999999",
+        type=PrincipalType.HUMAN,
+        # A stranger to the TOPIC's owner, not to the topic: this test is about ownership routing,
+        # so the caller must be able to see the claim at all (R06).
+        allowed_topics=frozenset({"hr"}),
     ).scope_for(project_id)
 
     outcome = await do_correct_knowledge(

@@ -175,8 +175,13 @@ export interface paths {
         put?: never;
         /**
          * Revert Correction
-         * @description Revert a correction (FR-15.8). Authorised **server-side** for an admin OR the owner of the
-         *     target claim's tags — never trusted from the UI. A 403 for anyone else is audited.
+         * @description Revert a correction (FR-15.8).
+         *
+         *     The one mutation whose matrix row is not a pure role: the project administrator OR the owner of
+         *     the target claim's topics may revert. That is expressed as
+         *     :attr:`Capability.CORRECTION_REVERT` with the ownership fact passed in — the bespoke
+         *     ``is_admin or is_owner`` gate this replaces was the reason T001 could not fold this route into
+         *     the uniform matrix. A refusal is still audited.
          */
         post: operations["revert_correction_api_v1_admin_corrections__correction_id__revert_post"];
         delete?: never;
@@ -234,6 +239,10 @@ export interface paths {
         /**
          * Approve Document
          * @description Approve a pending doc from the console (D13); corrected tags inherit to chunks (FR-1.15).
+         *
+         *     R02: approving publishes every topic the document carries, and a corrected tag moves it into a
+         *     new one, so the decision covers the union of the document's tags and the applied ones — a caller cannot publish into, or out of,
+         *     a topic it does not hold. A document in another project is absent, never denied (FR-4.3).
          */
         post: operations["approve_document_api_v1_admin_documents__document_id__approve_post"];
         delete?: never;
@@ -254,6 +263,9 @@ export interface paths {
         /**
          * Reject Document
          * @description Reject a pending doc from the console (D13): nothing reaches the graph.
+         *
+         *     R02: rejecting is a lifecycle decision like approving — it terminates a document other people's
+         *     topics may depend on — so it needs the same document-lifecycle capability and topic scope.
          */
         post: operations["reject_document_api_v1_admin_documents__document_id__reject_post"];
         delete?: never;
@@ -295,6 +307,9 @@ export interface paths {
         /**
          * Promote Gap
          * @description Promote an agent gap to a hunt (FR-14.6 — agent gaps never trigger automatically).
+         *
+         *     Promoting sends the gap's question to a human owner, so it needs the gap-promotion capability
+         *     over the gap's own topics; a gap in another project is absent (FR-4.3).
          */
         post: operations["promote_gap_api_v1_admin_gaps__gap_id__promote_post"];
         delete?: never;
@@ -353,6 +368,8 @@ export interface paths {
         /**
          * Ask Hunt
          * @description Open a MANUAL hunt (FR-6.2c) routed by topic overlap (NO_OWNER if unowned).
+         *
+         *     The question is routed to whoever owns the topics it names, so the caller must hold them.
          */
         post: operations["ask_hunt_api_v1_admin_hunts_ask_post"];
         delete?: never;
@@ -567,7 +584,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Projects */
+        /**
+         * List Projects
+         * @description The projects this caller may know about.
+         *
+         *     R01 (strengthened during T001): this route returned every slug in the instance, so any caller
+         *     that passed the old admin gate enumerated other tenants by name. Enumerating the whole instance
+         *     is a platform operation; a project caller sees only the projects it is a member of.
+         */
         get: operations["list_projects_api_v1_admin_projects_get"];
         put?: never;
         /** Create Project */
@@ -610,6 +634,10 @@ export interface paths {
         /**
          * Resolve Chunk Item
          * @description Approve (embed + curator tags + recallable) or reject a needs_review chunk (FR-1.5/4.4/14.4).
+         *
+         *     Curation is the one capability ``can_curate`` grants, and only inside its own topics: the
+         *     decision covers the chunk's current topics AND any curator-corrected tags, so a review decision
+         *     can never move content into a topic the curator does not hold.
          */
         post: operations["resolve_chunk_item_api_v1_admin_review_queue_chunks__chunk_id__resolve_post"];
         delete?: never;
@@ -766,8 +794,10 @@ export interface paths {
         };
         /**
          * Usage Endpoint
-         * @description Per-capability/day token + call usage (SPEC-26 FR-13.7). Same source as `brain usage`, so
-         *     the console figures always match the CLI. Counters are instance-global (SPEC-22 schema).
+         * @description This project's per-capability/day token + call usage (SPEC-26 FR-13.7, AUDIT-021 R12).
+         *
+         *     Same source as ``brain usage``, so the console figures always match the CLI. The counters used to
+         *     be instance-global: every project read the same pooled total, which reconciled with nobody.
          */
         get: operations["usage_endpoint_api_v1_admin_usage_get"];
         put?: never;
@@ -838,7 +868,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Approve Document */
+        /**
+         * Approve Document
+         * @description Approve a pending document (D13).
+         *
+         *     R02: this route had **no capability check whatsoever** — a valid project token of any role
+         *     published documents and retagged them. It now takes the same document-lifecycle decision as
+         *     its console sibling, from the same shared policy, so the two entry points cannot diverge
+         *     again.
+         */
         post: operations["approve_document_api_v1_documents__document_id__approve_post"];
         delete?: never;
         options?: never;
@@ -855,7 +893,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Reject Document */
+        /**
+         * Reject Document
+         * @description Reject a pending document (D13) — same authority as approving it (R02).
+         */
         post: operations["reject_document_api_v1_documents__document_id__reject_post"];
         delete?: never;
         options?: never;
@@ -1371,7 +1412,9 @@ export interface operations {
     };
     admin_revoke_connection_api_v1_admin_connections__connection_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path: {
                 connection_id: string;
@@ -1541,7 +1584,9 @@ export interface operations {
     };
     list_pending_documents_api_v1_admin_documents_pending_get: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1557,6 +1602,15 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -1813,7 +1867,9 @@ export interface operations {
     };
     ask_hunt_api_v1_admin_hunts_ask_post: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2156,7 +2212,9 @@ export interface operations {
     };
     list_persons_api_v1_admin_persons_get: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2174,11 +2232,22 @@ export interface operations {
                     };
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     create_person_api_v1_admin_persons_post: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2213,7 +2282,9 @@ export interface operations {
     };
     delete_person_api_v1_admin_persons__person_id__delete: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path: {
                 person_id: string;
@@ -2246,7 +2317,9 @@ export interface operations {
     };
     update_person_api_v1_admin_persons__person_id__patch: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path: {
                 person_id: string;
@@ -2283,7 +2356,9 @@ export interface operations {
     };
     list_projects_api_v1_admin_projects_get: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2301,11 +2376,22 @@ export interface operations {
                     };
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     create_project_api_v1_admin_projects_post: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2376,6 +2462,7 @@ export interface operations {
         parameters: {
             query: {
                 approve: boolean;
+                project?: string | null;
             };
             header?: never;
             path: {
@@ -2415,6 +2502,7 @@ export interface operations {
         parameters: {
             query: {
                 approve: boolean;
+                project?: string | null;
             };
             header?: never;
             path: {
@@ -2552,7 +2640,9 @@ export interface operations {
     };
     create_skill_admin_api_v1_admin_skills_post: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2587,7 +2677,9 @@ export interface operations {
     };
     archive_skill_admin_api_v1_admin_skills__slug__archive_post: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path: {
                 slug: string;
@@ -2620,7 +2712,9 @@ export interface operations {
     };
     list_sources_api_v1_admin_sources_get: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2638,11 +2732,22 @@ export interface operations {
                     };
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     create_source_api_v1_admin_sources_post: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2713,7 +2818,9 @@ export interface operations {
     };
     list_topics_api_v1_admin_topics_get: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2731,11 +2838,22 @@ export interface operations {
                     };
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     create_topic_api_v1_admin_topics_post: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2804,7 +2922,9 @@ export interface operations {
     };
     invite_user_api_v1_admin_users_invite_post: {
         parameters: {
-            query?: never;
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;

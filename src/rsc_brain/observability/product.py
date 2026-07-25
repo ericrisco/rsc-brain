@@ -22,7 +22,7 @@ async def product_metrics(
     sessionmaker: async_sessionmaker[AsyncSession], scope: ProjectScope, *, window_days: int = 30
 ) -> dict[str, object]:
     pid = uuid.UUID(scope.project_id)
-    activity = await audit_mod.activity_summary(sessionmaker, scope.project_id)
+    activity = await audit_mod.activity_summary(sessionmaker, scope)
     since = dt.datetime.now(dt.UTC) - dt.timedelta(days=window_days)
     async with sessionmaker() as session:
         claims = await _count(session, models.Claim, models.Claim.project_id == pid)
@@ -46,7 +46,11 @@ async def product_metrics(
             str(capability): int(total) if isinstance(total, int) else 0
             for capability, total in await session.execute(
                 select(models.TokenUsage.capability, func.sum(models.TokenUsage.tokens))
-                .where(models.TokenUsage.day >= since.date())
+                .where(
+                    models.TokenUsage.day >= since.date(),
+                    # R12: this project's consumption, not the instance's.
+                    models.TokenUsage.project_id == pid,
+                )
                 .group_by(models.TokenUsage.capability)
             )
         }

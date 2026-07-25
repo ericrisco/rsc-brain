@@ -10,16 +10,19 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import logging
 import uuid
 from typing import Protocol
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.config.models import CapabilitiesConfig, Capability
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
+
+_log = logging.getLogger(__name__)
 
 
 class BudgetExceededError(RuntimeError):
@@ -47,15 +50,44 @@ def text_hash(text: str) -> str:
 
 
 class PgUsageRecorder:
-    """Per-capability/day token counters + budget enforcement, backed by ``token_usage``."""
+    """Per-project/capability/day token counters + budget enforcement (``token_usage``).
+
+    R12: a recorder is bound to ONE project, because that is the unit an attempt is attributable to
+    and a budget is evaluated against. An unbound recorder is what the process holds before it knows
+    whose work it is doing; bind it with :meth:`for_project` at the boundary where the scope is
+    known (see :meth:`rsc_brain.gateway.model_gateway.ModelGateway.for_project`). An unbound
+    recorder still records — dropping accounting would be a worse failure than an unattributed row —
+    but it logs the omission and its row belongs to no project's report.
+    """
 
     def __init__(
-        self, sessionmaker: async_sessionmaker[AsyncSession], capabilities: CapabilitiesConfig
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        capabilities: CapabilitiesConfig,
+        *,
+        project_id: str | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._caps = capabilities
+        self._project_id = project_id
+
+    def for_project(self, project_id: str) -> PgUsageRecorder:
+        """This recorder, bound to ``project_id`` — every count and budget decision is that
+        project's own."""
+        return PgUsageRecorder(self._sm, self._caps, project_id=project_id)
+
+    @property
+    def project_id(self) -> str | None:
+        return self._project_id
+
+    def _pid(self) -> uuid.UUID | None:
+        return uuid.UUID(self._project_id) if self._project_id else None
 
     async def enforce_budget(self, capability: str) -> None:
+        """Refuse the attempt when THIS project has spent its daily budget for ``capability``.
+
+        Another project's traffic cannot exhaust it: the counter it reads is the bound project's.
+        """
         budget = self._caps.get(Capability(capability)).daily_token_budget
         if budget is None:
             return
@@ -63,17 +95,23 @@ class PgUsageRecorder:
             raise BudgetExceededError(capability)
 
     async def record(self, capability: str, tokens: int) -> None:
+        if self._project_id is None:
+            _log.warning(
+                "usage_unattributed",
+                extra={"capability": capability, "tokens": tokens},
+            )
         statement = (
             pg_insert(models.TokenUsage)
             .values(
                 id=uuid.uuid4(),
+                project_id=self._pid(),
                 capability=capability,
                 day=dt.datetime.now(dt.UTC).date(),
                 tokens=tokens,
                 calls=1,
             )
             .on_conflict_do_update(
-                index_elements=["capability", "day"],
+                index_elements=["project_id", "capability", "day"],
                 set_={
                     "tokens": models.TokenUsage.tokens + tokens,
                     "calls": models.TokenUsage.calls + 1,
@@ -86,29 +124,50 @@ class PgUsageRecorder:
     async def _today_tokens(self, capability: str) -> int:
         async with self._sm() as session:
             total = await session.scalar(
-                select(models.TokenUsage.tokens).where(
+                select(func.coalesce(func.sum(models.TokenUsage.tokens), 0)).where(
                     models.TokenUsage.capability == capability,
                     models.TokenUsage.day == dt.datetime.now(dt.UTC).date(),
+                    _project_condition(self._pid()),
                 )
             )
             return int(total or 0)
 
     async def usage(self, *, days: int = 7) -> list[dict[str, object]]:
-        """Recent per-capability/day usage (for ``brain usage``)."""
-        return await usage_by_day(self._sm, days=days)
+        """This project's recent per-capability/day usage (for ``brain usage``)."""
+        return await usage_by_day(self._sm, days=days, project_id=self._project_id)
+
+
+def _project_condition(pid: uuid.UUID | None) -> ColumnElement[bool]:
+    """Match exactly the bound project's rows — or exactly the unattributed ones when unbound.
+
+    Written as an explicit predicate because ``= NULL`` never matches: without it an unbound
+    recorder would read the whole instance's counter, which is the pooling R12 removes.
+    """
+    if pid is None:
+        return models.TokenUsage.project_id.is_(None)
+    return models.TokenUsage.project_id == pid
 
 
 async def usage_by_day(
-    sessionmaker: async_sessionmaker[AsyncSession], *, days: int = 7
+    sessionmaker: async_sessionmaker[AsyncSession],
+    *,
+    days: int = 7,
+    project_id: str | None = None,
 ) -> list[dict[str, object]]:
-    """Recent per-capability/day token + call usage. The single source of truth shared by
-    ``brain usage`` (CLI) and the console usage view (SPEC-26 FR-13.7), so the two always agree.
-    The counters are instance-global per capability/day (SPEC-22 schema — no per-project column)."""
+    """Recent per-capability/day token + call usage for ONE project (R12).
+
+    The single source of truth shared by ``brain usage`` (CLI) and the console usage view
+    (SPEC-26 FR-13.7), so the two always agree. ``project_id=None`` reads the unattributed rows
+    only — never the instance-wide pool, which is what made every tenant read the same total.
+    """
     since = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=days)
     async with sessionmaker() as session:
         rows = await session.scalars(
             select(models.TokenUsage)
-            .where(models.TokenUsage.day >= since)
+            .where(
+                models.TokenUsage.day >= since,
+                _project_condition(uuid.UUID(project_id) if project_id else None),
+            )
             .order_by(models.TokenUsage.day.desc(), models.TokenUsage.capability)
         )
         return [
@@ -119,6 +178,40 @@ async def usage_by_day(
                 "calls": r.calls,
             }
             for r in rows
+        ]
+
+
+async def usage_all_projects(
+    sessionmaker: async_sessionmaker[AsyncSession], *, days: int = 7
+) -> list[dict[str, object]]:
+    """Instance-wide usage per capability/day — the OPERATOR view (R10/R12).
+
+    Deliberately a separate function from :func:`usage_by_day`: the pooled total is a legitimate
+    cost/capacity signal for whoever runs the instance, and an illegitimate answer to "what did my
+    project spend?". Keeping them apart is what stops one from being served as the other, which is
+    exactly how R12 happened.
+    """
+    since = dt.datetime.now(dt.UTC).date() - dt.timedelta(days=days)
+    async with sessionmaker() as session:
+        rows = await session.execute(
+            select(
+                models.TokenUsage.capability,
+                models.TokenUsage.day,
+                func.sum(models.TokenUsage.tokens),
+                func.sum(models.TokenUsage.calls),
+            )
+            .where(models.TokenUsage.day >= since)
+            .group_by(models.TokenUsage.capability, models.TokenUsage.day)
+            .order_by(models.TokenUsage.day.desc(), models.TokenUsage.capability)
+        )
+        return [
+            {
+                "capability": capability,
+                "day": day.isoformat(),
+                "tokens": int(tokens or 0),
+                "calls": int(calls or 0),
+            }
+            for capability, day, tokens, calls in rows.all()
         ]
 
 

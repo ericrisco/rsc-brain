@@ -35,7 +35,11 @@ async def _mint_pat(harness: Harness, project_id: str) -> str:
     )
     identity = IdentityService(harness.sm)
     membership = await identity.add_membership(
-        user.user_id, project_id, allowed_topics=("general",), can_curate=True
+        # The management surface belongs to the project role, not to `can_curate` (AUDIT-020/R03).
+        user.user_id,
+        project_id,
+        role="project-admin",
+        allowed_topics=("general", "secret"),
     )
     return (await identity.issue_pat(membership)).token
 
@@ -55,9 +59,10 @@ async def test_usage_endpoint_matches_brain_usage(
 ) -> None:
     harness = build_harness()
     project = await harness.setup_project(unique_slug("acme"), TOPICS)
-    recorder = PgUsageRecorder(harness.sm, harness.gateway._caps)
-    # `token_usage` is instance-global (capability/day, no project); record to capabilities no other
-    # test makes exact assertions on, so this never contaminates the SPEC-22 usage/budget tests.
+    # Counters are per project (AUDIT-021 / R12), so the parity this test proves is per project:
+    # the console figure equals `brain usage --project <slug>` exactly. Recording to capabilities no
+    # other test asserts on keeps it from contaminating the SPEC-22 usage/budget tests.
+    recorder = PgUsageRecorder(harness.sm, harness.gateway._caps, project_id=project)
     await recorder.record("judge", 1200)
     await recorder.record("reranker", 340)
 
@@ -68,7 +73,7 @@ async def test_usage_endpoint_matches_brain_usage(
         )
     assert response.status_code == 200
     api_rows = response.json()["usage"]
-    cli_rows = await usage_by_day(harness.sm, days=7)
+    cli_rows = await usage_by_day(harness.sm, days=7, project_id=project)
     assert api_rows == cli_rows  # DONE: the console figure equals `brain usage` exactly
     totals = {r["capability"]: r["tokens"] for r in api_rows}
     assert totals["judge"] == 1200 and totals["reranker"] == 340

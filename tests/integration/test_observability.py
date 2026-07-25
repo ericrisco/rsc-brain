@@ -14,7 +14,11 @@ import pytest
 
 from rsc_brain.api.app import ApiDeps, create_app
 from rsc_brain.identity.service import IdentityService
-from rsc_brain.observability.metrics import NFR6_SERIES
+from rsc_brain.observability.metrics import (
+    PROJECT_DASHBOARD_SERIES,
+    RUNTIME_SERIES,
+    render_metrics,
+)
 from rsc_brain.stores.relational.store import PgRelationalStore
 
 from .conftest import Harness, unique_slug
@@ -37,24 +41,45 @@ async def _mint_pat(harness: Harness, project: str) -> str:
     )
     identity = IdentityService(harness.sm)
     membership = await identity.add_membership(
-        user.user_id, project, allowed_topics=("general",), can_curate=True
+        # A platform "admin" role is not project content authority (AUDIT-020/R03): the dashboard
+        # read needs an explicit membership, and this fixture relied on the old blanket gate.
+        user.user_id,
+        project,
+        role="project-admin",
+        allowed_topics=("general",),
     )
     return (await identity.issue_pat(membership)).token
 
 
-async def test_metrics_exposes_the_nfr6_catalogue(
+async def test_metrics_publishes_runtime_series_and_nothing_tenant_derived(
     build_harness: Callable[..., Harness], tmp_path: Path
 ) -> None:
-    # Every NFR-6 series is registered, so its name appears (HELP/TYPE) even before any data —
-    # no seeding needed, which also avoids contaminating the global token_usage counters.
+    """R10 — the scrape is an operator surface carrying runtime dimensions only.
+
+    This test used to assert that an ANONYMOUS caller got 200 and the whole NFR-6 catalogue,
+    including four instance-wide totals derived from tenant content. AUDIT-030's ratified
+    clarification (2026-07-24) says the opposite on both counts, so the assertion was canonizing the
+    disclosure. The NFR-6 signals themselves did not disappear: each moved to the authorized project
+    dashboard, and ``PROJECT_DASHBOARD_SERIES`` records where — asserted here so the move cannot be
+    silently undone.
+    """
     harness = build_harness()
     await harness.setup_project(unique_slug("acme"), [("general", 0)])
     async with _client(harness, tmp_path) as client:
         response = await client.get("/metrics")
-    assert response.status_code == 200
-    body = response.text
-    for series in NFR6_SERIES:
-        assert series in body, f"missing NFR-6 series {series}"
+    assert response.status_code in (401, 403), (
+        f"the operational scrape served an unauthorized caller: {response.status_code}"
+    )
+
+    body, _ = await render_metrics(harness.sm)
+    text = body.decode("utf-8")
+    for series in RUNTIME_SERIES:
+        assert series in text, f"missing runtime series {series}"
+    for series in PROJECT_DASHBOARD_SERIES:
+        assert series not in text, (
+            f"{series} is a tenant-derived signal and must live only in the project dashboard "
+            f"({PROJECT_DASHBOARD_SERIES[series]})"
+        )
 
 
 async def test_product_metrics_has_the_four_families(
@@ -76,5 +101,7 @@ async def test_product_metrics_has_the_four_families(
 async def test_trace_id_is_echoed(build_harness: Callable[..., Harness], tmp_path: Path) -> None:
     harness = build_harness()
     async with _client(harness, tmp_path) as client:
+        # Any request works as the correlation probe; the scrape now refuses an unauthorized caller
+        # (R10) and the trace header must still round-trip on the refusal.
         response = await client.get("/metrics", headers={"X-Trace-Id": "trace-abc-123"})
     assert response.headers.get("x-trace-id") == "trace-abc-123"  # correlated end-to-end (FR-14.3)

@@ -9,6 +9,60 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-25
+
+Everything merged into `main` up to this point ships here — the 0.1.0 line was never released — with
+the P0-A batch of the audit-remediation program as the change that justifies the minor bump: it
+tightens authorization and migrates the schema, so it is a behavioural break for any caller that
+relied on the old gates.
+
+### Changed — P0-A: shared authority and read isolation (audit-remediation-master, T002)
+
+- **One decision point for authority.** `rsc_brain.authorization.decide` answers a *named operation*
+  against the ratified AUDIT-020 matrix, and `ProjectScope` carries the two authorities that were
+  conflated: the project membership role and the platform role. **Breaking:** a platform
+  owner/admin no longer reaches project content without an explicit membership, and `can_curate`
+  authorizes only knowledge-review decisions — not project, ontology, logging, gap, export,
+  document-lifecycle or platform operations (R03/R04).
+- **Topic visibility is in the query.** Console reads, counters, aggregates and the CSV export are
+  filtered before a row, a total or a page exists: the activity aggregate, the review-queue counters
+  and the audit export previously shared the unfiltered query with the list beside them (R01).
+  `/api/v1/admin/projects` no longer enumerates other tenants' slugs.
+- **Document decisions require the lifecycle capability.** `POST /api/v1/documents/{id}/approve` and
+  `/reject` had no capability check at all; both entry points now take the same decision over the
+  document's topics plus any tag being applied (R02).
+- **Knowledge writes are intersected with topic authority** before persistence; a tag outside it is
+  refused rather than dropped (R05). A claim outside the caller's topic visibility is neither
+  readable nor mutable and answers exactly like a nonexistent one (R06). Correction attribution
+  derives from the scope's validated delegation, never from a client-supplied `on_behalf_of` (R15).
+- **`/metrics` is an operator surface.** It had no authorization dependency; it now requires the
+  operator capability, which no project role satisfies. The four tenant-derived totals it published
+  moved to the authorized project dashboard (R10).
+- **Model usage is per project.** `token_usage` counted per (capability, day) for the whole instance,
+  so each tenant read the pooled total as its own and one project's traffic exhausted another's
+  budget. `brain usage` gains `--project`; without it, it is explicitly the operator view (R12).
+- **Entity-graph views are permission-first.** Authority is applied to the whole candidate
+  neighbourhood before counting and paging, and claims now carry the deterministic entity identity
+  the graph node does, so a visible claim about one identity never authorizes a same-named other
+  (R16).
+
+### Added
+
+- `brain preflight` — a read-only report of data that would block a schema upgrade (cross-project
+  references), so an operator decides ownership instead of a migration guessing (R17).
+
+### Fixed
+
+- All 15 tenant-owned foreign keys are project-qualified `(project_id, child) -> parent (project_id,
+  id)`, enforced by the database, so a write that bypasses the service layer can no longer attach one
+  project's child to another project's parent (R17).
+
+### Migrations
+
+`d5b1f7c3a920` (project-bound usage), `e6c2a9f4b715` (project-qualified references — blocks with a
+per-relation report if pre-existing cross-project rows exist; run `brain preflight` first),
+`f7d3b1e8c204` (deterministic entity identity on claims).
+
 ### Added — Sprint 0 / SPEC-02 (foundational content)
 
 - **Prompts v1** (`src/rsc_brain/prompts/`): extractor cascade (entities → relations → claims),

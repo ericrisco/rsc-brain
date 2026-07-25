@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
+from rsc_brain.visibility import forbidden_topics, topic_clause
 
 GAP_STATUS_OPEN = "open"
 
@@ -108,10 +109,17 @@ async def list_gaps(
     audience); ``"agent"`` keeps gaps with agent denied recalls but **no** human one — the separate
     agent view that never triggers hunting. ``None`` returns every gap.
     """
+    forbidden = await forbidden_topics(sessionmaker, scope)
     async with sessionmaker() as session:
         query = (
             select(models.Gap)
-            .where(models.Gap.project_id == uuid.UUID(scope.project_id))
+            .where(
+                models.Gap.project_id == uuid.UUID(scope.project_id),
+                # R01: a gap names the topics its unanswered question was about, so it is
+                # topic-scoped content. A gap recorded with no topics at all is a project-level
+                # record and stays visible to a caller authorized for the project.
+                topic_clause(models.Gap.topics, scope, forbidden, allow_untagged=True),
+            )
             .order_by(models.Gap.count.desc(), models.Gap.last_seen_at.desc())
             .limit(limit)
         )

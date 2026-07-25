@@ -92,6 +92,19 @@ class AgentWriteService:
         tags: list[str] | None = None,
     ) -> SubmitResult:
         principal = scope.principal_id
+        # 0. Topic authority, BEFORE anything is persisted (R05). The tags a write carries decide
+        # who will be able to read it, so a write may only ever carry topics the caller holds:
+        #   * a tag outside `allowed_topics` — real or unregistered — is refused, not dropped or
+        #     silently rewritten, because a dropped tag would publish the fact somewhere else;
+        #   * a write with no tags has nothing to intersect and would land outside every topic's
+        #     authority, so it is refused too;
+        #   * empty topic authority is never "all topics".
+        # This used to be absent entirely: `submit` persisted whatever tags it was handed.
+        requested = [t for t in (tags or []) if t]
+        if not requested or not set(requested) <= set(scope.allowed_topics):
+            await self._record(scope, idempotency_key, "rejected", [])
+            return SubmitResult(status="rejected", claim_ids=[])
+
         # 1. Idempotent replay — a retry with the same key returns the original result.
         async with self._sm() as session:
             prior = await session.scalar(
@@ -114,7 +127,7 @@ class AgentWriteService:
         # an agent under `direct`, writes an active claim (credibility capped ≤ 0.6).
         quarantined = scope.principal_type is PrincipalType.AGENT and policy == "quarantine"
         credibility = min(QUARANTINE_CREDIBILITY, DIRECT_CREDIBILITY_CAP)
-        embedding = (await self._gateway.embed([text]))[0]
+        embedding = (await self._gateway.for_project(scope.project_id).embed([text]))[0]
         tag_list = list(tags or [])
         subject = entities[0] if entities else None
 

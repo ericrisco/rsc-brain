@@ -54,7 +54,7 @@ async def resolve_chunk(
             chunk.needs_review = True  # stays parked
             chunk.tags = [REJECTED_TAG]
             return "rejected"
-        embedding = (await gateway.embed([chunk.text]))[0]
+        embedding = (await gateway.for_project(scope.project_id).embed([chunk.text]))[0]
         chunk.embedding = embedding
         chunk.needs_review = False
         if tags is not None:
