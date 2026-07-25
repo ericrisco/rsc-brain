@@ -57,11 +57,15 @@ async def _needs_review_chunk_via_ingest(
     )
     if outcome.status == "pending_approval":
         await harness.service.approve(scope, outcome.document_id, approver=scope.principal_id)
+    return await _needs_review_chunk_of(harness, scope, outcome.document_id)
+
+
+async def _needs_review_chunk_of(harness: Harness, scope: ProjectScope, document_id: str) -> str:
     async with harness.sm() as session:
         chunk_id = await session.scalar(
             select(models.Chunk.id).where(
                 models.Chunk.project_id == uuid.UUID(scope.project_id),
-                models.Chunk.document_id == uuid.UUID(outcome.document_id),
+                models.Chunk.document_id == uuid.UUID(document_id),
                 models.Chunk.needs_review.is_(True),
             )
         )
@@ -211,14 +215,6 @@ async def test_a_rejected_chunk_leaves_the_review_queue_for_good(
     async with harness.sm() as session:
         chunk = await session.get(models.Chunk, uuid.UUID(chunk_id))
     assert chunk is not None
-    # Asserted FIRST on purpose: reject currently replaces the tag list with `["__rejected__"]`, and a
-    # chunk with no topic drops out of the topic-filtered queue by accident. Without this line the
-    # queue check below passes for the wrong reason and would start failing the moment the tag erasure
-    # is fixed.
-    assert "hr" in chunk.tags, (
-        f"rejecting erased the chunk's topics (tags={chunk.tags!r}), so it leaves the queue only "
-        "because no topic predicate can place it any more"
-    )
     assert chunk.needs_review is False, (
         "a rejected chunk is still flagged needs_review, so reject is a no-op with a tag"
     )
@@ -229,14 +225,18 @@ async def test_a_rejected_chunk_leaves_the_review_queue_for_good(
     )
 
 
-async def test_rejecting_a_chunk_keeps_its_topic_so_it_stays_filterable(
+async def test_a_rejected_chunk_stays_rejected_when_publish_is_re_run(
     build_harness: Callable[..., Harness],
 ) -> None:
-    """Reject replaces the tag list with ``["__rejected__"]``, dropping the topic tags.
+    """Clearing ``needs_review`` is what makes reject terminal — and what can undo it.
 
-    A row with no topic is a row the topic predicate cannot place, and every visibility decision in
-    the product is made from those tags. Rejecting should record a decision, not erase the dimension
-    the decision is authorized against.
+    Publish is idempotent by design (a crash resumes by redoing it), and it embeds every chunk that is
+    not flagged for review. So a chunk a curator refused becomes recallable the next time publish runs
+    over its document: the rejection is durable only until the pipeline retries.
+
+    The first premise this check started from was wrong — that reject erased the chunk's topics. It does
+    not: a chunk held for review carries only the review sentinel and is never topicalized, so there are
+    no topics to erase. The reachable failure is this one.
     """
     harness = build_harness()
     project = await harness.setup_project(unique_slug("acme"), TOPICS)
@@ -244,16 +244,22 @@ async def test_rejecting_a_chunk_keeps_its_topic_so_it_stays_filterable(
     await harness.repo.create_source(
         scope, name="manual", type_="folder", policy="manual", default_tags=["hr"]
     )
-    chunk_id = await _needs_review_chunk_via_ingest(harness, scope, source="manual")
-
+    outcome = await harness.service.ingest_bytes(
+        scope, AMBIGUOUS_TABLE, filename=f"{unique_slug('rota')}.md", source="manual"
+    )
+    await harness.service.approve(scope, outcome.document_id, approver=scope.principal_id)
+    chunk_id = await _needs_review_chunk_of(harness, scope, outcome.document_id)
     await resolve_chunk(harness.sm, scope, chunk_id, approve=False, gateway=harness.gateway)
+
+    # The documented redo: processing the same document again must not resurrect refused content.
+    await harness.pipeline.process(scope, outcome.document_id)
 
     async with harness.sm() as session:
         chunk = await session.get(models.Chunk, uuid.UUID(chunk_id))
     assert chunk is not None
-    assert "hr" in chunk.tags, (
-        f"rejecting the chunk erased its topics (tags={chunk.tags!r}), so no topic predicate can "
-        "place it any more"
+    assert chunk.embedding is None, (
+        "re-running publish embedded a chunk a curator had rejected, so the refusal lasted only until "
+        "the next retry"
     )
 
 
@@ -406,12 +412,14 @@ async def test_an_unconfigured_install_does_not_claim_the_owner_was_asked(
             headers={"Authorization": f"Bearer {token}"},
         )
 
-    if response.status_code == 201:
-        assert response.json()["state"].lower() not in {"awaiting_answer", "routed"}, (
-            "the API reports the owner is awaiting an answer on an install that has no channel "
-            f"configured and delivered nothing: {response.json()}"
-        )
-    else:  # the route refused before routing — acceptable only if it says why
-        assert response.status_code in {409, 503}, (
-            f"unexpected refusal {response.status_code}: {response.text[:200]}"
-        )
+    assert response.status_code == 201, response.text[:200]
+    body = response.json()
+    # Two things an operator needs, and neither existed: the hunt must not claim to be awaiting an
+    # answer from someone who was never contacted, and the response must say delivery did not happen.
+    # `ROUTED` (the parked state a throttled hunt also uses) is the honest answer here.
+    assert body["state"].lower() != "awaiting_answer", (
+        f"the API reports the owner is awaiting an answer on an install with no channel: {body}"
+    )
+    assert body["delivered"] is False, (
+        f"the API reports the hunt as delivered on an install that sent nothing: {body}"
+    )

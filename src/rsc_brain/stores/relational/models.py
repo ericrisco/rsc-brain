@@ -691,12 +691,18 @@ class EntityMergeProposal(Base):
     duplicate_entity_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     confidence: Mapped[float] = mapped_column(Numeric, server_default="0.5", nullable=False)
     method: Mapped[str] = mapped_column(Text, nullable=False)  # deterministic|llm
-    status: Mapped[str] = mapped_column(Text, nullable=False)  # needs_review|auto_applied|...
+    # needs_review|applied|auto_applied|rejected — the vocabulary lives in `rsc_brain.review.states`
+    # and is enforced by the CHECK below (R25: three spellings of this had drifted apart).
+    status: Mapped[str] = mapped_column(Text, nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
     resolved_by: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = _created_at()
     resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
+        CheckConstraint(
+            "status IN ('needs_review', 'applied', 'auto_applied', 'rejected')",
+            name="ck_entity_merge_proposals_status",
+        ),
         UniqueConstraint(
             "project_id",
             "canonical_entity_id",

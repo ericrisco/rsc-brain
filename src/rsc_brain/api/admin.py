@@ -1069,9 +1069,13 @@ def _directory(request: Request) -> object:
 
 
 def _hunts(request: Request) -> object:
-    from rsc_brain.hunting.service import HuntService
+    """The ONE hunt service the app was configured with (R28).
 
-    return HuntService(_deps(request).sessionmaker)  # type: ignore[attr-defined]
+    This used to build ``HuntService(sessionmaker)`` right here: no channel, so every hunt went to the
+    recorder that sends nothing, and no base URL, so every reply link pointed at a host that does not
+    exist. The configured service is assembled once in ``create_app`` and reused.
+    """
+    return request.app.state.hunts
 
 
 @router.get("/persons")
@@ -1172,6 +1176,8 @@ async def ask_hunt(
         "state": str(outcome.state),
         "person_id": outcome.person_id,
         "throttled": outcome.throttled,
+        # R28: an operator has to be able to tell "asked" from "recorded but never sent".
+        "delivered": outcome.delivered,
     }
 
 

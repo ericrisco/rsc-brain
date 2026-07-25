@@ -61,6 +61,22 @@ reranker:
 vision:
   enabled: false                  # FR-1.11 reserved
 
+# How a hunt reaches the person who knows (SPEC-15, FR-6.4). Left as `none` an install cannot deliver
+# anything — and says so: its hunts are reported ROUTED/delivered=false instead of claiming somebody was
+# asked. Set a channel to actually close the loop, and set `ingress.public_origin` too: the reply link
+# has to point at this install's own host.
+hunting:
+  channel: none                   # none | smtp | slack
+  # smtp:
+  #   host: smtp.example.com
+  #   port: 587
+  #   sender: rsc-brain@example.com
+  #   username: rsc-brain
+  #   password: supply via env only -> RSC_BRAIN_HUNTING__SMTP__PASSWORD=...
+  # slack:
+  #   bot_token: supply via env only -> RSC_BRAIN_HUNTING__SLACK__BOT_TOKEN=xoxb-...
+  #   default_channel: "#knowledge"
+
 logging:
   level: INFO
   json: true

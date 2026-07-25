@@ -48,6 +48,7 @@ from rsc_brain.knowledge.credibility import (
 )
 from rsc_brain.knowledge.graph_sync import GraphSync
 from rsc_brain.ontology.ingest import OntologyIngest
+from rsc_brain.review.resolve import REJECTED_TAG
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore, edge_type
 from rsc_brain.stores.graph_store import GraphEdge, GraphNode
@@ -162,29 +163,49 @@ class IngestionPipeline:
         approver: str | None = None,
     ) -> RunStatus:
         """Approve a pending document (optionally correcting tags), then publish (FR-1.14)."""
-        doc = await self._require_document(scope, document_id)
-        if doc.status not in {DocStatus.PENDING_APPROVAL.value, DocStatus.AUTO_APPROVED.value}:
-            raise ValueError(
-                f"document {document_id} is not awaiting approval (status={doc.status})"
-            )
-        await self._repo.set_status(
+        await self._require_document(scope, document_id)
+        # R31: conditional, so approve and reject racing cannot both win.
+        won = await self._repo.transition_status(
             scope,
             document_id,
-            DocStatus.APPROVED.value,
+            expected=[DocStatus.PENDING_APPROVAL.value, DocStatus.AUTO_APPROVED.value],
+            status=DocStatus.APPROVED.value,
             approved_by=approver,
             doc_tags=list(tags) if tags is not None else None,
         )
+        if not won:
+            current = (await self._require_document(scope, document_id)).status
+            raise ValueError(f"document {document_id} is not awaiting approval (status={current})")
         await self._repo.propagate_doc_tags(scope, document_id)
         parsed = self._parse(await self._require_document(scope, document_id))
         await self._publish(scope, document_id, parsed)
         return await self._run_status(scope, document_id)
 
     async def reject(self, scope: ProjectScope, document_id: str, *, reason: str) -> RunStatus:
-        """Reject a document: keep the file + reason (auditable), ingest nothing (FR-1.14)."""
+        """Reject a document: keep the file + reason (auditable), ingest nothing (FR-1.14).
+
+        R31: this used to reject a document in ANY status, so an already-published document could be
+        refused while its claims stayed live and recallable — the record said refused and the knowledge
+        said accepted, with nothing to reconcile them. Rejecting an already-rejected document is still
+        a no-op success, because a retry must be safe.
+        """
         await self._require_document(scope, document_id)
-        await self._repo.set_status(
-            scope, document_id, DocStatus.REJECTED.value, reject_reason=reason
+        won = await self._repo.transition_status(
+            scope,
+            document_id,
+            expected=[
+                DocStatus.RECEIVED.value,
+                DocStatus.PARSED.value,
+                DocStatus.PENDING_APPROVAL.value,
+                DocStatus.AUTO_APPROVED.value,
+                DocStatus.REJECTED.value,
+            ],
+            status=DocStatus.REJECTED.value,
+            reject_reason=reason,
         )
+        if not won:
+            current = (await self._require_document(scope, document_id)).status
+            raise ValueError(f"document {document_id} can no longer be rejected (status={current})")
         return await self._run_status(scope, document_id)
 
     async def recategorize(
@@ -295,7 +316,11 @@ class IngestionPipeline:
         embeddable = [
             c
             for c in chunk_rows
-            if not c.needs_review and c.text.strip() and c.text not in reuse_texts
+            if not c.needs_review
+            and REJECTED_TAG
+            not in c.tags  # R26: a refused chunk stays out of the index on redo too
+            and c.text.strip()
+            and c.text not in reuse_texts
         ]
         embeddings = await self._embed(scope, embeddable)
 
@@ -336,6 +361,8 @@ class IngestionPipeline:
         for row in chunk_rows:
             if row.kind != ChunkKind.PROSE.value or row.needs_review:
                 continue
+            if REJECTED_TAG in row.tags:
+                continue  # R26: refused content is not extracted from, however often publish reruns
             if row.text in reuse_texts:
                 continue  # unchanged prose: skip extraction (0 LLM calls); prior claim stays live
             try:

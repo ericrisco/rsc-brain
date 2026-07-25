@@ -10,7 +10,7 @@ never from the committed ``config.yaml`` (FR-4.7).
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
 
@@ -299,6 +299,45 @@ class IngressConfig(BaseModel):
     )
 
 
+class SmtpConfig(BaseModel):
+    """SMTP delivery for hunts. The password is a secret and belongs in the environment."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    host: str
+    port: int = Field(default=587, ge=1, le=65535)
+    sender: str = Field(default="rsc-brain@localhost")
+    username: str | None = None
+    password: SecretStr | None = Field(default=None, description="Supply via env only.")
+    starttls: bool = True
+
+
+class SlackConfig(BaseModel):
+    """Slack delivery for hunts. The bot token is a secret and belongs in the environment."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    bot_token: SecretStr = Field(description="Bot token; supply via env only.")
+    default_channel: str | None = None
+
+
+class HuntingConfig(BaseModel):
+    """How a hunt reaches the person who knows (AUDIT-042 / R28).
+
+    ``channel`` defaults to ``"none"`` because an install that has said nothing about email or Slack
+    cannot deliver anything. What changed is that the product now SAYS so: an opened hunt on such an
+    install is reported undelivered instead of awaiting an answer, so an unconfigured install is
+    distinguishable from a working one. It used to be indistinguishable, which left knowledge gaps open
+    behind records claiming somebody had been contacted.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    channel: Literal["none", "smtp", "slack"] = "none"
+    smtp: SmtpConfig | None = None
+    slack: SlackConfig | None = None
+
+
 class DatabaseConfig(BaseModel):
     """Data-service connection. The DSN carries a secret and is env-only (12-factor)."""
 
@@ -331,5 +370,6 @@ class AppConfig(BaseModel):
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     ingress: IngressConfig = Field(default_factory=IngressConfig)
+    hunting: HuntingConfig = Field(default_factory=HuntingConfig)
     limits: PublicLimits = Field(default_factory=PublicLimits)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

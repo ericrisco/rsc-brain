@@ -30,6 +30,7 @@ from rsc_brain.skills.store import SkillStore
 from rsc_brain.stores.relational import models
 
 if TYPE_CHECKING:
+    from rsc_brain.hunting.service import HuntService
     from rsc_brain.recall.guardrail import TopicClassifier
 
 FeedbackSignal = Literal["helpful", "wrong", "outdated"]
@@ -514,6 +515,9 @@ async def do_correct_knowledge(
     reason: str | None = None,
     on_behalf_of: str | None = None,
     dry_run: bool = False,
+    # R28: the install's configured hunt service. None builds one from configuration, so a CLI or a
+    # test that has not wired it still works — and gets an install that reports what it can deliver.
+    hunts: object | None = None,
 ) -> CorrectKnowledgeOutput:
     """Owner-authority correction (SPEC-08 §3.5). Delegates to the CorrectionService; audits."""
     from rsc_brain.knowledge.corrections import CorrectionService
@@ -550,10 +554,12 @@ async def do_correct_knowledge(
         )
         if correction_row is not None and correction_row.status == "routed_hunt":
             from rsc_brain.hunting.corrections_review import CorrectionReviewService
-            from rsc_brain.hunting.service import HuntService
 
+            # R28: this used to build `HuntService(sessionmaker)` here — no channel, no origin — so an
+            # agent's correction was routed to an owner who was never actually contacted. The caller
+            # passes the install's configured service.
             await CorrectionReviewService(
-                sessionmaker, hunts=HuntService(sessionmaker)
+                sessionmaker, hunts=_hunt_service(hunts, sessionmaker, gateway)
             ).open_review(scope, outcome.correction_id)
     hint = (
         f"use corrections revert {outcome.correction_id}"
@@ -567,3 +573,16 @@ async def do_correct_knowledge(
         correction_id=outcome.correction_id,
         reverted_hint=hint,
     )
+
+
+def _hunt_service(
+    provided: object | None, sessionmaker: async_sessionmaker[AsyncSession], gateway: object
+) -> HuntService:
+    """The configured hunt service, or one built from configuration when the caller passed none."""
+    from rsc_brain.hunting.factory import build_hunt_service_from_settings
+    from rsc_brain.hunting.service import HuntService as _HuntService
+
+    if provided is not None:
+        assert isinstance(provided, _HuntService)
+        return provided
+    return build_hunt_service_from_settings(sessionmaker, gateway=gateway)

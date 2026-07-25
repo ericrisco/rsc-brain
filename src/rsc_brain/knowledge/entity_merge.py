@@ -28,6 +28,12 @@ from rsc_brain.config.models import Capability, KnowledgeConfig
 from rsc_brain.gateway.errors import GatewayError
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.entity_resolution import entity_id, normalize_name
+from rsc_brain.review.states import (
+    PROPOSAL_APPLIED,
+    PROPOSAL_AUTO_APPLIED,
+    PROPOSAL_OPEN,
+    PROPOSAL_REJECTED,
+)
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational.entity_store import EntityRow, EntityStore
@@ -204,7 +210,9 @@ class EntityMergeService:
         *,
         store: EntityStore,
         graph: AgeGraphStore,
-        proposer: EntityMergeProposer,
+        # Optional: resolving a proposal proposes nothing, and the console path needs to build
+        # this service for resolution alone (R25).
+        proposer: EntityMergeProposer | None = None,
         sessionmaker: async_sessionmaker[AsyncSession],
         method: str = "deterministic",
         config: KnowledgeConfig | None = None,
@@ -217,13 +225,15 @@ class EntityMergeService:
         self._config = config or KnowledgeConfig()
 
     async def propose(self, scope: ProjectScope) -> ProposeSummary:
+        if self._proposer is None:
+            raise ValueError("this service was built for resolution only and has no proposer")
         entities = await self._store.list_active_entities(scope)
         candidates = await self._proposer.propose(entities)
         auto_applied: list[str] = []
         queued: list[str] = []
         for candidate in candidates:
             if candidate.confidence >= self._config.merge_auto_apply_confidence:
-                await self._apply(scope, candidate, status="auto_applied")
+                await self._apply(scope, candidate, status=PROPOSAL_AUTO_APPLIED)
                 auto_applied.append(candidate.duplicate_id)
             else:
                 proposal_id, _ = await self._store.create_proposal(
@@ -232,17 +242,19 @@ class EntityMergeService:
                     duplicate_id=candidate.duplicate_id,
                     confidence=candidate.confidence,
                     method=self._method,
-                    status="needs_review",
+                    status=PROPOSAL_OPEN,
                     reason=candidate.reason,
                 )
                 queued.append(proposal_id)
         return ProposeSummary(auto_applied=auto_applied, queued=queued)
 
-    async def confirm(self, scope: ProjectScope, proposal_id: str) -> MergeOutcome:
+    async def confirm(
+        self, scope: ProjectScope, proposal_id: str, *, resolved_by: str | None = None
+    ) -> MergeOutcome:
         proposal = await self._store.get_proposal(scope, proposal_id)
         if proposal is None:
             return MergeOutcome(status="rejected", explanation="Proposal not found.")
-        if proposal.status != "needs_review":
+        if proposal.status != PROPOSAL_OPEN:
             return MergeOutcome(
                 status="rejected",
                 explanation=f"Cannot confirm a {proposal.status} proposal.",
@@ -254,7 +266,13 @@ class EntityMergeService:
             confidence=proposal.confidence,
             reason=proposal.reason or "",
         )
-        edges = await self._apply(scope, candidate, status="applied", proposal_id=proposal_id)
+        edges = await self._apply(
+            scope,
+            candidate,
+            status=PROPOSAL_APPLIED,
+            proposal_id=proposal_id,
+            resolved_by=resolved_by,
+        )
         return MergeOutcome(
             status="applied",
             explanation="Merged the duplicate entity into the canonical one.",
@@ -262,18 +280,23 @@ class EntityMergeService:
             repointed_edges=edges,
         )
 
-    async def reject(self, scope: ProjectScope, proposal_id: str) -> MergeOutcome:
+    async def reject(
+        self, scope: ProjectScope, proposal_id: str, *, resolved_by: str | None = None
+    ) -> MergeOutcome:
         proposal = await self._store.get_proposal(scope, proposal_id)
         if proposal is None:
             return MergeOutcome(status="rejected", explanation="Proposal not found.")
-        if proposal.status != "needs_review":
+        if proposal.status != PROPOSAL_OPEN:
             return MergeOutcome(
                 status="rejected",
                 explanation=f"Cannot reject a {proposal.status} proposal.",
                 proposal_id=proposal_id,
             )
         await self._store.set_proposal_status(
-            scope, proposal_id, status="rejected", resolved_by=scope.principal_id
+            scope,
+            proposal_id,
+            status=PROPOSAL_REJECTED,
+            resolved_by=resolved_by or scope.principal_id,
         )
         await record_audit(
             self._sm, scope, action="entity_merge_reject", tool="entities", result_count=0
@@ -289,6 +312,7 @@ class EntityMergeService:
         *,
         status: str,
         proposal_id: str | None = None,
+        resolved_by: str | None = None,
     ) -> int:
         result = await self._store.apply_merge(
             scope,
@@ -303,16 +327,16 @@ class EntityMergeService:
         edges = await self._graph.merge_nodes(scope, canonical_node, duplicate_node)
         if proposal_id is not None:
             await self._store.set_proposal_status(
-                scope, proposal_id, status=status, resolved_by=scope.principal_id
+                scope, proposal_id, status=status, resolved_by=resolved_by or scope.principal_id
             )
-        elif status == "auto_applied":
+        elif status == PROPOSAL_AUTO_APPLIED:
             await self._store.create_proposal(
                 scope,
                 canonical_id=candidate.canonical_id,
                 duplicate_id=candidate.duplicate_id,
                 confidence=candidate.confidence,
                 method=self._method,
-                status="auto_applied",
+                status=PROPOSAL_AUTO_APPLIED,
                 reason=candidate.reason,
             )
         await record_audit(

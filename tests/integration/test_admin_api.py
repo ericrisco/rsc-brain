@@ -15,6 +15,8 @@ import httpx
 import pytest
 
 from rsc_brain.api.app import ApiDeps, create_app
+from rsc_brain.hunting.channels import NullChannel
+from rsc_brain.hunting.service import HuntService
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.stores.relational.store import PgRelationalStore
 from tests.integration.conftest import Harness, unique_slug
@@ -71,6 +73,10 @@ def _client(harness: Harness, tmp_path: Path) -> httpx.AsyncClient:
     app = create_app(
         deps=ApiDeps(sessionmaker=harness.sm, gateway=harness.gateway, data_dir=str(tmp_path))
     )
+    # An install that HAS configured a delivery channel: without one, hunting reports its hunts as
+    # undelivered rather than awaiting an answer (R28), which is a different test's subject. Assigned
+    # through `app.state.hunts` because that is where `create_app` itself puts the configured service.
+    app.state.hunts = HuntService(harness.sm, channel=NullChannel(), base_url="http://test")
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
 

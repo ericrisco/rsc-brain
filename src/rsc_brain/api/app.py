@@ -26,7 +26,7 @@ from starlette.responses import Response
 from rsc_brain import __version__
 from rsc_brain.api.authz import decide_document
 from rsc_brain.authorization import Allow, Capability, decide
-from rsc_brain.config.models import IngressConfig, RecallConfig
+from rsc_brain.config.models import HuntingConfig, IngressConfig, RecallConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.identity.resolve import resolve_scope
 from rsc_brain.ingest.pipeline import DocumentNotFoundError, IngestionPipeline, PipelineConfig
@@ -60,6 +60,10 @@ class ApiDeps:
     # R37: set in production so an accepted upload is queued rather than processed on the request
     # thread. Left None by tests and the CLI, where a synchronous ingest is the point.
     queue: object | None = None
+
+    # R28: how hunts reach a person. None means no channel is configured, and an opened hunt is then
+    # reported as undelivered rather than as awaiting an answer nobody was asked for.
+    hunting: HuntingConfig | None = None
 
     def service(self) -> tuple[IngestService, IngestRepository]:
         from rsc_brain.knowledge.contradictions import ContradictionResolver
@@ -120,6 +124,7 @@ def _deps_from_config() -> tuple[ApiDeps, AsyncEngine]:
         recall_config=dependencies.recall_config,
         sync_sessionmaker=make_sync_sessionmaker(make_sync_engine()),
         ingress=dependencies.ingress,
+        hunting=dependencies.hunting,
         # R37: heavy ingestion work is deferred to the worker; the request returns once the document,
         # its run checkpoint and the queue entry are durable.
         queue=build_queue(),
@@ -190,6 +195,21 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     from rsc_brain.api.admin import router as admin_router
     from rsc_brain.api.console import auth_router, me_router
 
+    # R28: the hunt reply path. Built here from configuration (channel + the install's own origin)
+    # so the link a message carries and the route that serves it are the same install's.
+    from rsc_brain.api.hunt import router as hunt_router
+    from rsc_brain.hunting.factory import build_hunt_service
+
+    hunting = deps.hunting
+    app.state.hunts = build_hunt_service(
+        deps.sessionmaker,
+        channel=hunting.channel if hunting else None,
+        smtp=hunting.smtp.model_dump() if hunting and hunting.smtp else None,
+        slack=hunting.slack.model_dump() if hunting and hunting.slack else None,
+        public_origin=deps.ingress.public_origin if deps.ingress else None,
+        gateway=deps.gateway,
+    )
+    app.include_router(hunt_router)
     app.include_router(admin_router)
     app.include_router(auth_router)
     app.include_router(me_router)

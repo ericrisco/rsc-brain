@@ -136,6 +136,28 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HuntAnswer": {
+        "additionalProperties": false,
+        "description": "A JSON answer, for a client that is not the browser form.",
+        "properties": {
+          "answer": {
+            "maxLength": 65536,
+            "minLength": 1,
+            "title": "Answer",
+            "type": "string"
+          },
+          "decline": {
+            "default": false,
+            "title": "Decline",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "answer"
+        ],
+        "title": "HuntAnswer",
+        "type": "object"
+      },
       "HuntAsk": {
         "properties": {
           "question": {
@@ -520,7 +542,7 @@
   },
   "info": {
     "title": "rsc-brain",
-    "version": "0.6.0"
+    "version": "0.7.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -4450,6 +4472,61 @@
           }
         ],
         "summary": "Upload Document"
+      }
+    },
+    "/hunt/{token}/answer": {
+      "post": {
+        "description": "The same operation for a non-browser client. 404 for any token that does not resolve.",
+        "operationId": "submit_json_hunt__token__answer_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token",
+            "required": true,
+            "schema": {
+              "title": "Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HuntAnswer"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Submit Json Hunt  Token  Answer Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Json",
+        "tags": [
+          "hunt"
+        ]
       }
     },
     "/oauth/authorize": {
