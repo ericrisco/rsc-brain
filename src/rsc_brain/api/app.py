@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm import sessionmaker as SyncSessionmaker
 from starlette.responses import Response
 
+from rsc_brain import __version__
 from rsc_brain.api.authz import decide_document
 from rsc_brain.authorization import Allow, Capability, decide
 from rsc_brain.config.models import RecallConfig
@@ -135,7 +136,7 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     from rsc_brain.observability.metrics import render_metrics
 
     configure_logging()
-    app = FastAPI(title="rsc-brain", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="rsc-brain", version=__version__, lifespan=lifespan)
     app.middleware("http")(trace_middleware)  # bind trace_id per request (SPEC-23, FR-14.3)
 
     @app.get("/metrics", include_in_schema=False)

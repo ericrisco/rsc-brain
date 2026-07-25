@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
+from sqlalchemy import UniqueConstraint
 
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.tenant_integrity import (
@@ -60,7 +61,7 @@ def test_every_parent_is_referenced_by_its_project_qualified_key() -> None:
         unique_keys = {
             tuple(sorted(c.name for c in constraint.columns))
             for constraint in table.constraints
-            if constraint.__class__.__name__ == "UniqueConstraint"
+            if isinstance(constraint, UniqueConstraint)
         }
         assert ("id", PROJECT_COLUMN) in unique_keys, f"{parent} lacks a (project_id, id) key"
 
