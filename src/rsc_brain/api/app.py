@@ -23,6 +23,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm import sessionmaker as SyncSessionmaker
 from starlette.responses import Response
 
+from rsc_brain.api.authz import decide_document
+from rsc_brain.authorization import Allow, Capability, decide
 from rsc_brain.config.models import RecallConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.identity.resolve import resolve_scope
@@ -137,8 +139,30 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     app.middleware("http")(trace_middleware)  # bind trace_id per request (SPEC-23, FR-14.3)
 
     @app.get("/metrics", include_in_schema=False)
-    async def metrics() -> Response:
-        """Prometheus scrape endpoint (SPEC-23, NFR-6) — not part of the typed admin contract."""
+    async def metrics(
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    ) -> Response:
+        """Prometheus scrape endpoint (SPEC-23, NFR-6) — not part of the typed admin contract.
+
+        R10: the operational scrape is an OPERATOR surface. It used to have no authorization
+        dependency at all, so an anonymous caller read company-wide activity. It now requires the
+        named operator capability, and no project role satisfies it — a project administrator is not
+        an operator. The operator credential itself arrives with the runtime contract (T008); until
+        then this endpoint has no authorized caller, which is the safe state.
+        """
+        if credentials is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="missing bearer token"
+            )
+        scope = await resolve_scope(_deps(request).sessionmaker, credentials.credentials)
+        if scope is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
+        decision = decide(scope, Capability.OPERATOR_METRICS_READ)
+        if not isinstance(decision, Allow):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="operator credential required"
+            )
         body, content_type = await render_metrics(app.state.deps.sessionmaker)
         return Response(content=body, media_type=content_type)
 
@@ -242,6 +266,14 @@ def _register_routes(app: FastAPI) -> None:
         scope: ProjectScope = Depends(_scope),
         tags: list[str] | None = None,
     ) -> dict[str, object]:
+        """Approve a pending document (D13).
+
+        R02: this route had **no capability check whatsoever** — a valid project token of any role
+        published documents and retagged them. It now takes the same document-lifecycle decision as
+        its console sibling, from the same shared policy, so the two entry points cannot diverge
+        again.
+        """
+        await decide_document(_deps(request).sessionmaker, scope, document_id, extra_tags=tags)
         service, _ = _deps(request).service()
         try:
             run = await service.approve(scope, document_id, tags=tags, approver=scope.principal_id)
@@ -256,6 +288,8 @@ def _register_routes(app: FastAPI) -> None:
         reason: str = Form(...),
         scope: ProjectScope = Depends(_scope),
     ) -> dict[str, object]:
+        """Reject a pending document (D13) — same authority as approving it (R02)."""
+        await decide_document(_deps(request).sessionmaker, scope, document_id)
         service, _ = _deps(request).service()
         try:
             run = await service.reject(scope, document_id, reason=reason)

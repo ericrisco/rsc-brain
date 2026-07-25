@@ -28,6 +28,25 @@ class PrincipalType(StrEnum):
     AGENT = "agent"
 
 
+# Project roles (``project_memberships.role``) and platform roles (``users.role``) are DISTINCT
+# authorities (AUDIT-020/R03): a platform administrator performs platform and project-lifecycle
+# operations, a project role governs that project's content. Neither implies the other, and
+# ``can_curate`` is neither — it authorizes only assigned knowledge-review decisions.
+PROJECT_ROLE_ADMIN = "project-admin"
+PROJECT_ROLE_MEMBER = "member"
+PROJECT_ROLE_VIEWER = "viewer"
+#: The role carried by a non-human principal: it is never a project membership role, so no
+#: console/management capability can be satisfied by an agent credential.
+PROJECT_ROLE_AGENT = "agent"
+PLATFORM_ROLE_MEMBER = "member"
+
+#: Sentinel values that occupy a topic column without being topics. A chunk held back for review
+#: carries ``__needs_review__`` *instead of* its tags (it has not been topicalized yet), so a row
+#: carrying only sentinels has no topic dimension: it is neither authorized by nor withheld from
+#: any topic. Every authorization and visibility decision strips these before comparing.
+NON_TOPIC_TAGS: frozenset[str] = frozenset({"__needs_review__"})
+
+
 class ScopeError(Exception):
     """Base class for scope/authorization failures."""
 
@@ -58,6 +77,12 @@ class Principal:
     type: PrincipalType
     allowed_topics: frozenset[str] = frozenset()
     can_curate: bool = False
+    #: Membership role in the project this principal is bound to (AUDIT-020). The default is the
+    #: LEAST project authority, so a scope built without an explicit role can never satisfy a
+    #: management capability by omission.
+    role: str = PROJECT_ROLE_MEMBER
+    #: Global ``users.role`` — platform authority only, never project content authority.
+    platform_role: str = PLATFORM_ROLE_MEMBER
 
     def scope_for(self, project_id: str) -> ProjectScope:
         """Bind this identity to ``project_id``, producing an indivisible scope."""
@@ -67,6 +92,8 @@ class Principal:
             project_id=project_id,
             allowed_topics=self.allowed_topics,
             can_curate=self.can_curate,
+            role=self.role,
+            platform_role=self.platform_role,
         )
 
 
@@ -86,6 +113,8 @@ class ProjectScope:
     allowed_topics: frozenset[str] = frozenset()
     can_curate: bool = False
     on_behalf_of: str | None = None  # set when an agent acts for a human (SPEC-11)
+    role: str = PROJECT_ROLE_MEMBER  # project membership role (AUDIT-020)
+    platform_role: str = PLATFORM_ROLE_MEMBER  # global users.role — platform authority only
 
     def authorizes(self, project_id: str) -> bool:
         """True iff this scope is authorized for ``project_id``."""
@@ -119,6 +148,10 @@ class ProjectScope:
             allowed_topics=self.allowed_topics & agent.allowed_topics,
             can_curate=self.can_curate and agent.can_curate,
             on_behalf_of=self.principal_id,
+            # Delegation is an intersection, never an elevation: the acting agent holds no
+            # membership role and no platform role, so neither can be inherited (AUDIT-020/R15).
+            role=PROJECT_ROLE_AGENT,
+            platform_role=PLATFORM_ROLE_MEMBER,
         )
 
 

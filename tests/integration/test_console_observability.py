@@ -223,15 +223,27 @@ async def test_document_decisions_require_explicit_topic_authority(
         widened = await client.post(approve_path, json={"tags": ["finance"]}, headers=narrow)
         assert widened.status_code == 403, widened.text
 
-    # No side effect from either refusal: nothing was published and no `finance` tag exists.
+    # No side effect from either refusal: the document is still awaiting approval, nothing of it is
+    # recallable, and no `finance` tag exists.
+    #
+    # The oracle for "published" is the embedding, not `needs_review`: a manual-policy ingest
+    # already writes an *unembedded* chunk with `needs_review=False` while the document sits in
+    # `pending_approval`, and every recall path (vector, lexical, k-hop) requires
+    # `embedding IS NOT NULL` — verified against the real retriever, not assumed. Publishing is what
+    # `pipeline.approve` does: set the document to approved and embed. This assertion was written in
+    # T001 behind an earlier one that failed first, so it had never actually been evaluated.
     async with harness.sm() as db:
+        status = await db.scalar(
+            select(models.Document.status).where(models.Document.id == uuid_of(outcome.document_id))
+        )
+        assert status == "pending_approval", f"a refused decision advanced the document: {status}"
         published = await db.scalar(
             select(models.Chunk.id)
             .where(models.Chunk.document_id == uuid_of(outcome.document_id))
-            .where(models.Chunk.needs_review.is_(False))
+            .where(models.Chunk.embedding.is_not(None))
             .limit(1)
         )
-        assert published is None, "a refused decision published the document"
+        assert published is None, "a refused decision published (embedded) the document"
         tag_rows = await db.execute(
             select(models.Chunk.tags).where(
                 models.Chunk.document_id == uuid_of(outcome.document_id)

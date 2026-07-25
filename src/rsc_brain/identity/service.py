@@ -61,6 +61,24 @@ class IdentityService:
             rows = await session.scalars(select(models.Project.slug).order_by(models.Project.slug))
             return list(rows)
 
+    async def list_projects_for_user(self, user_id: str) -> list[str]:
+        """The slugs of the projects ``user_id`` is a member of (AUDIT-020/R01).
+
+        The console needs a project list; it does not need the instance's tenant inventory, so the
+        membership join — not a platform-wide listing — is what a project caller reads.
+        """
+        async with self._sm() as session:
+            rows = await session.scalars(
+                select(models.Project.slug)
+                .join(
+                    models.ProjectMembership,
+                    models.ProjectMembership.project_id == models.Project.id,
+                )
+                .where(models.ProjectMembership.user_id == uuid.UUID(user_id))
+                .order_by(models.Project.slug)
+            )
+            return list(rows)
+
     async def delete_project(self, slug: str) -> None:
         if slug == DEFAULT_PROJECT_SLUG:
             raise ValueError("the 'default' project cannot be deleted")

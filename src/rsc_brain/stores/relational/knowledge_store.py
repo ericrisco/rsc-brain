@@ -18,6 +18,7 @@ from sqlalchemy.orm import aliased
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
+from rsc_brain.visibility import forbidden_topics, topic_clause
 
 
 def _pid(scope: ProjectScope) -> uuid.UUID:
@@ -270,9 +271,23 @@ class KnowledgeStore:
             )
 
     async def get_claim(self, scope: ProjectScope, claim_id: str) -> ClaimData | None:
+        """One claim, or ``None`` when it is absent **or invisible to this caller**.
+
+        R06: this used to filter by project alone, so every mutation reached by claim id — feedback,
+        corrections — operated on claims the caller could not see, and answered differently for a
+        hidden claim than for a nonexistent one. Topic visibility belongs here, at the single
+        lookup every by-id path goes through, not in each caller.
+        """
+        forbidden = await forbidden_topics(self._sm, scope)
         async with self._sm() as session:
-            claim = await session.get(models.Claim, uuid.UUID(claim_id))
-            if claim is None or claim.project_id != _pid(scope):
+            claim = await session.scalar(
+                select(models.Claim).where(
+                    models.Claim.id == uuid.UUID(claim_id),
+                    models.Claim.project_id == _pid(scope),
+                    topic_clause(models.Claim.tags, scope, forbidden),
+                )
+            )
+            if claim is None:
                 return None
             return self._to_claim_data(claim)
 
@@ -412,9 +427,17 @@ class KnowledgeStore:
         """Corrections feed (SPEC-19): newest first, filterable by status (the
         ``pending_confirmation`` queue is just ``status='pending_confirmation'``), target claim, or
         author — the console's feed / by-claim / by-person views."""
+        forbidden = await forbidden_topics(self._sm, scope)
         query = (
             select(models.Correction)
-            .where(models.Correction.project_id == _pid(scope))
+            .join(models.Claim, models.Claim.id == models.Correction.target_claim)
+            .where(
+                models.Correction.project_id == _pid(scope),
+                # R01: a correction carries no topics of its own — it inherits the visibility of
+                # the claim it corrects, in-query, so a hidden claim's correction never appears in
+                # the feed or in any count derived from it.
+                topic_clause(models.Claim.tags, scope, forbidden),
+            )
             .order_by(models.Correction.created_at.desc())
             .limit(limit)
         )
@@ -448,13 +471,15 @@ class KnowledgeStore:
         self, scope: ProjectScope, *, limit: int = 100
     ) -> list[dict[str, object]]:
         """Claims currently flagged ``disputed`` (contradiction ties + expired correction reviews,
-        FR-15.6) — the console's disputed list (SPEC-19)."""
+        FR-15.6) — the console's disputed list (SPEC-19). Topic-filtered in-query (R01)."""
+        forbidden = await forbidden_topics(self._sm, scope)
         async with self._sm() as session:
             rows = await session.scalars(
                 select(models.Claim)
                 .where(
                     models.Claim.project_id == _pid(scope),
                     models.Claim.disputed.is_(True),
+                    topic_clause(models.Claim.tags, scope, forbidden),
                 )
                 .order_by(models.Claim.id)
                 .limit(limit)
@@ -477,6 +502,7 @@ class KnowledgeStore:
         their current credibility + validity — the loser is the one whose ``valid_to`` was set
         (superseded), the winner the one still open. Shows "who won, by what score" (SPEC-19)."""
         pid = _pid(scope)
+        forbidden = await forbidden_topics(self._sm, scope)
         claim_a = aliased(models.Claim)
         claim_b = aliased(models.Claim)
         async with self._sm() as session:
@@ -488,6 +514,9 @@ class KnowledgeStore:
                     .where(
                         models.ClaimPairVerdict.project_id == pid,
                         models.ClaimPairVerdict.verdict == "contradict",
+                        # A resolution discloses BOTH claims, so both must be visible (R01).
+                        topic_clause(claim_a.tags, scope, forbidden),
+                        topic_clause(claim_b.tags, scope, forbidden),
                     )
                     .order_by(models.ClaimPairVerdict.created_at.desc())
                     .limit(limit)
@@ -497,13 +526,22 @@ class KnowledgeStore:
 
     async def correction_metrics(self, scope: ProjectScope) -> dict[str, object]:
         """The Learning-Layer §7 metrics (SPEC-19): status ratios, revert rate, correction-wars
-        (disputed ties), and ownership coverage (% of topics with a registered owner)."""
+        (disputed ties), and ownership coverage (% of topics with a registered owner).
+
+        Every figure is computed over the caller's authorized topics only: an aggregate is a side
+        channel exactly like a list (R01).
+        """
         pid = _pid(scope)
+        forbidden = await forbidden_topics(self._sm, scope)
         async with self._sm() as session:
             status_rows = (
                 await session.execute(
                     select(models.Correction.status, func.count())
-                    .where(models.Correction.project_id == pid)
+                    .join(models.Claim, models.Claim.id == models.Correction.target_claim)
+                    .where(
+                        models.Correction.project_id == pid,
+                        topic_clause(models.Claim.tags, scope, forbidden),
+                    )
                     .group_by(models.Correction.status)
                 )
             ).all()
@@ -513,10 +551,17 @@ class KnowledgeStore:
             wars = await session.scalar(
                 select(func.count())
                 .select_from(models.Claim)
-                .where(models.Claim.project_id == pid, models.Claim.disputed.is_(True))
+                .where(
+                    models.Claim.project_id == pid,
+                    models.Claim.disputed.is_(True),
+                    topic_clause(models.Claim.tags, scope, forbidden),
+                )
             )
             topics = await session.scalars(
-                select(models.Topic.slug).where(models.Topic.project_id == pid)
+                select(models.Topic.slug).where(
+                    models.Topic.project_id == pid,
+                    models.Topic.slug.in_(sorted(scope.allowed_topics)),
+                )
             )
             topic_slugs = set(topics)
             owned = 0

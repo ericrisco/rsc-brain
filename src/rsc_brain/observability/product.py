@@ -22,7 +22,7 @@ async def product_metrics(
     sessionmaker: async_sessionmaker[AsyncSession], scope: ProjectScope, *, window_days: int = 30
 ) -> dict[str, object]:
     pid = uuid.UUID(scope.project_id)
-    activity = await audit_mod.activity_summary(sessionmaker, scope.project_id)
+    activity = await audit_mod.activity_summary(sessionmaker, scope)
     since = dt.datetime.now(dt.UTC) - dt.timedelta(days=window_days)
     async with sessionmaker() as session:
         claims = await _count(session, models.Claim, models.Claim.project_id == pid)

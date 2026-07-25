@@ -168,7 +168,7 @@ def audit(
         engine = make_engine()
         sessionmaker = make_sessionmaker(engine)
         try:
-            return await audit_mod.query_audit(
+            return await audit_mod.query_audit_raw(
                 sessionmaker,
                 project_id,
                 action=action,

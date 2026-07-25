@@ -143,9 +143,20 @@ async def _session_for(
 
 
 async def _topic_scoped_pat(harness: Harness, project_id: str, *, topics: tuple[str, ...]) -> str:
-    """A curator-member restricted to ``topics`` — the R01 principal: capable enough to pass the
-    token-path admin gate, but authorized for only a subset of the project's topics."""
-    return await _pat_for(harness, project_id, role="member", topics=topics, can_curate=True)
+    """A **project administrator** restricted to ``topics`` — the R01 principal.
+
+    T001 wrote this as a curator-member, because ``can_curate`` was the only thing that got past
+    the old blanket admin gate. T002 resolved that (the open design question it recorded): under the
+    ratified matrix ``can_curate`` authorizes knowledge-review decisions only, and the management
+    reads below (`/documents/pending/preview`, `/gaps`, `/audit`) belong to the project
+    administrator — which is exactly what
+    ``test_admin_api.py::test_curator_member_is_denied_the_management_surface`` pins from the other
+    side. Using the highest project role here also makes the R01 claim stronger, not weaker: even a
+    project administrator sees only the topics it holds. Not one assertion below changed.
+    """
+    return await _pat_for(
+        harness, project_id, role="project-admin", topics=topics, can_curate=False
+    )
 
 
 async def _setup_pending_document(

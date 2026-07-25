@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import security
@@ -28,6 +28,7 @@ from rsc_brain.hunting.state_machine import HuntState, HuntType, check_transitio
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
+from rsc_brain.visibility import forbidden_topics, topic_clause
 
 HUNT_ANSWER_CREDIBILITY = 0.95
 _EXPIRY = dt.timedelta(hours=72)
@@ -156,10 +157,23 @@ class HuntService:
     async def list_hunts(
         self, scope: ProjectScope, *, open_only: bool = False, limit: int = 100
     ) -> list[dict[str, object]]:
-        """The project's hunts, newest first — for ``brain hunts list`` and the admin API."""
+        """The project's hunts, newest first — for ``brain hunts list`` and the admin API.
+
+        A hunt has no topics of its own: it inherits them from the gap that raised it (R01), so a
+        hunt about a topic the caller cannot see is not listed. A hunt with no gap (a manual or
+        correction-review hunt) is a project-level record and stays visible.
+        """
+        forbidden = await forbidden_topics(self._sm, scope)
         query = (
             select(models.Hunt)
-            .where(models.Hunt.project_id == _pid(scope))
+            .outerjoin(models.Gap, models.Gap.id == models.Hunt.gap_id)
+            .where(
+                models.Hunt.project_id == _pid(scope),
+                or_(
+                    models.Hunt.gap_id.is_(None),
+                    topic_clause(models.Gap.topics, scope, forbidden, allow_untagged=True),
+                ),
+            )
             .order_by(models.Hunt.created_at.desc())
             .limit(limit)
         )
@@ -170,9 +184,22 @@ class HuntService:
             return [_hunt_public(hunt) for hunt in rows]
 
     async def get_hunt(self, scope: ProjectScope, hunt_id: str) -> dict[str, object] | None:
+        """One hunt, or ``None`` when absent or outside the caller's topic visibility (R01/FR-4.3)."""
+        forbidden = await forbidden_topics(self._sm, scope)
         async with self._sm() as session:
-            hunt = await session.get(models.Hunt, uuid.UUID(hunt_id))
-            if hunt is None or hunt.project_id != _pid(scope):
+            hunt = await session.scalar(
+                select(models.Hunt)
+                .outerjoin(models.Gap, models.Gap.id == models.Hunt.gap_id)
+                .where(
+                    models.Hunt.id == uuid.UUID(hunt_id),
+                    models.Hunt.project_id == _pid(scope),
+                    or_(
+                        models.Hunt.gap_id.is_(None),
+                        topic_clause(models.Gap.topics, scope, forbidden, allow_untagged=True),
+                    ),
+                )
+            )
+            if hunt is None:
                 return None
             return _hunt_public(hunt)
 

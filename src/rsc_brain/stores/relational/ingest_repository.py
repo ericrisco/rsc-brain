@@ -22,11 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.ingest.entity_resolution import normalize_name
 from rsc_brain.ingest.types import PipelineStage, ProposedChunk, RunStatus, TopicRule
-from rsc_brain.scope import ProjectScope
+from rsc_brain.scope import NON_TOPIC_TAGS, ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
+from rsc_brain.visibility import forbidden_topics, topic_clause
 
-NEEDS_REVIEW_TAG = "__needs_review__"
+NEEDS_REVIEW_TAG = next(iter(NON_TOPIC_TAGS))
 DEFAULT_SOURCE_NAME = "default"
 
 
@@ -314,12 +315,20 @@ class IngestRepository:
             return _doc_row(doc)
 
     async def list_documents_by_status(self, scope: ProjectScope, status: str) -> list[DocRow]:
+        """Documents in ``status`` that this caller may see.
+
+        R01: the approval queue is topic-scoped content — its titles and proposed tags describe the
+        document — so the caller's topic authority filters it in-query. A document with no proposed
+        tags yet has no topic dimension and stays visible to an authorized reviewer.
+        """
+        forbidden = await forbidden_topics(self._sm, scope)
         async with self._sm() as session:
             rows = await session.scalars(
                 select(models.Document)
                 .where(
                     models.Document.project_id == _pid(scope),
                     models.Document.status == status,
+                    topic_clause(models.Document.doc_tags, scope, forbidden, allow_untagged=True),
                 )
                 .order_by(models.Document.ingested_at)
             )

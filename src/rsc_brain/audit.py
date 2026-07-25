@@ -21,6 +21,24 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from rsc_brain.scope import PrincipalType, ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
+from rsc_brain.visibility import forbidden_topics, topic_clause
+
+
+async def _visibility(
+    sessionmaker: async_sessionmaker[AsyncSession], scope: ProjectScope
+) -> list[object]:
+    """The audit-visibility predicate for ``scope``, as query conditions (R01).
+
+    An audit row's topic dimension is ``topics_used``. Rows with none are project-level records of
+    an action (an export, a review decision) rather than topic-scoped content, so they stay visible
+    to a caller authorized for the project; a row that names topics is visible only to a caller who
+    holds them.
+    """
+    forbidden = await forbidden_topics(sessionmaker, scope)
+    return [
+        models.AuditLog.project_id == uuid.UUID(scope.project_id),
+        topic_clause(models.AuditLog.topics_used, scope, forbidden, allow_untagged=True),
+    ]
 
 
 async def record_audit(
@@ -103,10 +121,11 @@ def _parse_date(value: str | None) -> dt.datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.UTC)
 
 
-async def query_audit(
+async def query_audit_raw(
     sessionmaker: async_sessionmaker[AsyncSession],
     project_id: str,
     *,
+    extra: Sequence[object] = (),
     action: str | None = None,
     tool: str | None = None,
     principal_type: str | None = None,
@@ -116,10 +135,13 @@ async def query_audit(
     until: str | None = None,
     limit: int = 100,
 ) -> list[dict[str, object]]:
-    """Filterable audit query (SPEC-26 FR-13.7). All filters AND together; the project scope is
-    always applied in-query (FR-12.5). Ordered newest-first. ``query_text`` is NULL unless the
-    project's ``query_text_logging`` is ON, so no filter can surface query content (FR-13.9)."""
-    conditions = [models.AuditLog.project_id == uuid.UUID(project_id)]
+    """Filterable audit query WITHOUT topic visibility — project scope only.
+
+    This is the internal/raw read (a test oracle, an operator repair path). Every caller that serves
+    a human uses :func:`query_audit`, which adds the caller's topic visibility: R01 was exactly this
+    query reached directly from the console.
+    """
+    conditions: list[object] = [models.AuditLog.project_id == uuid.UUID(project_id), *extra]
     if action is not None:
         conditions.append(models.AuditLog.action == action)
     if tool is not None:
@@ -137,19 +159,59 @@ async def query_audit(
     if until_ts is not None:
         conditions.append(models.AuditLog.ts <= until_ts)
     statement = (
-        select(models.AuditLog).where(*conditions).order_by(models.AuditLog.ts.desc()).limit(limit)
+        select(models.AuditLog)
+        .where(*conditions)  # type: ignore[arg-type]
+        .order_by(models.AuditLog.ts.desc())
+        .limit(limit)
     )
     async with sessionmaker() as session:
         rows = await session.scalars(statement)
         return [_row_to_dict(row) for row in rows]
 
 
+async def query_audit(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    scope: ProjectScope,
+    *,
+    action: str | None = None,
+    tool: str | None = None,
+    principal_type: str | None = None,
+    principal_id: str | None = None,
+    denied: bool | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, object]]:
+    """The audit log as THIS caller may see it: project scope plus topic visibility (R01).
+
+    The export shares this query, so a CSV can never contain a row the list would have hidden.
+    """
+    return await query_audit_raw(
+        sessionmaker,
+        scope.project_id,
+        extra=await _visibility(sessionmaker, scope),
+        action=action,
+        tool=tool,
+        principal_type=principal_type,
+        principal_id=principal_id,
+        denied=denied,
+        since=since,
+        until=until,
+        limit=limit,
+    )
+
+
 async def activity_summary(
-    sessionmaker: async_sessionmaker[AsyncSession], project_id: str
+    sessionmaker: async_sessionmaker[AsyncSession], scope: ProjectScope
 ) -> dict[str, object]:
-    """Recall activity aggregates for the dashboard (FR-13.2), scoped to one project in-query:
-    total recalls, denied/abstained, distinct active principals, p95 duration, and recalls/day."""
-    pid = uuid.UUID(project_id)
+    """Recall activity aggregates for the dashboard (FR-13.2): total recalls, denied/abstained,
+    distinct active principals, p95 duration, and recalls/day.
+
+    Every figure is computed over the caller's *authorized* rows. R01: these counters used to span
+    the whole project, so a topic-limited caller learned how much traffic the topics it cannot see
+    were getting — a disclosure with no row to hide behind.
+    """
+    visibility = await _visibility(sessionmaker, scope)
     recall_rows = models.AuditLog.action == "recall"
     async with sessionmaker() as session:
         totals = (
@@ -159,12 +221,12 @@ async def activity_summary(
                     func.count().filter(models.AuditLog.denied.is_(True)),
                     func.count(func.distinct(models.AuditLog.principal_id)),
                     func.percentile_cont(0.95).within_group(models.AuditLog.duration_ms.asc()),
-                ).where(models.AuditLog.project_id == pid, recall_rows)
+                ).where(*visibility, recall_rows)  # type: ignore[arg-type]
             )
         ).one()
         per_day_rows = await session.execute(
             select(func.date(models.AuditLog.ts), func.count())
-            .where(models.AuditLog.project_id == pid, recall_rows)
+            .where(*visibility, recall_rows)  # type: ignore[arg-type]
             .group_by(func.date(models.AuditLog.ts))
             .order_by(func.date(models.AuditLog.ts))
         )
@@ -181,7 +243,7 @@ async def activity_summary(
 
 async def recall_stream(
     sessionmaker: async_sessionmaker[AsyncSession],
-    project_id: str,
+    scope: ProjectScope,
     *,
     principal_type: str | None = None,
     denied: bool | None = None,
@@ -189,8 +251,8 @@ async def recall_stream(
 ) -> list[dict[str, object]]:
     """The live recall stream (FR-13.3), scoped in-query, filterable by principal + denial.
     ``query_text`` is already NULL when the project's logging is OFF (FR-13.9) — no filter needed."""
-    conditions = [
-        models.AuditLog.project_id == uuid.UUID(project_id),
+    conditions: list[object] = [
+        *await _visibility(sessionmaker, scope),
         models.AuditLog.action == "recall",
     ]
     if principal_type is not None:
@@ -200,7 +262,7 @@ async def recall_stream(
     async with sessionmaker() as session:
         rows = await session.scalars(
             select(models.AuditLog)
-            .where(*conditions)
+            .where(*conditions)  # type: ignore[arg-type]
             .order_by(models.AuditLog.ts.desc())
             .limit(limit)
         )
