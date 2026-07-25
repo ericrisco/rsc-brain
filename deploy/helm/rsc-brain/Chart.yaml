@@ -8,8 +8,8 @@ description: >-
   brain-verify probes, first-admin bootstrap, persistent volumes — zero hand-editing.
 type: application
 # Chart version tracks the chart; appVersion tracks the rsc-brain release the images ship with.
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.2.1
+appVersion: "0.2.1"
 keywords:
   - knowledge-graph
   - mcp

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import select, update
@@ -229,6 +230,39 @@ class IdentityService:
             session.add(membership)
             await session.flush()
             return str(membership.id)
+
+    async def list_topic_slugs(self, project_id: str) -> list[str]:
+        """The project's topic slugs, ordered — the set an explicit grant can draw from."""
+        async with self._sm() as session:
+            rows = await session.scalars(
+                select(models.Topic.slug)
+                .where(models.Topic.project_id == uuid.UUID(project_id))
+                .order_by(models.Topic.slug)
+            )
+            return list(rows)
+
+    async def grant_topics(
+        self, user_id: str, project_id: str, slugs: Sequence[str]
+    ) -> tuple[str, ...]:
+        """Add ``slugs`` to a membership's topic authority, idempotently; returns the new set.
+
+        Topic authority stays EXPLICIT for every role, project administrators included (AUDIT-020:
+        empty authority is never all topics, and R01 holds that even the highest project role sees
+        only the topics it was granted). So a topic someone must be able to act on is recorded on
+        their membership rather than inferred from their role.
+        """
+        async with session_scope(self._sm) as session:
+            membership = await session.scalar(
+                select(models.ProjectMembership).where(
+                    models.ProjectMembership.user_id == uuid.UUID(user_id),
+                    models.ProjectMembership.project_id == uuid.UUID(project_id),
+                )
+            )
+            if membership is None:
+                return ()
+            merged = list(dict.fromkeys([*membership.allowed_topics, *slugs]))
+            membership.allowed_topics = merged
+            return tuple(merged)
 
     async def create_topic(
         self, project_id: str, slug: str, name: str, *, sensitivity: int = 0

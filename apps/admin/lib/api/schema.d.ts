@@ -777,7 +777,16 @@ export interface paths {
         /** List Topics */
         get: operations["list_topics_api_v1_admin_topics_get"];
         put?: never;
-        /** Create Topic */
+        /**
+         * Create Topic
+         * @description Create a topic, and record the creator's authority over it explicitly.
+         *
+         *     Topic authority is never implied by a role — not even the project administrator's (AUDIT-020;
+         *     R01 holds that the highest project role still sees only the topics it holds). Without the grant,
+         *     defining a topic would leave its own author unable to act on anything tagged with it, and the
+         *     only way out would be a direct database write. So the grant is made here, on the membership,
+         *     where it is visible and revocable.
+         */
         post: operations["create_topic_api_v1_admin_topics_post"];
         delete?: never;
         options?: never;

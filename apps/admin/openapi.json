@@ -496,7 +496,7 @@
   },
   "info": {
     "title": "rsc-brain",
-    "version": "0.2.0"
+    "version": "0.2.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -3708,6 +3708,7 @@
         ]
       },
       "post": {
+        "description": "Create a topic, and record the creator's authority over it explicitly.\n\nTopic authority is never implied by a role \u2014 not even the project administrator's (AUDIT-020;\nR01 holds that the highest project role still sees only the topics it holds). Without the grant,\ndefining a topic would leave its own author unable to act on anything tagged with it, and the\nonly way out would be a direct database write. So the grant is made here, on the membership,\nwhere it is visible and revocable.",
         "operationId": "create_topic_api_v1_admin_topics_post",
         "parameters": [
           {
