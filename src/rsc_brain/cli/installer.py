@@ -10,6 +10,7 @@ full recall-metrics run requires an ingested corpus + model (exercised by the in
 from __future__ import annotations
 
 import asyncio
+import os
 from collections import Counter
 from pathlib import Path
 
@@ -87,14 +88,30 @@ def init(
         "migrated": True,
         "admin": {"email": email, "created": created},
     }
-    human_admin = (
-        f"first admin created: {email}"
-        + (f" (generated password: {generated})" if generated else "")
-        if created
-        else f"admin already present ({email})"
-    )
+    # R13: a generated credential goes to an owner-only file and NEVER to stdout or the JSON payload.
+    # This command is the migrate-on-boot one-shot, so its output is the migrate service's log, and
+    # AUDIT-034 requires no credential value in application logs, lifecycle logs, rendered notes or CI
+    # artifacts. What the operator gets is the location — which is also all the Helm path ever gave.
+    credential_path: str | None = None
     if generated:
-        payload["admin_password"] = generated  # shown once (FR-18.x); never stored
+        from rsc_brain.deploy.bootstrap import store_generated_credential
+
+        # Read straight from the environment rather than through `load_settings()`: bootstrapping a
+        # fresh deployment must not require a complete model configuration to exist first.
+        directory = os.environ.get("RSC_BRAIN_INGEST__DATA_DIR", "data")
+        credential_path = str(store_generated_credential(directory, email, generated))
+        payload["admin_credential_file"] = credential_path
+    if created:
+        human_admin = f"first admin created: {email}"
+        if credential_path:
+            human_admin += (
+                f"; its generated password was stored in {credential_path} (mode 0600) — "
+                "retrieve it from there and delete the file"
+            )
+        else:
+            human_admin += " with the password you supplied"
+    else:
+        human_admin = f"admin already present ({email})"
     emit_result(ctx, json_output, payload, f"migrations applied; {human_admin}")
 
 

@@ -280,7 +280,46 @@ async def set_query_text_logging(
         project.settings = {**(project.settings or {}), "query_text_logging": enabled}
 
 
+#: Characters that make a spreadsheet start parsing a cell as an expression. Leading whitespace is
+#: skipped before that decision, so a payload can hide behind a tab or a carriage return.
+_ACTIVE_PREFIXES = ("=", "+", "-", "@")
+
+#: Control characters that would forge rows/columns or terminate the record early. Tab, CR and LF are
+#: handled separately: they are legitimate inside a quoted CSV field but must not survive as the
+#: leading characters of a cell, and NUL must not survive at all.
+_STRIPPED_CONTROLS = {chr(code) for code in range(32)} - {"\t", "\n", "\r"} | {"\x7f"}
+
+
+def neutralize_cell(value: object) -> object:
+    """Make one exported cell inert for a spreadsheet while keeping its literal readable (R11).
+
+    Opened in Excel, LibreOffice or Sheets, a cell whose first non-blank character is ``=``, ``+``,
+    ``-`` or ``@`` is evaluated: ``=cmd|' /c calc'!A0`` executes, ``=WEBSERVICE(...)`` exfiltrates the
+    row with no click. Audit values come from callers — a query text, a topic slug, a trace header — so
+    the export carries whatever was recorded straight to whoever opens it.
+
+    Neutralization is a leading apostrophe, the convention every major spreadsheet reads as "this is
+    text": the original characters stay in the file, so the literal value remains recoverable, which
+    an audit log has to guarantee. Values that are not text (ids, booleans, timestamps) pass through
+    untouched.
+    """
+    if not isinstance(value, str) or not value:
+        return value
+    cleaned = "".join(char for char in value if char not in _STRIPPED_CONTROLS)
+    # Compare on the stripped form: spreadsheets skip leading blanks before deciding, so " =1+1" and
+    # "\t=1+1" are just as active as "=1+1".
+    if cleaned.lstrip("\t\r\n ").startswith(_ACTIVE_PREFIXES):
+        return f"'{cleaned}"
+    return cleaned
+
+
 def to_csv(rows: Sequence[dict[str, object]]) -> str:
+    """Render audit rows as CSV with every cell neutralized against spreadsheet execution (R11).
+
+    ``csv`` already quotes embedded separators and newlines, so row/column forgery is handled by the
+    writer; what it does not do — and what R11 is about — is stop the spreadsheet from treating a
+    quoted cell's content as a formula once it is opened.
+    """
     if not rows:
         return ""
     fields = list(rows[0].keys())
@@ -288,5 +327,10 @@ def to_csv(rows: Sequence[dict[str, object]]) -> str:
     writer = csv.DictWriter(buffer, fieldnames=fields)
     writer.writeheader()
     for row in rows:
-        writer.writerow({k: ";".join(v) if isinstance(v, list) else v for k, v in row.items()})
+        writer.writerow(
+            {
+                key: neutralize_cell(";".join(value) if isinstance(value, list) else value)
+                for key, value in row.items()
+            }
+        )
     return buffer.getvalue()

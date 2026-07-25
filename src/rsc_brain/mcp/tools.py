@@ -118,10 +118,21 @@ class RunSkillOutput(BaseModel):
 
 
 class GetDocumentOutput(BaseModel):
+    """A document read (§5.8). Marked untrusted with provenance, exactly like a recall fragment.
+
+    R08: this used to be title + text + status/tags, with no trust marker anywhere — so the same
+    characters were untrusted when recalled and ordinary when fetched, and an agent that fetched
+    instead of recalling received a document's embedded instructions as trusted input. ``content_type``
+    and the provenance fields are what make the two paths equivalent (FR-14.8).
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     title: str
     page_text: str
+    content_type: str = UNTRUSTED
+    document_id: str = ""
+    project_id: str = ""
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -383,6 +394,8 @@ async def do_get_document(
         doc = await session.get(models.Document, uuid.UUID(document_id))
         if doc is None or str(doc.project_id) != scope.project_id:
             await _audit_get_document(sessionmaker, scope, 0)
+            # Absent and forbidden are the same answer, and it carries no provenance to compare
+            # against (FR-4.3).
             return GetDocumentOutput(title="", page_text="", metadata={})
         conditions = [
             chunk_visibility_clause(scope, forbidden),
@@ -400,7 +413,13 @@ async def do_get_document(
         title = doc.title or str(doc.id)
         metadata: dict[str, object] = {"status": doc.status, "tags": list(doc.doc_tags)}
     await _audit_get_document(sessionmaker, scope, len(texts))
-    return GetDocumentOutput(title=title, page_text="\n".join(texts), metadata=metadata)
+    return GetDocumentOutput(
+        title=title,
+        page_text="\n".join(texts),
+        document_id=document_id,
+        project_id=scope.project_id,
+        metadata=metadata,
+    )
 
 
 async def _audit_get_document(

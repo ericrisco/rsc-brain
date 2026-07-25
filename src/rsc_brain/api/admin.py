@@ -34,6 +34,7 @@ from rsc_brain.api.authz import (
 from rsc_brain.authorization import Allow, Capability, decide
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.ingest.sources import SourceService
+from rsc_brain.mcp.tools import UNTRUSTED
 from rsc_brain.recall.gaps import list_gaps
 from rsc_brain.scope import Principal, PrincipalType, ProjectScope
 from rsc_brain.stores.relational import models
@@ -556,7 +557,15 @@ async def review_queue(
         counts[item.source] = counts.get(item.source, 0) + 1
     return {
         "items": [
-            {"source": i.source, "id": i.id, "preview": i.preview, "detail": i.detail}
+            {
+                "source": i.source,
+                "id": i.id,
+                "preview": i.preview,
+                "detail": i.detail,
+                # R08: held chunks, agent submissions and guardrail catches are untrusted text shown
+                # for a decision; the marker travels with them (FR-14.8).
+                "content_type": UNTRUSTED,
+            }
             for i in items
         ],
         "counts": counts,
@@ -967,6 +976,11 @@ async def pending_document_previews(
                     "proposed_tags": list(doc.doc_tags),
                     "source_id": doc.source_id,
                     "preview": (preview or "")[:280],
+                    # R08: this is the least vetted text in the product — a document nobody has
+                    # approved — rendered into an operator's browser. It carries the same marker a
+                    # recall fragment does, so no consumer of this API can mistake it for trusted
+                    # content (FR-14.8).
+                    "content_type": UNTRUSTED,
                 }
             )
     return {"documents": out}

@@ -843,7 +843,17 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Login */
+        /**
+         * Login
+         * @description Verify credentials and mint a session token.
+         *
+         *     R09: over the shared budget the attempt is refused with 429 + ``Retry-After`` instead of another
+         *     401. The distinction is the point — a stream of 401s tells a client nothing about whether to stop,
+         *     and a limiter that is invisible in the outcome cannot be relied on by anything.
+         *
+         *     The source key is the IMMEDIATE peer. A forwarded address would let the attacker pick its own
+         *     budget by setting a header, which is the same mistake R51 fixes for OAuth metadata.
+         */
         post: operations["login_api_v1_auth_login_post"];
         delete?: never;
         options?: never;

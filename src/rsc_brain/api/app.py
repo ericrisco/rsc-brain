@@ -26,7 +26,7 @@ from starlette.responses import Response
 from rsc_brain import __version__
 from rsc_brain.api.authz import decide_document
 from rsc_brain.authorization import Allow, Capability, decide
-from rsc_brain.config.models import RecallConfig
+from rsc_brain.config.models import IngressConfig, RecallConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.identity.resolve import resolve_scope
 from rsc_brain.ingest.pipeline import DocumentNotFoundError, IngestionPipeline, PipelineConfig
@@ -53,6 +53,9 @@ class ApiDeps:
     # Sync sessionmaker for the Authlib OAuth server (SPEC-10) — Authlib is synchronous, so its
     # callbacks run over a sync session inside a threadpool. None until OAuth is configured.
     sync_sessionmaker: SyncSessionmaker[Session] | None = None
+    # How the service is reached from outside (AUDIT-038 / R51): the advertised origin and which
+    # proxies may influence it. None means nothing about the request is trusted.
+    ingress: IngressConfig | None = None
 
     def service(self) -> tuple[IngestService, IngestRepository]:
         repo = IngestRepository(self.sessionmaker)
@@ -107,6 +110,7 @@ def _deps_from_config() -> tuple[ApiDeps, AsyncEngine]:
         ),
         recall_config=settings.recall,
         sync_sessionmaker=make_sync_sessionmaker(make_sync_engine()),
+        ingress=settings.ingress,
     )
     return deps, engine
 

@@ -74,18 +74,17 @@ async def _admin_pat(harness: Harness, project_id: str, *, topics: tuple[str, ..
 
 
 async def _seed_row(harness: Harness, project_id: str, **fields: object) -> None:
+    """One audit row, with ``fields`` overriding the defaults rather than duplicating them."""
+    values: dict[str, object] = {
+        "principal_type": "human",
+        "principal_id": "seed",
+        "action": "recall",
+        "topics_used": ["general"],
+        "denied": False,
+    }
+    values.update(fields)
     async with harness.sm() as session:
-        session.add(
-            models.AuditLog(
-                project_id=uuid.UUID(project_id),
-                principal_type="human",
-                principal_id="seed",
-                action="recall",
-                topics_used=["general"],
-                denied=False,
-                **fields,
-            )
-        )
+        session.add(models.AuditLog(project_id=uuid.UUID(project_id), **values))
         await session.commit()
 
 

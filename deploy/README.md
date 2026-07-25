@@ -15,8 +15,12 @@ Container Toolkit is already installed — no target ever installs drivers.
 - **Migrate-on-boot** — a one-shot `migrate` service runs `brain init` (idempotent migrations +
   first-admin) before `api`/`worker` start (NFR-8).
 - **Healthchecks** — reuse `brain verify` (FR-11.2).
-- **First-admin bootstrap** — from `RSC_BRAIN_ADMIN_EMAIL`/`RSC_BRAIN_ADMIN_PASSWORD`, or a
-  generated password shown once in the `migrate` service logs.
+- **First-admin bootstrap** — from `RSC_BRAIN_ADMIN_EMAIL`/`RSC_BRAIN_ADMIN_PASSWORD`. If no
+  password is supplied, one is generated and written to `first-admin-credential` inside the data
+  volume with mode 0600; `brain init` prints that path and never the value (AUDIT-034 / R13 — a
+  credential must not reach application or lifecycle logs). Read it from there and delete the file.
+  `./deploy/init-secrets.sh` sets a password up front, so the generated path is only for deployments
+  that skip it.
 - **Persistent volumes** — Postgres data, the PDF inbox, and the model cache.
 
 ## Raw `docker compose` (baseline)
@@ -25,7 +29,9 @@ Container Toolkit is already installed — no target ever installs drivers.
 ./deploy/init-secrets.sh                 # generate deploy/.env with unique secrets (once)
 # edit deploy/.env: set RSC_BRAIN_DOMAIN to your real domain
 docker compose --env-file deploy/.env -f deploy/docker-compose.prod.yml up -d
-docker compose -f deploy/docker-compose.prod.yml logs migrate   # first-admin password (if generated)
+docker compose -f deploy/docker-compose.prod.yml logs migrate   # migration + bootstrap outcome
+# If a first-admin password was generated, it is in the data volume, never in the log above:
+docker compose -f deploy/docker-compose.prod.yml exec api cat /data/first-admin-credential
 ```
 
 `brain verify` gates the `api` healthcheck; the MCP URL is `https://<domain>/mcp`.

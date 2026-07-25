@@ -95,10 +95,16 @@ def test_the_deploy_guide_does_not_send_operators_to_the_service_log() -> None:
     """Documentation is part of the contract: telling operators to read it from the logs makes the
     leak the supported procedure, so the guide has to change with the behaviour."""
     guide = (REPO_ROOT / "deploy" / "README.md").read_text(encoding="utf-8")
+    # Looks for the INSTRUCTION, not for the two words appearing together: a sentence saying the
+    # credential is never in the log is exactly what the fixed guide should contain, and a heuristic
+    # that flags it would push the documentation back towards silence.
+    log_phrases = ("logs ", "in the logs", "service log", "log output")
     offending = [
         line.strip()
         for line in guide.splitlines()
-        if "password" in line.lower() and "log" in line.lower()
+        if "password" in line.lower()
+        and any(phrase in line.lower() for phrase in log_phrases)
+        and "never" not in line.lower()
     ]
     assert not offending, (
         f"deploy/README.md documents the credential leak as the delivery mechanism: {offending}"

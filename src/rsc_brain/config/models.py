@@ -247,6 +247,31 @@ class KnowledgeConfig(BaseModel):
     )
 
 
+class IngressConfig(BaseModel):
+    """How the service is reached from outside (AUDIT-038 / R51).
+
+    ``public_origin`` is the scheme+host clients actually use. It is a DEPLOYMENT fact, not something a
+    request can imply: OAuth metadata used to be built from ``request.base_url``, so a direct client
+    sending ``Host: attacker.example`` received an issuer and three endpoint URLs on the attacker's
+    host — and a client that discovers metadata that way sends its authorization code there.
+
+    ``trusted_proxies`` lists the networks whose forwarding headers may be believed. Empty means the
+    service is reached directly and no forwarding header is trusted from anyone, which is the safe
+    default rather than the permissive one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    public_origin: str | None = Field(
+        default=None,
+        description="External scheme+host, e.g. https://brain.example.com. None → derive per request.",
+    )
+    trusted_proxies: list[str] = Field(
+        default_factory=list,
+        description="CIDRs whose X-Forwarded-* headers are believed. Empty trusts none.",
+    )
+
+
 class DatabaseConfig(BaseModel):
     """Data-service connection. The DSN carries a secret and is env-only (12-factor)."""
 
@@ -278,4 +303,5 @@ class AppConfig(BaseModel):
     ingest: IngestConfig = Field(default_factory=IngestConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    ingress: IngressConfig = Field(default_factory=IngressConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

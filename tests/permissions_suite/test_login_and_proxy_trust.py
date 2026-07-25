@@ -84,14 +84,21 @@ async def test_repeated_failures_stop_consuming_the_password_hash(
 
     monkeypatch.setattr(security, "verify_password", _counting_verify)
 
+    refused = 0
     for _ in range(ABUSIVE_ATTEMPTS):
-        assert await sessions.login(harness.sm, email, "wrong-password") is None
+        try:
+            assert await sessions.login(harness.sm, email, "wrong-password") is None
+        except sessions.LoginRateLimited:
+            # Being refused IS the outcome under test; what matters is that the refusal arrives
+            # before the hash, which the count below proves.
+            refused += 1
 
     assert calls < ABUSIVE_ATTEMPTS, (
         f"{calls} of {ABUSIVE_ATTEMPTS} failed attempts each consumed a full argon2id verification — "
         "brute force is limited only by our own CPU cost, which makes the same stream a denial of "
         "service"
     )
+    assert refused, "no attempt was ever refused, so nothing stopped the stream"
 
 
 async def test_a_known_and_an_unknown_account_cost_the_same(

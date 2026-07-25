@@ -31,6 +31,21 @@ jobs:
       # integration) in the `integration` job below, where the DB-backed code is exercised.
       - run: uv run pytest
 
+  secrets:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # scan history too: a credential removed in a later commit is still leaked
+      # AUDIT-013 / R14: the exceptions live in .gitleaks.toml as exact literals for the deliberate
+      # test fixtures, each with its reason — never a rule or a path glob, which would suppress the
+      # same pattern everywhere.
+      - uses: gitleaks/gitleaks-action@83373cf2f8c4db6e24b41c1a9b086bb9619e9cd3 # v2.3.9
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
+
   licenses:
     name: AGPL license audit
     runs-on: ubuntu-latest

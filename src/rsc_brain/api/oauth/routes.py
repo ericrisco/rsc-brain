@@ -23,6 +23,7 @@ from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
 from rsc_brain.api.oauth.server import GrantUser, build_authorization_server
+from rsc_brain.api.origin import external_origin
 from rsc_brain.identity.sessions import list_memberships, resolve_session
 from rsc_brain.security import SESSION_PREFIX
 from rsc_brain.stores.relational import models
@@ -71,7 +72,9 @@ async def _current_user_id(request: Request) -> str | None:
 
 @router.get("/.well-known/oauth-authorization-server")
 async def authorization_server_metadata(request: Request) -> JSONResponse:
-    base = str(request.base_url).rstrip("/")
+    # R51: the advertised origin comes from configuration, not from the caller's Host header — an
+    # OAuth client that discovers metadata sends its authorization code and token request here.
+    base = external_origin(request, getattr(request.app.state.deps, "ingress", None))
     return JSONResponse(
         {
             "issuer": base,

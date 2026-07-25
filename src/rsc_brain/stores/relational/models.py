@@ -756,6 +756,28 @@ class PrincipalDailyUsage(Base):
     __table_args__ = (UniqueConstraint("project_id", "principal_id", "day"),)
 
 
+class LoginAttemptWindow(Base):
+    """Failed-login budget per source network and per account, shared across replicas (R09).
+
+    Not per process: the deployment runs several API replicas behind one proxy, so an in-memory limit
+    is silently divided by however many replicas an attacker's requests land on. Postgres is the shared
+    state every replica already has.
+
+    ``budget_key`` carries its dimension as a prefix (``network:``/``account:``) so one atomic
+    statement can charge either budget.
+    """
+
+    __tablename__ = "login_attempt_window"
+    id: Mapped[uuid.UUID] = _pk()
+    budget_key: Mapped[str] = mapped_column(Text, nullable=False)
+    window_start: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    __table_args__ = (
+        UniqueConstraint("budget_key", "window_start", name="uq_login_attempt_window_key_start"),
+        Index("ix_login_attempt_window_window_start", "window_start"),
+    )
+
+
 class PrincipalRateWindow(Base):
     """Sliding per-minute request counter per principal (SPEC-11, FR-14.7), shared across workers
     via Postgres — no Redis. One row per (principal, minute-truncated window)."""
