@@ -57,6 +57,10 @@ class ApiDeps:
     # proxies may influence it. None means nothing about the request is trusted.
     ingress: IngressConfig | None = None
 
+    # R37: set in production so an accepted upload is queued rather than processed on the request
+    # thread. Left None by tests and the CLI, where a synchronous ingest is the point.
+    queue: object | None = None
+
     def service(self) -> tuple[IngestService, IngestRepository]:
         repo = IngestRepository(self.sessionmaker)
         pipeline = IngestionPipeline(
@@ -68,7 +72,10 @@ class ApiDeps:
             # that project sets ontology.enabled=true, so a standard install pays nothing for it.
             ontology=OntologyIngest(self.sessionmaker),
         )
-        return IngestService(repo, pipeline, data_dir=self.data_dir), repo
+        return (
+            IngestService(repo, pipeline, data_dir=self.data_dir, queue=self.queue),  # type: ignore[arg-type]
+            repo,
+        )
 
     def retriever(self) -> PgRetriever:
         return PgRetriever(
@@ -81,38 +88,31 @@ class ApiDeps:
 
 
 def _deps_from_config() -> tuple[ApiDeps, AsyncEngine]:
-    from rsc_brain.config import load_settings
-    from rsc_brain.gateway.usage import PgEmbeddingCache, PgUsageRecorder
-    from rsc_brain.stores.relational.database import (
-        make_engine,
-        make_sessionmaker,
-        make_sync_engine,
-        make_sync_sessionmaker,
-    )
+    """Build the API's dependencies from the SHARED runtime factory (AUDIT-044 / R53).
 
-    settings = load_settings()
-    engine = make_engine()
-    sessionmaker = make_sessionmaker(engine)
+    The API used to assemble its own graph here and the worker assembled a different one in
+    ``ingest/queue.py`` — the API's gateway had a usage recorder and an embedding cache, the worker's
+    had neither. Both roles now come from :func:`rsc_brain.runtime.build`, so accounting, caching,
+    limits and ontology cannot differ by which process picked the job up.
+    """
+    from rsc_brain import runtime
+    from rsc_brain.ingest.queue import build_queue
+    from rsc_brain.stores.relational.database import make_sync_engine, make_sync_sessionmaker
+
+    dependencies = runtime.build("api")
     deps = ApiDeps(
-        sessionmaker=sessionmaker,
-        # SPEC-22 (FR-9.5/9.6): enforce daily token budgets + reuse cached embeddings in the
-        # running service (the gateway works without these; they're wired here for production).
-        gateway=ModelGateway(
-            settings.capabilities,
-            usage_recorder=PgUsageRecorder(sessionmaker, settings.capabilities),
-            embedding_cache=PgEmbeddingCache(sessionmaker),
-        ),
-        data_dir=settings.ingest.data_dir,
-        config=PipelineConfig(
-            hardware_profile=settings.hardware_profile,
-            sensitivity_threshold=settings.ingest.sensitivity_threshold,
-            default_tag=settings.ingest.default_tag,
-        ),
-        recall_config=settings.recall,
+        sessionmaker=dependencies.sessionmaker,
+        gateway=dependencies.gateway,
+        data_dir=dependencies.data_dir,
+        config=dependencies.pipeline_config,
+        recall_config=dependencies.recall_config,
         sync_sessionmaker=make_sync_sessionmaker(make_sync_engine()),
-        ingress=settings.ingress,
+        ingress=dependencies.ingress,
+        # R37: heavy ingestion work is deferred to the worker; the request returns once the document,
+        # its run checkpoint and the queue entry are durable.
+        queue=build_queue(),
     )
-    return deps, engine
+    return deps, dependencies.engine
 
 
 def create_app(*, deps: ApiDeps | None = None) -> FastAPI:

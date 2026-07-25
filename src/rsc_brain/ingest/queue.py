@@ -69,24 +69,28 @@ def build_queue(
 async def _default_runner(
     document_id: str, project_id: str, principal_id: str
 ) -> None:  # pragma: no cover - needs a live DB + models; exercised operationally
-    """Rebuild the stores + gateway from config and run the pipeline for one document."""
-    from rsc_brain.config import load_settings
-    from rsc_brain.gateway.model_gateway import ModelGateway
+    """Run the pipeline for one document, with the SAME runtime the API would have used.
+
+    R53: this used to build its own graph — `ModelGateway(settings.capabilities)` with no usage
+    recorder and no embedding cache — so a document ingested here spent tokens nobody recorded,
+    ignored the daily budget, and re-embedded text the API would have reused. Both roles now come from
+    :func:`rsc_brain.runtime.build`.
+    """
+    from rsc_brain import runtime
     from rsc_brain.ingest.pipeline import IngestionPipeline
     from rsc_brain.ontology.ingest import OntologyIngest
     from rsc_brain.scope import Principal, PrincipalType
     from rsc_brain.stores.age_graph_store import AgeGraphStore
-    from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
     from rsc_brain.stores.relational.ingest_repository import IngestRepository
 
-    settings = load_settings()
-    engine = make_engine()
+    dependencies = runtime.build("worker")
     try:
-        sessionmaker = make_sessionmaker(engine)
+        sessionmaker = dependencies.sessionmaker
         pipeline = IngestionPipeline(
             repository=IngestRepository(sessionmaker),
             graph_store=AgeGraphStore(sessionmaker),
-            gateway=ModelGateway(settings.capabilities),
+            gateway=dependencies.gateway,
+            config=dependencies.pipeline_config,
             ontology=OntologyIngest(sessionmaker),
         )
         scope = Principal(id=principal_id, type=PrincipalType.HUMAN, can_curate=True).scope_for(
@@ -94,4 +98,4 @@ async def _default_runner(
         )
         await pipeline.process(scope, document_id)
     finally:
-        await engine.dispose()
+        await dependencies.dispose()

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from rsc_brain.ingest.pipeline import IngestionPipeline
 from rsc_brain.ingest.types import DocStatus, RunStatus
@@ -25,6 +26,12 @@ class IngestOutcome:
     duplicate: bool
 
 
+class IngestQueueProtocol(Protocol):
+    """The one thing this service needs from a queue: durable acceptance of one document."""
+
+    async def enqueue(self, *, document_id: str, project_id: str, principal_id: str) -> None: ...
+
+
 class IngestService:
     def __init__(
         self,
@@ -32,10 +39,16 @@ class IngestService:
         pipeline: IngestionPipeline,
         *,
         data_dir: str | Path = "data",
+        queue: IngestQueueProtocol | None = None,
     ) -> None:
         self._repo = repository
         self._pipeline = pipeline
         self._blobs = Path(data_dir) / "blobs"
+        # R37: when a queue is configured, accepting a document ENQUEUES the heavy work instead of
+        # doing it on the caller's thread. Without one the pipeline still runs inline, which is what
+        # the CLI and the tests want — a synchronous ingest is a legitimate local operation, it is just
+        # not what an accepted HTTP request should do.
+        self._queue = queue
 
     async def ingest_bytes(
         self,
@@ -69,6 +82,16 @@ class IngestService:
         )
         await self._repo.ensure_run(scope, document_id, phase=DocStatus.RECEIVED.value)
         if not run:
+            return IngestOutcome(document_id, DocStatus.RECEIVED.value, duplicate=False)
+        if self._queue is not None:
+            # The durable record exists BEFORE the heavy work: the document row, its run checkpoint and
+            # the queue entry are all persisted, so a process that dies here loses nothing and the
+            # worker retries from the last checkpoint (the pipeline is idempotent, SPEC-05).
+            await self._queue.enqueue(
+                document_id=document_id,
+                project_id=scope.project_id,
+                principal_id=scope.principal_id,
+            )
             return IngestOutcome(document_id, DocStatus.RECEIVED.value, duplicate=False)
         status = await self._pipeline.process(scope, document_id)
         return IngestOutcome(document_id, status.phase, duplicate=False)

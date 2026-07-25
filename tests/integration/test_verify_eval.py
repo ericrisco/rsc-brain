@@ -26,11 +26,28 @@ DOC = b"# Engineering handbook\n\nThe deployment pipeline uses Docker containers
 
 
 async def test_verify_all_green(build_harness: Callable[..., Harness]) -> None:
+    """Readiness checks configuration and the local stores — and nothing remote (R50).
+
+    The gateway probe moved behind `probe_models=True`: this command is the container healthcheck, so
+    a provider outage used to restart every healthy container and a healthy deployment paid tokens on
+    every probe.
+    """
     harness = build_harness()
     report = await run_verify(gateway=harness.gateway, sessionmaker=harness.sm)
     assert report.ok is True
     names = {c.name for c in report.checks}
-    assert {"gateway", "database"} <= names
+    assert {"capabilities", "database"} <= names
+    assert "gateway" not in names, "readiness must not probe the model providers"
+
+
+async def test_verify_probes_the_providers_only_when_asked(
+    build_harness: Callable[..., Harness],
+) -> None:
+    """The deep diagnostic still exists — as an explicit operator action (AUDIT-044 clarification)."""
+    harness = build_harness()
+    report = await run_verify(gateway=harness.gateway, sessionmaker=harness.sm, probe_models=True)
+    assert report.ok is True
+    assert "gateway" in {c.name for c in report.checks}
 
 
 async def test_verify_reports_database_failure(build_harness: Callable[..., Harness]) -> None:

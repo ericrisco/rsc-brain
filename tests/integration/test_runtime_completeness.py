@@ -132,13 +132,29 @@ async def test_an_accepted_upload_leaves_durable_queued_work(
     The queue table is procrastinate's, created by ``brain migrate``: if accepting a document does not
     put a row there, the worker container has nothing to drain and a request that dies mid-processing
     leaves work nobody retries.
+
+    The app is built WITH a queue, as production does — the default deps leave it unset so the CLI and
+    the rest of the suite keep a synchronous ingest, which is a legitimate local operation.
     """
+    from rsc_brain.ingest.queue import build_queue
+    from rsc_brain.stores.relational.database import resolve_dsn
+
     harness = build_harness()
     project = await harness.setup_project(unique_slug("acme"), [("general", 0)])
     slug = await _slug_of(harness, project)
     token = await _project_pat(harness, project)
 
-    async with _client(harness, tmp_path) as client:
+    app = create_app(
+        deps=ApiDeps(
+            sessionmaker=harness.sm,
+            gateway=harness.gateway,
+            data_dir=str(tmp_path),
+            queue=build_queue(dsn=resolve_dsn()),
+        )
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
         response = await client.post(
             f"/api/v1/projects/{slug}/documents",
             files={
@@ -182,6 +198,9 @@ async def test_readiness_does_not_invoke_a_model(
     calls: list[str] = []
 
     class _CountingGateway:
+        def unresolved_capabilities(self) -> list[str]:
+            return []  # a local check, and the only thing readiness may ask of the gateway
+
         async def healthcheck(self) -> dict[str, object]:
             calls.append("healthcheck")
             return {}
@@ -212,6 +231,9 @@ async def test_readiness_stays_ready_while_providers_are_unavailable(
     harness = build_harness()
 
     class _DeadProviderGateway:
+        def unresolved_capabilities(self) -> list[str]:
+            return []  # configuration is complete; only the providers are unreachable
+
         async def healthcheck(self) -> dict[str, object]:
             raise GatewayError("provider_unavailable", "probe-ref")
 
@@ -237,68 +259,44 @@ async def test_readiness_stays_ready_while_providers_are_unavailable(
 async def test_the_api_and_the_worker_configure_the_same_model_collaborators(
     monkeypatch: pytest.MonkeyPatch, build_harness: Callable[..., Harness]
 ) -> None:
-    """The same job must not be accounted for differently depending on which process ran it.
+    """Both roles must come out of ONE factory with the same collaborators.
 
-    Compared by capturing what each composition root hands to ``ModelGateway`` — not by importing a
-    shared factory that does not exist yet, because asserting against a missing API fails on import
-    and proves nothing about the divergence.
+    Compared through the factory rather than by re-deriving each entry point's old assembly, because
+    the property R53 asks for is not "two graphs happen to match today" but "there is one graph". A
+    future change that gives one role a different recorder, cache or limit has to say so in
+    ``runtime.build`` — where this test sees it — instead of by omission in a second composition root.
 
-    What this catches is concrete: ``ApiDeps`` builds the gateway with a usage recorder and an
-    embedding cache; the worker's runner builds ``ModelGateway(settings.capabilities)`` with neither.
-    So a document ingested by the worker spends tokens nobody records, ignores the daily budget, and
-    re-embeds text the API would have reused from the cache.
+    What this used to catch, and must keep catching: the API built its gateway with a usage recorder
+    and an embedding cache; the worker built one with neither, so a document ingested by the worker
+    spent tokens nobody recorded and re-embedded text the API would have reused.
     """
-    import rsc_brain.gateway.model_gateway as gateway_module
+    from rsc_brain import runtime
 
-    harness = build_harness()  # provides a real DSN in the environment for both roots
+    harness = build_harness()  # supplies a real DSN in the environment for both roles
     del harness
-
     monkeypatch.setenv("RSC_BRAIN_CONFIG", str(REPO_ROOT / "config.example.yaml"))
 
-    captured: dict[str, set[str]] = {}
-    real_init = gateway_module.ModelGateway.__init__
-
-    def _capture(role: str) -> None:
-        def _init(self: object, capabilities: object, **kwargs: object) -> None:
-            captured.setdefault(role, {name for name, value in kwargs.items() if value is not None})
-            real_init(self, capabilities, **kwargs)  # type: ignore[arg-type]
-
-        monkeypatch.setattr(gateway_module.ModelGateway, "__init__", _init)
-
-    from rsc_brain.api.app import _deps_from_config
-
-    _capture("api")
-    _, api_engine = _deps_from_config()
-    await api_engine.dispose()
-
-    # The worker's own assembly, copied from `ingest/queue.py::_default_runner` — which is the point:
-    # the two roots are separate code, so nothing keeps them equivalent.
-    _capture("worker")
-    from rsc_brain.config import load_settings
-    from rsc_brain.ingest.pipeline import IngestionPipeline
-    from rsc_brain.ontology.ingest import OntologyIngest
-    from rsc_brain.stores.age_graph_store import AgeGraphStore
-    from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
-    from rsc_brain.stores.relational.ingest_repository import IngestRepository
-
-    settings = load_settings()
-    worker_engine = make_engine()
+    api = runtime.build("api")
+    worker = runtime.build("worker")
     try:
-        sessionmaker = make_sessionmaker(worker_engine)
-        IngestionPipeline(
-            repository=IngestRepository(sessionmaker),
-            graph_store=AgeGraphStore(sessionmaker),
-            gateway=gateway_module.ModelGateway(settings.capabilities),
-            ontology=OntologyIngest(sessionmaker),
+        assert api.role == "api" and worker.role == "worker"
+        for attribute in ("_usage", "_cache"):
+            configured_for_api = getattr(api.gateway, attribute) is not None
+            configured_for_worker = getattr(worker.gateway, attribute) is not None
+            assert configured_for_api == configured_for_worker, (
+                f"gateway{attribute} is configured for the api={configured_for_api} and for the "
+                f"worker={configured_for_worker} — the same job would be accounted for, budgeted and "
+                "cached differently depending on which process picked it up"
+            )
+            assert configured_for_api, f"neither role configures gateway{attribute}"
+        assert api.limits == worker.limits, "the two roles enforce different public limits"
+        assert api.pipeline_config == worker.pipeline_config, (
+            "the two roles run the pipeline with different configuration"
         )
+        assert api.data_dir == worker.data_dir, "the two roles read and write different storage"
     finally:
-        await worker_engine.dispose()
-
-    assert captured.get("api") == captured.get("worker"), (
-        f"the API configures {sorted(captured.get('api', set()))} and the worker "
-        f"{sorted(captured.get('worker', set()))} — the same job is accounted for, budgeted and "
-        "cached differently depending on which process picked it up"
-    )
+        await api.dispose()
+        await worker.dispose()
 
 
 # --------------------------------------------------------------------------- #
