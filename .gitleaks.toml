@@ -39,4 +39,12 @@ regexes = [
   # A sentinel a unit test injects as a *generated* first-admin password, purely to assert that it
   # never reaches stdout, the JSON payload or the deploy guide (R13).
   '''sentinel-generated-credential-9f3a1c''',
+  # THE two deliberate secret-like fixtures R14's third criterion refers to
+  # (tests/unit/test_doctor.py). They exist so the product's OWN secret scanner can be proved to flag
+  # a populated key and a populated password — `brain doctor` would be untested otherwise. Both are
+  # obvious non-values: `sk-ABCDEFGH…` is sequential, `hunter2` is the internet's example password.
+  # Listed as exact literals rather than by file, so the same shapes stay reported anywhere else,
+  # including in history.
+  '''sk-ABCDEFGH1234567890abcdef''',
+  '''hunter2-real-value''',
 ]
