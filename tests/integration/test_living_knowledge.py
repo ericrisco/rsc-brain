@@ -34,10 +34,26 @@ def _client(harness: Harness, tmp_path: Path) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
 
-async def _mint_pat(harness: Harness, project: str, *, can_curate: bool, user_id: str) -> str:
+async def _mint_pat(
+    harness: Harness,
+    project: str,
+    *,
+    can_curate: bool,
+    user_id: str,
+    project_role: str = "member",
+) -> str:
+    """A PAT with an explicit PROJECT role and authority over both of this file's topics.
+
+    The feed is topic-filtered (AUDIT-020 / R01) and reverting needs the project role or topic
+    ownership (FR-15.8), so the two are stated separately here: `can_curate` authorizes neither.
+    """
     identity = IdentityService(harness.sm)
     membership = await identity.add_membership(
-        user_id, project, allowed_topics=("pricing",), can_curate=can_curate
+        user_id,
+        project,
+        role=project_role,
+        allowed_topics=("pricing", "hr"),
+        can_curate=can_curate,
     )
     return (await identity.issue_pat(membership)).token
 
@@ -127,7 +143,9 @@ async def test_revert_authz_admin_ok_stranger_forbidden(
     stranger = await _make_user(harness)  # no Person → owns nothing; not a curator
     stranger_token = await _mint_pat(harness, project, can_curate=False, user_id=stranger)
     admin = await _make_user(harness)
-    admin_token = await _mint_pat(harness, project, can_curate=True, user_id=admin)
+    admin_token = await _mint_pat(
+        harness, project, can_curate=False, user_id=admin, project_role="project-admin"
+    )
 
     async with _client(harness, tmp_path) as client:
         forbidden = await client.post(

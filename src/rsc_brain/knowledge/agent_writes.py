@@ -127,7 +127,7 @@ class AgentWriteService:
         # an agent under `direct`, writes an active claim (credibility capped ≤ 0.6).
         quarantined = scope.principal_type is PrincipalType.AGENT and policy == "quarantine"
         credibility = min(QUARANTINE_CREDIBILITY, DIRECT_CREDIBILITY_CAP)
-        embedding = (await self._gateway.embed([text]))[0]
+        embedding = (await self._gateway.for_project(scope.project_id).embed([text]))[0]
         tag_list = list(tags or [])
         subject = entities[0] if entities else None
 

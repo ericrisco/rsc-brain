@@ -82,6 +82,10 @@ class ClaimSpec:
     subject: str | None = None
     predicate: str | None = None
     object: str | None = None
+    # Deterministic entity identity of each endpoint (AUDIT-035 / R16); None when the endpoint was
+    # not resolved to a typed entity.
+    subject_entity_key: str | None = None
+    object_entity_key: str | None = None
     tags: tuple[str, ...] = ()
     extraction_confidence: float | None = None
     credibility: float | None = None  # cred0 (SPEC-08 FR-5.1); None → DDL default
@@ -659,6 +663,14 @@ class IngestRepository:
                         subject=claim.subject,
                         predicate=claim.predicate,
                         object=claim.object,
+                        subject_entity_key=(
+                            uuid.UUID(claim.subject_entity_key)
+                            if claim.subject_entity_key
+                            else None
+                        ),
+                        object_entity_key=(
+                            uuid.UUID(claim.object_entity_key) if claim.object_entity_key else None
+                        ),
                         tags=list(claim.tags),
                         extraction_confidence=claim.extraction_confidence,
                         source_document_id=uuid.UUID(document_id),

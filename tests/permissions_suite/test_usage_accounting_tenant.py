@@ -92,9 +92,13 @@ async def test_two_projects_reconcile_to_their_own_usage_only(
     pat_b = await _mint_pat(harness, project_b)
 
     capability = f"acct-{unique_slug('cap')}"
-    recorder = PgUsageRecorder(harness.sm, _caps())
-    await recorder.record(capability, 111)  # project A's own attempt
-    await recorder.record(capability, 222)  # project B's own attempt
+    # Each attempt is recorded by the accounting bound to the project that made it. T001 wrote both
+    # lines against one unbound recorder, which cannot express whose attempt each was — no
+    # implementation could have attributed them, so the arrange was unsatisfiable while the
+    # assertions were right. The binding is the contract R12 introduces (`for_project`).
+    accounting = PgUsageRecorder(harness.sm, _caps())
+    await accounting.for_project(project_a).record(capability, 111)  # project A's own attempt
+    await accounting.for_project(project_b).record(capability, 222)  # project B's own attempt
 
     async with _client(harness, tmp_path) as client:
         resp_a = await client.get(
@@ -130,12 +134,12 @@ async def test_foreign_and_viewer_principal_cannot_observe_other_projects_usage(
     """
     harness = build_harness()
     # Project A exists and has its own attempt on record; B never calls this capability at all.
-    await harness.setup_project(unique_slug("acct-a"), [("general", 0), ("ops", 0)])
+    project_a = await harness.setup_project(unique_slug("acct-a"), [("general", 0), ("ops", 0)])
     project_b = await harness.setup_project(unique_slug("acct-b"), [("general", 0), ("ops", 0)])
 
     capability = f"acct-{unique_slug('cap')}"
-    recorder = PgUsageRecorder(harness.sm, _caps())
-    await recorder.record(capability, 999)  # project A's own attempt; B never called
+    accounting = PgUsageRecorder(harness.sm, _caps())
+    await accounting.for_project(project_a).record(capability, 999)  # A's attempt; B never called
 
     pat_member_b = await _mint_pat(harness, project_b, project_role="member")
     pat_viewer_b = await _mint_pat(harness, project_b, project_role="viewer")
@@ -174,7 +178,11 @@ async def test_project_daily_budget_is_independent_not_shared(
     reservation under a concurrent race is R29 (task T015), not this file.
     """
     harness = build_harness()
-    scout = PgUsageRecorder(harness.sm, _caps())
+    project_a = await harness.setup_project(unique_slug("budget-a"), [("general", 0)])
+    project_b = await harness.setup_project(unique_slug("budget-b"), [("general", 0)])
+
+    # Each project's budget is evaluated against its OWN consumption, so A's baseline is A's.
+    scout = PgUsageRecorder(harness.sm, _caps(), project_id=project_a)
     baseline_rows = await scout.usage(days=1)
     baseline = 0
     for row in baseline_rows:
@@ -184,17 +192,19 @@ async def test_project_daily_budget_is_independent_not_shared(
 
     headroom = 50
     budget = baseline + headroom
-    recorder = PgUsageRecorder(harness.sm, _caps(embedder_budget=budget))
+    accounting = PgUsageRecorder(harness.sm, _caps(embedder_budget=budget))
+    recorder_a = accounting.for_project(project_a)
+    recorder_b = accounting.for_project(project_b)
 
     # Project A has spent nothing under this fresh budget window; its own check must pass.
-    await recorder.enforce_budget("embedder")
+    await recorder_a.enforce_budget("embedder")
 
     # Project B's attempt, on the same capability/day, consumes well past A's headroom.
-    await recorder.record("embedder", headroom + 1)
+    await recorder_b.record("embedder", headroom + 1)
 
     # Safe expectation: project A's independent budget decision is untouched by B's traffic.
     try:
-        await recorder.enforce_budget("embedder")
+        await recorder_a.enforce_budget("embedder")
     except BudgetExceededError as exc:
         pytest.fail(
             "project A's budget check was exhausted by project B's traffic on a shared "

@@ -1,10 +1,21 @@
-"""Entity subgraph service (SPEC-26, FR-13.8): a bounded, permission-scoped neighborhood viewer.
+"""Entity subgraph service (SPEC-26 FR-13.8, AUDIT-035 R16): permission-first and bounded.
 
-The entry point is always ONE entity (never "the whole graph" — the Gurú lesson). Hard per-page
-limits live in the graph store's Cypher, not the client. Permissions (FR-4.2/4.3): the entry entity
-is visible only if the caller can see ≥1 claim referencing it (zero ⇒ indistinguishable from
-non-existent); neighbours are filtered the same way, so a forbidden-topic entity never leaks through
-the graph edges either.
+The entry point is always ONE entity (never "the whole graph" — the Gurú lesson). Two properties
+have to hold together, and used not to:
+
+* **permission-first.** Authority is applied to the whole candidate neighbourhood BEFORE anything is
+  counted or paged. The old order — page in the graph, filter in Python — meant the ``total``
+  announced neighbours the caller could not see, pages came back short or empty depending on where
+  hidden neighbours happened to sort, and revoking a topic left the total unchanged.
+* **identity, not name.** A claim's endpoint is authorized by the deterministic entity identity
+  ``entity_id(type, name)`` — the same value the graph node carries. Names are ambiguous: two
+  entities can share a normalized name and differ by type, and a visible claim about one must never
+  authorize the other. For claims written before that identity was recorded, a name still authorizes
+  — but only when it resolves to exactly one candidate identity. An ambiguous name authorizes
+  nothing, which is the safe direction.
+
+An entity the caller cannot see any claim about is reported exactly like one that does not exist
+(FR-4.3).
 """
 
 from __future__ import annotations
@@ -19,7 +30,11 @@ from rsc_brain.ingest.entity_resolution import entity_id, normalize_name
 from rsc_brain.recall.permissions import claim_visibility_clause, sensitive_tags
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
+from rsc_brain.stores.graph_store import GraphNode
 from rsc_brain.stores.relational import models
+
+#: Hard ceiling on one page, regardless of what the caller asks for (FR-13.8).
+MAX_PAGE = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,32 +57,91 @@ class NeighborhoodView:
     center: GraphNodeView
     neighbors: list[GraphNodeView]
     edges: list[GraphEdgeView]
-    total: int  # total neighbours in the graph (pre-permission upper bound), for pagination
+    total: int  # the AUTHORIZED neighbour count — never the physical one (R16)
     offset: int
     limit: int
 
 
-async def _visible_names(
-    session: AsyncSession,
-    scope: ProjectScope,
-    forbidden: frozenset[str],
-    names: list[str],
+async def _authorized_keys(
+    session: AsyncSession, scope: ProjectScope, forbidden: frozenset[str], candidates: list[str]
 ) -> set[str]:
-    """The subset of ``names`` that appear as subject/object of at least one claim the caller may
-    see. The permission cut is entirely in-query (FR-4.2), so nothing forbidden is ever fetched."""
+    """Which of these entity identities the caller may see a claim about (identity-keyed)."""
+    if not candidates:
+        return set()
+    keys = [uuid.UUID(c) for c in candidates if _is_uuid(c)]
+    if not keys:
+        return set()
+    subject_hits = await session.scalars(
+        select(models.Claim.subject_entity_key).where(
+            claim_visibility_clause(scope, forbidden), models.Claim.subject_entity_key.in_(keys)
+        )
+    )
+    object_hits = await session.scalars(
+        select(models.Claim.object_entity_key).where(
+            claim_visibility_clause(scope, forbidden), models.Claim.object_entity_key.in_(keys)
+        )
+    )
+    return {str(k) for k in [*subject_hits, *object_hits] if k is not None}
+
+
+async def _authorized_names(
+    session: AsyncSession, scope: ProjectScope, forbidden: frozenset[str], names: list[str]
+) -> set[str]:
+    """Which of these names appear in a visible claim whose matching ENDPOINT carries no key.
+
+    The fallback for endpoints written before identities were recorded. Each endpoint is judged on
+    its own: a claim may state the identity of its object and only name its subject. Once an endpoint
+    states which identity it is about, its name must not authorize a different one.
+    """
     if not names:
         return set()
     subject_hits = await session.scalars(
         select(models.Claim.subject).where(
-            claim_visibility_clause(scope, forbidden), models.Claim.subject.in_(names)
+            claim_visibility_clause(scope, forbidden),
+            models.Claim.subject_entity_key.is_(None),
+            models.Claim.subject.in_(names),
         )
     )
     object_hits = await session.scalars(
         select(models.Claim.object).where(
-            claim_visibility_clause(scope, forbidden), models.Claim.object.in_(names)
+            claim_visibility_clause(scope, forbidden),
+            models.Claim.object_entity_key.is_(None),
+            models.Claim.object.in_(names),
         )
     )
     return {n for n in [*subject_hits, *object_hits] if n is not None}
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _node_name(node: GraphNode) -> str:
+    return str(node.properties.get("name", ""))
+
+
+async def _authorize(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    scope: ProjectScope,
+    forbidden: frozenset[str],
+    candidates: list[GraphNode],
+) -> list[GraphNode]:
+    """The candidate neighbours this caller may see, in the candidates' deterministic order."""
+    if not candidates:
+        return []
+    names = [_node_name(n) for n in candidates]
+    ambiguous = {name for name in names if names.count(name) > 1}
+    async with sessionmaker() as session:
+        by_key = await _authorized_keys(session, scope, forbidden, [n.id for n in candidates])
+        # A name only speaks for an identity when it names exactly one of the candidates.
+        by_name = await _authorized_names(
+            session, scope, forbidden, sorted({n for n in names if n and n not in ambiguous})
+        )
+    return [n for n in candidates if n.id in by_key or _node_name(n) in by_name]
 
 
 async def entity_neighborhood(
@@ -79,9 +153,12 @@ async def entity_neighborhood(
     limit: int = 25,
     offset: int = 0,
 ) -> NeighborhoodView | None:
-    """The bounded neighbourhood of the named entity, or None if it is absent OR the caller cannot
-    see any of its claims (both indistinguishable, FR-4.3)."""
-    forbidden = await sensitive_tags(sessionmaker, scope.project_id)
+    """The bounded, authorized neighbourhood of the named entity.
+
+    ``None`` when the entity is absent OR the caller can see no claim about it — the two are
+    indistinguishable from outside (FR-4.3).
+    """
+    forbidden = await sensitive_tags(sessionmaker, scope.project_id) - scope.allowed_topics
     async with sessionmaker() as session:
         entity = await session.scalar(
             select(models.Entity)
@@ -94,49 +171,59 @@ async def entity_neighborhood(
         )
         if entity is None:
             return None
+        node_id = str(entity_id(entity.type, entity.name))
         entry_visible = await session.scalar(
             select(func.count())
             .select_from(models.Claim)
             .where(
                 claim_visibility_clause(scope, forbidden),
-                or_(models.Claim.subject == entity.name, models.Claim.object == entity.name),
+                or_(
+                    models.Claim.subject_entity_key == uuid.UUID(node_id),
+                    models.Claim.object_entity_key == uuid.UUID(node_id),
+                    # A keyless endpoint still authorizes the centre by name — per endpoint, since a
+                    # claim may key one side and only name the other. The centre was selected BY
+                    # name, so it is already resolved to one entity row.
+                    (models.Claim.subject_entity_key.is_(None))
+                    & (models.Claim.subject == entity.name),
+                    (models.Claim.object_entity_key.is_(None))
+                    & (models.Claim.object == entity.name),
+                ),
             )
         )
         if not entry_visible:
-            return None  # entity exists but is invisible to this caller ⇒ treat as absent
+            return None  # exists but invisible to this caller ⇒ treated as absent
 
-    node_id = str(entity_id(entity.type, entity.name))
-    nodes, edges, total = await graph.neighborhood(scope, node_id, limit=limit, offset=offset)
+    page = min(max(1, int(limit)), MAX_PAGE)
+    skip = max(0, int(offset))
 
-    # Keep only neighbours the caller may see claims for (0 leaks through the graph, FR-4.3).
-    async with sessionmaker() as session:
-        allowed = await _visible_names(
-            session, scope, forbidden, [str(n.properties.get("name", "")) for n in nodes]
-        )
-    kept = [n for n in nodes if str(n.properties.get("name", "")) in allowed]
-    kept_ids = {n.id for n in kept}
-    neighbors = [
-        GraphNodeView(
-            id=n.id,
-            name=str(n.properties.get("name", n.id)),
-            type=str(n.properties.get("type", "")),
-            anchored=False,
-        )
-        for n in kept
-    ]
-    edge_views = [
-        GraphEdgeView(source=e.source_id, target=e.target_id, type=e.type)
-        for e in edges
-        if e.source_id in {node_id, *kept_ids} and e.target_id in {node_id, *kept_ids}
-    ]
-    center = GraphNodeView(
-        id=node_id, name=entity.name, type=entity.type, anchored=entity.ontology_valid
-    )
+    # Authorize the WHOLE candidate set, then count, then page. Every observable — total, page
+    # density, continuation — is derived from the authorized set only (R16).
+    candidates = await graph.neighborhood_candidates(scope, node_id)
+    authorized = await _authorize(sessionmaker, scope, forbidden, candidates)
+    total = len(authorized)
+    page_nodes = authorized[skip : skip + page]
+
+    edges = await graph.edges_between(scope, node_id, [n.id for n in page_nodes])
+    visible_ids = {node_id, *(n.id for n in page_nodes)}
     return NeighborhoodView(
-        center=center,
-        neighbors=neighbors,
-        edges=edge_views,
+        center=GraphNodeView(
+            id=node_id, name=entity.name, type=entity.type, anchored=entity.ontology_valid
+        ),
+        neighbors=[
+            GraphNodeView(
+                id=n.id,
+                name=_node_name(n) or n.id,
+                type=str(n.properties.get("type", "")),
+                anchored=False,
+            )
+            for n in page_nodes
+        ],
+        edges=[
+            GraphEdgeView(source=e.source_id, target=e.target_id, type=e.type)
+            for e in edges
+            if e.source_id in visible_ids and e.target_id in visible_ids
+        ],
         total=total,
-        offset=max(0, offset),
-        limit=min(max(1, limit), 200),
+        offset=skip,
+        limit=page,
     )

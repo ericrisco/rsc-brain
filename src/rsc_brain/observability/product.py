@@ -46,7 +46,11 @@ async def product_metrics(
             str(capability): int(total) if isinstance(total, int) else 0
             for capability, total in await session.execute(
                 select(models.TokenUsage.capability, func.sum(models.TokenUsage.tokens))
-                .where(models.TokenUsage.day >= since.date())
+                .where(
+                    models.TokenUsage.day >= since.date(),
+                    # R12: this project's consumption, not the instance's.
+                    models.TokenUsage.project_id == pid,
+                )
                 .group_by(models.TokenUsage.capability)
             )
         }

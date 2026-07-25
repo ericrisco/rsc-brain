@@ -24,6 +24,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Identity,
     Index,
     Integer,
@@ -58,6 +59,26 @@ def _pk() -> Mapped[uuid.UUID]:
 
 def _project_fk() -> Mapped[uuid.UUID]:
     return mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+
+
+def _tenant_fk(column: str, parent: str, *, ondelete: str = "CASCADE") -> ForeignKeyConstraint:
+    """A project-qualified reference: ``(project_id, column) -> parent (project_id, id)`` (R17).
+
+    An ID-only foreign key lets a write that bypasses the service layer attach one project's child
+    to another project's parent, and the resulting row passes every scope check that only compares
+    the row's own ``project_id``. Composing the tenant into the key makes that row unwritable.
+
+    ``SET NULL`` is column-restricted (PG15+): a composite ``ON DELETE SET NULL`` would try to null
+    ``project_id``, which is the tenant and NOT NULL. Only the reference is cleared.
+    """
+    action = f"SET NULL ({column})" if ondelete == "SET NULL" else ondelete
+    # Unnamed on purpose: the metadata naming convention derives
+    # `fk_<child>_project_id_<column>_<parent>`, which is the name the migration creates.
+    return ForeignKeyConstraint(
+        ["project_id", column],
+        [f"{parent}.project_id", f"{parent}.id"],
+        ondelete=action,
+    )
 
 
 def _created_at() -> Mapped[dt.datetime]:
@@ -217,16 +238,17 @@ class Source(Base):
     policy: Mapped[str] = mapped_column(Text, nullable=False)  # manual|source_tags|llm|llm_review
     review_if_sensitive: Mapped[bool] = mapped_column(Boolean, server_default="true")
     curators: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(Uuid), server_default="{}")
-    __table_args__ = (Index("ix_sources_project_id_id", "project_id", "id"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "id"),
+        Index("ix_sources_project_id_id", "project_id", "id"),
+    )
 
 
 class Document(Base):
     __tablename__ = "documents"
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID] = _project_fk()
-    source_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("sources.id", ondelete="SET NULL")
-    )
+    source_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     logical_id: Mapped[str] = mapped_column(Text, nullable=False)
     version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
     checksum: Mapped[str] = mapped_column(Text, nullable=False)
@@ -242,7 +264,9 @@ class Document(Base):
     reject_reason: Mapped[str | None] = mapped_column(Text)
     __table_args__ = (
         UniqueConstraint("project_id", "checksum"),
+        UniqueConstraint("project_id", "id"),  # referenced by every child, project-qualified (R17)
         Index("ix_documents_project_id_id", "project_id", "id"),
+        _tenant_fk("source_id", "sources", ondelete="SET NULL"),
     )
 
 
@@ -250,7 +274,7 @@ class Chunk(Base):
     __tablename__ = "chunks"
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID] = _project_fk()
-    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
+    document_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     page: Mapped[int | None] = mapped_column(Integer)
     bbox: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     kind: Mapped[str] = mapped_column(Text, nullable=False)  # prose|table_row
@@ -264,18 +288,28 @@ class Chunk(Base):
     # A table with no clear header is retained (auditable) but never embedded/extracted, so it
     # can never surface in vector or graph results (FR-1.5, SPEC-05).
     needs_review: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
-    __table_args__ = (Index("ix_chunks_project_id_document_id", "project_id", "document_id"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "id"),
+        Index("ix_chunks_project_id_document_id", "project_id", "document_id"),
+        _tenant_fk("document_id", "documents"),
+    )
 
 
 class Claim(Base):
     __tablename__ = "claims"
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID] = _project_fk()
-    chunk_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("chunks.id", ondelete="CASCADE"))
+    chunk_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     subject: Mapped[str | None] = mapped_column(Text)
     predicate: Mapped[str | None] = mapped_column(Text)
     object: Mapped[str | None] = mapped_column(Text)
+    # The DETERMINISTIC identity of each endpoint — `entity_id(type, name)`, the same value the
+    # graph node carries (AUDIT-035 / R16). A name alone is not an identity: two entities can share
+    # a normalized name and differ by type, and a claim about one must never authorize the other.
+    # NULL when the endpoint could not be resolved to a typed entity.
+    subject_entity_key: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    object_entity_key: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     credibility: Mapped[float] = mapped_column(Numeric, server_default="0.5", nullable=False)
     valid_from: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     valid_to: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
@@ -292,7 +326,13 @@ class Claim(Base):
         Boolean, server_default="false", nullable=False
     )
     hunting_candidate: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
-    __table_args__ = (Index("ix_claims_project_id_chunk_id", "project_id", "chunk_id"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "id"),
+        Index("ix_claims_project_id_chunk_id", "project_id", "chunk_id"),
+        Index("ix_claims_project_id_subject_entity_key", "project_id", "subject_entity_key"),
+        Index("ix_claims_project_id_object_entity_key", "project_id", "object_entity_key"),
+        _tenant_fk("chunk_id", "chunks"),
+    )
 
 
 class Entity(Base):
@@ -313,6 +353,7 @@ class Entity(Base):
     ontology_valid: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
     __table_args__ = (
         UniqueConstraint("project_id", "normalized_name", "type"),
+        UniqueConstraint("project_id", "id"),
         Index("ix_entities_project_id_id", "project_id", "id"),
     )
 
@@ -337,11 +378,14 @@ class EntityAlias(Base):
     __tablename__ = "entity_aliases"
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID] = _project_fk()
-    entity_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("entities.id", ondelete="CASCADE"))
+    entity_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     alias: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float | None] = mapped_column(Numeric)
     approved: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
-    __table_args__ = (Index("ix_entity_aliases_project_id_entity_id", "project_id", "entity_id"),)
+    __table_args__ = (
+        Index("ix_entity_aliases_project_id_entity_id", "project_id", "entity_id"),
+        _tenant_fk("entity_id", "entities"),
+    )
 
 
 class Topic(Base):
@@ -371,7 +415,10 @@ class Person(Base):
     # Hunting directory (SPEC-15, FR-6.1): quiet_hours {tz, start, end} + preferred language.
     quiet_hours: Mapped[dict[str, object]] = mapped_column(JSONB, server_default="{}")
     language: Mapped[str | None] = mapped_column(Text)
-    __table_args__ = (Index("ix_persons_project_id_id", "project_id", "id"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "id"),
+        Index("ix_persons_project_id_id", "project_id", "id"),
+    )
 
 
 class Gap(Base):
@@ -386,17 +433,18 @@ class Gap(Base):
     created_at: Mapped[dt.datetime] = _created_at()
     last_seen_at: Mapped[dt.datetime] = _created_at()
     # Unique per (project, query_hash) so gap registration is an atomic upsert (SPEC-06, FR-3.3).
-    __table_args__ = (UniqueConstraint("project_id", "query_hash"),)
+    __table_args__ = (
+        UniqueConstraint("project_id", "query_hash"),
+        UniqueConstraint("project_id", "id"),
+    )
 
 
 class Hunt(Base):
     __tablename__ = "hunts"
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID] = _project_fk()
-    gap_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("gaps.id", ondelete="SET NULL"))
-    person_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("persons.id", ondelete="SET NULL")
-    )
+    gap_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    person_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     channel: Mapped[str | None] = mapped_column(Text)
     state: Mapped[str] = mapped_column(Text, nullable=False)
     question: Mapped[str | None] = mapped_column(Text)
@@ -414,7 +462,11 @@ class Hunt(Base):
     answered_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     claim_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
-    __table_args__ = (Index("ix_hunts_project_id_state", "project_id", "state"),)
+    __table_args__ = (
+        Index("ix_hunts_project_id_state", "project_id", "state"),
+        _tenant_fk("gap_id", "gaps", ondelete="SET NULL"),
+        _tenant_fk("person_id", "persons", ondelete="SET NULL"),
+    )
 
 
 class Skill(Base):
@@ -428,9 +480,7 @@ class Skill(Base):
     when_not: Mapped[str | None] = mapped_column(Text)
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     state: Mapped[str] = mapped_column(Text, nullable=False)  # proposed|active|archived
-    owner_person_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("persons.id", ondelete="SET NULL")
-    )
+    owner_person_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
     # SPEC-20: the markdown instructions, the entity/topic ids the skill's context is built from
     # (graph-sync key), and the stale marker set when that subgraph changes (FR-7.1/7.2).
@@ -442,19 +492,34 @@ class Skill(Base):
     __table_args__ = (
         UniqueConstraint("project_id", "slug"),
         Index("ix_skills_project_id_id", "project_id", "id"),
+        _tenant_fk("owner_person_id", "persons", ondelete="SET NULL"),
     )
 
 
 class TokenUsage(Base):
-    """Per-capability, per-day token + call counters (SPEC-22, FR-9.5)."""
+    """Per-project, per-capability, per-day token + call counters (SPEC-22 FR-9.5, AUDIT-021 R12).
+
+    ``project_id`` is what makes an attempt attributable and a budget independent. It is nullable
+    only because rows written before the counter was project-bound cannot be attributed after the
+    fact: those legacy rows appear in no project's report and are never reassigned.
+    """
 
     __tablename__ = "token_usage"
     id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE")
+    )
     capability: Mapped[str] = mapped_column(Text, nullable=False)
     day: Mapped[dt.date] = mapped_column(Date, nullable=False)
     tokens: Mapped[int] = mapped_column(BigInteger, server_default="0", nullable=False)
     calls: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
-    __table_args__ = (UniqueConstraint("capability", "day"),)
+    __table_args__ = (
+        # NULLS NOT DISTINCT: an unattributed row is still ONE counter per capability/day. With the
+        # default, two unattributed attempts would insert two rows, the upsert would never fire, and
+        # the counter would silently under-report.
+        UniqueConstraint("project_id", "capability", "day", postgresql_nulls_not_distinct=True),
+        Index("ix_token_usage_project_id_day", "project_id", "day"),
+    )
 
 
 class EmbeddingCache(Base):
@@ -497,15 +562,14 @@ class IngestError(Base):
     __tablename__ = "ingest_errors"
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID] = _project_fk()
-    document_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("documents.id", ondelete="CASCADE")
-    )
+    document_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     chunk_ref: Mapped[str | None] = mapped_column(Text)
     stage: Mapped[str] = mapped_column(Text, nullable=False)
     error: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[dt.datetime] = _created_at()
     __table_args__ = (
         Index("ix_ingest_errors_project_id_document_id", "project_id", "document_id"),
+        _tenant_fk("document_id", "documents"),
     )
 
 
@@ -520,9 +584,7 @@ class IngestRun(Base):
     __tablename__ = "ingest_runs"
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID] = _project_fk()
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
-    )
+    document_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     phase: Mapped[str] = mapped_column(Text, nullable=False)  # mirrors documents.status
     completed_stages: Mapped[list[str]] = mapped_column(
         ARRAY(Text), server_default="{}", nullable=False
@@ -538,6 +600,7 @@ class IngestRun(Base):
     __table_args__ = (
         UniqueConstraint("document_id"),
         Index("ix_ingest_runs_project_id_id", "project_id", "id"),
+        _tenant_fk("document_id", "documents"),
     )
 
 
@@ -553,12 +616,8 @@ class ClaimPairVerdict(Base):
     __tablename__ = "claim_pair_verdicts"
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID] = _project_fk()
-    claim_a: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
-    )
-    claim_b: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
-    )
+    claim_a: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    claim_b: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     judge_version: Mapped[str] = mapped_column(Text, nullable=False)
     verdict: Mapped[str] = mapped_column(Text, nullable=False)  # agree|contradict|unrelated
     confidence: Mapped[float] = mapped_column(Numeric, server_default="0.5", nullable=False)
@@ -566,6 +625,8 @@ class ClaimPairVerdict(Base):
     __table_args__ = (
         UniqueConstraint("project_id", "claim_a", "claim_b", "judge_version"),
         Index("ix_claim_pair_verdicts_project_id_id", "project_id", "id"),
+        _tenant_fk("claim_a", "claims"),
+        _tenant_fk("claim_b", "claims"),
     )
 
 
@@ -575,9 +636,7 @@ class Correction(Base):
     __tablename__ = "corrections"
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID] = _project_fk()
-    target_claim: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
-    )
+    target_claim: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     new_claim: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     author_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     on_behalf_of: Mapped[uuid.UUID | None] = mapped_column(Uuid)
@@ -589,7 +648,10 @@ class Correction(Base):
     reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = _created_at()
     resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
-    __table_args__ = (Index("ix_corrections_project_id_id", "project_id", "id"),)
+    __table_args__ = (
+        Index("ix_corrections_project_id_id", "project_id", "id"),
+        _tenant_fk("target_claim", "claims"),
+    )
 
 
 class FeedbackDailyImpact(Base):
@@ -600,14 +662,13 @@ class FeedbackDailyImpact(Base):
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID] = _project_fk()
     principal_id: Mapped[str] = mapped_column(Text, nullable=False)
-    claim_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("claims.id", ondelete="CASCADE"), nullable=False
-    )
+    claim_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     day: Mapped[dt.date] = mapped_column(Date, nullable=False)
     impact: Mapped[float] = mapped_column(Numeric, server_default="0", nullable=False)
     __table_args__ = (
         UniqueConstraint("project_id", "principal_id", "claim_id", "day"),
         Index("ix_feedback_daily_impact_project_id_id", "project_id", "id"),
+        _tenant_fk("claim_id", "claims"),
     )
 
 
@@ -620,12 +681,8 @@ class EntityMergeProposal(Base):
     __tablename__ = "entity_merge_proposals"
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID] = _project_fk()
-    canonical_entity_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("entities.id", ondelete="CASCADE"), nullable=False
-    )
-    duplicate_entity_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("entities.id", ondelete="CASCADE"), nullable=False
-    )
+    canonical_entity_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    duplicate_entity_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     confidence: Mapped[float] = mapped_column(Numeric, server_default="0.5", nullable=False)
     method: Mapped[str] = mapped_column(Text, nullable=False)  # deterministic|llm
     status: Mapped[str] = mapped_column(Text, nullable=False)  # needs_review|auto_applied|...
@@ -637,6 +694,8 @@ class EntityMergeProposal(Base):
         UniqueConstraint("project_id", "canonical_entity_id", "duplicate_entity_id"),
         Index("ix_entity_merge_proposals_project_id_id", "project_id", "id"),
         Index("ix_entity_merge_proposals_project_id_status", "project_id", "status"),
+        _tenant_fk("canonical_entity_id", "entities"),
+        _tenant_fk("duplicate_entity_id", "entities"),
     )
 
 

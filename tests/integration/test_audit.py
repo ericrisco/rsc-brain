@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from rsc_brain.audit import query_audit, record_audit, to_csv
+from rsc_brain.audit import query_audit_raw, record_audit, to_csv
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.scope import Principal, PrincipalType
 from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
@@ -42,7 +42,7 @@ async def test_audit_records_human_and_agent_actions_and_exports(migrated_dsn: s
             trace_id="run-42",
         )
 
-        rows = await query_audit(sessionmaker, project_id, limit=50)
+        rows = await query_audit_raw(sessionmaker, project_id, limit=50)
         assert len(rows) >= 2
 
         agent_rows = [r for r in rows if r["principal_type"] == "agent"]

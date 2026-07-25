@@ -938,6 +938,22 @@
               "title": "Connection Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
           }
         ],
         "responses": {
@@ -1196,7 +1212,7 @@
     },
     "/api/v1/admin/corrections/{correction_id}/revert": {
       "post": {
-        "description": "Revert a correction (FR-15.8). Authorised **server-side** for an admin OR the owner of the\ntarget claim's tags \u2014 never trusted from the UI. A 403 for anyone else is audited.",
+        "description": "Revert a correction (FR-15.8).\n\nThe one mutation whose matrix row is not a pure role: the project administrator OR the owner of\nthe target claim's topics may revert. That is expressed as\n:attr:`Capability.CORRECTION_REVERT` with the ownership fact passed in \u2014 the bespoke\n``is_admin or is_owner`` gate this replaces was the reason T001 could not fold this route into\nthe uniform matrix. A refusal is still audited.",
         "operationId": "revert_correction_api_v1_admin_corrections__correction_id__revert_post",
         "parameters": [
           {
@@ -1263,6 +1279,24 @@
     "/api/v1/admin/documents/pending": {
       "get": {
         "operationId": "list_pending_documents_api_v1_admin_documents_pending_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -1275,6 +1309,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -1347,7 +1391,7 @@
     },
     "/api/v1/admin/documents/{document_id}/approve": {
       "post": {
-        "description": "Approve a pending doc from the console (D13); corrected tags inherit to chunks (FR-1.15).",
+        "description": "Approve a pending doc from the console (D13); corrected tags inherit to chunks (FR-1.15).\n\nR02: approving publishes every topic the document carries, and a corrected tag moves it into a\nnew one, so the decision covers the union of the document's tags and the applied ones \u2014 a caller cannot publish into, or out of,\na topic it does not hold. A document in another project is absent, never denied (FR-4.3).",
         "operationId": "approve_document_api_v1_admin_documents__document_id__approve_post",
         "parameters": [
           {
@@ -1423,7 +1467,7 @@
     },
     "/api/v1/admin/documents/{document_id}/reject": {
       "post": {
-        "description": "Reject a pending doc from the console (D13): nothing reaches the graph.",
+        "description": "Reject a pending doc from the console (D13): nothing reaches the graph.\n\nR02: rejecting is a lifecycle decision like approving \u2014 it terminates a document other people's\ntopics may depend on \u2014 so it needs the same document-lifecycle capability and topic scope.",
         "operationId": "reject_document_api_v1_admin_documents__document_id__reject_post",
         "parameters": [
           {
@@ -1572,7 +1616,7 @@
     },
     "/api/v1/admin/gaps/{gap_id}/promote": {
       "post": {
-        "description": "Promote an agent gap to a hunt (FR-14.6 \u2014 agent gaps never trigger automatically).",
+        "description": "Promote an agent gap to a hunt (FR-14.6 \u2014 agent gaps never trigger automatically).\n\nPromoting sends the gap's question to a human owner, so it needs the gap-promotion capability\nover the gap's own topics; a gap in another project is absent (FR-4.3).",
         "operationId": "promote_gap_api_v1_admin_gaps__gap_id__promote_post",
         "parameters": [
           {
@@ -1791,8 +1835,26 @@
     },
     "/api/v1/admin/hunts/ask": {
       "post": {
-        "description": "Open a MANUAL hunt (FR-6.2c) routed by topic overlap (NO_OWNER if unowned).",
+        "description": "Open a MANUAL hunt (FR-6.2c) routed by topic overlap (NO_OWNER if unowned).\n\nThe question is routed to whoever owns the topics it names, so the caller must hold them.",
         "operationId": "ask_hunt_api_v1_admin_hunts_ask_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2432,6 +2494,24 @@
     "/api/v1/admin/persons": {
       "get": {
         "operationId": "list_persons_api_v1_admin_persons_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -2444,6 +2524,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -2458,6 +2548,24 @@
       },
       "post": {
         "operationId": "create_person_api_v1_admin_persons_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2515,6 +2623,22 @@
               "title": "Person Id",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
           }
         ],
         "responses": {
@@ -2561,6 +2685,22 @@
             "schema": {
               "title": "Person Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
             }
           }
         ],
@@ -2611,7 +2751,26 @@
     },
     "/api/v1/admin/projects": {
       "get": {
+        "description": "The projects this caller may know about.\n\nR01 (strengthened during T001): this route returned every slug in the instance, so any caller\nthat passed the old admin gate enumerated other tenants by name. Enumerating the whole instance\nis a platform operation; a project caller sees only the projects it is a member of.",
         "operationId": "list_projects_api_v1_admin_projects_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -2624,6 +2783,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -2638,6 +2807,24 @@
       },
       "post": {
         "operationId": "create_project_api_v1_admin_projects_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2758,7 +2945,7 @@
     },
     "/api/v1/admin/review-queue/chunks/{chunk_id}/resolve": {
       "post": {
-        "description": "Approve (embed + curator tags + recallable) or reject a needs_review chunk (FR-1.5/4.4/14.4).",
+        "description": "Approve (embed + curator tags + recallable) or reject a needs_review chunk (FR-1.5/4.4/14.4).\n\nCuration is the one capability ``can_curate`` grants, and only inside its own topics: the\ndecision covers the chunk's current topics AND any curator-corrected tags, so a review decision\ncan never move content into a topic the curator does not hold.",
         "operationId": "resolve_chunk_item_api_v1_admin_review_queue_chunks__chunk_id__resolve_post",
         "parameters": [
           {
@@ -2777,6 +2964,22 @@
             "schema": {
               "title": "Approve",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
             }
           }
         ],
@@ -2846,6 +3049,22 @@
             "schema": {
               "title": "Approve",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
             }
           }
         ],
@@ -3080,6 +3299,24 @@
       "post": {
         "description": "Create a skill from its markdown (OKF frontmatter + body).",
         "operationId": "create_skill_admin_api_v1_admin_skills_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3137,6 +3374,22 @@
               "title": "Slug",
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
           }
         ],
         "responses": {
@@ -3177,6 +3430,24 @@
     "/api/v1/admin/sources": {
       "get": {
         "operationId": "list_sources_api_v1_admin_sources_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -3189,6 +3460,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -3203,6 +3484,24 @@
       },
       "post": {
         "operationId": "create_source_api_v1_admin_sources_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3356,6 +3655,24 @@
     "/api/v1/admin/topics": {
       "get": {
         "operationId": "list_topics_api_v1_admin_topics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -3368,6 +3685,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -3382,6 +3709,24 @@
       },
       "post": {
         "operationId": "create_topic_api_v1_admin_topics_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3429,7 +3774,7 @@
     },
     "/api/v1/admin/usage": {
       "get": {
-        "description": "Per-capability/day token + call usage (SPEC-26 FR-13.7). Same source as `brain usage`, so\nthe console figures always match the CLI. Counters are instance-global (SPEC-22 schema).",
+        "description": "This project's per-capability/day token + call usage (SPEC-26 FR-13.7, AUDIT-021 R12).\n\nSame source as ``brain usage``, so the console figures always match the CLI. The counters used to\nbe instance-global: every project read the same pooled total, which reconciled with nobody.",
         "operationId": "usage_endpoint_api_v1_admin_usage_get",
         "parameters": [
           {
@@ -3497,6 +3842,24 @@
     "/api/v1/admin/users/invite": {
       "post": {
         "operationId": "invite_user_api_v1_admin_users_invite_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3615,6 +3978,7 @@
     },
     "/api/v1/documents/{document_id}/approve": {
       "post": {
+        "description": "Approve a pending document (D13).\n\nR02: this route had **no capability check whatsoever** \u2014 a valid project token of any role\npublished documents and retagged them. It now takes the same document-lifecycle decision as\nits console sibling, from the same shared policy, so the two entry points cannot diverge\nagain.",
         "operationId": "approve_document_api_v1_documents__document_id__approve_post",
         "parameters": [
           {
@@ -3681,6 +4045,7 @@
     },
     "/api/v1/documents/{document_id}/reject": {
       "post": {
+        "description": "Reject a pending document (D13) \u2014 same authority as approving it (R02).",
         "operationId": "reject_document_api_v1_documents__document_id__reject_post",
         "parameters": [
           {

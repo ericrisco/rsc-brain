@@ -91,6 +91,20 @@ def _safe_edge_type(predicate: str) -> str:
         return "related_to"
 
 
+def _entity_key(type_by_name: dict[str, str], name: str | None) -> str | None:
+    """The deterministic identity of a claim endpoint, or None when its type is unknown (R16).
+
+    Same function the graph node id comes from, so a claim and the node it is about carry the same
+    value and entity authorization is an equality check rather than a name guess.
+    """
+    if not name:
+        return None
+    entity_type = type_by_name.get(name)
+    if entity_type is None:
+        return None
+    return str(entity_id(entity_type, name))
+
+
 class IngestionPipeline:
     """Drives a single document through the D13 lifecycle. Idempotent and resumable."""
 
@@ -118,8 +132,10 @@ class IngestionPipeline:
         # Optional (SPEC-24): ontology anchoring/merge/relation-check. None (default) OR a project
         # with ontology.enabled=false means every seam here short-circuits — ingest is identical.
         self._ontology = ontology
-        self._topicalizer = Topicalizer(gateway)
-        self._extractor = CascadeExtractor(gateway)
+
+    def _for(self, scope: ProjectScope) -> ModelGateway:
+        """The gateway with accounting bound to this run's project (R12)."""
+        return self._gateway.for_project(scope.project_id)
 
     # --- public entry points -------------------------------------------------
 
@@ -239,6 +255,7 @@ class IngestionPipeline:
         rules = await self._repo.get_topic_rules(scope)
         default_tag = taxonomy[0] if taxonomy else self._config.default_tag
         policy = SourcePolicy(source.policy)
+        topicalizer = Topicalizer(self._for(scope))
 
         chunk_tags: dict[str, tuple[str, ...]] = {}
         proposed: set[str] = set(source.default_tags)
@@ -246,7 +263,7 @@ class IngestionPipeline:
             if row.needs_review:
                 chunk_tags[row.id] = row.tags  # reserved needs_review tag, kept as-is
                 continue
-            model_tags = await self._topicalizer.tag(
+            model_tags = await topicalizer.tag(
                 row.text, taxonomy=taxonomy, rules=rules, default_tag=default_tag
             )
             if policy in {SourcePolicy.MANUAL, SourcePolicy.SOURCE_TAGS}:
@@ -281,7 +298,7 @@ class IngestionPipeline:
             for c in chunk_rows
             if not c.needs_review and c.text.strip() and c.text not in reuse_texts
         ]
-        embeddings = await self._embed(embeddable)
+        embeddings = await self._embed(scope, embeddable)
 
         claims: list[ClaimSpec] = list(self._table_claims(parsed, chunk_rows, reuse_texts))
         entities: list[EntitySpec] = []
@@ -289,6 +306,8 @@ class IngestionPipeline:
         nodes: list[GraphNode] = []
         edges: list[GraphEdge] = []
         discarded = 0
+
+        extractor = CascadeExtractor(self._for(scope))
 
         # SPEC-24 seam: load the active ontology once (None ⇒ layer off ⇒ no relation check below).
         ontology_index = await self._ontology.index_for(scope) if self._ontology else None
@@ -306,7 +325,7 @@ class IngestionPipeline:
             if row.text in reuse_texts:
                 continue  # unchanged prose: skip extraction (0 LLM calls); prior claim stays live
             try:
-                graph = await self._extractor.extract(row.text)
+                graph = await extractor.extract(row.text)
             except ExtractionDiscarded as exc:
                 errors.append(
                     IngestErrorSpec(
@@ -396,10 +415,12 @@ class IngestionPipeline:
             freshness=1.0,
         )
 
-    async def _embed(self, chunks: Sequence[ChunkRow]) -> dict[str, list[float]]:
+    async def _embed(
+        self, scope: ProjectScope, chunks: Sequence[ChunkRow]
+    ) -> dict[str, list[float]]:
         if not chunks:
             return {}
-        vectors = await self._gateway.embed([c.text for c in chunks])
+        vectors = await self._for(scope).embed([c.text for c in chunks])
         return {chunk.id: vector for chunk, vector in zip(chunks, vectors, strict=True)}
 
     def _table_claims(
@@ -512,6 +533,10 @@ class IngestionPipeline:
                     subject=triple.subject,
                     predicate=triple.predicate,
                     object=triple.object,
+                    # The extractor knew each endpoint's TYPE, so the claim can carry the same
+                    # deterministic identity as the graph node instead of only a name (R16).
+                    subject_entity_key=_entity_key(type_by_name, triple.subject),
+                    object_entity_key=_entity_key(type_by_name, triple.object),
                     tags=row.tags,
                     extraction_confidence=row.extraction_confidence,
                     credibility=credibility,

@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 import pytest
 
-from rsc_brain.audit import query_audit
+from rsc_brain.audit import query_audit_raw
 from rsc_brain.identity.resolve import resolve_delegated_scope
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.mcp.tools import do_recall
@@ -83,7 +83,7 @@ async def test_delegation_intersects_topics_hr_case(
     assert on_behalf.found is False
 
     # The delegated call audits BOTH the agent and the user it acted for.
-    rows = await query_audit(harness.sm, project_id, action="recall")
+    rows = await query_audit_raw(harness.sm, project_id, action="recall")
     delegated_rows = [r for r in rows if r["on_behalf_of"] == user_id]
     assert delegated_rows
     assert delegated_rows[0]["principal_id"] == agent.principal_id  # type: ignore[attr-defined]

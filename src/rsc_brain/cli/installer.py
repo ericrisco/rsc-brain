@@ -102,18 +102,35 @@ def usage(
     ctx: typer.Context,
     json_output: bool = JSON_OPTION,
     days: int = typer.Option(7, "--days", help="How many days back to report."),
+    project: str | None = typer.Option(
+        None, "--project", help="Report one project's own usage instead of the whole instance."
+    ),
 ) -> None:
-    """Report per-capability token + call usage by day (SPEC-22, FR-9.5)."""
-    from rsc_brain.config import load_settings
-    from rsc_brain.gateway.usage import PgUsageRecorder
+    """Report token + call usage by day (SPEC-22, FR-9.5).
+
+    Counters are per project (AUDIT-021 / R12). Without ``--project`` this is the operator view —
+    the instance total, which reconciles with no single project; with it, that project's own figures,
+    the same ones the console shows.
+    """
+    from sqlalchemy import select
+
+    from rsc_brain.gateway.usage import usage_all_projects, usage_by_day
+    from rsc_brain.stores.relational import models
     from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
 
     async def _run() -> list[dict[str, object]]:
-        settings = load_settings()
         engine = make_engine()
+        sessionmaker = make_sessionmaker(engine)
         try:
-            recorder = PgUsageRecorder(make_sessionmaker(engine), settings.capabilities)
-            return await recorder.usage(days=days)
+            if project is None:
+                return await usage_all_projects(sessionmaker, days=days)
+            async with sessionmaker() as session:
+                project_id = await session.scalar(
+                    select(models.Project.id).where(models.Project.slug == project)
+                )
+            if project_id is None:
+                raise typer.BadParameter(f"unknown project: {project}")
+            return await usage_by_day(sessionmaker, days=days, project_id=str(project_id))
         finally:
             await engine.dispose()
 

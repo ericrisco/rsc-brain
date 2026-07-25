@@ -22,6 +22,7 @@ from rsc_brain.cli.data import demo as _demo
 from rsc_brain.cli.data import export as _export
 from rsc_brain.cli.data import forget as _forget
 from rsc_brain.cli.data import migrate as _migrate
+from rsc_brain.cli.data import preflight as _preflight
 from rsc_brain.cli.data import restore as _restore
 from rsc_brain.cli.entities import entities_app
 from rsc_brain.cli.hunting import gaps_app, hunt_app, hunts_app, persons_app
@@ -134,6 +135,11 @@ for _name in COMMANDS:
         app.command(_name, help=f"[{_name}] — not implemented in this SPEC; see the owning SPEC.")(
             _make_stub(_name)
         )
+
+# `preflight` is introduced by AUDIT-039 (R17): the read-only pre-migration data report.
+app.command("preflight", help="Report data that would block a migration (cross-project rows).")(
+    _preflight
+)
 
 # `projects` is introduced by SPEC-04 (beyond the original FR-10.1 22).
 app.add_typer(projects_app, name="projects", help="Manage projects.")

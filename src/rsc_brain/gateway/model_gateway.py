@@ -139,6 +139,29 @@ class ModelGateway:
         self._usage = usage_recorder
         self._cache = embedding_cache
 
+    def for_project(self, project_id: str) -> ModelGateway:
+        """This gateway with its accounting bound to ``project_id`` (AUDIT-021 / R12).
+
+        The process builds one gateway before it knows whose work it will do; every boundary that
+        holds a :class:`~rsc_brain.scope.ProjectScope` binds it here, so each attempt lands in that
+        project's counter and each budget decision reads that project's consumption. Model routing,
+        caches and repair behaviour are unchanged — only the accounting identity is.
+        """
+        recorder = self._usage
+        binder = getattr(recorder, "for_project", None)
+        if binder is None:  # no accounting configured, or a recorder that owns no project dimension
+            return self
+        bound: UsageRecorder = binder(project_id)
+        clone = ModelGateway(
+            self._caps,
+            completion_fn=self._completion,
+            embedding_fn=self._embedding,
+            max_repair_attempts=self._max_repair,
+            usage_recorder=bound,
+            embedding_cache=self._cache,
+        )
+        return clone
+
     def _cap(self, capability: Capability) -> CapabilityConfig:
         try:
             return self._caps.get(capability)

@@ -37,6 +37,39 @@ def migrate(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
     )
 
 
+def preflight(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
+    """Report data that would block a migration — cross-project references (AUDIT-039 / R17).
+
+    Read-only. Run it BEFORE ``brain migrate`` when upgrading an instance that predates
+    project-qualified references: a violation means two tenants disagree about who owns a row, and
+    deciding that is an operator's call. Nothing here reassigns or deletes anything.
+    """
+    from sqlalchemy import create_engine
+
+    from rsc_brain.stores.relational.tenant_integrity import (
+        cross_project_violations,
+        violation_report,
+    )
+
+    engine = create_engine(resolve_dsn().replace("+asyncpg", "+psycopg"))
+    try:
+        with engine.connect() as connection:
+            violations = cross_project_violations(connection)
+    finally:
+        engine.dispose()
+    human = (
+        "brain preflight: no cross-project references; the schema upgrade is safe to apply."
+        if not violations
+        else violation_report(violations)
+    )
+    emit_result(
+        ctx,
+        json_output,
+        {"status": "ok" if not violations else "blocked", "violations": violations},
+        human,
+    )
+
+
 def _libpq(dsn: str) -> tuple[dict[str, str], str]:
     """Return (env, password-less libpq URL) so the secret never appears on the argv."""
     url = make_url(dsn)

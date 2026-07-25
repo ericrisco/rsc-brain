@@ -34,9 +34,14 @@ async def _insert_claim(harness: Harness, project_id: str, credibility: float) -
 
 
 def _agent_scope(project_id: str) -> ProjectScope:
-    return Principal(id="00000000-0000-0000-0000-0000000000ee", type=PrincipalType.AGENT).scope_for(
-        project_id
-    )
+    # The agent holds the topic the claim under test is tagged with: feedback on a claim outside the
+    # caller's topic visibility is a no-op by design (AUDIT-036 / R06), so a scope with no topic
+    # authority would exercise the refusal path instead of the capping behaviour this file is about.
+    return Principal(
+        id="00000000-0000-0000-0000-0000000000ee",
+        type=PrincipalType.AGENT,
+        allowed_topics=frozenset({"general"}),
+    ).scope_for(project_id)
 
 
 async def test_human_helpful_raises_and_wrong_below_threshold_disputes(
@@ -44,7 +49,9 @@ async def test_human_helpful_raises_and_wrong_below_threshold_disputes(
 ) -> None:
     harness = build_harness()
     project = await harness.setup_project(unique_slug("acme"), [("general", 0)])
-    scope = harness.scope(project)
+    scope = harness.scope(
+        project, allowed_topics=["general"]
+    )  # R06: authority over the claim's topic
     store = KnowledgeStore(harness.sm)
 
     good = await _insert_claim(harness, project, 0.5)
@@ -82,7 +89,7 @@ async def test_agent_feedback_capped_and_never_disputes(
 async def test_report_feedback_tool_applies_and_audits(
     build_harness: Callable[..., Harness],
 ) -> None:
-    from rsc_brain.audit import query_audit
+    from rsc_brain.audit import query_audit_raw
 
     harness = build_harness()
     project = await harness.setup_project(unique_slug("acme"), [("general", 0)])
@@ -91,5 +98,5 @@ async def test_report_feedback_tool_applies_and_audits(
 
     result = await do_report_feedback(harness.sm, scope, claim_ids=[claim], signal="helpful")
     assert result.ok is True
-    rows = await query_audit(harness.sm, project, action="report_feedback:helpful")
+    rows = await query_audit_raw(harness.sm, project, action="report_feedback:helpful")
     assert rows and rows[0]["tool"] == "report_feedback"

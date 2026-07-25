@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 
 import pytest
 
-from rsc_brain.audit import query_audit
+from rsc_brain.audit import query_audit_raw
 from rsc_brain.config.models import KnowledgeConfig
 from rsc_brain.ingest.entity_resolution import entity_id
 from rsc_brain.knowledge.entity_merge import DeterministicMergeProposer, EntityMergeService
@@ -149,7 +149,7 @@ async def test_confirm_repoints_aliases_and_graph_edges(
     assert suppressed[0]["result"] is True
 
     # Audit: exactly one entity_merge row.
-    audit_rows = await query_audit(harness.sm, scope.project_id, action="entity_merge")
+    audit_rows = await query_audit_raw(harness.sm, scope.project_id, action="entity_merge")
     assert len(audit_rows) == 1
 
 
@@ -182,7 +182,7 @@ async def test_reject_changes_nothing(build_harness: Callable[..., Harness]) -> 
     assert len(active) == 2  # nothing merged
     proposal = await EntityStore(harness.sm).get_proposal(scope, summary.queued[0])
     assert proposal is not None and proposal.status == "rejected"
-    audit_rows = await query_audit(harness.sm, scope.project_id, action="entity_merge_reject")
+    audit_rows = await query_audit_raw(harness.sm, scope.project_id, action="entity_merge_reject")
     assert len(audit_rows) == 1
 
 

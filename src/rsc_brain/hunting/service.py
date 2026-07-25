@@ -434,7 +434,8 @@ class HuntService:
         document, so it is recallable with maximum authority (E7.5)."""
         embedding = None
         if self._gateway is not None:
-            embedding = list((await self._gateway.embed([text]))[0])  # type: ignore[attr-defined]
+            gateway = self._gateway.for_project(scope.project_id)  # type: ignore[attr-defined]
+            embedding = list((await gateway.embed([text]))[0])
         async with session_scope(self._sm) as session:
             document_id = await self._hunt_document(session, scope)
             chunk = models.Chunk(

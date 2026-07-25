@@ -61,9 +61,21 @@ async def _insert_claim(
 
 
 def _scope(
-    project: str, user_id: str, principal_type: PrincipalType = PrincipalType.HUMAN
+    project: str,
+    user_id: str,
+    principal_type: PrincipalType = PrincipalType.HUMAN,
+    *,
+    topics: tuple[str, ...] = ("pricing", "hr"),
 ) -> ProjectScope:
-    return Principal(id=user_id, type=principal_type).scope_for(project)
+    """A caller with topic authority over this file's claims.
+
+    A claim outside the caller's topic visibility is neither readable nor mutable and answers exactly
+    like a nonexistent one (AUDIT-036 / R06), so a scope with no topic authority would exercise that
+    refusal instead of the correction behaviour under test.
+    """
+    return Principal(id=user_id, type=principal_type, allowed_topics=frozenset(topics)).scope_for(
+        project
+    )
 
 
 def _service(harness: Harness) -> CorrectionService:

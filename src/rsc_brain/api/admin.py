@@ -727,11 +727,14 @@ async def export_audit(
 async def usage_endpoint(
     request: Request, scope: ProjectScope = Depends(_needs_usage_read), days: int = 7
 ) -> dict[str, object]:
-    """Per-capability/day token + call usage (SPEC-26 FR-13.7). Same source as `brain usage`, so
-    the console figures always match the CLI. Counters are instance-global (SPEC-22 schema)."""
+    """This project's per-capability/day token + call usage (SPEC-26 FR-13.7, AUDIT-021 R12).
+
+    Same source as ``brain usage``, so the console figures always match the CLI. The counters used to
+    be instance-global: every project read the same pooled total, which reconciled with nobody.
+    """
     from rsc_brain.gateway.usage import usage_by_day
 
-    rows = await usage_by_day(_deps(request).sessionmaker, days=days)  # type: ignore[attr-defined]
+    rows = await usage_by_day(_sm(request), days=days, project_id=scope.project_id)
     return {"usage": rows}
 
 

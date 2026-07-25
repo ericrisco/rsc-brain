@@ -102,9 +102,11 @@ async def test_correction_is_reflected_in_recall_and_admin_can_see_superseded(
     original_claim_ids = cast("list[str]", before.fragments[0].provenance["claim_ids"])
     assert original_claim_ids
 
-    owner_scope: ProjectScope = Principal(id=owner.user_id, type=PrincipalType.HUMAN).scope_for(
-        project
-    )
+    owner_scope: ProjectScope = Principal(
+        id=owner.user_id,
+        type=PrincipalType.HUMAN,
+        allowed_topics=frozenset({"engineering", "general"}),  # R06
+    ).scope_for(project)
     service = CorrectionService(
         store=KnowledgeStore(harness.sm), graph=AgeGraphStore(harness.sm), gateway=harness.gateway
     )

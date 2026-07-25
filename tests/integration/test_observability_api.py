@@ -44,12 +44,12 @@ async def test_activity_and_stream_are_project_scoped(
     await do_recall(retriever, harness.sm, scope_a, query="second query about A")
     await do_recall(retriever, harness.sm, scope_b, query="a query about B")
 
-    summary_a = await audit.activity_summary(harness.sm, a)
+    summary_a = await audit.activity_summary(harness.sm, scope_a)
     assert summary_a["recalls"] == 2  # only A's traffic — never B's (FR-12.5)
-    summary_b = await audit.activity_summary(harness.sm, b)
+    summary_b = await audit.activity_summary(harness.sm, scope_b)
     assert summary_b["recalls"] == 1
     # The stream is likewise scoped: only A's recalls, and p95 duration is populated.
-    stream_a = await audit.recall_stream(harness.sm, a)
+    stream_a = await audit.recall_stream(harness.sm, scope_a)
     assert len(stream_a) == 2
     assert all(r["duration_ms"] is not None for r in stream_a)
 
@@ -65,7 +65,7 @@ async def test_query_text_logging_off_never_persists_text(
     # Default ON → the raw text is stored + served in the stream.
     assert await audit.query_text_logging_enabled(harness.sm, project) is True
     await do_recall(retriever, harness.sm, scope, query="secret invoice 2024-0173")
-    on_row = (await audit.recall_stream(harness.sm, project))[0]
+    on_row = (await audit.recall_stream(harness.sm, scope))[0]
     assert on_row["query_text"] == "secret invoice 2024-0173"
     assert on_row["query_hash"]
 
@@ -73,7 +73,7 @@ async def test_query_text_logging_off_never_persists_text(
     await audit.set_query_text_logging(harness.sm, project, enabled=False)
     assert await audit.query_text_logging_enabled(harness.sm, project) is False
     await do_recall(retriever, harness.sm, scope, query="another private query 9988")
-    rows = await audit.recall_stream(harness.sm, project)
+    rows = await audit.recall_stream(harness.sm, scope)
     off_row = next(
         r for r in rows if r["query_hash"] == audit_query_hash("another private query 9988")
     )
@@ -95,8 +95,8 @@ async def test_stream_filters_by_principal(build_harness: Callable[..., Harness]
     await do_recall(retriever, harness.sm, human, query="human question")
     await do_recall(retriever, harness.sm, agent, query="agent question")
 
-    humans = await audit.recall_stream(harness.sm, project, principal_type="human")
-    agents = await audit.recall_stream(harness.sm, project, principal_type="agent")
+    humans = await audit.recall_stream(harness.sm, human, principal_type="human")
+    agents = await audit.recall_stream(harness.sm, human, principal_type="agent")
     assert len(humans) == 1 and humans[0]["principal_type"] == "human"
     assert len(agents) == 1 and agents[0]["principal_type"] == "agent"
 

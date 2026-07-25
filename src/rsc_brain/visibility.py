@@ -20,7 +20,6 @@ visible.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from typing import Any
 
 from sqlalchemy import ColumnElement, and_, false, func, literal, or_
@@ -61,23 +60,3 @@ def topic_clause(
     if forbidden:
         visible = and_(visible, ~column.op("&&")(sorted(forbidden)))
     return visible
-
-
-def authorized(
-    topics: Iterable[str] | None,
-    scope: ProjectScope,
-    forbidden: frozenset[str],
-    *,
-    allow_untagged: bool = False,
-) -> bool:
-    """The same rule in Python, for values already outside SQL (a graph node's topics, a payload).
-
-    Prefer :func:`topic_clause`: this variant cannot filter a count. It exists for the few places
-    where the candidate set does not come from a relational query.
-    """
-    values = {str(t) for t in (topics or []) if t} - NON_TOPIC_TAGS
-    if not values:
-        return allow_untagged
-    if values & forbidden:
-        return False
-    return bool(values & set(scope.allowed_topics))

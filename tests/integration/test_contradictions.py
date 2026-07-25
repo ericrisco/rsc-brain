@@ -62,7 +62,7 @@ async def test_contradiction_supersedes_lower_credibility(
 ) -> None:
     harness = build_harness()
     project = await harness.setup_project(unique_slug("acme"), [("general", 0)])
-    scope = harness.scope(project)
+    scope = harness.scope(project, allowed_topics=["general"])  # R06
     a = await _insert_claim(
         harness, project, text="The Acme SLA is 24 hours", subject="Acme SLA", credibility=0.8
     )
@@ -87,7 +87,7 @@ async def test_contradiction_supersedes_lower_credibility(
 async def test_tie_marks_both_disputed(build_harness: Callable[..., Harness]) -> None:
     harness = build_harness()
     project = await harness.setup_project(unique_slug("acme"), [("general", 0)])
-    scope = harness.scope(project)
+    scope = harness.scope(project, allowed_topics=["general"])  # R06
     a = await _insert_claim(
         harness, project, text="The Acme SLA is 24 hours", subject="Acme SLA", credibility=0.55
     )
@@ -111,7 +111,7 @@ async def test_tie_marks_both_disputed(build_harness: Callable[..., Harness]) ->
 async def test_verdict_is_cached(build_harness: Callable[..., Harness]) -> None:
     harness = build_harness()
     project = await harness.setup_project(unique_slug("acme"), [("general", 0)])
-    scope = harness.scope(project)
+    scope = harness.scope(project, allowed_topics=["general"])  # R06
     # Use a tie (|Δcred| < 0.15) so neither claim is superseded — both stay active and the same
     # pair is re-examined on the second pass, proving the cache (not a vanished claim).
     a = await _insert_claim(

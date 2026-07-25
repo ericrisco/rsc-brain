@@ -228,7 +228,8 @@ class CorrectionService:
             assert claim_id is not None
             return await self._store.get_claim(scope, claim_id), []
         assert statement is not None
-        embedding = (await self._gateway.embed([statement]))[0]
+        gateway = self._gateway.for_project(scope.project_id)  # R12
+        embedding = (await gateway.embed([statement]))[0]
         candidates = await self._store.find_candidate_claims(scope, embedding)
         wanted = normalize_name(statement)
         exact = [c for c in candidates if normalize_name(c.text) == wanted]

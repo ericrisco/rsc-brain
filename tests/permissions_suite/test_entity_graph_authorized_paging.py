@@ -53,8 +53,21 @@ async def _insert_entity(harness: Harness, project: str, name: str, etype: str) 
 
 
 async def _insert_claim(
-    harness: Harness, project: str, *, subject: str, obj: str, tags: list[str]
+    harness: Harness,
+    project: str,
+    *,
+    subject: str,
+    obj: str,
+    tags: list[str],
+    object_type: str | None = None,
 ) -> None:
+    """A claim about two endpoints.
+
+    ``object_type`` records the object's deterministic entity identity, which is what production
+    writes (the extractor knows each endpoint's type) and what makes a claim speak for ONE identity
+    rather than for every entity that happens to share a name. Omitted, the claim is the keyless
+    shape older rows have.
+    """
     async with harness.sm() as session:
         session.add(
             models.Claim(
@@ -63,6 +76,7 @@ async def _insert_claim(
                 subject=subject,
                 predicate="relates_to",
                 object=obj,
+                object_entity_key=entity_id(object_type, obj) if object_type else None,
                 tags=tags,
             )
         )
@@ -274,8 +288,20 @@ async def test_name_type_collision_does_not_leak_across_entities(
 
     # Only the person identity has ANY claim tying it to the center — the codename identity has
     # zero claims of its own and must be indistinguishable from absent.
+    #
+    # The claim names the identity it is about, exactly as the ingest pipeline does. T001 wrote it
+    # with the bare name, which cannot express this scenario at all: with two entities sharing the
+    # normalized name, a name-only claim is evidence about both or about neither, so no
+    # implementation could have returned exactly the person. The fixture is what was
+    # underdetermined; the assertion below — a visible claim for one identity never reveals the
+    # other — is unchanged, and now actually tests identity-keyed authorization.
     await _insert_claim(
-        harness, project, subject=center.name, obj=visible_person.name, tags=[VISIBLE]
+        harness,
+        project,
+        subject=center.name,
+        obj=visible_person.name,
+        tags=[VISIBLE],
+        object_type=visible_person.type,
     )
 
     await _seed_star(graph, scope, center, [visible_person, unrelated_codename])
