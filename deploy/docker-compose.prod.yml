@@ -107,7 +107,10 @@ services:
     image: caddy:2.8-alpine
     environment:
       RSC_BRAIN_DOMAIN: ${RSC_BRAIN_DOMAIN:-localhost}
+      # R45: two upstreams, because the edge owns one route map with two owners. With only the API
+      # here every path went to the service and the console container ran unreachable.
       RSC_BRAIN_APP_UPSTREAM: api:8080
+      RSC_BRAIN_CONSOLE_UPSTREAM: console:3000
     ports:
       - "80:80"
       - "443:443"
@@ -115,7 +118,7 @@ services:
       - ../Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    depends_on: [api]
+    depends_on: [api, console]
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
 

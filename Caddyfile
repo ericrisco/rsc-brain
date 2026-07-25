@@ -1,13 +1,58 @@
-# Caddy reverse proxy for the rsc-brain MCP/API (SPEC-10, FR-4.8 — TLS prerequisite of OAuth).
+# Caddy reverse proxy for rsc-brain (SPEC-10, FR-4.8 — TLS is a prerequisite of OAuth).
 #
-# Automatic HTTPS: set RSC_BRAIN_DOMAIN to a public domain and Caddy provisions + renews a
-# Let's Encrypt certificate. For a private/self-signed certificate instead, replace the site
-# address with your domain and add a `tls /path/cert.pem /path/key.pem` directive.
+# ONE ownership map, shared by every deployment target (AUDIT-046 / R45, plan §3 `edge.route`):
 #
-# Caddy terminates TLS and forwards to the app over http, setting X-Forwarded-Proto=https, so the
-# OAuth authorization server (which MUST see https, FR-4.10) builds correct https discovery URLs.
-# Run the app (uvicorn) with --proxy-headers so it trusts the forwarded scheme.
+#   console  →  /            /_next/*        /api/auth/*      /api/proxy/*
+#   service  →  /api/v1/*    /mcp*           /oauth/*         /.well-known/*
+#   service  →  /metrics     (reachable, but authorized as an operator surface — R10)
+#
+# Why the split is not cosmetic: `/api/auth/*` and `/api/proxy/*` are Next.js route handlers — the
+# browser's session and the typed proxy to the API. Sending `/api/*` wholesale to the service, or
+# everything to the service (which is what this file used to do), leaves the console container running
+# and unreachable: the product's own UI does not exist on its reference deployment.
+#
+# Automatic HTTPS: set RSC_BRAIN_DOMAIN to a public domain and Caddy provisions + renews a Let's
+# Encrypt certificate. For a private/self-signed certificate, replace the site address with your domain
+# and add `tls /path/cert.pem /path/key.pem`.
+#
+# Caddy terminates TLS and forwards over http with X-Forwarded-Proto=https. The service only believes
+# that header from a configured trusted proxy (AUDIT-038 / R51), so set
+# `RSC_BRAIN_INGRESS__PUBLIC_ORIGIN=https://<your domain>` — the advertised OAuth origin is a
+# deployment fact, not something a request may imply.
 
 {$RSC_BRAIN_DOMAIN:localhost} {
-	reverse_proxy {$RSC_BRAIN_APP_UPSTREAM:host.docker.internal:8080}
+	# --- service surfaces (most specific first; Caddy matches in order) ---
+	handle /api/v1/* {
+		reverse_proxy {$RSC_BRAIN_APP_UPSTREAM:api:8080}
+	}
+	handle /mcp* {
+		reverse_proxy {$RSC_BRAIN_APP_UPSTREAM:api:8080}
+	}
+	handle /oauth/* {
+		reverse_proxy {$RSC_BRAIN_APP_UPSTREAM:api:8080}
+	}
+	handle /.well-known/* {
+		reverse_proxy {$RSC_BRAIN_APP_UPSTREAM:api:8080}
+	}
+	# Reachable so an operator's scrape can get in; the endpoint itself requires the operator
+	# capability, and no project role satisfies it (R10).
+	handle /metrics {
+		reverse_proxy {$RSC_BRAIN_APP_UPSTREAM:api:8080}
+	}
+
+	# --- console surfaces, including its own BFF ---
+	handle /api/auth/* {
+		reverse_proxy {$RSC_BRAIN_CONSOLE_UPSTREAM:console:3000}
+	}
+	handle /api/proxy/* {
+		reverse_proxy {$RSC_BRAIN_CONSOLE_UPSTREAM:console:3000}
+	}
+	handle /_next/* {
+		reverse_proxy {$RSC_BRAIN_CONSOLE_UPSTREAM:console:3000}
+	}
+
+	# Everything else is the console: it owns the human-facing root.
+	handle {
+		reverse_proxy {$RSC_BRAIN_CONSOLE_UPSTREAM:console:3000}
+	}
 }

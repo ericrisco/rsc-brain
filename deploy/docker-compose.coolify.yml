@@ -10,11 +10,20 @@ services:
   db:
     environment:
       POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES}
-  # api/worker/migrate derive their DSN from POSTGRES_PASSWORD (see the canonical app-env), so only
-  # the api's public FQDN needs declaring — Coolify's proxy routes it to :8080 with TLS.
+  # api/worker/migrate derive their DSN from POSTGRES_PASSWORD (see the canonical app-env).
+  #
+  # ONE ownership map (AUDIT-046 / R46, plan §3 `edge.route`): Coolify's proxy takes the path from
+  # each SERVICE_FQDN_<SERVICE>_<PORT>. The service claims its own prefixes and the console keeps the
+  # root — including `/api/auth/*` and `/api/proxy/*`, which are Next.js route handlers, not API
+  # routes. Both used to be declared at `/`, which leaves which one answers up to the proxy rather
+  # than to the operator.
   api:
     environment:
-      SERVICE_FQDN_API_8080: /
+      SERVICE_FQDN_API_8080: /api/v1
+      SERVICE_FQDN_MCP_8080: /mcp
+      SERVICE_FQDN_OAUTH_8080: /oauth
+      SERVICE_FQDN_WELLKNOWN_8080: /.well-known
+      SERVICE_FQDN_METRICS_8080: /metrics
   console:
     environment:
       SERVICE_FQDN_CONSOLE_3000: /

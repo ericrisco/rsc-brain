@@ -30,7 +30,20 @@ spec:
     - host: {{ .Values.ingress.domain | quote }}
       http:
         paths:
-          # MCP + admin API + OAuth discovery → api (OAuth to Claude/ChatGPT needs this over HTTPS).
+          # ONE ownership map, identical on every target (AUDIT-046 / R48, plan §3 `edge.route`).
+          #
+          # `/api` used to be a single prefix pointing at the api service, which swallowed
+          # `/api/auth/*` and `/api/proxy/*` — the console's own Next.js route handlers, where the
+          # browser's session lives. Console login was therefore routed to a service that has never
+          # served it: working locally, 404 on Kubernetes. Ingress resolves longest-prefix-first, so
+          # the service now claims exactly `/api/v1` and the console keeps its BFF.
+          - path: /api/v1
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "rsc-brain.fullname" . }}-api
+                port:
+                  number: 8080
           - path: /mcp
             pathType: Prefix
             backend:
@@ -38,13 +51,14 @@ spec:
                 name: {{ include "rsc-brain.fullname" . }}-api
                 port:
                   number: 8080
-          - path: /api
+          - path: /oauth
             pathType: Prefix
             backend:
               service:
                 name: {{ include "rsc-brain.fullname" . }}-api
                 port:
                   number: 8080
+          # OAuth discovery: Claude/ChatGPT read this over HTTPS before connecting.
           - path: /.well-known
             pathType: Prefix
             backend:
@@ -52,7 +66,16 @@ spec:
                 name: {{ include "rsc-brain.fullname" . }}-api
                 port:
                   number: 8080
-          # Everything else → the admin console.
+          # Reachable so an operator scrape can get in; the endpoint requires the operator capability
+          # and no project role satisfies it (R10).
+          - path: /metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "rsc-brain.fullname" . }}-api
+                port:
+                  number: 8080
+          # Everything else → the admin console, including `/api/auth/*` and `/api/proxy/*`.
           - path: /
             pathType: Prefix
             backend:

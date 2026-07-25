@@ -7,13 +7,27 @@
 name: rsc-brain
 
 services:
+  # ONE ownership map, identical on every target (AUDIT-046 / R47, plan §3 `edge.route`). The api
+  # router used to claim the WHOLE host, so the console container ran unreachable and the product's
+  # own UI did not exist on this target. Traefik resolves by rule specificity via `priority`: the
+  # service's path prefixes win, and the console keeps the root plus its own `/api/auth` and
+  # `/api/proxy` BFF handlers.
   api:
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.rsc-api.rule=Host(`${RSC_BRAIN_DOMAIN}`)"
+      - "traefik.http.routers.rsc-api.rule=Host(`${RSC_BRAIN_DOMAIN}`) && (PathPrefix(`/api/v1`) || PathPrefix(`/mcp`) || PathPrefix(`/oauth`) || PathPrefix(`/.well-known`) || PathPrefix(`/metrics`))"
+      - "traefik.http.routers.rsc-api.priority=100"
       - "traefik.http.routers.rsc-api.entrypoints=websecure"
       - "traefik.http.routers.rsc-api.tls.certresolver=letsencrypt"
       - "traefik.http.services.rsc-api.loadbalancer.server.port=8080"
+  console:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rsc-console.rule=Host(`${RSC_BRAIN_DOMAIN}`)"
+      - "traefik.http.routers.rsc-console.priority=1"
+      - "traefik.http.routers.rsc-console.entrypoints=websecure"
+      - "traefik.http.routers.rsc-console.tls.certresolver=letsencrypt"
+      - "traefik.http.services.rsc-console.loadbalancer.server.port=3000"
   # Traefik terminates TLS — our Caddy is not used on this target.
   caddy:
     profiles: ["donotstart"]
