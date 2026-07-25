@@ -99,7 +99,6 @@ def network_canary(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
     configured, not that the operation is offline.
     """
     attempts: list[str] = []
-    real_getaddrinfo = socket.getaddrinfo
 
     def _getaddrinfo(host: object, port: object, *args: object, **kwargs: object) -> object:
         attempts.append(f"dns:{host}:{port}")
@@ -116,10 +115,7 @@ def network_canary(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
     monkeypatch.setattr(socket, "getaddrinfo", _getaddrinfo)
     monkeypatch.setattr(socket.socket, "connect", _connect)
     monkeypatch.setattr(socket, "create_connection", _create_connection)
-    try:
-        yield attempts
-    finally:
-        socket.getaddrinfo = real_getaddrinfo  # type: ignore[assignment]
+    yield attempts  # monkeypatch restores all three when the test ends
 
 
 def _client(harness: Harness, tmp_path: Path) -> httpx.AsyncClient:
