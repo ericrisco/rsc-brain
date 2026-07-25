@@ -78,7 +78,9 @@ async def test_preflight_reports_nothing_on_a_constrained_schema(
 
 def test_the_report_names_every_relation_and_its_row_count() -> None:
     """An operator has to be able to act on it, so each relation and count appears verbatim."""
-    report = violation_report({"chunks.document_id -> documents": 3, "claims.chunk_id -> chunks": 1})
+    report = violation_report(
+        {"chunks.document_id -> documents": 3, "claims.chunk_id -> chunks": 1}
+    )
     assert "chunks.document_id -> documents: 3 row(s)" in report
     assert "claims.chunk_id -> chunks: 1 row(s)" in report
     assert "no row is reassigned automatically" in report

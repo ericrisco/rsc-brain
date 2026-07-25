@@ -35,6 +35,7 @@ from rsc_brain.scope import (
     NON_TOPIC_TAGS,
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_MEMBER,
+    PROJECT_ROLE_VIEWER,
     PrincipalType,
     ProjectScope,
 )
@@ -42,7 +43,7 @@ from rsc_brain.scope import (
 #: Platform roles that carry platform (never project-content) authority.
 PLATFORM_ADMIN_ROLES = frozenset({"owner", "admin"})
 #: Project roles that may participate in a read at all (a viewer reads, never mutates).
-_READ_ROLES = frozenset({PROJECT_ROLE_ADMIN, PROJECT_ROLE_MEMBER, "viewer"})
+_READ_ROLES = frozenset({PROJECT_ROLE_ADMIN, PROJECT_ROLE_MEMBER, PROJECT_ROLE_VIEWER})
 
 
 class Capability(StrEnum):
@@ -211,6 +212,11 @@ def decide(
         return _allow(scope, capability, frozenset(scope.allowed_topics))
 
     if capability is Capability.KNOWLEDGE_REVIEW_DECIDE:
+        if scope.role == PROJECT_ROLE_VIEWER:
+            # A viewer never mutates, and a review decision is a mutation. `can_curate` and the
+            # project role are independent columns, so a viewer CAN carry curation — the matrix rule
+            # is what resolves it, not the data.
+            return refuse("a viewer never decides")
         if not (scope.can_curate or scope.role == PROJECT_ROLE_ADMIN):
             return refuse("curation capability required")
         if not topics_ok:
@@ -218,9 +224,13 @@ def decide(
         return _allow(scope, capability, frozenset(scope.allowed_topics))
 
     if capability is Capability.CORRECTION_REVERT:
+        if scope.role == PROJECT_ROLE_VIEWER:
+            return refuse("a viewer never mutates")
         if scope.role != PROJECT_ROLE_ADMIN and not object_owner:
             return refuse("project administration or topic ownership required")
-        if scope.role != PROJECT_ROLE_ADMIN and not topics_ok:
+        if not topics_ok:
+            # Reverting changes every topic the target claim carries, so partial authority over it is
+            # not authority — for the administrator as much as for the topic owner.
             return refuse(topic_reason)
         return _allow(scope, capability, frozenset(scope.allowed_topics))
 
