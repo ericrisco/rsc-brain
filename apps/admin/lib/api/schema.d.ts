@@ -1046,6 +1046,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/hunt/{token}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Json
+         * @description The same operation for a non-browser client. 404 for any token that does not resolve.
+         */
+        post: operations["submit_json_hunt__token__answer_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/oauth/authorize": {
         parameters: {
             query?: never;
@@ -1145,6 +1165,19 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HuntAnswer
+         * @description A JSON answer, for a client that is not the browser form.
+         */
+        HuntAnswer: {
+            /** Answer */
+            answer: string;
+            /**
+             * Decline
+             * @default false
+             */
+            decline: boolean;
         };
         /** HuntAsk */
         HuntAsk: {
@@ -3313,6 +3346,43 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_json_hunt__token__answer_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HuntAnswer"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
