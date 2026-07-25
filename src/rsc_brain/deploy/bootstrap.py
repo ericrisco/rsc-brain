@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import security
 from rsc_brain.identity.service import IdentityService
+from rsc_brain.scope import PROJECT_ROLE_ADMIN
 from rsc_brain.stores.relational import models
 
 DEFAULT_ADMIN_EMAIL = "admin@rsc-brain.local"
@@ -68,5 +69,16 @@ async def ensure_first_admin(
 
     identity = IdentityService(sessionmaker)
     project_id = await identity.ensure_default_project()
-    await identity.add_membership(user_id, project_id, role="admin", can_curate=True)
+    # Two SEPARATE authorities, both required and neither implying the other (AUDIT-020): `owner` on
+    # the platform above, and the project-administrator role here. This membership used to be written
+    # with `role="admin"` — a value that is not one of the documented project roles
+    # (project-admin|member|viewer) and that the capability matrix therefore admits to nothing, so a
+    # fresh install's only human was locked out of its own management surface.
+    await identity.add_membership(
+        user_id,
+        project_id,
+        role=PROJECT_ROLE_ADMIN,
+        allowed_topics=tuple(await identity.list_topic_slugs(project_id)),
+        can_curate=True,
+    )
     return AdminBootstrap(email=email, created=True, generated_password=generated)

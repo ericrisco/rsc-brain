@@ -300,10 +300,27 @@ async def list_topics(
 async def create_topic(
     body: TopicCreate, request: Request, scope: ProjectScope = Depends(_needs_config_write)
 ) -> dict[str, object]:
-    topic_id = await _identity(request).create_topic(
+    """Create a topic, and record the creator's authority over it explicitly.
+
+    Topic authority is never implied by a role — not even the project administrator's (AUDIT-020;
+    R01 holds that the highest project role still sees only the topics it holds). Without the grant,
+    defining a topic would leave its own author unable to act on anything tagged with it, and the
+    only way out would be a direct database write. So the grant is made here, on the membership,
+    where it is visible and revocable.
+    """
+    identity = _identity(request)
+    topic_id = await identity.create_topic(
         scope.project_id, body.slug, body.name, sensitivity=body.sensitivity
     )
-    return {"topic_id": topic_id, "slug": body.slug}
+    granted = await identity.grant_topics(scope.principal_id, scope.project_id, [body.slug])
+    await audit_mod.record_audit(
+        _sm(request),
+        scope,
+        action="topic:create",
+        tool="console",
+        topics_used=[body.slug],
+    )
+    return {"topic_id": topic_id, "slug": body.slug, "granted_topics": list(granted)}
 
 
 @router.get("/sources")

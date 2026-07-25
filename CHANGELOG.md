@@ -9,6 +9,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-25
+
+### Fixed
+
+- **The bootstrapped first admin could not administer its own project.** `brain init` wrote its
+  default-project membership with `role="admin"` — a value that is not one of the documented project
+  roles (`project-admin|member|viewer`). Nothing noticed while the old gate accepted `can_curate` as
+  administration; 0.2.0's named-capability matrix does not, so on a fresh install the only human was
+  locked out of the management surface (approving documents, reading the audit log, managing sources
+  and topics). The membership is now created as `project-admin`. This is the "admin lockout" the
+  remediation plan's risk register names as the thing an authorization repair must not cause, so it
+  has its own regression test rather than a corrected line.
+- **Creating a topic now records its author's authority over it.** Topic authority is explicit for
+  every role, the project administrator included, and a fresh install has no topics — so defining one
+  used to leave its own author unable to act on anything tagged with it, with a direct database write
+  as the only way out. `POST /api/v1/admin/topics` grants the new topic to the caller's membership and
+  returns `granted_topics`; the grant is durable, visible and revocable rather than inferred at
+  decision time.
+
 ## [0.2.0] - 2026-07-25
 
 Everything merged into `main` up to this point ships here — the 0.1.0 line was never released — with
