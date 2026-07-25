@@ -43,6 +43,12 @@ class _ClaimAggregate:
     valid_to: dt.date | None = None
     is_current: bool = True
     had_claims: bool = False  # the chunk had claims BEFORE the temporal window was applied
+    # R22: the text of the claims that SURVIVED the window. Rendering the whole chunk instead means a
+    # chunk holding both a current and a retired sentence answers with the retired one.
+    claim_texts: tuple[str, ...] = ()
+    # R24: any surviving claim is contested. A consumer that cannot see this cannot tell a disputed
+    # fact from a settled one.
+    disputed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +66,11 @@ class _Candidate:
     valid_from: dt.date | None
     valid_to: dt.date | None = None
     is_current: bool = True
+    disputed: bool = False
+
+
+#: Ceiling on how many chunks one recall may retrieve before filtering (R23 surplus meets R38 bounds).
+MAX_RETRIEVAL_WIDTH = 200
 
 
 def _mean(values: Sequence[float]) -> float | None:
@@ -154,14 +165,21 @@ class PgRetriever:
         forbidden = await sensitive_tags(self._sm, scope.project_id)
         hard_windows = await self._hard_window_map(scope)
 
-        vector_ids = await self._vector_candidates(scope, vector, forbidden, top_k)
+        # R23: retrieve a BOUNDED SURPLUS, not exactly the page. Relevance ranking happens before the
+        # temporal filter can run (the filter needs each chunk's claims), so retrieving exactly `top_k`
+        # lets stale-but-similar chunks occupy the page and starve the eligible answer out of it. The
+        # surplus is what the temporal filter then removes; the page is cut after scoring, below.
+        retrieval_width = min(top_k * self._config.temporal_refill_factor, MAX_RETRIEVAL_WIDTH)
+        vector_ids = await self._vector_candidates(scope, vector, forbidden, retrieval_width)
         if self._config.hybrid_enabled:
             # Hybrid (FR-3.7): fuse the vector list with a lexical (tsvector) list by RRF, so exact
             # identifiers embeddings miss still surface. Both vias carry the SAME in-query filter.
             lexical_ids = await self._lexical_candidates(
-                scope, query, forbidden, self._config.lexical_candidates
+                scope, query, forbidden, max(self._config.lexical_candidates, retrieval_width)
             )
-            candidate_ids = _rrf_fuse([vector_ids, lexical_ids], k=self._config.rrf_k, limit=top_k)
+            candidate_ids = _rrf_fuse(
+                [vector_ids, lexical_ids], k=self._config.rrf_k, limit=retrieval_width
+            )
         else:
             candidate_ids = vector_ids
         candidate_ids = await self._ontology_expand(scope, query, forbidden, candidate_ids)
@@ -190,7 +208,10 @@ class PgRetriever:
             await register_gap(self._sm, scope, query, topics=topics_hint or ())
             return RecallResult(found=False, gap_registered=True)
 
-        return RecallResult(found=True, fragments=self._assemble(scored), gap_registered=False)
+        # The page is cut HERE, after the temporal filter has removed what is not eligible (R23).
+        return RecallResult(
+            found=True, fragments=self._assemble(scored[:top_k]), gap_registered=False
+        )
 
     # --- steps ---------------------------------------------------------------
 
@@ -385,10 +406,15 @@ class PgRetriever:
                 # obsolete price). A chunk that never had claims (plain prose) stays recallable.
                 if claim.had_claims and not claim.claim_ids:
                     continue
+                # R22: render the surviving CLAIMS, not the chunk they came from. The temporal filter
+                # selects claims, so returning the chunk hands back whatever else it contains —
+                # including the sentence the store has already retired. A chunk with no claims at all
+                # (plain prose) still renders as itself.
+                rendered = "\n".join(claim.claim_texts) if claim.claim_texts else text
                 candidates.append(
                     _Candidate(
                         chunk_id=str(cid),
-                        text=text,
+                        text=rendered,
                         tags=tuple(tags),
                         page=page,
                         document_id=str(document_id),
@@ -400,6 +426,7 @@ class PgRetriever:
                         valid_from=claim.valid_from,
                         valid_to=claim.valid_to,
                         is_current=claim.is_current,
+                        disputed=claim.disputed,
                     )
                 )
             return candidates
@@ -440,19 +467,28 @@ class PgRetriever:
                     models.Claim.importance,
                     models.Claim.valid_from,
                     models.Claim.valid_to,
-                ).where(*conditions)
+                    models.Claim.text,
+                    models.Claim.disputed,
+                )
+                .where(*conditions)
+                .order_by(models.Claim.valid_from.nulls_last(), models.Claim.id)
             )
         ).all()
         had_claims = bool(await session.scalar(select(models.Claim.id).where(*base).limit(1)))
 
         claim_ids: list[str] = []
+        claim_texts: list[str] = []
         credibilities: list[float] = []
         importances: list[float] = []
         valid_from: dt.date | None = None
         valid_to: dt.date | None = None
         any_open = False
-        for cid, credibility, importance, cvf, cvt in rows:
+        any_disputed = False
+        for cid, credibility, importance, cvf, cvt, claim_text, claim_disputed in rows:
             claim_ids.append(str(cid))
+            if claim_text:
+                claim_texts.append(str(claim_text))
+            any_disputed = any_disputed or bool(claim_disputed)
             if credibility is not None:
                 credibilities.append(float(credibility))
             if importance is not None:
@@ -475,6 +511,8 @@ class PgRetriever:
             valid_to=None if any_open else valid_to,
             is_current=is_current,
             had_claims=had_claims,
+            claim_texts=tuple(claim_texts),
+            disputed=any_disputed,
         )
 
     @staticmethod
@@ -538,10 +576,14 @@ class PgRetriever:
                         "claim_ids": list(candidate.claim_ids),
                         "credibility": round(candidate.credibility or 0.5, 4),
                         "tags": list(candidate.tags),
+                        # R24: carried in the provenance AND on the fragment, so neither a client
+                        # reading the payload nor one reading the typed field can miss it.
+                        "disputed": candidate.disputed,
                     },
                     valid_from=candidate.valid_from,
                     valid_to=candidate.valid_to,
                     is_current=candidate.is_current,
+                    disputed=candidate.disputed,
                     untrusted_data=True,
                 )
             )

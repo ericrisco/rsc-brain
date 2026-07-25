@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from rsc_brain.config.models import KnowledgeConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.entity_resolution import normalize_name
+from rsc_brain.knowledge.graph_sync import GraphSync
 from rsc_brain.scope import PrincipalType, ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.graph_store import GraphEdge, GraphNode
@@ -52,6 +53,7 @@ class CorrectionService:
         self._graph = graph
         self._gateway = gateway
         self._config = config or KnowledgeConfig()
+        self._graph_sync = GraphSync(store=store, graph=graph)
 
     async def correct(
         self,
@@ -172,6 +174,9 @@ class CorrectionService:
         )
         if not sensitive:
             await self._write_correction_edges(scope, new_claim_id, target.id, scope.principal_id)
+            # R27: the corrected claim is closed in Postgres, so its graph relation stops being
+            # current too — otherwise a graph expansion keeps serving the text just corrected.
+            await self._graph_sync.retire_claims(scope, [target.id])
         return CorrectionOutcome(
             status=status,
             explanation=preview,
@@ -199,6 +204,11 @@ class CorrectionService:
             new_claim_id=str(correction.new_claim) if correction.new_claim else None,
             cred_restore=cred_restore,
         )
+        # A revert closes the correction's claim and reopens the original, so the graph swaps back
+        # in the same order (R27).
+        if correction.new_claim:
+            await self._graph_sync.retire_claims(scope, [str(correction.new_claim)])
+        await self._graph_sync.reactivate_claims(scope, [str(correction.target_claim)])
         await self._store.record_correction(
             scope,
             target_claim=str(correction.target_claim),

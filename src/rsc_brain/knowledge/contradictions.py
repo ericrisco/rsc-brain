@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from rsc_brain.config.models import KnowledgeConfig
 from rsc_brain.ingest.entity_resolution import normalize_name
 from rsc_brain.knowledge.credibility import clamp
+from rsc_brain.knowledge.graph_sync import GraphSync
 from rsc_brain.knowledge.judge import Judge, Verdict
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
@@ -79,11 +80,17 @@ class ContradictionResolver:
         self._graph = graph
         self._judge = judge
         self._config = config or KnowledgeConfig()
+        self._graph_sync = GraphSync(store=store, graph=graph)
 
     async def resolve_document(self, scope: ProjectScope, document_id: str) -> ResolutionSummary:
-        """Detect + resolve contradictions among a document's active claims (on-ingest hook)."""
+        """Detect + resolve contradictions between a document's claims and the eligible corpus.
+
+        R19: this used to pass ``claims_for_document`` — the document's OWN claims — so a new document
+        was only ever compared against itself. The candidate set now includes eligible prior claims from
+        the rest of the project, which is where a contradiction actually lives.
+        """
         return await self.resolve_claims(
-            scope, await self._store.claims_for_document(scope, document_id)
+            scope, await self._store.contradiction_candidates(scope, document_id)
         )
 
     async def resolve_ids(self, scope: ProjectScope, claim_ids: Sequence[str]) -> ResolutionSummary:
@@ -140,6 +147,9 @@ class ContradictionResolver:
             loser_cred=loser_cred,
         )
         await self._write_supersedes(scope, winner.id, loser.id)
+        # R27: the loser is superseded relationally; its relation stops being current in the graph
+        # too, unless another live claim still asserts it.
+        await self._graph_sync.retire_claims(scope, [loser.id])
         return [loser.id], []
 
     async def _write_supersedes(self, scope: ProjectScope, winner_id: str, loser_id: str) -> None:

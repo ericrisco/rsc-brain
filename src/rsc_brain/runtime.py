@@ -45,6 +45,38 @@ class RuntimeDependencies:
         await self.engine.dispose()
 
 
+def build_pipeline(dependencies: RuntimeDependencies) -> object:
+    """The ingestion pipeline as production must run it, contradiction detection included (R18).
+
+    ``_detect_contradictions_on_ingest`` is a no-op when no resolver was injected, and no composition
+    root injected one — so detection ran in tests that passed a resolver and nowhere else. Building the
+    pipeline here means neither entry point can forget it, for the same reason the gateway's
+    collaborators live in one place.
+    """
+    from rsc_brain.ingest.pipeline import IngestionPipeline
+    from rsc_brain.knowledge.contradictions import ContradictionResolver
+    from rsc_brain.knowledge.judge import LlmJudge
+    from rsc_brain.ontology.ingest import OntologyIngest
+    from rsc_brain.stores.age_graph_store import AgeGraphStore
+    from rsc_brain.stores.relational.ingest_repository import IngestRepository
+    from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+
+    sessionmaker = dependencies.sessionmaker
+    graph = AgeGraphStore(sessionmaker)
+    return IngestionPipeline(
+        repository=IngestRepository(sessionmaker),
+        graph_store=graph,
+        gateway=dependencies.gateway,
+        config=dependencies.pipeline_config,
+        ontology=OntologyIngest(sessionmaker),
+        contradiction_resolver=ContradictionResolver(
+            store=KnowledgeStore(sessionmaker),
+            graph=graph,
+            judge=LlmJudge(dependencies.gateway),
+        ),
+    )
+
+
 def build(role: Role) -> RuntimeDependencies:
     """Assemble the runtime for ``role`` from configuration.
 

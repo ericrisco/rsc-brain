@@ -36,6 +36,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select
@@ -65,8 +66,19 @@ async def _claim(
     chunk_id: uuid.UUID | None = None,
     document_id: uuid.UUID | None = None,
     embed: bool = True,
+    embed_as: str | None = None,
+    subject_entity_key: str | None = None,
+    predicate: str | None = None,
+    object_entity_key: str | None = None,
 ) -> str:
-    embedding = list((await harness.gateway.embed([text]))[0]) if embed else None
+    """One claim. ``embed_as`` embeds the claim under a different anchor text.
+
+    The harness's embedder is a hash of the text, so two near-identical sentences come out nearly
+    orthogonal — the opposite of what a real embedder does, and contradiction pairing is driven by
+    similarity. Anchoring both sides of a contradiction on the same text is what makes the fixture
+    behave like production instead of like the fake.
+    """
+    embedding = list((await harness.gateway.embed([embed_as or text]))[0]) if embed else None
     async with harness.sm() as session:
         claim = models.Claim(
             project_id=uuid.UUID(project),
@@ -79,6 +91,9 @@ async def _claim(
             valid_to=valid_to,
             source_document_id=document_id,
             embedding=embedding,
+            predicate=predicate,
+            subject_entity_key=uuid.UUID(subject_entity_key) if subject_entity_key else None,
+            object_entity_key=uuid.UUID(object_entity_key) if object_entity_key else None,
         )
         session.add(claim)
         await session.flush()
@@ -133,7 +148,9 @@ def _retriever(harness: Harness, **overrides: object) -> PgRetriever:
 
 
 async def test_a_production_shaped_ingest_detects_a_contradiction(
-    build_harness: Callable[..., Harness], make_completion: Callable[..., object]
+    build_harness: Callable[..., Harness],
+    make_completion: Callable[..., object],
+    tmp_path: Path,
 ) -> None:
     """A feature that is off in production is not a feature.
 
@@ -160,12 +177,24 @@ async def test_a_production_shaped_ingest_detects_a_contradiction(
     await harness.repo.create_source(
         scope, name="manual", type_="folder", policy="manual", default_tags=["general"]
     )
-    await _claim(harness, project, text="The SLA is 24 hours.")
+    # Anchored on the exact text the extraction below yields: the fake embedder is a hash, so a
+    # trailing period is as distant as an unrelated sentence. The production embedder would pair these
+    # on meaning; here the anchor stands in for that similarity.
+    await _claim(harness, project, text="The SLA is 24 hours.", embed_as="The SLA is 48 hours")
 
-    outcome = await harness.service.ingest_bytes(
+    # Built through `ApiDeps.service()` — the composition the API actually uses — rather than through
+    # the harness's own pipeline, which is exactly the difference the finding is about: the harness
+    # injects what it needs, production injected nothing.
+    from rsc_brain.api.app import ApiDeps
+
+    service, _ = ApiDeps(
+        sessionmaker=harness.sm, gateway=harness.gateway, data_dir=str(tmp_path)
+    ).service()
+    outcome = await service.ingest_bytes(
         scope, b"# Handbook\n\nThe SLA is 48 hours.\n", filename="hb.md", source="manual"
     )
-    await harness.service.approve(scope, outcome.document_id, approver=scope.principal_id)
+    if outcome.status == "pending_approval":
+        await service.approve(scope, outcome.document_id, approver=scope.principal_id)
 
     async with harness.sm() as session:
         verdicts = await session.scalar(
@@ -194,8 +223,12 @@ async def test_contradiction_candidates_span_documents(
     project = await harness.setup_project(unique_slug("acme"), TOPICS)
     old_doc, _ = await _document_with_chunk(harness, project, text="The SLA is 24 hours.")
     new_doc, _ = await _document_with_chunk(harness, project, text="The SLA is 48 hours.")
-    await _claim(harness, project, text="The SLA is 24 hours.", document_id=old_doc)
-    await _claim(harness, project, text="The SLA is 48 hours.", document_id=new_doc)
+    await _claim(
+        harness, project, text="The SLA is 24 hours.", document_id=old_doc, embed_as="the SLA"
+    )
+    await _claim(
+        harness, project, text="The SLA is 48 hours.", document_id=new_doc, embed_as="the SLA"
+    )
 
     from rsc_brain.knowledge.contradictions import ContradictionResolver
     from rsc_brain.knowledge.judge import LlmJudge
@@ -268,7 +301,11 @@ async def test_credibility_reflects_the_source_policy_not_the_chunk_shape(
             filename=f"{source}.md",
             source=source,
         )
-        await harness.service.approve(scope, outcome.document_id, approver=scope.principal_id)
+        # An `llm`-policy source publishes itself (D13); a `manual` one waits for a decision. Approve
+        # only what is actually waiting, so the comparison is between the two POLICIES rather than
+        # between two lifecycles.
+        if outcome.status == "pending_approval":
+            await harness.service.approve(scope, outcome.document_id, approver=scope.principal_id)
         async with harness.sm() as session:
             value = await session.scalar(
                 select(models.Claim.credibility)
@@ -307,7 +344,8 @@ async def test_a_second_independent_source_raises_credibility(
             filename=f"source-{index}.md",
             source="manual",
         )
-        await harness.service.approve(scope, outcome.document_id, approver=scope.principal_id)
+        if outcome.status == "pending_approval":
+            await harness.service.approve(scope, outcome.document_id, approver=scope.principal_id)
         async with harness.sm() as session:
             value = await session.scalar(
                 select(models.Claim.credibility)
@@ -443,10 +481,142 @@ async def test_recall_carries_the_disputed_state(build_harness: Callable[..., Ha
 async def test_superseding_a_claim_retires_its_graph_relation(
     build_harness: Callable[..., Harness],
 ) -> None:
-    """A correction supersedes in Postgres; the AGE edge is left current.
+    """A correction supersedes the claim in Postgres; the graph keeps serving the old fact.
 
-    The graph then keeps answering with a fact the relational store has retired, and the two stores
-    disagree with no way for a reader to tell which is right.
+    Driven through ``CorrectionService`` and asserted through ``k_hop`` — the real supersede path and a
+    real graph read — because the finding is about the two stores disagreeing in production, not about
+    a column. A test that set ``valid_to`` by hand would prove nothing: it bypasses every place a fix
+    could live.
+    """
+    from rsc_brain.knowledge.corrections import CorrectionService
+    from rsc_brain.stores.graph_store import GraphEdge, GraphNode
+    from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    scope = harness.scope(project, allowed_topics=["general"])
+    graph = AgeGraphStore(harness.sm)
+
+    # The relation as ingest writes it: entity → entity, typed by the predicate, with the claim
+    # carrying the same endpoint identities (R16's entity_key).
+    sla, hours72 = str(uuid.uuid4()), str(uuid.uuid4())
+    old_claim = await _claim(
+        harness,
+        project,
+        text="The SLA is 72 hours.",
+        subject_entity_key=sla,
+        predicate="is",
+        object_entity_key=hours72,
+    )
+    await graph.create_graph(scope)
+    await graph.upsert_nodes(
+        scope,
+        [
+            GraphNode(id=sla, labels=frozenset({"Entity"}), properties={"name": "SLA"}),
+            GraphNode(id=hours72, labels=frozenset({"Entity"}), properties={"name": "72 hours"}),
+        ],
+    )
+    await graph.upsert_edges(scope, [GraphEdge(source_id=sla, target_id=hours72, type="is")])
+
+    # An owner corrects it, which supersedes the claim relationally. Ownership is a Person who is
+    # RESPONSIBLE_FOR the claim's topic — the same condition `person_owns_any_tag` checks.
+    async with harness.sm() as session:
+        session.add(
+            models.User(
+                id=uuid.UUID(scope.principal_id),
+                email=f"{unique_slug('o')}@example.test",
+                status="active",
+                role="member",
+            )
+        )
+        await session.flush()
+        session.add(
+            models.Person(
+                project_id=uuid.UUID(project),
+                user_id=uuid.UUID(scope.principal_id),
+                name="owner",
+                topics=["general"],
+            )
+        )
+        await session.commit()
+    service = CorrectionService(
+        store=KnowledgeStore(harness.sm), graph=graph, gateway=harness.gateway
+    )
+    outcome = await service.correct(
+        scope, claim_id=old_claim, correction="The SLA is 48 hours.", reason="renegotiated"
+    )
+    assert outcome.status == "applied", outcome.explanation
+
+    reachable = [node.id for node in await graph.k_hop(scope, [sla], k=1)]
+    assert hours72 not in reachable, (
+        "the superseded claim's relation is still traversable, so the graph answers with a fact the "
+        "relational store has retired and neither store can tell you which is right"
+    )
+
+
+async def test_a_relation_two_documents_assert_survives_one_being_superseded(
+    build_harness: Callable[..., Harness],
+) -> None:
+    """Retirement is per-fact, not per-claim.
+
+    Two documents can assert the same relation. Retiring the edge because one of their claims was
+    superseded would retract a fact the corpus still holds — the opposite failure, and the reason
+    retirement asks whether any live claim still asserts the triple.
+    """
+    from rsc_brain.knowledge.graph_sync import GraphSync
+    from rsc_brain.stores.graph_store import GraphEdge, GraphNode
+    from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    scope = harness.scope(project, allowed_topics=["general"])
+    graph = AgeGraphStore(harness.sm)
+
+    sla, hours48 = str(uuid.uuid4()), str(uuid.uuid4())
+    closed = await _claim(
+        harness,
+        project,
+        text="The SLA is 48 hours.",
+        valid_to=dt.datetime.now(dt.UTC),
+        subject_entity_key=sla,
+        predicate="is",
+        object_entity_key=hours48,
+    )
+    await _claim(
+        harness,
+        project,
+        text="The SLA is 48 hours (handbook).",
+        subject_entity_key=sla,
+        predicate="is",
+        object_entity_key=hours48,
+    )
+
+    await graph.create_graph(scope)
+    await graph.upsert_nodes(
+        scope,
+        [
+            GraphNode(id=sla, labels=frozenset({"Entity"})),
+            GraphNode(id=hours48, labels=frozenset({"Entity"})),
+        ],
+    )
+    await graph.upsert_edges(scope, [GraphEdge(source_id=sla, target_id=hours48, type="is")])
+
+    retired = await GraphSync(store=KnowledgeStore(harness.sm), graph=graph).retire_claims(
+        scope, [closed]
+    )
+
+    assert retired == 0, "retired a relation another live claim still asserts"
+    assert hours48 in [node.id for node in await graph.k_hop(scope, [sla], k=1)]
+
+
+async def test_merging_a_duplicate_does_not_revive_its_retired_relations(
+    build_harness: Callable[..., Harness],
+) -> None:
+    """Merging relinks a duplicate's edges onto the canonical node — retired ones must stay retired.
+
+    Found while reviewing the retirement path rather than in the audit: the relink copied every edge
+    the duplicate had, so a superseded fact came back live under a new source id and retirement could
+    be undone by an unrelated entity merge.
     """
     from rsc_brain.stores.graph_store import GraphEdge, GraphNode
 
@@ -455,32 +625,22 @@ async def test_superseding_a_claim_retires_its_graph_relation(
     scope = harness.scope(project, allowed_topics=["general"])
     graph = AgeGraphStore(harness.sm)
 
-    old_claim = await _claim(harness, project, text="The SLA is 72 hours.")
+    canonical, duplicate, target = (str(uuid.uuid4()) for _ in range(3))
     await graph.create_graph(scope)
     await graph.upsert_nodes(
         scope,
         [
-            GraphNode(id=old_claim, labels=frozenset({"Claim"}), properties={"kind": "claim"}),
-            GraphNode(id="sla-node", labels=frozenset({"Entity"}), properties={"name": "SLA"}),
+            GraphNode(id=canonical, labels=frozenset({"Entity"})),
+            GraphNode(id=duplicate, labels=frozenset({"Entity"})),
+            GraphNode(id=target, labels=frozenset({"Entity"})),
         ],
     )
-    await graph.upsert_edges(
-        scope, [GraphEdge(source_id=old_claim, target_id="sla-node", type="ABOUT")]
+    await graph.upsert_edges(scope, [GraphEdge(source_id=duplicate, target_id=target, type="is")])
+    await graph.set_relations_retired(
+        scope, [GraphEdge(source_id=duplicate, target_id=target, type="is")], retired=True
     )
 
-    async with harness.sm() as session:
-        claim = await session.get(models.Claim, uuid.UUID(old_claim))
-        assert claim is not None
-        claim.valid_to = dt.datetime.now(dt.UTC)
-        await session.commit()
+    await graph.merge_nodes(scope, canonical_id=canonical, duplicate_id=duplicate)
 
-    rows = await graph.run_cypher(
-        scope,
-        "MATCH (c)-[r]->(e) WHERE c.id = $id AND r.superseded IS NULL RETURN count(r) AS live",
-        {"id": old_claim},
-    )
-    live = rows[0]["live"] if rows else 0
-    assert live == 0, (
-        f"{live} graph relation(s) of a superseded claim are still current, so the graph answers with "
-        "a fact the relational store has retired"
-    )
+    reachable = [node.id for node in await graph.k_hop(scope, [canonical], k=1)]
+    assert target not in reachable, "a merge relinked a retired relation back into the live graph"
