@@ -743,7 +743,13 @@ class KnowledgeStore:
     async def feedback_budget_remaining(
         self, scope: ProjectScope, principal_id: str, claim_id: str, day: dt.date, cap: float
     ) -> float:
-        """Remaining daily |Δcred| budget for this (principal, claim) — the agent-spam guard."""
+        """Remaining daily |Δcred| budget for this (principal, claim) — reporting only.
+
+        R33: this read used to be the ENFORCEMENT, with the spend committed in a separate transaction.
+        Six synchronised signals each read the same remaining budget and each applied a full delta, so
+        the guard that stops an agent grinding a claim's credibility down was exceeded fivefold. Deciding
+        and spending now happen together in :meth:`spend_feedback_budget`.
+        """
         async with self._sm() as session:
             consumed = await session.scalar(
                 select(models.FeedbackDailyImpact.impact).where(
@@ -754,6 +760,49 @@ class KnowledgeStore:
                 )
             )
             return max(0.0, cap - float(consumed or 0.0))
+
+    async def spend_feedback_budget(
+        self,
+        scope: ProjectScope,
+        *,
+        principal_id: str,
+        claim_id: str,
+        day: dt.date,
+        cap: float,
+        requested: float,
+    ) -> float:
+        """Consume up to ``requested`` of the daily budget and return what was actually granted.
+
+        One statement, so the cap holds under any number of concurrent callers: the ledger row is
+        incremented and clamped to ``cap`` in the same UPDATE that reads it, and the grant is the
+        difference the statement itself made. ``prev_impact`` carries the pre-update value because
+        ``RETURNING`` reports the new row only, and computing the difference from a separate SELECT
+        would put the race straight back.
+        """
+        if requested <= 0 or cap <= 0:
+            return 0.0
+        table = models.FeedbackDailyImpact.__table__
+        capped_new = func.least(cap, table.c.impact + requested)
+        statement = (
+            pg_insert(models.FeedbackDailyImpact)
+            .values(
+                project_id=_pid(scope),
+                principal_id=principal_id,
+                claim_id=uuid.UUID(claim_id),
+                day=day,
+                impact=min(requested, cap),
+                prev_impact=0,
+            )
+            .on_conflict_do_update(
+                index_elements=["project_id", "principal_id", "claim_id", "day"],
+                set_={"impact": capped_new, "prev_impact": table.c.impact},
+            )
+            .returning(table.c.impact, table.c.prev_impact)
+        )
+        async with session_scope(self._sm) as session:
+            row = (await session.execute(statement)).one()
+        granted = float(row[0]) - float(row[1] or 0.0)
+        return max(0.0, granted)
 
     async def apply_feedback(
         self,
@@ -767,8 +816,12 @@ class KnowledgeStore:
         disputed: bool = False,
         hunting_candidate: bool = False,
     ) -> None:
-        """Set the claim's new credibility, mark disputed/hunting if requested, and add the
-        consumed impact to the daily ledger — one transaction."""
+        """Set the claim's new credibility and mark disputed/hunting if requested — one transaction.
+
+        R33: the daily ledger is no longer touched here. Budget is granted by
+        :meth:`spend_feedback_budget` BEFORE the move is computed, because a spend decided from a value
+        read in another transaction is not a cap.
+        """
         values: dict[str, object] = {"credibility": new_credibility}
         if disputed:
             values["disputed"] = True
@@ -783,18 +836,4 @@ class KnowledgeStore:
                 )
                 .values(**values)
             )
-            statement = (
-                pg_insert(models.FeedbackDailyImpact)
-                .values(
-                    project_id=_pid(scope),
-                    principal_id=principal_id,
-                    claim_id=uuid.UUID(claim_id),
-                    day=day,
-                    impact=delta,
-                )
-                .on_conflict_do_update(
-                    index_elements=["project_id", "principal_id", "claim_id", "day"],
-                    set_={"impact": models.FeedbackDailyImpact.__table__.c.impact + delta},
-                )
-            )
-            await session.execute(statement)
+            _ = delta  # granted and recorded by `spend_feedback_budget` before this call

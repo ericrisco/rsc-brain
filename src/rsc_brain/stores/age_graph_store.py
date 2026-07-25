@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.graph_store import GraphEdge, GraphNode
+from rsc_brain.stores.relational.database import maybe_session_scope
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SET_SEARCH_PATH = 'SET search_path = ag_catalog, "$user", public'
@@ -117,17 +118,23 @@ class AgeGraphStore:
             result = await session.execute(text(sql))
         return result.all()
 
-    async def create_graph(self, scope: ProjectScope) -> None:
-        """Create this project's graph if absent (accompanies project creation)."""
+    async def create_graph(
+        self, scope: ProjectScope, *, session: AsyncSession | None = None
+    ) -> None:
+        """Create this project's graph if absent (accompanies project creation).
+
+        Takes an optional ``session`` so a caller can make its relational and graph writes ONE
+        transaction (R35) — the graph lives in the same database, so there is no reason for the two
+        halves of one operation to be able to disagree.
+        """
         graph = graph_name(scope.project_id)
-        async with self._sm() as session:
-            await self._prepare(session)
-            exists = await session.scalar(
+        async with maybe_session_scope(self._sm, session) as work:
+            await self._prepare(work)
+            exists = await work.scalar(
                 text("SELECT count(*) FROM ag_catalog.ag_graph WHERE name = :n"), {"n": graph}
             )
             if not exists:
-                await session.execute(text(f"SELECT ag_catalog.create_graph('{graph}')"))
-            await session.commit()
+                await work.execute(text(f"SELECT ag_catalog.create_graph('{graph}')"))
 
     async def drop_graph(self, scope: ProjectScope) -> None:
         graph = graph_name(scope.project_id)
@@ -140,25 +147,34 @@ class AgeGraphStore:
                 await session.execute(text(f"SELECT ag_catalog.drop_graph('{graph}', true)"))
             await session.commit()
 
-    async def upsert_nodes(self, scope: ProjectScope, nodes: Sequence[GraphNode]) -> None:
+    async def upsert_nodes(
+        self,
+        scope: ProjectScope,
+        nodes: Sequence[GraphNode],
+        *,
+        session: AsyncSession | None = None,
+    ) -> None:
         graph = graph_name(scope.project_id)
-        async with self._sm() as session:
-            await self._prepare(session)
+        async with maybe_session_scope(self._sm, session) as work:
+            await self._prepare(work)
             for node in nodes:
                 label = safe_identifier(next(iter(sorted(node.labels))) if node.labels else "Node")
                 set_frag, set_params = _assignments("n", dict(node.properties), "p")
                 cypher = f"MERGE (n:{label} {{id: $id}})"
                 if set_frag:
                     cypher += f" SET {set_frag}"
-                await self._cypher(
-                    session, graph, cypher, {"id": node.id, **set_params}, "v agtype"
-                )
-            await session.commit()
+                await self._cypher(work, graph, cypher, {"id": node.id, **set_params}, "v agtype")
 
-    async def upsert_edges(self, scope: ProjectScope, edges: Sequence[GraphEdge]) -> None:
+    async def upsert_edges(
+        self,
+        scope: ProjectScope,
+        edges: Sequence[GraphEdge],
+        *,
+        session: AsyncSession | None = None,
+    ) -> None:
         graph = graph_name(scope.project_id)
-        async with self._sm() as session:
-            await self._prepare(session)
+        async with maybe_session_scope(self._sm, session) as work:
+            await self._prepare(work)
             for edge in edges:
                 etype = safe_identifier(edge.type)
                 set_frag, set_params = _assignments("r", dict(edge.properties), "p")
@@ -166,13 +182,12 @@ class AgeGraphStore:
                 if set_frag:
                     cypher += f" SET {set_frag}"
                 await self._cypher(
-                    session,
+                    work,
                     graph,
                     cypher,
                     {"src": edge.source_id, "dst": edge.target_id, **set_params},
                     "v agtype",
                 )
-            await session.commit()
 
     async def set_relations_retired(
         self, scope: ProjectScope, relations: Sequence[GraphEdge], *, retired: bool
@@ -374,7 +389,14 @@ class AgeGraphStore:
         parsed = _parse_agtype(rows[0][0])
         return parsed if isinstance(parsed, int) else 0
 
-    async def merge_nodes(self, scope: ProjectScope, canonical_id: str, duplicate_id: str) -> int:
+    async def merge_nodes(
+        self,
+        scope: ProjectScope,
+        canonical_id: str,
+        duplicate_id: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> int:
         """Re-point every edge of the duplicate node onto the canonical node, then tombstone the
         duplicate (``suppressed = true`` + ``merged_into``). Returns the re-pointed edge count.
 
@@ -385,12 +407,12 @@ class AgeGraphStore:
         if canonical_id == duplicate_id:
             return 0
         graph = graph_name(scope.project_id)
-        async with self._sm() as session:
-            await self._prepare(session)
-            if not await self._graph_exists(session, graph):
+        async with maybe_session_scope(self._sm, session) as work:
+            await self._prepare(work)
+            if not await self._graph_exists(work, graph):
                 return 0
             out_rows = await self._cypher(
-                session,
+                work,
                 graph,
                 "MATCH ({id: $dup})-[r]->(b) WHERE r.superseded IS NULL "
                 "RETURN type(r) AS t, b.id AS other",
@@ -398,43 +420,71 @@ class AgeGraphStore:
                 "t agtype, other agtype",
             )
             in_rows = await self._cypher(
-                session,
+                work,
                 graph,
                 "MATCH (a)-[r]->({id: $dup}) WHERE r.superseded IS NULL "
                 "RETURN type(r) AS t, a.id AS other",
                 {"dup": duplicate_id},
                 "t agtype, other agtype",
             )
-        edges: list[GraphEdge] = []
-        for etype, other in out_rows:
-            neighbour = str(_parse_agtype(other))
-            if neighbour not in (canonical_id, duplicate_id):
-                edges.append(
-                    GraphEdge(
-                        source_id=canonical_id, target_id=neighbour, type=str(_parse_agtype(etype))
+            edges: list[GraphEdge] = []
+            for etype, other in out_rows:
+                neighbour = str(_parse_agtype(other))
+                if neighbour not in (canonical_id, duplicate_id):
+                    edges.append(
+                        GraphEdge(
+                            source_id=canonical_id,
+                            target_id=neighbour,
+                            type=str(_parse_agtype(etype)),
+                        )
                     )
-                )
-        for etype, other in in_rows:
-            neighbour = str(_parse_agtype(other))
-            if neighbour not in (canonical_id, duplicate_id):
-                edges.append(
-                    GraphEdge(
-                        source_id=neighbour, target_id=canonical_id, type=str(_parse_agtype(etype))
+            for etype, other in in_rows:
+                neighbour = str(_parse_agtype(other))
+                if neighbour not in (canonical_id, duplicate_id):
+                    edges.append(
+                        GraphEdge(
+                            source_id=neighbour,
+                            target_id=canonical_id,
+                            type=str(_parse_agtype(etype)),
+                        )
                     )
-                )
-        if edges:
-            await self.upsert_edges(scope, edges)
-        async with self._sm() as session:
-            await self._prepare(session)
+            if edges:
+                await self.upsert_edges(scope, edges, session=work)
             await self._cypher(
-                session,
+                work,
                 graph,
                 "MATCH (n {id: $dup}) SET n.suppressed = true, n.merged_into = $canon",
                 {"dup": duplicate_id, "canon": canonical_id},
                 "v agtype",
             )
-            await session.commit()
         return len(edges)
+
+    async def relation_triples(
+        self, scope: ProjectScope, *, limit: int = 1000
+    ) -> list[tuple[str, str, str]]:
+        """Live ``(source, type, target)`` triples of relations that came from a document (R35).
+
+        Bounded and read-only: the two-store divergence report needs the graph's own view of what it
+        asserts, and ``run_cypher`` returns a single column per row. Provenance edges (``SUPERSEDES``,
+        ``CORRECTED_BY``) are excluded — they record decisions, not facts, so no claim asserts them.
+        """
+        graph = graph_name(scope.project_id)
+        if not await self._graph_exists_by_name(graph):
+            return []
+        async with self._sm() as session:
+            await self._prepare(session)
+            rows = await self._cypher(
+                session,
+                graph,
+                "MATCH (a)-[r]->(b) WHERE r.superseded IS NULL AND r.source_document_id IS NOT NULL "
+                f"RETURN a.id AS s, type(r) AS t, b.id AS o LIMIT {int(limit)}",
+                {},
+                "s agtype, t agtype, o agtype",
+            )
+        return [
+            (str(_parse_agtype(row[0])), str(_parse_agtype(row[1])), str(_parse_agtype(row[2])))
+            for row in rows
+        ]
 
     async def run_cypher(
         self, scope: ProjectScope, cypher: str, params: Mapping[str, object]

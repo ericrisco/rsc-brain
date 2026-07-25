@@ -52,6 +52,7 @@ from rsc_brain.review.resolve import REJECTED_TAG
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore, edge_type
 from rsc_brain.stores.graph_store import GraphEdge, GraphNode
+from rsc_brain.stores.relational.database import session_scope
 from rsc_brain.stores.relational.ingest_repository import (
     ChunkRow,
     ClaimSpec,
@@ -393,22 +394,28 @@ class IngestionPipeline:
 
         claims = await self._embed_claims(scope, claims)
         counters = Counters(claims_generated=len(claims), discarded_chunks=discarded)
-        await self._repo.record_publish(
-            scope,
-            document_id,
-            embeddings=embeddings,
-            claims=claims,
-            entities=entities,
-            errors=errors,
-            counters=counters,
-        )
-        # Graph writes are idempotent (MERGE) and happen after the relational commit; the PERSIST
-        # checkpoint is set last, so a crash in between simply redoes an idempotent publish.
-        await self._graph.create_graph(scope)
-        if nodes:
-            await self._graph.upsert_nodes(scope, nodes)
-        if edges:
-            await self._graph.upsert_edges(scope, edges)
+        # R35: the relational half and the GRAPH half are one transaction. They used to be separate
+        # commits, so an interruption between them left claims live in Postgres with no relations in
+        # AGE: two readable stores disagreeing about the same document, with nothing recording which
+        # half happened. The graph is in the same database, so atomicity was always available — it
+        # just was not taken. Graph writes stay idempotent (MERGE), so a retry after a rollback is
+        # still safe.
+        async with session_scope(self._repo.sessionmaker) as unit:
+            await self._repo.record_publish(
+                scope,
+                document_id,
+                embeddings=embeddings,
+                claims=claims,
+                entities=entities,
+                errors=errors,
+                counters=counters,
+                session=unit,
+            )
+            await self._graph.create_graph(scope, session=unit)
+            if nodes:
+                await self._graph.upsert_nodes(scope, nodes, session=unit)
+            if edges:
+                await self._graph.upsert_edges(scope, edges, session=unit)
         # Supersede the prior version: changed/removed chunks lose their embedding + have their
         # claims closed (valid_to=now); unchanged chunks are left intact so their claims persist
         # with the same id/credibility (D6, AC#3). Never deletes; idempotent.

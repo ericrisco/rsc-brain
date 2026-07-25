@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from rsc_brain.gateway.model_gateway import ModelGateway
-from rsc_brain.gateway.usage import BudgetExceededError
+from rsc_brain.gateway.usage import Attempt, BudgetExceededError
 from tests.conftest import _fake_capabilities, deterministic_embedding
 
 
@@ -31,6 +33,12 @@ class FakeCache:
 
 
 class FakeRecorder:
+    """A recorder that implements the reserve/settle pair the gateway uses (R29).
+
+    ``reserve`` is how an attempt holds budget across the provider call and settles on the way out; the
+    gateway no longer checks and records separately, because the gap between those two was the finding.
+    """
+
     def __init__(self, *, over: bool = False) -> None:
         self.records: list[tuple[str, int]] = []
         self._over = over
@@ -41,6 +49,16 @@ class FakeRecorder:
 
     async def record(self, capability: str, tokens: int) -> None:
         self.records.append((capability, tokens))
+
+    @asynccontextmanager
+    async def reserve(self, capability: str) -> AsyncIterator[Attempt]:
+        if self._over:
+            raise BudgetExceededError(capability)
+        attempt = Attempt()
+        try:
+            yield attempt
+        finally:
+            self.records.append((capability, attempt.spent))
 
 
 def _counting_embedding_fn() -> tuple[Any, list[str]]:

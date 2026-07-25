@@ -269,7 +269,13 @@ class Document(Base):
     approved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     reject_reason: Mapped[str | None] = mapped_column(Text)
     __table_args__ = (
-        UniqueConstraint("project_id", "checksum"),
+        UniqueConstraint("project_id", "checksum", name="uq_documents_project_id_checksum"),
+        # R30: version was allocated with `max+1` read outside the insert, so two revisions of one
+        # logical document both claimed the same number. The constraint turns that into a conflict the
+        # admitting statement retries, instead of a silent duplicate that stops ordering anything.
+        UniqueConstraint(
+            "project_id", "logical_id", "version", name="uq_documents_project_logical_version"
+        ),
         UniqueConstraint("project_id", "id"),  # referenced by every child, project-qualified (R17)
         Index("ix_documents_project_id_id", "project_id", "id"),
         _tenant_fk("source_id", "sources", ondelete="SET NULL"),
@@ -671,6 +677,10 @@ class FeedbackDailyImpact(Base):
     claim_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     day: Mapped[dt.date] = mapped_column(Date, nullable=False)
     impact: Mapped[float] = mapped_column(Numeric, server_default="0", nullable=False)
+    # R33: the value `impact` held before the statement that last changed it. `RETURNING` reports the
+    # NEW row only, so this is how a single upsert can tell the caller how much of its request was
+    # actually granted — computing that from a separate SELECT is the race the cap exists to prevent.
+    prev_impact: Mapped[float] = mapped_column(Numeric, server_default="0", nullable=False)
     __table_args__ = (
         UniqueConstraint("project_id", "principal_id", "claim_id", "day"),
         Index("ix_feedback_daily_impact_project_id_id", "project_id", "id"),

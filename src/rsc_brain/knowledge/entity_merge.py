@@ -36,6 +36,7 @@ from rsc_brain.review.states import (
 )
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
+from rsc_brain.stores.relational.database import session_scope
 from rsc_brain.stores.relational.entity_store import EntityRow, EntityStore
 
 MERGE_PROMPT_VERSION = "entity-merge-v1"
@@ -314,22 +315,34 @@ class EntityMergeService:
         proposal_id: str | None = None,
         resolved_by: str | None = None,
     ) -> int:
-        result = await self._store.apply_merge(
-            scope,
-            canonical_id=candidate.canonical_id,
-            duplicate_id=candidate.duplicate_id,
-            confidence=candidate.confidence,
-        )
-        # Graph node ids are deterministic uuid5(type, name) (SPEC-05); re-point the duplicate's
-        # edges onto the canonical node and tombstone the duplicate node.
-        canonical_node = str(entity_id(result.canonical_type, result.canonical_name))
-        duplicate_node = str(entity_id(result.canonical_type, result.duplicate_name))
-        edges = await self._graph.merge_nodes(scope, canonical_node, duplicate_node)
-        if proposal_id is not None:
-            await self._store.set_proposal_status(
-                scope, proposal_id, status=status, resolved_by=resolved_by or scope.principal_id
+        # R35: the relational merge, the graph merge and the proposal's resolution are ONE transaction.
+        # They used to be three, so a failure in the middle left an entity tombstoned as merged in
+        # Postgres, its edges still on the duplicate node in AGE, and the proposal still open for a
+        # curator to decide a merge that had already half happened.
+        async with session_scope(self._sm) as unit:
+            result = await self._store.apply_merge(
+                scope,
+                canonical_id=candidate.canonical_id,
+                duplicate_id=candidate.duplicate_id,
+                confidence=candidate.confidence,
+                session=unit,
             )
-        elif status == PROPOSAL_AUTO_APPLIED:
+            # Graph node ids are deterministic uuid5(type, name) (SPEC-05); re-point the duplicate's
+            # edges onto the canonical node and tombstone the duplicate node.
+            canonical_node = str(entity_id(result.canonical_type, result.canonical_name))
+            duplicate_node = str(entity_id(result.canonical_type, result.duplicate_name))
+            edges = await self._graph.merge_nodes(
+                scope, canonical_node, duplicate_node, session=unit
+            )
+            if proposal_id is not None:
+                await self._store.set_proposal_status(
+                    scope,
+                    proposal_id,
+                    status=status,
+                    resolved_by=resolved_by or scope.principal_id,
+                    session=unit,
+                )
+        if proposal_id is None and status == PROPOSAL_AUTO_APPLIED:
             await self._store.create_proposal(
                 scope,
                 canonical_id=candidate.canonical_id,

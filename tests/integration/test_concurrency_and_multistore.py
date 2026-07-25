@@ -15,10 +15,12 @@ import asyncio
 import datetime as dt
 import uuid
 from collections.abc import Callable
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
 
+from rsc_brain.config.models import CapabilitiesConfig, CapabilityConfig
 from rsc_brain.stores.relational import models
 
 from .conftest import Harness, unique_slug
@@ -26,6 +28,17 @@ from .conftest import Harness, unique_slug
 pytestmark = pytest.mark.integration
 
 TOPICS = [("hr", 0)]
+
+
+def _capabilities(**overrides: CapabilityConfig) -> CapabilitiesConfig:
+    """A complete capabilities config — all five are required — with the one under test overridden."""
+    base = {
+        name: CapabilityConfig(provider="test", model="m")
+        for name in ("extractor", "judge", "topicalizer", "reranker")
+    }
+    base["embedder"] = CapabilityConfig(provider="test", model="bge-m3")
+    base.update(overrides)
+    return CapabilitiesConfig(**base)
 
 
 def _barrier_after(monkeypatch: pytest.MonkeyPatch, owner: type, method: str, parties: int) -> None:
@@ -333,9 +346,7 @@ async def test_a_failure_writing_the_graph_leaves_no_committed_claims(
     )
     body = b"# Handbook\n\nAna Ruiz owns payroll approvals at Acme.\n"
 
-    control = await harness.service.ingest_bytes(
-        scope, body, filename="control.md", source="auto"
-    )
+    control = await harness.service.ingest_bytes(scope, body, filename="control.md", source="auto")
     async with harness.sm() as session:
         produced = await session.scalar(
             select(func.count())
@@ -430,3 +441,197 @@ async def test_a_merge_that_fails_in_the_graph_does_not_half_merge(
     assert merged == 0, (
         "an entity is tombstoned as merged in Postgres while its graph identity was never merged"
     )
+
+
+# --------------------------------------------------------------------------- #
+# R29 — every attempt is reserved and reconciled
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_daily_token_budget_is_not_exceeded_by_concurrent_attempts(
+    build_harness: Callable[..., Harness],
+) -> None:
+    """The budget was checked, then the call happened, then the spend was recorded.
+
+    Every concurrent attempt therefore passed the same check and spent anyway, so the ceiling could be
+    crossed by as many attempts as happened to be in flight. A budget that only holds when requests
+    arrive one at a time is not a budget — the busy case is the one it exists for.
+
+    The four attempts genuinely overlap: the fake provider yields for a moment, so all four are inside
+    their call before any returns, which is what makes this a race rather than four sequential calls. A
+    barrier would be tighter and would also deadlock — a refused attempt never reaches the provider, so
+    the survivors would wait forever for parties that are never coming.
+    """
+    from rsc_brain.config.models import Capability
+    from rsc_brain.gateway.model_gateway import ModelGateway
+    from rsc_brain.gateway.usage import BudgetExceededError, PgUsageRecorder
+
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    capability = Capability.TOPICALIZER
+    caps = _capabilities(
+        topicalizer=CapabilityConfig(provider="test", model="m", daily_token_budget=100)
+    )
+
+    def _response(tokens: int) -> SimpleNamespace:
+        """Shaped like a LiteLLM response: attribute access plus a usage block reporting tokens."""
+        message = SimpleNamespace(content="ok")
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=message)], usage={"total_tokens": tokens}
+        )
+
+    async def completion(**_kwargs: object) -> object:
+        await asyncio.sleep(0.05)  # long enough that all four hold their budget at once
+        return _response(60)
+
+    gateway = ModelGateway(
+        caps, completion_fn=completion, usage_recorder=PgUsageRecorder(harness.sm, caps)
+    ).for_project(project)
+
+    async def attempt() -> str:
+        return await gateway.complete(capability, [{"role": "user", "content": "hi"}])
+
+    outcomes = await asyncio.gather(*(attempt() for _ in range(4)), return_exceptions=True)
+    refused = [o for o in outcomes if isinstance(o, BudgetExceededError)]
+
+    async with harness.sm() as session:
+        spent = await session.scalar(
+            select(func.sum(models.TokenUsage.tokens)).where(
+                models.TokenUsage.project_id == uuid.UUID(project),
+                models.TokenUsage.capability == str(capability),
+            )
+        )
+    assert refused, "four overlapping attempts all passed one budget check"
+    assert int(spent or 0) <= 100 + 60, (
+        f"{int(spent or 0)} tokens were spent against a 100-token daily budget"
+    )
+
+
+async def test_a_structured_completion_records_the_tokens_it_actually_spent(
+    build_harness: Callable[..., Harness],
+) -> None:
+    """Structured completions record ``tokens=0``.
+
+    That is most of the product's model traffic — every extraction, topicalization and judge call — so
+    the budget those capabilities are configured with can never be reached, and a usage report shows a
+    busy project spending nothing. A repair round and a fallback attempt are invisible for the same
+    reason: only the successful call is counted, and it is counted as zero.
+    """
+    from pydantic import BaseModel
+
+    from rsc_brain.config.models import Capability
+    from rsc_brain.gateway.model_gateway import ModelGateway
+    from rsc_brain.gateway.usage import PgUsageRecorder
+
+    class Shape(BaseModel):
+        value: str
+
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    capability = Capability.TOPICALIZER
+    caps = _capabilities()
+
+    async def completion(**_kwargs: object) -> object:
+        message = SimpleNamespace(content='{"value": "ok"}')
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=message)], usage={"total_tokens": 77}
+        )
+
+    gateway = ModelGateway(
+        caps,
+        completion_fn=completion,
+        usage_recorder=PgUsageRecorder(harness.sm, caps),
+    ).for_project(project)
+
+    await gateway.complete_structured(capability, [{"role": "user", "content": "hi"}], Shape)
+
+    async with harness.sm() as session:
+        spent = await session.scalar(
+            select(func.sum(models.TokenUsage.tokens)).where(
+                models.TokenUsage.project_id == uuid.UUID(project),
+                models.TokenUsage.capability == str(capability),
+            )
+        )
+    assert int(spent or 0) == 77, (
+        f"a structured completion that spent 77 tokens was recorded as {int(spent or 0)}"
+    )
+
+
+async def test_the_operator_can_ask_whether_the_two_stores_agree(
+    build_harness: Callable[..., Harness], make_completion: Callable[..., object]
+) -> None:
+    """Atomic writes mean a divergence cannot be introduced; they do not mean there is none.
+
+    An install upgraded from an earlier version, a manual repair, a partial restore or a future bug can
+    all leave the stores saying different things, and until now nobody could ask. R17 established the
+    pattern for the relational side; this is the two-store half.
+
+    Asserted by introducing a divergence the way reality would — retiring the graph relation behind the
+    store's back — and checking the report notices. A report that only ever says "fine" is not evidence.
+    """
+    from rsc_brain.stores.age_graph_store import AgeGraphStore
+    from rsc_brain.stores.multistore_integrity import divergence_report
+
+    harness = build_harness(
+        completion=make_completion(
+            claims=[
+                {
+                    "text": "Ana Ruiz owns payroll approvals.",
+                    "subject": "Ana Ruiz",
+                    "predicate": "owns",
+                    "object": "payroll approvals",
+                }
+            ],
+            entities=[
+                {"name": "Ana Ruiz", "type": "person"},
+                {"name": "payroll approvals", "type": "concept"},
+            ],
+            relations=[{"subject": "Ana Ruiz", "predicate": "owns", "object": "payroll approvals"}],
+            tags=["hr"],
+        )
+    )
+    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    scope = harness.scope(project, allowed_topics=["hr"])
+    await harness.repo.create_source(
+        scope, name="auto", type_="folder", policy="source_tags", default_tags=["hr"]
+    )
+    outcome = await harness.service.ingest_bytes(
+        scope,
+        b"# Handbook\n\nAna Ruiz owns payroll approvals at Acme.\n",
+        filename="hb.md",
+        source="auto",
+    )
+    assert outcome.status == "processed", outcome.status
+
+    clean = await divergence_report(harness.sm, scope)
+    assert not clean.diverged, clean.explain()
+
+    # Introduce the divergence the way a partial restore or an older version would: the claim stays
+    # live relationally and its relation stops being current in the graph.
+    async with harness.sm() as session:
+        keys = (
+            await session.execute(
+                select(
+                    models.Claim.subject_entity_key,
+                    models.Claim.predicate,
+                    models.Claim.object_entity_key,
+                ).where(
+                    models.Claim.project_id == uuid.UUID(project),
+                    models.Claim.subject_entity_key.is_not(None),
+                )
+            )
+        ).all()
+    assert keys, "this ingest wrote no relation-bearing claims, so the check below is vacuous"
+    from rsc_brain.stores.age_graph_store import edge_type
+    from rsc_brain.stores.graph_store import GraphEdge
+
+    subject, predicate, obj = keys[0]
+    await AgeGraphStore(harness.sm).set_relations_retired(
+        scope,
+        [GraphEdge(source_id=str(subject), target_id=str(obj), type=edge_type(str(predicate)))],
+        retired=True,
+    )
+
+    diverged = await divergence_report(harness.sm, scope)
+    assert diverged.claims_without_relations >= 1, diverged.explain()
+    assert diverged.examples, "the report says the stores disagree without saying where"
