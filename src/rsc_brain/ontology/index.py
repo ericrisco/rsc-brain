@@ -18,7 +18,30 @@ from rdflib.namespace import OWL, SKOS
 
 
 class OntologyParseError(ValueError):
-    """The ontology document could not be parsed as OWL/RDF/SKOS."""
+    """The ontology document was refused. The message is a stable class, never the input.
+
+    R07: the message used to be rdflib's, which quotes the offending line, so a parse failure echoed
+    attacker-supplied content back through the API's 422. Callers get a class and attribution; the
+    content, local paths, internal URLs and stack traces stay server-side.
+    """
+
+
+#: The formats SPEC-24 ratified. Anything else is refused for NOT BEING ON THIS LIST — rdflib
+#: supports far more (JSON-LD, N3, NQuads, TriG, TriX…), and "the parser can read it" was never the
+#: admission rule. JSON-LD is the concrete reason this matters: its parser dereferences a remote
+#: ``@context``, so accepting it turns an upload into an SSRF (R07).
+RATIFIED_FORMATS: dict[str, str] = {
+    "owl": "xml",
+    "rdf": "xml",
+    "skos": "xml",
+    "turtle": "turtle",
+    "ttl": "turtle",
+}
+
+#: Ratified resource budgets (AUDIT-031 clarifications). Deployments may lower them, never omit them.
+MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
+MAX_STATEMENTS = 100_000
+MAX_HIERARCHY_DEPTH = 32
 
 
 def _norm(text: str) -> str:
@@ -50,13 +73,26 @@ class OntologyIndex:
 
     @classmethod
     def parse_many(cls, documents: list[tuple[str, str]]) -> OntologyIndex:
-        """Parse one or more (content, format) ontology documents into a single merged index."""
+        """Parse one or more (content, format) ontology documents into a single merged index.
+
+        Every check happens BEFORE the parser runs on the bytes, because the parser is the thing being
+        contained: an unratified format is refused rather than handed to whatever plugin implements it,
+        and an oversized document is refused rather than parsed to find out how big its graph is (R07).
+        """
         graph = Graph()
         for content, fmt in documents:
+            _check_format(fmt)
+            _check_size(content)
             try:
-                graph.parse(data=content, format=_rdflib_format(fmt))
+                graph.parse(data=content, format=RATIFIED_FORMATS[fmt.lower()])
             except Exception as exc:  # rdflib raises a variety of parse exceptions
-                raise OntologyParseError(str(exc)) from exc
+                # Deliberately not `str(exc)`: rdflib quotes the offending input, and the caller
+                # supplied it. A stable class is what a caller needs; the detail belongs in the log.
+                raise OntologyParseError("malformed ontology document") from exc
+            if len(graph) > MAX_STATEMENTS:
+                raise OntologyParseError(
+                    f"too many statements: over the {MAX_STATEMENTS} statement budget"
+                )
         index = cls(triples=len(graph))
         for predicate in (RDFS.label, SKOS.prefLabel, SKOS.altLabel):
             for subject, _p, label in graph.triples((None, predicate, None)):
@@ -184,7 +220,21 @@ class OntologyIndex:
         return found
 
 
-def _rdflib_format(fmt: str) -> str:
-    return {"owl": "xml", "rdf": "xml", "skos": "xml", "turtle": "turtle", "ttl": "turtle"}.get(
-        fmt.lower(), fmt.lower()
-    )
+def _check_format(fmt: str) -> None:
+    """Refuse anything outside the ratified allowlist, and say that is why.
+
+    The refusal has to be distinguishable from a syntax error: an implementation that merely happens
+    to fail on an unratified document offers no containment for the next well-formed one.
+    """
+    if fmt.lower() not in RATIFIED_FORMATS:
+        allowed = ", ".join(sorted(RATIFIED_FORMATS))
+        raise OntologyParseError(f"unsupported ontology format {fmt!r}; allowed formats: {allowed}")
+
+
+def _check_size(content: str) -> None:
+    """Refuse an oversized document before parsing it."""
+    size = len(content.encode("utf-8"))
+    if size > MAX_DOCUMENT_BYTES:
+        raise OntologyParseError(
+            f"ontology document too large: {size} bytes over the {MAX_DOCUMENT_BYTES} byte budget"
+        )

@@ -10,8 +10,10 @@ signing key to manage (all tokens are opaque, SPEC-10).
 
 from __future__ import annotations
 
+import os
 import secrets
 from dataclasses import dataclass
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -27,6 +29,32 @@ DEFAULT_ADMIN_EMAIL = "admin@rsc-brain.local"
 def generate_secret(nbytes: int = 24) -> str:
     """A URL-safe opaque secret (Postgres password / first-admin password)."""
     return secrets.token_urlsafe(nbytes)
+
+
+#: Where a generated first-admin credential is left for the operator, relative to the data directory.
+CREDENTIAL_FILENAME = "first-admin-credential"
+
+
+def store_generated_credential(data_dir: str | Path, email: str, password: str) -> Path:
+    """Write a generated credential to an owner-only file and return its path (R13).
+
+    Printing it was the delivery mechanism, and ``brain init`` is the migrate-on-boot one-shot, so its
+    stdout is the ``migrate`` service's log — which AUDIT-034 requires to contain no credential value.
+    The Helm path already does this properly by generating into a Secret; on compose and bare metal the
+    equivalent is a file only the owner can read, inside the volume the deployment already treats as
+    private state.
+
+    Created with mode 0600 from the start (never written world-readable and chmod'ed after), and
+    replaced rather than appended so a re-run cannot accumulate old credentials.
+    """
+    directory = Path(data_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / CREDENTIAL_FILENAME
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(f"email: {email}\npassword: {password}\n")
+    path.chmod(0o600)  # explicit: umask does not apply to a file that already existed
+    return path
 
 
 @dataclass(frozen=True, slots=True)

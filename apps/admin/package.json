@@ -1,6 +1,6 @@
 {
   "name": "@rsc-brain/admin",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "rsc-brain admin console (SPEC-07 bootstrap). Consumes ONLY the typed REST admin client.",
   "scripts": {
@@ -33,5 +33,9 @@
     "openapi-typescript": "^7.5.0",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "postcss": "^8.5.23",
+    "sharp": "^0.35.3"
   }
 }

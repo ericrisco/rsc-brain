@@ -9,6 +9,63 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-25
+
+P0-B of the audit-remediation program: the hostile-ingress batch. Seven findings, all of them paths
+where content someone else supplies reached a parser, a spreadsheet, a log or an agent's instruction
+channel.
+
+### Fixed
+
+- **Ontology parsing no longer reaches the network (R07).** `_rdflib_format` fell through to any
+  format rdflib supported, JSON-LD included — and rdflib's JSON-LD parser dereferences a remote
+  `@context`, so uploading a document made the server contact a host the uploader chose. Formats are
+  now an allowlist of the four SPEC-24 ratified names, refused as unsupported rather than as
+  malformed, and documents are bounded before parsing (5 MiB, 100,000 statements). A parse failure
+  returns a stable error class instead of echoing the submitted content back through the 422.
+- **Served document text is explicit untrusted data (R08).** Only recall marked its fragments, so the
+  same characters were untrusted when recalled and ordinary when fetched — an agent that fetched
+  instead of recalling received a document's embedded instructions as trusted input. `get_document`
+  now carries `content_type: "untrusted_data"` plus document/project provenance, and so do the
+  console's pending-approval preview and review queue, which show the least vetted text in the
+  product.
+- **Login resists brute force and enumeration (R09).** Every attempt spent a full argon2id
+  verification, so the cost of an attack was ours, not the attacker's; and an unknown email returned
+  before the verify while a known one returned after, which discloses account existence no matter how
+  identical the response is. There is now a shared per-account and per-source budget in Postgres (not
+  per process: replicas would each get their own limit), refusals answer 429 with `Retry-After`, and
+  an unknown account pays the same verification against a dummy digest.
+- **Audit exports cannot execute in a spreadsheet (R11).** Cells were written raw, so a query text, a
+  topic slug or a trace header beginning with `=`, `+`, `-` or `@` was evaluated on open — `=cmd|…`
+  executes, `=WEBSERVICE(…)` exfiltrates the row with no click. Active cells are now neutralized with
+  the leading apostrophe every spreadsheet reads as text, control characters that could forge records
+  are dropped, and the literal value stays recoverable — an audit log must not quietly alter what it
+  recorded.
+- **A generated first-admin credential never reaches output or logs (R13).** `brain init` printed it
+  and put it in the JSON payload, and that command is the migrate-on-boot one-shot, so its stdout is
+  the `migrate` service's log — which `deploy/README.md` documented as the way to retrieve it. It is
+  now written to `first-admin-credential` in the data volume with mode 0600, and only the path is
+  printed, mirroring what the Helm path already did with its Secret.
+- **No high advisory remains in the console's production graph (R14).** Every published `next`
+  bundles a vulnerable `postcss` and `sharp` — the ranges cover releases up to `16.3.0-preview.7` — so
+  no upgrade closes it; the transitive versions are pinned forward with lockfile `overrides`. CI now
+  runs `npm audit --omit=dev --audit-level=high`, which it never did, and a gitleaks job whose
+  exceptions are exact literals for the deliberate test fixtures rather than a rule or a path glob.
+- **Only trusted proxies influence external metadata (R51).** OAuth metadata was built from
+  `request.base_url`, so a direct client sending `Host: attacker.example` received an issuer and three
+  endpoint URLs on the attacker's host — and a client that discovers metadata that way sends its
+  authorization code there. The advertised origin comes from the new `ingress.public_origin` setting;
+  request-derived origins are used only when the immediate peer is a configured trusted proxy.
+
+### Added
+
+- `ingress` configuration: `public_origin` (the external scheme+host, a deployment fact) and
+  `trusted_proxies` (CIDRs whose forwarding headers may be believed; empty trusts none).
+
+### Migrations
+
+`b8e4f1c7a025` — the shared login-attempt budget.
+
 ## [0.2.1] - 2026-07-25
 
 ### Fixed

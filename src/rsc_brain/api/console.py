@@ -53,7 +53,29 @@ async def _session_user(
 
 @auth_router.post("/login")
 async def login(body: LoginRequest, request: Request) -> dict[str, object]:
-    token = await sessions.login(_sessionmaker(request), body.email, body.password)
+    """Verify credentials and mint a session token.
+
+    R09: over the shared budget the attempt is refused with 429 + ``Retry-After`` instead of another
+    401. The distinction is the point — a stream of 401s tells a client nothing about whether to stop,
+    and a limiter that is invisible in the outcome cannot be relied on by anything.
+
+    The source key is the IMMEDIATE peer. A forwarded address would let the attacker pick its own
+    budget by setting a header, which is the same mistake R51 fixes for OAuth metadata.
+    """
+    client = request.client
+    try:
+        token = await sessions.login(
+            _sessionmaker(request),
+            body.email,
+            body.password,
+            network_key=client.host if client else "unknown",
+        )
+    except sessions.LoginRateLimited as limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="too many failed attempts",
+            headers={"Retry-After": str(limited.retry_after_seconds)},
+        ) from limited
     if token is None:
         # Unknown email, wrong password, and inactive user are all one indistinguishable 401.
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid credentials")

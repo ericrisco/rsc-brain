@@ -18,6 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import security
+from rsc_brain.identity.login_budget import LoginBudget, normalize_account
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
 
@@ -49,19 +50,67 @@ def _now() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
 
 
+class LoginRateLimited(Exception):
+    """The attempt was refused by the shared budget before any verification ran (R09).
+
+    A distinct outcome on purpose: the caller has to be able to answer 429 with a retry hint, because
+    "wrong password" and "stop trying" are different facts and a client cannot infer the second from
+    a stream of the first.
+    """
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__("too many failed login attempts")
+        self.retry_after_seconds = retry_after_seconds
+
+
+#: A well-formed argon2id digest of a value nobody knows, used to spend the same verification cost on
+#: an unknown account as on a known one. Computed once at import: hashing per request would itself be a
+#: timing difference, and a constant would be a credential in the source.
+_DUMMY_DIGEST = security.hash_password(security.mint_token("dummy"))
+
+
 async def login(
-    sessionmaker: async_sessionmaker[AsyncSession], email: str, password: str
+    sessionmaker: async_sessionmaker[AsyncSession],
+    email: str,
+    password: str,
+    *,
+    network_key: str = "unknown",
 ) -> str | None:
     """Verify credentials on the single D11 identity and mint a session token (shown once).
 
-    Returns ``None`` on any failure (unknown email, wrong password, inactive user) — the caller
-    maps that to one indistinguishable 401."""
+    Returns ``None`` on any failure (unknown email, wrong password, inactive user) — the caller maps
+    that to one indistinguishable 401 — and raises :class:`LoginRateLimited` once the shared budget for
+    this account or source network is spent (R09).
+
+    Two properties beyond "does the password match":
+
+    * over the budget, the argon2id verification does not run. The cost of a failed attempt is ours,
+      not the attacker's, so an unlimited stream is both unbounded brute force and a cheap denial of
+      service;
+    * an unknown or inactive account pays the SAME verification against a dummy digest. Returning
+      early would make the work performed disclose whether the account exists, which is an enumeration
+      oracle regardless of how identical the response looks.
+    """
+    account_key = normalize_account(email)
+    budget = LoginBudget(sessionmaker)
+    state = await budget.check(network_key=network_key, account_key=account_key)
+    if not state.allowed:
+        raise LoginRateLimited(state.retry_after_seconds)
+
     async with session_scope(sessionmaker) as session:
         user = await session.scalar(select(models.User).where(models.User.email == email))
-        if user is None or user.status != "active" or user.password_hash is None:
+        usable = user is not None and user.status == "active" and user.password_hash is not None
+        # Always verify: against the real digest when there is one, against the dummy otherwise.
+        matched = security.verify_password(
+            user.password_hash
+            if usable and user is not None and user.password_hash
+            else _DUMMY_DIGEST,
+            password,
+        )
+        if not usable or not matched or user is None:
+            await budget.charge_failure(network_key=network_key, account_key=account_key)
             return None
-        if not security.verify_password(user.password_hash, password):
-            return None
+        await budget.clear(account_key=account_key)
         token = security.mint_token(security.SESSION_PREFIX)
         session.add(
             models.ConsoleSession(

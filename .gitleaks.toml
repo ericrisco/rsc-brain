@@ -1,0 +1,50 @@
+# Secret scanning (AUDIT-013 / R14, third acceptance criterion).
+#
+# The criterion is not "run a scanner": it is that any exception is limited to the deliberate
+# secret-like TEST FIXTURES, records its reason, and does not suppress the same pattern elsewhere or
+# in history. So this file allowlists specific literal strings — never a rule, a pattern or a path
+# glob over the test tree, because "ignore secrets under tests/" would hide a real credential that a
+# fixture accidentally captures.
+#
+# Every credential the product handles is opaque and generated (`ck_`/`inv_`/`cks_` bearer tokens,
+# argon2id password hashes, the Postgres DSN from the environment), so a literal secret in source is
+# always either a fixture or a mistake.
+
+title = "rsc-brain"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+Deliberate test fixtures only. Each entry is an exact literal with the reason it exists; adding a
+regex here that could match unseen values, or a path that covers a whole directory, defeats the point
+of the gate.
+"""
+
+regexTarget = "match"
+
+regexes = [
+  # A passphrase used to prove argon2id hashing round-trips and that a wrong password is rejected
+  # (tests/unit/test_security.py), and reused as the console-login fixture in the integration suite.
+  # It is a public example phrase, never a credential for anything that exists.
+  '''correct horse battery staple''',
+  # The invitation-acceptance fixture: any string long enough to satisfy the password rules, used so
+  # a test user can log in afterwards.
+  '''password-abc-123456''',
+  # The password the integration harness gives its throwaway Postgres container. Testcontainers
+  # requires >=16 characters and rejects obvious placeholders; the container is created and destroyed
+  # inside the test session and is never reachable from outside it.
+  '''testcontainers-strong-pw-abc123''',
+  # A sentinel a unit test injects as a *generated* first-admin password, purely to assert that it
+  # never reaches stdout, the JSON payload or the deploy guide (R13).
+  '''sentinel-generated-credential-9f3a1c''',
+  # THE two deliberate secret-like fixtures R14's third criterion refers to
+  # (tests/unit/test_doctor.py). They exist so the product's OWN secret scanner can be proved to flag
+  # a populated key and a populated password — `brain doctor` would be untested otherwise. Both are
+  # obvious non-values: `sk-ABCDEFGH…` is sequential, `hunter2` is the internet's example password.
+  # Listed as exact literals rather than by file, so the same shapes stay reported anywhere else,
+  # including in history.
+  '''sk-ABCDEFGH1234567890abcdef''',
+  '''hunter2-real-value''',
+]

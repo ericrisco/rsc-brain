@@ -31,6 +31,35 @@ jobs:
       # integration) in the `integration` job below, where the DB-backed code is exercised.
       - run: uv run pytest
 
+  secrets:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      # AUDIT-034: a binary fetched from the network is verified before it is extracted or executed,
+      # so altered bytes fail the job instead of running. Taken from the release's own checksums file.
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # scan history too: a credential removed in a later commit is still leaked
+      - name: Install gitleaks (pinned + checksum verified)
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "$archive" gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+      # AUDIT-013 / R14: the exceptions live in .gitleaks.toml as exact literals for the deliberate
+      # test fixtures, each with its reason — never a rule or a path glob, which would suppress the
+      # same pattern everywhere. `--redact` keeps a finding from printing the secret it found.
+      - name: Scan the working tree and history
+        run: gitleaks detect --source . --config .gitleaks.toml --redact --no-banner --verbose
+
   licenses:
     name: AGPL license audit
     runs-on: ubuntu-latest
@@ -107,6 +136,12 @@ jobs:
           npm run lint
           npm run typecheck
           npm run build
+      # AUDIT-013 / R14: a release-blocking advisory in the console's PRODUCTION graph fails the
+      # workflow. The Python graph already has its own gate (pip-audit); this closes the other half,
+      # which was reviewed locally and never enforced here.
+      - name: Dependency audit (npm, production only)
+        working-directory: apps/admin
+        run: npm audit --omit=dev --audit-level=high
 
   helm:
     name: helm chart (lint · schema · compose-drift)
