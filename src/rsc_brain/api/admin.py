@@ -523,7 +523,7 @@ async def create_skill_admin(
         frontmatter, skill_body = parse_skill(body.markdown)
     except SkillFrontmatterError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
     skill_id = await _skill_store(request).create(scope, frontmatter, skill_body)  # type: ignore[attr-defined]
     return {"skill_id": skill_id, "slug": frontmatter.slug}
@@ -1203,7 +1203,7 @@ async def add_ontology(
         )
     except OntologyParseError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"invalid ontology: {exc}"
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"invalid ontology: {exc}"
         ) from exc
     return {"ontology_id": ontology_id, "name": body.name}
 
