@@ -206,7 +206,7 @@ async def test_readiness_stays_ready_while_providers_are_unavailable(
     build_harness: Callable[..., Harness],
 ) -> None:
     """Process, configuration and stores healthy ⇒ ready, whatever the providers are doing."""
-    from rsc_brain.gateway.model_gateway import GatewayError
+    from rsc_brain.gateway.errors import GatewayError
     from rsc_brain.installer.verify import run_verify
 
     harness = build_harness()
