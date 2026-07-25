@@ -87,8 +87,26 @@ PARENTS: tuple[str, ...] = (
 )
 
 
+#: Names that would exceed Postgres's 63-character identifier limit, which the server truncates
+#: SILENTLY — leaving a constraint whose real name is not the one that created it, so a rollback that
+#: drops it by name fails. Stated explicitly instead.
+EXPLICIT_NAMES: dict[tuple[str, str], str] = {
+    ("entity_merge_proposals", "canonical_entity_id"): (
+        "fk_entity_merge_proposals_project_canonical_entities"
+    ),
+    ("entity_merge_proposals", "duplicate_entity_id"): (
+        "fk_entity_merge_proposals_project_duplicate_entities"
+    ),
+}
+
+
 def _qualified_name(child: str, column: str, parent: str) -> str:
-    return f"fk_{child}_project_id_{column}_{parent}"
+    explicit = EXPLICIT_NAMES.get((child, column))
+    if explicit is not None:
+        return explicit
+    name = f"fk_{child}_project_id_{column}_{parent}"
+    assert len(name) <= 63, f"identifier would be truncated by Postgres: {name}"
+    return name
 
 
 def _violations() -> dict[str, int]:

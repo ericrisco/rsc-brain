@@ -61,7 +61,9 @@ def _project_fk() -> Mapped[uuid.UUID]:
     return mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
 
 
-def _tenant_fk(column: str, parent: str, *, ondelete: str = "CASCADE") -> ForeignKeyConstraint:
+def _tenant_fk(
+    column: str, parent: str, *, ondelete: str = "CASCADE", name: str | None = None
+) -> ForeignKeyConstraint:
     """A project-qualified reference: ``(project_id, column) -> parent (project_id, id)`` (R17).
 
     An ID-only foreign key lets a write that bypasses the service layer attach one project's child
@@ -72,12 +74,16 @@ def _tenant_fk(column: str, parent: str, *, ondelete: str = "CASCADE") -> Foreig
     ``project_id``, which is the tenant and NOT NULL. Only the reference is cleared.
     """
     action = f"SET NULL ({column})" if ondelete == "SET NULL" else ondelete
-    # Unnamed on purpose: the metadata naming convention derives
-    # `fk_<child>_project_id_<column>_<parent>`, which is the name the migration creates.
+    # Normally unnamed: the metadata naming convention derives
+    # `fk_<child>_project_id_<column>_<parent>`, which is the name the migration creates. Pass
+    # ``name`` where that would exceed Postgres's 63-character identifier limit — the server
+    # truncates silently, so an over-length name means the model and the database disagree about it
+    # and a rollback that drops it by name fails.
     return ForeignKeyConstraint(
         ["project_id", column],
         [f"{parent}.project_id", f"{parent}.id"],
         ondelete=action,
+        name=name,
     )
 
 
@@ -691,11 +697,26 @@ class EntityMergeProposal(Base):
     created_at: Mapped[dt.datetime] = _created_at()
     resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
-        UniqueConstraint("project_id", "canonical_entity_id", "duplicate_entity_id"),
+        UniqueConstraint(
+            "project_id",
+            "canonical_entity_id",
+            "duplicate_entity_id",
+            # Explicit: the generated name would be 76 characters, over Postgres's 63-char limit,
+            # and would be truncated silently — drifting from the name the migration deployed.
+            name="uq_entity_merge_proposals_project_canonical_duplicate",
+        ),
         Index("ix_entity_merge_proposals_project_id_id", "project_id", "id"),
         Index("ix_entity_merge_proposals_project_id_status", "project_id", "status"),
-        _tenant_fk("canonical_entity_id", "entities"),
-        _tenant_fk("duplicate_entity_id", "entities"),
+        _tenant_fk(
+            "canonical_entity_id",
+            "entities",
+            name="fk_entity_merge_proposals_project_canonical_entities",
+        ),
+        _tenant_fk(
+            "duplicate_entity_id",
+            "entities",
+            name="fk_entity_merge_proposals_project_duplicate_entities",
+        ),
     )
 
 
@@ -711,7 +732,14 @@ class AgentWriteIdempotency(Base):
     claim_ids: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False)  # quarantined|active|rejected
     created_at: Mapped[dt.datetime] = _created_at()
-    __table_args__ = (UniqueConstraint("project_id", "principal_id", "idempotency_key"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "principal_id",
+            "idempotency_key",
+            name="uq_agent_write_idempotency_project_principal_key",  # generated name is 66 chars
+        ),
+    )
 
 
 class PrincipalDailyUsage(Base):
