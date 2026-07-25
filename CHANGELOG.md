@@ -9,6 +9,31 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-25
+
+P0-C (second half): one edge route map, honoured by every deployment target.
+
+### Fixed
+
+- **Compose/Caddy routes the console at all (R45).** The Caddyfile forwarded *everything* to the API,
+  so the `console` service was built, started and unreachable — the product's own UI did not exist on
+  its reference deployment. Caddy now owns a path map with two upstreams.
+- **Helm stopped swallowing the console's BFF (R48).** `/api` was a single prefix pointing at the
+  service, which also captured `/api/auth/*` and `/api/proxy/*` — Next.js route handlers where the
+  browser's session lives. Console login therefore worked locally and answered 404 on Kubernetes. The
+  service claims `/api/v1`, `/mcp`, `/oauth`, `/.well-known` and `/metrics`; everything else is the
+  console.
+- **Coolify no longer leaves two owners for one path (R46).** Both the API and the console declared
+  `SERVICE_FQDN_… : /`, so which one answered was the proxy's choice rather than the operator's. Each
+  now declares the paths it owns.
+- **Dokploy publishes the console (R47).** Its Traefik router claimed the whole host for the API, so
+  the console was unreachable there too. Both services now have routers, with the service's path
+  prefixes at a higher priority and the console holding the root.
+
+### Migrations
+
+None.
+
 ## [0.4.0] - 2026-07-25
 
 P0-C (first half) of the audit-remediation program: the production runtime. The gap this batch closes
