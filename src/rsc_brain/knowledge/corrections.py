@@ -65,6 +65,18 @@ class CorrectionService:
         on_behalf_of: str | None = None,
         dry_run: bool = False,
     ) -> CorrectionOutcome:
+        # Attribution derives from the authenticated scope's *validated* delegation, never from the
+        # client-supplied field (R15). A caller that asserts an identity the scope does not carry is
+        # refused before any lookup or write: the previous code copied the raw string straight into
+        # the durable `corrections.on_behalf_of`, so anyone could attribute a correction to anyone.
+        # Revocation is handled by construction — the delegation was validated when the scope was
+        # resolved, so a scope resolved after a revocation simply has no `on_behalf_of`.
+        if on_behalf_of is not None and on_behalf_of != scope.on_behalf_of:
+            return CorrectionOutcome(
+                status="rejected",
+                explanation="Attribution requires a valid delegation for this operation.",
+            )
+
         target, candidates = await self._resolve_target(scope, claim_id, topic, statement)
         if target is None:
             if candidates:
@@ -81,8 +93,10 @@ class CorrectionService:
                 scope,
                 target_claim=target.id,
                 new_claim=None,
-                author_id=None,
-                on_behalf_of=on_behalf_of,
+                # The ACTING agent is provenance too (R15): `author_id=None` here dropped it, so a
+                # legitimately delegated suggestion recorded who it was for and never who made it.
+                author_id=scope.principal_id,
+                on_behalf_of=scope.on_behalf_of,
                 role_applied="agent_suggestion",
                 status="routed_to_owner",
                 before_text=target.text,
@@ -102,7 +116,7 @@ class CorrectionService:
                 target_claim=target.id,
                 new_claim=None,
                 author_id=scope.principal_id,
-                on_behalf_of=on_behalf_of,
+                on_behalf_of=scope.on_behalf_of,
                 role_applied="non_owner",
                 status="routed_hunt",
                 before_text=target.text,
@@ -149,7 +163,7 @@ class CorrectionService:
             target_claim=target.id,
             new_claim=new_claim_id,
             author_id=scope.principal_id,
-            on_behalf_of=on_behalf_of,
+            on_behalf_of=scope.on_behalf_of,
             role_applied=role,
             status=status,
             before_text=json.dumps({"text": target.text, "credibility": target.credibility}),
