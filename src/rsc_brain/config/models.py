@@ -247,6 +247,27 @@ class KnowledgeConfig(BaseModel):
     )
 
 
+class PublicLimits(BaseModel):
+    """Ratified ceilings for every public surface (AUDIT-044 / R38, plan §3).
+
+    Nothing here is optional. A surface with no ceiling is unbounded work an anonymous or
+    minimally-authorized caller can ask for: a 5 GB body, a million-entry array, a page that scans the
+    whole table. Deployments may LOWER these; omitting one is what the finding was.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    json_body_bytes: int = Field(default=1024 * 1024, ge=1024)
+    ontology_bytes: int = Field(default=5 * 1024 * 1024, ge=1024)
+    free_text_bytes: int = Field(default=64 * 1024, ge=256)
+    upload_bytes: int = Field(default=50 * 1024 * 1024, ge=1024)
+    public_array_items: int = Field(default=100, ge=1)
+    page_items: int = Field(default=100, ge=1)
+    admin_page_items: int = Field(default=200, ge=1)
+    audit_export_rows: int = Field(default=10_000, ge=1)
+    window_days: int = Field(default=365, ge=1)
+
+
 class IngressConfig(BaseModel):
     """How the service is reached from outside (AUDIT-038 / R51).
 
@@ -304,4 +325,5 @@ class AppConfig(BaseModel):
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     ingress: IngressConfig = Field(default_factory=IngressConfig)
+    limits: PublicLimits = Field(default_factory=PublicLimits)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

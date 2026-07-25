@@ -48,6 +48,19 @@ async def _check_gateway(gateway: ModelGateway) -> CheckResult:
     return CheckResult("gateway", True, "all capabilities healthy")
 
 
+def _check_capabilities_configured(gateway: ModelGateway) -> CheckResult:
+    """Every enabled capability RESOLVES — provider and model present — without calling anything.
+
+    Configuration completeness is what readiness can answer locally and cheaply, and it is the failure
+    an operator actually needs caught before traffic (R36): a capability with no model is broken
+    whatever the provider's status page says.
+    """
+    unresolved = gateway.unresolved_capabilities()
+    if unresolved:
+        return CheckResult("capabilities", False, f"unresolved: {sorted(unresolved)}")
+    return CheckResult("capabilities", True, "every capability is configured")
+
+
 async def _check_database(sessionmaker: async_sessionmaker[AsyncSession]) -> CheckResult:
     try:
         async with sessionmaker() as session:
@@ -69,12 +82,25 @@ async def run_verify(
     gateway: ModelGateway,
     sessionmaker: async_sessionmaker[AsyncSession],
     smoke: SmokeCheck | None = None,
+    probe_models: bool = False,
 ) -> VerifyReport:
-    """Run the gateway + database checks, plus an optional ingest→recall smoke."""
+    """Readiness: configuration and the local stores, with NO model invocation (R50).
+
+    This is what the container healthcheck runs, so whatever it does happens on a timer. Probing the
+    providers here meant an outage at the provider restarted every healthy container, and a healthy
+    deployment paid provider tokens on every probe. AUDIT-044 is explicit that deep dependency health
+    is an authenticated operator diagnostic, so it moved behind ``probe_models=True`` (``brain doctor``
+    and an explicit `--probe-models`), never the default.
+
+    ``gateway`` is still taken so the operator diagnostic and the readiness path share one entry point
+    and cannot drift into answering different questions.
+    """
     checks = [
-        await _check_gateway(gateway),
+        _check_capabilities_configured(gateway),
         await _check_database(sessionmaker),
     ]
+    if probe_models:
+        checks.append(await _check_gateway(gateway))
     if smoke is not None:
         try:
             ok, detail = await smoke()

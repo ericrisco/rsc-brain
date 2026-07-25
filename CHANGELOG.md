@@ -9,6 +9,42 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-25
+
+P0-C (first half) of the audit-remediation program: the production runtime. The gap this batch closes
+is the one between "the code works" and "the deployment works".
+
+### Fixed
+
+- **Accepted ingestion is durably queued and worker-run (R37).** The queue and the worker existed and
+  nothing used them: uploading a document ran parsing, extraction and embedding on the request thread,
+  so no durable record of accepted work existed before the heavy part. A request that died
+  mid-processing left a half-ingested document nobody would retry, while the worker container drained
+  an empty queue forever. `202` now means the document, its run checkpoint and the queue entry are all
+  persisted; the worker resumes from the last checkpoint on redelivery.
+- **Readiness performs no model inference (R50).** The container healthcheck runs `brain verify`, and
+  verify probed every capability through the gateway — so an outage at a model provider restarted every
+  healthy container, and a healthy deployment paid provider tokens on a timer. Readiness now checks
+  that capabilities are *configured* and that the local stores answer; the provider probe moved behind
+  an explicit `probe_models=True`, which is what AUDIT-044 ratified (deep dependency health is an
+  operator diagnostic, never high-frequency readiness).
+- **The API and the worker share one runtime (R53).** They assembled separate dependency graphs, and
+  the graphs differed: the API's gateway had a usage recorder and an embedding cache, the worker's had
+  neither. A document ingested by the worker spent tokens nobody recorded, ignored the daily budget,
+  and re-embedded text the API would have reused. Both roles now come from `rsc_brain.runtime.build`,
+  so a future divergence has to be declared there rather than appear by omission.
+- **Every public surface declares a ceiling (R38).** A 2 MiB JSON body, a 65 KiB free-text field, a
+  101-entry array and `limit=100000` were all accepted. Bodies, fields, arrays, pages and windows are
+  now bounded in the request schema, so an oversized request is refused by validation before a handler
+  allocates anything.
+
+### Added
+
+- `limits` configuration (`PublicLimits`): the ratified ceilings for JSON bodies, ontology documents,
+  free text, uploads, public arrays, pages, admin pages, audit-export rows and time windows. A
+  deployment may lower them; none may be absent.
+- `rsc_brain.runtime.build(role)` — the single composition root for both entry points.
+
 ## [0.3.0] - 2026-07-25
 
 P0-B of the audit-remediation program: the hostile-ingress batch. Seven findings, all of them paths

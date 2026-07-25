@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -32,6 +32,7 @@ from rsc_brain.api.authz import (
     object_topics,
 )
 from rsc_brain.authorization import Allow, Capability, decide
+from rsc_brain.config.models import PublicLimits
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.ingest.sources import SourceService
 from rsc_brain.mcp.tools import UNTRUSTED
@@ -43,6 +44,22 @@ from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
 
 _bearer = HTTPBearer(auto_error=False)
 
+# R38: the ratified public ceilings, applied in the SCHEMA so an oversized request is refused by
+# validation before a handler allocates anything. `PublicLimits` carries the deployment-tunable copy;
+# these are the compile-time defaults the request models need, and they must not diverge — the test
+# `test_schema_ceilings_match_the_configured_limits` pins them together.
+_DEFAULT_LIMITS = PublicLimits()
+JSON_BODY_MAX = _DEFAULT_LIMITS.json_body_bytes
+ONTOLOGY_MAX = _DEFAULT_LIMITS.ontology_bytes
+FREE_TEXT_MAX = _DEFAULT_LIMITS.free_text_bytes
+ARRAY_MAX = _DEFAULT_LIMITS.public_array_items
+PAGE_MAX = _DEFAULT_LIMITS.page_items
+ADMIN_PAGE_MAX = _DEFAULT_LIMITS.admin_page_items
+EXPORT_ROWS_MAX = _DEFAULT_LIMITS.audit_export_rows
+WINDOW_DAYS_MAX = _DEFAULT_LIMITS.window_days
+NAME_MAX = 512
+SLUG_MAX = 128
+
 router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 
 
@@ -52,57 +69,61 @@ class ProjectCreate(BaseModel):
 
 
 class TopicCreate(BaseModel):
-    slug: str
-    name: str
-    sensitivity: int = Field(default=0, ge=0)
+    slug: str = Field(max_length=SLUG_MAX)
+    name: str = Field(max_length=NAME_MAX)
+    sensitivity: int = Field(default=0, ge=0, le=10)
 
 
 class SourceCreate(BaseModel):
-    name: str
-    type: str = "folder"
-    policy: str = "llm"
-    default_tags: list[str] = Field(default_factory=list)
+    name: str = Field(max_length=NAME_MAX)
+    type: str = Field(default="folder", max_length=SLUG_MAX)
+    policy: str = Field(default="llm", max_length=SLUG_MAX)
+    default_tags: list[str] = Field(default_factory=list, max_length=ARRAY_MAX)
     review_if_sensitive: bool = True
 
 
 class UserInvite(BaseModel):
-    email: str
-    role: str = "member"
+    email: str = Field(max_length=NAME_MAX)
+    role: str = Field(default="member", max_length=SLUG_MAX)
 
 
 class PersonCreate(BaseModel):
-    name: str
-    topics: list[str] = Field(default_factory=list)
+    name: str = Field(max_length=NAME_MAX)
+    topics: list[str] = Field(default_factory=list, max_length=ARRAY_MAX)
     channels: dict[str, str] = Field(default_factory=dict)
     quiet_hours: dict[str, str] = Field(default_factory=dict)
-    language: str | None = None
+    language: str | None = Field(default=None, max_length=SLUG_MAX)
 
 
 class PersonUpdate(BaseModel):
-    topics: list[str] | None = None
+    topics: list[str] | None = Field(default=None, max_length=ARRAY_MAX)
     channels: dict[str, str] | None = None
     quiet_hours: dict[str, str] | None = None
-    language: str | None = None
+    language: str | None = Field(default=None, max_length=SLUG_MAX)
 
 
 class HuntAsk(BaseModel):
-    question: str
-    topics: list[str] = Field(default_factory=list)
+    question: str = Field(max_length=FREE_TEXT_MAX)
+    topics: list[str] = Field(default_factory=list, max_length=ARRAY_MAX)
 
 
 class SkillUpsert(BaseModel):
-    markdown: str  # the full skill file: OKF frontmatter + body
+    # The full skill file: OKF frontmatter + body. Bounded like any other public body (R38).
+    markdown: str = Field(max_length=JSON_BODY_MAX)
 
 
 class ChunkApprove(BaseModel):
-    tags: list[str] | None = None  # curator-corrected tags for an ambiguous table (FR-1.5)
+    # Curator-corrected tags for an ambiguous table (FR-1.5).
+    tags: list[str] | None = Field(default=None, max_length=ARRAY_MAX)
 
 
 class OntologyUpload(BaseModel):
-    name: str
-    format: str = Field(default="turtle", description="owl|rdf|skos|turtle")
-    content: str = Field(description="The full OWL/RDF/SKOS document text.")
-    uri_base: str | None = None
+    name: str = Field(max_length=NAME_MAX)
+    format: str = Field(default="turtle", max_length=SLUG_MAX, description="owl|rdf|skos|turtle")
+    content: str = Field(
+        max_length=ONTOLOGY_MAX, description="The full OWL/RDF/SKOS document text."
+    )
+    uri_base: str | None = Field(default=None, max_length=NAME_MAX)
 
 
 def _deps(request: Request) -> object:
@@ -648,7 +669,9 @@ async def resolve_merge_item(
 
 @router.get("/metrics/product")
 async def product_metrics_endpoint(
-    request: Request, scope: ProjectScope = Depends(_needs_knowledge_read), window_days: int = 30
+    request: Request,
+    scope: ProjectScope = Depends(_needs_knowledge_read),
+    window_days: int = Query(default=30, ge=1, le=WINDOW_DAYS_MAX),
 ) -> dict[str, object]:
     """The four PRD §8 metric families for a project (SPEC-23) — adoption, quality, knowledge,
     health. Project-scoped in-query (FR-12.5); the console consumes this."""
@@ -694,7 +717,7 @@ async def list_audit(
     denied: bool | None = None,
     since: str | None = None,
     until: str | None = None,
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=ADMIN_PAGE_MAX),
 ) -> dict[str, object]:
     """Filterable audit log (SPEC-26 FR-13.7). Project-scoped in-query (a project-admin sees only
     their project); `query_text` is NULL when `query_text_logging` is OFF (FR-13.9)."""
@@ -724,7 +747,7 @@ async def export_audit(
     denied: bool | None = None,
     since: str | None = None,
     until: str | None = None,
-    limit: int = 10000,
+    limit: int = Query(default=EXPORT_ROWS_MAX, ge=1, le=EXPORT_ROWS_MAX),
 ) -> Response:
     """CSV export of the filtered audit log (SPEC-26 FR-13.7, parity with `brain audit --export`).
     The export itself is audited (FR-4.5)."""
@@ -751,7 +774,9 @@ async def export_audit(
 
 @router.get("/usage")
 async def usage_endpoint(
-    request: Request, scope: ProjectScope = Depends(_needs_usage_read), days: int = 7
+    request: Request,
+    scope: ProjectScope = Depends(_needs_usage_read),
+    days: int = Query(default=7, ge=1, le=WINDOW_DAYS_MAX),
 ) -> dict[str, object]:
     """This project's per-capability/day token + call usage (SPEC-26 FR-13.7, AUDIT-021 R12).
 
@@ -768,9 +793,9 @@ async def usage_endpoint(
 async def entity_graph_endpoint(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),
-    name: str = "",
-    limit: int = 25,
-    offset: int = 0,
+    name: str = Query(default="", max_length=NAME_MAX),
+    limit: int = Query(default=25, ge=1, le=ADMIN_PAGE_MAX),
+    offset: int = Query(default=0, ge=0),
 ) -> dict[str, object]:
     """A bounded, paginated neighborhood of one entity (SPEC-26 FR-13.8). Permission-scoped: an
     entity with no visible claims is indistinguishable from a non-existent one (404, FR-4.3)."""
@@ -835,7 +860,7 @@ async def observability_recalls(
     scope: ProjectScope = Depends(_needs_knowledge_read),
     principal_type: str | None = None,
     denied: bool | None = None,
-    limit: int = 100,
+    limit: int = Query(default=100, ge=1, le=ADMIN_PAGE_MAX),
 ) -> dict[str, object]:
     """Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only
     when the project's logging is ON."""
@@ -903,11 +928,12 @@ async def put_query_text_logging(
 
 
 class ApproveDoc(BaseModel):
-    tags: list[str] | None = None  # corrected proposed tags (FR-1.15 inheritance on approve)
+    # Corrected proposed tags (FR-1.15 inheritance on approve).
+    tags: list[str] | None = Field(default=None, max_length=ARRAY_MAX)
 
 
 class RejectDoc(BaseModel):
-    reason: str
+    reason: str = Field(max_length=FREE_TEXT_MAX)
 
 
 @router.get("/observability/ingest")
@@ -1224,7 +1250,9 @@ async def add_ontology(
 
 @router.get("/ontologies/coverage")
 async def ontology_coverage(
-    request: Request, scope: ProjectScope = Depends(_needs_knowledge_read), top: int = 10
+    request: Request,
+    scope: ProjectScope = Depends(_needs_knowledge_read),
+    top: int = Query(default=10, ge=1, le=PAGE_MAX),
 ) -> dict[str, object]:
     """Anchoring coverage: % anchored + top unanchored names (SPEC-24, FR-17.7)."""
     coverage: dict[str, object] = await _ontology_store(request).coverage(  # type: ignore[attr-defined]

@@ -303,6 +303,23 @@ class ModelGateway:
             )
         return vectors
 
+    def unresolved_capabilities(self) -> list[str]:
+        """Capabilities missing a provider or a model — a local check, no provider contact (R50).
+
+        Readiness needs this; it must not need `healthcheck`, which spends a token per capability per
+        probe and fails when someone else's service is down.
+        """
+        missing: list[str] = []
+        for capability in Capability:
+            try:
+                config = self._caps.get(capability)
+            except AttributeError:
+                missing.append(capability.value)
+                continue
+            if not config.provider or not config.model:
+                missing.append(capability.value)
+        return missing
+
     async def healthcheck(self) -> dict[str, HealthStatus]:
         """Run a real structured/embed probe per configured capability (FR-9.3)."""
         statuses: dict[str, HealthStatus] = {}
