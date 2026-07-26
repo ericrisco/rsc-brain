@@ -369,3 +369,60 @@ async def test_the_cli_reject_route_is_bound_by_the_same_rule_as_the_service(
         "the CLI route rejected a published document, so the record says refused while its claims stay "
         f"live — the outcome R31 forbids through the service (cli exit={result.exit_code})"
     )
+
+
+async def test_refusing_to_reject_a_resolved_proposal_does_not_report_a_rejection(
+    build_harness: object,
+) -> None:
+    """``reject`` answers ``status="rejected"`` both when it rejected and when it REFUSED.
+
+    A caller reading the outcome cannot tell "the proposal is now rejected" from "your request was
+    declined because someone already applied it" — the explanation says so in prose, the status field
+    says the opposite. A second curator is told their rejection landed while the entities are merged.
+
+    Deterministic on purpose: the racing version of this passed on scheduling luck, which is a check that
+    certifies nothing (the race resolves to a self-consistent `applied` + merged state; what is wrong is
+    what the loser gets TOLD).
+    """
+    import uuid as _uuid
+
+    from rsc_brain.config.models import KnowledgeConfig
+    from rsc_brain.knowledge.entity_merge import DeterministicMergeProposer, EntityMergeService
+    from rsc_brain.stores.age_graph_store import AgeGraphStore
+    from rsc_brain.stores.relational import models as m
+    from rsc_brain.stores.relational.entity_store import EntityStore
+    from tests.integration.conftest import unique_slug
+
+    harness = build_harness()  # type: ignore[operator]
+    project = await harness.setup_project(unique_slug("acme"), [("hr", 0)])
+    scope = harness.scope(project, allowed_topics=["hr"])
+    async with harness.sm() as session:
+        for name in ("Acme Corporation", "Acme Corporaton"):
+            session.add(
+                m.Entity(
+                    project_id=_uuid.UUID(project),
+                    name=name,
+                    normalized_name=name.casefold(),
+                    type="org",
+                )
+            )
+        await session.commit()
+    service = EntityMergeService(
+        store=EntityStore(harness.sm),
+        graph=AgeGraphStore(harness.sm),
+        proposer=DeterministicMergeProposer(min_similarity=0.82),
+        sessionmaker=harness.sm,
+        config=KnowledgeConfig(merge_auto_apply_confidence=1.0),
+    )
+    summary = await service.propose(scope)
+    assert summary.queued
+    proposal_id = summary.queued[0]
+    applied = await service.confirm(scope, proposal_id)
+    assert applied.status == "applied", applied.explanation
+
+    outcome = await service.reject(scope, proposal_id)
+
+    assert outcome.status != "rejected", (
+        "rejecting an already-applied proposal reports status='rejected', so the caller is told their "
+        f"refusal landed while the merge stands: {outcome.explanation}"
+    )
