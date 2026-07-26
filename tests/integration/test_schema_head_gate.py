@@ -304,3 +304,68 @@ async def test_processing_a_rejected_document_does_not_publish_it(
         f"the worker overwrote a rejection and set the document to {document.status!r}"
     )
     assert claims == 0, f"a rejected document published {claims} claim(s)"
+
+
+async def test_the_cli_reject_route_is_bound_by_the_same_rule_as_the_service(
+    build_harness: object,
+    make_completion: object,
+    migrated_dsn: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``brain docs reject`` writes the status directly, bypassing R31's conditional transition.
+
+    R31 established that a published document cannot be rejected — the record would say refused while the
+    knowledge stayed live and recallable. The service path enforces it; the CLI path did not, so the same
+    instance answered differently depending on which route the operator reached for. That is the shape R25
+    was about (two routes, one object) applied to the decision R31 was about.
+
+    Driven through the real command, so it cannot pass by agreeing with an implementation detail.
+    """
+    import uuid as _uuid
+
+    from typer.testing import CliRunner
+
+    from rsc_brain.cli.main import app
+    from rsc_brain.stores.relational import models as m
+    from rsc_brain.stores.relational.database import DSN_ENV_VAR
+    from tests.integration.conftest import unique_slug
+
+    harness = build_harness(  # type: ignore[operator]
+        completion=make_completion(  # type: ignore[operator]
+            claims=[{"text": "The SLA is 48 hours.", "subject": "SLA"}], tags=["hr"]
+        )
+    )
+    slug = unique_slug("acme")
+    project = await harness.setup_project(slug, [("hr", 0)])
+    scope = harness.scope(project, allowed_topics=["hr"])
+    await harness.repo.create_source(
+        scope, name="auto", type_="folder", policy="source_tags", default_tags=["hr"]
+    )
+    outcome = await harness.service.ingest_bytes(
+        scope, b"# Handbook\n\nThe SLA is 48 hours.\n", filename="hb.md", source="auto"
+    )
+    assert outcome.status == "processed", outcome.status
+
+    monkeypatch.setenv(DSN_ENV_VAR, migrated_dsn)
+    result = await asyncio.to_thread(
+        CliRunner().invoke,
+        app,
+        [
+            "docs",
+            "reject",
+            outcome.document_id,
+            "--project",
+            slug,
+            "--reason",
+            "too late",
+            "--json",
+        ],
+    )
+
+    async with harness.sm() as session:
+        document = await session.get(m.Document, _uuid.UUID(outcome.document_id))
+    assert document is not None
+    assert document.status == "processed", (
+        "the CLI route rejected a published document, so the record says refused while its claims stay "
+        f"live — the outcome R31 forbids through the service (cli exit={result.exit_code})"
+    )

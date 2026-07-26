@@ -24,6 +24,7 @@ from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.pipeline import IngestionPipeline, PipelineConfig
 from rsc_brain.ingest.service import IngestService
 from rsc_brain.ingest.sources import SourceService
+from rsc_brain.ingest.types import DocStatus
 from rsc_brain.ontology.ingest import OntologyIngest
 from rsc_brain.scope import Principal, PrincipalType, ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
@@ -236,12 +237,35 @@ def docs_reject(
     reason: str = typer.Option(..., "--reason", help="Reason (kept, auditable)."),
     json_output: bool = JSON_OPTION,
 ) -> None:
-    """Reject a document: keep the file + reason, ingest nothing."""
+    """Reject a document: keep the file + reason, ingest nothing.
 
-    async def _do(repo: IngestRepository, scope: ProjectScope) -> None:
-        await repo.set_status(scope, document_id, "rejected", reject_reason=reason)
+    T022 re-audit: this used to write the status directly, so it could reject an ALREADY PUBLISHED
+    document — the record saying refused while its claims stayed live and recallable, which is exactly
+    what R31 forbids through the service. Two routes to one decision, answering differently depending on
+    which one the operator reached for. It goes through the same conditional transition now.
+    """
 
-    _run_with_repo(project, _do)
+    async def _do(repo: IngestRepository, scope: ProjectScope) -> bool:
+        return await repo.transition_status(
+            scope,
+            document_id,
+            expected=[
+                DocStatus.RECEIVED.value,
+                DocStatus.PARSED.value,
+                DocStatus.PENDING_APPROVAL.value,
+                DocStatus.AUTO_APPROVED.value,
+                DocStatus.REJECTED.value,
+            ],
+            status=DocStatus.REJECTED.value,
+            reject_reason=reason,
+        )
+
+    if not _run_with_repo(project, _do):
+        typer.echo(
+            f"docs reject: {document_id} can no longer be rejected (it is published or absent)",
+            err=True,
+        )
+        raise typer.Exit(code=1)
     emit_result(
         ctx, json_output, {"status": "ok", "rejected": document_id}, f"rejected {document_id}"
     )
