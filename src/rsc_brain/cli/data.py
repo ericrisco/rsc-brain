@@ -254,11 +254,29 @@ def forget(
     )
 
 
-def _data_dir() -> str:
-    """The configured data directory, so a deletion can reach the stored originals (R42/R44)."""
-    from rsc_brain.config import load_settings
+#: The env var pydantic-settings maps to `ingest.data_dir`, and the documented default.
+_DATA_DIR_ENV = "RSC_BRAIN_INGEST__DATA_DIR"
+_DATA_DIR_DEFAULT = "data"
 
-    return load_settings().ingest.data_dir
+
+def _data_dir() -> str:
+    """The configured data directory, so backup and deletion can reach the stored originals.
+
+    Deliberately NOT `load_settings()`: that requires the whole configuration tree, including every
+    model capability, and neither backing up files nor deleting them needs a working model gateway. An
+    instance whose capabilities are misconfigured is exactly one an operator may need to back up — making
+    `brain backup` fail on a validation error it has nothing to do with would be a worse defect than the
+    one this fixes.
+    """
+    configured = os.environ.get(_DATA_DIR_ENV)
+    if configured:
+        return configured
+    try:
+        from rsc_brain.config import load_settings
+
+        return load_settings().ingest.data_dir
+    except Exception:
+        return _DATA_DIR_DEFAULT
 
 
 async def _forget_document(project_id: str, document_id: str) -> dict[str, int]:
