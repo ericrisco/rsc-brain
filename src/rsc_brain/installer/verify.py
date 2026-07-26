@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.gateway.errors import GatewayError
 from rsc_brain.gateway.model_gateway import ModelGateway
+from rsc_brain.stores.relational.migrations import schema_state
 
 SmokeCheck = Callable[[], Awaitable[tuple[bool, str]]]
 
@@ -67,14 +68,17 @@ async def _check_database(sessionmaker: async_sessionmaker[AsyncSession]) -> Che
             extensions = await session.scalar(
                 text("SELECT count(*) FROM pg_extension WHERE extname IN ('age', 'vector')")
             )
-            head = await session.scalar(text("SELECT count(*) FROM alembic_version"))
     except Exception as exc:
         return CheckResult("database", False, f"unreachable ({type(exc).__name__})")
     if extensions != 2:
         return CheckResult("database", False, "missing age/vector extensions")
-    if not head:
-        return CheckResult("database", False, "no migration applied")
-    return CheckResult("database", True, "extensions present, schema at head")
+    # T022 re-audit: this used to report "schema at head" after checking only that `alembic_version` had
+    # a row, so a pod one revision behind answered Ready and served queries against a schema this build
+    # does not expect. Readiness is what an installer and a load balancer both act on.
+    state = schema_state()
+    if not state.at_head:
+        return CheckResult("database", False, state.explain())
+    return CheckResult("database", True, f"extensions present, {state.explain()}")
 
 
 async def run_verify(

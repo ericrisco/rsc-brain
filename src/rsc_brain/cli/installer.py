@@ -242,33 +242,26 @@ def wait_for_schema(
     """
     import time
 
-    async def _at_head() -> bool:
-        from sqlalchemy import text
-
-        from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
-
-        engine = make_engine()
-        try:
-            async with make_sessionmaker(engine)() as session:
-                stamped = await session.scalar(
-                    text("SELECT count(*) FROM alembic_version WHERE version_num IS NOT NULL")
-                )
-                return bool(stamped)
-        except Exception:
-            return False
-        finally:
-            await engine.dispose()
+    from rsc_brain.stores.relational.migrations import schema_state
 
     deadline = time.monotonic() + timeout
     while True:
-        if asyncio.run(_at_head()):
+        # T022 re-audit: this used to ask whether `alembic_version` had a ROW. On a fresh install the
+        # table is empty until the Job stamps it, so it worked; on an UPGRADE the row is already there
+        # from the previous version, so the gate passed instantly and api/worker started against the old
+        # schema — the exact ordering failure this command exists to prevent.
+        state = schema_state()
+        if state.at_head:
             emit_result(
-                ctx, json_output, {"status": "ok", "schema": "head"}, "brain: schema is at head."
+                ctx,
+                json_output,
+                {"status": "ok", "schema": "head", "revision": state.stamped},
+                f"brain: {state.explain()}.",
             )
             return
         if time.monotonic() >= deadline:
             typer.echo(
-                f"brain wait-for-schema: the schema was not at head within {timeout}s", err=True
+                f"brain wait-for-schema: not ready within {timeout}s — {state.explain()}", err=True
             )
             raise typer.Exit(code=1)
         time.sleep(2)

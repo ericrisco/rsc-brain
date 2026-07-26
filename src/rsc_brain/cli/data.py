@@ -209,8 +209,11 @@ async def _verify_database() -> bool:
             extensions = await session.scalar(
                 text("SELECT count(*) FROM pg_extension WHERE extname IN ('age', 'vector')")
             )
-            head = await session.scalar(text("SELECT count(*) FROM alembic_version"))
-        return extensions == 2 and bool(head)
+        # T022 re-audit: "at head" used to mean "alembic_version has a row", so a dump taken from an
+        # OLDER schema restored, verified and was reported ready.
+        from rsc_brain.stores.relational.migrations import schema_state
+
+        return extensions == 2 and schema_state().at_head
     finally:
         await engine.dispose()
 
