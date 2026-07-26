@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import re
 import uuid
 from pathlib import Path
 from typing import Any, cast
@@ -118,12 +119,16 @@ async def _erase_claims_naming(
     """
     predicates = []
     for surface in sorted(s for s in surfaces if s and s.strip()):
-        pattern = f"%{surface}%"
+        # Word-bounded, case-insensitive. A substring match (`ILIKE '%Ana%'`) deletes "bananas",
+        # "Anatolia" and "analysis": one person's erasure request silently destroying unrelated company
+        # knowledge. `\y` is Postgres's word boundary, and the name is regex-escaped because a surface
+        # form can contain metacharacters (`C++`, `AT&T (Inc.)`).
+        pattern = rf"\y{re.escape(surface)}\y"
         predicates.extend(
             [
-                models.Claim.text.ilike(pattern),
-                models.Claim.subject.ilike(pattern),
-                models.Claim.object.ilike(pattern),
+                models.Claim.text.op("~*")(pattern),
+                models.Claim.subject.op("~*")(pattern),
+                models.Claim.object.op("~*")(pattern),
             ]
         )
     if not predicates:
@@ -267,23 +272,28 @@ async def _document_path(
 
 
 def _remove_blob(path: str | None, *, data_dir: str | None) -> bool:
-    """Delete a stored original. Refuses a path outside the configured data directory.
+    """Delete a stored original, and only ever one inside the directory the install owns.
 
-    A recorded path is data, and data decides which file to unlink here — so it is checked against the
-    directory the install owns rather than trusted. A path that escapes is left alone and reported.
+    A recorded path is DATA — a restored backup, a manual repair or an earlier bug can put anything in
+    it — and here that data decides which file is unlinked. So it is checked, never trusted, and a
+    caller that has not said which directory it owns gets no deletion at all: the containment check
+    used to be skipped entirely when ``data_dir`` was ``None``, which is the default, so the default
+    call unlinked whatever the row happened to hold.
     """
     if not path:
         return False
+    if data_dir is None:
+        _log.warning("blob_kept_no_data_dir", extra={"path": path})
+        return False
     target = Path(path)
-    if data_dir is not None:
-        root = Path(data_dir).resolve()
-        try:
-            resolved = target.resolve()
-            resolved.relative_to(root)
-        except (ValueError, OSError):
-            _log.warning("blob_outside_data_dir", extra={"path": str(target)})
-            return False
-        target = resolved
+    root = Path(data_dir).resolve()
+    try:
+        resolved = target.resolve()
+        resolved.relative_to(root)
+    except (ValueError, OSError):
+        _log.warning("blob_outside_data_dir", extra={"path": str(target)})
+        return False
+    target = resolved
     try:
         target.unlink(missing_ok=True)
     except OSError:  # a directory, a permission problem — reported, never fatal for the erasure

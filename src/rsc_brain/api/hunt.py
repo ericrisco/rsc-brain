@@ -16,6 +16,7 @@ as hostile input:
 
 from __future__ import annotations
 
+import html
 from typing import Annotated
 
 from fastapi import APIRouter, Form, HTTPException, Request, status
@@ -65,10 +66,17 @@ async def answer_form(token: str, request: Request) -> HTMLResponse:
     hunt = await _service(request).hunt_for_token(token)
     if hunt is None:
         return _page(f"<h1>Link expired</h1><p>{_UNKNOWN}</p>")
-    question = hunt["question"] or "(no question recorded)"
+    # Escaped, both of them. The question reaches this page from a curator, from an agent's gap or from
+    # a document's text — none of which is trusted markup — and this is the product's one deliberately
+    # unauthenticated route, served to the person being asked for help. Unescaped, a question is a
+    # script injection into their browser on the install's own origin. The token is escaped for the same
+    # reason even though only a token we minted ever gets this far: a page that is safe because of an
+    # invariant somewhere else is one refactor from being unsafe.
+    question = html.escape(str(hunt["question"] or "(no question recorded)"))
+    safe_token = html.escape(token, quote=True)
     return _page(
         f"<h1>rsc-brain needs your knowledge</h1><p>{question}</p>"
-        f'<form method=post action="/hunt/{token}">'
+        f'<form method=post action="/hunt/{safe_token}">'
         f'<textarea name=answer maxlength="{_LIMITS.free_text_bytes}" '
         'placeholder="Your answer"></textarea><p>'
         "<button name=decline value=false type=submit>Send answer</button>"
