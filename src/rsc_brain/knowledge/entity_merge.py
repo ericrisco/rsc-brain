@@ -58,6 +58,9 @@ class ProposeSummary:
 
 @dataclass(frozen=True, slots=True)
 class MergeOutcome:
+    #: `applied` | `rejected` | `refused`. T022 re-audit: `refused` used to be reported as `rejected`,
+    #: so a caller could not tell "the proposal is now rejected" from "your request was declined because
+    #: someone already applied it" — the explanation said so in prose and the status said the opposite.
     status: str
     explanation: str
     proposal_id: str | None = None
@@ -254,10 +257,10 @@ class EntityMergeService:
     ) -> MergeOutcome:
         proposal = await self._store.get_proposal(scope, proposal_id)
         if proposal is None:
-            return MergeOutcome(status="rejected", explanation="Proposal not found.")
+            return MergeOutcome(status="refused", explanation="Proposal not found.")
         if proposal.status != PROPOSAL_OPEN:
             return MergeOutcome(
-                status="rejected",
+                status="refused",
                 explanation=f"Cannot confirm a {proposal.status} proposal.",
                 proposal_id=proposal_id,
             )
@@ -286,10 +289,10 @@ class EntityMergeService:
     ) -> MergeOutcome:
         proposal = await self._store.get_proposal(scope, proposal_id)
         if proposal is None:
-            return MergeOutcome(status="rejected", explanation="Proposal not found.")
+            return MergeOutcome(status="refused", explanation="Proposal not found.")
         if proposal.status != PROPOSAL_OPEN:
             return MergeOutcome(
-                status="rejected",
+                status="refused",
                 explanation=f"Cannot reject a {proposal.status} proposal.",
                 proposal_id=proposal_id,
             )

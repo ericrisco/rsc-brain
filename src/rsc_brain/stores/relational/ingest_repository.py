@@ -123,6 +123,10 @@ class IngestErrorSpec:
 #: caller took the number, so a bounded retry always converges; the bound is a runaway guard.
 _ADMISSION_ATTEMPTS = 5
 
+#: Decisions nothing in the pipeline may undo. `rejected` is the only one today: `processed` is the
+#: pipeline's own end state and a redo must be able to reach it again (publish is idempotent).
+_TERMINAL_STATUSES = ("rejected",)
+
 
 class IngestRepository:
     """Ingestion persistence. Concrete, project-scoped, transaction-atomic per stage."""
@@ -760,6 +764,11 @@ class IngestRepository:
                 .where(
                     models.Document.id == uuid.UUID(document_id),
                     models.Document.project_id == _pid(scope),
+                    # T022 re-audit: the parse phase used to write the policy's status unconditionally,
+                    # so a document REJECTED while its job sat in the queue was moved back to
+                    # `auto_approved` and then published. A terminal decision is not the parse phase's to
+                    # revisit; the tags are still recorded either way.
+                    models.Document.status.not_in(_TERMINAL_STATUSES),
                 )
                 .values(doc_tags=list(doc_tags), status=status)
             )

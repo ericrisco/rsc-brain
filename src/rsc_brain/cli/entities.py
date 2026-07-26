@@ -128,7 +128,9 @@ def merges_confirm(
     emit_result(
         ctx, json_output, {"status": status, "explanation": explanation}, f"{status}: {explanation}"
     )
-    if status == "rejected":
+    # `refused` is the service declining the request (already resolved, absent); it used to be reported
+    # as `rejected`, which is a different thing and is why this exit code had to be widened (T022).
+    if status in {"rejected", "refused"}:
         raise typer.Exit(code=1)
 
 
@@ -144,3 +146,7 @@ def merges_reject(
     emit_result(
         ctx, json_output, {"status": status, "explanation": explanation}, f"{status}: {explanation}"
     )
+    # A refusal is not a rejection: the proposal was already resolved, so the operator's request did not
+    # take effect and must not exit 0.
+    if status == "refused":
+        raise typer.Exit(code=1)

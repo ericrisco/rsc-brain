@@ -116,6 +116,11 @@ async def _erase_claims_naming(
     Matching is on the SURFACE forms, case-insensitively: the stored text is what a reader sees, and a
     normalized comparison would miss "ANA RUIZ" in a sentence. Chunks go too — a chunk is what recall
     serves, so deleting the claim alone would erase the assertion and keep the disclosure.
+
+    The embedding CACHE goes too (T022 re-audit). It is keyed by SHA-256 of the text and holds the
+    vector, so after an erasure the sentence's embedding was still there — a derivative of the erased
+    content, which R43's ratified criterion forbids — and its hash still answered "was this sentence ever
+    ingested?", which is the question an erasure is supposed to make unanswerable.
     """
     predicates = []
     for surface in sorted(s for s in surfaces if s and s.strip()):
@@ -135,27 +140,57 @@ async def _erase_claims_naming(
         return 0
     rows = (
         await session.execute(
-            select(models.Claim.id, models.Claim.chunk_id).where(
+            select(models.Claim.id, models.Claim.chunk_id, models.Claim.text).where(
                 models.Claim.project_id == project_id, or_(*predicates)
             )
         )
     ).all()
     claim_ids = [r[0] for r in rows]
     chunk_ids = [r[1] for r in rows if r[1] is not None]
+    texts = {r[2] for r in rows if r[2]}
     if claim_ids:
         await session.execute(
             delete(models.Claim).where(
                 models.Claim.project_id == project_id, models.Claim.id.in_(claim_ids)
             )
         )
+    chunk_texts: set[str] = set()
     if chunk_ids:
+        chunk_texts = {
+            t
+            for t in await session.scalars(
+                select(models.Chunk.text).where(
+                    models.Chunk.project_id == project_id, models.Chunk.id.in_(chunk_ids)
+                )
+            )
+            if t
+        }
         # The chunk carries the same sentence and is what the vector index serves from.
         await session.execute(
             delete(models.Chunk).where(
                 models.Chunk.project_id == project_id, models.Chunk.id.in_(chunk_ids)
             )
         )
+    await _purge_cached_embeddings(session, texts | chunk_texts)
     return len(claim_ids)
+
+
+async def _purge_cached_embeddings(session: AsyncSession, texts: set[str]) -> int:
+    """Drop the cached embedding of every erased text.
+
+    The cache is global and keyed by content hash, so this removes the vector AND the hash that could
+    confirm the sentence had been ingested. Deleting by hash means nothing has to be recomputed for text
+    that is still in the corpus.
+    """
+    if not texts:
+        return 0
+    from rsc_brain.gateway.usage import text_hash
+
+    hashes = sorted({text_hash(t) for t in texts})
+    result = await session.execute(
+        delete(models.EmbeddingCache).where(models.EmbeddingCache.text_hash.in_(hashes))
+    )
+    return int(cast("CursorResult[Any]", result).rowcount or 0)
 
 
 async def entity_is_erased(
@@ -321,12 +356,34 @@ async def hard_delete_project(
     """
     await AgeGraphStore(sessionmaker).drop_graph(scope)
     async with session_scope(sessionmaker) as session:
+        # T022 re-audit: the embedding cache is global and keyed by content hash, so a deleted project's
+        # sentences kept a live vector — and a hash that still answered "was this ever ingested?". Read
+        # the texts BEFORE the cascade removes the rows that name them.
+        texts = {
+            t
+            for t in await session.scalars(
+                select(models.Chunk.text).where(
+                    models.Chunk.project_id == uuid.UUID(scope.project_id)
+                )
+            )
+            if t
+        }
+        texts |= {
+            t
+            for t in await session.scalars(
+                select(models.Claim.text).where(
+                    models.Claim.project_id == uuid.UUID(scope.project_id)
+                )
+            )
+            if t
+        }
+        cached = await _purge_cached_embeddings(session, texts)
         result = await session.execute(
             delete(models.Project).where(models.Project.id == uuid.UUID(scope.project_id))
         )
         deleted = int(cast("CursorResult[Any]", result).rowcount or 0)
     removed = _remove_project_blobs(scope, data_dir=data_dir)
-    return {"deleted_projects": deleted, "blobs_removed": removed}
+    return {"deleted_projects": deleted, "blobs_removed": removed, "cached_embeddings": cached}
 
 
 def _remove_project_blobs(scope: ProjectScope, *, data_dir: str | None) -> int:
