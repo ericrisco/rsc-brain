@@ -43,7 +43,8 @@ class HuntAnswer(BaseModel):
 def _service(request: Request) -> HuntService:
     """The hunt service the app was built with (configured channel + real public origin)."""
     service = request.app.state.hunts
-    assert isinstance(service, HuntService)
+    if not isinstance(service, HuntService):  # pragma: no cover - a composition error, not input
+        raise RuntimeError("the application was built without a hunt service")
     return service
 
 

@@ -81,12 +81,14 @@ def cross_project_violations(connection: Connection) -> dict[str, int]:
     found: dict[str, int] = {}
     for relation in tenant_relations():
         count = connection.execute(
+            # table in this module — a literal list, not input. The preflight has to name tables it was
+            # written against, and a bind parameter cannot be an identifier.
             text(
                 f"""
                 SELECT count(*) FROM {relation.child} c
                 JOIN {relation.parent} p ON p.id = c.{relation.column}
                 WHERE c.{PROJECT_COLUMN} IS DISTINCT FROM p.{PROJECT_COLUMN}
-                """
+                """  # noqa: S608
             )
         ).scalar()
         if count:

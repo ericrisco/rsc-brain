@@ -30,8 +30,10 @@ from rsc_brain.skills.store import SkillStore
 from rsc_brain.stores.relational import models
 
 if TYPE_CHECKING:
+    from rsc_brain.gateway.model_gateway import ModelGateway
     from rsc_brain.hunting.service import HuntService
     from rsc_brain.recall.guardrail import TopicClassifier
+    from rsc_brain.stores.age_graph_store import AgeGraphStore
 
 FeedbackSignal = Literal["helpful", "wrong", "outdated"]
 
@@ -475,10 +477,9 @@ async def do_submit_knowledge(
 ) -> SubmitKnowledgeOutput:
     """Agent/human knowledge write (SPEC-11 FR-14.4). `idempotency_key` is required; the project's
     `agent_writes` policy decides quarantine/direct/off. Audited (agent + on_behalf_of via scope)."""
-    from rsc_brain.gateway.model_gateway import ModelGateway
     from rsc_brain.knowledge.agent_writes import AgentWriteService
 
-    assert isinstance(gateway, ModelGateway)
+    gateway = _as_gateway(gateway)
     if not idempotency_key:
         # Writes require an idempotency key (retries must not duplicate) — reject without one.
         return SubmitKnowledgeOutput(ok=False, status="rejected", claim_ids=[])
@@ -521,13 +522,11 @@ async def do_correct_knowledge(
 ) -> CorrectKnowledgeOutput:
     """Owner-authority correction (SPEC-08 §3.5). Delegates to the CorrectionService; audits."""
     from rsc_brain.knowledge.corrections import CorrectionService
-    from rsc_brain.stores.age_graph_store import AgeGraphStore
     from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
 
-    assert isinstance(graph, AgeGraphStore)
-    from rsc_brain.gateway.model_gateway import ModelGateway
+    graph = _as_graph(graph)
 
-    assert isinstance(gateway, ModelGateway)
+    gateway = _as_gateway(gateway)
     service = CorrectionService(store=KnowledgeStore(sessionmaker), graph=graph, gateway=gateway)
     outcome = await service.correct(
         scope,
@@ -583,6 +582,28 @@ def _hunt_service(
     from rsc_brain.hunting.service import HuntService as _HuntService
 
     if provided is not None:
-        assert isinstance(provided, _HuntService)
+        if not isinstance(provided, _HuntService):  # pragma: no cover - a composition error
+            raise TypeError("this tool needs a HuntService")
         return provided
     return build_hunt_service_from_settings(sessionmaker, gateway=gateway)
+
+
+def _as_gateway(candidate: object) -> ModelGateway:
+    """Narrow the loosely-typed collaborator the MCP server hands in.
+
+    An explicit check rather than an `assert`: asserts are stripped under `python -O`, so a wiring
+    mistake would surface later as an AttributeError inside a tool call instead of at the boundary.
+    """
+    from rsc_brain.gateway.model_gateway import ModelGateway as _Gateway
+
+    if not isinstance(candidate, _Gateway):  # pragma: no cover - a composition error, not input
+        raise TypeError("this tool needs a ModelGateway")
+    return candidate
+
+
+def _as_graph(candidate: object) -> AgeGraphStore:
+    from rsc_brain.stores.age_graph_store import AgeGraphStore as _Graph
+
+    if not isinstance(candidate, _Graph):  # pragma: no cover - a composition error, not input
+        raise TypeError("this tool needs an AgeGraphStore")
+    return candidate

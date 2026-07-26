@@ -1,3 +1,3 @@
 """rsc-brain — self-hosted company memory over MCP."""
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"

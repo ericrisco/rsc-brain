@@ -111,10 +111,14 @@ class AgeGraphStore:
     ) -> Sequence[Sequence[object]]:
         # graph + cypher are literals (AGE requirement); user data goes only through :params.
         if params:
-            sql = f"SELECT * FROM ag_catalog.cypher('{graph}', $$ {cypher} $$, :params) AS ({columns})"
+            # literals — they cannot be bind parameters. Both are ours: `graph` is
+            # `"p_" + UUID(project_id).hex` (so a non-UUID never reaches here) and every interpolation
+            # inside `cypher` goes through `safe_identifier`/`edge_type`. Caller data travels only as
+            # `:params`, JSON-encoded.
+            sql = f"SELECT * FROM ag_catalog.cypher('{graph}', $$ {cypher} $$, :params) AS ({columns})"  # noqa: S608
             result = await session.execute(text(sql), {"params": json.dumps(dict(params))})
         else:
-            sql = f"SELECT * FROM ag_catalog.cypher('{graph}', $$ {cypher} $$) AS ({columns})"
+            sql = f"SELECT * FROM ag_catalog.cypher('{graph}', $$ {cypher} $$) AS ({columns})"  # noqa: S608
             result = await session.execute(text(sql))
         return result.all()
 

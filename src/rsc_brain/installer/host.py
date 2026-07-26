@@ -39,7 +39,13 @@ def _docker_present() -> bool:
     if shutil.which("docker") is None:
         return False
     try:
-        result = subprocess.run(["docker", "info"], capture_output=True, timeout=5, check=False)
+        # path would be wrong on every distribution, and `shutil.which` already gated the call.
+        result = subprocess.run(
+            ["docker", "info"],  # noqa: S607
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
         return result.returncode == 0
     except (OSError, subprocess.SubprocessError):  # pragma: no cover - environment-dependent
         return False
@@ -50,7 +56,7 @@ def _detect_gpu() -> tuple[bool, str | None, int | None]:
         return False, None, None
     try:  # pragma: no cover - requires a GPU host
         result = subprocess.run(
-            [
+            [  # noqa: S607
                 "nvidia-smi",
                 "--query-gpu=name,memory.total",
                 "--format=csv,noheader,nounits",
