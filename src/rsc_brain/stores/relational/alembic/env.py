@@ -64,8 +64,20 @@ def _do_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
+    # AUDIT-049 / R52: a bounded lock wait for every migration, applied as CONNECTION settings rather
+    # than as statements on the live connection. Issuing `SET` before Alembic's own transaction begins
+    # opens an implicit transaction that Alembic's commit does not close — the migration then runs and
+    # is rolled back when the connection closes, silently. A runner that commits nothing is a far worse
+    # failure than a missing timeout, and it is exactly what the first version of this fix did.
+    from rsc_brain.stores.relational.migrations import migration_server_settings
+
     section = config.get_section(config.config_ini_section, {})
-    connectable = async_engine_from_config(section, prefix="sqlalchemy.", poolclass=pool.NullPool)
+    connectable = async_engine_from_config(
+        section,
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+        connect_args={"server_settings": migration_server_settings()},
+    )
     async with connectable.connect() as connection:
         await connection.run_sync(_do_migrations)
     await connectable.dispose()

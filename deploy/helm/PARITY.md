@@ -15,7 +15,7 @@ re-record the hash **in the same PR**.
 | Compose service | Chart resource(s) | Notes |
 |---|---|---|
 | `db` (image `rsc-brain/db:pg16-age-pgvector`) | `db-statefulset.yaml` (StatefulSet + headless Service) | Single D1 image; `pg_isready` → readiness/liveness probes (parity with the compose healthcheck). |
-| `migrate` (`brain init`, one-shot) | `migrate-job.yaml` (Job, hook `post-install,pre-upgrade`) | Sole migrator; `wait-for-db` initContainer replaces compose `depends_on: db healthy`. Idempotent (FR-2.3). |
+| `migrate` (`brain init`, one-shot) | `migrate-job.yaml` (ordinary Job, named per release revision) | Sole migrator; `wait-for-db` initContainer replaces compose `depends_on: db healthy`. Idempotent (FR-2.3). NOT a Helm hook (R49): a `post-install` hook runs *after* `--wait` has waited for the api, whose readiness needs the schema the hook has not applied — a deadlock. `pre-install` cannot work either, because the database is a resource of this same chart. |
 | `api` (`brain verify` healthcheck) | `api-deployment.yaml` (Deployment + ClusterIP Service) | Readiness = `brain verify` (same check, FR-11.2). Exposed only via Ingress. |
 | `worker` (`python -m rsc_brain.worker`) | `worker-deployment.yaml` (Deployment) | No healthcheck in compose ⇒ no probes; k8s restarts on process exit. |
 | `console` (Next.js) | `console-deployment.yaml` (Deployment + ClusterIP Service) | `API_URL` → the api Service. Exposed only via Ingress. |
@@ -44,9 +44,12 @@ re-record the hash **in the same PR**.
 
 - **Caddy → Ingress + cert-manager**: the standard k8s idiom; cert-manager is a cluster prereq (D8),
   not installed by the chart. Same pattern as the PaaS overlays.
-- **`depends_on` → probes + hook ordering**: k8s has no compose-style `depends_on`. The migrate Job
-  (`post-install,pre-upgrade`) is the sole migrator; the api's `brain verify` readiness keeps it out
-  of the Service until the schema is at head — self-healing equivalent of `service_completed_successfully`.
+- **`depends_on` → init containers**: k8s has no compose-style `depends_on`. The migrate Job is the sole
+  migrator and an ordinary resource, so `helm install --wait` waits for it to COMPLETE; api and worker
+  each carry a `wait-for-schema` initContainer, so the pod stays in Init until the schema is at head.
+  That is the equivalent of `service_completed_successfully` — and it is what R49 required: the app waits
+  for the migration instead of the installer waiting for the app while the app waits for the migration.
+  `brain verify` readiness remains, but as a health signal rather than as the ordering mechanism.
 - **`security_opt: no-new-privileges` → `securityContext` (runAsNonRoot)**: the k8s pod-security
   equivalent.
 - **GPU (D8)**: host precondition in both. The chart adds an *opt-in* in-cluster Ollama Deployment

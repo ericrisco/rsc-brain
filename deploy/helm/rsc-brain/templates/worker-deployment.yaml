@@ -27,6 +27,19 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.securityContext | nindent 8 }}
+      initContainers:
+        # AUDIT-047 / R49: block until the migration Job has brought the schema to head. Without this
+        # the ONLY gate is the readiness probe — and readiness is what `helm install --wait` waits on, so
+        # the installer waited for the app while the app waited for the migration.
+        - name: wait-for-schema
+          image: {{ include "rsc-brain.image" (dict "root" . "repository" .Values.image.app.repository) }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["brain", "wait-for-schema", "--timeout", "600"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "rsc-brain.configName" . }}
+            - secretRef:
+                name: {{ include "rsc-brain.secretName" . }}
       containers:
         - name: worker
           image: {{ include "rsc-brain.image" (dict "root" . "repository" .Values.image.app.repository) }}

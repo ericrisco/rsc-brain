@@ -223,6 +223,57 @@ def apply(
         raise typer.Exit(code=1)
 
 
+def wait_for_schema(
+    ctx: typer.Context,
+    timeout: int = typer.Option(300, "--timeout", help="Seconds to wait before giving up."),
+    json_output: bool = JSON_OPTION,
+) -> None:
+    """Block until the database schema is at head, then exit 0 (AUDIT-047 / R49).
+
+    This is what an init container waits on. The alternative — letting READINESS be the only gate — is a
+    deadlock on Kubernetes: `helm install --wait` waits for the app to be Ready, and the app is not Ready
+    until the schema is at head, which the migration Job has not applied yet because Helm is still
+    waiting. Gating the pod on the schema in an init container inverts that dependency and leaves
+    readiness meaning what it should: "this process can serve".
+
+    Deliberately narrow: it asks whether the schema is at head and nothing else. It must not need a model
+    gateway, a full configuration tree, or anything else that can fail for unrelated reasons while a
+    perfectly good migration is running.
+    """
+    import time
+
+    async def _at_head() -> bool:
+        from sqlalchemy import text
+
+        from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
+
+        engine = make_engine()
+        try:
+            async with make_sessionmaker(engine)() as session:
+                stamped = await session.scalar(
+                    text("SELECT count(*) FROM alembic_version WHERE version_num IS NOT NULL")
+                )
+                return bool(stamped)
+        except Exception:
+            return False
+        finally:
+            await engine.dispose()
+
+    deadline = time.monotonic() + timeout
+    while True:
+        if asyncio.run(_at_head()):
+            emit_result(
+                ctx, json_output, {"status": "ok", "schema": "head"}, "brain: schema is at head."
+            )
+            return
+        if time.monotonic() >= deadline:
+            typer.echo(
+                f"brain wait-for-schema: the schema was not at head within {timeout}s", err=True
+            )
+            raise typer.Exit(code=1)
+        time.sleep(2)
+
+
 def verify(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
     """Smoke-test the running system: gateway probe + database (extensions + schema at head)."""
 
