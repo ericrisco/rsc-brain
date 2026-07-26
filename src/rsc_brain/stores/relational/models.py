@@ -666,6 +666,27 @@ class Correction(Base):
     )
 
 
+class ErasureTombstone(Base):
+    """A name this project has erased (AUDIT-023 / R43).
+
+    Erasure never auto-revives: without this row the next document naming the same person recreates the
+    entity as if nothing had happened, with no decision and no audit. ``retired_at`` records the
+    explicit owner authorization that allows the name back, so the history of both decisions survives.
+    """
+
+    __tablename__ = "erasure_tombstones"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    normalized_name: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_type: Mapped[str | None] = mapped_column(Text)
+    erased_at: Mapped[dt.datetime] = _created_at()
+    erased_by: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    retired_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        Index("ix_erasure_tombstones_project_id_normalized_name", "project_id", "normalized_name"),
+    )
+
+
 class FeedbackDailyImpact(Base):
     """Consumed feedback budget per (principal, claim, day) — the cap that stops agent spam
     from moving a claim more than the daily limit (FR-5.4/14.5)."""

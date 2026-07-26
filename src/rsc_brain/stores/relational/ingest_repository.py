@@ -881,12 +881,22 @@ class IngestRepository:
     async def _upsert_entities(
         self, session: AsyncSession, scope: ProjectScope, entities: Sequence[EntitySpec]
     ) -> dict[str, str]:
+        """Create or reuse each entity — except one this project has erased (R43).
+
+        Erasure never auto-revives (AUDIT-023, ratified). Without this check the next document naming an
+        erased person recreated the entity as if nothing had happened: no decision, no audit, and no way
+        for the operator who performed the erasure to know it came back. Allowing the name again is an
+        explicit owner action that retires the tombstone.
+        """
+        erased = await self._erased_names(session, scope)
         ids: dict[str, str] = {}
         for entity in entities:
             norm = normalize_name(entity.name)
             key = f"{norm}|{entity.type}"
             if key in ids:
                 continue
+            if norm in erased:
+                continue  # tombstoned: the extraction still ran, the identity is simply not recreated
             statement = (
                 pg_insert(models.Entity)
                 .values(
@@ -910,6 +920,17 @@ class IngestRepository:
             ids[key] = str(entity_id)
             await self._insert_new_aliases(session, scope, str(entity_id), entity.aliases)
         return ids
+
+    @staticmethod
+    async def _erased_names(session: AsyncSession, scope: ProjectScope) -> frozenset[str]:
+        """Normalized names this project has erased and not authorized back (R43)."""
+        rows = await session.scalars(
+            select(models.ErasureTombstone.normalized_name).where(
+                models.ErasureTombstone.project_id == _pid(scope),
+                models.ErasureTombstone.retired_at.is_(None),
+            )
+        )
+        return frozenset(rows)
 
     async def _insert_new_aliases(
         self,

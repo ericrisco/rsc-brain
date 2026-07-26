@@ -17,6 +17,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import security
+from rsc_brain.scope import Principal, PrincipalType
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
 
@@ -80,15 +81,28 @@ class IdentityService:
             )
             return list(rows)
 
-    async def delete_project(self, slug: str) -> None:
+    async def delete_project(self, slug: str, *, data_dir: str | None = None) -> None:
+        """Delete a project through the ONE all-store orchestrator (AUDIT-026 / R44).
+
+        This used to delete the ``projects`` row and rely on cascades — so the AGE graph and the stored
+        source documents survived, and `brain forget --whole-project` (which did drop the graph) removed
+        more than `brain projects delete` did. Two routes, two meanings of "delete", and the operator
+        could not tell which they had used.
+        """
+        from rsc_brain.knowledge.gdpr import hard_delete_project
+
         if slug == DEFAULT_PROJECT_SLUG:
             raise ValueError("the 'default' project cannot be deleted")
-        async with session_scope(self._sm) as session:
-            project = await session.scalar(
-                select(models.Project).where(models.Project.slug == slug)
+        async with self._sm() as session:
+            project_id = await session.scalar(
+                select(models.Project.id).where(models.Project.slug == slug)
             )
-            if project is not None:
-                await session.delete(project)
+        if project_id is None:
+            return
+        scope = Principal(id="cli", type=PrincipalType.HUMAN, can_curate=True).scope_for(
+            str(project_id)
+        )
+        await hard_delete_project(self._sm, scope, data_dir=data_dir)
 
     # --- users & invitations -------------------------------------------------
 

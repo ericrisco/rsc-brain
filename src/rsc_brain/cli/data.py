@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import os
+import shutil
 import subprocess
 import uuid
 from pathlib import Path
@@ -82,39 +84,96 @@ def _libpq(dsn: str) -> tuple[dict[str, str], str]:
 
 def backup(
     ctx: typer.Context,
-    output: Path = typer.Option(..., "--output", "-o", help="Destination dump file."),
+    output: Path = typer.Option(..., "--output", "-o", help="Destination snapshot directory."),
     json_output: bool = JSON_OPTION,
 ) -> None:
-    """Back up the database to a single pg_dump custom-format artifact (embeddings included)."""
+    """Back up the whole instance: the database AND the stored source documents (R40).
+
+    This used to write one ``pg_dump`` file. The database carries the graph and the vectors — both live
+    in Postgres — but not the originals, so a backup was silently partial: restoring it produced a corpus
+    whose every source document was missing while the rows still pointed at paths that no longer existed.
+    And nothing recorded what a backup contained, so there was no way to find that out before needing it.
+
+    The output is a directory with a manifest listing every component's size and SHA-256, which is what
+    ``brain restore`` verifies before it activates anything.
+    """
+    from rsc_brain.deploy.snapshot import BLOBS_DIR, DATABASE_NAME, build_manifest, write_manifest
+
+    output.mkdir(parents=True, exist_ok=True)
     env, url = _libpq(resolve_dsn())
     subprocess.run(
-        ["pg_dump", "--format=custom", "--no-owner", "--file", str(output), url],
+        [
+            "pg_dump",
+            "--format=custom",
+            "--no-owner",
+            "--file",
+            str(output / DATABASE_NAME),
+            url,
+        ],
         env=env,
         check=True,
     )
+    blobs_source = Path(_data_dir()) / "blobs"
+    if blobs_source.exists():
+        shutil.copytree(blobs_source, output / BLOBS_DIR, dirs_exist_ok=True)
+    manifest = build_manifest(output, created_at=dt.datetime.now(dt.UTC).isoformat())
+    write_manifest(output, manifest)
     emit_result(
         ctx,
         json_output,
-        {"status": "ok", "action": "backup", "output": str(output)},
-        f"brain backup: wrote {output}.",
+        {
+            "status": "ok",
+            "action": "backup",
+            "output": str(output),
+            "components": len(manifest.components),
+            "blobs": manifest.blob_count,
+        },
+        f"brain backup: wrote {output} ({len(manifest.components)} components, "
+        f"{manifest.blob_count} stored documents).",
     )
 
 
 def restore(
     ctx: typer.Context,
-    file: Path = typer.Argument(..., help="Dump file produced by `brain backup`."),
+    snapshot: Path = typer.Argument(..., help="Snapshot directory produced by `brain backup`."),
     json_output: bool = JSON_OPTION,
 ) -> None:
-    """Restore a dump, apply migrations, and verify the database (extensions + schema head).
+    """Restore a verified snapshot — and nothing else (R41).
 
-    ``pg_restore --clean`` reports non-zero when it cannot DROP/recreate objects owned by the
-    Apache AGE extension (its per-graph label tables and the extension itself resist a plain
-    dump/restore) — those errors are **non-fatal**: the data restores regardless. So the
-    post-restore **verification** (extensions present + schema at head), not pg_restore's exit
-    code, is the gate."""
+    The snapshot is verified BEFORE anything is touched: format, completeness, sizes and SHA-256 of
+    every component including each stored document. A snapshot that does not verify is refused with the
+    reasons, and the existing target is left exactly as it was — a failed restore must not cost the
+    operator the environment they still had.
+
+    ``pg_restore --clean`` reports non-zero when it cannot DROP/recreate objects owned by the Apache AGE
+    extension (its per-graph label tables resist a plain dump/restore), so its exit code alone is not the
+    gate. But it is no longer ignored either: its output is surfaced, and the gate is the snapshot's own
+    verification plus the post-restore database check (extensions + schema head).
+    """
+    from rsc_brain.deploy.snapshot import BLOBS_DIR, DATABASE_NAME, verify_snapshot
+
+    verification = verify_snapshot(snapshot)
+    if not verification.ok:
+        typer.echo(f"brain restore: refusing to restore — {verification.explain()}", err=True)
+        emit_result(
+            ctx,
+            json_output,
+            {"status": "failed", "action": "restore", "problems": list(verification.problems)},
+            "brain restore: snapshot did not verify; nothing was changed.",
+        )
+        raise typer.Exit(code=1)
+
     env, url = _libpq(resolve_dsn())
     result = subprocess.run(
-        ["pg_restore", "--clean", "--if-exists", "--no-owner", "--dbname", url, str(file)],
+        [
+            "pg_restore",
+            "--clean",
+            "--if-exists",
+            "--no-owner",
+            "--dbname",
+            url,
+            str(snapshot / DATABASE_NAME),
+        ],
         env=env,
         check=False,
         capture_output=True,
@@ -125,11 +184,20 @@ def restore(
     if not verified:
         typer.echo(result.stderr, err=True)
         raise typer.Exit(code=1)
+    # The originals are restored only after the database is verified: a half-restored data directory
+    # beside an unusable database is the partial state this finding is about.
+    restored_blobs = 0
+    source = snapshot / BLOBS_DIR
+    if source.exists():
+        destination = Path(_data_dir()) / "blobs"
+        destination.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, destination, dirs_exist_ok=True)
+        restored_blobs = sum(1 for p in source.rglob("*") if p.is_file())
     emit_result(
         ctx,
         json_output,
-        {"status": "ok", "action": "restore", "verified": True},
-        f"brain restore: restored {file} and verified.",
+        {"status": "ok", "action": "restore", "verified": True, "blobs": restored_blobs},
+        f"brain restore: restored {snapshot} ({restored_blobs} stored documents) and verified.",
     )
 
 
@@ -184,6 +252,31 @@ def forget(
         f"brain forget: document {document} — deleted={result['deleted']}, "
         f"tombstoned={result['tombstoned']}.",
     )
+
+
+#: The env var pydantic-settings maps to `ingest.data_dir`, and the documented default.
+_DATA_DIR_ENV = "RSC_BRAIN_INGEST__DATA_DIR"
+_DATA_DIR_DEFAULT = "data"
+
+
+def _data_dir() -> str:
+    """The configured data directory, so backup and deletion can reach the stored originals.
+
+    Deliberately NOT `load_settings()`: that requires the whole configuration tree, including every
+    model capability, and neither backing up files nor deleting them needs a working model gateway. An
+    instance whose capabilities are misconfigured is exactly one an operator may need to back up — making
+    `brain backup` fail on a validation error it has nothing to do with would be a worse defect than the
+    one this fixes.
+    """
+    configured = os.environ.get(_DATA_DIR_ENV)
+    if configured:
+        return configured
+    try:
+        from rsc_brain.config import load_settings
+
+        return load_settings().ingest.data_dir
+    except Exception:
+        return _DATA_DIR_DEFAULT
 
 
 async def _forget_document(project_id: str, document_id: str) -> dict[str, int]:
@@ -277,7 +370,7 @@ def _forget_project_cmd(
             scope = Principal(id="cli", type=PrincipalType.HUMAN, can_curate=True).scope_for(
                 project_id
             )
-            await hard_delete_project(sessionmaker, scope)
+            await hard_delete_project(sessionmaker, scope, data_dir=_data_dir())
             return True
         finally:
             await engine.dispose()
