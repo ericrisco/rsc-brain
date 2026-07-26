@@ -24,16 +24,25 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_chunks_text_tsv "
-        "ON chunks USING gin (to_tsvector('simple', text))"
-    )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_claims_text_tsv "
-        "ON claims USING gin (to_tsvector('simple', text))"
-    )
+    # AUDIT-049 / R52: CONCURRENTLY, so writes to a corpus-sized table keep working during the build.
+    # A plain CREATE INDEX holds ACCESS EXCLUSIVE for the whole build, and every reader queues behind
+    # that lock request — a visible outage during an upgrade the operator was told was online.
+    #
+    # CONCURRENTLY cannot run inside a transaction, hence the autocommit block. An interrupted build can
+    # leave an INVALID index behind; `IF NOT EXISTS` plus the re-runnable shape means a retry converges,
+    # and an invalid index is inert rather than wrong (the planner ignores it).
+    with op.get_context().autocommit_block():
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_chunks_text_tsv "
+            "ON chunks USING gin (to_tsvector('simple', text))"
+        )
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_claims_text_tsv "
+            "ON claims USING gin (to_tsvector('simple', text))"
+        )
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS ix_claims_text_tsv")
-    op.execute("DROP INDEX IF EXISTS ix_chunks_text_tsv")
+    with op.get_context().autocommit_block():
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_claims_text_tsv")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_chunks_text_tsv")

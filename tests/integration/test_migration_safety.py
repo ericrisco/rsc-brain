@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -40,7 +41,7 @@ def _migration_files() -> list[Path]:
     return sorted(p for p in VERSIONS.glob("*.py") if not p.name.startswith("__"))
 
 
-def _rendered() -> list[dict]:
+def _rendered() -> list[dict[str, Any]]:
     """The chart as Kubernetes would receive it.
 
     Rendered rather than parsed as YAML: the templates are Go templates, so reading them directly tells
@@ -57,7 +58,7 @@ def _rendered() -> list[dict]:
     return [doc for doc in yaml.safe_load_all(out) if doc]
 
 
-def _kind(docs: list[dict], kind: str, component: str) -> dict:
+def _kind(docs: list[dict[str, Any]], kind: str, component: str) -> dict[str, Any]:
     for doc in docs:
         labels = (doc.get("metadata") or {}).get("labels") or {}
         if doc.get("kind") == kind and labels.get("app.kubernetes.io/component") == component:
@@ -146,15 +147,21 @@ async def test_a_migration_that_cannot_take_its_lock_gives_up(migrated_dsn: str)
     import os
 
     from rsc_brain.stores.relational.database import DSN_ENV_VAR, make_engine, make_sessionmaker
-    from rsc_brain.stores.relational.migrations import upgrade_to_head
+    from rsc_brain.stores.relational.migrations import (
+        MIGRATION_LOCK_TIMEOUT_MS,
+        upgrade_to_head,
+    )
 
+    assert 0 < MIGRATION_LOCK_TIMEOUT_MS <= 30_000, (
+        f"the migration lock timeout is {MIGRATION_LOCK_TIMEOUT_MS}ms — a bound nobody would notice is "
+        "not a bound"
+    )
     blocker_engine = make_engine(migrated_dsn)
     blocker_sessionmaker = make_sessionmaker(blocker_engine)
     previous = os.environ.get(DSN_ENV_VAR)
     os.environ[DSN_ENV_VAR] = migrated_dsn
     try:
-        async with blocker_sessionmaker() as blocker:
-            await blocker.execute(text("BEGIN"))
+        async with blocker_sessionmaker() as blocker, blocker.begin():
             await blocker.execute(text("LOCK TABLE alembic_version IN ACCESS EXCLUSIVE MODE"))
             try:
                 # 20s: comfortably more than any bounded lock wait, far less than "forever".
@@ -169,7 +176,7 @@ async def test_a_migration_that_cannot_take_its_lock_gives_up(migrated_dsn: str)
                     f"the migration failed, but not on the lock: {raised.value!r}"
                 )
             finally:
-                await blocker.execute(text("ROLLBACK"))
+                await blocker.rollback()
     finally:
         if previous is None:
             os.environ.pop(DSN_ENV_VAR, None)

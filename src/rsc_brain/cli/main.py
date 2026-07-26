@@ -37,6 +37,7 @@ from rsc_brain.cli.installer import init as _init
 from rsc_brain.cli.installer import plan as _plan
 from rsc_brain.cli.installer import usage as _usage
 from rsc_brain.cli.installer import verify as _verify
+from rsc_brain.cli.installer import wait_for_schema as _wait_for_schema
 from rsc_brain.cli.ontology import ontology_app
 from rsc_brain.cli.skills import skills_app
 
@@ -135,6 +136,12 @@ for _name in COMMANDS:
         app.command(_name, help=f"[{_name}] — not implemented in this SPEC; see the owning SPEC.")(
             _make_stub(_name)
         )
+
+# `wait-for-schema` is introduced by AUDIT-047 (R49): what an init container blocks on, so the app is
+# gated on the migration without the installer waiting on the app.
+app.command(
+    "wait-for-schema", help="Block until the database schema is at head (for init containers)."
+)(_wait_for_schema)
 
 # `preflight` is introduced by AUDIT-039 (R17): the read-only pre-migration data report.
 app.command("preflight", help="Report data that would block a migration (cross-project rows).")(

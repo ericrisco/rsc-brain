@@ -24,12 +24,16 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.add_column("topics", sa.Column("hard_window_days", sa.Integer(), nullable=True))
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_claims_project_id_valid "
-        "ON claims (project_id, valid_from, valid_to)"
-    )
+    # AUDIT-049 / R52: CONCURRENTLY on `claims`, which grows with the corpus. The column above is a
+    # metadata-only change on a small table and needs no such care.
+    with op.get_context().autocommit_block():
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_claims_project_id_valid "
+            "ON claims (project_id, valid_from, valid_to)"
+        )
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS ix_claims_project_id_valid")
+    with op.get_context().autocommit_block():
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_claims_project_id_valid")
     op.drop_column("topics", "hard_window_days")
