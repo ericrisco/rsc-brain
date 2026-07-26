@@ -187,7 +187,7 @@ def _render_ingress() -> list[dict[str, object]]:
     helm = shutil.which("helm")
     if helm is None:  # pragma: no cover - CI installs helm; a local run without it says so
         pytest.skip("helm is not installed")
-    rendered = subprocess.run(  # noqa: S603
+    rendered = subprocess.run(
         [helm, "template", "rb", str(REPO_ROOT / "deploy" / "helm" / "rsc-brain")],
         capture_output=True,
         text=True,
