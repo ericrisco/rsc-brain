@@ -143,13 +143,29 @@ class IngestionPipeline:
     async def process(self, scope: ProjectScope, document_id: str) -> RunStatus:
         """Run the parse phase; if the source policy auto-approves, continue to publish."""
         doc = await self._require_document(scope, document_id)
+        if doc.status == DocStatus.REJECTED.value:
+            # T022 re-audit: a document rejected while its job waited in the queue used to be parsed,
+            # re-approved and published — the worker undoing an operator's refusal. Since R37 the queue
+            # is the normal path, so this is the common case, not an exotic race.
+            return await self._run_status(scope, document_id)
         await self._repo.ensure_run(scope, document_id, phase=doc.status)
         parsed = self._parse(doc)
         await self._parse_phase(scope, doc, parsed)
 
         status = (await self._require_document(scope, document_id)).status
         if status == DocStatus.AUTO_APPROVED.value:
-            await self._repo.set_status(scope, document_id, DocStatus.APPROVED.value)
+            # T022 re-audit: this used to `set_status(APPROVED)` unconditionally, which is the
+            # read-then-write R31 removed from `approve` and `reject` and left here — on the WORKER's
+            # path, which R37 made the normal route for an uploaded document. An operator who rejected
+            # the document while the job was queued had the refusal silently overwritten, and its claims
+            # published. Losing the transition means someone else decided; that is not an error.
+            if not await self._repo.transition_status(
+                scope,
+                document_id,
+                expected=[DocStatus.AUTO_APPROVED.value],
+                status=DocStatus.APPROVED.value,
+            ):
+                return await self._run_status(scope, document_id)
             status = DocStatus.APPROVED.value
         if status == DocStatus.APPROVED.value:
             await self._publish(scope, document_id, parsed)

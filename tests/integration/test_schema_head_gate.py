@@ -19,6 +19,7 @@ looks like — and asking each of them.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 
 import pytest
@@ -248,3 +249,58 @@ async def test_deleting_a_project_also_removes_its_cached_embeddings(migrated_ds
         "a deleted project's sentences still have cached embeddings, so a derivative of a removed "
         "tenant's content survives in a store nobody scoped"
     )
+
+
+# --------------------------------------------------------------------------- #
+# R31 on the third path: the worker's own publish still overwrites a rejection
+# --------------------------------------------------------------------------- #
+
+
+async def test_processing_a_rejected_document_does_not_publish_it(
+    build_harness: object, make_completion: object
+) -> None:
+    """``process`` reads the status and then writes APPROVED unconditionally.
+
+    R31 made approve and reject conditional, but the WORKER's own path was left as a read-then-write —
+    and since R37 moved ingestion to the worker, that is the normal route for an uploaded document. An
+    operator rejects an auto-approved document; the worker had already read `auto_approved`, overwrites
+    the rejection, and publishes. The refusal is undone silently and the claims go live.
+    """
+    from tests.integration.conftest import unique_slug
+
+    harness = build_harness(  # type: ignore[operator]
+        completion=make_completion(  # type: ignore[operator]
+            claims=[{"text": "The SLA is 48 hours.", "subject": "SLA"}], tags=["hr"]
+        )
+    )
+    project = await harness.setup_project(unique_slug("acme"), [("hr", 0)])
+    scope = harness.scope(project, allowed_topics=["hr"])
+    await harness.repo.create_source(
+        scope, name="auto", type_="folder", policy="source_tags", default_tags=["hr"]
+    )
+    outcome = await harness.service.ingest_bytes(
+        scope, b"# Handbook\n\nThe SLA is 48 hours.\n", filename="hb.md", source="auto", run=False
+    )
+    await harness.service.reject(scope, outcome.document_id, reason="refused before processing")
+
+    # The worker picks the job up — with the status it read before the rejection landed.
+    with contextlib.suppress(ValueError):
+        await harness.pipeline.process(scope, outcome.document_id)
+
+    from sqlalchemy import func as _func
+    from sqlalchemy import select as _select
+
+    from rsc_brain.stores.relational import models as m
+
+    async with harness.sm() as session:
+        document = await session.get(m.Document, __import__("uuid").UUID(outcome.document_id))
+        claims = await session.scalar(
+            _select(_func.count())
+            .select_from(m.Claim)
+            .where(m.Claim.source_document_id == __import__("uuid").UUID(outcome.document_id))
+        )
+    assert document is not None
+    assert document.status == "rejected", (
+        f"the worker overwrote a rejection and set the document to {document.status!r}"
+    )
+    assert claims == 0, f"a rejected document published {claims} claim(s)"
