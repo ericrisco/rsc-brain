@@ -7,6 +7,7 @@ hosts, so this test skips locally and runs in CI (which installs postgresql-clie
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -48,10 +49,24 @@ async def test_backup_restore_roundtrip(migrated_dsn: str, tmp_path: Path) -> No
     finally:
         await engine.dispose()
 
-    env = {**os.environ, DSN_ENV_VAR: migrated_dsn}
-    dump = tmp_path / "rsc-brain.dump"
-    _brain(env, "backup", "--output", str(dump))
-    assert dump.exists() and dump.stat().st_size > 0
+    # A snapshot is a directory with a manifest (R40): the database dump plus the stored originals,
+    # each with a checksum, so `restore` can verify the whole thing before touching anything.
+    data_dir = tmp_path / "data"
+    (data_dir / "blobs" / slug).mkdir(parents=True)
+    original = data_dir / "blobs" / slug / "handbook.md"
+    original.write_bytes(b"# Handbook\n\nThe SLA is 48 hours.\n")
+    env = {
+        **os.environ,
+        DSN_ENV_VAR: migrated_dsn,
+        "RSC_BRAIN_INGEST__DATA_DIR": str(data_dir),
+    }
+    snapshot = tmp_path / "snapshot"
+    _brain(env, "backup", "--output", str(snapshot))
+    manifest = json.loads((snapshot / "manifest.json").read_text())
+    assert any(c["path"] == "database.dump" for c in manifest["components"])
+    assert any(c["path"].endswith("handbook.md") for c in manifest["components"]), (
+        f"the stored original is not in the snapshot manifest: {manifest['components']}"
+    )
 
     # Wipe the seeded row, then restore it from the dump.
     engine = make_engine(migrated_dsn)
@@ -63,7 +78,19 @@ async def test_backup_restore_roundtrip(migrated_dsn: str, tmp_path: Path) -> No
     finally:
         await engine.dispose()
 
-    _brain(env, "restore", str(dump))
+    # R41: a snapshot that does not verify is refused, and the existing target is left alone.
+    tampered = tmp_path / "tampered"
+    shutil.copytree(snapshot, tampered)
+    (tampered / "database.dump").write_bytes(b"truncated")
+    refused = subprocess.run(
+        ["uv", "run", "brain", "restore", str(tampered)], env=env, capture_output=True, text=True
+    )
+    assert refused.returncode != 0, "a corrupt snapshot was accepted"
+    assert "refusing" in (refused.stderr + refused.stdout).lower()
+
+    _brain(env, "restore", str(snapshot))
+    restored = data_dir / "blobs" / slug / "handbook.md"
+    assert restored.read_bytes() == b"# Handbook\n\nThe SLA is 48 hours.\n"
 
     engine = make_engine(migrated_dsn)
     sessionmaker = make_sessionmaker(engine)

@@ -12,8 +12,9 @@ counts, because the finding is precisely that the rows went away and the content
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -34,8 +35,9 @@ COMPOSE = REPO_ROOT / "deploy" / "docker-compose.prod.yml"
 BLOB_SUBDIR = "blobs"
 
 
-def _mounts(service: dict[str, object]) -> list[str]:
-    return [str(v) for v in (service.get("volumes") or [])]
+def _mounts(service: Mapping[str, Any]) -> list[str]:
+    volumes = service.get("volumes") or []
+    return [str(v) for v in volumes]
 
 
 # --------------------------------------------------------------------------- #
@@ -60,6 +62,19 @@ def test_the_api_and_worker_persist_the_data_directory() -> None:
             f"service {name!r} does not mount a persistent volume for its data directory, so the "
             f"documents it writes are lost when the container is replaced; mounts={mounts}"
         )
+
+    # The PaaS targets are OVERLAYS on this file (`-f prod -f coolify`), so they inherit these mounts —
+    # unless they replace them. R45-R48 recorded the cost of fixing one target and leaving three:
+    # `volumes` is a list, and a list in an override REPLACES rather than merges.
+    for overlay in ("coolify", "dokploy"):
+        doc = yaml.safe_load((REPO_ROOT / "deploy" / f"docker-compose.{overlay}.yml").read_text())
+        for name in ("api", "worker"):
+            service = (doc.get("services") or {}).get(name) or {}
+            overridden = _mounts(service)
+            assert not overridden or any("app_data" in mount for mount in overridden), (
+                f"the {overlay} overlay replaces {name}'s volumes without the data directory, so that "
+                f"target loses every stored document on redeploy; mounts={overridden}"
+            )
 
     declared = set(compose.get("volumes") or {})
     mounted = {
@@ -88,8 +103,7 @@ async def test_forgetting_a_document_deletes_its_stored_file(
     one thing "forget this document" has to mean. A GDPR erasure that leaves the source PDF in place
     has not erased anything.
     """
-    from rsc_brain.stores.age_graph_store import AgeGraphStore
-    from rsc_brain.stores.relational.store import PgRelationalStore
+    from rsc_brain.knowledge.gdpr import forget_document
 
     harness = build_harness()
     project = await harness.setup_project(unique_slug("acme"), TOPICS)
@@ -106,13 +120,9 @@ async def test_forgetting_a_document_deletes_its_stored_file(
     blob = Path(document.path)
     assert blob.exists(), "the ingest did not store a file, so this check would be vacuous"
 
-    # Exactly what `brain forget --document` does today: delete the row, tombstone the graph nodes.
-    await PgRelationalStore(harness.sm).knowledge().hard_delete_document(scope, outcome.document_id)
-    await AgeGraphStore(harness.sm).tombstone_document(scope, outcome.document_id)
+    await forget_document(harness.sm, scope, outcome.document_id, data_dir=str(tmp_path))
 
-    assert not blob.exists(), (
-        f"the stored document {blob} is still on disk after it was forgotten"
-    )
+    assert not blob.exists(), f"the stored document {blob} is still on disk after it was forgotten"
 
 
 # --------------------------------------------------------------------------- #
@@ -348,11 +358,11 @@ async def test_deleting_a_project_removes_its_blobs_and_is_idempotent(
     blobs = tmp_path / BLOB_SUBDIR / project
     assert list(blobs.glob("*")), "no blob was stored, so this check would be vacuous"
 
-    await hard_delete_project(harness.sm, scope)
+    await hard_delete_project(harness.sm, scope, data_dir=str(tmp_path))
 
     assert not blobs.exists() or not list(blobs.glob("*")), (
         f"the deleted project's files are still on disk at {blobs}"
     )
     # A second run must be a no-op rather than an error: deletion is exactly the operation an operator
     # retries after a timeout.
-    await hard_delete_project(harness.sm, scope)
+    await hard_delete_project(harness.sm, scope, data_dir=str(tmp_path))

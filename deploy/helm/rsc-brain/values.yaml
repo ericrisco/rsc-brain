@@ -71,6 +71,9 @@ persistence:
   db:
     size: 10Gi
     storageClass: ""
+  appData: # Stored source documents — the originals (R39). Losing this loses every ingested file.
+    size: 20Gi
+    storageClass: ""
   inbox: # PDF drop zone (FR-1.13)
     size: 5Gi
     storageClass: ""

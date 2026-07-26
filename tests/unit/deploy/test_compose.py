@@ -14,7 +14,11 @@ _CANONICAL = _DEPLOY / "docker-compose.prod.yml"
 _OVERLAYS = (_DEPLOY / "docker-compose.coolify.yml", _DEPLOY / "docker-compose.dokploy.yml")
 
 _REQUIRED_SERVICES = {"db", "migrate", "api", "worker", "console", "caddy"}
-_REQUIRED_VOLUMES = {"db_data", "inbox", "model_cache"}
+# R39: `app_data` holds the stored source documents — without it every original is lost when a
+# container is replaced. `model_cache` is NOT here: it was declared for an Ollama service this file does
+# not define (GPU stays a host precondition, D8), so nothing could mount it, and a declared volume
+# nobody mounts is storage the operator believes they have.
+_REQUIRED_VOLUMES = {"db_data", "app_data", "inbox"}
 
 
 def _load(path: Path) -> dict[str, Any]:

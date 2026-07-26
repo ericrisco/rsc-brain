@@ -26,8 +26,9 @@ re-record the hash **in the same PR**.
 | Compose volume | Chart resource | Notes |
 |---|---|---|
 | `db_data` | StatefulSet `volumeClaimTemplates: db-data` | Postgres data (graph + relational). |
-| `inbox` | PVC `<release>-inbox` | PDF drop zone (FR-1.13); mounted on api + worker at `/data/inbox`. |
-| `model_cache` | PVC `<release>-model-cache` | Ollama/HF weights; mounted on worker (+ opt-in ollama). |
+| `app_data` | PVC `<release>-app-data` | The stored SOURCE DOCUMENTS (R39); mounted on api + worker at `/var/lib/rsc-brain/data`, which is `RSC_BRAIN_INGEST__DATA_DIR`. Without it a replaced container loses every original while the rows still point at their paths. |
+| `inbox` | PVC `<release>-inbox` | PDF drop zone (FR-1.13); mounted on api + worker at `/var/lib/rsc-brain/data/inbox`, INSIDE the data dir — the chart used to point the data dir at this volume, conflating the store with the drop zone. |
+| _(none)_ | PVC `<release>-model-cache` | Ollama/HF weights; mounted on worker (+ opt-in in-cluster ollama). Chart-only: the compose declares no model cache, because Ollama is a host precondition there (D8) and no compose service would mount it. |
 | `caddy_data`, `caddy_config` | — (N/A) | Caddy is dropped; the Ingress controller + cert-manager hold TLS state. |
 
 ## Secrets / config

@@ -1,10 +1,29 @@
 {{- /*
-The two shared persistent volumes from the compose (inbox = PDF drop zone FR-1.13, model-cache =
-Ollama/HF weights). db_data lives in the StatefulSet's volumeClaimTemplate; caddy_* has no k8s
+The shared persistent volumes from the compose: app-data = the stored SOURCE DOCUMENTS (R39), inbox =
+the PDF drop zone (FR-1.13), model-cache = Ollama/HF weights (mounted by the worker and the optional
+in-cluster Ollama). app-data used to be absent and the data dir pointed AT the inbox volume, so the
+originals were persisted only by accident and the drop-zone watcher saw the store's own directory. db_data lives in the StatefulSet's volumeClaimTemplate; caddy_* has no k8s
 equivalent (the Ingress terminates TLS). resource-policy:keep so `helm uninstall`/upgrade never
 drops data. Default access mode is RWO (fine on a single node / kind); set an RWX storageClass for
 a multi-node cluster where api and worker land on different nodes.
 */ -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "rsc-brain.fullname" . }}-app-data
+  labels:
+    {{- include "rsc-brain.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.persistence.appData.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.appData.size | quote }}
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
