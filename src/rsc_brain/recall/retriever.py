@@ -133,7 +133,8 @@ class PgRetriever:
         if claim_ids:
             from rsc_brain.knowledge.contradictions import ContradictionResolver
 
-            assert isinstance(self._resolver, ContradictionResolver)
+            if not isinstance(self._resolver, ContradictionResolver):  # pragma: no cover
+                raise TypeError("the on-consume contradiction hook needs a ContradictionResolver")
             await self._resolver.resolve_ids(scope, claim_ids)
 
     async def recall(

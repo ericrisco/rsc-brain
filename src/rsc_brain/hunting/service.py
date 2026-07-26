@@ -381,7 +381,8 @@ class HuntService:
         )
         async with session_scope(self._sm) as session:
             live = await session.get(models.Hunt, hunt.id)
-            assert live is not None
+            if live is None:  # pragma: no cover - read moments ago in this same request
+                raise RuntimeError(f"hunt {hunt.id} disappeared mid-answer")
             check_transition(HuntState.AWAITING_ANSWER, HuntState.ANSWERED)
             live.answer = answer
             live.answered_at = now

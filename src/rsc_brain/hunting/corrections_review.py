@@ -83,7 +83,8 @@ class CorrectionReviewService:
         if hunt is None or hunt.correction_id is None:
             return HuntOutcome(hunt_id=hunt_id, state=HuntState.EXPIRED)
         correction = await self._store.get_correction(scope, str(hunt.correction_id))
-        assert correction is not None
+        if correction is None:  # pragma: no cover - the hunt's FK guarantees it
+            raise RuntimeError(f"hunt {hunt_id} references a correction that no longer exists")
         # The corrected claim inherits the target's tags (FR-15.4) so topic permissions are
         # preserved — never strip them to an untagged claim.
         target = await self._store.get_claim(scope, str(correction.target_claim))
@@ -108,7 +109,8 @@ class CorrectionReviewService:
         if hunt is None or hunt.correction_id is None:
             return HuntOutcome(hunt_id=hunt_id, state=HuntState.EXPIRED)
         correction = await self._store.get_correction(scope, str(hunt.correction_id))
-        assert correction is not None
+        if correction is None:  # pragma: no cover - the hunt's FK guarantees it
+            raise RuntimeError(f"hunt {hunt_id} references a correction that no longer exists")
         await self._store.set_disputed(scope, [str(correction.target_claim)], disputed=False)
         await self._store.set_correction_status(scope, str(hunt.correction_id), status="rejected")
         await self._close(scope, hunt_id, HuntState.DECLINED)

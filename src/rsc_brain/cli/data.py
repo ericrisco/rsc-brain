@@ -101,8 +101,8 @@ def backup(
 
     output.mkdir(parents=True, exist_ok=True)
     env, url = _libpq(resolve_dsn())
-    subprocess.run(
-        [
+    subprocess.run(  # noqa: S603
+        [  # noqa: S607
             "pg_dump",
             "--format=custom",
             "--no-owner",
@@ -164,8 +164,8 @@ def restore(
         raise typer.Exit(code=1)
 
     env, url = _libpq(resolve_dsn())
-    result = subprocess.run(
-        [
+    result = subprocess.run(  # noqa: S603
+        [  # noqa: S607
             "pg_restore",
             "--clean",
             "--if-exists",

@@ -172,7 +172,9 @@ class SubprocessActionRunner:
         if not action.command:
             return True, "no-op"
         try:
-            result = subprocess.run(
+            # from a request. The installer's job is to run declared steps; refusing to shell out would
+            # be refusing to install.
+            result = subprocess.run(  # noqa: S603
                 list(action.command),
                 cwd=self._cwd,
                 capture_output=True,
@@ -198,7 +200,7 @@ class CommandVerifier:
         if not command:
             return True
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # noqa: S603
                 list(command),
                 cwd=self._cwd,
                 capture_output=True,

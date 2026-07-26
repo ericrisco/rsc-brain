@@ -209,7 +209,8 @@ class IngestRepository:
             review_if_sensitive=True,
         )
         row = await self.get_source(scope, source_id)
-        assert row is not None  # just created within this scope
+        if row is None:  # pragma: no cover - created within this scope moments ago
+            raise RuntimeError("the default source vanished immediately after being created")
         return row
 
     # --- documents -----------------------------------------------------------

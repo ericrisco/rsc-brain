@@ -234,10 +234,10 @@ class CorrectionService:
         has_topic = topic is not None and statement is not None
         if has_claim == has_topic:  # both or neither → validation error
             return None, []
-        if has_claim:
-            assert claim_id is not None
+        if has_claim and claim_id is not None:
             return await self._store.get_claim(scope, claim_id), []
-        assert statement is not None
+        if statement is None:  # pragma: no cover - the caller validates exactly one of the two
+            raise ValueError("a correction needs either a claim id or a statement")
         gateway = self._gateway.for_project(scope.project_id)  # R12
         embedding = (await gateway.embed([statement]))[0]
         candidates = await self._store.find_candidate_claims(scope, embedding)

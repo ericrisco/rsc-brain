@@ -1,6 +1,6 @@
 [project]
 name = "rsc-brain"
-version = "0.10.0"
+version = "0.10.1"
 description = "Self-hosted company memory: a living knowledge graph with per-fact credibility and temporal validity, exposed over MCP under deterministic topic-based permissions."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -94,11 +94,22 @@ select = [
     "C4",            # comprehensions
     "PTH",           # use pathlib
     "RUF",           # ruff-specific
+    # SAST (AUDIT-048 / T020): the bandit checks, in the linter that already runs on every commit and
+    # in CI. A security scanner nobody runs is not a control, and a separate tool in one more workflow
+    # is one more thing to skip; these fail the same `ruff check .` the whole program has been gated on.
+    "S",             # flake8-bandit
 ]
 ignore = ["E501"]    # line length handled by the formatter
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["B011"]
+# `assert` IS the test, and a fixture's fake credential is not a leaked one (the secret scanner is what
+# guards against those, with an allowlist of exactly these literals). Everything else in `S` still applies
+# to tests.
+"tests/**" = ["B011", "S101", "S105", "S106", "S107", "S608"]
+# Benchmarks and one-shot scripts: `random` for sampling is not a cryptographic use, and the licence
+# audit shells out to a tool it installs itself.
+"evals/**" = ["S311"]
+"scripts/**" = ["S603", "S607"]
 
 [tool.ruff.lint.flake8-bugbear]
 # Typer's Option/Argument and FastAPI's Depends/File/Form/Query must be called in parameter

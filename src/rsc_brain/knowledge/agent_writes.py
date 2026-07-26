@@ -94,7 +94,8 @@ class AgentWriteService:
                 models.Document.logical_id == _SUBMISSION_LOGICAL_ID,
             )
         )
-        assert existing is not None  # the conflict proves the row is there
+        if existing is None:  # pragma: no cover - the ON CONFLICT proves the row is there
+            raise RuntimeError("the agent-submission document vanished between insert and read")
         return existing
 
     async def submit(
