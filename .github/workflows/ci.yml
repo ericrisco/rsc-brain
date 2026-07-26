@@ -143,6 +143,21 @@ jobs:
         working-directory: apps/admin
         run: npm audit --omit=dev --audit-level=high
 
+  # AUDIT-046 / R56: the ratified route map, traversed through a REAL Caddy with the repository's own
+  # Caddyfile. The parse-based checks (R45-R48) cannot see the proxy's own matching rules; this can, and
+  # it is the only check in the suite that a configuration cannot pass by merely looking correct.
+  edge:
+    name: live edge routing (real proxy traversal)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - run: uv sync --frozen --all-groups
+      - name: Traverse every ratified route through Caddy
+        run: uv run pytest -m e2e tests/integration/test_live_edge_routing.py -p no:cacheprovider
+
   helm:
     name: helm chart (lint · schema · compose-drift)
     runs-on: ubuntu-latest

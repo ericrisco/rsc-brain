@@ -1,6 +1,6 @@
 [project]
 name = "rsc-brain"
-version = "0.11.0"
+version = "0.12.0"
 description = "Self-hosted company memory: a living knowledge graph with per-fact credibility and temporal validity, exposed over MCP under deterministic topic-based permissions."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -105,7 +105,9 @@ ignore = ["E501"]    # line length handled by the formatter
 # `assert` IS the test, and a fixture's fake credential is not a leaked one (the secret scanner is what
 # guards against those, with an allowlist of exactly these literals). Everything else in `S` still applies
 # to tests.
-"tests/**" = ["B011", "S101", "S105", "S106", "S107", "S608"]
+# S603/S607: the deploy checks drive `docker`, `helm` and `uv` from PATH on purpose — they are the
+# tools under test, and the argument lists are built in the test itself.
+"tests/**" = ["B011", "S101", "S105", "S106", "S107", "S603", "S607", "S608"]
 # Benchmarks and one-shot scripts: `random` for sampling is not a cryptographic use, and the licence
 # audit shells out to a tool it installs itself.
 "evals/**" = ["S311"]
@@ -172,7 +174,12 @@ pythonpath = ["."]  # make the repo-root `evals` package importable in tests
 # Integration tests (real Postgres via testcontainers) are opt-in: `pytest -m integration`.
 # The default run excludes them so the unit gate needs no Docker image.
 addopts = "-q -m 'not integration'"
-markers = ["integration: requires a real Postgres+AGE+pgvector container (testcontainers)"]
+markers = [
+    "integration: requires a real Postgres+AGE+pgvector container (testcontainers)",
+    # R56: brings up a real proxy in Docker. Selectable on its own so the edge can be checked without
+    # the rest of the suite, and excluded where Docker is not available.
+    "e2e: requires Docker to stand up a real edge proxy",
+]
 filterwarnings = ["error"]
 
 [tool.coverage.run]

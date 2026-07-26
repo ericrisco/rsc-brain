@@ -32,7 +32,7 @@ skip_without_pg_tools = pytest.mark.skipif(
 
 
 def _brain(env: dict[str, str], *args: str) -> None:
-    subprocess.run(["uv", "run", "brain", *args], env=env, check=True)  # noqa: S603, S607
+    subprocess.run(["uv", "run", "brain", *args], env=env, check=True)
 
 
 @skip_without_pg_tools
@@ -82,8 +82,8 @@ async def test_backup_restore_roundtrip(migrated_dsn: str, tmp_path: Path) -> No
     tampered = tmp_path / "tampered"
     shutil.copytree(snapshot, tampered)
     (tampered / "database.dump").write_bytes(b"truncated")
-    refused = subprocess.run(  # noqa: S603
-        ["uv", "run", "brain", "restore", str(tampered)],  # noqa: S607
+    refused = subprocess.run(
+        ["uv", "run", "brain", "restore", str(tampered)],
         env=env,
         capture_output=True,
         text=True,

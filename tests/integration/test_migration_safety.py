@@ -49,8 +49,8 @@ def _rendered() -> list[dict[str, Any]]:
     """
     if shutil.which("helm") is None:
         pytest.skip("helm not installed (runs in CI)")
-    out = subprocess.run(  # noqa: S603
-        ["helm", "template", "rsc", str(CHART), "--set", "ingress.enabled=false"],  # noqa: S607
+    out = subprocess.run(
+        ["helm", "template", "rsc", str(CHART), "--set", "ingress.enabled=false"],
         capture_output=True,
         text=True,
         check=True,
