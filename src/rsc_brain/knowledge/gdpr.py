@@ -171,16 +171,20 @@ async def _erase_claims_naming(
                 models.Chunk.project_id == project_id, models.Chunk.id.in_(chunk_ids)
             )
         )
-    await _purge_cached_embeddings(session, texts | chunk_texts)
+    await _purge_cached_embeddings(session, project_id, texts | chunk_texts)
     return len(claim_ids)
 
 
-async def _purge_cached_embeddings(session: AsyncSession, texts: set[str]) -> int:
-    """Drop the cached embedding of every erased text.
+async def _purge_cached_embeddings(
+    session: AsyncSession, project_id: uuid.UUID, texts: set[str]
+) -> int:
+    """Drop THIS project's cached embedding of every erased text.
 
-    The cache is global and keyed by content hash, so this removes the vector AND the hash that could
-    confirm the sentence had been ingested. Deleting by hash means nothing has to be recomputed for text
-    that is still in the corpus.
+    Removes the vector — a derivative R43 forbids keeping — and the digest that could otherwise confirm the
+    sentence had been ingested. Scoped to the project (AUDIT-022): the first version of this deleted by
+    digest alone, so erasing in one project evicted another project's cached copy of the same string, which
+    is the "shared-value path" the cache spec explicitly forbids. Now an entry belongs to one project, so
+    the scope is both possible and required.
     """
     if not texts:
         return 0
@@ -188,7 +192,10 @@ async def _purge_cached_embeddings(session: AsyncSession, texts: set[str]) -> in
 
     hashes = sorted({text_hash(t) for t in texts})
     result = await session.execute(
-        delete(models.EmbeddingCache).where(models.EmbeddingCache.text_hash.in_(hashes))
+        delete(models.EmbeddingCache).where(
+            models.EmbeddingCache.project_id == project_id,
+            models.EmbeddingCache.text_hash.in_(hashes),
+        )
     )
     return int(cast("CursorResult[Any]", result).rowcount or 0)
 
@@ -377,7 +384,9 @@ async def hard_delete_project(
             )
             if t
         }
-        cached = await _purge_cached_embeddings(session, texts)
+        # Belt and braces next to the FK cascade: the cascade removes this project's entries when the
+        # row goes, and this makes the intent explicit and the count reportable.
+        cached = await _purge_cached_embeddings(session, uuid.UUID(scope.project_id), texts)
         result = await session.execute(
             delete(models.Project).where(models.Project.id == uuid.UUID(scope.project_id))
         )

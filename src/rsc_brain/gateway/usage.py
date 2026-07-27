@@ -56,10 +56,24 @@ class UsageRecorder(Protocol):
 
 
 class EmbeddingCache(Protocol):
+    """A cache is always addressed within a project (AUDIT-022).
+
+    ``project_id`` is keyword-only and required in practice: an implementation that receives ``None``
+    must behave as an empty cache rather than fall back to a global scope, because that fallback is how
+    one tenant could confirm another's content from its own usage counter.
+    """
+
     async def get_many(
-        self, model: str, dimension: int, hashes: list[str]
+        self, model: str, dimension: int, hashes: list[str], *, project_id: str | None = None
     ) -> dict[str, list[float]]: ...
-    async def put_many(self, model: str, dimension: int, items: dict[str, list[float]]) -> None: ...
+    async def put_many(
+        self,
+        model: str,
+        dimension: int,
+        items: dict[str, list[float]],
+        *,
+        project_id: str | None = None,
+    ) -> None: ...
 
 
 def text_hash(text: str) -> str:
@@ -303,19 +317,27 @@ async def usage_all_projects(
 
 
 class PgEmbeddingCache:
-    """Text→vector cache keyed by SHA-256(text) + model + dimension (``embedding_cache``)."""
+    """Text→vector cache, private to one project (``embedding_cache``, AUDIT-022).
+
+    Every read and write carries the project. A call with no project reads and writes NOTHING: an
+    unattributed entry is what made this table a cross-tenant confirmation oracle — through the asking
+    tenant's own usage counter, not through timing — so the cache declines rather than falling back to a
+    global scope. Silence is also the right answer for an identifier learned elsewhere: absence and denial
+    look identical (FR-4.3).
+    """
 
     def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
         self._sm = sessionmaker
 
     async def get_many(
-        self, model: str, dimension: int, hashes: list[str]
+        self, model: str, dimension: int, hashes: list[str], *, project_id: str | None = None
     ) -> dict[str, list[float]]:
-        if not hashes:
+        if not hashes or project_id is None:
             return {}
         async with self._sm() as session:
             rows = await session.scalars(
                 select(models.EmbeddingCache).where(
+                    models.EmbeddingCache.project_id == uuid.UUID(project_id),
                     models.EmbeddingCache.model == model,
                     models.EmbeddingCache.dimension == dimension,
                     models.EmbeddingCache.text_hash.in_(hashes),
@@ -323,13 +345,21 @@ class PgEmbeddingCache:
             )
             return {r.text_hash: [float(x) for x in r.embedding] for r in rows}
 
-    async def put_many(self, model: str, dimension: int, items: dict[str, list[float]]) -> None:
-        if not items:
+    async def put_many(
+        self,
+        model: str,
+        dimension: int,
+        items: dict[str, list[float]],
+        *,
+        project_id: str | None = None,
+    ) -> None:
+        if not items or project_id is None:
             return
         statement = pg_insert(models.EmbeddingCache).values(
             [
                 {
                     "id": uuid.uuid4(),
+                    "project_id": uuid.UUID(project_id),
                     "text_hash": h,
                     "model": model,
                     "dimension": dimension,
@@ -339,7 +369,7 @@ class PgEmbeddingCache:
             ]
         )
         statement = statement.on_conflict_do_nothing(
-            index_elements=["text_hash", "model", "dimension"]
+            index_elements=["project_id", "text_hash", "model", "dimension"]
         )
         async with session_scope(self._sm) as session:
             await session.execute(statement)

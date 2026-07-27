@@ -535,15 +535,35 @@ class TokenUsage(Base):
 
 
 class EmbeddingCache(Base):
-    """Cached embedding by SHA-256(text) + model + dimension (SPEC-22, FR-9.6)."""
+    """Cached embedding, private to one project (SPEC-22 FR-9.6 + AUDIT-022).
+
+    The project dimension is the whole point. Keyed by text digest alone, this table was a cross-tenant
+    confirmation oracle — and not through timing but through the asking tenant's own usage counter: a
+    string another project had embedded cost nothing, a new one cost a provider call, so a project could
+    confirm another's exact content by reading its own bill. It also made erasure undecidable, because no
+    entry was attributable to anyone: keeping them retained derived private data, deleting by digest
+    removed another tenant's live data.
+
+    Reuse — what FR-9.6 asked for — still happens within a project, which is where text actually repeats:
+    re-ingests, document versions, one corpus's boilerplate.
+    """
 
     __tablename__ = "embedding_cache"
     id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
     text_hash: Mapped[str] = mapped_column(Text, nullable=False)
     model: Mapped[str] = mapped_column(Text, nullable=False)
     dimension: Mapped[int] = mapped_column(Integer, nullable=False)
     embedding: Mapped[list[float]] = mapped_column(ARRAY(Float), nullable=False)
-    __table_args__ = (UniqueConstraint("text_hash", "model", "dimension"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "text_hash",
+            "model",
+            "dimension",
+            name="uq_embedding_cache_project_text_model_dim",
+        ),
+    )
 
 
 class AuditLog(Base):

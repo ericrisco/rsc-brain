@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from sqlalchemy import func, select
@@ -38,8 +39,8 @@ def _capabilities() -> CapabilitiesConfig:
     return CapabilitiesConfig(**base)
 
 
-async def _embedding(**kwargs: object) -> object:
-    texts = list(kwargs["input"])  # type: ignore[index]
+async def _embedding(**kwargs: Any) -> object:
+    texts = list(kwargs["input"])
     return SimpleNamespace(data=[{"embedding": [0.1] * 1024} for _ in texts])
 
 
@@ -129,11 +130,16 @@ async def test_a_cache_entry_belongs_to_exactly_one_project(migrated_dsn: str) -
         await gateway.for_project(project_a).embed([text])  # type: ignore[attr-defined]
         await gateway.for_project(project_b).embed([text])  # type: ignore[attr-defined]
 
+        # Queried by the digest, not by the model name: the cache stores `cap.litellm_model`
+        # (`test/bge-m3` here), and pinning the wrong model string is how this check first passed
+        # vacuously against an empty result set.
+        from rsc_brain.gateway.usage import text_hash
+
         async with sessionmaker() as session:
             owners = list(
                 await session.scalars(
                     select(models.EmbeddingCache.project_id).where(
-                        models.EmbeddingCache.model == "bge-m3"
+                        models.EmbeddingCache.text_hash == text_hash(text)
                     )
                 )
             )
@@ -166,7 +172,9 @@ async def test_erasing_one_project_leaves_the_other_projects_cache_intact(
         await gateway.for_project(project_a).embed([text])  # type: ignore[attr-defined]
         await gateway.for_project(project_b).embed([text])  # type: ignore[attr-defined]
 
-        scope_a = Principal(id="cli", type=PrincipalType.HUMAN, can_curate=True).scope_for(project_a)
+        scope_a = Principal(id="cli", type=PrincipalType.HUMAN, can_curate=True).scope_for(
+            project_a
+        )
         await hard_delete_project(sessionmaker, scope_a)
 
         # B must still be served from cache: its own usage must not move for that text.
@@ -205,9 +213,7 @@ async def test_an_identifier_learned_from_another_project_reads_as_absent(
     try:
         project_a, project_b = await _two_projects(sessionmaker)
         cache = PgEmbeddingCache(sessionmaker)
-        await cache.put_many(
-            "bge-m3", 1024, {text_hash(text): [0.3] * 1024}, project_id=project_a
-        )
+        await cache.put_many("bge-m3", 1024, {text_hash(text): [0.3] * 1024}, project_id=project_a)
 
         leaked = text_hash(text)
         as_b = await cache.get_many("bge-m3", 1024, [leaked], project_id=project_b)

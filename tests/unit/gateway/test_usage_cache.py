@@ -13,23 +13,42 @@ from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.gateway.usage import Attempt, BudgetExceededError
 from tests.conftest import _fake_capabilities, deterministic_embedding
 
+PROJECT = "11111111-1111-1111-1111-111111111111"
+
 
 class FakeCache:
+    """A cache that honours the project dimension (AUDIT-022).
+
+    Keyed with the project like the real one: a fake that ignored it would let these checks pass while the
+    product's isolation was broken, which is the only thing this dimension exists for.
+    """
+
     def __init__(self) -> None:
-        self.store: dict[tuple[str, int, str], list[float]] = {}
+        self.store: dict[tuple[str, int, str, str | None], list[float]] = {}
 
     async def get_many(
-        self, model: str, dimension: int, hashes: list[str]
+        self, model: str, dimension: int, hashes: list[str], *, project_id: str | None = None
     ) -> dict[str, list[float]]:
+        if project_id is None:
+            return {}
         return {
-            h: self.store[(model, dimension, h)]
+            h: self.store[(model, dimension, h, project_id)]
             for h in hashes
-            if (model, dimension, h) in self.store
+            if (model, dimension, h, project_id) in self.store
         }
 
-    async def put_many(self, model: str, dimension: int, items: dict[str, list[float]]) -> None:
+    async def put_many(
+        self,
+        model: str,
+        dimension: int,
+        items: dict[str, list[float]],
+        *,
+        project_id: str | None = None,
+    ) -> None:
+        if project_id is None:
+            return
         for h, vector in items.items():
-            self.store[(model, dimension, h)] = vector
+            self.store[(model, dimension, h, project_id)] = vector
 
 
 class FakeRecorder:
@@ -39,9 +58,21 @@ class FakeRecorder:
     gateway no longer checks and records separately, because the gap between those two was the finding.
     """
 
-    def __init__(self, *, over: bool = False) -> None:
+    def __init__(self, *, over: bool = False, project_id: str | None = None) -> None:
         self.records: list[tuple[str, int]] = []
         self._over = over
+        self.project_id = project_id
+
+    def for_project(self, project_id: str) -> FakeRecorder:
+        """Bind the project, as the real recorder does (R12).
+
+        The gateway reads the project from HERE for the cache too (AUDIT-022) — one binding, not two — so a
+        fake without it would leave the gateway unbound and quietly cacheless, and the reuse checks below
+        would fail for a reason that has nothing to do with reuse.
+        """
+        bound = FakeRecorder(over=self._over, project_id=project_id)
+        bound.records = self.records
+        return bound
 
     async def enforce_budget(self, capability: str) -> None:
         if self._over:
@@ -78,7 +109,12 @@ def _counting_embedding_fn() -> tuple[Any, list[str]]:
 
 async def test_embedding_cache_avoids_reembedding() -> None:
     fn, seen = _counting_embedding_fn()
-    gw = ModelGateway(_fake_capabilities(), embedding_fn=fn, embedding_cache=FakeCache())
+    gw = ModelGateway(
+        _fake_capabilities(),
+        embedding_fn=fn,
+        embedding_cache=FakeCache(),
+        usage_recorder=FakeRecorder(),
+    ).for_project(PROJECT)
     first = await gw.embed(["A", "B"])
     assert seen == ["A", "B"]
     second = await gw.embed(["A"])  # cached → no new provider call
@@ -88,7 +124,12 @@ async def test_embedding_cache_avoids_reembedding() -> None:
 
 async def test_embed_dedups_within_a_batch_and_preserves_order() -> None:
     fn, seen = _counting_embedding_fn()
-    gw = ModelGateway(_fake_capabilities(), embedding_fn=fn, embedding_cache=FakeCache())
+    gw = ModelGateway(
+        _fake_capabilities(),
+        embedding_fn=fn,
+        embedding_cache=FakeCache(),
+        usage_recorder=FakeRecorder(),
+    ).for_project(PROJECT)
     out = await gw.embed(["A", "B", "A"])
     assert seen == ["A", "B"]  # "A" embedded once
     assert out[0] == out[2] and out[0] != out[1]  # order preserved
