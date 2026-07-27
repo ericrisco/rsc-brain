@@ -281,15 +281,23 @@ class ModelGateway:
         )
 
     async def embed(self, texts: Sequence[str]) -> list[list[float]]:
-        """Embed ``texts`` and enforce the anchored dimension (FR-9.4). When an embedding cache is
-        configured (FR-9.6) the same text (by SHA-256) is served from cache, never re-embedded."""
+        """Embed ``texts`` and enforce the anchored dimension (FR-9.4).
+
+        When a cache is configured (FR-9.6) the same text is served from it — within THIS project only
+        (AUDIT-022). The project comes from the same binding that carries usage accounting, so a gateway
+        that accounts correctly caches correctly; an unbound gateway simply gets no cache, because a
+        cross-project hit is how a tenant used to confirm another tenant's content from its own bill.
+        """
         cap = self._cap(Capability.EMBEDDER)
         ordered = list(texts)
-        if self._cache is None:
+        project_id = self._project_id()
+        if self._cache is None or project_id is None:
             return await self._embed_raw(cap, ordered)
         model, dim = cap.litellm_model, cap.effective_dimension
         hashes = [text_hash(t) for t in ordered]
-        cached = await self._cache.get_many(model, dim, list(dict.fromkeys(hashes)))
+        cached = await self._cache.get_many(
+            model, dim, list(dict.fromkeys(hashes)), project_id=project_id
+        )
         miss_texts: list[str] = []
         miss_hashes: list[str] = []
         for text, digest in zip(ordered, hashes, strict=True):
@@ -299,9 +307,19 @@ class ModelGateway:
         if miss_texts:
             vectors = await self._embed_raw(cap, miss_texts)
             fresh = dict(zip(miss_hashes, vectors, strict=True))
-            await self._cache.put_many(model, dim, fresh)
+            await self._cache.put_many(model, dim, fresh, project_id=project_id)
             cached = {**cached, **fresh}
         return [cached[digest] for digest in hashes]
+
+    def _project_id(self) -> str | None:
+        """The project this gateway is bound to, taken from its usage recorder (AUDIT-021 / R12).
+
+        One binding, not two: the recorder already carries the project because that is the unit an attempt
+        is attributable to, and the cache needs exactly the same answer. A second source of truth here
+        would be a second thing to forget at a boundary.
+        """
+        recorder = self._usage
+        return getattr(recorder, "project_id", None) if recorder is not None else None
 
     async def _embed_raw(self, cap: CapabilityConfig, texts: list[str]) -> list[list[float]]:
         # R29: reserved for the duration of the call and settled on the way out, so a batch that fails

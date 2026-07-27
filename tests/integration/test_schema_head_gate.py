@@ -175,16 +175,22 @@ async def test_erasing_an_entity_also_removes_its_cached_embeddings(migrated_dsn
             )
             session.add(m.Claim(project_id=project.id, text=sentence, tags=["hr"], credibility=0.9))
             await session.commit()
+        # AUDIT-022: the cache is addressed within a project, so the fixture writes into the project it
+        # then erases from — a write with no project is a no-op and would make this check vacuous.
         cache = PgEmbeddingCache(sessionmaker)
-        await cache.put_many("bge-m3", 1024, {text_hash(sentence): [0.1] * 1024})
-        assert await cache.get_many("bge-m3", 1024, [text_hash(sentence)]), (
+        await cache.put_many(
+            "bge-m3", 1024, {text_hash(sentence): [0.1] * 1024}, project_id=project_id
+        )
+        assert await cache.get_many("bge-m3", 1024, [text_hash(sentence)], project_id=project_id), (
             "the cache did not store"
         )
 
         scope = Principal(id="cli", type=PrincipalType.HUMAN, can_curate=True).scope_for(project_id)
         await forget_entity(sessionmaker, scope, name="Ana Ruiz")
 
-        remaining = await cache.get_many("bge-m3", 1024, [text_hash(sentence)])
+        remaining = await cache.get_many(
+            "bge-m3", 1024, [text_hash(sentence)], project_id=project_id
+        )
     finally:
         await engine.dispose()
 
@@ -236,12 +242,16 @@ async def test_deleting_a_project_also_removes_its_cached_embeddings(migrated_ds
             )
             await session.commit()
         cache = PgEmbeddingCache(sessionmaker)
-        await cache.put_many("bge-m3", 1024, {text_hash(sentence): [0.2] * 1024})
+        await cache.put_many(
+            "bge-m3", 1024, {text_hash(sentence): [0.2] * 1024}, project_id=project_id
+        )
 
         scope = Principal(id="cli", type=PrincipalType.HUMAN, can_curate=True).scope_for(project_id)
         await hard_delete_project(sessionmaker, scope)
 
-        remaining = await cache.get_many("bge-m3", 1024, [text_hash(sentence)])
+        remaining = await cache.get_many(
+            "bge-m3", 1024, [text_hash(sentence)], project_id=project_id
+        )
     finally:
         await engine.dispose()
 

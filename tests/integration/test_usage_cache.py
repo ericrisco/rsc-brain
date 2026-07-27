@@ -22,7 +22,7 @@ from rsc_brain.gateway.usage import (
 )
 from tests.conftest import _fake_capabilities, deterministic_embedding
 
-from .conftest import Harness
+from .conftest import Harness, unique_slug
 
 pytestmark = pytest.mark.integration
 
@@ -46,8 +46,12 @@ async def test_counters_sum_and_report(build_harness: Callable[..., Harness]) ->
 
 
 async def test_budget_enforced(build_harness: Callable[..., Harness]) -> None:
+    # Bound to its own project: an unbound recorder counts into the instance-wide unattributed row, which
+    # every other test in the session also writes to, so a 3-token budget was already spent before this
+    # check began. R12's own point — a budget is evaluated against the project that spent it.
     harness = build_harness()
-    recorder = PgUsageRecorder(harness.sm, _caps(embedder_budget=3))
+    project = await harness.setup_project(unique_slug("budget"), [("general", 0)])
+    recorder = PgUsageRecorder(harness.sm, _caps(embedder_budget=3)).for_project(project)
     await recorder.enforce_budget("embedder")  # under budget → fine
     await recorder.record("embedder", 5)  # now over
     with pytest.raises(BudgetExceededError):
@@ -55,11 +59,14 @@ async def test_budget_enforced(build_harness: Callable[..., Harness]) -> None:
 
 
 async def test_embedding_cache_round_trip(build_harness: Callable[..., Harness]) -> None:
+    # AUDIT-022: the cache is addressed within a project. A call without one reads and writes nothing,
+    # because an unattributed entry is what made this table a cross-tenant oracle.
     harness = build_harness()
+    project = await harness.setup_project(unique_slug("cache"), [("general", 0)])
     cache = PgEmbeddingCache(harness.sm)
     vector = [0.1, 0.2, 0.3]
-    await cache.put_many("m", 3, {"h1": vector})
-    got = await cache.get_many("m", 3, ["h1", "missing"])
+    await cache.put_many("m", 3, {"h1": vector}, project_id=project)
+    got = await cache.get_many("m", 3, ["h1", "missing"], project_id=project)
     assert got == {"h1": vector}
 
 
@@ -76,9 +83,16 @@ async def test_gateway_caches_embeddings_in_postgres(build_harness: Callable[...
 
         return _call()
 
+    # Bound to a project, as every production caller is: the gateway takes the cache's project from the
+    # same binding that carries usage accounting (AUDIT-021 + AUDIT-022).
+    project = await harness.setup_project(unique_slug("cache"), [("general", 0)])
+    caps = _fake_capabilities()
     gw = ModelGateway(
-        _fake_capabilities(), embedding_fn=fn, embedding_cache=PgEmbeddingCache(harness.sm)
-    )
+        caps,
+        embedding_fn=fn,
+        embedding_cache=PgEmbeddingCache(harness.sm),
+        usage_recorder=PgUsageRecorder(harness.sm, caps),
+    ).for_project(project)
     unique = f"cache-me-{text_hash('seed')[:8]}"
     await gw.embed([unique])
     await gw.embed([unique])  # second time served from Postgres
