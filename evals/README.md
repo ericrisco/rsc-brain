@@ -1,65 +1,69 @@
-# Foundational eval content (SPEC-02)
+# Evaluation corpus and metrics
 
-The synthetic content the whole product's quality is measured against: two fictional projects,
-their documents, the golden question set, contradiction pairs, and the example taxonomy.
-`documents.yaml` is the **source of truth**; `generate_pdfs.py` renders it to PDFs on demand.
+The repository includes a synthetic, reviewable corpus for recall quality, abstention, temporal
+behavior, prompt-injection resistance, and project/topic isolation. It contains no production
+company data.
 
-## The `brain eval` rule (PRD §12) — non-negotiable
+## Current corpus
 
-**Run `brain eval` before changing any model, provider, or versioned prompt in
-`src/rsc_brain/prompts/`.** Prompts determine graph quality as much as the model does. In CI the
-evals run over this corpus with a small, pinned model for reproducibility (§12.5). The `brain
-eval` runner itself lands in SPEC-06; this SPEC produces the dataset + schema + validator.
+`documents.yaml` is the source for two fictional organizations and their source documents.
+`taxonomy.yaml` defines project-local topics and sensitivities. `golden.yaml` contains 47 cases:
 
-## The two projects (used by the permission/isolation suite, FR-12.5)
+| Family | Cases | Purpose |
+|---|---:|---|
+| `hit` | 12 | Relevant knowledge should be returned. |
+| `abstain` | 5 | Unsupported questions should return no answer. |
+| `denied` | 6 | Topic-hidden knowledge must not leak. |
+| `cross_project` | 5 | Another project's knowledge must not leak. |
+| `exact_id` | 4 | Exact identifiers remain retrievable. |
+| `temporal` | 9 | Current and historical intent select the correct validity interval. |
+| `injection` | 6 | Instructions embedded in documents remain untrusted data. |
 
-**Acme Corp** (software) — topics: `general`, `engineering`, `sales`, `hr` (sensitivity 3),
-`payroll` (4). **Globex Consulting** — topics: `corp`, `delivery`, `legal` (2), `personnel` (3).
-Slugs are disjoint between projects (per-project topics, D9). See `taxonomy.yaml`.
+Of the 47 cases, 24 must find knowledge and 23 must abstain. `contradictions.yaml` supplies
+contradiction cases for the living-graph evaluator.
 
-### Users & memberships (referenced by `golden.yaml`)
-
-| user | project | role | allowed_topics |
-|------|---------|------|----------------|
-| alice | acme | member | general, engineering, sales |
-| bob | acme | member | general  *(no hr/payroll — the FR-4.14 denied cases)* |
-| carol | acme | project-admin | general, engineering, sales, hr, payroll |
-| dave | globex | member | corp, delivery |
-| erin | globex | member | corp, delivery, legal |
-
-alice/carol are acme-only; dave/erin globex-only → the cross-project cases. bob lacks the
-sensitive topics → the FR-4.14 denied cases.
-
-## D13 policy coverage (each policy has a test document)
-
-| policy | document | note |
-|--------|----------|------|
-| `source_tags` | most docs (e.g. `acme-overview-en`) | tags from the source |
-| `llm` | `acme-hr-reviews-en`, `acme-llm-note-en` | LLM-topicalized |
-| `llm_review` | `acme-payroll-bands-es`, `globex-personnel-es` | **retained** (sensitive) until approved |
-| `manual` | `acme-hr-manual-en`, `globex-legal-manual-en` | **retained** — not recallable until approved |
-
-## Temporal cases (FR-16.9)
-
-`acme-sla-2023-en` (24h) → `acme-sla-2024-en` (12h); `globex-rate-2022-en` (100 €/h) →
-`globex-rate-2024-en` (120 €/h). Golden family `temporal` asks current vs historical; in v0.2
-`current` mode must exclude the superseded claim and historical intent must recover it.
-
-## Generating the PDFs
-
-`documents.yaml` is the editable source. To materialize PDFs (native for prose/tables; a
-rasterized, text-layer-free page for `kind: scanned`, to force the OCR path):
+Validate the static corpus and report its composition:
 
 ```bash
-uv run --group evals python -m evals.generate_pdfs   # writes evals/pdfs/*.pdf (gitignored)
+uv run python -m evals.validate
+uv run brain --json eval
 ```
 
-SPEC-05's ingestion tests consume these PDFs. Keeping the source in YAML (not committed binaries)
-makes the corpus reviewable and editable; the PDFs are a generated view.
+The CLI command reports composition only. It does not run model-backed recall.
 
-## Blocked-by-resource
+## Generate PDF fixtures
 
-Step 10 (iterate prompts against the target **local model**, sampling extraction discards to
-< 10%) requires a local model (Ollama/vLLM), which is **not available on this host** — it is
-recorded `blocked-by-resource` and runs when a local model is present. The v1 prompts ship with
-the AUDIT-008 untrusted-data discipline and ES/EN few-shot in the meantime.
+The YAML source can be rendered into native and scanned PDF fixtures:
+
+```bash
+uv run --group evals python -m evals.generate_pdfs
+```
+
+Generated files are written under `evals/pdfs/` and are ignored by Git. Scanned fixtures have no
+text layer, which forces the OCR path. The locked default application environment supports Markdown;
+PDF and OCR execution also needs the operator-installed Docling backend.
+
+## Run quality evaluation
+
+`evals.runner.run_eval` accepts a sequence of `EvalCase` values and an asynchronous `recall_fn`.
+The caller owns dataset ingestion, per-case principal scope, model/provider configuration, and
+result persistence. The runner returns:
+
+- must-find hit rate (`retrieval_precision` in the 0.13.0 report);
+- correct-abstention rate over must-abstain cases;
+- permission leak count for `denied` and `cross_project` cases; and
+- average recall latency.
+
+`evals.runner.run_calibration` runs the same cases through a retriever configured to expose raw top
+scores and selects the threshold that maximizes abstention F1.
+
+The deterministic gateway and metric functions run in automated tests. A live-provider evaluation
+requires a prepared corpus and provider environment; record that evidence separately rather than
+treating `brain eval` as a live quality pass.
+
+## Change rule
+
+Run the corpus evaluation before changing a model, provider, embedding, judge, reranker, or
+versioned prompt under `src/rsc_brain/prompts/`. Review golden expectations whenever a source
+document or taxonomy changes. Security cases must remain strict: any result for a denied or
+cross-project case is a permission leak.

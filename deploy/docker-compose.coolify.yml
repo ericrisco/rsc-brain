@@ -1,32 +1,45 @@
 # Coolify overlay (SPEC-18, E15.2) — a THIN delta on docker-compose.prod.yml.
 #   docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.coolify.yml up
 #
-# Coolify injects its "magic" env: SERVICE_PASSWORD_* (auto-generated secrets) and
-# SERVICE_FQDN_<SERVICE>_<PORT> (auto domain + its proxy terminates TLS). So we drop our own Caddy
-# and map the one secret (Postgres password) to Coolify's generator. No hand-editing.
+# Coolify injects SERVICE_PASSWORD_* auto-generated secrets and its proxy terminates TLS. Compose
+# interpolates the canonical file BEFORE merging this overlay, so the operator MUST also set
+# POSTGRES_PASSWORD to exactly the generated SERVICE_PASSWORD_POSTGRES value. Set an explicit
+# RSC_BRAIN_ADMIN_PASSWORD, hostname-only RSC_BRAIN_DOMAIN, and HTTPS
+# RSC_BRAIN_INGRESS__PUBLIC_ORIGIN through an injected api/worker override. Model routes remain
+# operator-supplied deployment settings.
 name: rsc-brain
 
 services:
   db:
     environment:
       POSTGRES_PASSWORD: ${SERVICE_PASSWORD_POSTGRES}
-  # api/worker/migrate derive their DSN from POSTGRES_PASSWORD (see the canonical app-env).
+  # api/worker/migrate derive their DSN from the separately required POSTGRES_PASSWORD. A mismatch
+  # with SERVICE_PASSWORD_POSTGRES starts Postgres with one password and configures the app with
+  # another.
   #
-  # ONE ownership map (AUDIT-046 / R46, plan §3 `edge.route`): Coolify's proxy takes the path from
-  # each SERVICE_FQDN_<SERVICE>_<PORT>. The service claims its own prefixes and the console keeps the
-  # root — including `/api/auth/*` and `/api/proxy/*`, which are Next.js route handlers, not API
-  # routes. Both used to be declared at `/`, which leaves which one answers up to the proxy rather
-  # than to the operator.
+  # ONE ownership map (AUDIT-046 / R46, plan §3 `edge.route`): both routers use the same explicit
+  # host. Separate SERVICE_FQDN identifiers would generate separate wildcard origins in Coolify.
+  # COMPOSE_PROJECT_NAME namespaces Traefik objects so parallel deployments cannot overwrite them.
+  # The service claims its own prefixes and the console keeps the root — including `/api/auth/*`
+  # and `/api/proxy/*`, which are Next.js route handlers, not API routes.
   api:
-    environment:
-      SERVICE_FQDN_API_8080: /api/v1
-      SERVICE_FQDN_MCP_8080: /mcp
-      SERVICE_FQDN_OAUTH_8080: /oauth
-      SERVICE_FQDN_WELLKNOWN_8080: /.well-known
-      SERVICE_FQDN_METRICS_8080: /metrics
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.rule=Host(`${RSC_BRAIN_DOMAIN}`) && (PathPrefix(`/api/v1`) || PathPrefix(`/mcp`) || PathPrefix(`/oauth`) || PathPrefix(`/.well-known`) || PathPrefix(`/metrics`))"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.priority=100"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.entryPoints=https"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.tls=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}-api.loadbalancer.server.port=8080"
   console:
-    environment:
-      SERVICE_FQDN_CONSOLE_3000: /
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-console.rule=Host(`${RSC_BRAIN_DOMAIN}`)"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-console.priority=1"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-console.entryPoints=https"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-console.tls=true"
+      - "traefik.http.routers.${COMPOSE_PROJECT_NAME}-console.tls.certresolver=letsencrypt"
+      - "traefik.http.services.${COMPOSE_PROJECT_NAME}-console.loadbalancer.server.port=3000"
   # Coolify's proxy does TLS + domain — our Caddy is not used on this target.
   caddy:
     profiles: ["donotstart"]

@@ -19,15 +19,17 @@ rsc-brain is installing into namespace "{{ .Release.Namespace }}" as release "{{
 
 3. First-admin login. Email: {{ .Values.admin.email }}
    The password was auto-generated (unless you set admin.password). Retrieve it from the Secret
-   (it is NEVER printed here or in the templates):
+   (it is never printed in these notes or in migration logs):
      kubectl -n {{ .Release.Namespace }} get secret {{ include "rsc-brain.secretName" . }} \
        -o jsonpath='{.data.RSC_BRAIN_ADMIN_PASSWORD}' | base64 -d ; echo
-   It is also shown once in the migrate Job logs:
-     kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/component=migrate
-
 4. Verify the running system (same check as the api readiness probe):
      kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "rsc-brain.fullname" . }}-api -- brain verify
 
 Secrets (DB password, admin password) are auto-generated and PRESERVED across `helm upgrade`.
-GPU (Ollama/vLLM) is a host precondition (D8): the default points the gateway at an external
-endpoint; see the chart README to opt into an in-cluster Ollama on a GPU-ready cluster.
+Helm render output can contain Secret manifests, so keep rendered output in a private location and
+delete it after review.
+Configure all five model capabilities and a reachable provider before ingestion or recall. The
+readiness command above checks configuration and database state without contacting the provider.
+Chart 0.14.0 sends top-level extraEnv only to API + worker; move any 0.13.x console-only entries to
+console.extraEnv before upgrade.
+GPU drivers and device plugins remain cluster preconditions; see the chart README.

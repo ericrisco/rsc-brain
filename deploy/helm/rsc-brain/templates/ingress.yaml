@@ -66,8 +66,8 @@ spec:
                 name: {{ include "rsc-brain.fullname" . }}-api
                 port:
                   number: 8080
-          # Reachable so an operator scrape can get in; the endpoint requires the operator capability
-          # and no project role satisfies it (R10).
+          # No 0.13.0 principal satisfies this API endpoint's operator capability. This ownership also
+          # intercepts the console product-metrics page at /metrics; both surfaces are unavailable.
           - path: /metrics
             pathType: Prefix
             backend:

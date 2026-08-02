@@ -59,7 +59,7 @@ def init(
         None,
         "--admin-password",
         envvar="RSC_BRAIN_ADMIN_PASSWORD",
-        help="First-admin password (generated + shown once if omitted).",
+        help="First-admin password (generated into an owner-only file if omitted).",
     ),
 ) -> None:
     """Bootstrap a deployment (SPEC-18): apply migrations, then create the first admin if none

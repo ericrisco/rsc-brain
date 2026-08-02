@@ -1,4 +1,6 @@
-{{- /* Non-secret app config (parity with the compose x-app-env; the DSN + admin live in the Secret). */ -}}
+{{- /* Non-secret app config (parity with compose x-app-env; DSN + admin live in the Secret).
+RSC_BRAIN_DOMAIN is a hostname and does not set ingress.public_origin; inject the HTTPS origin with
+extraEnv as documented in the chart README. */ -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:

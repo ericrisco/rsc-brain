@@ -31,7 +31,7 @@ from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.identity.resolve import resolve_scope
 from rsc_brain.ingest.pipeline import DocumentNotFoundError, IngestionPipeline, PipelineConfig
 from rsc_brain.ingest.service import IngestService
-from rsc_brain.mcp.server import build_mcp_server
+from rsc_brain.mcp.server import build_mcp_server, normalize_mcp_security_headers
 from rsc_brain.ontology.ingest import OntologyIngest
 from rsc_brain.ontology.recall import OntologyRecall
 from rsc_brain.recall.retriever import PgRetriever
@@ -140,7 +140,10 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     if deps is None:
         deps, engine = _deps_from_config()
     mcp_server = build_mcp_server(
-        sessionmaker=deps.sessionmaker, retriever=deps.retriever(), gateway=deps.gateway
+        sessionmaker=deps.sessionmaker,
+        retriever=deps.retriever(),
+        gateway=deps.gateway,
+        public_origin=deps.ingress.public_origin if deps.ingress else None,
     )
 
     @asynccontextmanager
@@ -216,7 +219,7 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     from rsc_brain.api.oauth.routes import router as oauth_router
 
     app.include_router(oauth_router)
-    app.mount("/mcp", mcp_server.streamable_http_app())
+    app.mount("/", normalize_mcp_security_headers(mcp_server.streamable_http_app()))
     return app
 
 

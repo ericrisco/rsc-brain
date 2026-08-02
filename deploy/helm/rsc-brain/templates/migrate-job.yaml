@@ -12,9 +12,9 @@ until the schema is at head. The install could not succeed on a fresh cluster.
 there is nothing for the Job to connect to.
 
 So the Job is an ORDINARY resource, named per revision (Jobs are immutable, so an upgrade needs a new
-one), and the app is gated on the schema by its own init container. `helm install --wait` then waits for
-the Job to complete and for pods whose init container is waiting on the schema the Job is applying —
-which is the ordering the deployment always meant to express.
+one), and the app is gated on the schema by its own init container. Published commands add
+`--wait-for-jobs` to `--wait`: Helm waits for the Job explicitly, while workload readiness also stays
+blocked until the init containers observe the schema the Job applies.
 */ -}}
 apiVersion: batch/v1
 kind: Job

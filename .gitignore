@@ -29,6 +29,7 @@
 .env.*
 !.env.example
 !.env.*.example
+/deploy/compose.models.yml
 
 # --- Python: virtualenvs, caches, build + coverage artifacts ---
 .venv/

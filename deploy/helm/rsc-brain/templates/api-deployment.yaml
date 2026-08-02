@@ -54,8 +54,8 @@ spec:
                 name: {{ include "rsc-brain.secretName" . }}
           env:
             - name: RSC_BRAIN_INGEST__DATA_DIR
-              # R39: the store's own directory, NOT the drop zone. Pointing it at the inbox conflated
-              # the two: the watcher saw the store's `blobs/` as material to ingest.
+              # R39: active original-document store. The nested inbox mount is reserved layout only;
+              # no packaged 0.13.0 process starts a folder watcher.
               value: /var/lib/rsc-brain/data
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
@@ -75,6 +75,7 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 6
           volumeMounts:
+            # The chart does not initialize ownership. Both mounts must be writable by runAsUser.
             - name: app-data
               mountPath: /var/lib/rsc-brain/data
             - name: inbox

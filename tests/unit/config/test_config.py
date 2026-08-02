@@ -16,6 +16,7 @@ from rsc_brain.config import (
     ScoreWeights,
     load_settings,
 )
+from rsc_brain.config.models import IngressConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EXAMPLE_CONFIG = REPO_ROOT / "config.example.yaml"
@@ -111,6 +112,36 @@ def test_score_weights_must_sum_to_one() -> None:
 def test_unknown_capability_key_is_forbidden() -> None:
     with pytest.raises(ValidationError):
         _capabilities(unexpected=_capability())
+
+
+def test_public_origin_is_canonicalized_for_every_security_consumer() -> None:
+    ingress = IngressConfig(public_origin="HTTPS://Brain.Example.COM:443/")
+
+    assert ingress.public_origin == "https://brain.example.com"
+
+
+def test_blank_public_origin_keeps_the_unconfigured_mode() -> None:
+    assert IngressConfig(public_origin="  ").public_origin is None
+
+
+@pytest.mark.parametrize(
+    "public_origin",
+    [
+        "ftp://brain.example.com",
+        "https://user@brain.example.com",
+        "https://brain.example.com/path",
+        "https://brain.example.com?query=yes",
+        "https://brain.example.com#fragment",
+        "https://faß.de",
+        "https://[v1.foo]",
+        "brain.example.com",
+    ],
+)
+def test_public_origin_rejects_values_that_are_not_an_ascii_http_origin(
+    public_origin: str,
+) -> None:
+    with pytest.raises(ValidationError, match="public origin"):
+        IngressConfig(public_origin=public_origin)
 
 
 # --- the example file must never carry a secret (FR-4.7) ---

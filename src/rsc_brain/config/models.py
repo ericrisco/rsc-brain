@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from enum import StrEnum
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 # The embedding dimension is anchored to BGE-M3 (D5) and must match the DDL
 # ``chunks.embedding vector(1024)`` (PRD §5.2). The gateway fails loudly if a
@@ -277,10 +278,12 @@ class PublicLimits(BaseModel):
 class IngressConfig(BaseModel):
     """How the service is reached from outside (AUDIT-038 / R51).
 
-    ``public_origin`` is the scheme+host clients actually use. It is a DEPLOYMENT fact, not something a
-    request can imply: OAuth metadata used to be built from ``request.base_url``, so a direct client
+    ``public_origin`` is the scheme+host clients actually use. It is a DEPLOYMENT fact, not something
+    a request can imply: OAuth metadata used to be built from ``request.base_url``, so a direct client
     sending ``Host: attacker.example`` received an issuer and three endpoint URLs on the attacker's
-    host — and a client that discovers metadata that way sends its authorization code there.
+    host — and a client that discovers metadata that way sends its authorization code there. The MCP
+    transport also uses it as the exact public Host and Origin boundary while retaining DNS-rebinding
+    protection.
 
     ``trusted_proxies`` lists the networks whose forwarding headers may be believed. Empty means the
     service is reached directly and no forwarding header is trusted from anyone, which is the safe
@@ -291,12 +294,60 @@ class IngressConfig(BaseModel):
 
     public_origin: str | None = Field(
         default=None,
-        description="External scheme+host, e.g. https://brain.example.com. None → derive per request.",
+        description=(
+            "ASCII HTTP(S) scheme+host, e.g. https://brain.example.com; also the MCP Host/Origin "
+            "boundary. Use IDNA punycode for international domains. None → derive OAuth per "
+            "request and keep MCP loopback-only."
+        ),
     )
     trusted_proxies: list[str] = Field(
         default_factory=list,
         description="CIDRs whose X-Forwarded-* headers are believed. Empty trusts none.",
     )
+
+    @field_validator("public_origin")
+    @classmethod
+    def _canonical_public_origin(cls, value: str | None) -> str | None:
+        """Validate one ASCII HTTP origin and give every security consumer the same value."""
+        if value is None:
+            return None
+        candidate = value.strip()
+        if not candidate:
+            return None
+        try:
+            parsed = urlsplit(candidate)
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("public origin must contain a valid host and port") from exc
+
+        scheme = parsed.scheme.lower()
+        hostname = parsed.hostname
+        if (
+            scheme not in {"http", "https"}
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or bool(parsed.query)
+            or bool(parsed.fragment)
+            or (parsed.netloc.startswith("[") and ":" not in hostname)
+        ):
+            raise ValueError("public origin must be an HTTP(S) scheme plus host, without a path")
+        if not hostname.isascii() or any(
+            not (character.isalnum() or character in ".-:") for character in hostname
+        ):
+            raise ValueError(
+                "public origin host must be ASCII; configure international domains as IDNA punycode"
+            )
+
+        canonical_host = hostname.lower()
+        if ":" in canonical_host:
+            canonical_host = f"[{canonical_host}]"
+        default_port = 443 if scheme == "https" else 80
+        authority = (
+            canonical_host if port is None or port == default_port else f"{canonical_host}:{port}"
+        )
+        return f"{scheme}://{authority}"
 
 
 class SmtpConfig(BaseModel):

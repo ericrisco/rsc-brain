@@ -1,54 +1,106 @@
 # Contributing to rsc-brain
 
-Thanks for helping build rsc-brain. This guide gets a new contributor (human or coding agent)
-productive quickly. The deeper development runbook lives in [`docs/AGENTS.md`](docs/AGENTS.md).
+This guide defines the repository contribution contract. The
+[development runbook](docs/AGENTS.md) provides the file map and focused commands; the
+[installation runbook](docs/INSTALL.md) is for operators, not contributors.
 
-## Development setup
+## Set up the checkout
+
+Prerequisites are Git, Python 3.12, [uv](https://docs.astral.sh/uv/), and Node.js 22 for console
+work. Docker is required for integration, edge, and deployment checks.
 
 ```bash
-uv sync --all-groups        # venv + all deps (Python 3.12)
-uv run pytest               # tests
-uv run ruff check .         # lint
-uv run ruff format .        # format
-uv run mypy                 # strict types
-uv run pre-commit install   # optional: run the hooks on commit
+uv sync --all-groups
+uv run brain --version
+uv run pytest
+
+cd apps/admin
+npm ci
+npm run typecheck
 ```
 
-## Definition of done (what CI enforces)
+The default pytest command excludes tests marked `integration`. Start from a branch based on current
+`main`, keep each change focused, and use a pull request for review. The project uses Semantic
+Versioning and Conventional Commit prefixes. Sign commits with the Developer Certificate of Origin
+when preparing a contribution: `git commit -s`.
 
-- `ruff check` and `ruff format --check` clean.
-- `mypy --strict` clean.
-- `pytest` green with **≥70%** coverage.
-- `pip-audit` reports no known vulnerabilities; the AGPL license audit passes.
-- New behaviour has tests; docs/CHANGELOG claim only what is observable in the same change
-  (no premature "done").
+## Required checks
 
-## Commits & branches
+Run checks in proportion to the affected surface, then run the full applicable set before handing
+off a change:
 
-- Work on a branch off `main`; open a Pull Request. Direct pushes to `main` are not allowed.
-- Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`,
-  `docs:`, `ci:`, …). The project follows [SemVer](https://semver.org/).
-- **Sign off** every commit (Developer Certificate of Origin): `git commit -s`.
+```bash
+uv run ruff check .
+uv run ruff format --check src tests
+uv run mypy
+uv run pytest
+uv run python scripts/check_docs.py
+uv run python scripts/check_licenses.py
+uv run pip-audit
+```
 
-## Hard rules (automatic PR rejection)
+For a full data-service gate, build the repository image and run both unit and integration tests:
 
-These are non-negotiable and are gated in review/CI:
+```bash
+export POSTGRES_PASSWORD=local-test-password-change-me
+docker compose build db
+uv run pytest -m "integration or not integration" \
+  --cov=rsc_brain --cov-report=term-missing --cov-fail-under=70
+```
 
-1. A knowledge query without a `ProjectScope` (a bare `project_id`) — see
-   [`docs/interface-freeze.md`](docs/interface-freeze.md) (AUDIT-003).
-2. A permission/tag filter applied **outside** the store query instead of in it (FR-4.2).
-3. "Denied" being distinguishable from "does not exist" on any permission-checked path (FR-4.3).
-4. Ingestion writing malformed/unvalidated data to the graph instead of discarding-and-logging
-   (FR-1.8).
+Console changes also require:
 
-## Frozen interfaces
+```bash
+cd apps/admin
+npm ci
+npm run gen:api
+npm run lint
+npm run typecheck
+npm run build
+npm audit --omit=dev --audit-level=high
+```
 
-`GraphStore`, `VectorStore`, `RelationalStore`, `Channel`, and the `recall`/`ingest` signatures
-are **frozen** (see [`docs/interface-freeze.md`](docs/interface-freeze.md)). Changing them
-requires a one-page RFC approved before the change.
+Do not report a skipped or unavailable environment check as a pass. The CI workflow is the source of
+truth for merge gates; [Security Policy](SECURITY.md) maps the current jobs.
 
-## Models, prompts & evals
+## Load-bearing rules
 
-Run `brain eval` before changing any model, provider, or versioned prompt (the eval harness
-lands in SPEC-06). Never change a capability's model/routing from call data — it is owned by
-configuration (AUDIT-005).
+1. Knowledge code receives `ProjectScope`, never an independently supplied project identifier.
+2. Authorization is a named capability decision. Topic visibility is applied inside the query that
+   produces content, counts, order, pages, graph state, exports, or model context.
+3. Permission-denied and absent private objects keep the same external shape where existence would
+   disclose information.
+4. Callers cannot override capability routing, provider endpoints, or credentials; typed
+   configuration owns those choices.
+5. Uploaded documents, retrieved text, model output, paths, URLs, and parser formats remain untrusted
+   data at their sinks.
+6. Multi-step lifecycle and cross-store changes must be idempotent, recoverable, and tested under
+   competing decisions or process failure where that can occur.
+
+The stable contracts and RFC process are listed in
+[Interface Freeze](docs/interface-freeze.md).
+
+## Tests and evidence
+
+- Write the smallest test that fails on the pre-change behaviour, then observe it pass after the
+  implementation. An import, fixture, or syntax failure is not behavioural evidence.
+- Use real Postgres + AGE + pgvector for tenant integrity, transactions, graph/vector behaviour,
+  migration, backup/restore, or concurrency properties.
+- Exercise both allow and deny sides of authorization. A negative assertion also needs a positive
+  control proving the protected result was reachable.
+- Run `brain eval` before changing a model, provider, embedding, judge, or versioned prompt. The
+  [evaluation corpus](evals/README.md) explains the deterministic and live-model boundaries.
+
+## Documentation ownership
+
+Update documentation in the same change when supported behaviour, commands, configuration,
+interfaces, deployment, or security controls move:
+
+- `README.md` and `docs/index.md` orient readers.
+- `docs/tutorials/`, `docs/how-to/`, `docs/reference/`, and `docs/explanation/` each serve their
+  declared mode.
+- `CHANGELOG.md` records shipped behaviour, not plans.
+- Interface and configuration references must stay covered by `scripts/check_docs.py`.
+
+Public documentation must work from a downloaded checkout and contain no credential values or local
+control-plane dependencies.

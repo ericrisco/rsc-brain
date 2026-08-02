@@ -9,6 +9,118 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Added a Diátaxis-based public documentation set for installation, first use, operations,
+  configuration, REST, MCP, security, architecture, and troubleshooting.
+- Added executable documentation, MCP transport, platform-overlay, and Helm regression checks.
+
+### Changed
+
+- Released chart schema `0.14.0`: top-level Helm `extraEnv` now reaches only API and worker;
+  console-only values move to `console.extraEnv`. Application images remain at `0.13.0`.
+
+### Fixed
+
+- Served streamable HTTP MCP at the documented `/mcp` path and retained DNS-rebinding protection
+  for the canonical configured public origin, including strict Host, Origin, and port boundaries.
+- Validated and canonicalized `ingress.public_origin` before OAuth, hunting, and MCP consume it.
+- Made Coolify route both surfaces on one origin without cross-project Traefik object collisions,
+  and connected Dokploy's exposed services to its explicit proxy network.
+- Kept application capability secrets out of the console render and made Helm rendering examples
+  treat generated Secret manifests as sensitive temporary artifacts.
+
+## [0.13.0] - 2026-07-27
+
+### Fixed
+
+- Made embedding-cache entries project-private so cache timing and reuse cannot become a
+  cross-tenant oracle.
+- Bound cache reads, writes, and invalidation to the same project authority as the knowledge
+  operation that requested the embedding.
+
+## [0.12.1] - 2026-07-26
+
+### Fixed
+
+- Required migration and restore checks to match the exact Alembic head rather than accepting any
+  stamped revision.
+- Completed project-qualified embedding-cache erasure and aligned worker, CLI, and API document
+  rejection with the same terminal-state rules.
+- Preserved explicit refusal outcomes where a request cannot publish or mutate knowledge.
+
+## [0.12.0] - 2026-07-26
+
+### Fixed
+
+- Added live reverse-proxy traversal for the public route matrix, covering service, MCP, OAuth,
+  metrics, console, and console BFF ownership through Caddy.
+
+## [0.11.0] - 2026-07-26
+
+### Fixed
+
+- Contained stored and reflected text at browser, file, parser, and URL sinks, including console XSS
+  paths and stored-blob boundaries.
+- Narrowed entity erasure so a name match cannot remove unrelated project knowledge.
+- Added regression tests for the self-review findings discovered after the first security pass.
+
+## [0.10.1] - 2026-07-26
+
+### Security
+
+- Added Ruff security rules to the required lint gate and tightened production assertions around
+  credentials, images, workflows, and rendered deployment output.
+
+## [0.10.0] - 2026-07-26
+
+### Fixed
+
+- Serialized migrations and made application startup wait for the exact schema head.
+- Changed the Helm migration resource and pod ordering to avoid install and upgrade deadlocks.
+- Added pre-migration tenant-integrity checks for project-qualified references.
+
+## [0.9.0] - 2026-07-26
+
+### Added
+
+- Persistent storage for original source documents alongside relational, graph, and vector state.
+- Verifiable snapshot directories containing a database dump, source blobs, sizes, and SHA-256
+  digests.
+
+### Fixed
+
+- Made restore fail closed before target mutation when a snapshot is incomplete or altered.
+- Extended document, entity, and project erasure across stored blobs and all indexed forms.
+
+## [0.8.0] - 2026-07-25
+
+### Fixed
+
+- Made token budgets, quota admission, and usage ledgers atomic under concurrent requests.
+- Serialized per-project knowledge-version allocation and cross-store lifecycle decisions.
+- Added transaction boundaries and recovery checks for operations spanning relational and graph
+  state.
+
+## [0.7.0] - 2026-07-25
+
+### Fixed
+
+- Converged document review routes on one decision model with terminal rejection semantics.
+- Prevented multiple approval or rejection paths from producing conflicting publication state.
+- Hardened knowledge-hunting delivery and decision tracking, including explicit undelivered
+  outcomes when no channel is configured.
+
+## [0.6.0] - 2026-07-25
+
+### Fixed
+
+- Aligned recall, timelines, feedback, correction, and document reads around authoritative
+  claim-level provenance and temporal state.
+- Applied knowledge visibility and denial rules before aggregates, ordering, graph expansion, and
+  returned context could disclose hidden records.
+- Converged submission and correction behavior across MCP, REST, CLI, and stored lifecycle state.
+
 ## [0.5.0] - 2026-07-25
 
 P0-C (second half): one edge route map, honoured by every deployment target.

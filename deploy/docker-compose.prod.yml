@@ -4,17 +4,17 @@
 # on top of THIS file (`docker compose -f docker-compose.prod.yml -f docker-compose.<target>.yml`),
 # never a forked definition — so they can't drift.
 #
-# Plug-and-play (FR-18.x): migrate-on-boot (one-shot `brain init`, NFR-8) → api/worker; healthchecks
-# reuse `brain verify` (FR-11.2); Caddy does automatic TLS + domain (FR-4.8/D11 — a hard OAuth
-# prereq); the first admin is bootstrapped from env or generated + shown in the `init` logs; data,
-# the stored source documents and the PDF inbox live on persistent volumes. GPU (ollama/vllm) stays a
-# HOST precondition (D8) — nothing here installs drivers, and no model cache is declared here because
-# no service in this file would mount one.
+# The topology supplies migration ordering, readiness, TLS routing, and persistent application data.
+# It does not provision a model server or the four capability routes beyond embedder; add those to
+# api + worker with a private Compose override. Supply the first-admin password explicitly: migrate
+# does not mount app_data, so a generated owner-only credential file would be ephemeral. Fresh
+# application volumes also need writable ownership for UID 10001; this topology has no ownership
+# initializer. GPU (Ollama/vLLM) remains a host precondition and nothing here installs drivers.
 name: rsc-brain
 
 x-app-env: &app-env
-  # The single required secret is POSTGRES_PASSWORD; the app DSN derives from it (override
-  # RSC_BRAIN_DATABASE__DSN directly only for an external database).
+  # The required database secret is POSTGRES_PASSWORD; the app DSN derives from it. Model-provider
+  # credentials, when needed, belong in the operator's api/worker environment override.
   RSC_BRAIN_DATABASE__DSN: ${RSC_BRAIN_DATABASE__DSN:-postgresql+asyncpg://${POSTGRES_USER:-rsc_brain}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-rsc_brain}}
   RSC_BRAIN_DOMAIN: ${RSC_BRAIN_DOMAIN:-localhost}
   # R39: original documents are written under this directory. It MUST be on a persistent volume in
@@ -46,7 +46,8 @@ services:
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
 
-  # Migrate-on-boot (NFR-8) + first-admin bootstrap (FR-18.x). One-shot: api/worker wait for it.
+  # Migrate-on-boot + first-admin bootstrap. One-shot: api/worker wait for it. Keep an explicit
+  # RSC_BRAIN_ADMIN_PASSWORD because this service does not mount the persistent app_data volume.
   migrate:
     build:
       context: ..
@@ -68,8 +69,9 @@ services:
     environment: *app-env
     expose: ["8080"]
     volumes:
-      # The stored documents (R39) and the watched drop zone (FR-1.13) — both persistent, both shared
-      # with the worker, because either process may write or read them.
+      # app_data is the active original-document store. inbox preserves the planned watcher layout,
+      # but no deployed 0.13.0 process starts that watcher; dropping files there has no effect. Both
+      # mounts need ownership writable by UID 10001 before ingestion.
       - app_data:/var/lib/rsc-brain/data
       - inbox:/var/lib/rsc-brain/data/inbox
     depends_on:
@@ -138,6 +140,6 @@ services:
 volumes:
   db_data: # Postgres data (knowledge graph + relational store)
   app_data: # Stored source documents — the originals, needed for re-ingest and for audit (R39)
-  inbox: # PDF drop zone (FR-1.13)
+  inbox: # Reserved folder-watcher layout; no packaged 0.13.0 process consumes it
   caddy_data:
   caddy_config:

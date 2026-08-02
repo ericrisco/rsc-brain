@@ -4,11 +4,11 @@ description: >-
   Self-hosted company memory — a living knowledge graph over MCP. Kubernetes chart derived
   1:1 from the canonical production docker-compose (SPEC-18/25, principle D18): StatefulSet
   Postgres+AGE+pgvector, Deployments for api/worker/console, Ingress + cert-manager for TLS,
-  and a migrate-on-boot Job. Plug-and-play (FR-18.x): auto-generated secrets, migrate-on-boot,
-  brain-verify probes, first-admin bootstrap, persistent volumes — zero hand-editing.
+  and a migrate-on-boot Job. Includes preserved generated secrets, readiness probes, first-admin
+  bootstrap, and persistent volumes; operators supply images, infrastructure, and model routes.
 type: application
 # Chart version tracks the chart; appVersion tracks the rsc-brain release the images ship with.
-version: 0.13.0
+version: 0.14.0
 appVersion: "0.13.0"
 keywords:
   - knowledge-graph

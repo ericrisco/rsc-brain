@@ -3,8 +3,9 @@
 # recipe the release runs on a clean cluster; it needs Docker + kind + kubectl + helm and BUILT
 # images, so it is a per-release step (like SPEC-18's real-instance verification), not a CI unit.
 #
-# It exercises AC#1/#2: helm install → migrate Job → probes green → `brain verify` 100%.
-# The live cert-manager/ClusterIssuer + real Claude/ChatGPT OAuth (AC#6) run against a real cluster.
+# It exercises chart install, migration ordering, readiness, and the HTTP route map. It supplies
+# placeholder non-embedder capability routes because readiness checks configuration completeness but
+# does not call providers. Live model, cert-manager/TLS, and third-party OAuth checks are separate.
 set -euo pipefail
 
 CLUSTER="${CLUSTER:-rsc-brain-e2e}"
@@ -32,11 +33,16 @@ kubectl -n ingress-nginx wait --for=condition=available deploy/ingress-nginx-con
 
 # TLS stays off because `ingress.clusterIssuer` is blank by default, so no TLS block is emitted.
 echo "==> helm install (ingress ENABLED, no TLS — cert-manager is a cluster prereq)"
+# AppConfig requires provider + model for all five roles. Embedder comes from chart values; these
+# four placeholder routes let the readiness-only recipe start without claiming a provider was tested.
+# The explicit HTTP origin matches this no-TLS kind fixture and lets MCP validate the forwarded Host.
+EXTRA_ENV_JSON='[{"name":"RSC_BRAIN_INGRESS__PUBLIC_ORIGIN","value":"http://rsc-brain.local"},{"name":"RSC_BRAIN_CAPABILITIES__EXTRACTOR__PROVIDER","value":"ollama"},{"name":"RSC_BRAIN_CAPABILITIES__EXTRACTOR__MODEL","value":"qwen2.5:14b-instruct"},{"name":"RSC_BRAIN_CAPABILITIES__JUDGE__PROVIDER","value":"ollama"},{"name":"RSC_BRAIN_CAPABILITIES__JUDGE__MODEL","value":"qwen2.5:14b-instruct"},{"name":"RSC_BRAIN_CAPABILITIES__TOPICALIZER__PROVIDER","value":"ollama"},{"name":"RSC_BRAIN_CAPABILITIES__TOPICALIZER__MODEL","value":"llama3.1:8b-instruct"},{"name":"RSC_BRAIN_CAPABILITIES__RERANKER__PROVIDER","value":"ollama"},{"name":"RSC_BRAIN_CAPABILITIES__RERANKER__MODEL","value":"bge-reranker-v2-m3"}]'
 helm install rsc-brain "$CHART" --namespace "$NS" --create-namespace \
   --set image.tag=e2e --set image.db.tag=pg16-age-pgvector \
   --set image.pullPolicy=Never \
   --set ingress.enabled=true --set ingress.domain=rsc-brain.local \
-  --wait --timeout 10m
+  --set-json "extraEnv=${EXTRA_ENV_JSON}" \
+  --wait --wait-for-jobs --timeout 10m
 
 echo "==> Waiting for the migrate Job"
 kubectl -n "$NS" wait --for=condition=complete job -l app.kubernetes.io/component=migrate --timeout=5m
@@ -51,31 +57,39 @@ echo "==> Traversing every ratified route through the real Ingress (R56)"
 # One ownership map (plan §3 `edge.route`). Asserted through the proxy, from outside: the service and the
 # console answer differently, so the response says which one the Ingress chose. A rendered manifest
 # cannot tell you that, which is why R56 exists alongside R45-R48.
-kubectl -n "$NS" port-forward svc/rsc-brain-api 18080:8080 >/dev/null 2>&1 &
+kubectl -n ingress-nginx port-forward svc/ingress-nginx-controller 18080:80 >/dev/null 2>&1 &
 PF_PID=$!
 trap 'kill $PF_PID 2>/dev/null || true' EXIT
 sleep 3
 
-declare -a SERVICE_PATHS=("/api/v1/openapi.json" "/mcp" "/.well-known/oauth-authorization-server" "/metrics")
-declare -a CONSOLE_PATHS=("/" "/api/auth/session")
+# Exact unauthenticated statuses are the ownership fingerprint. A generic "anything but 404" check
+# lets the console's real /metrics page masquerade as the API metrics endpoint, so it is not evidence.
+declare -a ROUTE_PROBES=(
+  "service|/api/v1/admin/projects|401"
+  "service|/mcp|406"
+  "service|/oauth/authorize|401"
+  "service|/.well-known/oauth-authorization-server|200"
+  "service|/metrics|401"
+  "console|/|200"
+  "console|/api/auth/login|405"
+  "console|/api/proxy/api/v1/admin/projects|401"
+)
 
 fail=0
-for path in "${SERVICE_PATHS[@]}"; do
-  code=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: rsc-brain.local" "http://127.0.0.1:80${path}")
-  # Any answer other than a 404-from-the-console proves the service owns the path; the endpoints
-  # themselves are authorized (401/403 is a correct answer here).
-  if [[ "$code" == "000" ]]; then
-    echo "  FAIL $path — the Ingress routed it nowhere"; fail=1
-  else
-    echo "  ok   $path -> HTTP $code"
+for probe in "${ROUTE_PROBES[@]}"; do
+  IFS='|' read -r owner path expected <<< "$probe"
+  if ! code=$(curl --silent --show-error --max-time 10 --output /dev/null \
+    --write-out "%{http_code}" --header "Host: rsc-brain.local" \
+    "http://127.0.0.1:18080${path}"); then
+    echo "  FAIL $owner $path — request did not complete"
+    fail=1
+    continue
   fi
-done
-for path in "${CONSOLE_PATHS[@]}"; do
-  code=$(curl -s -o /dev/null -w "%{http_code}" -H "Host: rsc-brain.local" "http://127.0.0.1:80${path}")
-  if [[ "$code" == "000" ]]; then
-    echo "  FAIL $path — the Ingress routed it nowhere"; fail=1
+  if [[ "$code" != "$expected" ]]; then
+    echo "  FAIL $owner $path — expected HTTP $expected, got $code"
+    fail=1
   else
-    echo "  ok   $path -> HTTP $code"
+    echo "  ok   $owner $path -> HTTP $code"
   fi
 done
 [[ "$fail" == "0" ]] || { echo "==> R56: the live Ingress does not honour the route map"; exit 1; }

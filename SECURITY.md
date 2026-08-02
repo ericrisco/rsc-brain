@@ -1,46 +1,71 @@
 # Security Policy
 
-## Reporting a vulnerability
+## Report a vulnerability
 
-**Please do not open a public issue for security problems.** Report privately via GitHub's
+Do not open a public issue for a suspected vulnerability. Use GitHub's
 [private vulnerability reporting](https://github.com/ericrisco/rsc-brain/security/advisories/new)
-for this repository. Include a description, affected version/commit, and a reproduction if you
-have one. We aim to acknowledge within 5 working days and to agree a disclosure timeline with
-you before any public detail is shared.
+for this repository. Include the affected version or commit, impact, reproduction conditions, and
+any known mitigation. The project aims to acknowledge a report within five working days and agrees
+on a disclosure timeline before publishing details.
 
 ## Supported versions
 
-The project is pre-1.0 (`0.x`). Security fixes target `main`; there is no back-porting to
-older `0.x` tags yet. This section will be tightened at the v1.0 release.
+rsc-brain is pre-1.0. Security fixes target `main` and the next release; older `0.x` tags do not
+receive backports. Confirm the running package with `brain --version` before reporting or applying a
+fix. The current documented release is `0.13.0`.
 
-## Automated gates that run today
+## Security boundaries
 
-This is an honest inventory — it lists what actually runs, and what does **not** yet, so the
-absence of a finding is never mistaken for proven coverage.
+- A credential resolves one principal and project scope. Project content also requires membership,
+  a named capability, and any relevant topic authority.
+- Topic filtering occurs before content, counts, order, pages, graph neighbours, exports, or model
+  context become observable.
+- Source documents and retrieved fragments are untrusted data. They cannot select tools,
+  permissions, credentials, destinations, or executable actions.
+- Configuration owns model routing. Secrets come from environment variables, Docker/Kubernetes
+  secrets, or an equivalent secrets backend; committed examples contain field names and placeholders
+  only.
+- Route validators bound documented fields, arrays, pages, exports, ontology input, and time
+  windows. There is no global HTTP body limit in 0.13.0, and document upload does not enforce the
+  declared `limits.upload_bytes`; place a body ceiling at the trusted edge.
+- Backups include database state and stored source blobs. Restore validates the snapshot before
+  database mutation, but blob copy does not remove files absent from the snapshot; restore into a
+  new or empty data directory.
 
-| Gate | Where | Status |
-|---|---|---|
-| Lint + format (`ruff`) | CI `quality` | ✅ runs on every PR/push |
-| Strict typing (`mypy --strict`) | CI `quality` | ✅ |
-| Tests + coverage (≥70%) | CI `quality` | ✅ |
-| Dependency audit (`pip-audit`, SCA) | CI `sca` | ✅ — currently **no known vulnerabilities** (pytest is `9.1.1`, so PYSEC-2026-1845 does not apply) |
-| AGPL license compatibility | CI `licenses` | ✅ |
-| Data-service build + extension smoke | CI `integration` | ✅ (ephemeral compose) |
-| SBOM (syft) + CVE scan (grype) | Release workflow | ✅ on release/tag |
-| Actions pinned to full commit SHAs, least-privilege tokens | all workflows | ✅ (AUDIT-006) |
-| Basic committed-secret guard | `pre-commit` (`detect-private-key`) + `.gitignore` boundary | ⚠️ **not** a full secret scanner |
+See [Security and tenancy](docs/explanation/security-and-tenancy.md) for the design and
+[Permissions reference](docs/reference/permissions.md) for the authorization matrix.
 
-### Not yet covered (planned)
+## Automated gates
 
-- **Dedicated secret scanning** (e.g. gitleaks) over the working tree and git history.
-- **SAST** (e.g. semgrep) in CI.
+The repository's workflows currently require:
 
-These land in the release-hardening SPEC (SPEC-22). Until then, "no committed secret was
-found" means only that the basic guard and the ignore boundary passed — not that a full scan
-ran.
+| Gate | Workflow evidence |
+| --- | --- |
+| Lint, formatting, and Python SAST | Ruff, including the `S` security rules |
+| Strict types | mypy over source, tests, and eval code |
+| Unit and real-data-service tests | pytest; the integration job builds Postgres 16 + AGE + pgvector and enforces at least 70% coverage over the full suite |
+| Secret scanning | gitleaks over the working tree and Git history with exact fixture exceptions |
+| Dependency scanning | `pip-audit` and production-only `npm audit --omit=dev --audit-level=high` |
+| License policy | AGPL compatibility audit |
+| Console contract | OpenAPI export and generated TypeScript drift checks, lint, types, and production build |
+| Edge routing | live Caddy traversal of the supported route matrix |
+| Kubernetes packaging | Compose/chart parity, Helm lint, and kubeconform on default and production-like renders |
+| Release artifacts | SPDX SBOM from Syft and a Grype CVE scan |
 
-## Secrets
+Workflow actions and downloaded scanner binaries are pinned or checksum-verified, and workflow
+tokens default to read-only permissions. A green structural/render check is not proof that a live
+TLS, OAuth, model-provider, restore, or Kubernetes environment worked; those checks require the
+corresponding infrastructure.
 
-Real credentials never enter git. They live in `.env` (gitignored) or Docker secrets, and the
-application reads them from the environment only (`config.yaml`/`config.example.yaml` never
-contain keys). See [`docker/README.md`](docker/README.md) for the data-service password guard.
+## Secret handling
+
+- Never commit `.env`, generated credentials, tokens, database dumps, or private source documents.
+- Do not place API keys or the database DSN in `config.yaml` or `config.example.yaml`.
+- Give production secrets through environment variables, Compose/PaaS secret injection, or a
+  Kubernetes Secret. Restrict local secret files to their owner.
+- `brain init` does not print a generated first-admin password. Prefer supplying one explicitly; if
+  the CLI generates it, retrieve it from the owner-only file path reported by the command, then
+  remove that file after storing the credential safely.
+
+The data image also refuses blank, known-placeholder, or short PostgreSQL passwords before the
+server starts. See the [data-service guide](docker/README.md).

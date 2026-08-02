@@ -1,11 +1,14 @@
 {{- /*
-The shared persistent volumes from the compose: app-data = the stored SOURCE DOCUMENTS (R39), inbox =
-the PDF drop zone (FR-1.13), model-cache = Ollama/HF weights (mounted by the worker and the optional
-in-cluster Ollama). app-data used to be absent and the data dir pointed AT the inbox volume, so the
-originals were persisted only by accident and the drop-zone watcher saw the store's own directory. db_data lives in the StatefulSet's volumeClaimTemplate; caddy_* has no k8s
-equivalent (the Ingress terminates TLS). resource-policy:keep so `helm uninstall`/upgrade never
-drops data. Default access mode is RWO (fine on a single node / kind); set an RWX storageClass for
-a multi-node cluster where api and worker land on different nodes.
+The shared persistent volumes from Compose: app-data = stored source documents (R39), inbox = a
+reserved watcher layout, model-cache = Ollama/HF weights. No packaged 0.13.0 process starts the
+folder watcher. db_data lives in the StatefulSet's volumeClaimTemplate; caddy_* has no Kubernetes
+equivalent because Ingress terminates TLS. resource-policy:keep prevents Helm from deleting these
+claims during uninstall/upgrade.
+
+All claims below request RWO, and values expose no access-mode override. API and worker share
+app-data + inbox, while the chart defines no co-scheduling. Multi-node placement therefore needs a
+backend with compatible RWO attachment or external co-location. The chart also has no fsGroup or
+ownership init; provision app-data + inbox writable by securityContext.runAsUser before ingestion.
 */ -}}
 apiVersion: v1
 kind: PersistentVolumeClaim

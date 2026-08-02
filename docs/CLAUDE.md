@@ -1,27 +1,18 @@
-# CLAUDE.md — development guidance
+# Coding-agent guidance
 
-> Guidance for Claude (and other coding agents) working inside the rsc-brain product repo.
-> The full development runbook is [`AGENTS.md`](AGENTS.md) — read it first.
+Read the [development runbook](AGENTS.md) before changing this repository and use the
+[contributing guide](../CONTRIBUTING.md) as the definition of done.
 
-## Fast path
+Four rules carry the highest implementation risk:
 
-```bash
-uv sync --all-groups
-uv run pytest            # green?
-uv run ruff check . && uv run mypy
-```
+1. Pass `ProjectScope` into knowledge, storage, recall, and ingestion boundaries; never combine a
+   principal with a separate caller-selected project.
+2. Keep model provider, model, endpoint, fallback, and credentials under typed configuration.
+3. Change contracts listed in [Interface Freeze](interface-freeze.md) only through an approved RFC
+   and matching contract tests.
+4. Keep public documentation synchronized with executable behavior and run
+   `uv run python scripts/check_docs.py`.
 
-## The four rules you must not break
-
-1. **`ProjectScope`, never a bare `project_id`** into store/recall/ingest calls; cross-project
-   mismatch fails before any side effect (AUDIT-003).
-2. **Config owns model routing** — pass only a typed `GenerationOptions`; never `model`/
-   `api_base`/`api_key` from call data (AUDIT-005).
-3. **Frozen interfaces** (`docs/interface-freeze.md`) change only via an approved RFC.
-4. **Truthful docs** — a CHANGELOG/README claim must be observable and verified in the same
-   change; label work-in-progress as such.
-
-## Definition of done
-
-Green `ruff` + `mypy --strict` + `pytest` (≥70% cov), clean `pip-audit` and license audit,
-tests for new behaviour. See [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
+Use failing behavioral tests before implementation, include allow and deny cases for authorization,
+and use the real data-service suite for tenant, transaction, graph, vector, migration, concurrency,
+backup, or restore claims.

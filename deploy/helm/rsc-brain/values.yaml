@@ -1,15 +1,15 @@
-# rsc-brain Helm values (SPEC-25). The happy path is `helm install` + 2-3 values:
-#   --set ingress.domain=brain.acme.com --set ingress.clusterIssuer=letsencrypt-prod
-# Everything else has a sensible default; nothing below needs hand-editing for a working install.
+# rsc-brain Helm values. Defaults render for validation but are not a working model configuration.
+# Pin images, configure ingress/storage, set a reachable embedder below, and add extractor, judge,
+# topicalizer, and reranker routes through extraEnv. See the chart README.
 
 nameOverride: ""
 fullnameOverride: ""
 
 # --- Container images -------------------------------------------------------
-# Defaults match the names the repo's CI publishes (parity with the canonical compose). Point
-# `registry` at your registry and pin `tag` to a release for production.
+# Bare defaults match the local Compose image names; the release workflow does not publish them.
+# Build and push the three images to your registry, set `registry`, and pin `tag` for production.
 image:
-  registry: "" # e.g. ghcr.io/ericrisco — empty uses the bare repositories below
+  registry: "" # e.g. registry.example.com/acme — empty uses the bare repositories below
   tag: "latest" # pin to a release tag in production
   pullPolicy: IfNotPresent
   app:
@@ -21,7 +21,7 @@ image:
     tag: pg16-age-pgvector # the single Postgres+AGE+pgvector image (D1)
 imagePullSecrets: []
 
-# --- The one secret + first admin (auto-generated when blank; preserved across upgrades) --------
+# --- Generated database + first-admin credentials (preserved across upgrades) -------------------
 postgres:
   user: rsc_brain
   database: rsc_brain
@@ -30,15 +30,15 @@ database:
   dsn: "" # set ONLY to target an external Postgres; otherwise derived from postgres.* above
 admin:
   email: admin@rsc-brain.local
-  password: "" # blank ⇒ generated once, shown in the migrate Job logs + stored in the Secret
+  password: "" # blank ⇒ generated once and preserved in the Secret; never printed in Job logs
 
 # --- Model gateway (D8: GPU is a HOST precondition; the chart never installs drivers) -----------
-# Default: point the gateway at an EXTERNAL endpoint (a GPU host or managed service).
+# The default URL is a placeholder. Point it at a real external service or the opt-in Deployment.
 gateway:
   embedder:
     provider: ollama
-    model: nomic-embed-text
-    apiBase: http://ollama:11434 # an in-cluster Service, external URL, or the opt-in ollama below
+    model: bge-m3
+    apiBase: http://ollama:11434
 
 # Opt-in in-cluster Ollama — only if the cluster ALREADY has an operative GPU (device plugin +
 # drivers are the host's responsibility, D8). Off by default.
@@ -65,8 +65,11 @@ worker:
 console:
   replicas: 1
   resources: {}
+  extraEnv: [] # Console-only; capability routes and secret refs stay in top-level extraEnv.
 
-# --- Persistent volumes (the three FR-18.x volumes; caddy_* is N/A — Ingress does TLS) ----------
+# --- Persistent volumes (fixed RWO; caddy_* is N/A because Ingress does TLS) --------------------
+# The chart does not configure fsGroup, initialize ownership, request RWX, or co-schedule pods.
+# Provision appData/inbox for securityContext.runAsUser and keep shared mounts on compatible nodes.
 persistence:
   db:
     size: 10Gi
@@ -74,7 +77,7 @@ persistence:
   appData: # Stored source documents — the originals (R39). Losing this loses every ingested file.
     size: 20Gi
     storageClass: ""
-  inbox: # PDF drop zone (FR-1.13)
+  inbox: # Reserved watcher layout; no packaged 0.13.0 process consumes dropped files
     size: 5Gi
     storageClass: ""
   modelCache: # Ollama / HF weights
@@ -92,7 +95,11 @@ ingress:
 
 securityContext:
   runAsNonRoot: true
-  runAsUser: 1000
+  runAsUser: 1000 # PVC ownership must be provisioned for this UID; the chart does not chown mounts
 
-# Extra environment for every app container (escape hatch for uncommon RSC_BRAIN_* overrides).
+# Chart 0.14.0: top-level extraEnv is for Python application containers (API + worker) only. Values
+# used by the console in chart 0.13.x must move to console.extraEnv before upgrade. Use it for the four
+# required capability routes not modeled above and for RSC_BRAIN_INGRESS__PUBLIC_ORIGIN;
+# ingress.domain alone does not set that field. Use valueFrom Secret refs for credentials. The console
+# receives only console.extraEnv, so model configuration and credentials cannot leak into it.
 extraEnv: []

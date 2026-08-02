@@ -2,8 +2,11 @@
 #   docker compose -f deploy/docker-compose.prod.yml -f deploy/docker-compose.dokploy.yml up
 #
 # Dokploy fronts services with Traefik: TLS + domain come from Traefik labels on the api service, so
-# we drop our own Caddy. POSTGRES_PASSWORD + RSC_BRAIN_DOMAIN are set in the Dokploy env UI (the DSN
-# derives from POSTGRES_PASSWORD via the canonical app-env). No hand-editing of these files.
+# we drop our own Caddy. Set POSTGRES_PASSWORD, an explicit RSC_BRAIN_ADMIN_PASSWORD, and the
+# hostname-only RSC_BRAIN_DOMAIN in the Dokploy env UI. Also inject
+# RSC_BRAIN_INGRESS__PUBLIC_ORIGIN=https://<same-hostname> into api/worker through the private
+# override. The DSN derives from POSTGRES_PASSWORD via the canonical app-env; model routes remain
+# operator-supplied deployment settings.
 name: rsc-brain
 
 services:
@@ -13,16 +16,20 @@ services:
   # service's path prefixes win, and the console keeps the root plus its own `/api/auth` and
   # `/api/proxy` BFF handlers.
   api:
+    networks: [default, dokploy-network]
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
       - "traefik.http.routers.rsc-api.rule=Host(`${RSC_BRAIN_DOMAIN}`) && (PathPrefix(`/api/v1`) || PathPrefix(`/mcp`) || PathPrefix(`/oauth`) || PathPrefix(`/.well-known`) || PathPrefix(`/metrics`))"
       - "traefik.http.routers.rsc-api.priority=100"
       - "traefik.http.routers.rsc-api.entrypoints=websecure"
       - "traefik.http.routers.rsc-api.tls.certresolver=letsencrypt"
       - "traefik.http.services.rsc-api.loadbalancer.server.port=8080"
   console:
+    networks: [default, dokploy-network]
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=dokploy-network"
       - "traefik.http.routers.rsc-console.rule=Host(`${RSC_BRAIN_DOMAIN}`)"
       - "traefik.http.routers.rsc-console.priority=1"
       - "traefik.http.routers.rsc-console.entrypoints=websecure"
@@ -31,3 +38,7 @@ services:
   # Traefik terminates TLS — our Caddy is not used on this target.
   caddy:
     profiles: ["donotstart"]
+
+networks:
+  dokploy-network:
+    external: true

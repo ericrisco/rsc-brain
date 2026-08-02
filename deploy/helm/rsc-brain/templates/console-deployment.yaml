@@ -35,7 +35,7 @@ spec:
               value: http://{{ include "rsc-brain.fullname" . }}-api:8080
             - name: NODE_ENV
               value: production
-            {{- with .Values.extraEnv }}
+            {{- with .Values.console.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           readinessProbe:

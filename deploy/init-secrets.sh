@@ -24,12 +24,11 @@ POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 # Public domain for automatic HTTPS (Caddy). Set to your real domain before going live.
 RSC_BRAIN_DOMAIN=localhost
 
-# First admin — created on first \`brain init\`. Change the email; the password is shown once.
+# First admin — created on first \`brain init\`. Change the email; the value stays in this file.
 RSC_BRAIN_ADMIN_EMAIL=admin@rsc-brain.local
 RSC_BRAIN_ADMIN_PASSWORD=${ADMIN_PASSWORD}
 
-# Model gateway (defaults target the optional ollama profile). Override per capability as needed.
-# RSC_BRAIN_CAPABILITIES__EMBEDDER__PROVIDER=ollama
+# Model routes belong in the private api/worker Compose override described in deploy/README.md.
 EOF
 chmod 600 "$ENV_FILE"
 echo "Wrote $ENV_FILE with unique secrets (mode 600)." >&2

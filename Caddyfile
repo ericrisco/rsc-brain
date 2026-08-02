@@ -4,7 +4,7 @@
 #
 #   console  →  /            /_next/*        /api/auth/*      /api/proxy/*
 #   service  →  /api/v1/*    /mcp*           /oauth/*         /.well-known/*
-#   service  →  /metrics     (reachable, but authorized as an operator surface — R10)
+#   service  →  /metrics     (safe-denied in 0.13.0; also shadows the console page — R10)
 #
 # Why the split is not cosmetic: `/api/auth/*` and `/api/proxy/*` are Next.js route handlers — the
 # browser's session and the typed proxy to the API. Sending `/api/*` wholesale to the service, or
@@ -34,8 +34,8 @@
 	handle /.well-known/* {
 		reverse_proxy {$RSC_BRAIN_APP_UPSTREAM:api:8080}
 	}
-	# Reachable so an operator's scrape can get in; the endpoint itself requires the operator
-	# capability, and no project role satisfies it (R10).
+	# No 0.13.0 principal satisfies the endpoint's operator capability. This ownership also intercepts
+	# the console's product-metrics page at the same path; both public surfaces are unavailable.
 	handle /metrics {
 		reverse_proxy {$RSC_BRAIN_APP_UPSTREAM:api:8080}
 	}

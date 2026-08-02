@@ -10,10 +10,13 @@ the same ASGI app as the FastAPI REST API (one process/port).
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.identity.resolve import resolve_delegated_scope
@@ -60,6 +63,72 @@ never see project B. If a query matches nothing you are allowed to see, the answ
 `found: false` — identical whether the knowledge is absent or merely not permitted.
 """
 
+_LOOPBACK_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
+_LOOPBACK_ORIGINS = ("http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*")
+
+
+class _NormalizeMcpSecurityHeaders:
+    """Normalize case-insensitive URI components before the SDK performs exact matching."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            normalized_scope = dict(scope)
+            normalized_scope["headers"] = [
+                (name, value.lower() if name.lower() in {b"host", b"origin"} else value)
+                for name, value in scope.get("headers", [])
+            ]
+            scope = normalized_scope
+        await self.app(scope, receive, send)
+
+
+def normalize_mcp_security_headers(app: ASGIApp) -> ASGIApp:
+    """Apply RFC case normalization without disabling the SDK's DNS-rebinding checks."""
+    return _NormalizeMcpSecurityHeaders(app)
+
+
+def _transport_security(public_origin: str | None) -> TransportSecuritySettings:
+    """Keep DNS-rebinding protection while admitting the configured deployment origin."""
+    allowed_hosts = list(_LOOPBACK_HOSTS)
+    allowed_origins = list(_LOOPBACK_ORIGINS)
+    if public_origin:
+        try:
+            parsed = urlsplit(public_origin.rstrip("/"))
+            configured_port = parsed.port
+        except ValueError:
+            parsed = None
+        if parsed is not None:
+            scheme = parsed.scheme.casefold()
+            if (
+                scheme in {"http", "https"}
+                and parsed.hostname
+                and not parsed.username
+                and not parsed.password
+                and parsed.path in {"", "/"}
+                and not parsed.query
+                and not parsed.fragment
+            ):
+                hostname = parsed.hostname.lower()
+                if ":" in hostname:
+                    hostname = f"[{hostname}]"
+                default_port = 443 if scheme == "https" else 80
+                if configured_port is None or configured_port == default_port:
+                    allowed_hosts.extend((hostname, f"{hostname}:{default_port}"))
+                    allowed_origins.extend(
+                        (f"{scheme}://{hostname}", f"{scheme}://{hostname}:{default_port}")
+                    )
+                else:
+                    netloc = f"{hostname}:{configured_port}"
+                    allowed_hosts.append(netloc)
+                    allowed_origins.append(f"{scheme}://{netloc}")
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(dict.fromkeys(allowed_hosts)),
+        allowed_origins=list(dict.fromkeys(allowed_origins)),
+    )
+
 
 def build_mcp_server(
     *,
@@ -68,6 +137,7 @@ def build_mcp_server(
     gateway: ModelGateway,
     stateless: bool = True,
     quota_config: QuotaConfig | None = None,
+    public_origin: str | None = None,
 ) -> FastMCP:
     """Build the FastMCP server wired to the retriever + stores."""
     graph = AgeGraphStore(sessionmaker)
@@ -76,6 +146,7 @@ def build_mcp_server(
         name="rsc-brain",
         instructions=ANTI_INJECTION_GUIDE,
         stateless_http=stateless,
+        transport_security=_transport_security(public_origin),
     )
 
     async def _scope(

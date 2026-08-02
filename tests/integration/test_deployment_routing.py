@@ -1,15 +1,7 @@
-"""Every deployment target routes the same paths to the same owner (AUDIT-046 / R45-R48, T009 RED).
+"""Every deployment target routes the same paths to the same owner (AUDIT-046 / R45-R48).
 
-One route map, four targets, and today each disagrees with it differently:
-
-* **Compose/Caddy (R45)** forwards *everything* to ``api:8080``. The ``console`` service is built,
-  started and unreachable: there is no route to it at all, so the product's own UI does not exist on
-  its reference deployment.
-* **Helm (R48)** sends ``/api`` as a prefix to the service, which swallows ``/api/auth/*`` and
-  ``/api/proxy/*`` — the console's BFF. Those are Next.js route handlers; the API has never served
-  them, so console login is routed to a 404.
-* **Coolify (R46)** and **Dokploy (R47)** publish the api service and nothing else, so the console is
-  unreachable there too, and Dokploy's Traefik labels claim the whole host for the API.
+These regression checks preserve the ownership map after the original Caddy, Helm, Coolify, and
+Dokploy routing conflicts were corrected.
 
 The ratified ownership map (plan §3 ``edge.route``):
 
@@ -38,7 +30,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 #: Paths the CONSOLE must own on every target. `/api/auth` and `/api/proxy` are Next.js route
 #: handlers — the browser's session lives there — so a target that routes them to the API has no login.
-CONSOLE_PATHS = ("/", "/_next/static/chunk.js", "/api/auth/session", "/api/proxy/projects")
+CONSOLE_PATHS = (
+    "/",
+    "/_next/static/chunk.js",
+    "/api/auth/login",
+    "/api/proxy/api/v1/admin/projects",
+)
 
 #: Paths the SERVICE must own on every target.
 SERVICE_PATHS = (
@@ -46,6 +43,7 @@ SERVICE_PATHS = (
     "/mcp",
     "/oauth/authorize",
     "/.well-known/oauth-authorization-server",
+    "/metrics",
 )
 
 
@@ -146,9 +144,8 @@ def test_a_paas_overlay_publishes_the_console_too(overlay: str) -> None:
     compose = yaml.safe_load(_read("deploy", overlay))
     services = compose.get("services") or {}
 
-    # Each PaaS publishes differently — Coolify through SERVICE_FQDN_* env, Dokploy through Traefik
-    # labels — so "is it published" has to be asked in the target's own terms rather than by looking
-    # for `ports`, which neither uses.
+    # Each PaaS publishes through proxy metadata rather than host ports, so inspect its labels and
+    # retain support for FQDN metadata if a platform overlay uses it in the future.
     def _is_published(service: dict[str, Any] | None) -> bool:
         if not service:
             return False
@@ -252,7 +249,7 @@ def test_no_path_in_the_map_is_left_unowned() -> None:
     An unowned path is a 404 the operator cannot explain; two owners is a coin flip at deploy time.
     Both are the same defect from the outside, which is why the map is asserted as a whole.
     """
-    for path in (*CONSOLE_PATHS, *SERVICE_PATHS, "/metrics"):
+    for path in (*CONSOLE_PATHS, *SERVICE_PATHS):
         assert _caddy_owner(path), f"Caddy leaves {path} unrouted"
     ingress = _render_ingress()
     for path in (*CONSOLE_PATHS, *SERVICE_PATHS):
