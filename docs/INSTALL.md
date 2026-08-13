@@ -81,9 +81,9 @@ Resolve every blocker and rerun `brain plan --json` before applying.
 ### Phase `data_service` — Start the data service
 
 - **Precondition:** Docker is available.
-- **Verify command:** `docker compose ps db`
-- **Success criterion:** the `db` container is running and healthy (the start action waits on its
-  healthcheck).
+- **Verify command:** `docker compose exec -T db pg_isready -q`
+- **Success criterion:** the `db` container is up and accepting connections. (`docker compose ps`
+  is not used: it exits 0 even when the service does not exist.)
 - **Corrective action:** inspect `docker compose logs db` for service failures.
 - **Rollback:** `docker compose stop db`; named volumes are preserved.
 
@@ -92,9 +92,9 @@ runs next.
 
 ### Phase `migrate` — Apply database migrations
 
-- **Precondition:** the `db` container is running.
-- **Verify command:** `brain migrate`
-- **Success criterion:** Migration exits successfully and a repeat reports no pending work.
+- **Precondition:** the `db` container is accepting connections.
+- **Verify command:** `brain wait-for-schema --timeout 0`
+- **Success criterion:** the schema is at head. The check observes; it does not migrate.
 - **Corrective action:** Verify the database DSN and tenant-integrity preflight, then rerun
   `brain migrate`.
 - **Rollback:** No automatic downgrade; restore a verified backup into an inactive target when a

@@ -225,8 +225,12 @@ def build_plan(*, profile: str, docker: bool, free_ports: Mapping[int, bool]) ->
                     ("brain", "migrate"),
                 ),
             ),
+            # AUDIT-057: the verify used to be `brain migrate` itself, so checking the
+            # postcondition PERFORMED the migration — and the phase then reported "already
+            # satisfied" for work it had just done. A verify must observe, never act.
             verify=Check(
-                "schema at head (migrate is a no-op on a migrated DB)", ("brain", "migrate")
+                "the schema is at head",
+                ("brain", "wait-for-schema", "--timeout", "0"),
             ),
         ),
         Phase(

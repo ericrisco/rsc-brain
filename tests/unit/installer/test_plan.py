@@ -178,3 +178,17 @@ def test_no_phase_verifies_with_a_command_that_cannot_fail() -> None:
                 f"phase {phase.id!r} gates on `docker compose ps`, which exits 0 even when the "
                 "service does not exist"
             )
+
+
+def test_a_phase_verify_never_repeats_its_own_action() -> None:
+    """AUDIT-057: `migrate` verified with `brain migrate` — the same command as its action. Since
+    the postcondition is checked BEFORE the actions run, checking performed the migration, and the
+    phase then reported "already satisfied" for work it had just done itself. A verify observes; an
+    action acts. Conflating them makes the transcript lie about what happened."""
+    plan = build_plan(profile="cpu_only", docker=True, free_ports={})
+    for phase in plan.phases:
+        for action in phase.actions:
+            assert tuple(action.command) != tuple(phase.verify.command), (
+                f"phase {phase.id!r} verifies by re-running its own action "
+                f"({' '.join(action.command)}) — checking would perform the work"
+            )
