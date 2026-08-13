@@ -128,3 +128,26 @@ def test_config_phase_produces_usable_secrets_not_a_blank_template() -> None:
     assert tuple(config.verify.command) != ("test", "-f", ".env"), (
         "existence of .env does not prove the secrets inside it are usable"
     )
+
+
+def test_every_brain_command_a_phase_invokes_actually_exists() -> None:
+    """The catalog is executable, so a phase that calls a command the CLI does not expose is a
+    broken install — and the unit suite must catch it, not the rented host. It did not: the first
+    fix shipped a `config` phase calling `brain init-env` while the command was registered into a
+    frozen contract list the registrar filters, so it never reached the app."""
+    from typer.main import get_command
+
+    from rsc_brain.cli.main import app
+
+    registered = set(get_command(app).commands)  # type: ignore[attr-defined]
+    plan = build_plan(profile="cpu_only", docker=True, free_ports={})
+    for phase in plan.phases:
+        commands = [phase.precondition.command, phase.verify.command]
+        commands.extend(action.command for action in phase.actions)
+        for command in commands:
+            if not command or command[0] != "brain":
+                continue
+            assert command[1] in registered, (
+                f"phase {phase.id!r} invokes `brain {command[1]}`, which the CLI does not expose "
+                f"(registered: {sorted(registered)})"
+            )

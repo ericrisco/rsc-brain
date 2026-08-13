@@ -25,6 +25,7 @@ Running `brain` with no command prints help. Completion commands are not registe
 | Command | Purpose | Arguments and options |
 |---|---|---|
 | `brain init` | Apply migrations and create the first administrator. Repeated runs are idempotent. | `--admin-email TEXT`; `--admin-password TEXT`. When the password is absent, the generated credential is written to `first-admin-credential` under `RSC_BRAIN_INGEST__DATA_DIR`, default `data`, with mode `0600`. Output reports the file path but never the password. |
+| `brain init-env` | Create `.env` if absent and generate any unset required secret. Idempotent: a value already set is never rotated, so re-running it cannot change the database password out from under a running database. | `--check` reports whether the required secrets are usable and changes nothing; exits non-zero when any is blank or a placeholder. |
 | `brain doctor` | Detect host characteristics, recommend a hardware profile, and scan configuration for secrets. | No command-specific options. |
 | `brain plan` | Print the install phases that apply would execute without changing the deployment. | No command-specific options. |
 | `brain apply` | Execute the checkpointed install plan with per-phase rollback. | `--yes` suppresses confirmations for automation. |

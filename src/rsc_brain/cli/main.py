@@ -78,7 +78,6 @@ _IMPLEMENTED_COMMANDS: dict[str, tuple[Callable[..., None], str]] = {
     "restore": (_restore, "Restore a dump, apply migrations, and verify."),
     "forget": (_forget, "Hard-delete a document and tombstone its graph nodes."),
     "audit": (_audit, "Show or export the audit log for a project."),
-    "init-env": (_init_env, "Create .env and generate any unset required secret (idempotent)."),
     "doctor": (_doctor, "Detect host + recommend profile + scan config for secrets."),
     "plan": (_plan, "Dry-run the install: the phase plan `apply` would execute (SPEC-16)."),
     "apply": (_apply, "Execute the install plan (idempotent, checkpointed, per-phase rollback)."),
@@ -144,6 +143,13 @@ for _name in COMMANDS:
 app.command(
     "wait-for-schema", help="Block until the database schema is at head (for init containers)."
 )(_wait_for_schema)
+
+# `init-env` is introduced by AUDIT-051: the install's config phase must leave usable secrets
+# behind, not a template with a blank password. Registered here rather than in the frozen FR-10.1
+# contract list, like every other post-contract command.
+app.command(
+    "init-env", help="Create .env and generate any unset required secret (idempotent)."
+)(_init_env)
 
 # `preflight` is introduced by AUDIT-039 (R17): the read-only pre-migration data report.
 app.command("preflight", help="Report data that would block a migration (cross-project rows).")(
