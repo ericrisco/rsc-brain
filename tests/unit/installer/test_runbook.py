@@ -57,7 +57,10 @@ def test_the_three_guardrails_are_present() -> None:
 def test_every_cited_brain_command_exists() -> None:
     root = typer.main.get_command(app)
     known = set(root.commands)  # type: ignore[attr-defined]
-    cited = set(re.findall(r"`brain ([a-z]+)", _TEXT))
+    # Hyphenated names are real commands (`wait-for-schema`, `init-env`); the old pattern
+    # stopped at the hyphen and compared a fragment, so it both missed typos in the tail
+    # and reported false ones for the head.
+    cited = set(re.findall(r"`brain ([a-z][a-z-]*)", _TEXT))
     assert cited, "runbook cites no brain commands — did the flow section change?"
     missing = cited - known
     assert not missing, f"runbook cites non-existent brain commands: {sorted(missing)}"
