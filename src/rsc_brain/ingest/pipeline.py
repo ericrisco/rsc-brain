@@ -24,6 +24,7 @@ from pathlib import Path
 
 from rsc_brain.config.models import HardwareProfile, KnowledgeConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
+from rsc_brain.identity.service import DEFAULT_TOPIC_SLUG
 from rsc_brain.ingest.chunker import chunk_prose
 from rsc_brain.ingest.entity_resolution import entity_id
 from rsc_brain.ingest.extractor import CascadeExtractor, ExtractionDiscarded
@@ -72,7 +73,7 @@ _ENTITY_LABEL = "Entity"
 class PipelineConfig:
     hardware_profile: HardwareProfile = HardwareProfile.WORKSTATION
     sensitivity_threshold: int = 3
-    default_tag: str = "general"
+    default_tag: str = DEFAULT_TOPIC_SLUG
 
 
 def default_parser_factory(doc: DocRow) -> DocumentParser:

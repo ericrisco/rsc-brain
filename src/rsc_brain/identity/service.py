@@ -22,6 +22,11 @@ from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
 
 DEFAULT_PROJECT_SLUG = "default"
+#: The topic the ingestion pipeline falls back to when nothing more specific is assigned. It is
+#: shared with `PipelineConfig.default_tag` rather than duplicated: if the two drifted, the first
+#: admin would be granted a topic nothing is ever tagged with — which fails silently and is
+#: indistinguishable from an empty knowledge base (AUDIT-066).
+DEFAULT_TOPIC_SLUG = "general"
 
 
 def _now() -> dt.datetime:
@@ -277,6 +282,26 @@ class IdentityService:
             merged = list(dict.fromkeys([*membership.allowed_topics, *slugs]))
             membership.allowed_topics = merged
             return tuple(merged)
+
+    async def ensure_default_topic(self, project_id: str) -> str:
+        """Create the fallback topic if absent; return its id. Idempotent.
+
+        The first admin's topic grant is a SNAPSHOT taken at bootstrap. Topics are created lazily
+        during ingestion, so on a fresh install the snapshot was empty and froze that way: the owner
+        ingested a document, asked for it, and got `found: false` — correctly indistinguishable from
+        "nothing there" (FR-4.3), and therefore impossible to diagnose. Ensuring the fallback topic
+        exists first is what makes the snapshot non-empty.
+        """
+        async with session_scope(self._sm) as session:
+            existing = await session.scalar(
+                select(models.Topic.id).where(
+                    models.Topic.project_id == uuid.UUID(project_id),
+                    models.Topic.slug == DEFAULT_TOPIC_SLUG,
+                )
+            )
+            if existing is not None:
+                return str(existing)
+        return await self.create_topic(project_id, DEFAULT_TOPIC_SLUG, "General")
 
     async def create_topic(
         self, project_id: str, slug: str, name: str, *, sensitivity: int = 0
