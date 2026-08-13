@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import security
@@ -301,7 +302,22 @@ class IdentityService:
             )
             if existing is not None:
                 return str(existing)
-        return await self.create_topic(project_id, DEFAULT_TOPIC_SLUG, "General")
+        try:
+            return await self.create_topic(project_id, DEFAULT_TOPIC_SLUG, "General")
+        except IntegrityError:
+            # Check-then-insert spans two transactions, so another `brain init` — or an api and a
+            # worker booting together — can win the race between them. The unique constraint is the
+            # real arbiter; losing to it means the topic now exists, which is the outcome asked for.
+            async with self._sm() as session:
+                existing = await session.scalar(
+                    select(models.Topic.id).where(
+                        models.Topic.project_id == uuid.UUID(project_id),
+                        models.Topic.slug == DEFAULT_TOPIC_SLUG,
+                    )
+                )
+            if existing is None:  # pragma: no cover - the constraint fired for another reason
+                raise
+            return str(existing)
 
     async def create_topic(
         self, project_id: str, slug: str, name: str, *, sensitivity: int = 0
