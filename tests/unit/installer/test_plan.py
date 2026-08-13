@@ -165,3 +165,16 @@ def test_config_phase_leaves_an_application_configuration_behind() -> None:
         "the config phase must materialise an application configuration, not only .env: "
         f"actions say {described!r}"
     )
+
+
+def test_no_phase_verifies_with_a_command_that_cannot_fail() -> None:
+    """`docker compose ps <svc>` exits 0 whether or not the container exists, so using it as a
+    verify made the phase unconditionally 'satisfied' — on a host with nothing running at all.
+    A check that cannot fail is not a check."""
+    plan = build_plan(profile="cpu_only", docker=True, free_ports={})
+    for phase in plan.phases:
+        for command in (phase.precondition.command, phase.verify.command):
+            assert tuple(command[:3]) != ("docker", "compose", "ps"), (
+                f"phase {phase.id!r} gates on `docker compose ps`, which exits 0 even when the "
+                "service does not exist"
+            )

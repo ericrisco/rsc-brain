@@ -33,6 +33,13 @@ class Settings(AppConfig, BaseSettings):
         env_nested_delimiter="__",
         extra="ignore",
         case_sensitive=False,
+        # AUDIT-056: compose injects `.env` into containers, but `brain apply` runs the CLI on the
+        # host, where nothing loaded it — so the installer wrote a perfectly good DSN into a file
+        # the application never read, and `brain migrate` stopped with "no database configured".
+        # A real environment variable still outranks this file (pydantic-settings orders
+        # init > env > dotenv), so a platform-injected value is never shadowed by a stale checkout.
+        env_file=".env",
+        env_file_encoding="utf-8",
     )
 
     # Set by :func:`load_settings` before instantiation; read in the source hook.

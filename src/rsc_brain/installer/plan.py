@@ -200,8 +200,12 @@ def build_plan(*, profile: str, docker: bool, free_ports: Mapping[int, bool]) ->
             # a schema the later `migrate` phase is what creates. The compose action already
             # waits for the container's own healthcheck, so that is what can honestly be asserted
             # here; the full check (extensions + head + capabilities) is the terminal phase's job.
+            # `docker compose ps db` exits 0 even when no container exists, so it verified
+            # nothing. `pg_isready` inside the service fails when the container is absent, not
+            # running, or not yet accepting connections — which is the property this phase claims.
             verify=Check(
-                "the db container is running and healthy", ("docker", "compose", "ps", "db")
+                "the db container is running and accepting connections",
+                ("docker", "compose", "exec", "-T", "db", "pg_isready", "-q"),
             ),
             rollback=(
                 make_action("compose", "Stop the db service", ("docker", "compose", "stop", "db")),
@@ -210,7 +214,10 @@ def build_plan(*, profile: str, docker: bool, free_ports: Mapping[int, bool]) ->
         Phase(
             id="migrate",
             title="Apply database migrations",
-            precondition=Check("the db container is running", ("docker", "compose", "ps", "db")),
+            precondition=Check(
+                "the db container is accepting connections",
+                ("docker", "compose", "exec", "-T", "db", "pg_isready", "-q"),
+            ),
             actions=(
                 make_action(
                     "migration",
@@ -225,7 +232,10 @@ def build_plan(*, profile: str, docker: bool, free_ports: Mapping[int, bool]) ->
         Phase(
             id="inference",
             title=f"Start the local inference backend ({backend})",
-            precondition=Check("the db container is running", ("docker", "compose", "ps", "db")),
+            precondition=Check(
+                "the db container is accepting connections",
+                ("docker", "compose", "exec", "-T", "db", "pg_isready", "-q"),
+            ),
             actions=(
                 make_action(
                     "compose",
@@ -233,8 +243,11 @@ def build_plan(*, profile: str, docker: bool, free_ports: Mapping[int, bool]) ->
                     ("docker", "compose", "--profile", backend, "up", "-d"),
                 ),
             ),
+            # Same trap as data_service: `ps` exits 0 for a service that was never started.
+            # `exec` into the container fails unless it is actually up.
             verify=Check(
-                f"the {backend} container is running", ("docker", "compose", "ps", backend)
+                f"the {backend} container is running",
+                ("docker", "compose", "exec", "-T", backend, "true"),
             ),
             rollback=(
                 make_action(
