@@ -25,7 +25,7 @@ def test_settings_read_the_dotenv_the_installer_writes(
     for stale in [k for k in os.environ if k.startswith("RSC_BRAIN_")]:
         monkeypatch.delenv(stale, raising=False)
 
-    assert "env_file" in Settings.model_config and Settings.model_config["env_file"], (
+    assert Settings.model_config.get("env_file"), (
         "Settings declares no env_file, so a CLI invocation cannot see the .env the installer "
         "wrote — the 12-factor environment only reaches containers, never the host CLI"
     )
