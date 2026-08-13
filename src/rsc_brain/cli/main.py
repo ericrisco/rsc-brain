@@ -34,6 +34,7 @@ from rsc_brain.cli.installer import calibrate as _calibrate
 from rsc_brain.cli.installer import doctor as _doctor
 from rsc_brain.cli.installer import eval_command as _eval
 from rsc_brain.cli.installer import init as _init
+from rsc_brain.cli.installer import init_env as _init_env
 from rsc_brain.cli.installer import plan as _plan
 from rsc_brain.cli.installer import usage as _usage
 from rsc_brain.cli.installer import verify as _verify
@@ -142,6 +143,13 @@ for _name in COMMANDS:
 app.command(
     "wait-for-schema", help="Block until the database schema is at head (for init containers)."
 )(_wait_for_schema)
+
+# `init-env` is introduced by AUDIT-051: the install's config phase must leave usable secrets
+# behind, not a template with a blank password. Registered here rather than in the frozen FR-10.1
+# contract list, like every other post-contract command.
+app.command("init-env", help="Create .env and generate any unset required secret (idempotent).")(
+    _init_env
+)
 
 # `preflight` is introduced by AUDIT-039 (R17): the read-only pre-migration data report.
 app.command("preflight", help="Report data that would block a migration (cross-project rows).")(

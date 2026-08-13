@@ -24,6 +24,11 @@ POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
 # Public domain for automatic HTTPS (Caddy). Set to your real domain before going live.
 RSC_BRAIN_DOMAIN=localhost
 
+# AUDIT-060: written here rather than left to be remembered. This drives OAuth metadata, the
+# request-to-a-human links, and the transport's Host/Origin boundary, and it MUST agree with
+# RSC_BRAIN_DOMAIN above — change both together when you set your hostname.
+RSC_BRAIN_INGRESS__PUBLIC_ORIGIN=https://localhost
+
 # First admin — created on first \`brain init\`. Change the email; the value stays in this file.
 RSC_BRAIN_ADMIN_EMAIL=admin@rsc-brain.local
 RSC_BRAIN_ADMIN_PASSWORD=${ADMIN_PASSWORD}

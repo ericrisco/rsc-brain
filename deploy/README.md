@@ -12,7 +12,7 @@ stack: operators must supply all model routes and a reachable provider.
 
 | Target | Provides | Operator still provides |
 |---|---|---|
-| Production Compose | Database, migration job, API, worker, console, Caddy, named volumes | Domain/DNS, complete model configuration, reachable model provider, explicit first-admin password, writable volume ownership |
+| Production Compose | Database, migration job, API, worker, console, Caddy, named volumes, **defaults for all five capability layers**, **volume-ownership initialisation** | Domain/DNS, a reachable model provider serving the configured models, explicit first-admin password |
 | Coolify overlay | Compose topology with Coolify TLS/path ownership and generated `SERVICE_PASSWORD_POSTGRES` | Matching `POSTGRES_PASSWORD`, explicit admin password, domain/public origin, complete model configuration, provider, writable volume ownership |
 | Dokploy overlay | Compose topology with Traefik TLS/path ownership | Database/admin passwords, domain/public origin, complete model configuration, provider, writable volume ownership |
 | Helm chart | PostgreSQL StatefulSet, migration Job, API/worker/console Deployments, fixed-RWO PVCs, Ingress | Storage ownership and compatible scheduling, ingress infrastructure, TLS issuer, complete model configuration, images, provider |
@@ -24,11 +24,13 @@ model services remain host or cluster preconditions.
 
 `AppConfig` requires `extractor`, `judge`, `topicalizer`, `embedder`, and `reranker` capability
 objects. Every object needs a provider and model. A provider endpoint and API key may also be
-required. The embedder must return 1024-dimensional vectors.
+required. **The embedder must return exactly 1024-dimensional vectors** — the gateway refuses any
+other width, and the store's vector column is fixed at it.
 
-The canonical Compose and chart values expose embedder fields only. Add the other four capabilities
-through an environment overlay or Helm `extraEnv`; setting variables in the host environment alone
-does not inject undeclared Compose variables into a container.
+The canonical Compose now ships a default for **every** capability layer, so no hand-authored
+overlay is needed to start. Override any of them through the environment. Until 2026-08-13 the
+embedder defaulted to a 768-dimensional model, which the gateway refused — a fresh
+`docker compose up` could not start at all.
 
 The production Compose file does not start Ollama or vLLM. An endpoint such as
 `http://ollama:11434` works only when that hostname exists on the deployment network and serves the

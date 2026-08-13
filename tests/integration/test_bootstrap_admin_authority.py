@@ -20,7 +20,7 @@ from sqlalchemy import select
 from rsc_brain.authorization import Allow, Capability, decide
 from rsc_brain.deploy.bootstrap import ensure_first_admin
 from rsc_brain.identity.resolve import resolve_scope
-from rsc_brain.identity.service import IdentityService
+from rsc_brain.identity.service import DEFAULT_TOPIC_SLUG, IdentityService
 from rsc_brain.scope import PROJECT_ROLE_ADMIN, ProjectScope
 from rsc_brain.stores.relational import models
 
@@ -96,10 +96,14 @@ async def test_the_first_admin_still_holds_platform_authority(
 async def test_creating_a_topic_grants_its_author_explicit_authority(
     build_harness: Callable[..., Harness], tmp_path: object
 ) -> None:
-    """A fresh install has no topics, so the first admin's authority starts empty — correctly, since
-    empty authority is never all topics. Defining a topic therefore has to record the author's
-    authority over it, or the person who created it could not act on anything tagged with it and the
-    only way out would be a direct database write.
+    """Defining a topic has to record the author's authority over it, or the person who created it
+    could not act on anything tagged with it and the only way out would be a direct database write.
+
+    The baseline changed on 2026-08-13 (AUDIT-066): bootstrap now ensures the ingestion pipeline's
+    fallback topic exists and grants it, because the previous empty grant was a snapshot taken
+    before any topic existed and froze that way — so a fresh install's owner ingested a document and
+    then could not see it, with `found: false` correctly indistinguishable from "nothing there".
+    This test's subject is unchanged: creating a topic must grant its author authority over it.
     """
     from pathlib import Path
 
@@ -109,7 +113,10 @@ async def test_creating_a_topic_grants_its_author_explicit_authority(
 
     harness = build_harness()
     scope = await _bootstrapped_scope(harness)
-    assert scope.allowed_topics == frozenset(), "a fresh install has no topics to hold yet"
+    assert scope.allowed_topics == frozenset({DEFAULT_TOPIC_SLUG}), (
+        "a fresh install holds exactly the ingestion fallback topic — not nothing (which locked the "
+        "owner out of their own knowledge) and not everything (empty authority is never all topics)"
+    )
 
     identity = IdentityService(harness.sm)
     async with harness.sm() as session:

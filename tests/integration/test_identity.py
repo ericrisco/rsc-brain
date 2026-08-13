@@ -28,16 +28,18 @@ async def test_identity_lifecycle_and_timed_revocation(migrated_dsn: str) -> Non
             await svc.accept_invitation(invitation.token, "second-try-xyz")
 
         membership_id = await svc.add_membership(
-            user_id, default_id, role="member", allowed_topics=("general",)
+            user_id, default_id, role="member", allowed_topics=("finance",)
         )
-        await svc.create_topic(default_id, "general", "General", sensitivity=0)
+        # A slug the bootstrap does not already own: it now creates the ingestion fallback
+        # topic itself (AUDIT-066), and `create_topic` rightly refuses a duplicate.
+        await svc.create_topic(default_id, "finance", "Finance", sensitivity=0)
         pat = await svc.issue_pat(membership_id, name="cli")
 
         scope = await resolve_scope(sessionmaker, pat.token)
         assert scope is not None
         assert scope.principal_type is PrincipalType.HUMAN
         assert scope.project_id == default_id
-        assert "general" in scope.allowed_topics
+        assert "finance" in scope.allowed_topics
         # Unknown token resolves to None (indistinguishable from a revoked one).
         assert await resolve_scope(sessionmaker, "ck_does-not-exist") is None
 
@@ -65,7 +67,7 @@ async def test_agent_authenticates_with_its_own_identity(migrated_dsn: str) -> N
         owner_inv = await svc.invite_user("owner@example.com", role="admin")
         owner_id = await svc.accept_invitation(owner_inv.token, "owner-password-123")
         agent_id = await svc.create_agent(
-            project_id, owner_id, "ingestor-bot", allowed_topics=("general",)
+            project_id, owner_id, "ingestor-bot", allowed_topics=("finance",)
         )
         agent_pat = await svc.issue_agent_pat(agent_id, name="svc")
 

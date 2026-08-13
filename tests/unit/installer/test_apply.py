@@ -64,7 +64,11 @@ def test_apply_then_reapply_is_a_no_op(tmp_path: Path) -> None:
     assert first.ok
     assert {r.id: r.status for r in first.results}["config"] == "applied"
 
+    # A new process, but the artifacts the phases produced are still on disk — which is why the
+    # double must carry them over. AUDIT-054 made the skip depend on the postcondition holding,
+    # so a double that forgets the world would be modelling a machine that wiped itself.
     again = FakeInstaller(plan)
+    again.satisfied |= cp.completed()
     second = apply_plan(plan, runner=again, verifier=again, checkpoints=cp, assume_yes=True)
     assert second.ok
     assert all(r.status == "skipped" for r in second.results)  # every phase already done
@@ -92,6 +96,7 @@ def test_interrupted_apply_resumes_from_checkpoint(tmp_path: Path) -> None:
     assert cp.completed() == {"preflight", "config"}
 
     resumed = FakeInstaller(plan)  # the operator fixed the cause; re-run
+    resumed.satisfied |= cp.completed()  # what earlier phases produced is still on disk
     report = apply_plan(plan, runner=resumed, verifier=resumed, checkpoints=cp, assume_yes=True)
     assert report.ok
     statuses = {r.id: r.status for r in report.results}
@@ -145,3 +150,31 @@ def test_blocked_plan_never_runs(tmp_path: Path) -> None:
     assert report.results[0].status == "blocked"
     assert "host preconditions" in report.results[0].detail
     assert fake.runs == []
+
+
+def test_a_checkpointed_phase_whose_postcondition_broke_is_re_applied(tmp_path: Path) -> None:
+    """AUDIT-054: `apply` trusted the checkpoint alone, so a phase that had run once was skipped
+    forever — even after the artifacts it produced were gone. An operator who deleted `.env` and
+    re-ran `apply` got "config: checkpointed", a skip, and then a failure three phases later with
+    nothing pointing at the skipped phase as the cause. Observed on a rented host.
+
+    A checkpoint records that a phase *ran*. What the installer must act on is whether its
+    postcondition still *holds*."""
+    plan, cp = _plan(), _cp(tmp_path)
+    installer = FakeInstaller(plan)
+
+    first = apply_plan(plan, runner=installer, verifier=installer, checkpoints=cp, assume_yes=True)
+    assert first.ok
+
+    # The operator deletes their configuration; the checkpoint file survives.
+    installer.satisfied.discard("config")
+    installer.runs.clear()
+
+    second = apply_plan(plan, runner=installer, verifier=installer, checkpoints=cp, assume_yes=True)
+
+    config = next(r for r in second.results if r.id == "config")
+    assert config.status == "applied", (
+        f"a checkpointed phase whose postcondition no longer holds must run again, got {config}"
+    )
+    assert installer.runs, "re-applying must actually re-run the phase's actions"
+    assert second.ok

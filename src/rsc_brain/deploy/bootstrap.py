@@ -102,6 +102,13 @@ async def ensure_first_admin(
     # with `role="admin"` — a value that is not one of the documented project roles
     # (project-admin|member|viewer) and that the capability matrix therefore admits to nothing, so a
     # fresh install's only human was locked out of its own management surface.
+    # AUDIT-066: the grant below is a SNAPSHOT of the project's topics, and topics are created
+    # lazily during ingestion — so on a fresh install it was empty and stayed empty. The owner
+    # ingested a document, asked for it, and got `found: false`, which FR-4.3 requires to be
+    # indistinguishable from "nothing there". Four correct claims sat in the database, invisible to
+    # the only human on the system. Ensuring the fallback topic exists first is the difference
+    # between an install that works and one that looks broken while every invariant holds.
+    await identity.ensure_default_topic(project_id)
     await identity.add_membership(
         user_id,
         project_id,

@@ -115,12 +115,16 @@ def apply_plan(
     done = checkpoints.completed()
     results: list[PhaseResult] = []
     for phase in plan.phases:
-        if phase.id in done:  # already checkpointed → resume without repeating work
-            results.append(PhaseResult(phase.id, "skipped", "checkpointed"))
-            continue
-        if verifier.check(phase):  # postcondition already holds → idempotent skip (self-heal)
+        # AUDIT-054: a checkpoint records that a phase RAN; what decides a skip is whether its
+        # postcondition still HOLDS. Trusting the checkpoint alone made a phase skipped forever
+        # once it had run — so an operator who deleted their `.env` and re-ran `apply` was told
+        # "config: checkpointed", watched it skip, and hit a failure three phases later with
+        # nothing pointing back at the cause. Idempotent has to mean convergent, not merely
+        # resumable.
+        if verifier.check(phase):  # postcondition holds → nothing to do (checkpointed or not)
             checkpoints.mark(phase.id)
-            results.append(PhaseResult(phase.id, "skipped", "already satisfied"))
+            detail = "checkpointed" if phase.id in done else "already satisfied"
+            results.append(PhaseResult(phase.id, "skipped", detail))
             continue
 
         # Guardrail (FR-11.4): confirm every destructive action before running it.

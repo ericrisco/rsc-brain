@@ -4,13 +4,19 @@
 # on top of THIS file (`docker compose -f docker-compose.prod.yml -f docker-compose.<target>.yml`),
 # never a forked definition — so they can't drift.
 #
-# The topology supplies migration ordering, readiness, TLS routing, and persistent application data.
-# It does not provision a model server or the four capability routes beyond embedder; add those to
-# api + worker with a private Compose override. Supply the first-admin password explicitly: migrate
-# does not mount app_data, so a generated owner-only credential file would be ephemeral. Fresh
-# application volumes also need writable ownership for UID 10001; this topology has no ownership
-# initializer. GPU (Ollama/vLLM) remains a host precondition and nothing here installs drivers.
-name: rsc-brain
+# The topology supplies migration ordering, readiness, TLS routing, persistent application data,
+# defaults for ALL FIVE capability layers, and volume-ownership initialisation. Supply the
+# first-admin password explicitly: migrate does not mount app_data, so a generated owner-only
+# credential file would be ephemeral.
+#
+# It still does not PROVISION a model server: the capability defaults point at `http://ollama:11434`,
+# which resolves only when a service by that name is on this network serving those models. GPU
+# (Ollama/vLLM) remains a host precondition and nothing here installs drivers.
+# AUDIT-062: distinct from the root topology's project name. Both used to be `rsc-brain`, so both
+# mounted the same `rsc-brain_db_data` volume — and since Postgres applies POSTGRES_PASSWORD only on
+# first initialisation, an operator who followed the phased installer and then this file met
+# "password authentication failed" with nothing tying it to a database another topology had created.
+name: rsc-brain-prod
 
 x-app-env: &app-env
   # The required database secret is POSTGRES_PASSWORD; the app DSN derives from it. Model-provider
@@ -21,11 +27,75 @@ x-app-env: &app-env
   # every service that ingests or serves them, or replacing a container destroys every file the
   # product has been given while the database keeps rows pointing at paths that no longer exist.
   RSC_BRAIN_INGEST__DATA_DIR: /var/lib/rsc-brain/data
+  # AUDIT-060: the public origin drives OAuth metadata, the request-to-a-human links, and the
+  # transport's Host/Origin boundary. It defaults to the domain above rather than being a second
+  # value the operator has to remember to keep in agreement with it.
+  RSC_BRAIN_INGRESS__PUBLIC_ORIGIN: ${RSC_BRAIN_INGRESS__PUBLIC_ORIGIN:-https://${RSC_BRAIN_DOMAIN:-localhost}}
+  # AUDIT-059: all five capability layers carry defaults. This file used to declare the embedder's
+  # three variables only, so an operator had to hand-author twenty entries across two services
+  # before anything would start — configuration an operator must invent is configuration the
+  # product failed to ship. Point these at your own provider; every one is overridable by env.
+  #
+  # AUDIT-058: the embedder default was `nomic-embed-text`, which returns 768 dimensions. The
+  # gateway anchors at 1024 and refuses anything else, so the shipped default could not start.
+  # Measured on a real host, not inferred. `bge-m3` is 1024 and is the anchor's own model.
   RSC_BRAIN_CAPABILITIES__EMBEDDER__PROVIDER: ${RSC_BRAIN_CAPABILITIES__EMBEDDER__PROVIDER:-ollama}
-  RSC_BRAIN_CAPABILITIES__EMBEDDER__MODEL: ${RSC_BRAIN_CAPABILITIES__EMBEDDER__MODEL:-nomic-embed-text}
+  RSC_BRAIN_CAPABILITIES__EMBEDDER__MODEL: ${RSC_BRAIN_CAPABILITIES__EMBEDDER__MODEL:-bge-m3}
   RSC_BRAIN_CAPABILITIES__EMBEDDER__API_BASE: ${RSC_BRAIN_CAPABILITIES__EMBEDDER__API_BASE:-http://ollama:11434}
+  RSC_BRAIN_CAPABILITIES__EXTRACTOR__PROVIDER: ${RSC_BRAIN_CAPABILITIES__EXTRACTOR__PROVIDER:-ollama}
+  RSC_BRAIN_CAPABILITIES__EXTRACTOR__MODEL: ${RSC_BRAIN_CAPABILITIES__EXTRACTOR__MODEL:-qwen2.5:14b-instruct}
+  RSC_BRAIN_CAPABILITIES__EXTRACTOR__API_BASE: ${RSC_BRAIN_CAPABILITIES__EXTRACTOR__API_BASE:-http://ollama:11434}
+  RSC_BRAIN_CAPABILITIES__EXTRACTOR__API_KEY: ${RSC_BRAIN_CAPABILITIES__EXTRACTOR__API_KEY:-}
+  RSC_BRAIN_CAPABILITIES__JUDGE__PROVIDER: ${RSC_BRAIN_CAPABILITIES__JUDGE__PROVIDER:-ollama}
+  RSC_BRAIN_CAPABILITIES__JUDGE__MODEL: ${RSC_BRAIN_CAPABILITIES__JUDGE__MODEL:-qwen2.5:14b-instruct}
+  RSC_BRAIN_CAPABILITIES__JUDGE__API_BASE: ${RSC_BRAIN_CAPABILITIES__JUDGE__API_BASE:-http://ollama:11434}
+  RSC_BRAIN_CAPABILITIES__JUDGE__API_KEY: ${RSC_BRAIN_CAPABILITIES__JUDGE__API_KEY:-}
+  RSC_BRAIN_CAPABILITIES__TOPICALIZER__PROVIDER: ${RSC_BRAIN_CAPABILITIES__TOPICALIZER__PROVIDER:-ollama}
+  RSC_BRAIN_CAPABILITIES__TOPICALIZER__MODEL: ${RSC_BRAIN_CAPABILITIES__TOPICALIZER__MODEL:-llama3.1:8b-instruct}
+  RSC_BRAIN_CAPABILITIES__TOPICALIZER__API_BASE: ${RSC_BRAIN_CAPABILITIES__TOPICALIZER__API_BASE:-http://ollama:11434}
+  RSC_BRAIN_CAPABILITIES__TOPICALIZER__API_KEY: ${RSC_BRAIN_CAPABILITIES__TOPICALIZER__API_KEY:-}
+  RSC_BRAIN_CAPABILITIES__RERANKER__PROVIDER: ${RSC_BRAIN_CAPABILITIES__RERANKER__PROVIDER:-ollama}
+  RSC_BRAIN_CAPABILITIES__RERANKER__MODEL: ${RSC_BRAIN_CAPABILITIES__RERANKER__MODEL:-bge-reranker-v2-m3}
+  RSC_BRAIN_CAPABILITIES__RERANKER__API_BASE: ${RSC_BRAIN_CAPABILITIES__RERANKER__API_BASE:-http://ollama:11434}
 
 services:
+  # AUDIT-061: the image runs as uid 10001, but Docker creates fresh named volumes owned by root —
+  # so the documented install required a manual one-shot `chown` before anything would start, and
+  # an operator who missed it got a permission error from a container that had just been declared
+  # healthy. This one-shot service does it declaratively; api/worker/migrate wait for it.
+  init-volumes:
+    image: busybox:1.36
+    user: "0"
+    command:
+      ["sh", "-c", "chown -R 10001:10001 /var/lib/rsc-brain/data && echo volumes-ready"]
+    volumes:
+      - app_data:/var/lib/rsc-brain/data
+      - inbox:/var/lib/rsc-brain/data/inbox
+    restart: "no"
+
+  # Opt-in model server, matching the chart's in-cluster Ollama. The capability defaults above
+  # point at `http://ollama:11434`, and until now the production topology shipped no such service —
+  # so a fresh install came up healthy with every model route aimed at a host that did not exist.
+  #
+  # Deliberately behind a profile: a GPU is a host precondition (D8), and a CPU-only box should not
+  # silently pull gigabytes of weights. Start it with `--profile ollama`, then pull the models the
+  # capability defaults name. Point the capabilities at your own provider instead and leave this
+  # off entirely — that is the supported path for hosted models.
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    expose: ["11434"]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
   db:
     build:
       context: ..
@@ -61,6 +131,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      init-volumes:
+        condition: service_completed_successfully
     security_opt: [no-new-privileges:true]
     restart: "no"
 
@@ -78,6 +150,8 @@ services:
       db:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      init-volumes:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "brain", "verify"]
@@ -99,6 +173,8 @@ services:
       db:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      init-volumes:
         condition: service_completed_successfully
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
@@ -138,6 +214,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  ollama_models: # weights for the opt-in model server; large, and worth keeping across restarts
   db_data: # Postgres data (knowledge graph + relational store)
   app_data: # Stored source documents — the originals, needed for re-ingest and for audit (R39)
   inbox: # Reserved folder-watcher layout; no packaged 0.13.0 process consumes it

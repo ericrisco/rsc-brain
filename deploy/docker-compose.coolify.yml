@@ -7,7 +7,9 @@
 # RSC_BRAIN_ADMIN_PASSWORD, hostname-only RSC_BRAIN_DOMAIN, and HTTPS
 # RSC_BRAIN_INGRESS__PUBLIC_ORIGIN through an injected api/worker override. Model routes remain
 # operator-supplied deployment settings.
-name: rsc-brain
+# Must match the production topology's project name: an overlay's `name:` wins, so a stale
+# value here would silently re-collide with the root topology's volumes (AUDIT-062).
+name: rsc-brain-prod
 
 services:
   db:
