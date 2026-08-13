@@ -76,3 +76,24 @@ call the configured provider, pull models, or run ingestion and recall. Helm lin
 the parity hash prove packaging structure; they do not prove a live cluster, TLS issuer, writable
 volume ownership, compatible RWO scheduling, provider, or third-party OAuth client. A deployment
 requires live write probes from API and worker.
+
+## 2026-08-13 — capability defaults and project-name isolation
+
+Reconciled after a real-host install run changed the canonical compose:
+
+- **All five capability layers now carry defaults** in both targets (`x-app-env` in the compose,
+  `gateway.*` in `values.yaml` rendered by the ConfigMap). Previously each declared the embedder
+  only and told the operator to supply the other four, which meant twenty hand-authored entries
+  before anything would start.
+- **The compose's embedder default was `nomic-embed-text`, which returns 768 dimensions** — the
+  gateway anchors at 1024 and refuses anything else, so a fresh `docker compose up` could not
+  start. Measured on a host, not inferred. The chart already had `bge-m3` and was unaffected; this
+  is the one case so far where the Kubernetes target was correct and the primary one was not.
+- **The compose project name moved to `rsc-brain-prod`** (and both overlays with it) because it
+  collided with the root topology's `rsc-brain`, sharing `db_data`. Postgres applies its password
+  only on first initialisation, so an operator who followed the phased installer and then this path
+  met a bare "password authentication failed". Helm is unaffected: its release name already scopes
+  its resources.
+
+Not verified locally: `helm lint` and the chart's rendered-security tests need the `helm` binary,
+which is absent from the authoring machine. CI is the gate for the chart half of this change.

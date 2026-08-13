@@ -77,3 +77,36 @@ def test_application_volumes_have_their_ownership_initialised() -> None:
         depends = services[dependant].get("depends_on") or {}
         names = depends if isinstance(depends, list) else list(depends)
         assert "init-volumes" in names, f"{dependant} must wait for volume ownership"
+
+
+def test_the_two_shipped_topologies_do_not_share_a_database_volume() -> None:
+    """AUDIT-062: both the root (phased-installer) compose and the production compose declared
+    `name: rsc-brain` and mounted `db_data`, so they shared `rsc-brain_db_data`. Postgres applies
+    POSTGRES_PASSWORD only on first initialisation, so an operator who tried the documented phased
+    installer and then followed deploy/README.md met `password authentication failed for user
+    "rsc_brain"` — with nothing to connect it to a volume initialised by the other topology.
+
+    Two install paths that a single documented set of instructions can lead an operator through
+    must not collide on persistent state."""
+    root = yaml.safe_load((REPO / "docker-compose.yml").read_text(encoding="utf-8"))
+    prod = yaml.safe_load(_rendered())
+    assert root.get("name") != prod.get("name"), (
+        f"both topologies use project name {root.get('name')!r}, so their named volumes collide: "
+        "the database from one is reused by the other with a different generated password"
+    )
+
+
+def test_every_overlay_keeps_the_production_project_name() -> None:
+    """An overlay's `name:` wins when composed on top of the production file, so a stale value in
+    one would silently reintroduce the volume collision AUDIT-062 fixed — while the production file
+    itself still looked correct."""
+    prod_name = yaml.safe_load(_rendered())["name"]
+    for overlay in sorted((REPO / "deploy").glob("docker-compose.*.yml")):
+        if overlay.name == "docker-compose.prod.yml":
+            continue
+        spec = yaml.safe_load(overlay.read_text(encoding="utf-8")) or {}
+        if "name" in spec:
+            assert spec["name"] == prod_name, (
+                f"{overlay.name} sets project name {spec['name']!r} but production uses "
+                f"{prod_name!r}; the overlay wins, so its volumes would differ"
+            )

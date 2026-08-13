@@ -7,7 +7,9 @@
 # RSC_BRAIN_INGRESS__PUBLIC_ORIGIN=https://<same-hostname> into api/worker through the private
 # override. The DSN derives from POSTGRES_PASSWORD via the canonical app-env; model routes remain
 # operator-supplied deployment settings.
-name: rsc-brain
+# Must match the production topology's project name: an overlay's `name:` wins, so a stale
+# value here would silently re-collide with the root topology's volumes (AUDIT-062).
+name: rsc-brain-prod
 
 services:
   # ONE ownership map, identical on every target (AUDIT-046 / R47, plan §3 `edge.route`). The api

@@ -35,9 +35,29 @@ admin:
 # --- Model gateway (D8: GPU is a HOST precondition; the chart never installs drivers) -----------
 # The default URL is a placeholder. Point it at a real external service or the opt-in Deployment.
 gateway:
+  # AUDIT-059 parity: all five capability layers carry defaults, matching the canonical compose.
+  # The chart used to declare the embedder only and route the other four through extraEnv, so the
+  # two production targets disagreed about what "shipped defaults" meant.
+  # The embedder MUST be 1024-dimensional: the gateway anchors at that width and refuses others.
   embedder:
     provider: ollama
     model: bge-m3
+    apiBase: http://ollama:11434
+  extractor:
+    provider: ollama
+    model: qwen2.5:14b-instruct
+    apiBase: http://ollama:11434
+  judge:
+    provider: ollama
+    model: qwen2.5:14b-instruct
+    apiBase: http://ollama:11434
+  topicalizer:
+    provider: ollama
+    model: llama3.1:8b-instruct
+    apiBase: http://ollama:11434
+  reranker:
+    provider: ollama
+    model: bge-reranker-v2-m3
     apiBase: http://ollama:11434
 
 # Opt-in in-cluster Ollama — only if the cluster ALREADY has an operative GPU (device plugin +

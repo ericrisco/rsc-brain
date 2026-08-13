@@ -9,6 +9,11 @@ metadata:
     {{- include "rsc-brain.labels" . | nindent 4 }}
 data:
   RSC_BRAIN_DOMAIN: {{ .Values.ingress.domain | quote }}
-  RSC_BRAIN_CAPABILITIES__EMBEDDER__PROVIDER: {{ .Values.gateway.embedder.provider | quote }}
-  RSC_BRAIN_CAPABILITIES__EMBEDDER__MODEL: {{ .Values.gateway.embedder.model | quote }}
-  RSC_BRAIN_CAPABILITIES__EMBEDDER__API_BASE: {{ .Values.gateway.embedder.apiBase | quote }}
+  {{- range $layer := list "embedder" "extractor" "judge" "topicalizer" "reranker" }}
+  {{- $cfg := index $.Values.gateway $layer }}
+  {{- if $cfg }}
+  RSC_BRAIN_CAPABILITIES__{{ upper $layer }}__PROVIDER: {{ $cfg.provider | quote }}
+  RSC_BRAIN_CAPABILITIES__{{ upper $layer }}__MODEL: {{ $cfg.model | quote }}
+  RSC_BRAIN_CAPABILITIES__{{ upper $layer }}__API_BASE: {{ $cfg.apiBase | quote }}
+  {{- end }}
+  {{- end }}

@@ -12,7 +12,11 @@
 # It still does not PROVISION a model server: the capability defaults point at `http://ollama:11434`,
 # which resolves only when a service by that name is on this network serving those models. GPU
 # (Ollama/vLLM) remains a host precondition and nothing here installs drivers.
-name: rsc-brain
+# AUDIT-062: distinct from the root topology's project name. Both used to be `rsc-brain`, so both
+# mounted the same `rsc-brain_db_data` volume — and since Postgres applies POSTGRES_PASSWORD only on
+# first initialisation, an operator who followed the phased installer and then this file met
+# "password authentication failed" with nothing tying it to a database another topology had created.
+name: rsc-brain-prod
 
 x-app-env: &app-env
   # The required database secret is POSTGRES_PASSWORD; the app DSN derives from it. Model-provider
