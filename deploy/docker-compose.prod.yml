@@ -73,6 +73,29 @@ services:
       - inbox:/var/lib/rsc-brain/data/inbox
     restart: "no"
 
+  # Opt-in model server, matching the chart's in-cluster Ollama. The capability defaults above
+  # point at `http://ollama:11434`, and until now the production topology shipped no such service —
+  # so a fresh install came up healthy with every model route aimed at a host that did not exist.
+  #
+  # Deliberately behind a profile: a GPU is a host precondition (D8), and a CPU-only box should not
+  # silently pull gigabytes of weights. Start it with `--profile ollama`, then pull the models the
+  # capability defaults name. Point the capabilities at your own provider instead and leave this
+  # off entirely — that is the supported path for hosted models.
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    expose: ["11434"]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
   db:
     build:
       context: ..
@@ -191,6 +214,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  ollama_models: # weights for the opt-in model server; large, and worth keeping across restarts
   db_data: # Postgres data (knowledge graph + relational store)
   app_data: # Stored source documents — the originals, needed for re-ingest and for audit (R39)
   inbox: # Reserved folder-watcher layout; no packaged 0.13.0 process consumes it

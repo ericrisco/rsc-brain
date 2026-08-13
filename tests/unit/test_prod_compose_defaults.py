@@ -110,3 +110,20 @@ def test_every_overlay_keeps_the_production_project_name() -> None:
                 f"{overlay.name} sets project name {spec['name']!r} but production uses "
                 f"{prod_name!r}; the overlay wins, so its volumes would differ"
             )
+
+
+def test_the_production_topology_can_serve_its_own_default_models() -> None:
+    """The capability defaults point at `http://ollama:11434`, but the production topology shipped
+    no such service — so a fresh install came up healthy with every model route pointing at a host
+    that did not exist. The Helm chart has had an opt-in in-cluster Ollama for exactly this; the
+    primary target had nothing, which is the same target asymmetry as the 768-dimension default.
+
+    Opt-in, not default: it must not start unless asked, because a GPU is a host precondition (D8)
+    and a CPU-only box should not silently pull gigabytes of weights."""
+    spec = yaml.safe_load(_rendered())
+    ollama = spec["services"].get("ollama")
+    assert ollama is not None, (
+        "capability defaults point at http://ollama:11434 and no such service exists in the "
+        "production topology"
+    )
+    assert ollama.get("profiles"), "the model server must be opt-in via a profile, never default-on"
