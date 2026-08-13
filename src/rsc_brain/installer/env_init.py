@@ -18,11 +18,19 @@ Two properties matter more than the convenience:
 from __future__ import annotations
 
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import quote
 
 #: Keys the installer must not leave blank, because a later phase fails on them.
 REQUIRED_SECRETS: tuple[str, ...] = ("POSTGRES_PASSWORD",)
+
+#: The application reads its database location from here. The compose service is configured from
+#: POSTGRES_*, so without this the installer generates a password the application cannot use and
+#: `brain migrate` stops with DatabaseNotConfiguredError — leaving the operator to hand-assemble a
+#: connection string out of three values they never chose.
+DSN_KEY = "RSC_BRAIN_DATABASE__DSN"
 
 #: Values that are present but mean "not configured". Treated exactly like a blank.
 PLACEHOLDERS: frozenset[str] = frozenset(
@@ -78,6 +86,20 @@ def _is_unset(value: str | None) -> bool:
     return value is None or value.strip().strip("\"'").lower() in PLACEHOLDERS
 
 
+def _derive_dsn(values: Mapping[str, str]) -> str:
+    """Compose the DSN from what the compose service was just configured with.
+
+    The password is percent-encoded: it is generated URL-safe today, but an operator may set their
+    own, and a `@` or `/` in a password silently produces a DSN that points somewhere else.
+    """
+    user = values.get("POSTGRES_USER") or "rsc_brain"
+    database = values.get("POSTGRES_DB") or "rsc_brain"
+    password = quote(values.get("POSTGRES_PASSWORD", ""), safe="")
+    host = values.get("RSC_BRAIN_DB_BIND") or "127.0.0.1"
+    port = values.get("RSC_BRAIN_DB_PORT") or "5432"
+    return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{database}"
+
+
 def _generate() -> str:
     """A password safe to paste into an env file: URL-safe, no quoting hazards, 32 bytes."""
     return secrets.token_urlsafe(32)
@@ -115,6 +137,25 @@ def materialise(root: Path) -> EnvReport:
         else:
             already.append(key)
 
+    # The DSN is derived, never invented: it must agree with the POSTGRES_* values above, and it
+    # is only written when the operator has not already pointed the app at their own database.
+    values = _parse(text)
+    if _is_unset(values.get(DSN_KEY)):
+        dsn = _derive_dsn(values)
+        if DSN_KEY in values:
+            text = (
+                "\n".join(
+                    f"{DSN_KEY}={dsn}" if line.split("=", 1)[0].strip() == DSN_KEY else line
+                    for line in text.splitlines()
+                )
+                + "\n"
+            )
+        else:
+            text = text.rstrip("\n") + f"\n{DSN_KEY}={dsn}\n"
+        generated.append(DSN_KEY)
+    else:
+        already.append(DSN_KEY)
+
     env_path.write_text(text, encoding="utf-8")
     env_path.chmod(0o600)
 
@@ -143,6 +184,8 @@ def check(root: Path) -> tuple[bool, str]:
     unset = [key for key in REQUIRED_SECRETS if _is_unset(values.get(key))]
     if unset:
         return False, f"unset or placeholder: {', '.join(unset)}"
+    if _is_unset(values.get(DSN_KEY)):
+        return False, f"{DSN_KEY} is unset — the application cannot reach the database"
     if not (root / CONFIG_FILE).exists():
         return False, f"{CONFIG_FILE} is missing — the runtime cannot load its settings without it"
-    return True, f"secrets set ({', '.join(REQUIRED_SECRETS)}) and {CONFIG_FILE} present"
+    return True, f"secrets set, {DSN_KEY} derived, and {CONFIG_FILE} present"
