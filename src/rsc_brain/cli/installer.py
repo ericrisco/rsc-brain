@@ -60,6 +60,7 @@ def init_env(
             "created": report.created,
             "generated": list(report.generated),
             "already_set": list(report.already_set),
+            "config_created": report.config_created,
         },
         f"init-env: {report.explain()}",
     )

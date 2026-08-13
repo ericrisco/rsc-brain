@@ -175,7 +175,7 @@ def build_plan(*, profile: str, docker: bool, free_ports: Mapping[int, bool]) ->
             actions=(
                 make_action(
                     "config",
-                    "Create .env if absent and generate any unset required secret (idempotent)",
+                    "Materialise configuration: .env with generated secrets + config.yaml (idempotent)",
                     ("brain", "init-env"),
                 ),
             ),

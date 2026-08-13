@@ -151,3 +151,17 @@ def test_every_brain_command_a_phase_invokes_actually_exists() -> None:
                 f"phase {phase.id!r} invokes `brain {command[1]}`, which the CLI does not expose "
                 f"(registered: {sorted(registered)})"
             )
+
+
+def test_config_phase_leaves_an_application_configuration_behind() -> None:
+    """AUDIT-053: `brain migrate` loads full Settings, which require `capabilities` — so with no
+    `config.yaml` the migration phase dies on a model-configuration error while trying to create
+    database tables. Whatever one thinks of that coupling, the install cannot finish unless the
+    config phase produces an application configuration too."""
+    plan = build_plan(profile="cpu_only", docker=True, free_ports={})
+    config = next(p for p in plan.phases if p.id == "config")
+    described = " ".join(a.description for a in config.actions).lower()
+    assert "config.yaml" in described or "application configuration" in described, (
+        "the config phase must materialise an application configuration, not only .env: "
+        f"actions say {described!r}"
+    )

@@ -30,6 +30,15 @@ PLACEHOLDERS: frozenset[str] = frozenset(
 )
 
 
+#: The application configuration the runtime refuses to start without. `brain migrate` loads full
+#: settings — including model capabilities it never uses — so without this file a *database*
+#: migration fails on a *model* validation error. Materialising the shipped example is what makes
+#: the install a single command; the operator still edits the model routes before the terminal
+#: verify can pass.
+CONFIG_FILE = "config.yaml"
+CONFIG_TEMPLATE = "config.example.yaml"
+
+
 @dataclass(frozen=True, slots=True)
 class EnvReport:
     """What `materialise` did, so the CLI can print it without re-reading the file."""
@@ -37,6 +46,7 @@ class EnvReport:
     created: bool
     generated: tuple[str, ...]
     already_set: tuple[str, ...]
+    config_created: bool = False
 
     def explain(self) -> str:
         parts: list[str] = []
@@ -45,6 +55,11 @@ class EnvReport:
             parts.append(f"generated {', '.join(self.generated)}")
         if self.already_set:
             parts.append(f"kept existing {', '.join(self.already_set)}")
+        parts.append(
+            f"{CONFIG_FILE} created from {CONFIG_TEMPLATE}"
+            if self.config_created
+            else f"{CONFIG_FILE} already present"
+        )
         return "; ".join(parts)
 
 
@@ -102,7 +117,21 @@ def materialise(root: Path) -> EnvReport:
 
     env_path.write_text(text, encoding="utf-8")
     env_path.chmod(0o600)
-    return EnvReport(created=created, generated=tuple(generated), already_set=tuple(already))
+
+    config_created = False
+    config_path = root / CONFIG_FILE
+    if not config_path.exists():
+        template = root / CONFIG_TEMPLATE
+        if template.exists():
+            config_path.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+            config_created = True
+
+    return EnvReport(
+        created=created,
+        generated=tuple(generated),
+        already_set=tuple(already),
+        config_created=config_created,
+    )
 
 
 def check(root: Path) -> tuple[bool, str]:
@@ -114,4 +143,6 @@ def check(root: Path) -> tuple[bool, str]:
     unset = [key for key in REQUIRED_SECRETS if _is_unset(values.get(key))]
     if unset:
         return False, f"unset or placeholder: {', '.join(unset)}"
-    return True, f"every required secret is set ({', '.join(REQUIRED_SECRETS)})"
+    if not (root / CONFIG_FILE).exists():
+        return False, f"{CONFIG_FILE} is missing — the runtime cannot load its settings without it"
+    return True, f"secrets set ({', '.join(REQUIRED_SECRETS)}) and {CONFIG_FILE} present"

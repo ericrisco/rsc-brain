@@ -147,9 +147,9 @@ app.command(
 # `init-env` is introduced by AUDIT-051: the install's config phase must leave usable secrets
 # behind, not a template with a blank password. Registered here rather than in the frozen FR-10.1
 # contract list, like every other post-contract command.
-app.command(
-    "init-env", help="Create .env and generate any unset required secret (idempotent)."
-)(_init_env)
+app.command("init-env", help="Create .env and generate any unset required secret (idempotent).")(
+    _init_env
+)
 
 # `preflight` is introduced by AUDIT-039 (R17): the read-only pre-migration data report.
 app.command("preflight", help="Report data that would block a migration (cross-project rows).")(
