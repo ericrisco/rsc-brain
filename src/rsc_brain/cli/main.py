@@ -34,6 +34,7 @@ from rsc_brain.cli.installer import calibrate as _calibrate
 from rsc_brain.cli.installer import doctor as _doctor
 from rsc_brain.cli.installer import eval_command as _eval
 from rsc_brain.cli.installer import init as _init
+from rsc_brain.cli.installer import init_env as _init_env
 from rsc_brain.cli.installer import plan as _plan
 from rsc_brain.cli.installer import usage as _usage
 from rsc_brain.cli.installer import verify as _verify
@@ -77,6 +78,7 @@ _IMPLEMENTED_COMMANDS: dict[str, tuple[Callable[..., None], str]] = {
     "restore": (_restore, "Restore a dump, apply migrations, and verify."),
     "forget": (_forget, "Hard-delete a document and tombstone its graph nodes."),
     "audit": (_audit, "Show or export the audit log for a project."),
+    "init-env": (_init_env, "Create .env and generate any unset required secret (idempotent)."),
     "doctor": (_doctor, "Detect host + recommend profile + scan config for secrets."),
     "plan": (_plan, "Dry-run the install: the phase plan `apply` would execute (SPEC-16)."),
     "apply": (_apply, "Execute the install plan (idempotent, checkpointed, per-phase rollback)."),

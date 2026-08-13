@@ -170,16 +170,20 @@ def build_plan(*, profile: str, docker: bool, free_ports: Mapping[int, bool]) ->
             id="config",
             title="Prepare configuration",
             precondition=Check(
-                "A .env with a strong POSTGRES_PASSWORD is expected", ("test", "-f", ".env")
+                "a .env template exists to materialise from", ("test", "-f", ".env.example")
             ),
             actions=(
                 make_action(
                     "config",
-                    "Create .env from the template (then set a strong POSTGRES_PASSWORD)",
-                    ("cp", "-n", ".env.example", ".env"),
+                    "Create .env if absent and generate any unset required secret (idempotent)",
+                    ("brain", "init-env"),
                 ),
             ),
-            verify=Check(".env exists", ("test", "-f", ".env")),
+            # AUDIT-051: existence of the file never proved the secrets inside it were usable.
+            verify=Check(
+                "every required secret is set (not blank, not a placeholder)",
+                ("brain", "init-env", "--check"),
+            ),
         ),
         Phase(
             id="data_service",
@@ -192,17 +196,36 @@ def build_plan(*, profile: str, docker: bool, free_ports: Mapping[int, bool]) ->
                     ("docker", "compose", "up", "-d", "--wait", "db"),
                 ),
             ),
+            # AUDIT-052: this used to gate on `brain verify`, which demands the schema AT HEAD —
+            # a schema the later `migrate` phase is what creates. The compose action already
+            # waits for the container's own healthcheck, so that is what can honestly be asserted
+            # here; the full check (extensions + head + capabilities) is the terminal phase's job.
             verify=Check(
-                "database reachable with extensions at head", ("brain", "verify", "--json")
+                "the db container is running and healthy", ("docker", "compose", "ps", "db")
             ),
             rollback=(
                 make_action("compose", "Stop the db service", ("docker", "compose", "stop", "db")),
             ),
         ),
         Phase(
+            id="migrate",
+            title="Apply database migrations",
+            precondition=Check("the db container is running", ("docker", "compose", "ps", "db")),
+            actions=(
+                make_action(
+                    "migration",
+                    "Apply all pending migrations to head (idempotent)",
+                    ("brain", "migrate"),
+                ),
+            ),
+            verify=Check(
+                "schema at head (migrate is a no-op on a migrated DB)", ("brain", "migrate")
+            ),
+        ),
+        Phase(
             id="inference",
             title=f"Start the local inference backend ({backend})",
-            precondition=Check("The data service is up", ("brain", "verify", "--json")),
+            precondition=Check("the db container is running", ("docker", "compose", "ps", "db")),
             actions=(
                 make_action(
                     "compose",
@@ -219,21 +242,6 @@ def build_plan(*, profile: str, docker: bool, free_ports: Mapping[int, bool]) ->
                     f"Stop the {backend} backend",
                     ("docker", "compose", "--profile", backend, "stop"),
                 ),
-            ),
-        ),
-        Phase(
-            id="migrate",
-            title="Apply database migrations",
-            precondition=Check("The data service is up", ("brain", "verify", "--json")),
-            actions=(
-                make_action(
-                    "migration",
-                    "Apply all pending migrations to head (idempotent)",
-                    ("brain", "migrate"),
-                ),
-            ),
-            verify=Check(
-                "schema at head (migrate is a no-op on a migrated DB)", ("brain", "migrate")
             ),
         ),
         Phase(

@@ -1,20 +1,26 @@
 # Phased installer runbook
 
-This page mirrors the current `brain plan` and `brain apply` phase catalog. The catalog is
-experimental in release 0.13.0 and is not the recommended clean-install path.
+This page mirrors the current `brain plan` and `brain apply` phase catalog.
 
-For a working source-based API setup, follow the
-[getting-started tutorial](tutorials/getting-started.md). The phased installer currently has three
-observable limits:
+`brain apply` takes a clean host from nothing to a migrated data service and a running inference
+backend, in one command, with no file to hand-edit first. It generates the database password itself.
 
-- its `config` action creates `.env` but does not create `config.yaml` or select
-  `config.example.yaml`;
-- its `data_service` verification requires the schema at head before the later `migrate` phase; and
+Two limits remain, and they are scope, not defects:
+
+- its `config` action creates `.env` and its secrets, but does not create `config.yaml` — select
+  `config.example.yaml` and set your model routes before the terminal `verify` can pass; and
 - it starts the data and inference containers, not the API, worker, console, or production edge.
+  **For a full production deployment — API, worker, console and an HTTPS edge — follow
+  [deploy/README.md](../deploy/README.md) instead**; that is the path a company installs.
 
-On a fresh checkout these constraints can stop `brain apply` before completion. The phase structure,
-guardrails, checkpoints, and rollback behavior are tested, but a successful clean-host transcript is
-not shipped as release evidence.
+Two earlier limits were removed on 2026-08-13 after a clean-host install run stopped on both:
+
+- the `config` phase copied a template and reported success while leaving `POSTGRES_PASSWORD`
+  empty, which the next phase refuses (it now generates the secret, and verifies it is usable); and
+- every phase up to and including `migrate` gated on `brain verify`, which demands the schema **at
+  head** — the schema that `migrate` is what creates. A fresh database could therefore never reach
+  the phase that would have migrated it. `migrate` now runs directly after the data service, and the
+  full `brain verify` is the terminal gate only.
 
 ## Inspect the flow
 
@@ -64,28 +70,39 @@ Resolve every blocker and rerun `brain plan --json` before applying.
 
 ### Phase `config` — Prepare configuration
 
-- **Precondition:** A repository-root `.env` with a strong `POSTGRES_PASSWORD` is expected.
-- **Verify command:** `test -f .env`
-- **Success criterion:** `.env` exists.
-- **Corrective action:** Copy `.env.example` to `.env`, set a unique password, and separately select
-  a complete application configuration such as `config.example.yaml`.
+- **Precondition:** `.env.example` exists to materialise from.
+- **Verify command:** `brain init-env --check`
+- **Success criterion:** every required secret is set — neither blank nor a placeholder.
+- **Corrective action:** run `brain init-env`. It creates `.env` if absent and generates any unset
+  required secret. It is idempotent: a value already set is never rotated, so re-running `apply` on
+  a live install cannot change the password out from under a running database.
 - **Rollback:** None; review or remove only the local file you created.
 
 ### Phase `data_service` — Start the data service
 
 - **Precondition:** Docker is available.
-- **Verify command:** `brain verify --json`
-- **Success criterion:** The database has AGE and pgvector and is already at the exact schema head.
-- **Corrective action:** On a fresh database, run `brain migrate` with the correct DSN before
-  resuming; inspect `docker compose logs db` for service failures.
+- **Verify command:** `docker compose ps db`
+- **Success criterion:** the `db` container is running and healthy (the start action waits on its
+  healthcheck).
+- **Corrective action:** inspect `docker compose logs db` for service failures.
 - **Rollback:** `docker compose stop db`; named volumes are preserved.
 
-This verification ordering is a known 0.13.0 installer limitation: migration appears later in the
-catalog even though this phase requires migrated state.
+This phase deliberately does **not** assert schema state: the schema is created by `migrate`, which
+runs next.
+
+### Phase `migrate` — Apply database migrations
+
+- **Precondition:** the `db` container is running.
+- **Verify command:** `brain migrate`
+- **Success criterion:** Migration exits successfully and a repeat reports no pending work.
+- **Corrective action:** Verify the database DSN and tenant-integrity preflight, then rerun
+  `brain migrate`.
+- **Rollback:** No automatic downgrade; restore a verified backup into an inactive target when a
+  downgrade is required.
 
 ### Phase `inference` — Start the local inference backend
 
-- **Precondition:** The data service passes `brain verify`.
+- **Precondition:** the `db` container is running.
 - **Verify command:** `docker compose ps`
 - **Success criterion:** The selected `ollama` or `vllm` profile container is running.
 - **Corrective action:** Use the Ollama profile for `cpu_only`; verify GPU runtime and model resources
@@ -93,16 +110,6 @@ catalog even though this phase requires migrated state.
 - **Rollback:** Stop the selected Compose profile; database state remains.
 
 Container state does not prove that all configured models are installed or callable.
-
-### Phase `migrate` — Apply database migrations
-
-- **Precondition:** The data service is running.
-- **Verify command:** `brain migrate`
-- **Success criterion:** Migration exits successfully and a repeat reports no pending work.
-- **Corrective action:** Verify the database DSN and tenant-integrity preflight, then rerun
-  `brain migrate`.
-- **Rollback:** No automatic downgrade; restore a verified backup into an inactive target when a
-  downgrade is required.
 
 ### Phase `verify` — Verify the installation
 

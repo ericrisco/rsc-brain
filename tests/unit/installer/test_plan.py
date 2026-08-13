@@ -38,7 +38,11 @@ def test_phase_order_is_stable_and_migrate_is_its_own_phase() -> None:
     plan = build_plan(profile="cpu_only", docker=True, free_ports=ALL_FREE)
     ids = [p.id for p in plan.phases]
     assert ids == list(PHASE_IDS)
-    assert ids == ["preflight", "config", "data_service", "inference", "migrate", "verify"]
+    # AUDIT-052 moved `migrate` ahead of `inference` (2026-08-13). The old order was not merely
+    # a preference: with `migrate` fourth, the phases before it gated on `brain verify`, which
+    # demands the schema at head — so a clean host could never reach the phase that creates it.
+    # A real install on a rented box stopped exactly there.
+    assert ids == ["preflight", "config", "data_service", "migrate", "inference", "verify"]
     # 12-factor: migrate is a distinct phase, before the terminal verify.
     assert ids.index("migrate") < ids.index("verify")
 
@@ -80,3 +84,47 @@ def test_plan_to_dict_is_a_stable_agent_contract() -> None:
         "rollback",
         "destructive",
     }
+
+
+# --- Regressions from the real-host install run (2026-08-13) ---------------------------------
+# A clean host stopped at `data_service` because the catalog asked for a schema that only a
+# later phase creates, and the phase before it reported success while leaving an unusable
+# password. Both were observed on a rented box, not theorised.
+
+
+def test_migrate_never_depends_on_the_schema_it_creates() -> None:
+    """AUDIT-052: `brain verify` requires the schema AT HEAD, so no phase at or before
+    `migrate` may use it as a gate — that is a deadlock: the phase that creates the schema
+    cannot require the schema to already exist."""
+    plan = build_plan(profile="cpu_only", docker=True, free_ports={8000: True, 5432: True})
+    ids = [p.id for p in plan.phases]
+    migrate_at = ids.index("migrate")
+    for phase in plan.phases[: migrate_at + 1]:
+        gates = (phase.precondition.command, phase.verify.command)
+        for command in gates:
+            assert tuple(command[:2]) != ("brain", "verify"), (
+                f"phase {phase.id!r} gates on `brain verify`, which demands the schema at head, "
+                f"but it runs at or before `migrate` (position {ids.index(phase.id)} of {ids})"
+            )
+
+
+def test_data_service_precedes_migrate_which_precedes_the_final_verify() -> None:
+    """The only ordering that can succeed on a fresh database."""
+    ids = [p.id for p in build_plan(profile="cpu_only", docker=True, free_ports={}).phases]
+    assert ids.index("data_service") < ids.index("migrate") < ids.index("verify")
+
+
+def test_config_phase_produces_usable_secrets_not_a_blank_template() -> None:
+    """AUDIT-051: the phase used to run `cp -n .env.example .env` and verify with
+    `test -f .env` — reporting success while leaving `POSTGRES_PASSWORD=` empty, which the
+    next phase refuses. A phase that succeeds must leave the install one step better off."""
+    plan = build_plan(profile="cpu_only", docker=True, free_ports={})
+    config = next(p for p in plan.phases if p.id == "config")
+    assert config.actions, "config must do something"
+    action = config.actions[0]
+    assert tuple(action.command[:1]) != ("cp",), (
+        "copying the template cannot be the whole action: it leaves the password blank"
+    )
+    assert tuple(config.verify.command) != ("test", "-f", ".env"), (
+        "existence of .env does not prove the secrets inside it are usable"
+    )

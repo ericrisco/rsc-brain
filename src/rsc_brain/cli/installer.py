@@ -19,10 +19,50 @@ import yaml
 
 from rsc_brain.cli._common import JSON_OPTION, emit_result
 from rsc_brain.installer import doctor as doctor_mod
+from rsc_brain.installer import env_init
 from rsc_brain.installer.verify import run_verify
 
 _CONFIG_CANDIDATES = [Path("config.yaml"), Path("config.example.yaml")]
 _GOLDEN = Path("evals/golden.yaml")
+
+
+def init_env(
+    ctx: typer.Context,
+    check: bool = typer.Option(
+        False, "--check", help="Report whether the required secrets are usable; change nothing."
+    ),
+    json_output: bool = JSON_OPTION,
+) -> None:
+    """Create .env if absent and generate any unset required secret (idempotent).
+
+    AUDIT-051: the install's config phase used to copy the template and call that success, leaving
+    `POSTGRES_PASSWORD=` empty for the next phase to choke on. Generating the secret is what makes
+    a clean install a single command. An already-set value is never rotated.
+    """
+    root = Path.cwd()
+    if check:
+        ok, detail = env_init.check(root)
+        emit_result(
+            ctx,
+            json_output,
+            {"status": "ok" if ok else "incomplete", "detail": detail},
+            f"init-env --check: {detail}",
+        )
+        if not ok:
+            raise typer.Exit(1)
+        return
+    report = env_init.materialise(root)
+    emit_result(
+        ctx,
+        json_output,
+        {
+            "status": "ok",
+            "created": report.created,
+            "generated": list(report.generated),
+            "already_set": list(report.already_set),
+        },
+        f"init-env: {report.explain()}",
+    )
 
 
 def doctor(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
