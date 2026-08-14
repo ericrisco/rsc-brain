@@ -62,8 +62,17 @@ class IngestService:
         """Ingest raw bytes. Returns a duplicate no-op if the checksum already exists in-project."""
         checksum = hashlib.sha256(data).hexdigest()
         existing = await self._repo.find_document_by_checksum(scope, checksum)
-        if existing is not None:
+        if existing is not None and existing.status != DocStatus.RECEIVED.value:
             return IngestOutcome(existing.id, existing.status, duplicate=True)
+        if existing is not None:
+            # AUDIT-069: this short-circuit used to fire on the checksum alone, without looking at what
+            # became of the existing document. So one whose parse had failed — still at RECEIVED,
+            # holding no knowledge — was indistinguishable from one fully processed. An operator who
+            # fixed the cause and re-submitted the same bytes was told "duplicate", and the document
+            # stayed stuck forever with no route back. Deduplication is right for an ingestion that got
+            # somewhere; applied to one that never started, it traps the file. Resuming is safe: the
+            # pipeline is idempotent and checkpointed (SPEC-05).
+            return await self._resume(scope, existing.id, run=run)
 
         source_row = await self._resolve_source(scope, source)
         path = self._store_blob(scope, checksum, filename, data)
@@ -86,6 +95,11 @@ class IngestService:
             document = await self._repo.get_document(scope, document_id)
             existing_status = document.status if document else DocStatus.RECEIVED.value
             return IngestOutcome(document_id, existing_status, duplicate=True)
+        return await self._admit_and_run(scope, document_id, run=run)
+
+    async def _admit_and_run(
+        self, scope: ProjectScope, document_id: str, *, run: bool
+    ) -> IngestOutcome:
         await self._repo.ensure_run(scope, document_id, phase=DocStatus.RECEIVED.value)
         if not run:
             return IngestOutcome(document_id, DocStatus.RECEIVED.value, duplicate=False)
@@ -99,8 +113,26 @@ class IngestService:
                 principal_id=scope.principal_id,
             )
             return IngestOutcome(document_id, DocStatus.RECEIVED.value, duplicate=False)
-        status = await self._pipeline.process(scope, document_id)
+        try:
+            status = await self._pipeline.process(scope, document_id)
+        except Exception as exc:
+            # AUDIT-068: a document that failed before chunking stayed at RECEIVED with `error: null`.
+            # The AUDIT-065 rule only fires once chunks exist and none produced claims, so it could not
+            # see a failure one stage earlier: the operator got a traceback on their terminal and a
+            # status record that said nothing. Anything reading the run instead of the console — the
+            # console itself, a worker-driven ingest, an operator looking a week later — saw a document
+            # that had simply stopped. The exception still propagates; the run now says what happened.
+            await self._repo.record_run_error(
+                scope,
+                document_id,
+                f"ingestion failed before completing: {type(exc).__name__}: {exc}"[:1000],
+            )
+            raise
         return IngestOutcome(document_id, status.phase, duplicate=False)
+
+    async def _resume(self, scope: ProjectScope, document_id: str, *, run: bool) -> IngestOutcome:
+        """Re-run the pipeline for a document that was admitted but never processed (AUDIT-069)."""
+        return await self._admit_and_run(scope, document_id, run=run)
 
     async def ingest_path(
         self, scope: ProjectScope, path: str | Path, *, source: str | None = None

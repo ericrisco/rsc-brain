@@ -22,7 +22,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.ingest.entity_resolution import normalize_name
-from rsc_brain.ingest.types import PipelineStage, ProposedChunk, RunStatus, TopicRule
+from rsc_brain.ingest.types import (
+    DocStatus,
+    PipelineStage,
+    ProposedChunk,
+    RunStatus,
+    TopicRule,
+)
 from rsc_brain.scope import NON_TOPIC_TAGS, ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import maybe_session_scope, session_scope
@@ -643,6 +649,26 @@ class IngestRepository:
             elif run.claims_generated > 0 and run.error and "no knowledge published" in run.error:
                 run.error = None  # a later stage produced claims; the note no longer holds
         run.updated_at = _now()
+
+    async def record_run_error(self, scope: ProjectScope, document_id: str, error: str) -> None:
+        """Record why an ingestion stopped, where `brain status` reads it (AUDIT-068).
+
+        A failure that only reaches the caller's stderr is invisible to the console, to a
+        worker-driven ingest, and to anyone looking a week later. The run is the durable place that
+        answers "what happened to my document".
+        """
+        async with session_scope(self._sm) as session:
+            run = await self._get_run(session, scope, document_id)
+            if run is None:
+                run = models.IngestRun(
+                    project_id=_pid(scope),
+                    document_id=uuid.UUID(document_id),
+                    phase=DocStatus.RECEIVED.value,
+                )
+                session.add(run)
+                await session.flush()
+            run.error = error
+            run.updated_at = _now()
 
     async def _touch_run_phase(
         self, session: AsyncSession, scope: ProjectScope, document_id: str, phase: str
