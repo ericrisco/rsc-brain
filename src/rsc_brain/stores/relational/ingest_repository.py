@@ -566,6 +566,18 @@ class IngestRepository:
                 .on_conflict_do_nothing(index_elements=["document_id"])
             )
             await session.execute(statement)
+            # AUDIT-071: AUDIT-068 made a failure durable so an operator could read it, and nothing
+            # cleared it. A document that failed and was then retried (AUDIT-069) finished as
+            # `phase: processed` with all seven stages and 2 claims, still carrying the
+            # `ConversionError` from the attempt before — observed on the host. The AUDIT-065 note has
+            # a clearing rule, but it matches only its own text. The error field describes the LATEST
+            # attempt, so a new attempt starts with a clean one. This is the single choke point every
+            # attempt passes through (the service's admit and `pipeline.process` both call it), which
+            # is why the reset lives here and not in one caller.
+            run = await self._get_run(session, scope, document_id)
+            if run is not None and run.error is not None:
+                run.error = None
+                run.updated_at = _now()
 
     async def _get_run(
         self, session: AsyncSession, scope: ProjectScope, document_id: str

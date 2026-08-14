@@ -28,6 +28,28 @@ def test_a_run_that_produced_no_knowledge_says_so() -> None:
     )
 
 
+def test_a_successful_attempt_does_not_report_the_previous_failure() -> None:
+    """AUDIT-071, a regression introduced by the AUDIT-068 fix and found by using it.
+
+    AUDIT-068 made a failure durable so the operator could read it. Nothing then cleared it, so a
+    document that failed and was later retried successfully (AUDIT-069) reported, on a real host:
+    `phase: processed`, all seven stages complete, 2 claims generated — **and** the `ConversionError`
+    from the attempt before. The AUDIT-065 note has a clearing rule, but it only matches its own text.
+
+    Same class of untruthfulness the two earlier findings fixed, inverted: a success that reports a
+    failure. The error field describes the LATEST attempt, so a new attempt must start with a clean
+    one — recorded at `ensure_run`, the single choke point every attempt passes through, from the
+    service and from the worker alike."""
+    source = REPOSITORY.read_text(encoding="utf-8")
+    body = source[source.index("async def ensure_run") :]
+    body = body[: body.index("\n    async def ", 10)]
+    assert "AUDIT-071" in body, (
+        "a new attempt does not clear the previous attempt's failure, so a processed document can "
+        "report an error it has since overcome"
+    )
+    assert "error" in body, "ensure_run must reset the run's error when an attempt begins"
+
+
 def test_every_tag_the_pipeline_assigns_becomes_a_governable_topic() -> None:
     """AUDIT-066b: the topicalizer writes tags onto chunks and documents, but nothing created a
     `topics` row for them — so knowledge could be tagged with a name that exists nowhere in the
