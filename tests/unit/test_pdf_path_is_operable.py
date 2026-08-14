@@ -1,8 +1,11 @@
-"""AUDIT-067/068/069: the three defects that combine to make PDFs unusable.
+"""AUDIT-067/068/069/070: the four defects that combine to make PDFs unusable.
 
 Found by actually ingesting a PDF on a rented host, after the AUDIT-064 build flag shipped. Each is
 survivable alone; together they are the worst possible sequence for an operator — submit a PDF, get
 silence, fix the cause, and be told "duplicate".
+
+AUDIT-068 and 069 paid for themselves immediately: they are what made AUDIT-070 *visible* instead of
+another silent `error: null` on a document that could never be retried.
 """
 
 from __future__ import annotations
@@ -27,6 +30,27 @@ def test_the_pdf_image_does_not_need_a_gui_stack() -> None:
     for gui_lib in ("libgl1", "libxcb1", "libx11"):
         assert gui_lib not in dockerfile.lower(), (
             f"{gui_lib} was added to a server image; the headless build removes the need for it"
+        )
+
+
+def test_the_pdf_image_does_not_need_a_cxx_compiler_at_runtime() -> None:
+    """AUDIT-070: with `cv2` importable, docling still failed — its transformers engines call
+    `torch.compile()` by default, and torch's inductor backend then shells out to a C++ compiler that
+    a slim runtime image does not have (`InvalidCxxCompiler: ... (None, 'g++')`).
+
+    Measured on the host, same PDF, three runs: default → failure after 56s; `TORCH_COMPILE_DISABLE=1`
+    → 112 characters extracted in 14s. Shipping a C++ toolchain in a production image to enable a JIT
+    that this workload does not benefit from would be strictly worse on both size and attack surface —
+    so the image declares eager mode instead."""
+    dockerfile = (REPO / "Dockerfile").read_text(encoding="utf-8")
+    assert "TORCH_COMPILE_DISABLE=1" in dockerfile, (
+        "docling's engines call torch.compile(), whose inductor backend needs g++ at runtime; without "
+        "this the PDF backend builds fine and fails on every document"
+    )
+    for toolchain in ("build-essential", "g++", "gcc"):
+        assert f"install -y --no-install-recommends {toolchain}" not in dockerfile, (
+            f"{toolchain} was added to a runtime image to satisfy a JIT compiler; eager mode is "
+            "faster here and carries no toolchain"
         )
 
 
