@@ -38,6 +38,23 @@ configured models.
 
 See the [configuration reference](../docs/reference/configuration.md) for every field.
 
+## PDF ingestion (opt-in)
+
+The application image ships **without** the layout/OCR backend, so out of the box it ingests
+markdown and text. PDFs need `docling`, which pulls torch and adds gigabytes — a cost a box that
+never sees a PDF should not pay, and the reason it is not in the locked dependency graph.
+
+To build an image that parses PDFs, set the build argument:
+
+```bash
+INSTALL_PDF_BACKEND=true docker compose --env-file deploy/.env \
+  -f deploy/docker-compose.prod.yml build migrate
+```
+
+Every service shares that image, so building it once is enough. Without it, submitting a PDF fails
+with an explicit message naming the missing backend rather than silently producing an empty
+document.
+
 ## Raw Docker Compose
 
 Create the secret file and edit the domain and admin email before deployment. Add the public HTTPS

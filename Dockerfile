@@ -14,6 +14,22 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev
 
+# AUDIT-064: the PRD scopes v1 as PDFs, and this image could not parse one — the layout/OCR backend
+# is an operator extra kept deliberately OUT of the locked graph, because it pulls torch and would
+# add gigabytes to every install including CPU-only boxes that never see a PDF. The consequence was
+# a trap: install, drop a PDF, and get told to install something into a container you did not build.
+#
+# The extra stays opt-in and stays unlocked (`uv pip install`, not `uv sync`), so the lock keeps its
+# property. What changes is that enabling it is a documented flag instead of a Dockerfile edit:
+#   docker build --build-arg INSTALL_PDF_BACKEND=true .
+ARG INSTALL_PDF_BACKEND=false
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ "$INSTALL_PDF_BACKEND" = "true" ]; then \
+        uv pip install --python /app/.venv/bin/python docling; \
+    else \
+        echo "PDF backend not installed (INSTALL_PDF_BACKEND=false); markdown/text ingestion only"; \
+    fi
+
 FROM python:3.12-slim-bookworm AS runtime
 # PostgreSQL 16 client (PGDG) so `brain backup`/`restore` match the server major version.
 RUN apt-get update \

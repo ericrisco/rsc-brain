@@ -623,6 +623,25 @@ class IngestRepository:
             run.tables_converted += counters.tables_converted
             run.tables_needs_review += counters.tables_needs_review
             run.discarded_chunks += counters.discarded_chunks
+            # AUDIT-065: a document whose every chunk was discarded used to finish as
+            # `phase: processed` with `error: null` — zero knowledge published, and the only signal
+            # a counter in a separate status call. An operator read "processed" and believed it
+            # worked. Discarding is correct (FR-1.8: never garbage to the graph); reporting it as
+            # unqualified success is not, so the run says what happened. Computed from the run's
+            # ACCUMULATED totals, because one stage's delta cannot see the whole document.
+            if (
+                run.chunks_created > 0
+                and run.claims_generated == 0
+                and run.discarded_chunks >= run.chunks_created
+            ):
+                run.error = (
+                    f"no knowledge published: all {run.discarded_chunks} of "
+                    f"{run.chunks_created} chunk(s) were discarded by extraction. The document was "
+                    "parsed and stored, but produced no claims — check that the extractor "
+                    "capability is reachable and that its model returns the expected structure."
+                )
+            elif run.claims_generated > 0 and run.error and "no knowledge published" in run.error:
+                run.error = None  # a later stage produced claims; the note no longer holds
         run.updated_at = _now()
 
     async def _touch_run_phase(
@@ -750,6 +769,24 @@ class IngestRepository:
         """Write per-chunk tags + the document's proposed tags + its post-policy status, and
         checkpoint TOPICALIZE (one tx)."""
         async with session_scope(self._sm) as session:
+            # AUDIT-066b: the topicalizer writes tags, but nothing created a `topics` row for them —
+            # so knowledge could carry a name that exists nowhere in the taxonomy. The permission
+            # filter cuts on exactly those names, so no administrator could SEE what needed
+            # granting, which made the knowledge unreachable and the reason undiscoverable.
+            # Granting stays an administrator's decision; discovering what to grant cannot.
+            # Idempotent by necessity: the same tag arrives with every document.
+            assigned = {tag for tags in chunk_tags.values() for tag in tags} | set(doc_tags)
+            if assigned:
+                await session.execute(
+                    pg_insert(models.Topic)
+                    .values(
+                        [
+                            {"project_id": _pid(scope), "slug": tag, "name": tag, "sensitivity": 0}
+                            for tag in sorted(assigned)
+                        ]
+                    )
+                    .on_conflict_do_nothing(index_elements=["project_id", "slug"])
+                )
             for chunk_id, tags in chunk_tags.items():
                 await session.execute(
                     update(models.Chunk)
