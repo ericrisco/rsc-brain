@@ -26,8 +26,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from typer.testing import CliRunner
-
 from rsc_brain.cli.main import app
 
 REPO = Path(__file__).resolve().parents[2]
@@ -36,9 +34,7 @@ ADMIN_API = REPO / "src" / "rsc_brain" / "api" / "admin.py"
 
 
 def test_the_cli_can_grant_a_topic_to_a_principal() -> None:
-    result = CliRunner().invoke(app, ["topics", "--help"])
-    assert result.exit_code == 0, result.output
-    assert "grant" in result.output, (
+    assert "grant" in _subcommands(["topics"]), (
         "no CLI surface grants a topic, so a second user's authority can only be set with SQL"
     )
 
@@ -46,18 +42,41 @@ def test_the_cli_can_grant_a_topic_to_a_principal() -> None:
 def test_the_cli_can_revoke_a_topic_from_a_principal() -> None:
     """`create_topic`'s docstring claims the grant is 'visible and revocable'. Nothing revoked it:
     authority could only ever grow."""
-    result = CliRunner().invoke(app, ["topics", "--help"])
-    assert result.exit_code == 0, result.output
-    assert "revoke" in result.output, "granted authority could not be withdrawn"
+    assert "revoke" in _subcommands(["topics"]), "granted authority could not be withdrawn"
+
+
+def _subcommands(command_path: list[str]) -> set[str]:
+    """The names of a group's subcommands, read from the parsed command tree."""
+    import typer.main
+
+    node = typer.main.get_command(app)
+    for name in command_path:
+        node = node.commands[name]  # type: ignore[attr-defined]
+    return set(node.commands)  # type: ignore[attr-defined]
+
+
+def _option_names(command_path: list[str]) -> set[str]:
+    """The command's declared option strings.
+
+    Read from the parsed command rather than from `--help`: Rich wraps help output to the terminal
+    width, so an assertion against rendered text passes at one width and fails at another. My first
+    version of this test did exactly that — green locally, red in CI on the same commit.
+    """
+    import typer.main
+
+    click_command = typer.main.get_command(app)
+    node = click_command
+    for name in command_path:
+        node = node.commands[name]  # type: ignore[attr-defined]
+    return {opt for param in node.params for opt in getattr(param, "opts", [])}
 
 
 def test_granting_names_the_principal_and_the_project() -> None:
     """A grant is meaningless without saying whose it is. The command must take the user and the
     project, not default to the caller — defaulting to the caller is precisely the hole this fixes."""
-    result = CliRunner().invoke(app, ["topics", "grant", "--help"])
-    assert result.exit_code == 0, result.output
+    options = _option_names(["topics", "grant"])
     for option in ("--project-id", "--user-id"):
-        assert option in result.output, f"grant does not name {option}"
+        assert option in options, f"grant does not name {option}; it declares {sorted(options)}"
 
 
 def test_a_grant_is_validated_against_the_project_taxonomy() -> None:

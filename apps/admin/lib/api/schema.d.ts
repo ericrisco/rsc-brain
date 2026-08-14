@@ -794,6 +794,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/topics/{slug}/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Grant Topic
+         * @description Grant a topic to a principal's membership in the caller's project.
+         */
+        post: operations["grant_topic_api_v1_admin_topics__slug__grants_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/topics/{slug}/grants/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Topic
+         * @description Withdraw a topic from a principal's membership in the caller's project.
+         */
+        delete: operations["revoke_topic_api_v1_admin_topics__slug__grants__user_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/usage": {
         parameters: {
             query?: never;
@@ -1298,6 +1338,19 @@ export interface components {
             sensitivity: number;
             /** Slug */
             slug: string;
+        };
+        /**
+         * TopicGrant
+         * @description AUDIT-073: whose authority changes, stated explicitly.
+         *
+         *     The user is named in the body rather than defaulting to the caller, because defaulting to the
+         *     caller is exactly the hole this closes — `POST /topics` self-granted and nothing could grant to
+         *     anyone else. The project is NOT a field: it comes from the token's scope, never from the client
+         *     (FR-12.3).
+         */
+        TopicGrant: {
+            /** User Id */
+            user_id: string;
         };
         /** UserInvite */
         UserInvite: {
@@ -2918,6 +2971,81 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    grant_topic_api_v1_admin_topics__slug__grants_post: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TopicGrant"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_topic_api_v1_admin_topics__slug__grants__user_id__delete: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
