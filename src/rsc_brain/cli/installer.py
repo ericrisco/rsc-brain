@@ -23,7 +23,18 @@ from rsc_brain.installer import env_init
 from rsc_brain.installer.verify import run_verify
 
 _CONFIG_CANDIDATES = [Path("config.yaml"), Path("config.example.yaml")]
-_GOLDEN = Path("evals/golden.yaml")
+
+# AUDIT-072: this used to be `Path("evals/golden.yaml")` — a path relative to the process's working
+# directory, pointing into the SOURCE REPO. `evals` is deliberately not part of the distributed
+# package (`packages = ["src/rsc_brain"]`), so on a container, a pip install or a Helm deployment the
+# file cannot exist and both commands died with a bare exit code 2. The candidates below keep the
+# checkout case working and let an install pass its own set explicitly.
+_GOLDEN_CANDIDATES = [Path("evals/golden.yaml"), Path("/etc/rsc-brain/golden.yaml")]
+GOLDEN_OPTION = typer.Option(
+    None,
+    "--golden",
+    help="Path to the calibration set (YAML with a `cases` list). Required where none is installed.",
+)
 
 
 def init_env(
@@ -337,10 +348,33 @@ def verify(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
         raise typer.Exit(code=1)
 
 
-def _load_golden() -> dict[str, object]:
-    if not _GOLDEN.is_file():
+def _load_golden(explicit: Path | None = None) -> dict[str, object]:
+    """Resolve and summarise the calibration set.
+
+    AUDIT-072: the missing-set path used to be `raise typer.Exit(code=2)` — an exit code and not one
+    word. On a real install that is every invocation, so the two commands that own the abstention
+    threshold appeared to do nothing at all, while `brain verify` in the same container returned
+    normal JSON. The product knew exactly what was wrong and said nothing, which is the defect
+    AUDIT-065 and AUDIT-068 removed one layer up.
+
+    No default set is shipped on purpose. The repository's golden set describes two fictional
+    companies; calibrating τ against it would hand an operator a confidently wrong threshold for
+    their own knowledge, which is worse than an honest refusal.
+    """
+    candidates = [explicit] if explicit is not None else _GOLDEN_CANDIDATES
+    path = next((c for c in candidates if c is not None and c.is_file()), None)
+    if path is None:
+        looked = ", ".join(str(c) for c in candidates if c is not None)
+        typer.echo(
+            "no calibration set found. τ governs when recall abstains (SPEC-06 FR-3.3) and must be "
+            "calibrated against YOUR corpus — the repository's golden set describes fictional "
+            f"companies and would calibrate the wrong threshold. Looked in: {looked}. Pass "
+            "--golden PATH with a YAML file holding a `cases` list, or install one at "
+            f"{_GOLDEN_CANDIDATES[-1]}.",
+            err=True,
+        )
         raise typer.Exit(code=2)
-    cases = yaml.safe_load(_GOLDEN.read_text(encoding="utf-8")).get("cases", [])
+    cases = yaml.safe_load(path.read_text(encoding="utf-8")).get("cases", [])
     families = Counter(c["family"] for c in cases)
     must_find = sum(1 for c in cases if c.get("must_find"))
     return {
@@ -351,10 +385,14 @@ def _load_golden() -> dict[str, object]:
     }
 
 
-def eval_command(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
+def eval_command(
+    ctx: typer.Context,
+    json_output: bool = JSON_OPTION,
+    golden: Path | None = GOLDEN_OPTION,
+) -> None:
     """Report the golden set composition. A full recall-metrics run requires an ingested corpus +
     model (see evals.runner.run_eval, exercised by the integration suite)."""
-    composition = _load_golden()
+    composition = _load_golden(golden)
     payload = {"status": "ok", "golden": composition, "note": "full run needs ingested corpus"}
     human = (
         f"eval: {composition['total']} golden cases "
@@ -364,10 +402,14 @@ def eval_command(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
     emit_result(ctx, json_output, payload, human)
 
 
-def calibrate(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
+def calibrate(
+    ctx: typer.Context,
+    json_output: bool = JSON_OPTION,
+    golden: Path | None = GOLDEN_OPTION,
+) -> None:
     """Report the calibration set (τ is swept over recall scores by evals.runner.run_calibration;
     a full run requires an ingested corpus + model)."""
-    composition = _load_golden()
+    composition = _load_golden(golden)
     payload = {
         "status": "ok",
         "golden": composition,

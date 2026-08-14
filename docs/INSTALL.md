@@ -121,10 +121,40 @@ Container state does not prove that all configured models are installed or calla
   ingest-to-recall smoke outside this readiness command.
 - **Rollback:** None; this phase is read-only.
 
+## After the install: calibrate the abstention threshold
+
+The phase catalog above ends at a running, migrated, reachable stack. It does **not** leave you with
+a system that reliably says "I don't have that".
+
+Recall abstains when the best fragment's blended score falls below τ (SPEC-06 FR-3.3). The shipped
+default is `0.45`, and the score is `0.55·similarity + 0.25·credibility + 0.10·freshness +
+0.10·importance` — so the terms that have nothing to do with your question already supply most of the
+threshold. Measured on a real install: credible, fresh knowledge contributed `0.324` of the `0.45`,
+leaving an effective similarity floor of `0.230`, while pure gibberish scored `0.304` similarity
+against the ingested corpus. Un-calibrated, the gate separates sense from nonsense by hundredths on a
+quantity whose noise is tenths.
+
+τ is therefore **per-install**, not a constant:
+
+```bash
+brain eval --golden /path/to/your-golden.yaml        # what your set contains
+brain calibrate --golden /path/to/your-golden.yaml   # the set + the current default
+```
+
+The calibration set is a YAML file with a `cases` list, each case carrying the question, the family,
+and whether the answer must be found or must be abstained from. **No default set is shipped on
+purpose**: this repository's golden set describes two fictional companies, and calibrating against it
+would give you a confidently wrong threshold for your own knowledge. Install your own at
+`/etc/rsc-brain/golden.yaml` or pass `--golden` each time.
+
+Until you have done this, treat every `found: true` as unverified: the system will answer questions
+whose subject it has never seen, from knowledge that is credible but irrelevant.
+
 ## Safer automation use
 
 Capture `brain doctor --json` and `brain plan --json` before invoking `brain apply --yes`. Treat a
 green phase report as evidence for the catalogued checks only. It does not mean the API is serving,
-the production proxy is configured, or a model-backed knowledge request succeeds.
+the production proxy is configured, a model-backed knowledge request succeeds, or that abstention has
+been calibrated.
 
 See [Troubleshooting](how-to/troubleshooting.md) for the supported diagnostic sequence.
