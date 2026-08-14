@@ -74,6 +74,18 @@ class TopicCreate(BaseModel):
     sensitivity: int = Field(default=0, ge=0, le=10)
 
 
+class TopicGrant(BaseModel):
+    """AUDIT-073: whose authority changes, stated explicitly.
+
+    The user is named in the body rather than defaulting to the caller, because defaulting to the
+    caller is exactly the hole this closes — `POST /topics` self-granted and nothing could grant to
+    anyone else. The project is NOT a field: it comes from the token's scope, never from the client
+    (FR-12.3).
+    """
+
+    user_id: str = Field(max_length=64)
+
+
 class SourceCreate(BaseModel):
     name: str = Field(max_length=NAME_MAX)
     type: str = Field(default="folder", max_length=SLUG_MAX)
@@ -343,6 +355,66 @@ async def create_topic(
         topics_used=[body.slug],
     )
     return {"topic_id": topic_id, "slug": body.slug, "granted_topics": list(granted)}
+
+
+async def _change_authority(
+    request: Request,
+    scope: ProjectScope,
+    slug: str,
+    user_id: str,
+    *,
+    action: str,
+) -> dict[str, object]:
+    """Grant or revoke one topic on another principal's membership (AUDIT-073).
+
+    SPEC-04 §3.1 requires topic authority to be "persistidos y expuestos por API"; only the
+    self-grant inside `create_topic` was. The project comes from the caller's scope, so an
+    administrator of one project can never reach into another (FR-12.3), and a slug outside this
+    project's taxonomy is refused by the service (§3.2).
+    """
+    identity = _identity(request)
+    current = await identity.membership_topics(user_id, scope.project_id)
+    if current is None:
+        # Denied ≡ absent: an administrator of this project learns nothing about memberships
+        # elsewhere, and nothing about whether that user exists at all (FR-4.3).
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    try:
+        if action == "grant":
+            topics = await identity.grant_topics(user_id, scope.project_id, [slug])
+        else:
+            topics = await identity.revoke_topics(user_id, scope.project_id, [slug])
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    await audit_mod.record_audit(
+        _sm(request),
+        scope,
+        action=f"topic:{action}",
+        tool="console",
+        topics_used=[slug],
+    )
+    return {"slug": slug, "user_id": user_id, "allowed_topics": list(topics)}
+
+
+@router.post("/topics/{slug}/grants", status_code=status.HTTP_201_CREATED)
+async def grant_topic(
+    slug: str,
+    body: TopicGrant,
+    request: Request,
+    scope: ProjectScope = Depends(_needs_config_write),
+) -> dict[str, object]:
+    """Grant a topic to a principal's membership in the caller's project."""
+    return await _change_authority(request, scope, slug, body.user_id, action="grant")
+
+
+@router.delete("/topics/{slug}/grants/{user_id}")
+async def revoke_topic(
+    slug: str,
+    user_id: str,
+    request: Request,
+    scope: ProjectScope = Depends(_needs_config_write),
+) -> dict[str, object]:
+    """Withdraw a topic from a principal's membership in the caller's project."""
+    return await _change_authority(request, scope, slug, user_id, action="revoke")
 
 
 @router.get("/sources")

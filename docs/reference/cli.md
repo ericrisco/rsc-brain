@@ -67,6 +67,9 @@ Running `brain` with no command prints help. Completion commands are not registe
 | `brain users deactivate` | Disable a user and revoke that user's credentials. | Required `USER_ID`. |
 | `brain topics` | Parent group for topic commands. | A child command is required for an operation. |
 | `brain topics create` | Create a topic. | Required `--project-id TEXT`, `SLUG`, and `--name TEXT`; `--sensitivity INTEGER`, default `0`. Values of `3` or greater are restrictive. |
+| `brain topics grant` | Grant a topic to a principal's membership. Authority is never implied by a role, so it is recorded per topic. | Required `SLUG`, `--project-id TEXT` and `--user-id TEXT`. Refuses a slug that is not a topic of that project, and refuses when the user has no membership there. |
+| `brain topics revoke` | Withdraw a topic from a principal's membership. | Required `SLUG`, `--project-id TEXT` and `--user-id TEXT`. Idempotent: withdrawing what nobody holds is not an error. |
+| `brain topics grants` | Report a principal's current topic authority. | Required `--project-id TEXT` and `--user-id TEXT`. |
 
 ## People, gaps, and hunts
 

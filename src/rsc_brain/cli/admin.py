@@ -138,6 +138,88 @@ def topics_create(
     emit_result(ctx, json_output, {"status": "ok", "topic_id": topic_id}, f"created topic {slug}")
 
 
+# AUDIT-073: creating a topic granted it to its creator and that was the whole story — no surface
+# granted or revoked a topic for anyone else, so past the first user a company could not give its
+# departments the topic-based access this product exists to provide. SPEC-04 §3.1 specifies the
+# membership's `allowed_topics[]` in `api/` + `cli/`; these are that half of it.
+
+
+def _resolve_membership(project_id: str, user_id: str) -> tuple[str, ...]:
+    """Refuse loudly when the membership does not exist, instead of reporting an empty success."""
+    current = _run(lambda s: s.membership_topics(user_id, project_id))
+    if current is None:
+        typer.echo(
+            f"no membership for user {user_id} in project {project_id}. A grant is recorded on a "
+            "membership, so the user must be a member of the project first.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    return current
+
+
+@topics_app.command("grant")
+def topics_grant(
+    ctx: typer.Context,
+    slug: str = typer.Argument(..., help="Topic slug to grant."),
+    project_id: str = typer.Option(..., "--project-id", help="Project the membership belongs to."),
+    user_id: str = typer.Option(..., "--user-id", help="User whose authority is being extended."),
+    json_output: bool = JSON_OPTION,
+) -> None:
+    """Grant a topic to a principal's membership.
+
+    Authority is never implied by a role (R01, AUDIT-020), so it is granted here explicitly and per
+    topic. A slug that is not a topic of this project is refused (SPEC-04 §3.2).
+    """
+    _resolve_membership(project_id, user_id)
+    try:
+        granted = _run(lambda s: s.grant_topics(user_id, project_id, [slug]))
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    emit_result(
+        ctx,
+        json_output,
+        {"status": "ok", "allowed_topics": list(granted)},
+        f"granted {slug}; authority is now {', '.join(granted) or '(none)'}",
+    )
+
+
+@topics_app.command("revoke")
+def topics_revoke(
+    ctx: typer.Context,
+    slug: str = typer.Argument(..., help="Topic slug to withdraw."),
+    project_id: str = typer.Option(..., "--project-id", help="Project the membership belongs to."),
+    user_id: str = typer.Option(..., "--user-id", help="User whose authority is being reduced."),
+    json_output: bool = JSON_OPTION,
+) -> None:
+    """Withdraw a topic from a principal's membership. Idempotent."""
+    _resolve_membership(project_id, user_id)
+    remaining = _run(lambda s: s.revoke_topics(user_id, project_id, [slug]))
+    emit_result(
+        ctx,
+        json_output,
+        {"status": "ok", "allowed_topics": list(remaining)},
+        f"revoked {slug}; authority is now {', '.join(remaining) or '(none)'}",
+    )
+
+
+@topics_app.command("grants")
+def topics_grants(
+    ctx: typer.Context,
+    project_id: str = typer.Option(..., "--project-id", help="Project to report on."),
+    user_id: str = typer.Option(..., "--user-id", help="User to report on."),
+    json_output: bool = JSON_OPTION,
+) -> None:
+    """Report a principal's current topic authority — what a grant or revoke would change."""
+    current = _resolve_membership(project_id, user_id)
+    emit_result(
+        ctx,
+        json_output,
+        {"status": "ok", "allowed_topics": list(current)},
+        f"authority: {', '.join(current) or '(none)'}",
+    )
+
+
 # --- audit + doctor (single commands) ---------------------------------------
 
 

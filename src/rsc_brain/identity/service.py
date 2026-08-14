@@ -270,8 +270,31 @@ class IdentityService:
         empty authority is never all topics, and R01 holds that even the highest project role sees
         only the topics it was granted). So a topic someone must be able to act on is recorded on
         their membership rather than inferred from their role.
+
+        AUDIT-073: this used to merge whatever strings it was handed. SPEC-04 §3.2 requires that
+        assigning a topic from another project fail, and authority is the one field that must never
+        take an unvalidated write — a slug that names nothing is authority over nothing today and
+        authority over whatever later claims that name.
+
+        A missing membership still returns ``()`` rather than raising: an agent principal has no
+        membership, and `create_topic` self-grants through this method on both principal types. The
+        operator surfaces check the membership themselves so the refusal is loud where a human is
+        watching.
         """
         async with session_scope(self._sm) as session:
+            known = set(
+                await session.scalars(
+                    select(models.Topic.slug).where(
+                        models.Topic.project_id == uuid.UUID(project_id)
+                    )
+                )
+            )
+            unknown = [slug for slug in slugs if slug not in known]
+            if unknown:
+                raise ValueError(
+                    f"not topics of this project: {', '.join(sorted(unknown))}. "
+                    "A grant may only name a topic of the membership's own project (SPEC-04 §3.2)."
+                )
             membership = await session.scalar(
                 select(models.ProjectMembership).where(
                     models.ProjectMembership.user_id == uuid.UUID(user_id),
@@ -283,6 +306,48 @@ class IdentityService:
             merged = list(dict.fromkeys([*membership.allowed_topics, *slugs]))
             membership.allowed_topics = merged
             return tuple(merged)
+
+    async def revoke_topics(
+        self, user_id: str, project_id: str, slugs: Sequence[str]
+    ) -> tuple[str, ...]:
+        """Remove ``slugs`` from a membership's topic authority; returns the remaining set.
+
+        AUDIT-073: `create_topic`'s own docstring describes the grant as "visible and revocable", and
+        nothing revoked it — authority could only ever grow. Withdrawing access is the half of a
+        permission model that gets exercised when someone changes team or leaves one, and it was the
+        half that did not exist.
+
+        Idempotent: revoking a topic nobody holds is not an error. Unlike a grant, no taxonomy check
+        applies — removing a slug that names nothing is exactly the cleanup someone would want.
+        """
+        async with session_scope(self._sm) as session:
+            membership = await session.scalar(
+                select(models.ProjectMembership).where(
+                    models.ProjectMembership.user_id == uuid.UUID(user_id),
+                    models.ProjectMembership.project_id == uuid.UUID(project_id),
+                )
+            )
+            if membership is None:
+                return ()
+            dropped = set(slugs)
+            remaining = [slug for slug in membership.allowed_topics if slug not in dropped]
+            membership.allowed_topics = remaining
+            return tuple(remaining)
+
+    async def membership_topics(self, user_id: str, project_id: str) -> tuple[str, ...] | None:
+        """A membership's current topic authority, or ``None`` when there is no such membership.
+
+        AUDIT-073: the operator surfaces need to tell "granted nothing" apart from "no such
+        membership" so they can refuse loudly instead of reporting an empty success.
+        """
+        async with self._sm() as session:
+            membership = await session.scalar(
+                select(models.ProjectMembership).where(
+                    models.ProjectMembership.user_id == uuid.UUID(user_id),
+                    models.ProjectMembership.project_id == uuid.UUID(project_id),
+                )
+            )
+            return None if membership is None else tuple(membership.allowed_topics)
 
     async def ensure_default_topic(self, project_id: str) -> str:
         """Create the fallback topic if absent; return its id. Idempotent.
