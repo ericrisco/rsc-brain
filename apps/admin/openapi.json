@@ -472,6 +472,21 @@
         "title": "TopicCreate",
         "type": "object"
       },
+      "TopicGrant": {
+        "description": "AUDIT-073: whose authority changes, stated explicitly.\n\nThe user is named in the body rather than defaulting to the caller, because defaulting to the\ncaller is exactly the hole this closes \u2014 `POST /topics` self-granted and nothing could grant to\nanyone else. The project is NOT a field: it comes from the token's scope, never from the client\n(FR-12.3).",
+        "properties": {
+          "user_id": {
+            "maxLength": 64,
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "TopicGrant",
+        "type": "object"
+      },
       "UserInvite": {
         "properties": {
           "email": {
@@ -3828,6 +3843,157 @@
           }
         ],
         "summary": "Create Topic",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/topics/{slug}/grants": {
+      "post": {
+        "description": "Grant a topic to a principal's membership in the caller's project.",
+        "operationId": "grant_topic_api_v1_admin_topics__slug__grants_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopicGrant"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Grant Topic Api V1 Admin Topics  Slug  Grants Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Grant Topic",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/topics/{slug}/grants/{user_id}": {
+      "delete": {
+        "description": "Withdraw a topic from a principal's membership in the caller's project.",
+        "operationId": "revoke_topic_api_v1_admin_topics__slug__grants__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Revoke Topic Api V1 Admin Topics  Slug  Grants  User Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revoke Topic",
         "tags": [
           "admin"
         ]

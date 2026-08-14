@@ -81,6 +81,8 @@ Every operation in this table also accepts optional query parameter `project`. I
 | `POST /api/v1/admin/users/invite` | `platform.user.invite` | `UserInvite`. | `201`; user identifier and single-display invitation token. |
 | `GET /api/v1/admin/topics` | `project.manage.read` | No additional input. | `200`; topic slugs and sensitivity values. |
 | `POST /api/v1/admin/topics` | `project.config.write` | `TopicCreate`. | `201`; topic identifier, slug, and the creator's resulting topic grant. |
+| `POST /api/v1/admin/topics/{slug}/grants` | `project.config.write` | `TopicGrant`; the project comes from the caller's scope, never the body. | `201`; the principal's resulting topic authority. `400` when the slug is not a topic of that project; `404` when the user has no membership there, so denied stays indistinguishable from absent. |
+| `DELETE /api/v1/admin/topics/{slug}/grants/{user_id}` | `project.config.write` | No body. | `200`; the principal's remaining topic authority. Idempotent. `404` when the user has no membership in the caller's project. |
 | `GET /api/v1/admin/sources` | `project.manage.read` | No additional input. | `200`; source records and categorization policy. |
 | `POST /api/v1/admin/sources` | `project.config.write` | `SourceCreate`. | `201`; source identifier and name. |
 | `GET /api/v1/admin/persons` | `project.manage.read` | No additional input. | `200`; person routing records. |
