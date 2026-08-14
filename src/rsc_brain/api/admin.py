@@ -37,10 +37,20 @@ from rsc_brain.identity.service import IdentityService
 from rsc_brain.ingest.sources import SourceService
 from rsc_brain.mcp.tools import UNTRUSTED
 from rsc_brain.recall.gaps import list_gaps
-from rsc_brain.scope import Principal, PrincipalType, ProjectScope
+from rsc_brain.scope import (
+    PROJECT_ROLE_ADMIN,
+    PROJECT_ROLE_MEMBER,
+    PROJECT_ROLE_VIEWER,
+    Principal,
+    PrincipalType,
+    ProjectScope,
+)
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.ingest_repository import IngestRepository
 from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+
+# SPEC-04 §3.1's project roles, validated where the refusal reaches the caller (AUDIT-074).
+_PROJECT_ROLES = (PROJECT_ROLE_ADMIN, PROJECT_ROLE_MEMBER, PROJECT_ROLE_VIEWER)
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -72,6 +82,19 @@ class TopicCreate(BaseModel):
     slug: str = Field(max_length=SLUG_MAX)
     name: str = Field(max_length=NAME_MAX)
     sensitivity: int = Field(default=0, ge=0, le=10)
+
+
+class MembershipCreate(BaseModel):
+    """AUDIT-074: attaching a user to the caller's project.
+
+    The project is not a field — it comes from the token's scope (FR-12.3). The role is required
+    rather than defaulted, because a membership created with a silently-chosen role is an authority
+    decision nobody made.
+    """
+
+    user_id: str = Field(max_length=64)
+    role: str = Field(max_length=32)
+    can_curate: bool = False
 
 
 class TopicGrant(BaseModel):
@@ -355,6 +378,63 @@ async def create_topic(
         topics_used=[body.slug],
     )
     return {"topic_id": topic_id, "slug": body.slug, "granted_topics": list(granted)}
+
+
+@router.get("/memberships")
+async def list_memberships(
+    request: Request, scope: ProjectScope = Depends(_needs_manage_read)
+) -> dict[str, object]:
+    """Who belongs to the caller's project, with the role and topic authority each holds.
+
+    AUDIT-074: an administrator has to see this before granting anything — the topic grant refuses
+    without a membership, and nothing reported whether one existed.
+    """
+    return {"memberships": await _identity(request).list_memberships(scope.project_id)}
+
+
+@router.post("/memberships", status_code=status.HTTP_201_CREATED)
+async def create_membership(
+    body: MembershipCreate,
+    request: Request,
+    scope: ProjectScope = Depends(_needs_config_write),
+) -> dict[str, object]:
+    """Attach a user to the caller's project (AUDIT-074).
+
+    `add_membership` previously had one caller, the first owner's bootstrap, so every later user
+    belonged to no project and could be given nothing. No topic is granted here: authority stays a
+    separate explicit act, because empty authority is never all topics (AUDIT-020, R01).
+    """
+    identity = _identity(request)
+    if body.role not in _PROJECT_ROLES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"unknown role; expected one of {', '.join(_PROJECT_ROLES)}",
+        )
+    if await identity.membership_topics(body.user_id, scope.project_id) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="a membership is unique per user and project",
+        )
+    membership_id = await identity.add_membership(
+        body.user_id, scope.project_id, role=body.role, can_curate=body.can_curate
+    )
+    await audit_mod.record_audit(
+        _sm(request), scope, action="membership:create", tool="console", topics_used=[]
+    )
+    return {"membership_id": membership_id, "user_id": body.user_id, "role": body.role}
+
+
+@router.delete("/memberships/{user_id}")
+async def delete_membership(
+    user_id: str, request: Request, scope: ProjectScope = Depends(_needs_config_write)
+) -> dict[str, object]:
+    """Detach a user from the caller's project; their access tokens stop resolving with it."""
+    if not await _identity(request).remove_membership(user_id, scope.project_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    await audit_mod.record_audit(
+        _sm(request), scope, action="membership:remove", tool="console", topics_used=[]
+    )
+    return {"removed": user_id}
 
 
 async def _change_authority(
