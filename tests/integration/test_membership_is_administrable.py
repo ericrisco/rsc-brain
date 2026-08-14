@@ -8,6 +8,7 @@ is the half of access control that runs when someone leaves a team.
 from __future__ import annotations
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from rsc_brain.identity.resolve import resolve_scope
 from rsc_brain.identity.service import IdentityService
@@ -75,7 +76,8 @@ async def test_a_membership_is_unique_per_user_and_project(migrated_dsn: str) ->
         invitation = await svc.invite_user("twice@example.com", role="member")
         user = await svc.accept_invitation(invitation.token, "s3cret-password-abc")
         await svc.add_membership(user, project, role="member")
-        with pytest.raises(Exception):  # the unique constraint, whatever the driver raises
+        # Named precisely: a blind `Exception` would also pass on a typo in this test.
+        with pytest.raises(IntegrityError):
             await svc.add_membership(user, project, role="viewer")
     finally:
         await engine.dispose()
