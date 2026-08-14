@@ -122,6 +122,11 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      args:
+        # AUDIT-064: set to "true" to build an image that can parse PDFs (adds the layout/OCR
+        # backend and torch — gigabytes). This service builds the shared application image, so the
+        # flag belongs here. Default off: a box that only ever sees markdown should not carry it.
+        INSTALL_PDF_BACKEND: ${INSTALL_PDF_BACKEND:-false}
     image: rsc-brain/app:latest
     command: ["brain", "init"]
     environment:
