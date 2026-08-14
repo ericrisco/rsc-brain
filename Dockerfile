@@ -25,7 +25,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ARG INSTALL_PDF_BACKEND=false
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$INSTALL_PDF_BACKEND" = "true" ]; then \
-        uv pip install --python /app/.venv/bin/python docling; \
+        uv pip install --python /app/.venv/bin/python docling && \
+        # AUDIT-067: docling pulls the full OpenCV wheel, whose `cv2` links against libxcb, libGL,
+        # libgthread and libglib — measured with `ldd` inside the built image. Installing the Python
+        # package alone produced a 9.48 GB PDF-capable image that still could not parse a PDF. The fix
+        # is NOT to add X11 and OpenGL to a server image: the headless build provides the same `cv2`
+        # with none of the GUI dependencies, which is both smaller and a narrower attack surface.
+        uv pip install --python /app/.venv/bin/python --force-reinstall opencv-python-headless; \
     else \
         echo "PDF backend not installed (INSTALL_PDF_BACKEND=false); markdown/text ingestion only"; \
     fi
@@ -47,8 +53,16 @@ RUN apt-get update \
 RUN useradd --create-home --uid 10001 rsc
 WORKDIR /app
 COPY --from=build --chown=rsc:rsc /app /app
+# AUDIT-070: docling's transformers engines call `torch.compile()` by default, and torch's inductor
+# backend then shells out to a C++ compiler this image deliberately does not ship — so every PDF died
+# with `InvalidCxxCompiler: ... (None, 'g++')` even once cv2 imported. Measured on the host with the
+# same document: default → failure after 56s; eager mode → 112 characters extracted in 14s. Adding a
+# toolchain to a production runtime to feed a JIT this workload never benefits from would be worse on
+# both counts, so the image declares eager mode. `TORCHDYNAMO_DISABLE` is the legacy alias of the same
+# switch (both measured working); the current name is set here.
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    TORCH_COMPILE_DISABLE=1
 USER rsc
 
 EXPOSE 8080
