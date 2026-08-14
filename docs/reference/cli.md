@@ -35,8 +35,8 @@ Running `brain` with no command prints help. Completion commands are not registe
 | `brain preflight` | Report cross-project data that would block a migration. | No command-specific options. |
 | `brain backup` | Write a snapshot directory containing a custom-format database dump, stored document blobs, and a manifest with sizes and SHA-256 digests. | Required `--output PATH` or `-o PATH`. |
 | `brain restore` | Verify a snapshot, restore the database and stored blobs, apply migrations, and verify extensions and schema head. | Required `SNAPSHOT` path produced by `brain backup`. Snapshot verification happens before the target is changed. |
-| `brain calibrate` | Report the calibration set and default relevance threshold. | No command-specific options. |
-| `brain eval` | Report golden-set composition. | No command-specific options. A full evaluation requires an ingested corpus. |
+| `brain calibrate` | Report the calibration set and default relevance threshold τ. Recall's abstention gate is per-install; see [INSTALL.md](../INSTALL.md). | `--golden PATH` names the calibration set (YAML with a `cases` list). No default set is shipped: searched at `evals/golden.yaml` then `/etc/rsc-brain/golden.yaml`, and the command refuses with an explanation when none is present. |
+| `brain eval` | Report golden-set composition. | `--golden PATH`, resolved as for `brain calibrate`. A full evaluation requires an ingested corpus. |
 | `brain usage` | Report daily token and call usage by model capability. | `--days INTEGER`, default `7`; optional `--project TEXT` limits the report to one project. |
 
 ## Ingestion and document commands
