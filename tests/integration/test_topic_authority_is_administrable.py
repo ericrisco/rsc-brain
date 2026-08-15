@@ -23,7 +23,10 @@ async def test_authority_can_be_granted_and_withdrawn_for_another_principal(
     sessionmaker = make_sessionmaker(engine)
     svc = IdentityService(sessionmaker)
     try:
-        project = await svc.ensure_default_project()
+        # A project of this test's own: the integration database is shared for the whole session, so
+        # `default` plus a common topic slug is a collision waiting for the next test that wants the
+        # same name — which is precisely what happened when the membership tests landed.
+        project = await svc.create_project("authority-grants", "Authority Grants")
         await svc.create_topic(project, "engineering", "Engineering", sensitivity=0)
         await svc.create_topic(project, "payroll", "Payroll", sensitivity=4)
 
@@ -72,8 +75,8 @@ async def test_a_topic_from_another_project_cannot_be_granted(migrated_dsn: str)
     sessionmaker = make_sessionmaker(engine)
     svc = IdentityService(sessionmaker)
     try:
-        home = await svc.ensure_default_project()
-        elsewhere = await svc.create_project("neighbour", "Neighbour")
+        home = await svc.create_project("authority-home", "Authority Home")
+        elsewhere = await svc.create_project("authority-neighbour", "Authority Neighbour")
         await svc.create_topic(elsewhere, "their-secrets", "Their Secrets", sensitivity=4)
 
         invitation = await svc.invite_user("stranger@example.com", role="member")
@@ -98,7 +101,7 @@ async def test_a_missing_membership_is_distinguishable_from_empty_authority(
     sessionmaker = make_sessionmaker(engine)
     svc = IdentityService(sessionmaker)
     try:
-        project = await svc.ensure_default_project()
+        project = await svc.create_project("authority-outsider", "Authority Outsider")
         invitation = await svc.invite_user("outsider@example.com", role="member")
         user = await svc.accept_invitation(invitation.token, "s3cret-password-abc")
 

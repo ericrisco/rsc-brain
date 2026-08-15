@@ -25,7 +25,10 @@ async def test_an_invited_user_becomes_able_to_act_only_once_made_a_member(
     sessionmaker = make_sessionmaker(engine)
     svc = IdentityService(sessionmaker)
     try:
-        project = await svc.ensure_default_project()
+        # A project of this test's own. The integration database is shared for the whole session, so
+        # reusing `default` + a common topic slug collides with any sibling test that does the same —
+        # which is exactly how this file first broke `test_topic_authority_is_administrable`.
+        project = await svc.create_project("membership-chain", "Membership Chain")
         await svc.create_topic(project, "engineering", "Engineering", sensitivity=0)
 
         invitation = await svc.invite_user("newcomer@example.com", role="member")
@@ -33,9 +36,7 @@ async def test_an_invited_user_becomes_able_to_act_only_once_made_a_member(
 
         # This was the dead end: a user existed and belonged nowhere, with no surface to change it.
         assert await svc.membership_topics(user, project) is None
-        assert await svc.list_memberships(project) == [] or all(
-            row["user_id"] != user for row in await svc.list_memberships(project)
-        )
+        assert await svc.list_memberships(project) == []
 
         membership = await svc.add_membership(user, project, role="member")
         listed = await svc.list_memberships(project)
@@ -72,7 +73,7 @@ async def test_a_membership_is_unique_per_user_and_project(migrated_dsn: str) ->
     sessionmaker = make_sessionmaker(engine)
     svc = IdentityService(sessionmaker)
     try:
-        project = await svc.ensure_default_project()
+        project = await svc.create_project("membership-unique", "Membership Uniqueness")
         invitation = await svc.invite_user("twice@example.com", role="member")
         user = await svc.accept_invitation(invitation.token, "s3cret-password-abc")
         await svc.add_membership(user, project, role="member")
