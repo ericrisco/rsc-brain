@@ -45,9 +45,9 @@ export function Dialog({
       className="m-auto w-[min(36rem,calc(100%-2rem))] rounded-[var(--radius-overlay)] border border-border-strong bg-surface p-0 text-text-primary shadow-2xl backdrop:bg-overlay"
     >
       <div className="border-b border-border px-5 py-4">
-        <p id={titleId} className="text-base font-semibold">
+        <h2 id={titleId} className="text-base font-semibold">
           {title}
-        </p>
+        </h2>
         {description ? (
           <p id={descriptionId} className="mt-1 text-sm text-text-secondary">
             {description}
