@@ -77,6 +77,7 @@ async def _default_runner(
     :func:`rsc_brain.runtime.build`.
     """
     from rsc_brain import runtime
+    from rsc_brain.ingest.failures import record_ingestion_failure
     from rsc_brain.ingest.pipeline import IngestionPipeline
     from rsc_brain.ontology.ingest import OntologyIngest
     from rsc_brain.scope import Principal, PrincipalType
@@ -86,8 +87,9 @@ async def _default_runner(
     dependencies = runtime.build("worker")
     try:
         sessionmaker = dependencies.sessionmaker
+        repository = IngestRepository(sessionmaker)
         pipeline = IngestionPipeline(
-            repository=IngestRepository(sessionmaker),
+            repository=repository,
             graph_store=AgeGraphStore(sessionmaker),
             gateway=dependencies.gateway,
             config=dependencies.pipeline_config,
@@ -96,6 +98,18 @@ async def _default_runner(
         scope = Principal(id=principal_id, type=PrincipalType.HUMAN, can_curate=True).scope_for(
             project_id
         )
-        await pipeline.process(scope, document_id)
+        try:
+            await pipeline.process(scope, document_id)
+        except Exception as exc:
+            # AUDIT-088: measured on a real host — three malformed PDFs (zero bytes, a truncated
+            # transfer, a ZIP renamed to .pdf) raised ConversionError here, procrastinate marked the
+            # jobs `failed` and exhausted them, and `GET /api/v1/ingest/runs` still reported
+            # `phase: received, error: null` for all three. Indistinguishable from the documents
+            # still sitting in `todo`. The queue knew; the product did not say.
+            #
+            # The exception is re-raised so the job still fails and the operator's queue metrics stay
+            # true; what changes is that the run now carries the reason.
+            await record_ingestion_failure(repository, scope, document_id, exc)
+            raise
     finally:
         await dependencies.dispose()

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from rsc_brain.ingest.failures import record_ingestion_failure
 from rsc_brain.ingest.pipeline import IngestionPipeline
 from rsc_brain.ingest.types import DocStatus, RunStatus
 from rsc_brain.scope import ProjectScope
@@ -122,11 +123,12 @@ class IngestService:
             # status record that said nothing. Anything reading the run instead of the console — the
             # console itself, a worker-driven ingest, an operator looking a week later — saw a document
             # that had simply stopped. The exception still propagates; the run now says what happened.
-            await self._repo.record_run_error(
-                scope,
-                document_id,
-                f"ingestion failed before completing: {type(exc).__name__}: {exc}"[:1000],
-            )
+            #
+            # AUDIT-088: this branch is the one WITHOUT a queue. The queued branch returns above, so
+            # the "worker-driven ingest" this comment names was the single reader the fix never
+            # reached — and production always has a queue. The recording now lives in one shared
+            # place both paths call; see `rsc_brain.ingest.failures`.
+            await record_ingestion_failure(self._repo, scope, document_id, exc)
             raise
         return IngestOutcome(document_id, status.phase, duplicate=False)
 
