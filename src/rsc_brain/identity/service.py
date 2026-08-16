@@ -239,6 +239,14 @@ class IdentityService:
         allowed_topics: tuple[str, ...] = (),
         can_curate: bool = False,
     ) -> str:
+        """Attach a user to a project. Unique per (user, project) — SPEC-04 §3.1.
+
+        AUDIT-074: for the whole of the product's life this had exactly one caller, the bootstrap of
+        the FIRST owner. No CLI command and no API route reached it, so an invited user who set their
+        password belonged to no project, saw nothing, and could not be given anything — the operator
+        surfaces added in AUDIT-073 correctly refuse to grant a topic without a membership, which is
+        how this surfaced. The only route out was a direct database write.
+        """
         async with session_scope(self._sm) as session:
             membership = models.ProjectMembership(
                 user_id=uuid.UUID(user_id),
@@ -250,6 +258,57 @@ class IdentityService:
             session.add(membership)
             await session.flush()
             return str(membership.id)
+
+    async def remove_membership(self, user_id: str, project_id: str) -> bool:
+        """Detach a user from a project; ``False`` when there was nothing to detach.
+
+        AUDIT-074: access that cannot be withdrawn is not access control. Deleting the membership
+        cascades to that principal's PATs (the FK is ``ON DELETE CASCADE``), so revocation of the
+        credentials issued under it is not a second step someone can forget.
+        """
+        async with session_scope(self._sm) as session:
+            membership = await session.scalar(
+                select(models.ProjectMembership).where(
+                    models.ProjectMembership.user_id == uuid.UUID(user_id),
+                    models.ProjectMembership.project_id == uuid.UUID(project_id),
+                )
+            )
+            if membership is None:
+                return False
+            await session.delete(membership)
+            return True
+
+    async def list_memberships(self, project_id: str) -> list[dict[str, object]]:
+        """Who belongs to a project, with the role and authority each holds (AUDIT-074).
+
+        An administrator has to be able to see this before granting anything: AUDIT-073's grant
+        refuses without a membership, and nothing reported whether one existed.
+        """
+        async with self._sm() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        models.ProjectMembership.user_id,
+                        models.User.email,
+                        models.ProjectMembership.role,
+                        models.ProjectMembership.allowed_topics,
+                        models.ProjectMembership.can_curate,
+                    )
+                    .join(models.User, models.User.id == models.ProjectMembership.user_id)
+                    .where(models.ProjectMembership.project_id == uuid.UUID(project_id))
+                    .order_by(models.User.email)
+                )
+            ).all()
+            return [
+                {
+                    "user_id": str(user_id),
+                    "email": email,
+                    "role": role,
+                    "allowed_topics": list(topics),
+                    "can_curate": can_curate,
+                }
+                for user_id, email, role, topics, can_curate in rows
+            ]
 
     async def list_topic_slugs(self, project_id: str) -> list[str]:
         """The project's topic slugs, ordered — the set an explicit grant can draw from."""

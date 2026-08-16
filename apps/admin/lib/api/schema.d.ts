@@ -395,6 +395,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/memberships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Memberships
+         * @description Who belongs to the caller's project, with the role and topic authority each holds.
+         *
+         *     AUDIT-074: an administrator has to see this before granting anything — the topic grant refuses
+         *     without a membership, and nothing reported whether one existed.
+         */
+        get: operations["list_memberships_api_v1_admin_memberships_get"];
+        put?: never;
+        /**
+         * Create Membership
+         * @description Attach a user to the caller's project (AUDIT-074).
+         *
+         *     `add_membership` previously had one caller, the first owner's bootstrap, so every later user
+         *     belonged to no project and could be given nothing. No topic is granted here: authority stays a
+         *     separate explicit act, because empty authority is never all topics (AUDIT-020, R01).
+         */
+        post: operations["create_membership_api_v1_admin_memberships_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/memberships/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Membership
+         * @description Detach a user from the caller's project; their access tokens stop resolving with it.
+         */
+        delete: operations["delete_membership_api_v1_admin_memberships__user_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/metrics/product": {
         parameters: {
             query?: never;
@@ -1233,6 +1284,25 @@ export interface components {
             /** Password */
             password: string;
         };
+        /**
+         * MembershipCreate
+         * @description AUDIT-074: attaching a user to the caller's project.
+         *
+         *     The project is not a field — it comes from the token's scope (FR-12.3). The role is required
+         *     rather than defaulted, because a membership created with a silently-chosen role is an authority
+         *     decision nobody made.
+         */
+        MembershipCreate: {
+            /**
+             * Can Curate
+             * @default false
+             */
+            can_curate: boolean;
+            /** Role */
+            role: string;
+            /** User Id */
+            user_id: string;
+        };
         /** OntologyUpload */
         OntologyUpload: {
             /**
@@ -2015,6 +2085,111 @@ export interface operations {
             header?: never;
             path: {
                 hunt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_memberships_api_v1_admin_memberships_get: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_membership_api_v1_admin_memberships_post: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_membership_api_v1_admin_memberships__user_id__delete: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path: {
+                user_id: string;
             };
             cookie?: never;
         };

@@ -198,6 +198,32 @@
         "title": "LoginRequest",
         "type": "object"
       },
+      "MembershipCreate": {
+        "description": "AUDIT-074: attaching a user to the caller's project.\n\nThe project is not a field \u2014 it comes from the token's scope (FR-12.3). The role is required\nrather than defaulted, because a membership created with a silently-chosen role is an authority\ndecision nobody made.",
+        "properties": {
+          "can_curate": {
+            "default": false,
+            "title": "Can Curate",
+            "type": "boolean"
+          },
+          "role": {
+            "maxLength": 32,
+            "title": "Role",
+            "type": "string"
+          },
+          "user_id": {
+            "maxLength": 64,
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "role"
+        ],
+        "title": "MembershipCreate",
+        "type": "object"
+      },
       "OntologyUpload": {
         "properties": {
           "content": {
@@ -2029,6 +2055,194 @@
           }
         ],
         "summary": "Get Hunt",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/memberships": {
+      "get": {
+        "description": "Who belongs to the caller's project, with the role and topic authority each holds.\n\nAUDIT-074: an administrator has to see this before granting anything \u2014 the topic grant refuses\nwithout a membership, and nothing reported whether one existed.",
+        "operationId": "list_memberships_api_v1_admin_memberships_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Memberships Api V1 Admin Memberships Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Memberships",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "description": "Attach a user to the caller's project (AUDIT-074).\n\n`add_membership` previously had one caller, the first owner's bootstrap, so every later user\nbelonged to no project and could be given nothing. No topic is granted here: authority stays a\nseparate explicit act, because empty authority is never all topics (AUDIT-020, R01).",
+        "operationId": "create_membership_api_v1_admin_memberships_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Create Membership Api V1 Admin Memberships Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Membership",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/memberships/{user_id}": {
+      "delete": {
+        "description": "Detach a user from the caller's project; their access tokens stop resolving with it.",
+        "operationId": "delete_membership_api_v1_admin_memberships__user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Delete Membership Api V1 Admin Memberships  User Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Membership",
         "tags": [
           "admin"
         ]

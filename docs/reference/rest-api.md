@@ -81,6 +81,9 @@ Every operation in this table also accepts optional query parameter `project`. I
 | `POST /api/v1/admin/users/invite` | `platform.user.invite` | `UserInvite`. | `201`; user identifier and single-display invitation token. |
 | `GET /api/v1/admin/topics` | `project.manage.read` | No additional input. | `200`; topic slugs and sensitivity values. |
 | `POST /api/v1/admin/topics` | `project.config.write` | `TopicCreate`. | `201`; topic identifier, slug, and the creator's resulting topic grant. |
+| `GET /api/v1/admin/memberships` | `project.manage.read` | No additional input. | `200`; each member's identifier, email, role, topic authority and curate flag. |
+| `POST /api/v1/admin/memberships` | `project.config.write` | `MembershipCreate`; the project comes from the caller's scope, never the body. | `201`; membership identifier, user and role. `400` on an unknown role; `409` when the membership already exists. |
+| `DELETE /api/v1/admin/memberships/{user_id}` | `project.config.write` | No body. | `200`; the detached user. `404` when there is no such membership in the caller's project. |
 | `POST /api/v1/admin/topics/{slug}/grants` | `project.config.write` | `TopicGrant`; the project comes from the caller's scope, never the body. | `201`; the principal's resulting topic authority. `400` when the slug is not a topic of that project; `404` when the user has no membership there, so denied stays indistinguishable from absent. |
 | `DELETE /api/v1/admin/topics/{slug}/grants/{user_id}` | `project.config.write` | No body. | `200`; the principal's remaining topic authority. Idempotent. `404` when the user has no membership in the caller's project. |
 | `GET /api/v1/admin/sources` | `project.manage.read` | No additional input. | `200`; source records and categorization policy. |

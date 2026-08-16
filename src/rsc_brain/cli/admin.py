@@ -18,7 +18,12 @@ from rsc_brain import audit as audit_mod
 from rsc_brain.cli._common import JSON_OPTION, emit_result
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.installer import doctor as doctor_mod
+from rsc_brain.scope import PROJECT_ROLE_ADMIN, PROJECT_ROLE_MEMBER, PROJECT_ROLE_VIEWER
 from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
+
+# SPEC-04 §3.1's project roles. Validated in the CLI so an unknown role is refused where a human can
+# read the refusal, instead of persisting as a role nothing in the product understands.
+_PROJECT_ROLES = (PROJECT_ROLE_ADMIN, PROJECT_ROLE_MEMBER, PROJECT_ROLE_VIEWER)
 
 
 def _run[T](fn: Callable[[IdentityService], Awaitable[T]]) -> T:
@@ -120,6 +125,94 @@ def users_deactivate(
     )
 
 
+# AUDIT-074: `add_membership` had one caller — the bootstrap of the first owner. So `brain users
+# invite` + `accept` produced a user who belonged to no project, saw nothing, and could not be given
+# anything, with SQL the only way out. SPEC-04 §3.1 specifies the membership (user, project, role,
+# `allowed_topics[]`, `can_curate`) in `api/` + `cli/`; these three commands are the CLI half.
+
+
+@users_app.command("add-membership")
+def users_add_membership(
+    ctx: typer.Context,
+    user_id: str = typer.Argument(..., help="User to attach."),
+    project_id: str = typer.Option(..., "--project-id", help="Project to attach them to."),
+    role: str = typer.Option(
+        PROJECT_ROLE_MEMBER, "--role", help="project-admin | member | viewer."
+    ),
+    can_curate: bool = typer.Option(
+        False, "--can-curate", help="May resolve contradictions and merge proposals."
+    ),
+    json_output: bool = JSON_OPTION,
+) -> None:
+    """Attach a user to a project, with a role stated explicitly.
+
+    No topics are granted here. Authority stays a separate, explicit act (`brain topics grant`),
+    because empty authority is never all topics (AUDIT-020, R01) and a membership that silently
+    carried access would be exactly that inference.
+    """
+    if role not in _PROJECT_ROLES:
+        typer.echo(f"unknown role {role!r}; expected one of {', '.join(_PROJECT_ROLES)}", err=True)
+        raise typer.Exit(code=2)
+    existing = _run(lambda s: s.membership_topics(user_id, project_id))
+    if existing is not None:
+        typer.echo(
+            f"user {user_id} is already a member of project {project_id} "
+            "(a membership is unique per user and project). Use `brain topics grant` to change "
+            "authority, or `brain users remove-membership` first.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    membership_id = _run(
+        lambda s: s.add_membership(user_id, project_id, role=role, can_curate=can_curate)
+    )
+    emit_result(
+        ctx,
+        json_output,
+        {"status": "ok", "membership_id": membership_id, "role": role, "allowed_topics": []},
+        f"added {user_id} to {project_id} as {role}; authority is empty until a topic is granted",
+    )
+
+
+@users_app.command("remove-membership")
+def users_remove_membership(
+    ctx: typer.Context,
+    user_id: str = typer.Argument(..., help="User to detach."),
+    project_id: str = typer.Option(..., "--project-id", help="Project to detach them from."),
+    json_output: bool = JSON_OPTION,
+) -> None:
+    """Detach a user from a project, revoking the credentials issued under that membership.
+
+    The PAT foreign key cascades, so tokens minted for this membership stop resolving with the
+    membership itself rather than in a second step someone can forget.
+    """
+    removed = _run(lambda s: s.remove_membership(user_id, project_id))
+    if not removed:
+        typer.echo(f"no membership for user {user_id} in project {project_id}", err=True)
+        raise typer.Exit(code=2)
+    emit_result(
+        ctx,
+        json_output,
+        {"status": "ok", "removed": user_id},
+        f"removed {user_id} from {project_id}; its access tokens no longer resolve",
+    )
+
+
+@users_app.command("memberships")
+def users_memberships(
+    ctx: typer.Context,
+    project_id: str = typer.Option(..., "--project-id", help="Project to report on."),
+    json_output: bool = JSON_OPTION,
+) -> None:
+    """Report who belongs to a project, with the role and topic authority each holds."""
+    rows = _run(lambda s: s.list_memberships(project_id))
+    human = "\n".join(
+        f"  {r['email']}  {r['role']}  topics={', '.join(r['allowed_topics']) or '(none)'}"  # type: ignore[arg-type]
+        f"  curate={r['can_curate']}  id={r['user_id']}"
+        for r in rows
+    )
+    emit_result(ctx, json_output, {"memberships": rows}, human or "  (no members)")
+
+
 # --- topics -----------------------------------------------------------------
 
 topics_app = typer.Typer(help="Manage a project's topics.", no_args_is_help=True)
@@ -142,6 +235,11 @@ def topics_create(
 # granted or revoked a topic for anyone else, so past the first user a company could not give its
 # departments the topic-based access this product exists to provide. SPEC-04 §3.1 specifies the
 # membership's `allowed_topics[]` in `api/` + `cli/`; these are that half of it.
+#
+# AUDIT-074: and the grant's own precondition was unreachable. `add_membership` had exactly one
+# caller — the bootstrap of the first owner — so an invited user who set their password belonged to
+# no project. The commands under `brain users` below are the missing half; without them the grant
+# above is a surface over a state nobody can create.
 
 
 def _resolve_membership(project_id: str, user_id: str) -> tuple[str, ...]:

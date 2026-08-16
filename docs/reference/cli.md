@@ -65,6 +65,9 @@ Running `brain` with no command prints help. Completion commands are not registe
 | `brain users invite` | Create an invitation credential. | Required `EMAIL`; `--role TEXT`, default `member`, accepts `owner`, `admin`, or `member`. |
 | `brain users accept` | Consume an invitation and set the user's password. | Required `TOKEN` and `--password TEXT`. |
 | `brain users deactivate` | Disable a user and revoke that user's credentials. | Required `USER_ID`. |
+| `brain users add-membership` | Attach a user to a project. Without a membership a user belongs nowhere and can hold no topic. | Required `USER_ID` and `--project-id TEXT`; `--role TEXT`, default `member`, accepts `project-admin`, `member` or `viewer`; `--can-curate`. Grants no topics: authority stays a separate explicit act. Refuses a duplicate membership. |
+| `brain users remove-membership` | Detach a user from a project. The access tokens issued under that membership stop resolving with it. | Required `USER_ID` and `--project-id TEXT`. |
+| `brain users memberships` | Report who belongs to a project, with each role and topic authority. | Required `--project-id TEXT`. |
 | `brain topics` | Parent group for topic commands. | A child command is required for an operation. |
 | `brain topics create` | Create a topic. | Required `--project-id TEXT`, `SLUG`, and `--name TEXT`; `--sensitivity INTEGER`, default `0`. Values of `3` or greater are restrictive. |
 | `brain topics grant` | Grant a topic to a principal's membership. Authority is never implied by a role, so it is recorded per topic. | Required `SLUG`, `--project-id TEXT` and `--user-id TEXT`. Refuses a slug that is not a topic of that project, and refuses when the user has no membership there. |
