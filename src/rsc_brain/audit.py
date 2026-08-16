@@ -195,6 +195,7 @@ async def query_audit_raw(
     since: str | None = None,
     until: str | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[dict[str, object]]:
     """Filterable audit query WITHOUT topic visibility — project scope only.
 
@@ -222,7 +223,8 @@ async def query_audit_raw(
     statement = (
         select(models.AuditLog)
         .where(*conditions)  # type: ignore[arg-type]
-        .order_by(models.AuditLog.ts.desc())
+        .order_by(models.AuditLog.ts.desc(), models.AuditLog.id.desc())
+        .offset(offset)
         .limit(limit)
     )
     async with sessionmaker() as session:
@@ -242,6 +244,7 @@ async def query_audit(
     since: str | None = None,
     until: str | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[dict[str, object]]:
     """The audit log as THIS caller may see it: project scope plus topic visibility (R01).
 
@@ -259,6 +262,7 @@ async def query_audit(
         since=since,
         until=until,
         limit=limit,
+        offset=offset,
     )
 
 

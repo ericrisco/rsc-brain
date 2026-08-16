@@ -58,7 +58,8 @@ async def test_usage_endpoint_matches_brain_usage(
     build_harness: Callable[..., Harness], tmp_path: Path
 ) -> None:
     harness = build_harness()
-    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    project_slug = unique_slug("acme")
+    project = await harness.setup_project(project_slug, TOPICS)
     # Counters are per project (AUDIT-021 / R12), so the parity this test proves is per project:
     # the console figure equals `brain usage --project <slug>` exactly. Recording to capabilities no
     # other test asserts on keeps it from contaminating the SPEC-22 usage/budget tests.
@@ -72,11 +73,32 @@ async def test_usage_endpoint_matches_brain_usage(
             "/api/v1/admin/usage?days=7", headers={"Authorization": f"Bearer {token}"}
         )
     assert response.status_code == 200
-    api_rows = response.json()["usage"]
+    payload = response.json()
+    api_rows = payload["usage"]
     cli_rows = await usage_by_day(harness.sm, days=7, project_id=project)
     assert api_rows == cli_rows  # DONE: the console figure equals `brain usage` exactly
     totals = {r["capability"]: r["tokens"] for r in api_rows}
     assert totals["judge"] == 1200 and totals["reranker"] == 340
+    assert payload["total_tokens"] == 1540
+    assert payload["total_calls"] == 2
+    assert payload["window_days"] == 7
+    assert payload["project"] == project_slug
+    assert payload["capability"] is None
+    assert payload["capabilities"] == ["judge", "reranker"]
+    assert sum(row["tokens"] for row in payload["daily_totals"]) == 1540
+
+    async with _client(harness, tmp_path) as client:
+        filtered = await client.get(
+            "/api/v1/admin/usage?days=7&capability=judge",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert filtered.status_code == 200
+    filtered_payload = filtered.json()
+    assert {row["capability"] for row in filtered_payload["usage"]} == {"judge"}
+    assert filtered_payload["total_tokens"] == 1200
+    assert filtered_payload["total_calls"] == 1
+    assert filtered_payload["capability"] == "judge"
+    assert filtered_payload["capabilities"] == ["judge", "reranker"]
 
 
 # --- FR-13.7 audit filters + CSV export, FR-13.9 privacy --------------------
@@ -102,6 +124,21 @@ async def test_audit_filters_and_csv_export(
 
         by_action = await client.get("/api/v1/admin/audit?action=ingest", headers=headers)
         assert all(r["action"] == "ingest" for r in by_action.json()["audit"])
+
+        first_page = await client.get(
+            "/api/v1/admin/audit?action=recall&limit=1&offset=0", headers=headers
+        )
+        first_payload = first_page.json()
+        assert len(first_payload["audit"]) == 1
+        assert first_payload["next_offset"] == 1
+        assert first_payload["freshness"]
+        second_page = await client.get(
+            "/api/v1/admin/audit?action=recall&limit=1&offset=1", headers=headers
+        )
+        second_payload = second_page.json()
+        assert len(second_payload["audit"]) == 1
+        assert second_payload["next_offset"] is None
+        assert first_payload["audit"][0]["id"] != second_payload["audit"][0]["id"]
 
         export = await client.get("/api/v1/admin/audit/export", headers=headers)
         assert export.status_code == 200

@@ -4,8 +4,8 @@ import { api } from "./client";
 import { networkUiError, uiErrorFromResponse } from "./ui-error";
 import type {
   Activity,
+  Audit,
   AuditFilters,
-  AuditRow,
   CorrectionList,
   CorrectionMetrics,
   CorrectionRevertResult,
@@ -26,7 +26,7 @@ import type {
   RevokedPat,
   ResolutionList,
   ReviewQueue,
-  UsageRow,
+  Usage,
 } from "./types";
 
 /** The authenticated user + their memberships (drives the project selector + role gating). */
@@ -396,31 +396,41 @@ export function useResolveMerge(project: string) {
 // --- SPEC-26 console release ----------------------------------------------------------------
 
 /** Per-capability/day token usage (SPEC-26 FR-13.7). Same source as `brain usage`. */
-export function useUsage(project: string, days: number) {
+export function useUsage(project: string, days: number, capability?: string) {
   return useQuery({
-    queryKey: ["usage", project, days],
+    queryKey: ["usage", project, days, capability],
     enabled: !!project,
-    queryFn: async (): Promise<{ usage: UsageRow[] }> => {
-      const { data, error } = await api.GET("/api/v1/admin/usage", {
-        params: { query: { project, days } },
-      });
-      if (error) throw new Error("failed to load usage");
-      return data as unknown as { usage: UsageRow[] };
+    queryFn: async (): Promise<Usage> => {
+      try {
+        const { data, error, response } = await api.GET("/api/v1/admin/usage", {
+          params: { query: { project, days, capability } },
+        });
+        if (error) throw uiErrorFromResponse(response, error);
+        return data;
+      } catch (error) {
+        if (error && typeof error === "object" && "kind" in error) throw error;
+        throw networkUiError();
+      }
     },
   });
 }
 
 /** Filterable audit log (SPEC-26 FR-13.7). */
-export function useAudit(project: string, filters: AuditFilters, limit = 200) {
+export function useAudit(project: string, filters: AuditFilters, limit = 50, offset = 0) {
   return useQuery({
-    queryKey: ["audit", project, filters, limit],
+    queryKey: ["audit", project, filters, limit, offset],
     enabled: !!project,
-    queryFn: async (): Promise<{ audit: AuditRow[] }> => {
-      const { data, error } = await api.GET("/api/v1/admin/audit", {
-        params: { query: { project, limit, ...filters } },
-      });
-      if (error) throw new Error("failed to load audit log");
-      return data as unknown as { audit: AuditRow[] };
+    queryFn: async (): Promise<Audit> => {
+      try {
+        const { data, error, response } = await api.GET("/api/v1/admin/audit", {
+          params: { query: { project, limit, offset, ...filters } },
+        });
+        if (error) throw uiErrorFromResponse(response, error);
+        return data;
+      } catch (error) {
+        if (error && typeof error === "object" && "kind" in error) throw error;
+        throw networkUiError();
+      }
     },
   });
 }
@@ -452,11 +462,17 @@ export function useEntityGraph(project: string, name: string, offset: number, li
     enabled: !!project && !!name,
     retry: false,
     queryFn: async (): Promise<Neighborhood | null> => {
-      const { data, error } = await api.GET("/api/v1/admin/graph/entity", {
-        params: { query: { project, name, offset, limit } },
-      });
-      if (error) return null; // 404 ≡ absent/invisible (FR-4.3)
-      return data as unknown as Neighborhood;
+      try {
+        const { data, error, response } = await api.GET("/api/v1/admin/graph/entity", {
+          params: { query: { project, name, offset, limit } },
+        });
+        if (response.status === 404) return null; // absent ≡ invisible (FR-4.3)
+        if (error) throw uiErrorFromResponse(response, error);
+        return data;
+      } catch (error) {
+        if (error && typeof error === "object" && "kind" in error) throw error;
+        throw networkUiError();
+      }
     },
   });
 }

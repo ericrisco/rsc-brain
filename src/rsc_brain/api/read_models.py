@@ -263,3 +263,78 @@ class ProductMetricsEnvelope(BaseModel):
     quality: ProductQualityMetrics
     knowledge: ProductKnowledgeMetrics
     health: ProductHealthMetrics
+
+
+class UsageRowView(BaseModel):
+    capability: str
+    day: str
+    tokens: int
+    calls: int
+
+
+class UsageDayTotal(BaseModel):
+    day: str
+    tokens: int
+    calls: int
+
+
+class UsageEnvelope(BaseModel):
+    """Project-scoped usage with server-owned aggregates for one reporting window."""
+
+    usage: list[UsageRowView]
+    capabilities: list[str]
+    daily_totals: list[UsageDayTotal]
+    total_tokens: int
+    total_calls: int
+    window_days: int
+    project: str
+    capability: str | None
+
+
+class AuditView(BaseModel):
+    """One display-safe, permission-filtered audit event."""
+
+    id: int
+    ts: dt.datetime | None
+    project_id: str
+    user_id: str | None
+    principal_type: str | None
+    principal_id: str | None
+    on_behalf_of: str | None
+    trace_id: str | None
+    action: str
+    tool: str | None
+    query_hash: str | None
+    query_text: str | None
+    duration_ms: int | None
+    topics_used: list[str]
+    result_count: int | None
+    denied: bool
+
+
+class AuditEnvelope(BaseModel):
+    audit: list[AuditView]
+    next_offset: int | None
+    freshness: dt.datetime
+
+
+class GraphNodeView(BaseModel):
+    id: str
+    name: str
+    type: str
+    anchored: bool
+
+
+class GraphEdgeView(BaseModel):
+    source: str
+    target: str
+    type: str
+
+
+class EntityGraphEnvelope(BaseModel):
+    center: GraphNodeView
+    neighbors: list[GraphNodeView]
+    edges: list[GraphEdgeView]
+    total: int
+    offset: int
+    limit: int
