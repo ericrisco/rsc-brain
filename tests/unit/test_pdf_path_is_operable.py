@@ -10,6 +10,7 @@ another silent `error: null` on a document that could never be retried.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -66,12 +67,41 @@ def test_the_pdf_image_does_not_need_a_cxx_compiler_at_runtime() -> None:
 def test_a_failed_ingestion_is_recorded_on_the_run() -> None:
     """AUDIT-068: the PDF failed before chunking, so the run stayed at `received` with `error: null`.
     The AUDIT-065 rule only fires when chunks exist and none produced claims, so it could not see a
-    failure that happened earlier. Same class of defect, one stage upstream."""
-    service = (REPO / "src" / "rsc_brain" / "ingest" / "service.py").read_text(encoding="utf-8")
-    assert "AUDIT-068" in service, "a pipeline failure is not recorded against the run"
-    assert "record_failure" in service or "run_error" in service, (
-        "the failure must be written where `brain status` reads it, not only to stderr"
-    )
+    failure that happened earlier. Same class of defect, one stage upstream.
+
+    Rewritten under AUDIT-088. This test used to assert `"AUDIT-068" in service` — a substring of a
+    *comment*, which AUDIT-079 established proves nothing — and a bare function name that a rename
+    silently invalidated. Worse, it read only `service.py`, so it stayed green through the entire
+    period in which the queued path (the one every production install takes) recorded nothing at
+    all. It now asserts the structure on **both** paths.
+    """
+    for module, function in (("service.py", "_admit_and_run"), ("queue.py", "_default_runner")):
+        source = (REPO / "src" / "rsc_brain" / "ingest" / module).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        node = next(
+            candidate
+            for candidate in ast.walk(tree)
+            if isinstance(candidate, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and candidate.name == function
+        )
+        handlers = [child for child in ast.walk(node) if isinstance(child, ast.ExceptHandler)]
+        assert handlers, f"{module}:{function} does not handle a pipeline failure at all"
+
+        called = {
+            child.func.id
+            for handler in handlers
+            for child in ast.walk(handler)
+            if isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+        }
+        assert "record_ingestion_failure" in called, (
+            f"{module}:{function} catches the failure without writing it where `brain status` "
+            "reads it — the operator sees a document that simply stopped"
+        )
+        assert any(
+            isinstance(child, ast.Raise) and child.exc is None
+            for handler in handlers
+            for child in ast.walk(handler)
+        ), f"{module}:{function} swallows the exception instead of re-raising it"
 
 
 def test_a_document_stuck_before_processing_can_be_retried() -> None:
