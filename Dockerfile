@@ -40,7 +40,30 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         # GUI distribution is still present rather than discovering it on a host months later.
         uv pip uninstall --python /app/.venv/bin/python opencv-python opencv-python-headless || true; \
         uv pip install --python /app/.venv/bin/python opencv-python-headless && \
-        test ! -d /app/.venv/lib/python3.12/site-packages/opencv_python.libs; \
+        test ! -d /app/.venv/lib/python3.12/site-packages/opencv_python.libs && \
+        # AUDIT-087: the rapidocr wheel ships PP-OCRv6 as `.onnx`, and rapidocr's own default engine
+        # is `onnxruntime` — but the runtime that executes those files was never installed. So the
+        # engine fell back to torch and fetched a PARALLEL set of `.pth` weights from huggingface.co,
+        # unauthenticated, on the first scanned page. Measured on a real host: 3 `.onnx` at build
+        # time, 7 files and 62 MB after one PDF. An install with restricted egress therefore passed
+        # the build, passed `brain verify`, accepted the upload with 202, and only then failed —
+        # while `deploy/README.md` says building the image once is enough.
+        #
+        # Install the runtime for the models already in the image, and fail the BUILD if it cannot
+        # import, rather than discovering it on an operator's air-gapped host (the AUDIT-083 rule:
+        # assert the property here, not months later).
+        uv pip install --python /app/.venv/bin/python onnxruntime && \
+        /app/.venv/bin/python -c "import onnxruntime" && \
+        # Half a fix is still a network dependency. The wheel bundles only the CHINESE PP-OCRv6
+        # models, so asking for `latin` — the model that reads Spanish, which is the product's
+        # declared scope — fetched two more `.onnx` on the first scanned page even with the engine
+        # pinned. Measured: 4 downloads before, 2 after; the right language, still over the wire.
+        # Warm the models this product actually asks for into the image, then assert they are on
+        # disk. An air-gapped install must not discover its OCR models are elsewhere.
+        /app/.venv/bin/python -c "\
+from rapidocr import RapidOCR, EngineType, LangDet, LangRec, ModelType, OCRVersion; \
+RapidOCR(params={'Det.engine_type': EngineType.ONNXRUNTIME, 'Det.lang_type': LangDet.CH, 'Det.model_type': ModelType.MOBILE, 'Det.ocr_version': OCRVersion.PPOCRV5, 'Rec.engine_type': EngineType.ONNXRUNTIME, 'Rec.lang_type': LangRec.LATIN, 'Rec.model_type': ModelType.MOBILE, 'Rec.ocr_version': OCRVersion.PPOCRV5})" && \
+        ls /app/.venv/lib/python3.12/site-packages/rapidocr/models/ | grep -q "latin_PP-OCRv5_rec" ; \
     else \
         echo "PDF backend not installed (INSTALL_PDF_BACKEND=false); markdown/text ingestion only"; \
     fi
