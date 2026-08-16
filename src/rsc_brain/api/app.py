@@ -257,8 +257,12 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(me_router)
     from rsc_brain.api.oauth.routes import router as oauth_router
+    from rsc_brain.api.version import router as version_router
 
     app.include_router(oauth_router)
+    # SPEC release-identity: unauthenticated, and mounted before the catch-all MCP mount so the
+    # edge's existing `/api/v1/*` rule reaches it with no Caddyfile or ingress change.
+    app.include_router(version_router)
     app.mount("/", normalize_mcp_security_headers(mcp_server.streamable_http_app()))
     return app
 
@@ -334,6 +338,10 @@ def _register_routes(app: FastAPI) -> None:
                     "tables_needs_review": r.tables_needs_review,
                     "discarded_chunks": r.discarded_chunks,
                     "error": r.error,
+                    # AUDIT-091: a snapshot without a clock answers "what state" but never "is it
+                    # moving". A stage can run for hours; without this the caller cannot tell a
+                    # working worker from a stalled one.
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else None,
                 }
                 for r in runs
             ]

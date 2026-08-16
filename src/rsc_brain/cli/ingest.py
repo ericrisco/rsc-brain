@@ -45,8 +45,44 @@ async def _resolve_project_id(sessionmaker: async_sessionmaker[AsyncSession], sl
     return str(pid)
 
 
+#: The topic authority a local CLI invocation carries. It is empty on purpose: R01/AUDIT-020 —
+#: no role, and no amount of shell access, implies authority over a topic. Granting the CLI
+#: blanket topic authority would make the box's root account a universal reader.
+_CLI_TOPICS: frozenset[str] = frozenset()
+
+
 def _cli_scope(project_id: str) -> ProjectScope:
-    return Principal(id="cli", type=PrincipalType.HUMAN, can_curate=True).scope_for(project_id)
+    return Principal(
+        id="cli", type=PrincipalType.HUMAN, can_curate=True, allowed_topics=_CLI_TOPICS
+    ).scope_for(project_id)
+
+
+def _empty_queue_message() -> str:
+    """AUDIT-089: "review queue empty" was a claim about the world; the truth was about the caller.
+
+    `list_documents_by_status` filters the approval queue by the caller's topic authority in-query
+    (R01 — the queue's titles and proposed tags *are* topic-scoped content). The CLI principal holds
+    no grants, so every document that carries a topic is invisible to it, and the command reported
+    that as an empty queue.
+
+    Measured on a real host: the API listed one document `pending_approval` in project `globex`
+    while `brain docs review --project globex` printed "review queue empty" — for a **prompt-
+    injection document the topicalizer had correctly tagged `hr` + `payroll`**, sitting in the human
+    approval gate. An operator working from the CLI would have concluded there was nothing to
+    review, about the single document that most needed a human.
+
+    The fix is not to widen the CLI's authority — that would void R01 and hand the box's root
+    account universal read. It is to stop the command asserting emptiness it cannot know. The
+    message states a fact about the *caller*, which leaks nothing about the corpus and so keeps
+    FR-4.3 (denied ≡ non-existent) intact: it never says whether anything is hidden.
+    """
+    if not _CLI_TOPICS:
+        return (
+            "no documents awaiting approval that this caller may see — the CLI principal holds no "
+            "topic grants, so any pending document carrying a topic is filtered out (R01). Use a "
+            "project-scoped token for a member with the relevant topics to review those."
+        )
+    return "no documents awaiting approval that this caller may see"
 
 
 def _run_with_repo[T](slug: str, fn: Callable[[IngestRepository, ProjectScope], Awaitable[T]]) -> T:
@@ -208,7 +244,12 @@ def docs_review(
 
     pending = _run_with_repo(project, _do)
     human = "\n".join(f"{d['document_id']}: {d['proposed_tags']}" for d in pending)
-    emit_result(ctx, json_output, {"pending": pending}, human or "review queue empty")
+    emit_result(
+        ctx,
+        json_output,
+        {"pending": pending, "topic_authority": sorted(_CLI_TOPICS)},
+        human or _empty_queue_message(),
+    )
 
 
 @docs_app.command("approve")

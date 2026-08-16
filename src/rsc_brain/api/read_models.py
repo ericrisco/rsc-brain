@@ -69,6 +69,7 @@ class IngestRunView(BaseModel):
     claims_generated: int
     discarded_chunks: int
     error: str | None
+    updated_at: str | None
 
 
 class IngestErrorView(BaseModel):

@@ -13,6 +13,7 @@ The API uses several credential lanes. An OpenAPI bearer marker identifies the H
 | Project-scoped `/api/v1/admin/*` operations | Personal access token, OAuth access token, or console session bearer. A PAT or OAuth token already carries its project. A console session must also send `project=<slug>` and must belong to that project. |
 | Platform `/api/v1/admin/*` operations | Personal access token, OAuth access token, or console session bearer. All resolve a current identity-only platform scope; no credential's project binding or `project` query grants platform authority. |
 | Base ingestion and document routes | Project-scoped personal access token or OAuth access token. Console sessions are not resolved by this lane. |
+| `GET /api/v1/version` | **No credential.** Open by decision: monitoring, support and the upgrade runbook need it without one, and it discloses only the published version. |
 | `/api/v1/me*` | Console session bearer; human PAT and OAuth credentials are also accepted for the authoritative `/me` reread. |
 | `POST /api/v1/auth/login` | Email and password in JSON; no prior bearer. |
 | `POST /api/v1/auth/logout` | A console session bearer is useful but optional at runtime; a supplied session is revoked. |
@@ -178,6 +179,21 @@ These routes resolve only a project-scoped PAT or OAuth access token.
 | `GET /api/v1/ingest/runs` | No request fields. | `200`; runs with phase, completed stages, chunk/claim/table counts, discarded count, and error. |
 | `POST /api/v1/documents/{document_id}/approve` | Required path `document_id`; optional JSON body that is an array of replacement tag strings. | `200`; identifier, resulting phase, and generated-claim count. Requires document-decision authority over existing and replacement tags. |
 | `POST /api/v1/documents/{document_id}/reject` | Required path `document_id`; required form field `reason`. | `200`; identifier and resulting phase. Requires document-decision authority. |
+
+## Instance identity
+
+One operation, and the only one in the API that accepts no credential.
+
+| Operation | Input | Success |
+|---|---|---|
+| `GET /api/v1/version` | No request fields, no credential. | `200`; `version` is the published version this instance is, or that version with a `+dev` marker when the build is not a published release. Answers while the database and model providers are unreachable. |
+
+The value is the **public form** of the build identity: it names the published version and never the
+source revision. `brain --version` inside the instance reports the full form, which distinguishes
+two different unpublished builds that answer identically here.
+
+The identity is fixed when the artifact is built. It cannot be set by the deployment — see
+[configuration](configuration.md#build-identity).
 
 ## Console authentication and self-service operations
 

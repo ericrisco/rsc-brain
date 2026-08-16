@@ -7,7 +7,8 @@ on:
     tags: ["v*"]
 
 # Nothing by default; each job grants only the token scope it demonstrably needs (AUDIT-006).
-# Neither job needs contents:write — they only read the source to produce evidence.
+# The evidence jobs need contents:read alone; only `publish` needs packages:write, and it is granted
+# there rather than by widening this default.
 permissions: {}
 
 jobs:
@@ -40,3 +41,79 @@ jobs:
           path: .
           fail-build: true
           severity-cutoff: high
+
+  # SPEC release-identity: until this existed, a release produced an SBOM and a CVE scan — evidence
+  # ABOUT a release, not a release. Fifteen version tags, zero published artifacts, and every
+  # operator compiling a 9.5 GB image from source (~25 minutes measured on a cx43). Rolling back
+  # meant rebuilding, at the moment when time matters most.
+  #
+  # Both components are published, not just the application. The access token that ingestion
+  # requires can only be issued from the console — measured on a real host — so an application
+  # published alone would still leave the operator building from source to use the product at all.
+  publish:
+    name: publish artifacts (application + console)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The one extra scope, granted to the one job that needs it. Widening the workflow default
+      # instead would hand it to the evidence jobs, which only read the source.
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The build identity is derived from tags, and a shallow clone has none.
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+      - uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve the build identity
+        id: identity
+        run: |
+          set -euo pipefail
+          identity="$(git describe --tags --always --dirty)"
+          test -n "${identity}"
+          # A release must never be built from a modified tree: the identity would say `-dirty` and
+          # the artifact would be unreproducible from any commit.
+          case "${identity}" in *-dirty) echo "refusing to publish a dirty tree: ${identity}" >&2; exit 1;; esac
+          echo "value=${identity}" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      # Named by the version tag, never `latest`: `latest` is what made two different deployments
+      # indistinguishable in the first place.
+      - name: Build and push the application
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          push: true
+          build-args: |
+            INSTALL_PDF_BACKEND=true
+            RSC_BRAIN_BUILD_IDENTITY=${{ steps.identity.outputs.value }}
+          tags: ghcr.io/${{ github.repository }}/app:${{ steps.identity.outputs.version }}
+      - name: Build and push the console
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: apps/admin
+          push: true
+          tags: ghcr.io/${{ github.repository }}/console:${{ steps.identity.outputs.version }}
+
+  # Atomicity, as the spec defines it: a version is published only when ALL of its artifacts and its
+  # evidence are. This job declares it, and it runs last because it depends on every one of them —
+  # a dependency rather than a position in the file, because "we put it at the end" survives exactly
+  # until someone adds a step.
+  release:
+    name: declare the version published
+    runs-on: ubuntu-latest
+    needs: [publish, sbom, vuln-scan]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Publish the release record
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag || \
+            gh release edit "${GITHUB_REF_NAME}" --draft=false

@@ -1140,4 +1140,5 @@ def _run_status(run: models.IngestRun) -> RunStatus:
         tables_needs_review=run.tables_needs_review,
         discarded_chunks=run.discarded_chunks,
         error=run.error,
+        updated_at=run.updated_at,
     )

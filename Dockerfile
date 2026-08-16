@@ -3,6 +3,23 @@
 # selected by the compose command. Multi-stage uv build; runs as a non-root user (12-factor).
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS build
 WORKDIR /app
+
+# SPEC release-identity: the artifact carries the identity it will report, fixed here because the
+# artifact IS the thing being identified. The value is what `git describe --tags --always --dirty`
+# yields for the source this image was built from.
+#
+# The build FAILS on an empty value rather than producing an image that quietly reports "not a
+# published release" while being one. That is the AUDIT-083 rule — assert the property where it is
+# created, not months later on an operator's host — and it matters more here than usual, because an
+# unstamped image does not crash: it lies quietly, and only in the direction of understatement.
+#
+# Placed FIRST on purpose. Sitting at the end of the build stage it would still be correct and would
+# still fail — after the twenty-five minutes the PDF backend takes. A guard that only reports at the
+# end of the expensive work teaches people to skip it.
+ARG RSC_BRAIN_BUILD_IDENTITY
+RUN test -n "${RSC_BRAIN_BUILD_IDENTITY}" \
+    || { echo "build identity is empty: pass --build-arg RSC_BRAIN_BUILD_IDENTITY=\$(git describe --tags --always --dirty)" >&2; exit 1; }
+
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never
@@ -40,7 +57,30 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         # GUI distribution is still present rather than discovering it on a host months later.
         uv pip uninstall --python /app/.venv/bin/python opencv-python opencv-python-headless || true; \
         uv pip install --python /app/.venv/bin/python opencv-python-headless && \
-        test ! -d /app/.venv/lib/python3.12/site-packages/opencv_python.libs; \
+        test ! -d /app/.venv/lib/python3.12/site-packages/opencv_python.libs && \
+        # AUDIT-087: the rapidocr wheel ships PP-OCRv6 as `.onnx`, and rapidocr's own default engine
+        # is `onnxruntime` — but the runtime that executes those files was never installed. So the
+        # engine fell back to torch and fetched a PARALLEL set of `.pth` weights from huggingface.co,
+        # unauthenticated, on the first scanned page. Measured on a real host: 3 `.onnx` at build
+        # time, 7 files and 62 MB after one PDF. An install with restricted egress therefore passed
+        # the build, passed `brain verify`, accepted the upload with 202, and only then failed —
+        # while `deploy/README.md` says building the image once is enough.
+        #
+        # Install the runtime for the models already in the image, and fail the BUILD if it cannot
+        # import, rather than discovering it on an operator's air-gapped host (the AUDIT-083 rule:
+        # assert the property here, not months later).
+        uv pip install --python /app/.venv/bin/python onnxruntime && \
+        /app/.venv/bin/python -c "import onnxruntime" && \
+        # Half a fix is still a network dependency. The wheel bundles only the CHINESE PP-OCRv6
+        # models, so asking for `latin` — the model that reads Spanish, which is the product's
+        # declared scope — fetched two more `.onnx` on the first scanned page even with the engine
+        # pinned. Measured: 4 downloads before, 2 after; the right language, still over the wire.
+        # Warm the models this product actually asks for into the image, then assert they are on
+        # disk. An air-gapped install must not discover its OCR models are elsewhere.
+        /app/.venv/bin/python -c "\
+from rapidocr import RapidOCR, EngineType, LangDet, LangRec, ModelType, OCRVersion; \
+RapidOCR(params={'Det.engine_type': EngineType.ONNXRUNTIME, 'Det.lang_type': LangDet.CH, 'Det.model_type': ModelType.MOBILE, 'Det.ocr_version': OCRVersion.PPOCRV5, 'Rec.engine_type': EngineType.ONNXRUNTIME, 'Rec.lang_type': LangRec.LATIN, 'Rec.model_type': ModelType.MOBILE, 'Rec.ocr_version': OCRVersion.PPOCRV5})" && \
+        ls /app/.venv/lib/python3.12/site-packages/rapidocr/models/ | grep -q "latin_PP-OCRv5_rec" ; \
     else \
         echo "PDF backend not installed (INSTALL_PDF_BACKEND=false); markdown/text ingestion only"; \
     fi
@@ -69,9 +109,13 @@ COPY --from=build --chown=rsc:rsc /app /app
 # toolchain to a production runtime to feed a JIT this workload never benefits from would be worse on
 # both counts, so the image declares eager mode. `TORCHDYNAMO_DISABLE` is the legacy alias of the same
 # switch (both measured working); the current name is set here.
+# Re-declared: a multi-stage build drops build arguments between stages, so an identity that
+# existed only in the build stage would be an identity the running process cannot read.
+ARG RSC_BRAIN_BUILD_IDENTITY
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    TORCH_COMPILE_DISABLE=1
+    TORCH_COMPILE_DISABLE=1 \
+    RSC_BRAIN_BUILD_IDENTITY=${RSC_BRAIN_BUILD_IDENTITY}
 USER rsc
 
 EXPOSE 8080

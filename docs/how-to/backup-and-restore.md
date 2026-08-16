@@ -76,6 +76,30 @@ objects, then merges restored blobs into the target `blobs/` directory without r
 from the snapshot. Use a new or empty database and a new, empty, writable data directory or PVC.
 Keep API traffic disabled and stop every worker that could write to the target.
 
+### Give the target's data volume to the runtime user
+
+**Writable means writable by UID `10001`, and a newly created volume is not.** The image runs as
+that user; a fresh Docker volume or PVC belongs to root. Every command below runs inside the
+application image, so the first one fails with `Permission denied` and the copy and the restore fail
+after it. This is the same one-time task the
+[deployment guide](../../deploy/README.md#provision-application-volume-ownership) requires when
+installing, and it applies identically to a restore target — which is the harder moment to discover
+it, because you are restoring.
+
+For a Compose target, before anything else:
+
+```bash
+docker compose --env-file deploy/.env \
+  -f deploy/docker-compose.prod.yml \
+  -f deploy/compose.models.yml \
+  run --rm --no-deps --user 0 api \
+  sh -ceu 'chown -R 10001:10001 /var/lib/rsc-brain/data'
+```
+
+For a Helm target, use the chart's `podSecurityContext.fsGroup` or your storage backend's ownership
+procedure so the application-data PVC is owned by `10001` before the API pod starts. For a
+source-checkout target the directory is owned by the user running `uv run`, so nothing is needed.
+
 Choose the target application version before restoring. `brain restore` always applies migrations to
 the schema head known by the CLI binary that executes it. For an upgrade rollback, create the inactive
 target with the previous pinned image and configuration, then run that previous version's CLI. Do not
