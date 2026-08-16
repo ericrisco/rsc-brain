@@ -9,6 +9,7 @@ auditable; a revoked PAT/session stops resolving in <5s.
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from typing import Literal
 
@@ -39,6 +40,33 @@ class LoginRequest(BaseModel):
 class CreatePatRequest(BaseModel):
     project: str
     name: str | None = None
+
+
+class SelfPat(BaseModel):
+    """One display-safe personal credential owned by the current user."""
+
+    id: str
+    name: str | None
+    project: str
+    created_at: dt.datetime | None
+    expires_at: dt.datetime | None
+    revoked: bool
+
+
+class SelfPatList(BaseModel):
+    pats: list[SelfPat]
+
+
+class CreatedPat(BaseModel):
+    """The only response that contains newly issued credential material."""
+
+    pat_id: str
+    token: str
+
+
+class RevokedPat(BaseModel):
+    ok: bool
+    revoked: str
 
 
 class SessionIdentity(BaseModel):
@@ -167,17 +195,16 @@ async def me(request: Request, user: SessionUser = Depends(_session_user)) -> Se
     )
 
 
-@me_router.get("/pats")
-async def list_pats(
-    request: Request, user: SessionUser = Depends(_session_user)
-) -> dict[str, object]:
-    return {"pats": await sessions.list_user_pats(_sessionmaker(request), user.user_id)}
+@me_router.get("/pats", response_model=SelfPatList)
+async def list_pats(request: Request, user: SessionUser = Depends(_session_user)) -> SelfPatList:
+    rows = await sessions.list_user_pats(_sessionmaker(request), user.user_id)
+    return SelfPatList(pats=[SelfPat.model_validate(row) for row in rows])
 
 
-@me_router.post("/pats", status_code=status.HTTP_201_CREATED)
+@me_router.post("/pats", status_code=status.HTTP_201_CREATED, response_model=CreatedPat)
 async def create_pat(
     body: CreatePatRequest, request: Request, user: SessionUser = Depends(_session_user)
-) -> dict[str, object]:
+) -> CreatedPat:
     sessionmaker = _sessionmaker(request)
     membership_id = await sessions.membership_for(sessionmaker, user.user_id, body.project)
     if membership_id is None:
@@ -185,18 +212,18 @@ async def create_pat(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     issued = await IdentityService(sessionmaker).issue_pat(membership_id, name=body.name)
     # The secret is shown exactly once.
-    return {"pat_id": issued.id, "token": issued.token}
+    return CreatedPat(pat_id=issued.id, token=issued.token)
 
 
-@me_router.delete("/pats/{pat_id}")
+@me_router.delete("/pats/{pat_id}", response_model=RevokedPat)
 async def revoke_pat(
     pat_id: str, request: Request, user: SessionUser = Depends(_session_user)
-) -> dict[str, object]:
+) -> RevokedPat:
     sessionmaker = _sessionmaker(request)
     if not await sessions.owns_pat(sessionmaker, user.user_id, pat_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     await IdentityService(sessionmaker).revoke_pat(pat_id)
-    return {"ok": True, "revoked": pat_id}
+    return RevokedPat(ok=True, revoked=pat_id)
 
 
 @me_router.get("/connections")

@@ -1413,6 +1413,26 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** ActivityDay */
+        ActivityDay: {
+            /** Day */
+            day: string;
+            /** Recalls */
+            recalls: number;
+        };
+        /** ActivityEnvelope */
+        ActivityEnvelope: {
+            /** Active Principals */
+            active_principals: number;
+            /** Denied */
+            denied: number;
+            /** P95 Duration Ms */
+            p95_duration_ms: number | null;
+            /** Recalls */
+            recalls: number;
+            /** Recalls Per Day */
+            recalls_per_day: components["schemas"]["ActivityDay"][];
+        };
         /** ApproveDoc */
         ApproveDoc: {
             /** Tags */
@@ -1448,6 +1468,16 @@ export interface components {
             name?: string | null;
             /** Project */
             project: string;
+        };
+        /**
+         * CreatedPat
+         * @description The only response that contains newly issued credential material.
+         */
+        CreatedPat: {
+            /** Pat Id */
+            pat_id: string;
+            /** Token */
+            token: string;
         };
         /** CredentialCreate */
         CredentialCreate: {
@@ -1512,6 +1542,15 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** HealthEnvelope */
+        HealthEnvelope: {
+            /** Database */
+            database: string;
+            /** Ingest Errors */
+            ingest_errors: number;
+            /** Pending Approval */
+            pending_approval: number;
+        };
         /**
          * HuntAnswer
          * @description A JSON answer, for a client that is not the browser form.
@@ -1554,6 +1593,41 @@ export interface components {
         ImpactCommand: {
             /** Impact Acknowledged */
             impact_acknowledged: boolean;
+        };
+        /** IngestEnvelope */
+        IngestEnvelope: {
+            /** Errors */
+            errors: components["schemas"]["IngestErrorView"][];
+            /** Runs */
+            runs: components["schemas"]["IngestRunView"][];
+        };
+        /** IngestErrorView */
+        IngestErrorView: {
+            /** Chunk */
+            chunk: string | null;
+            /** Document Id */
+            document_id: string | null;
+            /** Error */
+            error: string;
+            /** Stage */
+            stage: string;
+        };
+        /** IngestRunView */
+        IngestRunView: {
+            /** Chunks Created */
+            chunks_created: number;
+            /** Claims Generated */
+            claims_generated: number;
+            /** Completed Stages */
+            completed_stages: string[];
+            /** Discarded Chunks */
+            discarded_chunks: number;
+            /** Document Id */
+            document_id: string;
+            /** Error */
+            error: string | null;
+            /** Phase */
+            phase: string;
         };
         /** InvitationAccept */
         InvitationAccept: {
@@ -1715,6 +1789,26 @@ export interface components {
             replayed?: boolean | null;
             /** Reset Token */
             reset_token?: string | null;
+        };
+        /** PendingDocumentEnvelope */
+        PendingDocumentEnvelope: {
+            /** Documents */
+            documents: components["schemas"]["PendingDocumentView"][];
+        };
+        /** PendingDocumentView */
+        PendingDocumentView: {
+            /** Content Type */
+            content_type: string;
+            /** Document Id */
+            document_id: string;
+            /** Preview */
+            preview: string;
+            /** Proposed Tags */
+            proposed_tags: string[];
+            /** Source Id */
+            source_id: string | null;
+            /** Title */
+            title: string | null;
         };
         /** PersonCreate */
         PersonCreate: {
@@ -1998,6 +2092,36 @@ export interface components {
             pats: string;
             /** Sessions */
             sessions: string;
+        };
+        /** RevokedPat */
+        RevokedPat: {
+            /** Ok */
+            ok: boolean;
+            /** Revoked */
+            revoked: string;
+        };
+        /**
+         * SelfPat
+         * @description One display-safe personal credential owned by the current user.
+         */
+        SelfPat: {
+            /** Created At */
+            created_at: string | null;
+            /** Expires At */
+            expires_at: string | null;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string | null;
+            /** Project */
+            project: string;
+            /** Revoked */
+            revoked: boolean;
+        };
+        /** SelfPatList */
+        SelfPatList: {
+            /** Pats */
+            pats: components["schemas"]["SelfPat"][];
         };
         /**
          * SessionEnvelope
@@ -2743,9 +2867,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PendingDocumentEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -3376,9 +3498,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ActivityEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -3409,9 +3529,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["HealthEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -3442,9 +3560,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["IngestEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -5888,9 +6004,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SelfPatList"];
                 };
             };
         };
@@ -5914,9 +6028,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CreatedPat"];
                 };
             };
             /** @description Validation Error */
@@ -5947,9 +6059,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RevokedPat"];
                 };
             };
             /** @description Validation Error */

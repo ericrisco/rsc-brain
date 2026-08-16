@@ -42,6 +42,60 @@ class RecallView(BaseModel):
     denied: bool
 
 
+class ActivityDay(BaseModel):
+    day: str
+    recalls: int
+
+
+class ActivityEnvelope(BaseModel):
+    recalls: int
+    denied: int
+    active_principals: int
+    p95_duration_ms: float | None
+    recalls_per_day: list[ActivityDay]
+
+
+class HealthEnvelope(BaseModel):
+    database: str
+    pending_approval: int
+    ingest_errors: int
+
+
+class IngestRunView(BaseModel):
+    document_id: str
+    phase: str
+    completed_stages: list[str]
+    chunks_created: int
+    claims_generated: int
+    discarded_chunks: int
+    error: str | None
+
+
+class IngestErrorView(BaseModel):
+    document_id: str | None
+    chunk: str | None
+    stage: str
+    error: str
+
+
+class IngestEnvelope(BaseModel):
+    runs: list[IngestRunView]
+    errors: list[IngestErrorView]
+
+
+class PendingDocumentView(BaseModel):
+    document_id: str
+    title: str | None
+    proposed_tags: list[str]
+    source_id: str | None
+    preview: str
+    content_type: str
+
+
+class PendingDocumentEnvelope(BaseModel):
+    documents: list[PendingDocumentView]
+
+
 class ProductMetricDay(BaseModel):
     """One exact server-owned recall count in the selected reporting window."""
 

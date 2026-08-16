@@ -4,71 +4,22 @@ import type { components } from "./schema";
 export type Membership = components["schemas"]["SessionMembership"];
 export type Me = components["schemas"]["SessionEnvelope"];
 
-export interface Pat {
-  id: string;
-  name: string | null;
-  project: string;
-  created_at: string | null;
-  expires_at: string | null;
-  revoked: boolean;
-}
-
-export interface PatList {
-  pats: Pat[];
-}
-
-export interface CreatedPat {
-  pat_id: string;
-  token: string;
-}
+export type Pat = components["schemas"]["SelfPat"];
+export type PatList = components["schemas"]["SelfPatList"];
+export type CreatedPat = components["schemas"]["CreatedPat"];
+export type RevokedPat = components["schemas"]["RevokedPat"];
 
 // --- SPEC-14 read observability -------------------------------------------------------------
 
-export interface Activity {
-  recalls: number;
-  denied: number;
-  active_principals: number;
-  p95_duration_ms: number | null;
-  recalls_per_day: { day: string; recalls: number }[];
-}
-
-export interface RecallRow {
-  id: number;
-  ts: string | null;
-  principal_type: string | null;
-  principal_id: string | null;
-  on_behalf_of: string | null;
-  query_text: string | null;
-  query_hash: string | null;
-  topics_used: string[];
-  result_count: number | null;
-  duration_ms: number | null;
-  denied: boolean;
-}
-
-export interface Health {
-  database: string;
-  pending_approval: number;
-  ingest_errors: number;
-}
-
-export interface PendingDoc {
-  document_id: string;
-  title: string | null;
-  proposed_tags: string[];
-  source_id: string | null;
-  preview: string;
-}
-
-export interface IngestRun {
-  document_id: string;
-  phase: string;
-  completed_stages: string[];
-  chunks_created: number;
-  claims_generated: number;
-  discarded_chunks: number;
-  error: string | null;
-}
+export type Activity = components["schemas"]["ActivityEnvelope"];
+export type RecallRow = components["schemas"]["RecallView"];
+export type RecallPage = components["schemas"]["ReadPage_RecallView_"];
+export type Health = components["schemas"]["HealthEnvelope"];
+export type PendingDoc = components["schemas"]["PendingDocumentView"];
+export type PendingDocList = components["schemas"]["PendingDocumentEnvelope"];
+export type IngestRun = components["schemas"]["IngestRunView"];
+export type IngestError = components["schemas"]["IngestErrorView"];
+export type Ingest = components["schemas"]["IngestEnvelope"];
 
 // --- SPEC-19 living knowledge ---------------------------------------------------------------
 

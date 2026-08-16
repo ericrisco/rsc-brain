@@ -13,13 +13,14 @@ import type {
   Gap,
   Health,
   Hunt,
-  IngestRun,
+  Ingest,
   Me,
   Neighborhood,
   PatList,
-  PendingDoc,
+  PendingDocList,
   ProductMetrics,
-  RecallRow,
+  RecallPage,
+  RevokedPat,
   Resolution,
   ReviewQueue,
   UsageRow,
@@ -48,9 +49,9 @@ export function usePats() {
   return useQuery({
     queryKey: ["me", "pats"],
     queryFn: async (): Promise<PatList> => {
-      const { data, error } = await api.GET("/api/v1/me/pats");
-      if (error) throw new Error("failed to load connections");
-      return data as unknown as PatList;
+      const { data, error, response } = await api.GET("/api/v1/me/pats");
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }
@@ -59,9 +60,9 @@ export function useCreatePat() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: { project: string; name?: string }): Promise<CreatedPat> => {
-      const { data, error } = await api.POST("/api/v1/me/pats", { body: input });
-      if (error) throw new Error("failed to create PAT");
-      return data as unknown as CreatedPat;
+      const { data, error, response } = await api.POST("/api/v1/me/pats", { body: input });
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me", "pats"] }),
   });
@@ -70,11 +71,12 @@ export function useCreatePat() {
 export function useRevokePat() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (patId: string) => {
-      const { error } = await api.DELETE("/api/v1/me/pats/{pat_id}", {
+    mutationFn: async (patId: string): Promise<RevokedPat> => {
+      const { data, error, response } = await api.DELETE("/api/v1/me/pats/{pat_id}", {
         params: { path: { pat_id: patId } },
       });
-      if (error) throw new Error("failed to revoke PAT");
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["me", "pats"] }),
   });
@@ -82,83 +84,100 @@ export function useRevokePat() {
 
 
 const REFRESH_MS = 5000; // FR-13.2 auto-refresh (TanStack Query polling; no websockets)
+type PollingOptions = { paused?: boolean; enabled?: boolean };
 
 /** Activity dashboard aggregates for a project (auto-refreshing). */
-export function useActivity(project: string) {
+export function useActivity(
+  project: string,
+  { paused = false, enabled = true }: PollingOptions = {},
+) {
   return useQuery({
     queryKey: ["obs", "activity", project],
-    enabled: !!project,
-    refetchInterval: REFRESH_MS,
+    enabled: !!project && enabled,
+    refetchInterval: paused ? false : REFRESH_MS,
     queryFn: async (): Promise<Activity> => {
-      const { data, error } = await api.GET("/api/v1/admin/observability/activity", {
+      const { data, error, response } = await api.GET("/api/v1/admin/observability/activity", {
         params: { query: { project } },
       });
-      if (error) throw new Error("failed to load activity");
-      return data as unknown as Activity;
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }
 
 /** Live recall stream, filterable by principal + denial. */
-export function useRecalls(project: string, filters: { principal_type?: string; denied?: boolean }) {
+export function useRecalls(
+  project: string,
+  filters: { principal_type?: string; denied?: boolean },
+  { paused = false, enabled = true }: PollingOptions = {},
+) {
   return useQuery({
     queryKey: ["obs", "recalls", project, filters],
-    enabled: !!project,
-    refetchInterval: REFRESH_MS,
-    queryFn: async (): Promise<{ recalls: RecallRow[] }> => {
-      const { data, error } = await api.GET("/api/v1/admin/observability/recalls", {
+    enabled: !!project && enabled,
+    refetchInterval: paused ? false : REFRESH_MS,
+    queryFn: async (): Promise<RecallPage> => {
+      const { data, error, response } = await api.GET("/api/v1/admin/observability/recalls", {
         params: { query: { project, ...filters } },
       });
-      if (error) throw new Error("failed to load recalls");
-      return data as unknown as { recalls: RecallRow[] };
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }
 
 /** Service health widget. */
-export function useHealth(project: string) {
+export function useHealth(
+  project: string,
+  { paused = false, enabled = true }: PollingOptions = {},
+) {
   return useQuery({
     queryKey: ["obs", "health", project],
-    enabled: !!project,
-    refetchInterval: REFRESH_MS,
+    enabled: !!project && enabled,
+    refetchInterval: paused ? false : REFRESH_MS,
     queryFn: async (): Promise<Health> => {
-      const { data, error } = await api.GET("/api/v1/admin/observability/health", {
+      const { data, error, response } = await api.GET("/api/v1/admin/observability/health", {
         params: { query: { project } },
       });
-      if (error) throw new Error("failed to load health");
-      return data as unknown as Health;
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }
 
 /** Ingest runs + extraction errors. */
-export function useIngest(project: string) {
+export function useIngest(
+  project: string,
+  { paused = false, enabled = true }: PollingOptions = {},
+) {
   return useQuery({
     queryKey: ["obs", "ingest", project],
-    enabled: !!project,
-    refetchInterval: REFRESH_MS,
-    queryFn: async (): Promise<{ runs: IngestRun[]; errors: unknown[] }> => {
-      const { data, error } = await api.GET("/api/v1/admin/observability/ingest", {
+    enabled: !!project && enabled,
+    refetchInterval: paused ? false : REFRESH_MS,
+    queryFn: async (): Promise<Ingest> => {
+      const { data, error, response } = await api.GET("/api/v1/admin/observability/ingest", {
         params: { query: { project } },
       });
-      if (error) throw new Error("failed to load ingest");
-      return data as unknown as { runs: IngestRun[]; errors: unknown[] };
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }
 
 /** The D13 approval queue (pending docs + preview + proposed tags). */
-export function usePendingDocs(project: string) {
+export function usePendingDocs(
+  project: string,
+  { paused = false, enabled = true }: PollingOptions = {},
+) {
   return useQuery({
     queryKey: ["obs", "pending", project],
-    enabled: !!project,
-    refetchInterval: REFRESH_MS,
-    queryFn: async (): Promise<{ documents: PendingDoc[] }> => {
-      const { data, error } = await api.GET("/api/v1/admin/documents/pending/preview", {
+    enabled: !!project && enabled,
+    refetchInterval: paused ? false : REFRESH_MS,
+    queryFn: async (): Promise<PendingDocList> => {
+      const { data, error, response } = await api.GET("/api/v1/admin/documents/pending/preview", {
         params: { query: { project } },
       });
-      if (error) throw new Error("failed to load pending queue");
-      return data as unknown as { documents: PendingDoc[] };
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }

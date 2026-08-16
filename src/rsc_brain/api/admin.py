@@ -32,7 +32,16 @@ from rsc_brain.api.authz import (
     merge_proposal_topics,
     object_topics,
 )
-from rsc_brain.api.read_models import ProductMetricsEnvelope, ReadPage, RecallView
+from rsc_brain.api.read_models import (
+    ActivityEnvelope,
+    HealthEnvelope,
+    IngestEnvelope,
+    PendingDocumentEnvelope,
+    PendingDocumentView,
+    ProductMetricsEnvelope,
+    ReadPage,
+    RecallView,
+)
 from rsc_brain.authorization import Allow, Capability, decide
 from rsc_brain.config.models import PublicLimits
 from rsc_brain.identity.service import IdentityService
@@ -1226,12 +1235,12 @@ class QueryTextLogging(BaseModel):
     enabled: bool
 
 
-@router.get("/observability/activity")
+@router.get("/observability/activity", response_model=ActivityEnvelope)
 async def observability_activity(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> ActivityEnvelope:
     """Activity dashboard aggregates (FR-13.2): recalls/day, active principals, p95, denied."""
-    return await audit_mod.activity_summary(_sm(request), scope)
+    return ActivityEnvelope.model_validate(await audit_mod.activity_summary(_sm(request), scope))
 
 
 @router.get("/observability/recalls", response_model=ReadPage[RecallView])
@@ -1271,10 +1280,10 @@ async def observability_recalls(
     )
 
 
-@router.get("/observability/health")
+@router.get("/observability/health", response_model=HealthEnvelope)
 async def observability_health(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> HealthEnvelope:
     """Service health (FR-13.2): the pending-approval queue depth + extraction error count."""
     sm = _deps(request).sessionmaker  # type: ignore[attr-defined]
     pid = uuid.UUID(scope.project_id)
@@ -1305,11 +1314,11 @@ async def observability_health(
                 document_visible,
             )
         )
-    return {
-        "database": "ok",
-        "pending_approval": int(pending or 0),
-        "ingest_errors": int(errors or 0),
-    }
+    return HealthEnvelope(
+        database="ok",
+        pending_approval=int(pending or 0),
+        ingest_errors=int(errors or 0),
+    )
 
 
 @router.get("/settings/query-text-logging")
@@ -1348,10 +1357,10 @@ class RejectDoc(BaseModel):
     reason: str = Field(max_length=FREE_TEXT_MAX)
 
 
-@router.get("/observability/ingest")
+@router.get("/observability/ingest", response_model=IngestEnvelope)
 async def observability_ingest(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> IngestEnvelope:
     """Ingest runs per document (stage checkpoints) + extraction errors with their chunk (FR-13.4)."""
     pid = uuid.UUID(scope.project_id)
     document_visible = fully_authorized_topic_clause(models.Document.doc_tags, scope)
@@ -1400,27 +1409,29 @@ async def observability_ingest(
             {"document_id": str(doc) if doc else None, "chunk": chunk, "stage": stage, "error": err}
             for doc, chunk, stage, err in error_rows.all()
         ]
-    return {
-        "runs": [
-            {
-                "document_id": str(r.document_id),
-                "phase": r.phase,
-                "completed_stages": list(r.completed_stages),
-                "chunks_created": r.chunks_created,
-                "claims_generated": r.claims_generated,
-                "discarded_chunks": r.discarded_chunks,
-                "error": r.error,
-            }
-            for r in runs
-        ],
-        "errors": errors,
-    }
+    return IngestEnvelope.model_validate(
+        {
+            "runs": [
+                {
+                    "document_id": str(r.document_id),
+                    "phase": r.phase,
+                    "completed_stages": list(r.completed_stages),
+                    "chunks_created": r.chunks_created,
+                    "claims_generated": r.claims_generated,
+                    "discarded_chunks": r.discarded_chunks,
+                    "error": r.error,
+                }
+                for r in runs
+            ],
+            "errors": errors,
+        }
+    )
 
 
-@router.get("/documents/pending/preview")
+@router.get("/documents/pending/preview", response_model=PendingDocumentEnvelope)
 async def pending_document_previews(
     request: Request, scope: ProjectScope = Depends(_needs_manage_read)
-) -> dict[str, object]:
+) -> PendingDocumentEnvelope:
     """The D13 queue with a text preview + proposed (editable) tags + source, for the console."""
     repo = IngestRepository(_deps(request).sessionmaker)  # type: ignore[attr-defined]
     pending = await repo.list_documents_by_status(scope, "pending_approval")
@@ -1450,7 +1461,9 @@ async def pending_document_previews(
                     "content_type": UNTRUSTED,
                 }
             )
-    return {"documents": out}
+    return PendingDocumentEnvelope(
+        documents=[PendingDocumentView.model_validate(document) for document in out]
+    )
 
 
 @router.post("/documents/{document_id}/approve")

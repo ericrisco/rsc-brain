@@ -55,7 +55,10 @@ export function Tabs({
             >
               {item.label}
               {typeof item.count === "number" ? (
-                <span className="ml-2 font-mono text-xs text-text-secondary">{item.count}</span>
+                <>
+                  {" "}
+                  <span className="ml-2 font-mono text-xs text-text-secondary">{item.count}</span>
+                </>
               ) : null}
             </button>
           );

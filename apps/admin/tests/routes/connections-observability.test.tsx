@@ -181,6 +181,7 @@ describe("Observability operational workspace", () => {
   beforeEach(() => {
     pathname = "/observability";
     search = "tab=overview";
+    session.memberships[0]!.role = "project-admin";
     replace.mockReset();
     approveDoc.mockReset();
     rejectDoc.mockReset();
@@ -251,6 +252,27 @@ describe("Observability operational workspace", () => {
     expect(useActivity).toHaveBeenLastCalledWith("alpha", { paused: true });
     await user.click(screen.getByRole("tab", { name: "Recalls" }));
     expect(replace).toHaveBeenCalledWith("/observability?tab=recalls", { scroll: false });
+  });
+
+  it("does not expose the approval surface outside project administration", async () => {
+    session.memberships[0]!.role = "viewer";
+    search = "tab=approvals";
+    const loaded = await loadPage("app/(console)/observability/page.tsx");
+    expect(loaded?.default).toBeTypeOf("function");
+    if (!loaded) return;
+    renderPage(loaded.default);
+
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Overview",
+      "Recalls",
+      "Ingest",
+    ]);
+    expect(screen.queryByRole("tab", { name: /Approvals/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Operational signal" })).toBeVisible();
+    expect(usePendingDocs).toHaveBeenLastCalledWith("alpha", {
+      paused: false,
+      enabled: false,
+    });
   });
 
   it("renders privacy-safe recall unknowns without resurrecting query text", async () => {
