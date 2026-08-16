@@ -62,6 +62,8 @@ Every capability object has the same fields:
 | `recall` | object | configured defaults | Recall, temporal filtering, and result-budget settings. |
 | `recall.temporal_refill_factor` | integer | `4` | Candidate surplus retrieved before temporal filtering; from `1` through `20`. Retrieval width is also capped internally at `200`. |
 | `recall.tau` | number | `0.45` | Relevance threshold. Recall abstains when the best score is lower; from `0` through `1`. |
+| `recall.tau_rerank` | number | `0.5` | Relevance threshold used **instead of** `recall.tau` when `reranker.enabled` is true. It reads the reranker's answers-the-question score, a different quantity from the blended score, so it is calibrated separately; from `0` through `1`. |
+| `recall.rerank_candidates` | integer | `10` | How many top candidates the reranker scores. Bounded so one recall cannot become an unbounded number of model calls; from `1` through `50`. |
 | `recall.weights` | object | configured defaults | Four components of the recall score. |
 | `recall.weights.similarity` | number | `0.55` | Similarity contribution; from `0` through `1`. |
 | `recall.weights.credibility` | number | `0.25` | Credibility contribution; from `0` through `1`. |
