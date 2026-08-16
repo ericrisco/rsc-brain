@@ -23,6 +23,68 @@ pytestmark = pytest.mark.integration
 
 _PASSWORD = "correct horse battery staple"  # Integration fixture only.
 
+_HUNT_COMMAND_FIELDS = frozenset(
+    {
+        "hunt_id",
+        "state",
+        "topics",
+        "person_id",
+        "throttled",
+        "delivered",
+        "audit_correlation",
+        "replayed",
+    }
+)
+_HUNT_VIEW_FIELDS = frozenset(
+    {
+        "id",
+        "type",
+        "state",
+        "question",
+        "topics",
+        "person_id",
+        "gap_id",
+        "correction_id",
+        "channel",
+        "retries",
+        "created_at",
+        "asked_at",
+        "answered_at",
+        "expires_at",
+        "resolved_at",
+    }
+)
+_PERSON_COLLECTION_FIELDS = frozenset(
+    {
+        "id",
+        "name",
+        "topics",
+        "language",
+        "channel_types",
+        "has_quiet_hours",
+        "active_hunts",
+        "version",
+    }
+)
+_SKILL_CREATE_FIELDS = frozenset({"skill_id", "slug"})
+_SKILL_VIEW_FIELDS = frozenset(
+    {"slug", "title", "status", "stale", "depends_on", "version"}
+)
+_SKILL_VALIDATE_FIELDS = frozenset(
+    {"slug", "status", "stale", "depends_on", "version", "audit_correlation"}
+)
+_SKILL_ARCHIVE_FIELDS = frozenset(
+    {
+        "slug",
+        "status",
+        "stale",
+        "depends_on",
+        "version",
+        "audit_correlation",
+        "replayed",
+    }
+)
+
 
 def _client(harness: Harness, tmp_path: Path) -> tuple[httpx.AsyncClient, NullChannel]:
     channel = NullChannel()
@@ -124,6 +186,100 @@ def _uuid(value: object) -> uuid.UUID | None:
         return uuid.UUID(str(value))
     except (AttributeError, TypeError, ValueError):
         return None
+
+
+def _forbidden_public_key_paths(value: object, path: str = "$") -> list[str]:
+    """Find secret-bearing keys recursively without ever rendering their values."""
+    paths: list[str] = []
+    if isinstance(value, dict):
+        for raw_key, child in value.items():
+            key = str(raw_key).casefold().replace("-", "_")
+            child_path = f"{path}.{raw_key}"
+            is_secret_key = any(
+                (
+                    key.startswith("magic"),
+                    "token" in key,
+                    "hash" in key,
+                    "contact" in key,
+                    key in {"channels", "email", "slack"},
+                    "channel" in key and key not in {"channel", "channel_types"},
+                )
+            )
+            if is_secret_key:
+                paths.append(child_path)
+            paths.extend(_forbidden_public_key_paths(child, child_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            paths.extend(_forbidden_public_key_paths(child, f"{path}[{index}]"))
+    return paths
+
+
+def _response_value(response: httpx.Response) -> object:
+    try:
+        return response.json()
+    except ValueError:
+        return response.text
+
+
+def _secret_value_paths(value: object, secrets: set[str], path: str = "$") -> list[str]:
+    """Find fixture secrets recursively while reporting paths, never the secret values."""
+    if isinstance(value, str):
+        return [path] if any(secret in value for secret in secrets) else []
+    paths: list[str] = []
+    if isinstance(value, dict):
+        for raw_key, child in value.items():
+            paths.extend(_secret_value_paths(child, secrets, f"{path}.{raw_key}"))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            paths.extend(_secret_value_paths(child, secrets, f"{path}[{index}]"))
+    return paths
+
+
+def _check_public_payload(
+    failures: list[str],
+    label: str,
+    response: httpx.Response,
+    expected: frozenset[str] | None = None,
+) -> None:
+    """Check a JSON payload's closed shape and recursively reject secret-bearing keys."""
+    value = _response_value(response)
+    payload = value if isinstance(value, dict) else {}
+    if expected is not None and response.status_code < 400 and set(payload) != expected:
+        failures.append(f"{label}: minimized top-level response shape differs")
+    if forbidden_paths := _forbidden_public_key_paths(value):
+        failures.append(f"{label}: secret-bearing response keys at {', '.join(forbidden_paths)}")
+
+
+def _check_secret_values(
+    failures: list[str],
+    label: str,
+    responses: tuple[httpx.Response, ...],
+    logs: str,
+    secrets: set[str],
+) -> None:
+    leaked_paths = [
+        f"response[{index}]{path.removeprefix('$')}"
+        for index, response in enumerate(responses)
+        for path in _secret_value_paths(_response_value(response), secrets)
+    ]
+    if leaked_paths:
+        failures.append(f"{label}: secret fixture value leaked at {', '.join(leaked_paths)}")
+    if any(secret in logs for secret in secrets):
+        failures.append(f"{label}: secret fixture value leaked through logs")
+
+
+async def _project_resource_counts(harness: Harness, project_id: str) -> tuple[int, int, int]:
+    project_uuid = _uuid(project_id)
+    if project_uuid is None:
+        return (-1, -1, -1)
+    async with harness.sm() as session:
+        counts: list[int] = []
+        for model in (models.Person, models.Skill, models.Hunt):
+            count = await session.scalar(
+                select(func.count()).select_from(model).where(model.project_id == project_uuid)
+            )
+            counts.append(int(count or 0))
+    return counts[0], counts[1], counts[2]
 
 
 async def _hunt_count(harness: Harness, project_id: str, question: str) -> int:
@@ -324,7 +480,7 @@ async def test_manual_hunt_persists_topics_and_replays_idempotently(
             json={"question": denied_question, "topics": ["hidden"]},
         )
 
-    delivery_secrets = {
+    delivery_secrets = {contact} | {
         value
         for message in channel.sent
         for value in (
@@ -392,6 +548,19 @@ async def test_manual_hunt_persists_topics_and_replays_idempotently(
         _status(failures, label, response, expected)
     first_body = _object(first)
     replay_body = _object(replay)
+    _check_public_payload(failures, "first", first, _HUNT_COMMAND_FIELDS)
+    _check_public_payload(failures, "replay", replay, _HUNT_COMMAND_FIELDS)
+    _check_public_payload(failures, "list", hunts, frozenset({"hunts"}))
+    _check_public_payload(failures, "detail", detail, frozenset({"hunt"}))
+    _check_public_payload(failures, "legacy detail", legacy_detail, frozenset({"hunt"}))
+    _check_public_payload(failures, "restricted list", restricted_list, frozenset({"hunts"}))
+    for label, response in (
+        ("owner", owner),
+        ("unauthorized topic", hidden),
+        ("restricted detail", restricted_detail),
+        ("missing detail", missing_detail),
+    ):
+        _check_public_payload(failures, label, response)
     if first.status_code == 201:
         if first_body.get("topics") != ["general"]:
             failures.append("first: authorized topics are not returned/persisted")
@@ -399,34 +568,12 @@ async def test_manual_hunt_persists_topics_and_replays_idempotently(
             failures.append("first: non-empty audit correlation missing")
         if first_body.get("replayed") is not False:
             failures.append("first: a newly-created hunt must report replayed=false")
-        if set(first_body) != {
-            "hunt_id",
-            "state",
-            "topics",
-            "person_id",
-            "throttled",
-            "delivered",
-            "audit_correlation",
-            "replayed",
-        }:
-            failures.append("first: minimized command response shape missing")
     if replay.status_code == 200:
-        if replay_body.get("hunt_id") != first_body.get("hunt_id"):
-            failures.append("replay: idempotency key created a second hunt")
         if replay_body.get("replayed") is not True:
             failures.append("replay: authoritative replay flag missing")
-        if replay_body.get("audit_correlation") != first_body.get("audit_correlation"):
-            failures.append("replay: original audit correlation was not preserved")
-        for key in (
-            "hunt_id",
-            "state",
-            "topics",
-            "person_id",
-            "throttled",
-            "delivered",
-        ):
-            if replay_body.get(key) != first_body.get(key):
-                failures.append(f"replay: original {key} changed")
+        expected_replay = {**first_body, "replayed": True}
+        if replay_body != expected_replay:
+            failures.append("replay: complete original command result changed beyond replayed flag")
     if len(channel.sent) != 1:
         failures.append(f"replay: expected one delivery, got {len(channel.sent)}")
     if await _hunt_count(harness, project_id, question) != 1:
@@ -447,35 +594,20 @@ async def test_manual_hunt_persists_topics_and_replays_idempotently(
     if legacy_error is not None:
         failures.append(f"legacy row: insert without topics failed with {legacy_error}")
     if hunts.status_code == 200:
+        hunt_rows = _list_field(_object(hunts), "hunts")
+        if any(not isinstance(item, dict) or set(item) != _HUNT_VIEW_FIELDS for item in hunt_rows):
+            failures.append("list: a HuntView did not match the minimized closed schema")
         matching = [
             item
-            for item in _list_field(_object(hunts), "hunts")
+            for item in hunt_rows
             if isinstance(item, dict) and item.get("question") == question
         ]
         if len(matching) != 1 or matching[0].get("topics") != ["general"]:
             failures.append("list after restart: immutable topic snapshot missing or duplicated")
-        elif set(matching[0]) != {
-            "id",
-            "type",
-            "state",
-            "question",
-            "topics",
-            "person_id",
-            "gap_id",
-            "correction_id",
-            "channel",
-            "retries",
-            "created_at",
-            "asked_at",
-            "answered_at",
-            "expires_at",
-            "resolved_at",
-        }:
-            failures.append("list: minimized HuntView schema missing")
         legacy = next(
             (
                 item
-                for item in _list_field(_object(hunts), "hunts")
+                for item in hunt_rows
                 if isinstance(item, dict) and item.get("id") == legacy_id
             ),
             None,
@@ -483,32 +615,53 @@ async def test_manual_hunt_persists_topics_and_replays_idempotently(
         if not isinstance(legacy, dict) or legacy.get("topics") != []:
             failures.append("list: legacy hunt was not normalized to empty topics")
     detail_hunt = _dict_field(_object(detail), "hunt")
-    if detail.status_code == 200 and detail_hunt.get("topics") != ["general"]:
-        failures.append("detail after restart: immutable topic snapshot missing")
+    if detail.status_code == 200:
+        if set(detail_hunt) != _HUNT_VIEW_FIELDS:
+            failures.append("detail: HuntView did not match the minimized closed schema")
+        if detail_hunt.get("topics") != ["general"]:
+            failures.append("detail after restart: immutable topic snapshot missing")
+    legacy_hunt = _dict_field(_object(legacy_detail), "hunt")
     if (
         legacy_detail.status_code == 200
-        and _dict_field(_object(legacy_detail), "hunt").get("topics") != []
+        and (set(legacy_hunt) != _HUNT_VIEW_FIELDS or legacy_hunt.get("topics") != [])
     ):
-        failures.append("detail: legacy hunt was not normalized to empty topics")
+        failures.append("detail: legacy HuntView was not minimized or normalized to empty topics")
     if restricted_list.status_code == 200:
+        restricted_rows = _list_field(_object(restricted_list), "hunts")
+        if any(
+            not isinstance(item, dict) or set(item) != _HUNT_VIEW_FIELDS
+            for item in restricted_rows
+        ):
+            failures.append("restricted list: a HuntView did not match the closed schema")
         restricted_ids = {
             item.get("id")
-            for item in _list_field(_object(restricted_list), "hunts")
+            for item in restricted_rows
             if isinstance(item, dict)
         }
         if first_id in restricted_ids:
             failures.append("restricted list: disclosed a hunt outside topic authority")
     if _body_signature(restricted_detail) != _body_signature(missing_detail):
         failures.append("restricted detail: refusal differs from an absent hunt")
-    serialized_responses = "\n".join(
-        response.text for response in (first, replay, hunts, detail, restricted_list)
-    )
     captured = capsys.readouterr()
     captured_logs = f"{caplog.text}\n{captured.out}\n{captured.err}"
-    for secret in delivery_secrets:
-        if secret in serialized_responses or secret in captured_logs:
-            failures.append("hunt secret leaked through a payload or logs")
-            break
+    _check_secret_values(
+        failures,
+        "hunt public surfaces",
+        (
+            owner,
+            first,
+            replay,
+            hidden,
+            hunts,
+            detail,
+            legacy_detail,
+            restricted_list,
+            restricted_detail,
+            missing_detail,
+        ),
+        captured_logs,
+        delivery_secrets,
+    )
     assert not failures, "\n".join(failures)
 
 
@@ -650,6 +803,22 @@ async def test_person_collection_minimizes_contact_and_delete_reports_dependenci
         ("stale survivor", stale_after, 200),
     ):
         _status(failures, label, response, expected)
+    _check_public_payload(failures, "person collection", collection, frozenset({"persons"}))
+    _check_public_payload(failures, "dependency hunt", hunt, _HUNT_COMMAND_FIELDS)
+    for label, response in (
+        ("create dependent", created),
+        ("create idle", idle),
+        ("create stale", stale_person),
+        ("foreign detail", foreign_detail),
+        ("foreign missing", foreign_missing),
+        ("dependency impact", impact),
+        ("idle impact", idle_impact),
+        ("idle delete", idle_removed),
+        ("idle after", idle_after),
+        ("dependency delete", blocked),
+        ("stale delete", stale_delete),
+    ):
+        _check_public_payload(failures, label, response)
     for label, response in (
         ("dependent", created),
         ("idle", idle),
@@ -661,6 +830,11 @@ async def test_person_collection_minimizes_contact_and_delete_reports_dependenci
         if contact in collection.text or slack in collection.text:
             failures.append("collection: raw contact channel leaked")
         people = _list_field(_object(collection), "persons")
+        if any(
+            not isinstance(person, dict) or set(person) != _PERSON_COLLECTION_FIELDS
+            for person in people
+        ):
+            failures.append("collection: a PersonView did not match the minimized closed schema")
         item = next(
             (
                 person
@@ -669,16 +843,7 @@ async def test_person_collection_minimizes_contact_and_delete_reports_dependenci
             ),
             None,
         )
-        if not isinstance(item, dict) or set(item) != {
-            "id",
-            "name",
-            "topics",
-            "language",
-            "channel_types",
-            "has_quiet_hours",
-            "active_hunts",
-            "version",
-        }:
+        if not isinstance(item, dict):
             failures.append("collection: minimized PersonView schema missing")
     if detail.status_code == 200:
         person = _dict_field(_object(detail), "person")
@@ -727,13 +892,35 @@ async def test_person_collection_minimizes_contact_and_delete_reports_dependenci
         failures.append("stale delete: authoritative state changed after conflict")
     captured = capsys.readouterr()
     captured_logs = f"{caplog.text}\n{captured.out}\n{captured.err}"
-    if contact in captured_logs or slack in captured_logs:
-        failures.append("person contact leaked through logs")
+    _check_secret_values(
+        failures,
+        "minimized person surfaces",
+        (
+            created,
+            idle,
+            stale_person,
+            collection,
+            foreign_detail,
+            foreign_missing,
+            hunt,
+            impact,
+            idle_impact,
+            idle_removed,
+            idle_after,
+            blocked,
+            stale_delete,
+        ),
+        captured_logs,
+        {contact, slack},
+    )
     assert not failures, "\n".join(failures)
 
 
 async def test_skill_view_dependency_validation_archive_replay_and_stale_version(
-    build_harness: Callable[..., Harness], tmp_path: Path
+    build_harness: Callable[..., Harness],
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     harness = build_harness()
     slug = unique_slug("skill-lifecycle")
@@ -747,6 +934,7 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
         )
     dependency = str(dependency_id or uuid.uuid4())
     initial_version = 7
+    procedure_secret = f"private-procedure-{unique_slug('body')}"
     markdown = serialize_skill(
         SkillFrontmatter(
             slug=skill_slug,
@@ -756,7 +944,7 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
             state="proposed",
             version=initial_version,
         ),
-        "## Procedure\n\nVerify the release.\n",
+        f"## Procedure\n\nVerify the release using {procedure_secret}.\n",
     )
 
     client_instance, _ = _client(harness, tmp_path)
@@ -815,29 +1003,35 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
         ("list after", after, 200),
     ):
         _status(failures, label, response, expected)
+    for label, response, expected_fields in (
+        ("create", created, _SKILL_CREATE_FIELDS),
+        ("list", listing, frozenset({"skills"})),
+        ("validate", validated, _SKILL_VALIDATE_FIELDS),
+        ("list after validate", listed_after_validation, frozenset({"skills"})),
+        ("archive", archived, _SKILL_ARCHIVE_FIELDS),
+        ("archive replay", replay, _SKILL_ARCHIVE_FIELDS),
+        ("list after", after, frozenset({"skills"})),
+    ):
+        _check_public_payload(failures, label, response, expected_fields)
+    _check_public_payload(failures, "stale version", stale)
 
     def find_skill(response: httpx.Response) -> dict[str, object] | None:
         if response.status_code != 200:
             return None
+        skills = _list_field(_object(response), "skills")
+        if any(not isinstance(item, dict) or set(item) != _SKILL_VIEW_FIELDS for item in skills):
+            failures.append("list: a SkillView did not match the minimized closed schema")
         return next(
             (
                 item
-                for item in _list_field(_object(response), "skills")
+                for item in skills
                 if isinstance(item, dict) and item.get("slug") == skill_slug
             ),
             None,
         )
 
     listed = find_skill(listing)
-    skill_view_fields = {
-        "slug",
-        "title",
-        "status",
-        "stale",
-        "depends_on",
-        "version",
-    }
-    if listed is None or not skill_view_fields <= set(listed):
+    if listed is None:
         failures.append("list: complete versioned SkillView missing")
     elif (
         listed.get("status") != "proposed"
@@ -851,7 +1045,8 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
     if validated.status_code == 200:
         body = _object(validated)
         if (
-            body.get("status") != "active"
+            body.get("slug") != skill_slug
+            or body.get("status") != "active"
             or body.get("version") != initial_version + 1
             or body.get("stale") is not False
             or body.get("depends_on") != [dependency]
@@ -882,7 +1077,11 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
         failures.append("validate: database transition is not authoritative")
     if archived.status_code == 200:
         body = _object(archived)
-        if body.get("status") != "archived" or body.get("version") != initial_version + 2:
+        if (
+            body.get("slug") != skill_slug
+            or body.get("status") != "archived"
+            or body.get("version") != initial_version + 2
+        ):
             failures.append("archive: authoritative status/version missing")
         if body.get("stale") is not False or body.get("depends_on") != [dependency]:
             failures.append("archive: dependency/stale state changed")
@@ -895,9 +1094,9 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
         replay_body = _object(replay)
         if replay_body.get("replayed") is not True:
             failures.append("archive replay: idempotent replay flag missing")
-        for key in ("slug", "status", "version", "stale", "depends_on", "audit_correlation"):
-            if replay_body.get(key) != archive_body.get(key):
-                failures.append(f"archive replay: original {key} changed")
+        expected_replay = {**archive_body, "replayed": True}
+        if replay_body != expected_replay:
+            failures.append("archive replay: complete original result changed beyond replayed flag")
     if db_after_archive is None or any(
         (
             db_after_archive.get("state") != "archived",
@@ -919,6 +1118,24 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
         )
     ):
         failures.append("list after: replay/stale request changed authoritative state")
+    captured = capsys.readouterr()
+    captured_logs = f"{caplog.text}\n{captured.out}\n{captured.err}"
+    _check_secret_values(
+        failures,
+        "skill public surfaces",
+        (
+            created,
+            listing,
+            validated,
+            listed_after_validation,
+            archived,
+            replay,
+            stale,
+            after,
+        ),
+        captured_logs,
+        {procedure_secret},
+    )
     assert not failures, "\n".join(failures)
 
 
@@ -929,6 +1146,15 @@ async def test_viewer_curator_and_platform_owner_cannot_mutate_project_directory
     slug = unique_slug("directory-deny")
     project_id = await harness.setup_project(slug, [("general", 0)])
     marker = unique_slug("denied")
+    seed_skill_slug = unique_slug("deny-control-skill")
+    seed_skill_version = 5
+    async with harness.sm() as session:
+        dependency_id = await session.scalar(
+            select(models.Topic.id).where(
+                models.Topic.project_id == _uuid(project_id), models.Topic.slug == "general"
+            )
+        )
+    dependency = str(dependency_id or uuid.uuid4())
     client_instance, _ = _client(harness, tmp_path)
 
     async with client_instance as client:
@@ -959,6 +1185,31 @@ async def test_viewer_curator_and_platform_owner_cannot_mutate_project_directory
             project_id=project_id,
             project_role="project-admin",
         )
+        seed_person = await client.post(
+            f"/api/v1/admin/persons?project={slug}",
+            headers=admin,
+            json={"name": "Mutation control person", "topics": ["general"], "language": "en"},
+        )
+        seed_person_id = _string_field(_object(seed_person), "person_id") or str(uuid.uuid4())
+        seed_skill_markdown = serialize_skill(
+            SkillFrontmatter(
+                slug=seed_skill_slug,
+                title="Mutation control skill",
+                tags=["general"],
+                depends_on=[dependency],
+                state="proposed",
+                version=seed_skill_version,
+            ),
+            "Control body",
+        )
+        seed_skill = await client.post(
+            f"/api/v1/admin/skills?project={slug}",
+            headers=admin,
+            json={"markdown": seed_skill_markdown},
+        )
+        seed_person_before = await _person_db_state(harness, seed_person_id)
+        seed_skill_before = await _skill_db_state(harness, project_id, seed_skill_slug)
+        counts_before = await _project_resource_counts(harness, project_id)
         actors = {"viewer": viewer, "curator": curator, "owner-member": owner_member}
         denials: dict[str, httpx.Response] = {}
         for actor, actor_headers in actors.items():
@@ -969,36 +1220,75 @@ async def test_viewer_curator_and_platform_owner_cannot_mutate_project_directory
                 SkillFrontmatter(slug=skill_slug, title="Denied", tags=["general"]),
                 "No write",
             )
-            denials[f"{actor}/person"] = await client.post(
+            denials[f"{actor}/person-create"] = await client.post(
                 f"/api/v1/admin/persons?project={slug}",
                 headers=actor_headers,
                 json={"name": person_name, "topics": ["general"]},
             )
-            denials[f"{actor}/skill"] = await client.post(
+            denials[f"{actor}/person-patch"] = await client.patch(
+                f"/api/v1/admin/persons/{seed_person_id}?project={slug}",
+                headers=actor_headers,
+                json={"language": f"denied-{actor}", "expected_version": 1},
+            )
+            denials[f"{actor}/person-delete"] = await client.delete(
+                f"/api/v1/admin/persons/{seed_person_id}",
+                headers=actor_headers,
+                params={"project": slug, "expected_version": 1},
+            )
+            denials[f"{actor}/skill-create"] = await client.post(
                 f"/api/v1/admin/skills?project={slug}",
                 headers=actor_headers,
                 json={"markdown": skill},
             )
-            denials[f"{actor}/hunt"] = await client.post(
+            denials[f"{actor}/skill-validate"] = await client.post(
+                f"/api/v1/admin/skills/{seed_skill_slug}/validate?project={slug}",
+                headers=actor_headers,
+                json={"expected_version": seed_skill_version},
+            )
+            denials[f"{actor}/skill-archive"] = await client.post(
+                f"/api/v1/admin/skills/{seed_skill_slug}/archive?project={slug}",
+                headers={
+                    **actor_headers,
+                    "Idempotency-Key": f"deny-archive-{actor}",
+                },
+                json={"expected_version": seed_skill_version},
+            )
+            denials[f"{actor}/hunt-ask"] = await client.post(
                 f"/api/v1/admin/hunts/ask?project={slug}",
                 headers=actor_headers,
                 json={"question": question, "topics": ["general"]},
             )
+        seed_person_after = await _person_db_state(harness, seed_person_id)
+        seed_skill_after = await _skill_db_state(harness, project_id, seed_skill_slug)
+        counts_after = await _project_resource_counts(harness, project_id)
         persons_after = await client.get(f"/api/v1/admin/persons?project={slug}", headers=admin)
         skills_after = await client.get(f"/api/v1/admin/skills?project={slug}", headers=admin)
         hunts_after = await client.get(f"/api/v1/admin/hunts?project={slug}", headers=admin)
 
-    failures = [
+    failures: list[str] = []
+    _status(failures, "seed person", seed_person, 201)
+    _status(failures, "seed skill", seed_skill, 201)
+    if dependency_id is None:
+        failures.append("fixture: deny-control skill dependency is not authoritative")
+    if seed_person_before is None or seed_skill_before is None:
+        failures.append("fixture: mutation-control seed was not persisted")
+    failures.extend(
         f"{label}: expected 403, got {response.status_code}; {_safe_shape(response)}"
         for label, response in denials.items()
         if response.status_code != 403
-    ]
+    )
     for label, response in (
         ("persons after", persons_after),
         ("skills after", skills_after),
         ("hunts after", hunts_after),
     ):
         _status(failures, label, response, 200)
+    if seed_person_after != seed_person_before:
+        failures.append("postcondition: a denied Person mutation changed or deleted its seed")
+    if seed_skill_after != seed_skill_before:
+        failures.append("postcondition: a denied Skill mutation changed or deleted its seed")
+    if counts_after != counts_before:
+        failures.append("postcondition: denied mutations changed project resource counts")
     project_uuid = _uuid(project_id)
     if project_uuid is None:
         failures.append("postcondition: invalid project id")
