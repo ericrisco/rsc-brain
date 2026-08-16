@@ -8,18 +8,19 @@ injected through the API dependency boundary that T006 must expose.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import logging
 import time
 import uuid
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TypedDict, TypeGuard
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from rsc_brain import security
 from rsc_brain.api.app import ApiDeps, create_app
@@ -30,11 +31,35 @@ from rsc_brain.identity.sessions import resolve_session
 from rsc_brain.mcp.quotas import QuotaConfig, QuotaService
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
+from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
 from tests.integration.conftest import Harness, unique_slug
 
 _PASSWORD = "correct horse battery staple"  # Integration fixture only.
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+async def _isolate_management_projects(migrated_dsn: str) -> AsyncIterator[None]:
+    """Keep exact inventory contracts independent on the session-scoped Postgres container.
+
+    The integration container intentionally survives the whole pytest session. Management tests,
+    however, assert exact tenant inventories, so every project created by one test must be removed
+    before the next test starts. Global users may remain because every fixture address is unique.
+    """
+
+    engine = make_engine(migrated_dsn)
+    sessionmaker = make_sessionmaker(engine)
+    async with sessionmaker() as session:
+        await session.execute(delete(models.Project))
+        await session.commit()
+    try:
+        yield
+    finally:
+        async with sessionmaker() as session:
+            await session.execute(delete(models.Project))
+            await session.commit()
+        await engine.dispose()
 
 
 class UserShape(TypedDict):
@@ -3420,3 +3445,218 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
             )
     assert target_session
     assert not failures, "\n".join(failures)
+
+
+async def test_project_delete_saga_resumes_after_a_multistore_failure(
+    build_harness: Callable[..., Harness],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crash after the durable checkpoint must not strand or falsely replay the erasure."""
+
+    from rsc_brain.knowledge import gdpr
+
+    harness = build_harness()
+    identity = IdentityService(harness.sm)
+    await identity.ensure_default_project()
+    owner = await _active_user(identity, platform_role="owner")
+    project_slug = unique_slug("saga-delete")
+    project_id = await identity.create_project(project_slug, "Saga delete")
+    original = gdpr.hard_delete_project
+    attempts = 0
+
+    async def fail_once(*args: object, **kwargs: object) -> dict[str, int]:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("injected multistore interruption")
+        return await original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(gdpr, "hard_delete_project", fail_once)
+    async with _client(harness, tmp_path) as client:
+        session_headers, _ = await _session(client, owner)
+        headers = {**session_headers, "Idempotency-Key": "delete-saga-recovery-contract"}
+        params: dict[str, str | int] = {"expected_version": 1, "confirm": project_slug}
+        interrupted = await client.delete(
+            f"/api/v1/admin/projects/{project_slug}", headers=headers, params=params
+        )
+        resumed = await client.delete(
+            f"/api/v1/admin/projects/{project_slug}", headers=headers, params=params
+        )
+        replay = await client.delete(
+            f"/api/v1/admin/projects/{project_slug}", headers=headers, params=params
+        )
+
+    assert interrupted.status_code == 500
+    assert resumed.status_code == 200
+    resumed_payload = resumed.json()
+    assert resumed_payload == {
+        "project": project_slug,
+        "status": "deleted",
+        "audit_correlation": resumed_payload["audit_correlation"],
+        "replayed": True,
+    }
+    assert replay.status_code == 200
+    assert replay.json() == resumed_payload
+    assert attempts == 2
+    assert await _project_row(harness, project_slug) is None
+    async with harness.sm() as session:
+        command = await session.scalar(
+            select(models.ManagementCommand).where(
+                models.ManagementCommand.operation == f"project:delete target={project_slug}",
+                models.ManagementCommand.idempotency_key == "delete-saga-recovery-contract",
+            )
+        )
+        audit_count = len(
+            list(
+                await session.scalars(
+                    select(models.AuditLog).where(
+                        models.AuditLog.project_id == uuid.UUID(project_id),
+                        models.AuditLog.action == f"project:delete target={project_slug}",
+                    )
+                )
+            )
+        )
+    assert command is not None and command.status == "completed"
+    assert audit_count == 1
+
+
+async def test_project_admin_cannot_escalate_platform_role_or_disable_cross_project_identity(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    harness = build_harness()
+    project_slug = unique_slug("authority-a")
+    project_id = await harness.setup_project(project_slug, [("general", 0)])
+    foreign_id = await harness.setup_project(unique_slug("authority-b"), [("general", 0)])
+    identity = IdentityService(harness.sm)
+    admin = await _active_user(identity)
+    target = await _active_user(identity)
+    await identity.add_membership(
+        admin.user["id"], project_id, role="project-admin", allowed_topics=("general",)
+    )
+    await identity.add_membership(
+        target.user["id"], project_id, role="member", allowed_topics=("general",)
+    )
+    await identity.add_membership(
+        target.user["id"], foreign_id, role="member", allowed_topics=("general",)
+    )
+    escalated_email = f"{unique_slug('escalated')}@example.com"
+
+    async with _client(harness, tmp_path) as client:
+        session_headers, _ = await _session(client, admin)
+        elevated = await client.post(
+            f"/api/v1/admin/users/invite?project={project_slug}",
+            headers={**session_headers, "Idempotency-Key": "deny-platform-escalation"},
+            json={
+                "email": escalated_email,
+                "platform_role": "owner",
+                "project_role": "member",
+                "allowed_topics": ["general"],
+            },
+        )
+        cross_project_disable = await client.post(
+            f"/api/v1/admin/users/{target.user['id']}/disable?project={project_slug}",
+            headers={**session_headers, "Idempotency-Key": "deny-cross-project-disable"},
+            json={"expected_status": "active", "impact_acknowledged": True},
+        )
+
+    assert elevated.status_code == 403
+    assert cross_project_disable.status_code == 403
+    async with harness.sm() as session:
+        escalated = await session.scalar(
+            select(models.User.id).where(models.User.email == escalated_email)
+        )
+        target_row = await session.get(models.User, uuid.UUID(target.user["id"]))
+        target_memberships = list(
+            await session.scalars(
+                select(models.ProjectMembership).where(
+                    models.ProjectMembership.user_id == uuid.UUID(target.user["id"])
+                )
+            )
+        )
+    assert escalated is None
+    assert target_row is not None and target_row.status == "active" and target_row.version == 1
+    assert len(target_memberships) == 2
+
+
+async def test_concurrent_same_key_commits_one_transition_audit_and_replay(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    harness = build_harness()
+    project_slug = unique_slug("concurrent-command")
+    project_id = await harness.setup_project(project_slug, [("general", 0)])
+    identity = IdentityService(harness.sm)
+    admin = await _active_user(identity)
+    await identity.add_membership(
+        admin.user["id"], project_id, role="project-admin", allowed_topics=("general",)
+    )
+    topic_slug = unique_slug("one-topic")
+
+    async with _client(harness, tmp_path) as client:
+        session_headers, _ = await _session(client, admin)
+        headers = {**session_headers, "Idempotency-Key": "concurrent-topic-contract"}
+
+        async def create() -> httpx.Response:
+            return await client.post(
+                f"/api/v1/admin/topics?project={project_slug}",
+                headers=headers,
+                json={"slug": topic_slug, "name": "One topic", "sensitivity": 2},
+            )
+
+        first, second = await asyncio.gather(create(), create())
+        mismatch = await client.post(
+            f"/api/v1/admin/topics?project={project_slug}",
+            headers=headers,
+            json={"slug": topic_slug, "name": "Different request", "sensitivity": 2},
+        )
+
+    assert sorted((first.status_code, second.status_code)) == [200, 201]
+    original = first.json() if first.status_code == 201 else second.json()
+    replay = second.json() if second.status_code == 200 else first.json()
+    assert replay == {**original, "replayed": True}
+    assert mismatch.status_code == 409
+    assert set(mismatch.json()) == {"detail", "audit_correlation"}
+    async with harness.sm() as session:
+        topic_count = len(
+            list(
+                await session.scalars(
+                    select(models.Topic).where(
+                        models.Topic.project_id == uuid.UUID(project_id),
+                        models.Topic.slug == topic_slug,
+                    )
+                )
+            )
+        )
+        audit_count = len(
+            list(
+                await session.scalars(
+                    select(models.AuditLog).where(
+                        models.AuditLog.project_id == uuid.UUID(project_id),
+                        models.AuditLog.action == f"topic:create target={topic_slug}",
+                        models.AuditLog.denied.is_(False),
+                    )
+                )
+            )
+        )
+        denied_audit_count = len(
+            list(
+                await session.scalars(
+                    select(models.AuditLog).where(
+                        models.AuditLog.project_id == uuid.UUID(project_id),
+                        models.AuditLog.action == f"topic:create target={topic_slug}",
+                        models.AuditLog.denied.is_(True),
+                    )
+                )
+            )
+        )
+        command_count = len(
+            list(
+                await session.scalars(
+                    select(models.ManagementCommand).where(
+                        models.ManagementCommand.project_id == uuid.UUID(project_id),
+                        models.ManagementCommand.operation == f"topic:create target={topic_slug}",
+                    )
+                )
+            )
+        )
+    assert (topic_count, audit_count, denied_audit_count, command_count) == (1, 1, 1, 1)

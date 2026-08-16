@@ -9,11 +9,13 @@ auditable; a revoked PAT/session stops resolving in <5s.
 
 from __future__ import annotations
 
+import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.authorization import effective_platform_capabilities
@@ -21,6 +23,7 @@ from rsc_brain.identity import sessions
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.identity.sessions import SessionUser
 from rsc_brain.scope import PlatformIdentityScope, PrincipalType
+from rsc_brain.stores.relational import models
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -82,10 +85,24 @@ async def _session_user(
 ) -> SessionUser:
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing session")
-    user = await sessions.resolve_session(_sessionmaker(request), credentials.credentials)
-    if user is None:
+    sessionmaker = _sessionmaker(request)
+    user = await sessions.resolve_session(sessionmaker, credentials.credentials)
+    if user is not None:
+        return user
+    # `/me` is the common authority reread for all human console credentials. PAT and OAuth are
+    # project-bound, but resolve to the same global identity and fresh memberships as a session.
+    from rsc_brain.identity.resolve import resolve_scope
+
+    scope = await resolve_scope(sessionmaker, credentials.credentials)
+    if scope is None or scope.principal_type is not PrincipalType.HUMAN:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid session")
-    return user
+    async with sessionmaker() as session:
+        identity = await session.scalar(
+            select(models.User).where(models.User.id == uuid.UUID(scope.principal_id))
+        )
+    if identity is None or identity.status != "active":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid session")
+    return SessionUser(user_id=str(identity.id), email=identity.email, role=identity.role)
 
 
 @auth_router.post("/login")

@@ -79,29 +79,65 @@ async def record_audit(
     result_count: int | None = None,
     denied: bool = False,
     trace_id: str | None = None,
-) -> None:
+) -> int:
     # `query_text` is persisted verbatim only when the caller passes it (do_recall passes it solely
     # when the project's query_text_logging is ON, FR-13.9) — record_audit itself never fetches it.
-    is_human = scope.principal_type is PrincipalType.HUMAN
     async with session_scope(sessionmaker) as session:
-        session.add(
-            models.AuditLog(
-                project_id=uuid.UUID(scope.project_id),
-                user_id=uuid.UUID(scope.principal_id) if is_human else None,
-                principal_type=scope.principal_type.value,
-                principal_id=scope.principal_id,
-                on_behalf_of=scope.on_behalf_of,
-                trace_id=trace_id,
-                action=action,
-                tool=tool,
-                query_hash=query_hash,
-                query_text=query_text,
-                duration_ms=duration_ms,
-                topics_used=list(topics_used),
-                result_count=result_count,
-                denied=denied,
-            )
+        return await record_audit_in_session(
+            session,
+            scope,
+            action=action,
+            tool=tool,
+            query_hash=query_hash,
+            query_text=query_text,
+            duration_ms=duration_ms,
+            topics_used=topics_used,
+            result_count=result_count,
+            denied=denied,
+            trace_id=trace_id,
         )
+
+
+async def record_audit_in_session(
+    session: AsyncSession,
+    scope: ProjectScope,
+    *,
+    action: str,
+    tool: str | None = None,
+    query_hash: str | None = None,
+    query_text: str | None = None,
+    duration_ms: int | None = None,
+    topics_used: Sequence[str] = (),
+    result_count: int | None = None,
+    denied: bool = False,
+    trace_id: str | None = None,
+) -> int:
+    """Append an audit outcome to the caller's existing transaction.
+
+    Management mutations use this form so state, audit correlation and idempotency result become
+    durable together; other call sites keep the standalone convenience wrapper above.
+    """
+
+    is_human = scope.principal_type is PrincipalType.HUMAN
+    row = models.AuditLog(
+        project_id=uuid.UUID(scope.project_id),
+        user_id=uuid.UUID(scope.principal_id) if is_human else None,
+        principal_type=scope.principal_type.value,
+        principal_id=scope.principal_id,
+        on_behalf_of=scope.on_behalf_of,
+        trace_id=trace_id,
+        action=action,
+        tool=tool,
+        query_hash=query_hash,
+        query_text=query_text,
+        duration_ms=duration_ms,
+        topics_used=list(topics_used),
+        result_count=result_count,
+        denied=denied,
+    )
+    session.add(row)
+    await session.flush()
+    return row.id
 
 
 async def query_text_logging_enabled(
