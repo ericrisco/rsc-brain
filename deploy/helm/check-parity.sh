@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Drift guard (SPEC-25 §4.1): the Helm chart is DERIVED from the canonical production compose, so
-# the two must never diverge silently. This records the hash of docker-compose.prod.yml that the
-# chart + PARITY.md were last reconciled against. If the compose changes, this fails — the fix is
-# to update the chart + PARITY.md and re-record the hash in the SAME PR, then:
-#   shasum -a 256 deploy/docker-compose.prod.yml > deploy/helm/COMPOSE_SOURCE.sha256
-# (the path column is intentional — `shasum -c` verifies file + hash together).
+# Drift guard (SPEC-25 §4.1): the Helm chart and the install-by-version topology are both DERIVED
+# from the canonical production compose, so none of the three may diverge silently. This records the
+# hash of every guarded file as last reconciled. If one changes, this fails — the fix is to update
+# the chart + PARITY.md and re-record ALL of them in the SAME PR:
+#   shasum -a 256 deploy/docker-compose.prod.yml deploy/docker-compose.version.yml > deploy/helm/COMPOSE_SOURCE.sha256
+# (the path column is intentional — `shasum -c` verifies file + hash together.)
+#
+# Re-recording only the canonical file drops the other from the guard, silently. This header said
+# exactly that for one commit after the second file was added: an instruction that disarms the
+# protection it is printed to restore. The error path below was fixed and this was not — a fix
+# applied to the loud copy of a sentence and not to the quiet one.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 RECORD="deploy/helm/COMPOSE_SOURCE.sha256"
-
-# SPEC release-identity: the install-by-version topology is DERIVED from the canonical compose the
-# same way the chart is, so it belongs under the same guard. Without this it would be the only
-# deployment definition in the repository that nothing reconciles — in a repository that already
-# decided this question once.
 
 if [[ ! -f "$RECORD" ]]; then
   echo "parity guard: missing $RECORD" >&2
