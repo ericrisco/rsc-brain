@@ -250,20 +250,48 @@ export function usePromoteGap(project: string) {
 }
 
 /** Hunts for a project (live — follows the FR-6.3 state machine). */
-export function useHunts(project: string) {
+export function useHunts(project: string, openOnly = false) {
   return useQuery({
-    queryKey: ["kb", "hunts", project],
+    queryKey: ["kb", "hunts", project, openOnly],
     enabled: !!project,
     refetchInterval: LIVE_MS,
     queryFn: async (): Promise<HuntList> => {
       const { data, error, response } = await api.GET("/api/v1/admin/hunts", {
-        params: { query: { project } },
+        params: { query: { project, open_only: openOnly } },
       });
       if (error) throw uiErrorFromResponse(response, error);
       return data;
     },
   });
 }
+
+export {
+  useArchiveSkill,
+  useAskHunt,
+  useCreateProject,
+  useCreateSkill,
+  useCreateTopic,
+  useCreateUserCredential,
+  useDeleteProject,
+  useDisableUser,
+  useGrantTopic,
+  useInviteUser,
+  useMemberships,
+  useProjectDeleteImpact,
+  useProjects,
+  useRequestPasswordReset,
+  useRevokeTopic,
+  useRevokeUserCredential,
+  useRotateUserCredential,
+  useSkills,
+  useTopics,
+  useUpdateMembership,
+  useUpdateProject,
+  useUpdateTopic,
+  useUserCredentials,
+  useUsers,
+  useValidateSkill,
+} from "./management-hooks";
 
 /** Claims currently disputed (FR-13.5). */
 export function useDisputed(project: string) {

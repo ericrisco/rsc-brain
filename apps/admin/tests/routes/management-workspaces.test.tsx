@@ -51,6 +51,18 @@ vi.mock("@/components/page-shell", () => ({
 }));
 
 vi.mock("@/lib/api/hooks", () => ({
+  useMe: () => ({
+    data: {
+      identity: { id: "operator-1", email: "operator@example.invalid", role: "admin" },
+      user: { id: "operator-1", email: "operator@example.invalid", role: "admin" },
+      is_owner: false,
+      platform_capabilities: ["platform.project.list_all", "platform.project.create", "platform.user.invite"],
+      memberships: [{ project: "alpha", role: "project-admin", capabilities: ["project.manage.read", "project.config.write", "hunt.manage"], allowed_topics: ["general", "security"], can_curate: true }],
+      preference_metadata: { theme: "system", locale: "en" },
+    },
+    isLoading: false,
+    isError: false,
+  }),
   useProjects: () => ({
     data: {
       projects: [
@@ -86,7 +98,13 @@ vi.mock("@/lib/api/hooks", () => ({
     isError: false,
   }),
   useInviteUser: () => ({ mutateAsync: inviteUser, isPending: false }),
+  useMemberships: () => ({
+    data: { memberships: [{ id: "membership-ada", user_id: "user-ada", role: "project-admin", status: "active", version: 9, allowed_topics: ["general", "security"], can_curate: true }] },
+    isLoading: false,
+    isError: false,
+  }),
   useDisableUser: () => ({ mutateAsync: disableUser, isPending: false }),
+  useRequestPasswordReset: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useUserCredentials: () => ({
     data: { items: [{ id: "cred-1", user_id: "user-ada", project: "alpha", name: "Automation", kind: "pat", status: "active", version: 2 }] },
     isLoading: false,

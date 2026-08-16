@@ -49,6 +49,8 @@ from rsc_brain.api.read_models import (
     GapEnvelope,
     GapView,
     HealthEnvelope,
+    HuntCommandView,
+    HuntDetailEnvelope,
     HuntEnvelope,
     HuntView,
     IngestEnvelope,
@@ -61,6 +63,10 @@ from rsc_brain.api.read_models import (
     RecallView,
     ReviewItemView,
     ReviewQueueEnvelope,
+    SkillCommandView,
+    SkillCreateResult,
+    SkillEnvelope,
+    SkillView,
     UsageDayTotal,
     UsageEnvelope,
     UsageRowView,
@@ -835,19 +841,19 @@ def _skill_command_view(skill: object) -> dict[str, object]:
     return view
 
 
-@router.get("/skills")
+@router.get("/skills", response_model=SkillEnvelope)
 async def list_skills_admin(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read), state: str | None = None
-) -> dict[str, object]:
+) -> SkillEnvelope:
     """List a project's skills (SPEC-20, FR-7.1). Read — console-consumable."""
     rows = await _skill_store(request).list_authorized(scope, state=state)  # type: ignore[attr-defined]
-    return {"skills": [_skill_view(skill) for skill in rows]}
+    return SkillEnvelope(skills=[SkillView.model_validate(_skill_view(skill)) for skill in rows])
 
 
-@router.post("/skills", status_code=status.HTTP_201_CREATED)
+@router.post("/skills", status_code=status.HTTP_201_CREATED, response_model=SkillCreateResult)
 async def create_skill_admin(
     body: SkillUpsert, request: Request, scope: ProjectScope = Depends(_needs_config_write)
-) -> dict[str, object]:
+) -> SkillCreateResult:
     """Create a skill from its markdown (OKF frontmatter + body)."""
     from rsc_brain.skills.frontmatter import SkillFrontmatterError, parse_skill
 
@@ -872,17 +878,17 @@ async def create_skill_admin(
         ) from exc
     decide_object(scope, Capability.PROJECT_CONFIG_WRITE, frontmatter.tags)
     skill_id = await _skill_store(request).create(scope, frontmatter, skill_body)  # type: ignore[attr-defined]
-    return {"skill_id": skill_id, "slug": frontmatter.slug}
+    return SkillCreateResult(skill_id=skill_id, slug=frontmatter.slug)
 
 
-@router.post("/skills/{slug}/validate")
+@router.post("/skills/{slug}/validate", response_model=SkillCommandView)
 async def validate_skill_admin(
     slug: str,
     body: VersionedCommand,
     request: Request,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     scope: ProjectScope = Depends(_needs_config_write),
-) -> dict[str, object]:
+) -> SkillCommandView:
     from rsc_brain.skills.store import (
         SkillNotFound,
         SkillValidationConflict,
@@ -922,21 +928,23 @@ async def validate_skill_admin(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="skill dependencies are not valid"
         ) from exc
-    return {
-        **_skill_command_view(transition.skill),
-        "audit_correlation": transition.audit_correlation,
-        "replayed": transition.replayed,
-    }
+    return SkillCommandView.model_validate(
+        {
+            **_skill_command_view(transition.skill),
+            "audit_correlation": transition.audit_correlation,
+            "replayed": transition.replayed,
+        }
+    )
 
 
-@router.post("/skills/{slug}/archive")
+@router.post("/skills/{slug}/archive", response_model=SkillCommandView)
 async def archive_skill_admin(
     slug: str,
     body: VersionedCommand,
     request: Request,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     scope: ProjectScope = Depends(_needs_config_write),
-) -> dict[str, object]:
+) -> SkillCommandView:
     from rsc_brain.skills.store import SkillNotFound, SkillVersionConflict
 
     if not idempotency_key:
@@ -968,11 +976,13 @@ async def archive_skill_admin(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="version conflict"
         ) from exc
-    return {
-        **_skill_command_view(transition.skill),
-        "audit_correlation": transition.audit_correlation,
-        "replayed": transition.replayed,
-    }
+    return SkillCommandView.model_validate(
+        {
+            **_skill_command_view(transition.skill),
+            "audit_correlation": transition.audit_correlation,
+            "replayed": transition.replayed,
+        }
+    )
 
 
 @router.get("/review-queue", response_model=ReviewQueueEnvelope)
@@ -1775,24 +1785,24 @@ async def list_hunts(
     return HuntEnvelope(hunts=[HuntView.model_validate(hunt) for hunt in hunts])
 
 
-@router.get("/hunts/{hunt_id}")
+@router.get("/hunts/{hunt_id}", response_model=HuntDetailEnvelope)
 async def get_hunt(
     hunt_id: str, request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> HuntDetailEnvelope:
     hunt = await _hunts(request).get_hunt(scope, hunt_id)  # type: ignore[attr-defined]
     if hunt is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="hunt not found")
-    return {"hunt": hunt}
+    return HuntDetailEnvelope(hunt=HuntView.model_validate(hunt))
 
 
-@router.post("/hunts/ask", status_code=status.HTTP_201_CREATED)
+@router.post("/hunts/ask", status_code=status.HTTP_201_CREATED, response_model=HuntCommandView)
 async def ask_hunt(
     body: HuntAsk,
     request: Request,
     response: Response,
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     scope: ProjectScope = Depends(_needs_hunt_manage),
-) -> dict[str, object]:
+) -> HuntCommandView:
     """Open a MANUAL hunt (FR-6.2c) routed by topic overlap (NO_OWNER if unowned).
 
     The question is routed to whoever owns the topics it names, so the caller must hold them.
@@ -1817,17 +1827,17 @@ async def ask_hunt(
     )
     if outcome.replayed:
         response.status_code = status.HTTP_200_OK
-    return {
-        "hunt_id": outcome.hunt_id,
-        "state": str(outcome.state),
-        "person_id": outcome.person_id,
-        "throttled": outcome.throttled,
+    return HuntCommandView(
+        hunt_id=outcome.hunt_id,
+        state=str(outcome.state),
+        person_id=outcome.person_id,
+        throttled=outcome.throttled,
         # R28: an operator has to be able to tell "asked" from "recorded but never sent".
-        "delivered": outcome.delivered,
-        "topics": list(outcome.topics),
-        "audit_correlation": outcome.audit_correlation,
-        "replayed": outcome.replayed,
-    }
+        delivered=outcome.delivered,
+        topics=list(outcome.topics),
+        audit_correlation=outcome.audit_correlation,
+        replayed=outcome.replayed,
+    )
 
 
 @router.post(
