@@ -1180,6 +1180,7 @@ async def observability_ingest(
                 "claims_generated": r.claims_generated,
                 "discarded_chunks": r.discarded_chunks,
                 "error": r.error,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,  # AUDIT-091
             }
             for r in runs
         ],
