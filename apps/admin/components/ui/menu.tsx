@@ -16,6 +16,8 @@ export function Menu({
   label,
   children,
   className,
+  onBlur,
+  onKeyDownCapture,
   ...props
 }: HTMLAttributes<HTMLDivElement> & { label: ReactNode }) {
   const [open, setOpen] = useState(false);
@@ -47,20 +49,28 @@ export function Menu({
     else if (event.key === "ArrowUp") target = (current - 1 + menuItems.length) % menuItems.length;
     else if (event.key === "Home") target = 0;
     else if (event.key === "End") target = menuItems.length - 1;
-    else if (event.key === "Escape") {
-      event.preventDefault();
-      closeAndRestoreFocus();
-      return;
-    } else if (event.key === "Tab") {
-      setOpen(false);
-      return;
-    } else return;
+    else return;
     event.preventDefault();
     menuItems[target]?.focus();
   };
 
   return (
-    <div ref={rootRef} className={cn("relative", className)} {...props}>
+    <div
+      ref={rootRef}
+      className={cn("relative", className)}
+      {...props}
+      onBlur={(event) => {
+        onBlur?.(event);
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+      }}
+      onKeyDownCapture={(event) => {
+        onKeyDownCapture?.(event);
+        if (!open || event.defaultPrevented || event.key !== "Escape") return;
+        event.preventDefault();
+        event.stopPropagation();
+        closeAndRestoreFocus();
+      }}
+    >
       <button
         ref={triggerRef}
         type="button"
