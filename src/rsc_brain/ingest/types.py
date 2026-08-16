@@ -8,6 +8,7 @@ same pipeline (plan §decision 1).
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -191,3 +192,11 @@ class RunStatus:
     tables_needs_review: int = 0
     discarded_chunks: int = 0
     error: str | None = None
+    #: AUDIT-091: when this run last changed. The row has carried it since the schema was written —
+    #: every stage mark and every recorded error stamps it — and no reader could see it. Without it
+    #: a snapshot answers "what state" but never "is it moving", and those are different questions
+    #: for a stage that can run for hours. Measured on a real host: a 400-page document sat at
+    #: `phase: approved, claims_generated: 0, error: null` for three hours while making 1,300
+    #: provider calls. Nothing in the response distinguished that from a stalled worker; it took
+    #: counting rows in `token_usage` to tell, which no operator should have to do.
+    updated_at: dt.datetime | None = None
