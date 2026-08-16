@@ -185,7 +185,9 @@ describe("Quiet Control Room design-system contract", () => {
   });
 
   it("provides one shared primitive catalogue and semantic shell landmarks", () => {
-    const shell = readAppFile("components/page-shell.tsx");
+    const shell = ["components/page-shell.tsx", "components/app-shell.tsx"]
+      .map(readAppFile)
+      .join("\n");
 
     expect({
       primitives: primitiveFiles.every((name) => existsSync(appFile(`components/ui/${name}.tsx`))),

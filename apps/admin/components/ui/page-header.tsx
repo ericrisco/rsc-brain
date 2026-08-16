@@ -14,7 +14,7 @@ export function PageHeader({
   meta?: ReactNode;
 }) {
   return (
-    <header className="grid gap-4 border-b border-border pb-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+    <div className="grid gap-4 border-b border-border pb-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
       <div>
         {eyebrow ? (
           <p className="mb-2 font-mono text-[0.6875rem] font-medium uppercase tracking-[0.12em] text-interactive">
@@ -28,6 +28,6 @@ export function PageHeader({
         {meta ? <div className="mt-3 flex flex-wrap gap-2">{meta}</div> : null}
       </div>
       {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
-    </header>
+    </div>
   );
 }
