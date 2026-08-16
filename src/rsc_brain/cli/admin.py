@@ -255,6 +255,26 @@ def _resolve_membership(project_id: str, user_id: str) -> tuple[str, ...]:
     return current
 
 
+@topics_app.command("list")
+def topics_list(
+    ctx: typer.Context,
+    project_id: str = typer.Option(..., "--project-id", help="Project whose taxonomy to report."),
+    json_output: bool = JSON_OPTION,
+) -> None:
+    """Report a project's topics with their sensitivity (AUDIT-075).
+
+    The set a grant may draw from. A topic at sensitivity 3 or above is restrictive, so the number is
+    shown rather than left for the operator to remember.
+    """
+    topics = _run(lambda s: s.list_topics(project_id))
+    human = "\n".join(
+        f"  {t['slug']:<16} sensitivity={t['sensitivity']}"
+        f"{'  (restrictive)' if int(t['sensitivity']) >= 3 else ''}  {t['name']}"  # type: ignore[call-overload]
+        for t in topics
+    )
+    emit_result(ctx, json_output, {"topics": topics}, human or "  (no topics)")
+
+
 @topics_app.command("grant")
 def topics_grant(
     ctx: typer.Context,
