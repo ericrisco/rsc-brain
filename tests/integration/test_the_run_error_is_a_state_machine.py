@@ -51,7 +51,7 @@ async def _document(harness: Harness, scope: ProjectScope, checksum: str, tmp_pa
 
 async def _status(harness: Harness, scope: ProjectScope, document: str) -> RunStatus:
     """The run, or a failure that says the run is missing rather than an AttributeError."""
-    status = await _status(harness, scope, document)
+    status = await harness.repo.get_run_status(scope, document)
     assert status is not None, "no run exists for this document"
     return status
 
