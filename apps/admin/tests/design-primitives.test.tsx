@@ -60,6 +60,10 @@ describe("design-system runtime", () => {
     await user.click(screen.getByRole("tab", { name: /Second/ }));
     expect(screen.getByRole("tab", { name: /Second/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveTextContent("Second panel");
+
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("tab", { name: "First" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("First panel");
   });
 
   it("uses the native modal boundary with labelled content", () => {

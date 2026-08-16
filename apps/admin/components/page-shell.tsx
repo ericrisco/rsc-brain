@@ -89,7 +89,7 @@ export function PageShell({
           </p>
         </aside>
         <div className="min-w-0">
-          <header className="sticky top-0 z-40 flex min-h-14 flex-wrap items-center justify-between gap-2 border-b border-border bg-canvas/95 px-4 backdrop-blur-sm lg:px-6">
+          <header className="sticky top-0 z-40 flex min-h-14 flex-wrap items-center justify-between gap-2 border-b border-border bg-canvas px-4 lg:px-6">
             <div className="lg:hidden">
               <BrandMark compact />
             </div>

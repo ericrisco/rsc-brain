@@ -1,3 +1,5 @@
+"use client";
+
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
@@ -32,6 +34,20 @@ export function Tabs({
               aria-selected={selected}
               tabIndex={selected ? 0 : -1}
               onClick={() => onValueChange(item.value)}
+              onKeyDown={(event) => {
+                const current = items.findIndex((candidate) => candidate.value === item.value);
+                let target = current;
+                if (event.key === "ArrowRight") target = (current + 1) % items.length;
+                else if (event.key === "ArrowLeft") target = (current - 1 + items.length) % items.length;
+                else if (event.key === "Home") target = 0;
+                else if (event.key === "End") target = items.length - 1;
+                else return;
+                event.preventDefault();
+                const next = items[target];
+                if (!next) return;
+                onValueChange(next.value);
+                document.getElementById(`tab-${next.value}`)?.focus();
+              }}
               className={cn(
                 "relative min-h-11 whitespace-nowrap px-3 text-sm font-medium text-text-secondary transition-colors duration-[var(--motion-fast)] hover:text-text-primary",
                 selected && "text-text-primary after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-interactive",
