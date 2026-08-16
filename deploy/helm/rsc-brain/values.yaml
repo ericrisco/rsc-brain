@@ -57,7 +57,7 @@ gateway:
     apiBase: http://ollama:11434
   reranker:
     provider: ollama
-    model: bge-reranker-v2-m3
+    model: qwen2.5:3b-instruct  # AUDIT-085: chat model — the implementation is LLM-based
     apiBase: http://ollama:11434
 
 # Opt-in in-cluster Ollama — only if the cluster ALREADY has an operative GPU (device plugin +

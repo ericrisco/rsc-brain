@@ -121,3 +121,23 @@ async def abstains(
             "one score per passage, in order — a short list mis-attributes every score after the gap"
         )
     return max(scores) < threshold
+
+
+async def degradation_of(reranker: Reranker, query: str, passages: Sequence[str]) -> str | None:
+    """Why the reranker could not decide, or ``None`` when it did.
+
+    AUDIT-085: the spec said the fallback happens "and the degradation is recorded", and the first
+    implementation had the fallback without the recording. A degradation nobody can observe is how a
+    measurement concludes "the reranker does not improve abstention" about a component that never
+    ran — which is exactly what happened, twice, before this existed.
+
+    Separate from `abstains` so the decision stays a decision: the caller asks whether to abstain,
+    and asks *separately* whether the answer it got was the reranker's opinion or the fallback's.
+    """
+    if not passages:
+        return "no candidates to score"
+    try:
+        await reranker.relevance(query, passages)
+    except RerankerUnavailable as exc:
+        return f"reranker unavailable, abstention fell back to the blended threshold: {exc}"
+    return None
