@@ -1462,6 +1462,91 @@ export interface components {
             /** Tags */
             tags?: string[] | null;
         };
+        /** ChunkReviewResolution */
+        ChunkReviewResolution: {
+            /** Chunk Id */
+            chunk_id: string;
+            /** Outcome */
+            outcome: string;
+        };
+        /** ContradictionResolutionEnvelope */
+        ContradictionResolutionEnvelope: {
+            /** Resolutions */
+            resolutions: components["schemas"]["ContradictionResolutionView"][];
+        };
+        /** ContradictionResolutionView */
+        ContradictionResolutionView: {
+            /** Confidence */
+            confidence: number;
+            /** Created At */
+            created_at: string | null;
+            /** Judge Version */
+            judge_version: string;
+            loser: components["schemas"]["ResolutionSideView"];
+            /** Verdict */
+            verdict: string;
+            winner: components["schemas"]["ResolutionSideView"];
+        };
+        /** CorrectionEnvelope */
+        CorrectionEnvelope: {
+            /** Corrections */
+            corrections: components["schemas"]["CorrectionView"][];
+        };
+        /** CorrectionMetricsEnvelope */
+        CorrectionMetricsEnvelope: {
+            /** Applied */
+            applied: number;
+            /** By Status */
+            by_status: {
+                [key: string]: number;
+            };
+            /** Correction Wars */
+            correction_wars: number;
+            /** Ownership Coverage */
+            ownership_coverage: number;
+            /** Rejected */
+            rejected: number;
+            /** Revert Rate */
+            revert_rate: number;
+            /** Routed Hunt */
+            routed_hunt: number;
+            /** Total */
+            total: number;
+        };
+        /** CorrectionRevertResult */
+        CorrectionRevertResult: {
+            /** Explanation */
+            explanation: string;
+            /** Status */
+            status: string;
+        };
+        /** CorrectionView */
+        CorrectionView: {
+            /** After Text */
+            after_text: string | null;
+            /** Author Id */
+            author_id: string | null;
+            /** Before Text */
+            before_text: string | null;
+            /** Created At */
+            created_at: string | null;
+            /** Hunt Id */
+            hunt_id: string | null;
+            /** Id */
+            id: string;
+            /** New Claim */
+            new_claim: string | null;
+            /** On Behalf Of */
+            on_behalf_of: string | null;
+            /** Resolved At */
+            resolved_at: string | null;
+            /** Role Applied */
+            role_applied: string | null;
+            /** Status */
+            status: string;
+            /** Target Claim */
+            target_claim: string;
+        };
         /** CreatePatRequest */
         CreatePatRequest: {
             /** Name */
@@ -1537,6 +1622,44 @@ export interface components {
             replayed?: boolean | null;
             revocation: components["schemas"]["RevocationState"];
         };
+        /** DisputedClaimEnvelope */
+        DisputedClaimEnvelope: {
+            /** Claims */
+            claims: components["schemas"]["DisputedClaimView"][];
+        };
+        /** DisputedClaimView */
+        DisputedClaimView: {
+            /** Credibility */
+            credibility: number;
+            /** Id */
+            id: string;
+            /** Tags */
+            tags: string[];
+            /** Text */
+            text: string;
+            /** Valid To */
+            valid_to: string | null;
+        };
+        /** GapEnvelope */
+        GapEnvelope: {
+            /** Gaps */
+            gaps: components["schemas"]["GapView"][];
+        };
+        /** GapView */
+        GapView: {
+            /** Count */
+            count: number;
+            /** Id */
+            id: string;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Query Text */
+            query_text: string | null;
+            /** Status */
+            status: string;
+            /** Topics */
+            topics: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1570,6 +1693,44 @@ export interface components {
             question: string;
             /** Topics */
             topics?: string[];
+        };
+        /** HuntEnvelope */
+        HuntEnvelope: {
+            /** Hunts */
+            hunts: components["schemas"]["HuntView"][];
+        };
+        /** HuntView */
+        HuntView: {
+            /** Answered At */
+            answered_at: string | null;
+            /** Asked At */
+            asked_at: string | null;
+            /** Channel */
+            channel: string | null;
+            /** Correction Id */
+            correction_id: string | null;
+            /** Created At */
+            created_at: string | null;
+            /** Expires At */
+            expires_at: string | null;
+            /** Gap Id */
+            gap_id: string | null;
+            /** Id */
+            id: string;
+            /** Person Id */
+            person_id: string | null;
+            /** Question */
+            question: string | null;
+            /** Resolved At */
+            resolved_at: string | null;
+            /** Retries */
+            retries: number;
+            /** State */
+            state: string;
+            /** Topics */
+            topics: string[];
+            /** Type */
+            type: string;
         };
         /** IdentityMembershipEnvelope */
         IdentityMembershipEnvelope: {
@@ -1745,6 +1906,13 @@ export interface components {
             expected_version: number;
             /** Role */
             role?: string | null;
+        };
+        /** MergeReviewResolution */
+        MergeReviewResolution: {
+            /** Outcome */
+            outcome: string;
+            /** Proposal Id */
+            proposal_id: string;
         };
         /** OntologyUpload */
         OntologyUpload: {
@@ -2020,6 +2188,13 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** PromoteGapResult */
+        PromoteGapResult: {
+            /** Hunt Id */
+            hunt_id: string;
+            /** State */
+            state: string;
+        };
         /** QueryTextLogging */
         QueryTextLogging: {
             /** Enabled */
@@ -2081,6 +2256,41 @@ export interface components {
         RejectDoc: {
             /** Reason */
             reason: string;
+        };
+        /** ResolutionSideView */
+        ResolutionSideView: {
+            /** Claim Id */
+            claim_id: string;
+            /** Credibility */
+            credibility: number;
+            /** Text */
+            text: string;
+            /** Valid To */
+            valid_to: string | null;
+        };
+        /** ReviewItemView */
+        ReviewItemView: {
+            /** Content Type */
+            content_type: string;
+            /** Detail */
+            detail: {
+                [key: string]: unknown;
+            };
+            /** Id */
+            id: string;
+            /** Preview */
+            preview: string;
+            /** Source */
+            source: string;
+        };
+        /** ReviewQueueEnvelope */
+        ReviewQueueEnvelope: {
+            /** Counts */
+            counts: {
+                [key: string]: number;
+            };
+            /** Items */
+            items: components["schemas"]["ReviewItemView"][];
         };
         /** RevocationState */
         RevocationState: {
@@ -2466,9 +2676,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DisputedClaimEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -2532,9 +2740,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ContradictionResolutionEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -2568,9 +2774,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CorrectionEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -2601,9 +2805,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CorrectionMetricsEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -2636,9 +2838,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CorrectionRevertResult"];
                 };
             };
             /** @description Validation Error */
@@ -2977,9 +3177,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GapEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -3012,9 +3210,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["PromoteGapResult"];
                 };
             };
             /** @description Validation Error */
@@ -3082,9 +3278,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["HuntEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -4415,9 +4609,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ReviewQueueEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -4455,9 +4647,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ChunkReviewResolution"];
                 };
             };
             /** @description Validation Error */
@@ -4491,9 +4681,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["MergeReviewResolution"];
                 };
             };
             /** @description Validation Error */

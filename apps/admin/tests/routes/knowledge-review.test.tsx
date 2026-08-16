@@ -304,6 +304,18 @@ describe("Living knowledge workspace", () => {
     await user.click(within(dialog).getByRole("button", { name: "Revert now" }));
     await waitFor(() => expect(revertCorrection).toHaveBeenCalledWith("correction-1"));
   });
+
+  it("does not offer correction mutation to a viewer", async () => {
+    search = "area=corrections";
+    session.memberships[0]!.role = "viewer";
+    const loaded = await loadPage("app/(console)/knowledge/page.tsx");
+    expect(loaded?.default).toBeTypeOf("function");
+    if (!loaded) return;
+    renderPage(loaded.default);
+
+    expect(screen.getByRole("table", { name: "Knowledge corrections" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Revert correction" })).not.toBeInTheDocument();
+  });
 });
 
 describe("Unified review workspace", () => {
@@ -366,5 +378,16 @@ describe("Unified review workspace", () => {
     expect(screen.queryByRole("button", { name: "Approve item" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reject item" })).not.toBeInTheDocument();
     expect(screen.getByText("Read-only review access")).toBeVisible();
+  });
+
+  it("does not replace an unavailable review deep link with different evidence", async () => {
+    search = "source=guardrail&item=missing-item";
+    const loaded = await loadPage("app/(console)/review/page.tsx");
+    expect(loaded?.default).toBeTypeOf("function");
+    if (!loaded) return;
+    renderPage(loaded.default);
+
+    expect(screen.getByRole("status")).toHaveTextContent("This review item is not available");
+    expect(screen.queryByRole("region", { name: "Review evidence" })).not.toBeInTheDocument();
   });
 });
