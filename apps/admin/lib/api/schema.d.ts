@@ -537,7 +537,7 @@ export interface paths {
         /**
          * Observability Recalls
          * @description Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only
-         *     when the project's logging is ON.
+         *     when the project's logging is ON.  The cursor advances across authorized rows only.
          */
         get: operations["observability_recalls_api_v1_admin_observability_recalls_get"];
         put?: never;
@@ -1412,6 +1412,58 @@ export interface components {
         QueryTextLogging: {
             /** Enabled */
             enabled: boolean;
+        };
+        /** ReadPage[RecallView] */
+        ReadPage_RecallView_: {
+            /**
+             * Freshness
+             * Format: date-time
+             */
+            freshness: string;
+            /** Items */
+            items: components["schemas"]["RecallView"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Total */
+            total: number | null;
+        };
+        /**
+         * RecallView
+         * @description Display-safe recall audit row returned by the observability stream.
+         */
+        RecallView: {
+            /** Action */
+            action: string;
+            /** Denied */
+            denied: boolean;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Id */
+            id: string;
+            /** On Behalf Of */
+            on_behalf_of: string | null;
+            /** Principal Id */
+            principal_id: string | null;
+            /** Principal Type */
+            principal_type: string | null;
+            /** Project Id */
+            project_id: string;
+            /** Query Hash */
+            query_hash: string | null;
+            /** Query Text */
+            query_text: string | null;
+            /** Result Count */
+            result_count: number | null;
+            /** Tool */
+            tool: string | null;
+            /** Topics Used */
+            topics_used: string[];
+            /** Trace Id */
+            trace_id: string | null;
+            /** Ts */
+            ts: string | null;
+            /** User Id */
+            user_id: string | null;
         };
         /** RejectDoc */
         RejectDoc: {
@@ -2448,6 +2500,7 @@ export interface operations {
             query?: {
                 principal_type?: string | null;
                 denied?: boolean | null;
+                cursor?: string | null;
                 limit?: number;
                 project?: string | null;
             };
@@ -2463,9 +2516,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ReadPage_RecallView_"];
                 };
             };
             /** @description Validation Error */

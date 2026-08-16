@@ -437,6 +437,222 @@
         "title": "QueryTextLogging",
         "type": "object"
       },
+      "ReadPage_RecallView_": {
+        "properties": {
+          "freshness": {
+            "format": "date-time",
+            "title": "Freshness",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecallView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "total",
+          "freshness"
+        ],
+        "title": "ReadPage[RecallView]",
+        "type": "object"
+      },
+      "RecallView": {
+        "description": "Display-safe recall audit row returned by the observability stream.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "denied": {
+            "title": "Denied",
+            "type": "boolean"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "on_behalf_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Behalf Of"
+          },
+          "principal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal Id"
+          },
+          "principal_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal Type"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "query_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Hash"
+          },
+          "query_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Text"
+          },
+          "result_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Count"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool"
+          },
+          "topics_used": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics Used",
+            "type": "array"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "id",
+          "ts",
+          "project_id",
+          "user_id",
+          "principal_type",
+          "principal_id",
+          "on_behalf_of",
+          "trace_id",
+          "action",
+          "tool",
+          "query_hash",
+          "query_text",
+          "duration_ms",
+          "topics_used",
+          "result_count",
+          "denied"
+        ],
+        "title": "RecallView",
+        "type": "object"
+      },
       "RejectDoc": {
         "properties": {
           "reason": {
@@ -2642,7 +2858,7 @@
     },
     "/api/v1/admin/observability/recalls": {
       "get": {
-        "description": "Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only\nwhen the project's logging is ON.",
+        "description": "Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only\nwhen the project's logging is ON.  The cursor advances across authorized rows only.",
         "operationId": "observability_recalls_api_v1_admin_observability_recalls_get",
         "parameters": [
           {
@@ -2679,6 +2895,22 @@
           },
           {
             "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -2711,9 +2943,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Observability Recalls Api V1 Admin Observability Recalls Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReadPage_RecallView_"
                 }
               }
             },
