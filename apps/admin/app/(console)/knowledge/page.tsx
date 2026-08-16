@@ -1,10 +1,19 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
 
+import { PageShell } from "@/components/page-shell";
+import { Badge } from "@/components/ui/badge";
+import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DataTable, type DataColumn } from "@/components/ui/data-table";
+import { Dialog } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs } from "@/components/ui/tabs";
+import { TrustRail, type TrustSegment } from "@/components/ui/trust-rail";
 import {
   useCorrectionMetrics,
   useCorrections,
@@ -16,230 +25,359 @@ import {
   useResolutions,
   useRevertCorrection,
 } from "@/lib/api/hooks";
-import { useT } from "@/lib/i18n/context";
+import type { Correction, DisputedClaim, Gap, Hunt, Resolution } from "@/lib/api/types";
+import { useI18n } from "@/lib/i18n/context";
+import { formatDateTime, formatNumber } from "@/lib/i18n/format";
 
-/** SPEC-19 — the living-knowledge view: gaps, hunts, disputed claims + resolutions, and the
- * Learning-Layer corrections feed with the pending queue + revert. Read-only except the two
- * actions the gate requires (promote a gap, revert a correction); the server enforces authz. */
+const AREAS = ["gaps", "hunts", "disputed", "resolutions", "corrections"] as const;
+type KnowledgeArea = (typeof AREAS)[number];
+
 export default function KnowledgePage() {
-  const router = useRouter();
-  const t = useT();
-  const { data: me, isError } = useMe();
-  const [project, setProject] = useState("");
-
-  useEffect(() => {
-    if (isError) router.replace("/login");
-  }, [isError, router]);
-  useEffect(() => {
-    if (me && !project && me.memberships[0]) setProject(me.memberships[0].project);
-  }, [me, project]);
-
-  if (!me) return <main className="p-6 text-sm text-text-secondary">{t("common.loading")}</main>;
-
+  const { t } = useI18n();
   return (
-    <main className="mx-auto max-w-5xl space-y-6 p-6">
-      <header className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">{t("knowledge.title")}</h1>
-        <select
-          aria-label={t("common.project")}
-          className="h-9 rounded-[var(--radius-control)] border border-border-strong bg-surface px-2 text-sm text-text-primary"
-          value={project}
-          onChange={(e) => setProject(e.target.value)}
-        >
-          {me.memberships.map((m) => (
-            <option key={m.project} value={m.project}>
-              {m.project}
-            </option>
-          ))}
-        </select>
-      </header>
-      {project ? (
-        <>
-          <Metrics project={project} />
-          <Gaps project={project} />
-          <Hunts project={project} />
-          <Disputed project={project} />
-          <Resolutions project={project} />
-          <Corrections project={project} />
-        </>
-      ) : (
-        <p className="text-sm text-text-secondary">{t("common.selectProject")}</p>
-      )}
-    </main>
+    <PageShell title={t("knowledge.title")} subtitle={t("knowledge.subtitle")}>
+      {(project) => <KnowledgeSurface project={project} />}
+    </PageShell>
   );
 }
 
-function Metrics({ project }: { project: string }) {
-  const { data } = useCorrectionMetrics(project);
-  const t = useT();
-  if (!data) return null;
-  const cards: [string, string][] = [
-    [t("knowledge.metricCorrections"), String(data.total)],
-    [t("knowledge.metricApplied"), String(data.applied)],
-    [t("knowledge.metricRoutedHunt"), String(data.routed_hunt)],
-    [t("knowledge.metricRejected"), String(data.rejected)],
-    [t("knowledge.metricRevertRate"), `${Math.round(data.revert_rate * 100)}%`],
-    [t("knowledge.metricCorrectionWars"), String(data.correction_wars)],
-    [t("knowledge.metricOwnershipCoverage"), `${Math.round(data.ownership_coverage * 100)}%`],
+function KnowledgeSurface({ project }: { project: string }) {
+  const { t, locale } = useI18n();
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requested = searchParams.get("area");
+  const area: KnowledgeArea = AREAS.includes(requested as KnowledgeArea)
+    ? (requested as KnowledgeArea)
+    : "gaps";
+  const audience = searchParams.get("audience") === "agent" ? "agent" : "human";
+  const session = useMe();
+  const membership = session.data?.memberships.find((item) => item.project === project);
+  const canPromote = membership?.role === "project-admin";
+  const humanGaps = useGaps(project, false);
+  const hunts = useHunts(project);
+  const disputed = useDisputed(project);
+  const metrics = useCorrectionMetrics(project);
+
+  const changeArea = (nextArea: string) => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("area", nextArea);
+    if (!next.has("audience")) next.set("audience", audience);
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+  };
+
+  const openGapCount = humanGaps.data?.gaps.filter((gap) => gap.status === "open").length ?? 0;
+  const activeHuntCount = hunts.data?.hunts.filter(
+    (hunt) => !["resolved", "expired", "closed"].includes(hunt.state),
+  ).length ?? 0;
+  const disputedCount = disputed.data?.claims.length ?? 0;
+  const pendingCorrectionCount = metrics.data?.by_status.pending_confirmation ?? 0;
+  const posture: TrustSegment[] = [
+    {
+      id: "gaps",
+      label: t("knowledge.gapsTitle"),
+      status: formatNumber(openGapCount, locale),
+      detail: t("knowledge.openHumanGaps"),
+      tone: openGapCount > 0 ? "warning" : "success",
+    },
+    {
+      id: "hunts",
+      label: t("knowledge.huntsTitle"),
+      status: formatNumber(activeHuntCount, locale),
+      detail: t("knowledge.activeHunts"),
+      tone: activeHuntCount > 0 ? "neutral" : "success",
+    },
+    {
+      id: "disputed",
+      label: t("knowledge.disputedTitle"),
+      status: formatNumber(disputedCount, locale),
+      detail: t("knowledge.disputedHelp"),
+      tone: disputedCount > 0 ? "warning" : "success",
+    },
+    {
+      id: "corrections",
+      label: t("knowledge.correctionsTitle"),
+      status: formatNumber(pendingCorrectionCount, locale),
+      detail: t("knowledge.pendingConfirmation"),
+      tone: pendingCorrectionCount > 0 ? "warning" : "success",
+    },
   ];
+  const tabs = [
+    { value: "gaps", label: t("knowledge.gapsTitle") },
+    { value: "hunts", label: t("knowledge.huntsTitle") },
+    { value: "disputed", label: t("knowledge.disputedTab") },
+    { value: "resolutions", label: t("knowledge.resolutionsTab") },
+    { value: "corrections", label: t("knowledge.correctionsTitle") },
+  ];
+
   return (
-    <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {cards.map(([label, value]) => (
-        <Card key={label}>
-          <CardHeader className="pb-1">
-            <CardDescription>{label}</CardDescription>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold">{value}</CardContent>
-        </Card>
-      ))}
+    <div className="space-y-7">
+      <TrustRail segments={posture} label={t("knowledge.postureLabel")} />
+      <Tabs items={tabs} value={area} onValueChange={changeArea} label={t("knowledge.areasLabel")}>
+        {area === "gaps" ? (
+          <GapsWorkspace
+            project={project}
+            audience={audience}
+            canPromote={canPromote}
+            searchParams={searchParams}
+          />
+        ) : null}
+        {area === "hunts" ? <HuntsWorkspace query={hunts} /> : null}
+        {area === "disputed" ? <DisputedWorkspace query={disputed} /> : null}
+        {area === "resolutions" ? <ResolutionsWorkspace project={project} /> : null}
+        {area === "corrections" ? (
+          <CorrectionsWorkspace
+            project={project}
+            canRevert={Boolean(membership && membership.role !== "viewer")}
+          />
+        ) : null}
+      </Tabs>
+    </div>
+  );
+}
+
+type QueryResult<Data> = { data?: Data; isLoading: boolean; isError: boolean };
+
+function GapsWorkspace({
+  project,
+  audience,
+  canPromote,
+  searchParams,
+}: {
+  project: string;
+  audience: "human" | "agent";
+  canPromote: boolean;
+  searchParams: URLSearchParams;
+}) {
+  const { t, locale } = useI18n();
+  const pathname = usePathname();
+  const router = useRouter();
+  const query = useGaps(project, audience === "agent");
+  const promote = usePromoteGap(project);
+  const [target, setTarget] = useState<Gap | null>(null);
+  const [mutationError, setMutationError] = useState(false);
+  const columns: DataColumn<Gap>[] = [
+    {
+      key: "question",
+      label: t("knowledge.question"),
+      render: (gap) => gap.query_text ?? t("knowledge.queryTextHiddenByPolicy"),
+    },
+    {
+      key: "frequency",
+      label: t("knowledge.frequency"),
+      align: "right",
+      render: (gap) => formatNumber(gap.count, locale),
+    },
+    {
+      key: "topics",
+      label: t("knowledge.topics"),
+      render: (gap) => gap.topics.join(", ") || "—",
+    },
+    {
+      key: "last_seen",
+      label: t("knowledge.lastSeen"),
+      render: (gap) => formatDateTime(gap.last_seen_at, locale),
+    },
+    {
+      key: "status",
+      label: t("connections.status"),
+      render: (gap) => <Badge tone={gap.status === "open" ? "warning" : "neutral"}>{gap.status}</Badge>,
+    },
+    ...(audience === "agent" && canPromote
+      ? [
+          {
+            key: "action",
+            label: t("connections.actions"),
+            align: "right" as const,
+            render: (gap: Gap) => (
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label={t("knowledge.promoteGapToHunt")}
+                onClick={() => setTarget(gap)}
+              >
+                {t("knowledge.promoteToHunt")}
+              </Button>
+            ),
+          },
+        ]
+      : []),
+  ];
+
+  const changeAudience = (nextAudience: string) => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.set("area", "gaps");
+    next.set("audience", nextAudience);
+    router.replace(`${pathname}?${next.toString()}`, { scroll: false });
+  };
+
+  async function onPromote() {
+    if (!target) return;
+    setMutationError(false);
+    try {
+      await promote.mutateAsync(target.id);
+      setTarget(null);
+    } catch {
+      setMutationError(true);
+    }
+  }
+
+  return (
+    <section aria-labelledby="knowledge-gaps-title" className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h2 id="knowledge-gaps-title" className="text-xl font-semibold">
+            {t("knowledge.gapsTitle")}
+          </h2>
+          <p className="mt-1 text-sm text-text-secondary">
+            {audience === "agent" ? t("knowledge.gapsAgentDesc") : t("knowledge.gapsHumanDesc")}
+          </p>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="gap-audience">{t("knowledge.audience")}</Label>
+          <Select id="gap-audience" value={audience} onChange={(event) => changeAudience(event.target.value)}>
+            <option value="human">{t("knowledge.humanCreated")}</option>
+            <option value="agent">{t("knowledge.agentCreated")}</option>
+          </Select>
+        </div>
+      </div>
+      {mutationError ? <Banner tone="danger" title={t("knowledge.promoteError")}>{t("common.tryAgain")}</Banner> : null}
+      {query.isLoading ? <Skeleton className="h-56 w-full" /> : null}
+      {query.isError ? <Banner tone="danger" title={t("knowledge.loadError")}>{t("common.tryAgain")}</Banner> : null}
+      {!query.isLoading && !query.isError ? (
+        <DataTable caption={t("knowledge.gapTableLabel")} columns={columns} rows={query.data?.gaps ?? []} rowKey={(gap) => gap.id} emptyTitle={t("knowledge.noGaps")} />
+      ) : null}
+      <Dialog
+        open={target !== null}
+        onClose={() => setTarget(null)}
+        title={t("knowledge.promoteDialogTitle")}
+        description={t("knowledge.promoteDialogDescription")}
+        cancelLabel={t("common.cancel")}
+        actions={<Button disabled={promote.isPending} onClick={onPromote}>{t("knowledge.promoteNow")}</Button>}
+      >
+        {target ? (
+          <dl className="grid grid-cols-[7rem_1fr] gap-x-4 gap-y-2 text-sm">
+            <dt className="text-text-secondary">{t("knowledge.question")}</dt>
+            <dd>{target.query_text ?? t("knowledge.queryTextHiddenByPolicy")}</dd>
+            <dt className="text-text-secondary">{t("knowledge.topics")}</dt>
+            <dd>{target.topics.join(", ") || "—"}</dd>
+          </dl>
+        ) : null}
+      </Dialog>
     </section>
   );
 }
 
-function Gaps({ project }: { project: string }) {
-  const t = useT();
-  const [agents, setAgents] = useState(false);
-  const { data } = useGaps(project, agents);
-  const promote = usePromoteGap(project);
-  const gaps = data?.gaps ?? [];
+function HuntsWorkspace({ query }: { query: QueryResult<{ hunts: Hunt[] }> }) {
+  const { t, locale } = useI18n();
+  const columns: DataColumn<Hunt>[] = [
+    { key: "state", label: t("knowledge.state"), render: (hunt) => <Badge tone={hunt.state === "asked" ? "info" : "neutral"}>{hunt.state}</Badge> },
+    { key: "question", label: t("knowledge.question"), render: (hunt) => hunt.question ?? "—" },
+    { key: "topics", label: t("knowledge.topics"), render: (hunt) => hunt.topics.join(", ") || "—" },
+    { key: "owner", label: t("knowledge.owner"), render: (hunt) => hunt.person_id ?? "—" },
+    { key: "channel", label: t("knowledge.channel"), render: (hunt) => hunt.channel ?? "—" },
+    { key: "deadline", label: t("knowledge.deadline"), render: (hunt) => formatDateTime(hunt.expires_at, locale) },
+    { key: "retries", label: t("knowledge.retriesLabel"), align: "right", render: (hunt) => hunt.retries },
+  ];
+  return <KnowledgeTableState title={t("knowledge.huntsTitle")} caption={t("knowledge.huntsTableLabel")} query={query} rows={query.data?.hunts ?? []} columns={columns} rowKey={(hunt) => hunt.id} empty={t("knowledge.noHunts")} />;
+}
+
+function DisputedWorkspace({ query }: { query: QueryResult<{ claims: DisputedClaim[] }> }) {
+  const { t, locale } = useI18n();
+  const columns: DataColumn<DisputedClaim>[] = [
+    { key: "claim", label: t("knowledge.claim"), render: (claim) => <div><p>{claim.text}</p><p className="mt-1 font-mono text-xs text-text-tertiary">{claim.id}</p></div> },
+    { key: "credibility", label: t("knowledge.credibility"), align: "right", render: (claim) => `${Math.round(claim.credibility * 100)}%` },
+    { key: "validity", label: t("knowledge.validity"), render: (claim) => claim.valid_to ? formatDateTime(claim.valid_to, locale) : t("knowledge.noExpiry") },
+    { key: "topics", label: t("knowledge.topics"), render: (claim) => claim.tags.join(", ") || "—" },
+  ];
+  return <KnowledgeTableState title={t("knowledge.disputedTitle")} caption={t("knowledge.disputedTableLabel")} query={query} rows={query.data?.claims ?? []} columns={columns} rowKey={(claim) => claim.id} empty={t("knowledge.nothingDisputed")} />;
+}
+
+function ResolutionsWorkspace({ project }: { project: string }) {
+  const { t } = useI18n();
+  const query = useResolutions(project);
+  if (query.isLoading) return <Skeleton className="h-56 w-full" />;
+  if (query.isError) return <Banner tone="danger" title={t("knowledge.loadError")}>{t("common.tryAgain")}</Banner>;
   return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between">
-        <div>
-          <CardTitle>{t("knowledge.gapsTitle")}</CardTitle>
-          <CardDescription>{agents ? t("knowledge.gapsAgentDesc") : t("knowledge.gapsHumanDesc")}</CardDescription>
-        </div>
-        <Button variant="outline" onClick={() => setAgents((v) => !v)}>
-          {agents ? t("knowledge.showHumanGaps") : t("knowledge.showAgentGaps")}
-        </Button>
-      </CardHeader>
-      <CardContent className="space-y-2 text-sm">
-        {gaps.length === 0 && <p className="text-text-secondary">{t("knowledge.noGaps")}</p>}
-        {gaps.map((g) => (
-          <div key={g.id} className="flex items-center justify-between border-b border-border py-1">
-            <span>
-              <span className="font-mono text-xs text-text-secondary">×{g.count}</span>{" "}
-              {g.query_text ?? t("knowledge.queryTextHidden")} <span className="text-text-secondary">{g.topics.join(", ")}</span>
-            </span>
-            {agents && (
-              <Button variant="outline" onClick={() => promote.mutate(g.id)} disabled={promote.isPending}>
-                {t("knowledge.promoteToHunt")}
-              </Button>
-            )}
-          </div>
-        ))}
-      </CardContent>
-    </Card>
+    <section role="region" aria-label={t("knowledge.resolutionsTitle")} className="space-y-4">
+      <div>
+        <h2 className="text-xl font-semibold">{t("knowledge.resolutionsTitle")}</h2>
+        <p className="mt-1 text-sm text-text-secondary">{t("knowledge.resolutionsDesc")}</p>
+      </div>
+      {(query.data?.resolutions ?? []).length === 0 ? <p className="border-y border-border py-8 text-sm text-text-secondary">{t("knowledge.noResolutions")}</p> : (
+        <ol className="divide-y divide-border border-y border-border">
+          {(query.data?.resolutions ?? []).map((resolution) => <ResolutionRow key={`${resolution.winner.claim_id}:${resolution.loser.claim_id}`} resolution={resolution} />)}
+        </ol>
+      )}
+    </section>
   );
 }
 
-function Hunts({ project }: { project: string }) {
-  const t = useT();
-  const { data } = useHunts(project);
-  const hunts = data?.hunts ?? [];
+function ResolutionRow({ resolution }: { resolution: Resolution }) {
+  const { t } = useI18n();
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t("knowledge.huntsTitle")}</CardTitle>
-        <CardDescription>{t("knowledge.huntsDesc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-1 text-sm">
-        {hunts.length === 0 && <p className="text-text-secondary">{t("knowledge.noHunts")}</p>}
-        {hunts.map((h) => (
-          <div key={h.id} className="flex items-center justify-between border-b border-border py-1">
-            <span>
-              <span className="rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-xs">{h.state}</span>{" "}
-              <span className="text-text-secondary">{h.type}</span> {h.question ?? ""}
-            </span>
-            <span className="text-xs text-text-secondary">{h.retries > 0 ? t("knowledge.retries", { n: h.retries }) : ""}</span>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
+    <li className="grid gap-5 py-5 lg:grid-cols-2">
+      <div className="border-l-2 border-l-success pl-4">
+        <p className="text-xs font-medium uppercase tracking-[0.08em] text-text-secondary">{t("knowledge.winner")}</p>
+        <p className="mt-2">{resolution.winner.text}</p>
+        <p className="mt-1 font-mono text-xs text-text-tertiary">{resolution.winner.claim_id} · {Math.round(resolution.winner.credibility * 100)}%</p>
+      </div>
+      <div className="border-l-2 border-l-border-strong pl-4">
+        <p className="text-xs font-medium uppercase tracking-[0.08em] text-text-secondary">{t("knowledge.superseded")}</p>
+        <p className="mt-2">{resolution.loser.text}</p>
+        <p className="mt-1 font-mono text-xs text-text-tertiary">{resolution.loser.claim_id} · {Math.round(resolution.loser.credibility * 100)}%</p>
+      </div>
+      <p className="text-xs text-text-secondary lg:col-span-2">{t("knowledge.judgeSummary", { version: resolution.judge_version, confidence: Math.round(resolution.confidence * 100) })}</p>
+    </li>
   );
 }
 
-function Disputed({ project }: { project: string }) {
-  const t = useT();
-  const { data } = useDisputed(project);
-  const claims = data?.claims ?? [];
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t("knowledge.disputedTitle")}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-1 text-sm">
-        {claims.length === 0 && <p className="text-text-secondary">{t("knowledge.nothingDisputed")}</p>}
-        {claims.map((c) => (
-          <div key={c.id} className="border-b border-border py-1">
-            {c.text} <span className="text-text-secondary">{t("knowledge.cred", { value: c.credibility.toFixed(2) })}</span>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-function Resolutions({ project }: { project: string }) {
-  const t = useT();
-  const { data } = useResolutions(project);
-  const resolutions = data?.resolutions ?? [];
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{t("knowledge.resolutionsTitle")}</CardTitle>
-        <CardDescription>{t("knowledge.resolutionsDesc")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-2 text-sm">
-        {resolutions.length === 0 && <p className="text-text-secondary">{t("knowledge.noResolutions")}</p>}
-        {resolutions.map((r, i) => (
-          <div key={i} className="border-b border-border py-1">
-            <span className="text-success">✓ {r.winner.text}</span>{" "}
-            <span className="text-text-secondary">({r.winner.credibility.toFixed(2)})</span> {t("knowledge.vs")}{" "}
-            <span className="text-danger line-through">{r.loser.text}</span>{" "}
-            <span className="text-text-secondary">({r.loser.credibility.toFixed(2)}) — {t("knowledge.judge")} {r.confidence.toFixed(2)}</span>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-function Corrections({ project }: { project: string }) {
-  const t = useT();
-  const [pendingOnly, setPendingOnly] = useState(false);
-  const { data } = useCorrections(project, pendingOnly ? "pending_confirmation" : undefined);
+function CorrectionsWorkspace({ project, canRevert }: { project: string; canRevert: boolean }) {
+  const { t, locale } = useI18n();
+  const query = useCorrections(project);
   const revert = useRevertCorrection(project);
-  const corrections = data?.corrections ?? [];
+  const [target, setTarget] = useState<Correction | null>(null);
+  const [mutationError, setMutationError] = useState(false);
+  const columns: DataColumn<Correction>[] = [
+    { key: "change", label: t("knowledge.change"), render: (correction) => <div className="space-y-1"><p><span className="text-text-secondary">{t("knowledge.before")}: </span>{correction.before_text ?? "—"}</p><p><span className="text-text-secondary">{t("knowledge.after")}: </span>{correction.after_text ?? "—"}</p></div> },
+    { key: "actor", label: t("knowledge.actor"), render: (correction) => correction.author_id ?? correction.on_behalf_of ?? "—" },
+    { key: "role", label: t("knowledge.role"), render: (correction) => correction.role_applied ?? "—" },
+    { key: "status", label: t("connections.status"), render: (correction) => <Badge tone={correction.status === "applied" ? "success" : "neutral"}>{correction.status}</Badge> },
+    { key: "time", label: t("knowledge.created"), render: (correction) => formatDateTime(correction.created_at, locale) },
+    { key: "action", label: t("connections.actions"), align: "right", render: (correction) => correction.status === "applied" && canRevert ? <Button variant="outline" size="sm" aria-label={t("knowledge.revertCorrection")} onClick={() => setTarget(correction)}>{t("knowledge.revert")}</Button> : "—" },
+  ];
+  async function onRevert() {
+    if (!target) return;
+    setMutationError(false);
+    try {
+      await revert.mutateAsync(target.id);
+      setTarget(null);
+    } catch {
+      setMutationError(true);
+    }
+  }
   return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between">
-        <div>
-          <CardTitle>{t("knowledge.correctionsTitle")}</CardTitle>
-          <CardDescription>{pendingOnly ? t("knowledge.pendingQueueDesc") : t("knowledge.feedDesc")}</CardDescription>
-        </div>
-        <Button variant="outline" onClick={() => setPendingOnly((v) => !v)}>
-          {pendingOnly ? t("knowledge.showAll") : t("knowledge.pendingOnly")}
-        </Button>
-      </CardHeader>
-      <CardContent className="space-y-2 text-sm">
-        {revert.isError && <p className="text-danger">{(revert.error as Error).message}</p>}
-        {corrections.length === 0 && <p className="text-text-secondary">{t("knowledge.noCorrections")}</p>}
-        {corrections.map((c) => (
-          <div key={c.id} className="flex items-center justify-between border-b border-border py-1">
-            <span>
-              <span className="rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-xs">{c.status}</span>{" "}
-              <span className="text-text-secondary line-through">{c.before_text ?? ""}</span> →{" "}
-              {c.after_text ?? ""} <span className="text-text-secondary">({c.role_applied})</span>
-            </span>
-            {c.status === "applied" && (
-              <Button variant="outline" onClick={() => revert.mutate(c.id)} disabled={revert.isPending}>
-                {t("knowledge.revert")}
-              </Button>
-            )}
-          </div>
-        ))}
-      </CardContent>
-    </Card>
+    <section className="space-y-4" aria-labelledby="corrections-title">
+      <h2 id="corrections-title" className="text-xl font-semibold">{t("knowledge.correctionsTitle")}</h2>
+      {mutationError ? <Banner tone="danger" title={t("knowledge.revertError")}>{t("common.tryAgain")}</Banner> : null}
+      {query.isLoading ? <Skeleton className="h-56 w-full" /> : null}
+      {query.isError ? <Banner tone="danger" title={t("knowledge.loadError")}>{t("common.tryAgain")}</Banner> : null}
+      {!query.isLoading && !query.isError ? <DataTable caption={t("knowledge.correctionsTableLabel")} columns={columns} rows={query.data?.corrections ?? []} rowKey={(correction) => correction.id} emptyTitle={t("knowledge.noCorrections")} /> : null}
+      <Dialog open={target !== null} onClose={() => setTarget(null)} title={t("knowledge.revertDialogTitle")} description={t("knowledge.revertDialogDescription")} cancelLabel={t("common.cancel")} destructive actions={<Button variant="destructive" disabled={revert.isPending} onClick={onRevert}>{t("knowledge.revertNow")}</Button>}>
+        {target ? <dl className="grid grid-cols-[8rem_1fr] gap-x-4 gap-y-2 text-sm"><dt className="text-text-secondary">{t("knowledge.affectedClaim")}</dt><dd className="font-mono text-xs">{target.target_claim}</dd><dt className="text-text-secondary">{t("knowledge.change")}</dt><dd>{target.after_text ?? "—"}</dd></dl> : null}
+      </Dialog>
+    </section>
+  );
+}
+
+function KnowledgeTableState<Row>({ title, caption, query, rows, columns, rowKey, empty }: { title: string; caption: string; query: QueryResult<unknown>; rows: Row[]; columns: DataColumn<Row>[]; rowKey: (row: Row) => string; empty: string }) {
+  const { t } = useI18n();
+  return (
+    <section className="space-y-4">
+      <h2 className="text-xl font-semibold">{title}</h2>
+      {query.isLoading ? <Skeleton className="h-56 w-full" /> : null}
+      {query.isError ? <Banner tone="danger" title={t("knowledge.loadError")}>{t("common.tryAgain")}</Banner> : null}
+      {!query.isLoading && !query.isError ? <DataTable caption={caption} columns={columns} rows={rows} rowKey={rowKey} emptyTitle={empty} /> : null}
+    </section>
   );
 }

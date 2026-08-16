@@ -160,6 +160,302 @@
         "title": "ChunkApprove",
         "type": "object"
       },
+      "ChunkReviewResolution": {
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "outcome"
+        ],
+        "title": "ChunkReviewResolution",
+        "type": "object"
+      },
+      "ContradictionResolutionEnvelope": {
+        "properties": {
+          "resolutions": {
+            "items": {
+              "$ref": "#/components/schemas/ContradictionResolutionView"
+            },
+            "title": "Resolutions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "resolutions"
+        ],
+        "title": "ContradictionResolutionEnvelope",
+        "type": "object"
+      },
+      "ContradictionResolutionView": {
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "judge_version": {
+            "title": "Judge Version",
+            "type": "string"
+          },
+          "loser": {
+            "$ref": "#/components/schemas/ResolutionSideView"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          },
+          "winner": {
+            "$ref": "#/components/schemas/ResolutionSideView"
+          }
+        },
+        "required": [
+          "verdict",
+          "confidence",
+          "judge_version",
+          "winner",
+          "loser",
+          "created_at"
+        ],
+        "title": "ContradictionResolutionView",
+        "type": "object"
+      },
+      "CorrectionEnvelope": {
+        "properties": {
+          "corrections": {
+            "items": {
+              "$ref": "#/components/schemas/CorrectionView"
+            },
+            "title": "Corrections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "corrections"
+        ],
+        "title": "CorrectionEnvelope",
+        "type": "object"
+      },
+      "CorrectionMetricsEnvelope": {
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "integer"
+          },
+          "by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Status",
+            "type": "object"
+          },
+          "correction_wars": {
+            "title": "Correction Wars",
+            "type": "integer"
+          },
+          "ownership_coverage": {
+            "title": "Ownership Coverage",
+            "type": "number"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "revert_rate": {
+            "title": "Revert Rate",
+            "type": "number"
+          },
+          "routed_hunt": {
+            "title": "Routed Hunt",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "by_status",
+          "applied",
+          "routed_hunt",
+          "rejected",
+          "revert_rate",
+          "correction_wars",
+          "ownership_coverage"
+        ],
+        "title": "CorrectionMetricsEnvelope",
+        "type": "object"
+      },
+      "CorrectionRevertResult": {
+        "properties": {
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "explanation"
+        ],
+        "title": "CorrectionRevertResult",
+        "type": "object"
+      },
+      "CorrectionView": {
+        "properties": {
+          "after_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Text"
+          },
+          "author_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Id"
+          },
+          "before_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Text"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "hunt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hunt Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "new_claim": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Claim"
+          },
+          "on_behalf_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Behalf Of"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "role_applied": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Applied"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "target_claim": {
+            "title": "Target Claim",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "target_claim",
+          "new_claim",
+          "status",
+          "role_applied",
+          "author_id",
+          "on_behalf_of",
+          "hunt_id",
+          "before_text",
+          "after_text",
+          "created_at",
+          "resolved_at"
+        ],
+        "title": "CorrectionView",
+        "type": "object"
+      },
       "CreatePatRequest": {
         "properties": {
           "name": {
@@ -384,6 +680,138 @@
         "title": "DisableEnvelope",
         "type": "object"
       },
+      "DisputedClaimEnvelope": {
+        "properties": {
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/DisputedClaimView"
+            },
+            "title": "Claims",
+            "type": "array"
+          }
+        },
+        "required": [
+          "claims"
+        ],
+        "title": "DisputedClaimEnvelope",
+        "type": "object"
+      },
+      "DisputedClaimView": {
+        "properties": {
+          "credibility": {
+            "title": "Credibility",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "tags",
+          "credibility",
+          "valid_to"
+        ],
+        "title": "DisputedClaimView",
+        "type": "object"
+      },
+      "GapEnvelope": {
+        "properties": {
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/GapView"
+            },
+            "title": "Gaps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "gaps"
+        ],
+        "title": "GapEnvelope",
+        "type": "object"
+      },
+      "GapView": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "query_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Text"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "query_text",
+          "topics",
+          "count",
+          "status",
+          "last_seen_at"
+        ],
+        "title": "GapView",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -462,6 +890,183 @@
           "question"
         ],
         "title": "HuntAsk",
+        "type": "object"
+      },
+      "HuntEnvelope": {
+        "properties": {
+          "hunts": {
+            "items": {
+              "$ref": "#/components/schemas/HuntView"
+            },
+            "title": "Hunts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hunts"
+        ],
+        "title": "HuntEnvelope",
+        "type": "object"
+      },
+      "HuntView": {
+        "properties": {
+          "answered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "asked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asked At"
+          },
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel"
+          },
+          "correction_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "gap_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gap Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "retries": {
+            "title": "Retries",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "state",
+          "question",
+          "topics",
+          "person_id",
+          "gap_id",
+          "correction_id",
+          "channel",
+          "retries",
+          "created_at",
+          "asked_at",
+          "answered_at",
+          "expires_at",
+          "resolved_at"
+        ],
+        "title": "HuntView",
         "type": "object"
       },
       "IdentityMembershipEnvelope": {
@@ -1040,6 +1645,24 @@
           "expected_version"
         ],
         "title": "MembershipUpdate",
+        "type": "object"
+      },
+      "MergeReviewResolution": {
+        "properties": {
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "outcome"
+        ],
+        "title": "MergeReviewResolution",
         "type": "object"
       },
       "OntologyUpload": {
@@ -1819,6 +2442,24 @@
         "title": "ProjectUpdate",
         "type": "object"
       },
+      "PromoteGapResult": {
+        "properties": {
+          "hunt_id": {
+            "title": "Hunt Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hunt_id",
+          "state"
+        ],
+        "title": "PromoteGapResult",
+        "type": "object"
+      },
       "QueryTextLogging": {
         "properties": {
           "enabled": {
@@ -2060,6 +2701,100 @@
           "reason"
         ],
         "title": "RejectDoc",
+        "type": "object"
+      },
+      "ResolutionSideView": {
+        "properties": {
+          "claim_id": {
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "credibility": {
+            "title": "Credibility",
+            "type": "number"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          }
+        },
+        "required": [
+          "claim_id",
+          "text",
+          "credibility",
+          "valid_to"
+        ],
+        "title": "ResolutionSideView",
+        "type": "object"
+      },
+      "ReviewItemView": {
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "preview": {
+            "title": "Preview",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "id",
+          "preview",
+          "detail",
+          "content_type"
+        ],
+        "title": "ReviewItemView",
+        "type": "object"
+      },
+      "ReviewQueueEnvelope": {
+        "properties": {
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewItemView"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "counts"
+        ],
+        "title": "ReviewQueueEnvelope",
         "type": "object"
       },
       "RevocationState": {
@@ -3197,9 +3932,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Disputed Claims Api V1 Admin Claims Disputed Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DisputedClaimEnvelope"
                 }
               }
             },
@@ -3304,9 +4037,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Contradiction Resolutions Api V1 Admin Contradictions Resolutions Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ContradictionResolutionEnvelope"
                 }
               }
             },
@@ -3409,9 +4140,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Corrections Api V1 Admin Corrections Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CorrectionEnvelope"
                 }
               }
             },
@@ -3466,9 +4195,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Correction Metrics Api V1 Admin Corrections Metrics Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CorrectionMetricsEnvelope"
                 }
               }
             },
@@ -3532,9 +4259,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Revert Correction Api V1 Admin Corrections  Correction Id  Revert Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CorrectionRevertResult"
                 }
               }
             },
@@ -4136,9 +4861,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Project Gaps Api V1 Admin Gaps Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/GapEnvelope"
                 }
               }
             },
@@ -4202,9 +4925,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Promote Gap Api V1 Admin Gaps  Gap Id  Promote Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PromoteGapResult"
                 }
               }
             },
@@ -4359,9 +5080,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Hunts Api V1 Admin Hunts Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HuntEnvelope"
                 }
               }
             },
@@ -6547,9 +7266,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Review Queue Api V1 Admin Review Queue Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReviewQueueEnvelope"
                 }
               }
             },
@@ -6632,9 +7349,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Resolve Chunk Item Api V1 Admin Review Queue Chunks  Chunk Id  Resolve Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ChunkReviewResolution"
                 }
               }
             },
@@ -6707,9 +7422,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Resolve Merge Item Api V1 Admin Review Queue Merges  Proposal Id  Resolve Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MergeReviewResolution"
                 }
               }
             },

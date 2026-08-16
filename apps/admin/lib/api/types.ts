@@ -23,95 +23,25 @@ export type Ingest = components["schemas"]["IngestEnvelope"];
 
 // --- SPEC-19 living knowledge ---------------------------------------------------------------
 
-export interface Gap {
-  id: string;
-  query_text: string | null;
-  topics: string[];
-  count: number;
-  status: string;
-  last_seen_at: string | null;
-}
-
-export interface Hunt {
-  id: string;
-  type: string;
-  state: string;
-  question: string | null;
-  person_id: string | null;
-  gap_id: string | null;
-  correction_id: string | null;
-  channel: string | null;
-  retries: number;
-  created_at: string | null;
-  asked_at: string | null;
-  answered_at: string | null;
-  expires_at: string | null;
-  resolved_at: string | null;
-}
-
-export interface DisputedClaim {
-  id: string;
-  text: string;
-  tags: string[];
-  credibility: number;
-  valid_to: string | null;
-}
-
-export interface ResolutionSide {
-  claim_id: string;
-  text: string;
-  credibility: number;
-  valid_to: string | null;
-}
-
-export interface Resolution {
-  verdict: string;
-  confidence: number;
-  judge_version: string;
-  winner: ResolutionSide;
-  loser: ResolutionSide;
-  created_at: string | null;
-}
-
-export interface Correction {
-  id: string;
-  target_claim: string;
-  new_claim: string | null;
-  status: string;
-  role_applied: string | null;
-  author_id: string | null;
-  on_behalf_of: string | null;
-  hunt_id: string | null;
-  before_text: string | null;
-  after_text: string | null;
-  created_at: string | null;
-  resolved_at: string | null;
-}
-
-export interface CorrectionMetrics {
-  total: number;
-  by_status: Record<string, number>;
-  applied: number;
-  routed_hunt: number;
-  rejected: number;
-  revert_rate: number;
-  correction_wars: number;
-  ownership_coverage: number;
-}
+export type Gap = components["schemas"]["GapView"];
+export type GapList = components["schemas"]["GapEnvelope"];
+export type Hunt = components["schemas"]["HuntView"];
+export type HuntList = components["schemas"]["HuntEnvelope"];
+export type DisputedClaim = components["schemas"]["DisputedClaimView"];
+export type DisputedClaimList = components["schemas"]["DisputedClaimEnvelope"];
+export type Resolution = components["schemas"]["ContradictionResolutionView"];
+export type ResolutionList = components["schemas"]["ContradictionResolutionEnvelope"];
+export type Correction = components["schemas"]["CorrectionView"];
+export type CorrectionList = components["schemas"]["CorrectionEnvelope"];
+export type CorrectionMetrics = components["schemas"]["CorrectionMetricsEnvelope"];
+export type CorrectionRevertResult = components["schemas"]["CorrectionRevertResult"];
 
 // --- SPEC-21 unified needs_review queue -----------------------------------------------------
 
-export interface ReviewItem {
-  source: string;
-  id: string;
-  preview: string;
-  detail: Record<string, unknown>;
-}
-
-export interface ReviewQueue {
-  items: ReviewItem[];
-  counts: Record<string, number>;
-}
+export type ReviewItem = components["schemas"]["ReviewItemView"];
+export type ReviewQueue = components["schemas"]["ReviewQueueEnvelope"];
+export type ChunkReviewResolution = components["schemas"]["ChunkReviewResolution"];
+export type MergeReviewResolution = components["schemas"]["MergeReviewResolution"];
 
 // --- SPEC-26 console release ----------------------------------------------------------------
 

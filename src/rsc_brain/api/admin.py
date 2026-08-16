@@ -34,13 +34,30 @@ from rsc_brain.api.authz import (
 )
 from rsc_brain.api.read_models import (
     ActivityEnvelope,
+    ChunkReviewResolution,
+    ContradictionResolutionEnvelope,
+    ContradictionResolutionView,
+    CorrectionEnvelope,
+    CorrectionMetricsEnvelope,
+    CorrectionRevertResult,
+    CorrectionView,
+    DisputedClaimEnvelope,
+    DisputedClaimView,
+    GapEnvelope,
+    GapView,
     HealthEnvelope,
+    HuntEnvelope,
+    HuntView,
     IngestEnvelope,
+    MergeReviewResolution,
     PendingDocumentEnvelope,
     PendingDocumentView,
     ProductMetricsEnvelope,
+    PromoteGapResult,
     ReadPage,
     RecallView,
+    ReviewItemView,
+    ReviewQueueEnvelope,
 )
 from rsc_brain.authorization import Allow, Capability, decide
 from rsc_brain.config.models import PublicLimits
@@ -668,12 +685,12 @@ async def list_pending_documents(
     }
 
 
-@router.get("/gaps")
+@router.get("/gaps", response_model=GapEnvelope)
 async def list_project_gaps(
     request: Request,
     scope: ProjectScope = Depends(_needs_manage_read),
     audience: str | None = None,
-) -> dict[str, object]:
+) -> GapEnvelope:
     """Project gaps. ``audience=agent`` returns the separate agent-gap view (FR-14.6); ``human``
     the human-driven gaps eligible for the trigger; omitted returns all."""
     gaps = await list_gaps(
@@ -681,41 +698,43 @@ async def list_project_gaps(
         scope,
         audience=audience if audience in {"human", "agent"} else None,
     )
-    return {"gaps": gaps}
+    return GapEnvelope(gaps=[GapView.model_validate(gap) for gap in gaps])
 
 
 def _knowledge_store(request: Request) -> KnowledgeStore:
     return KnowledgeStore(_deps(request).sessionmaker)  # type: ignore[attr-defined]
 
 
-@router.get("/corrections")
+@router.get("/corrections", response_model=CorrectionEnvelope)
 async def list_corrections(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),
     status_filter: str | None = None,
     target_claim: str | None = None,
     author: str | None = None,
-) -> dict[str, object]:
+) -> CorrectionEnvelope:
     """Corrections feed (SPEC-19, FR-15.12): feed / by-claim / by-person; the ``pending_confirmation``
     queue is ``status_filter=pending_confirmation``."""
     rows = await _knowledge_store(request).list_corrections(
         scope, status=status_filter, target_claim=target_claim, author=author
     )
-    return {"corrections": rows}
+    return CorrectionEnvelope(corrections=[CorrectionView.model_validate(row) for row in rows])
 
 
-@router.get("/corrections/metrics")
+@router.get("/corrections/metrics", response_model=CorrectionMetricsEnvelope)
 async def correction_metrics(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> CorrectionMetricsEnvelope:
     """The Learning-Layer §7 metrics (SPEC-19, FR-15.12/§3.3)."""
-    return await _knowledge_store(request).correction_metrics(scope)
+    return CorrectionMetricsEnvelope.model_validate(
+        await _knowledge_store(request).correction_metrics(scope)
+    )
 
 
-@router.post("/corrections/{correction_id}/revert")
+@router.post("/corrections/{correction_id}/revert", response_model=CorrectionRevertResult)
 async def revert_correction(
     correction_id: str, request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> CorrectionRevertResult:
     """Revert a correction (FR-15.8).
 
     The one mutation whose matrix row is not a pure role: the project administrator OR the owner of
@@ -762,25 +781,27 @@ async def revert_correction(
     await audit_mod.record_audit(
         sessionmaker, scope, action=f"correct_knowledge:{outcome.status}", tool="console"
     )
-    return {"status": outcome.status, "explanation": outcome.explanation}
+    return CorrectionRevertResult(status=outcome.status, explanation=outcome.explanation)
 
 
-@router.get("/claims/disputed")
+@router.get("/claims/disputed", response_model=DisputedClaimEnvelope)
 async def list_disputed_claims(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> DisputedClaimEnvelope:
     """Claims currently flagged disputed (SPEC-19, FR-13.5)."""
     rows = await _knowledge_store(request).list_disputed_claims(scope)
-    return {"claims": rows}
+    return DisputedClaimEnvelope(claims=[DisputedClaimView.model_validate(row) for row in rows])
 
 
-@router.get("/contradictions/resolutions")
+@router.get("/contradictions/resolutions", response_model=ContradictionResolutionEnvelope)
 async def list_contradiction_resolutions(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> ContradictionResolutionEnvelope:
     """Resolved contradictions — who won, by what score (SPEC-19, FR-13.5/FR-5.3)."""
     rows = await _knowledge_store(request).list_contradiction_resolutions(scope)
-    return {"resolutions": rows}
+    return ContradictionResolutionEnvelope(
+        resolutions=[ContradictionResolutionView.model_validate(row) for row in rows]
+    )
 
 
 def _skill_store(request: Request) -> object:
@@ -948,48 +969,48 @@ async def archive_skill_admin(
     }
 
 
-@router.get("/review-queue")
+@router.get("/review-queue", response_model=ReviewQueueEnvelope)
 async def review_queue(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),
     source: str | None = None,
-) -> dict[str, object]:
+) -> ReviewQueueEnvelope:
     """The unified needs_review queue (SPEC-21, FR-13.6): all four sources, filterable by source."""
     from rsc_brain.review.queue import list_review_queue
 
-    items = await list_review_queue(
+    all_items = await list_review_queue(
         _deps(request).sessionmaker,  # type: ignore[attr-defined]
         scope,
-        source=source,
     )
     counts: dict[str, int] = {}
-    for item in items:
+    for item in all_items:
         counts[item.source] = counts.get(item.source, 0) + 1
-    return {
-        "items": [
-            {
-                "source": i.source,
-                "id": i.id,
-                "preview": i.preview,
-                "detail": i.detail,
+    items = [item for item in all_items if source is None or item.source == source]
+    return ReviewQueueEnvelope(
+        items=[
+            ReviewItemView(
+                source=i.source,
+                id=i.id,
+                preview=i.preview,
+                detail=i.detail,
                 # R08: held chunks, agent submissions and guardrail catches are untrusted text shown
                 # for a decision; the marker travels with them (FR-14.8).
-                "content_type": UNTRUSTED,
-            }
+                content_type=UNTRUSTED,
+            )
             for i in items
         ],
-        "counts": counts,
-    }
+        counts=counts,
+    )
 
 
-@router.post("/review-queue/chunks/{chunk_id}/resolve")
+@router.post("/review-queue/chunks/{chunk_id}/resolve", response_model=ChunkReviewResolution)
 async def resolve_chunk_item(
     chunk_id: str,
     body: ChunkApprove,
     request: Request,
     approve: bool,
     scope: ProjectScope = Depends(_needs_identity),
-) -> dict[str, object]:
+) -> ChunkReviewResolution:
     """Approve (embed + curator tags + recallable) or reject a needs_review chunk (FR-1.5/4.4/14.4).
 
     Curation is the one capability ``can_curate`` grants, and only inside its own topics: the
@@ -1023,16 +1044,16 @@ async def resolve_chunk_item(
         action=f"review:chunk:{outcome}",
         tool="console",
     )
-    return {"chunk_id": chunk_id, "outcome": outcome}
+    return ChunkReviewResolution(chunk_id=chunk_id, outcome=outcome)
 
 
-@router.post("/review-queue/merges/{proposal_id}/resolve")
+@router.post("/review-queue/merges/{proposal_id}/resolve", response_model=MergeReviewResolution)
 async def resolve_merge_item(
     proposal_id: str,
     request: Request,
     approve: bool,
     scope: ProjectScope = Depends(_needs_identity),
-) -> dict[str, object]:
+) -> MergeReviewResolution:
     """Approve (apply the merge) or reject an entity-merge proposal (FR-1.9)."""
     from rsc_brain.review.resolve import resolve_merge
 
@@ -1053,7 +1074,7 @@ async def resolve_merge_item(
         action=f"review:merge:{outcome}",
         tool="console",
     )
-    return {"proposal_id": proposal_id, "outcome": outcome}
+    return MergeReviewResolution(proposal_id=proposal_id, outcome=outcome)
 
 
 @router.get("/metrics/product", response_model=ProductMetricsEnvelope)
@@ -1702,14 +1723,14 @@ async def delete_person(
     return {"person_id": person_id, "removed": True}
 
 
-@router.get("/hunts")
+@router.get("/hunts", response_model=HuntEnvelope)
 async def list_hunts(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),
     open_only: bool = False,
-) -> dict[str, object]:
+) -> HuntEnvelope:
     hunts = await _hunts(request).list_hunts(scope, open_only=open_only)  # type: ignore[attr-defined]
-    return {"hunts": hunts}
+    return HuntEnvelope(hunts=[HuntView.model_validate(hunt) for hunt in hunts])
 
 
 @router.get("/hunts/{hunt_id}")
@@ -1767,10 +1788,14 @@ async def ask_hunt(
     }
 
 
-@router.post("/gaps/{gap_id}/promote", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/gaps/{gap_id}/promote",
+    status_code=status.HTTP_201_CREATED,
+    response_model=PromoteGapResult,
+)
 async def promote_gap(
     gap_id: str, request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> PromoteGapResult:
     """Promote an agent gap to a hunt (FR-14.6 — agent gaps never trigger automatically).
 
     Promoting sends the gap's question to a human owner, so it needs the gap-promotion capability
@@ -1785,7 +1810,7 @@ async def promote_gap(
     outcome = await _hunts(request).promote_agent_gap(scope, gap_id)  # type: ignore[attr-defined]
     if outcome is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="gap not found")
-    return {"hunt_id": outcome.hunt_id, "state": str(outcome.state)}
+    return PromoteGapResult(hunt_id=outcome.hunt_id, state=str(outcome.state))
 
 
 # --- ontology (SPEC-24, FR-17.1/17.7 — optional, off by default) -------------

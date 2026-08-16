@@ -6,22 +6,25 @@ import type {
   Activity,
   AuditFilters,
   AuditRow,
-  Correction,
+  CorrectionList,
   CorrectionMetrics,
+  CorrectionRevertResult,
   CreatedPat,
-  DisputedClaim,
-  Gap,
+  ChunkReviewResolution,
+  DisputedClaimList,
+  GapList,
   Health,
-  Hunt,
+  HuntList,
   Ingest,
   Me,
+  MergeReviewResolution,
   Neighborhood,
   PatList,
   PendingDocList,
   ProductMetrics,
   RecallPage,
   RevokedPat,
-  Resolution,
+  ResolutionList,
   ReviewQueue,
   UsageRow,
 } from "./types";
@@ -221,12 +224,12 @@ export function useGaps(project: string, agents: boolean) {
     queryKey: ["kb", "gaps", project, agents],
     enabled: !!project,
     refetchInterval: LIVE_MS,
-    queryFn: async (): Promise<{ gaps: Gap[] }> => {
-      const { data, error } = await api.GET("/api/v1/admin/gaps", {
+    queryFn: async (): Promise<GapList> => {
+      const { data, error, response } = await api.GET("/api/v1/admin/gaps", {
         params: { query: { project, audience: agents ? "agent" : "human" } },
       });
-      if (error) throw new Error("failed to load gaps");
-      return data as unknown as { gaps: Gap[] };
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }
@@ -236,10 +239,11 @@ export function usePromoteGap(project: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (gapId: string) => {
-      const { error } = await api.POST("/api/v1/admin/gaps/{gap_id}/promote", {
+      const { data, error, response } = await api.POST("/api/v1/admin/gaps/{gap_id}/promote", {
         params: { path: { gap_id: gapId }, query: { project } },
       });
-      if (error) throw new Error("failed to promote gap");
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["kb"] }),
   });
@@ -251,12 +255,12 @@ export function useHunts(project: string) {
     queryKey: ["kb", "hunts", project],
     enabled: !!project,
     refetchInterval: LIVE_MS,
-    queryFn: async (): Promise<{ hunts: Hunt[] }> => {
-      const { data, error } = await api.GET("/api/v1/admin/hunts", {
+    queryFn: async (): Promise<HuntList> => {
+      const { data, error, response } = await api.GET("/api/v1/admin/hunts", {
         params: { query: { project } },
       });
-      if (error) throw new Error("failed to load hunts");
-      return data as unknown as { hunts: Hunt[] };
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }
@@ -267,12 +271,12 @@ export function useDisputed(project: string) {
     queryKey: ["kb", "disputed", project],
     enabled: !!project,
     refetchInterval: LIVE_MS,
-    queryFn: async (): Promise<{ claims: DisputedClaim[] }> => {
-      const { data, error } = await api.GET("/api/v1/admin/claims/disputed", {
+    queryFn: async (): Promise<DisputedClaimList> => {
+      const { data, error, response } = await api.GET("/api/v1/admin/claims/disputed", {
         params: { query: { project } },
       });
-      if (error) throw new Error("failed to load disputed claims");
-      return data as unknown as { claims: DisputedClaim[] };
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }
@@ -282,12 +286,12 @@ export function useResolutions(project: string) {
   return useQuery({
     queryKey: ["kb", "resolutions", project],
     enabled: !!project,
-    queryFn: async (): Promise<{ resolutions: Resolution[] }> => {
-      const { data, error } = await api.GET("/api/v1/admin/contradictions/resolutions", {
+    queryFn: async (): Promise<ResolutionList> => {
+      const { data, error, response } = await api.GET("/api/v1/admin/contradictions/resolutions", {
         params: { query: { project } },
       });
-      if (error) throw new Error("failed to load resolutions");
-      return data as unknown as { resolutions: Resolution[] };
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }
@@ -298,12 +302,12 @@ export function useCorrections(project: string, status?: string) {
     queryKey: ["kb", "corrections", project, status ?? "all"],
     enabled: !!project,
     refetchInterval: LIVE_MS,
-    queryFn: async (): Promise<{ corrections: Correction[] }> => {
-      const { data, error } = await api.GET("/api/v1/admin/corrections", {
+    queryFn: async (): Promise<CorrectionList> => {
+      const { data, error, response } = await api.GET("/api/v1/admin/corrections", {
         params: { query: { project, status_filter: status } },
       });
-      if (error) throw new Error("failed to load corrections");
-      return data as unknown as { corrections: Correction[] };
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }
@@ -314,11 +318,11 @@ export function useCorrectionMetrics(project: string) {
     queryKey: ["kb", "metrics", project],
     enabled: !!project,
     queryFn: async (): Promise<CorrectionMetrics> => {
-      const { data, error } = await api.GET("/api/v1/admin/corrections/metrics", {
+      const { data, error, response } = await api.GET("/api/v1/admin/corrections/metrics", {
         params: { query: { project } },
       });
-      if (error) throw new Error("failed to load metrics");
-      return data as unknown as CorrectionMetrics;
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }
@@ -327,11 +331,12 @@ export function useCorrectionMetrics(project: string) {
 export function useRevertCorrection(project: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (correctionId: string) => {
-      const { error } = await api.POST("/api/v1/admin/corrections/{correction_id}/revert", {
+    mutationFn: async (correctionId: string): Promise<CorrectionRevertResult> => {
+      const { data, error, response } = await api.POST("/api/v1/admin/corrections/{correction_id}/revert", {
         params: { path: { correction_id: correctionId }, query: { project } },
       });
-      if (error) throw new Error("revert failed (are you an admin or the tag owner?)");
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["kb"] }),
   });
@@ -347,11 +352,11 @@ export function useReviewQueue(project: string, source?: string) {
     enabled: !!project,
     refetchInterval: LIVE_MS,
     queryFn: async (): Promise<ReviewQueue> => {
-      const { data, error } = await api.GET("/api/v1/admin/review-queue", {
+      const { data, error, response } = await api.GET("/api/v1/admin/review-queue", {
         params: { query: { project, source } },
       });
-      if (error) throw new Error("failed to load the review queue");
-      return data as unknown as ReviewQueue;
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
   });
 }
@@ -360,12 +365,13 @@ export function useReviewQueue(project: string, source?: string) {
 export function useResolveChunk(project: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { chunkId: string; approve: boolean; tags?: string[] }) => {
-      const { error } = await api.POST("/api/v1/admin/review-queue/chunks/{chunk_id}/resolve", {
+    mutationFn: async (input: { chunkId: string; approve: boolean; tags?: string[] }): Promise<ChunkReviewResolution> => {
+      const { data, error, response } = await api.POST("/api/v1/admin/review-queue/chunks/{chunk_id}/resolve", {
         params: { path: { chunk_id: input.chunkId }, query: { project, approve: input.approve } },
         body: { tags: input.tags ?? null },
       });
-      if (error) throw new Error("failed to resolve chunk");
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["review"] }),
   });
@@ -375,11 +381,12 @@ export function useResolveChunk(project: string) {
 export function useResolveMerge(project: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { proposalId: string; approve: boolean }) => {
-      const { error } = await api.POST("/api/v1/admin/review-queue/merges/{proposal_id}/resolve", {
+    mutationFn: async (input: { proposalId: string; approve: boolean }): Promise<MergeReviewResolution> => {
+      const { data, error, response } = await api.POST("/api/v1/admin/review-queue/merges/{proposal_id}/resolve", {
         params: { path: { proposal_id: input.proposalId }, query: { project, approve: input.approve } },
       });
-      if (error) throw new Error("failed to resolve merge");
+      if (error) throw uiErrorFromResponse(response, error);
+      return data;
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["review"] }),
   });

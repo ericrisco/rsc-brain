@@ -96,6 +96,136 @@ class PendingDocumentEnvelope(BaseModel):
     documents: list[PendingDocumentView]
 
 
+class GapView(BaseModel):
+    id: str
+    query_text: str | None
+    topics: list[str]
+    count: int
+    status: str
+    last_seen_at: dt.datetime | None
+
+
+class GapEnvelope(BaseModel):
+    gaps: list[GapView]
+
+
+class HuntView(BaseModel):
+    id: str
+    type: str
+    state: str
+    question: str | None
+    topics: list[str]
+    person_id: str | None
+    gap_id: str | None
+    correction_id: str | None
+    channel: str | None
+    retries: int
+    created_at: dt.datetime | None
+    asked_at: dt.datetime | None
+    answered_at: dt.datetime | None
+    expires_at: dt.datetime | None
+    resolved_at: dt.datetime | None
+
+
+class HuntEnvelope(BaseModel):
+    hunts: list[HuntView]
+
+
+class DisputedClaimView(BaseModel):
+    id: str
+    text: str
+    tags: list[str]
+    credibility: float
+    valid_to: dt.datetime | None
+
+
+class DisputedClaimEnvelope(BaseModel):
+    claims: list[DisputedClaimView]
+
+
+class ResolutionSideView(BaseModel):
+    claim_id: str
+    text: str
+    credibility: float
+    valid_to: dt.datetime | None
+
+
+class ContradictionResolutionView(BaseModel):
+    verdict: str
+    confidence: float
+    judge_version: str
+    winner: ResolutionSideView
+    loser: ResolutionSideView
+    created_at: dt.datetime | None
+
+
+class ContradictionResolutionEnvelope(BaseModel):
+    resolutions: list[ContradictionResolutionView]
+
+
+class CorrectionView(BaseModel):
+    id: str
+    target_claim: str
+    new_claim: str | None
+    status: str
+    role_applied: str | None
+    author_id: str | None
+    on_behalf_of: str | None
+    hunt_id: str | None
+    before_text: str | None
+    after_text: str | None
+    created_at: dt.datetime | None
+    resolved_at: dt.datetime | None
+
+
+class CorrectionEnvelope(BaseModel):
+    corrections: list[CorrectionView]
+
+
+class CorrectionMetricsEnvelope(BaseModel):
+    total: int
+    by_status: dict[str, int]
+    applied: int
+    routed_hunt: int
+    rejected: int
+    revert_rate: float
+    correction_wars: int
+    ownership_coverage: float
+
+
+class CorrectionRevertResult(BaseModel):
+    status: str
+    explanation: str
+
+
+class ReviewItemView(BaseModel):
+    source: str
+    id: str
+    preview: str
+    detail: dict[str, object]
+    content_type: str
+
+
+class ReviewQueueEnvelope(BaseModel):
+    items: list[ReviewItemView]
+    counts: dict[str, int]
+
+
+class ChunkReviewResolution(BaseModel):
+    chunk_id: str
+    outcome: str
+
+
+class MergeReviewResolution(BaseModel):
+    proposal_id: str
+    outcome: str
+
+
+class PromoteGapResult(BaseModel):
+    hunt_id: str
+    state: str
+
+
 class ProductMetricDay(BaseModel):
     """One exact server-owned recall count in the selected reporting window."""
 
