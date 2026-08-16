@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -137,6 +137,7 @@ class PersonUpdate(BaseModel):
     channels: dict[str, str] | None = None
     quiet_hours: dict[str, str] | None = None
     language: str | None = Field(default=None, max_length=SLUG_MAX)
+    expected_version: int = Field(ge=1)
 
 
 class HuntAsk(BaseModel):
@@ -147,6 +148,10 @@ class HuntAsk(BaseModel):
 class SkillUpsert(BaseModel):
     # The full skill file: OKF frontmatter + body. Bounded like any other public body (R38).
     markdown: str = Field(max_length=JSON_BODY_MAX)
+
+
+class VersionedCommand(BaseModel):
+    expected_version: int = Field(ge=1)
 
 
 class ChunkApprove(BaseModel):
@@ -773,24 +778,32 @@ def _skill_store(request: Request) -> object:
     return SkillStore(_deps(request).sessionmaker)  # type: ignore[attr-defined]
 
 
+def _skill_view(skill: object) -> dict[str, object]:
+    """Closed lifecycle summary; instructions, owners and topic labels stay off collection reads."""
+    return {
+        "slug": skill.slug,  # type: ignore[attr-defined]
+        "title": skill.title,  # type: ignore[attr-defined]
+        "status": skill.state,  # type: ignore[attr-defined]
+        "stale": skill.stale,  # type: ignore[attr-defined]
+        "depends_on": list(skill.depends_on),  # type: ignore[attr-defined]
+        "version": skill.version,  # type: ignore[attr-defined]
+    }
+
+
+def _skill_command_view(skill: object) -> dict[str, object]:
+    """Mutation result without collection-only presentation copy."""
+    view = _skill_view(skill)
+    view.pop("title")
+    return view
+
+
 @router.get("/skills")
 async def list_skills_admin(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read), state: str | None = None
 ) -> dict[str, object]:
     """List a project's skills (SPEC-20, FR-7.1). Read — console-consumable."""
-    rows = await _skill_store(request).list_all(scope, state=state)  # type: ignore[attr-defined]
-    return {
-        "skills": [
-            {
-                "slug": s.slug,
-                "title": s.title,
-                "state": s.state,
-                "stale": s.stale,
-                "tags": list(s.tags),
-            }
-            for s in rows
-        ]
-    }
+    rows = await _skill_store(request).list_authorized(scope, state=state)  # type: ignore[attr-defined]
+    return {"skills": [_skill_view(skill) for skill in rows]}
 
 
 @router.post("/skills", status_code=status.HTTP_201_CREATED)
@@ -806,16 +819,113 @@ async def create_skill_admin(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
+    if frontmatter.state != "proposed" or frontmatter.version < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="console-created skills must begin proposed with a positive version",
+        )
+    try:
+        for dependency in frontmatter.depends_on:
+            uuid.UUID(dependency)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="skill dependencies must be identifiers",
+        ) from exc
+    decide_object(scope, Capability.PROJECT_CONFIG_WRITE, frontmatter.tags)
     skill_id = await _skill_store(request).create(scope, frontmatter, skill_body)  # type: ignore[attr-defined]
     return {"skill_id": skill_id, "slug": frontmatter.slug}
 
 
+@router.post("/skills/{slug}/validate")
+async def validate_skill_admin(
+    slug: str,
+    body: VersionedCommand,
+    request: Request,
+    scope: ProjectScope = Depends(_needs_config_write),
+) -> dict[str, object]:
+    from rsc_brain.skills.store import (
+        SkillNotFound,
+        SkillValidationConflict,
+        SkillVersionConflict,
+    )
+
+    store = _skill_store(request)
+    current = await store.get(scope, slug)  # type: ignore[attr-defined]
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    enforce(
+        decide(
+            scope,
+            Capability.PROJECT_CONFIG_WRITE,
+            object_topics=current.tags,
+            sensitive_existence=True,
+        )
+    )
+    try:
+        transition = await store.validate(  # type: ignore[attr-defined]
+            scope, slug, expected_version=body.expected_version
+        )
+    except SkillNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+    except SkillVersionConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="version conflict"
+        ) from exc
+    except SkillValidationConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="skill dependencies are not valid"
+        ) from exc
+    return {
+        **_skill_command_view(transition.skill),
+        "audit_correlation": transition.audit_correlation,
+    }
+
+
 @router.post("/skills/{slug}/archive")
 async def archive_skill_admin(
-    slug: str, request: Request, scope: ProjectScope = Depends(_needs_config_write)
+    slug: str,
+    body: VersionedCommand,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    scope: ProjectScope = Depends(_needs_config_write),
 ) -> dict[str, object]:
-    await _skill_store(request).set_state(scope, slug, "archived")  # type: ignore[attr-defined]
-    return {"slug": slug, "archived": True}
+    from rsc_brain.skills.store import SkillNotFound, SkillVersionConflict
+
+    if not idempotency_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Idempotency-Key is required"
+        )
+    store = _skill_store(request)
+    current = await store.get(scope, slug)  # type: ignore[attr-defined]
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    enforce(
+        decide(
+            scope,
+            Capability.PROJECT_CONFIG_WRITE,
+            object_topics=current.tags,
+            sensitive_existence=True,
+        )
+    )
+    try:
+        transition = await store.archive(  # type: ignore[attr-defined]
+            scope,
+            slug,
+            expected_version=body.expected_version,
+            idempotency_key=idempotency_key,
+        )
+    except SkillNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+    except SkillVersionConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="version conflict"
+        ) from exc
+    return {
+        **_skill_command_view(transition.skill),
+        "audit_correlation": transition.audit_correlation,
+        "replayed": transition.replayed,
+    }
 
 
 @router.get("/review-queue")
@@ -1341,16 +1451,18 @@ def _hunts(request: Request) -> object:
 async def list_persons(
     request: Request, scope: ProjectScope = Depends(_needs_manage_read)
 ) -> dict[str, object]:
-    rows = await _directory(request).list(scope)  # type: ignore[attr-defined]
+    rows = await _directory(request).list_authorized(scope)  # type: ignore[attr-defined]
     return {
         "persons": [
             {
                 "id": p.id,
                 "name": p.name,
                 "topics": list(p.topics),
-                "channels": p.channels,
-                "quiet_hours": p.quiet_hours,
                 "language": p.language,
+                "channel_types": sorted(p.channels),
+                "has_quiet_hours": bool(p.quiet_hours),
+                "active_hunts": p.active_hunts,
+                "version": p.version,
             }
             for p in rows
         ]
@@ -1361,6 +1473,7 @@ async def list_persons(
 async def create_person(
     body: PersonCreate, request: Request, scope: ProjectScope = Depends(_needs_config_write)
 ) -> dict[str, object]:
+    decide_object(scope, Capability.PROJECT_CONFIG_WRITE, body.topics)
     person_id = await _directory(request).add(  # type: ignore[attr-defined]
         scope,
         name=body.name,
@@ -1369,7 +1482,63 @@ async def create_person(
         quiet_hours=body.quiet_hours,
         language=body.language,
     )
-    return {"person_id": person_id, "name": body.name}
+    return {"person_id": person_id, "name": body.name, "version": 1}
+
+
+@router.get("/persons/{person_id}")
+async def get_person(
+    person_id: str,
+    request: Request,
+    scope: ProjectScope = Depends(_needs_manage_read),
+) -> dict[str, object]:
+    person = await _directory(request).get_authorized(scope, person_id)  # type: ignore[attr-defined]
+    if person is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    enforce(
+        decide(
+            scope,
+            Capability.PROJECT_MANAGE_READ,
+            object_topics=person.topics,
+            sensitive_existence=True,
+        )
+    )
+    return {
+        "person": {
+            "id": person.id,
+            "name": person.name,
+            "topics": list(person.topics),
+            "channels": person.channels,
+            "quiet_hours": person.quiet_hours,
+            "language": person.language,
+            "active_hunts": person.active_hunts,
+            "version": person.version,
+        }
+    }
+
+
+@router.get("/persons/{person_id}/delete-impact")
+async def person_delete_impact(
+    person_id: str,
+    request: Request,
+    scope: ProjectScope = Depends(_needs_manage_read),
+) -> dict[str, object]:
+    person = await _directory(request).delete_impact(scope, person_id)  # type: ignore[attr-defined]
+    if person is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    enforce(
+        decide(
+            scope,
+            Capability.PROJECT_MANAGE_READ,
+            object_topics=person.topics,
+            sensitive_existence=True,
+        )
+    )
+    return {
+        "person_id": person.id,
+        "can_delete": person.active_hunts == 0,
+        "active_hunts": person.active_hunts,
+        "version": person.version,
+    }
 
 
 @router.patch("/persons/{person_id}")
@@ -1379,22 +1548,72 @@ async def update_person(
     request: Request,
     scope: ProjectScope = Depends(_needs_config_write),
 ) -> dict[str, object]:
-    await _directory(request).update(  # type: ignore[attr-defined]
+    from rsc_brain.hunting.directory import PersonVersionConflict
+
+    current = await _directory(request).get_authorized(scope, person_id)  # type: ignore[attr-defined]
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    decide_object(
         scope,
-        person_id,
-        topics=body.topics,
-        channels=body.channels,
-        quiet_hours=body.quiet_hours,
-        language=body.language,
+        Capability.PROJECT_CONFIG_WRITE,
+        [*current.topics, *(body.topics or [])],
     )
-    return {"person_id": person_id, "updated": True}
+    try:
+        updated = await _directory(request).update(  # type: ignore[attr-defined]
+            scope,
+            person_id,
+            topics=body.topics,
+            channels=body.channels,
+            quiet_hours=body.quiet_hours,
+            language=body.language,
+            expected_version=body.expected_version,
+            authorize_topics=True,
+        )
+    except PersonVersionConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="version conflict"
+        ) from exc
+    if updated is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    return {
+        "person_id": person_id,
+        "updated": True,
+        "version": updated.version,
+        "language": updated.language,
+    }
 
 
 @router.delete("/persons/{person_id}")
 async def delete_person(
-    person_id: str, request: Request, scope: ProjectScope = Depends(_needs_config_write)
+    person_id: str,
+    request: Request,
+    expected_version: int = Query(ge=1),
+    scope: ProjectScope = Depends(_needs_config_write),
 ) -> dict[str, object]:
-    await _directory(request).remove(scope, person_id)  # type: ignore[attr-defined]
+    from rsc_brain.hunting.directory import PersonDependencyConflict, PersonVersionConflict
+
+    current = await _directory(request).get_authorized(scope, person_id)  # type: ignore[attr-defined]
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    decide_object(scope, Capability.PROJECT_CONFIG_WRITE, current.topics)
+    try:
+        removed = await _directory(request).remove(  # type: ignore[attr-defined]
+            scope,
+            person_id,
+            expected_version=expected_version,
+            authorize_topics=True,
+        )
+    except PersonVersionConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="version conflict"
+        ) from exc
+    except PersonDependencyConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason": "active hunts", "active_hunts": exc.active_hunts},
+        ) from exc
+    if not removed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     return {"person_id": person_id, "removed": True}
 
 
@@ -1420,7 +1639,11 @@ async def get_hunt(
 
 @router.post("/hunts/ask", status_code=status.HTTP_201_CREATED)
 async def ask_hunt(
-    body: HuntAsk, request: Request, scope: ProjectScope = Depends(_needs_hunt_manage)
+    body: HuntAsk,
+    request: Request,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    scope: ProjectScope = Depends(_needs_hunt_manage),
 ) -> dict[str, object]:
     """Open a MANUAL hunt (FR-6.2c) routed by topic overlap (NO_OWNER if unowned).
 
@@ -1428,8 +1651,24 @@ async def ask_hunt(
     """
     decide_object(scope, Capability.HUNT_MANAGE, body.topics)
     outcome = await _hunts(request).create_manual(  # type: ignore[attr-defined]
-        scope, question=body.question, topics=body.topics
+        scope,
+        question=body.question,
+        topics=body.topics,
+        idempotency_key=idempotency_key,
+        authorize_directory=True,
     )
+    # A same-key replay may outlive a membership/topic change.  Re-check the persisted snapshot,
+    # not merely the topics echoed in this retry, before returning the original result.
+    enforce(
+        decide(
+            scope,
+            Capability.HUNT_MANAGE,
+            object_topics=outcome.topics,
+            sensitive_existence=outcome.replayed,
+        )
+    )
+    if outcome.replayed:
+        response.status_code = status.HTTP_200_OK
     return {
         "hunt_id": outcome.hunt_id,
         "state": str(outcome.state),
@@ -1437,6 +1676,9 @@ async def ask_hunt(
         "throttled": outcome.throttled,
         # R28: an operator has to be able to tell "asked" from "recorded but never sent".
         "delivered": outcome.delivered,
+        "topics": list(outcome.topics),
+        "audit_correlation": outcome.audit_correlation,
+        "replayed": outcome.replayed,
     }
 
 

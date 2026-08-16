@@ -91,10 +91,12 @@ Platform operations ignore it; it cannot switch or widen their identity-only sco
 | `DELETE /api/v1/admin/topics/{slug}/grants/{user_id}` | `project.config.write` | No body. | `200`; the principal's remaining topic authority. Idempotent. `404` when the user has no membership in the caller's project. |
 | `GET /api/v1/admin/sources` | `project.manage.read` | No additional input. | `200`; source records and categorization policy. |
 | `POST /api/v1/admin/sources` | `project.config.write` | `SourceCreate`. | `201`; source identifier and name. |
-| `GET /api/v1/admin/persons` | `project.manage.read` | No additional input. | `200`; person routing records. |
-| `POST /api/v1/admin/persons` | `project.config.write` | `PersonCreate`. | `201`; person identifier and name. |
-| `PATCH /api/v1/admin/persons/{person_id}` | `project.config.write` | Required path `person_id`; `PersonUpdate`. | `200`; identifier and `updated: true`. |
-| `DELETE /api/v1/admin/persons/{person_id}` | `project.config.write` | Required path `person_id`. | `200`; identifier and `removed: true`. |
+| `GET /api/v1/admin/persons` | `project.manage.read` | No additional input. | `200`; minimized routing summaries with channel types, active-hunt impact and version, never contact values. |
+| `GET /api/v1/admin/persons/{person_id}` | `project.manage.read` | Required path `person_id`. | `200`; authorized contact detail and current version; foreign and absent identifiers are both `404`. |
+| `GET /api/v1/admin/persons/{person_id}/delete-impact` | `project.manage.read` | Required path `person_id`. | `200`; authoritative `can_delete`, active-hunt count and version. |
+| `POST /api/v1/admin/persons` | `project.config.write` | `PersonCreate`. | `201`; person identifier, name and initial version. |
+| `PATCH /api/v1/admin/persons/{person_id}` | `project.config.write` | Required path `person_id`; `PersonUpdate`, including required `expected_version`. | `200`; authoritative identifier, language and incremented version. A stale version is `409`. |
+| `DELETE /api/v1/admin/persons/{person_id}` | `project.config.write` | Required path `person_id` and query `expected_version`. | `200`; identifier and `removed: true`. Stale versions and active-hunt dependencies are `409`. |
 | `DELETE /api/v1/admin/connections/{connection_id}` | `platform.credential.revoke` | Required path `connection_id`. | `200`; revoked connection identifier. |
 
 ## Admin document and review operations
@@ -118,16 +120,17 @@ Platform operations ignore it; it cannot switch or widen their identity-only sco
 | `GET /api/v1/admin/corrections` | `knowledge.read` | Optional queries `status_filter`, `target_claim`, `author`, and `project`. | `200`; correction feed. |
 | `GET /api/v1/admin/corrections/metrics` | `knowledge.read` | Optional `project`. | `200`; correction metrics. |
 | `POST /api/v1/admin/corrections/{correction_id}/revert` | `correction.revert` after a visible-target lookup | Required path `correction_id`; optional `project`. | `200`; outcome status and explanation. |
-| `GET /api/v1/admin/skills` | `knowledge.read` | Optional queries `state` and `project`. | `200`; skill summaries with state, stale flag, and tags. |
-| `POST /api/v1/admin/skills` | `project.config.write` | `SkillUpsert`; optional `project`. | `201`; skill identifier and slug. |
-| `POST /api/v1/admin/skills/{slug}/archive` | `project.config.write` | Required path `slug`; optional `project`. | `200`; slug and `archived: true`. |
+| `GET /api/v1/admin/skills` | `knowledge.read` | Optional queries `state` and `project`. | `200`; topic-authorized closed summaries with status, stale flag, dependencies and version; procedure bodies are absent. |
+| `POST /api/v1/admin/skills` | `project.config.write` | `SkillUpsert` whose lifecycle state is `proposed`; optional `project`. | `201`; skill identifier and slug. Activation always goes through validation. |
+| `POST /api/v1/admin/skills/{slug}/validate` | `project.config.write` | Required path `slug`; `VersionedCommand`; optional `project`. | `200`; a validated proposed skill becomes active at the next version with audit correlation. Missing dependencies and stale versions conflict. |
+| `POST /api/v1/admin/skills/{slug}/archive` | `project.config.write` | Required path `slug`; required `Idempotency-Key`; `VersionedCommand`; optional `project`. | `200`; authoritative archived view and audit correlation. Same-key retries replay; stale versions are `409`. |
 | `GET /api/v1/admin/timeline` | `knowledge.read` | Optional queries `topic`, `entity`, `as_of`, and `project`. | `200`; permission-filtered timeline. `as_of` is an ISO date. |
 | `GET /api/v1/admin/graph/entity` | `knowledge.read` | Query `name`, default empty, maximum 512 characters; `limit` 1–200, default 25; `offset` at least 0, default 0; optional `project`. | `200`; visible center, neighbors, edges, total, offset, and limit. No visible center returns `404`. |
 | `GET /api/v1/admin/gaps` | `project.manage.read` | Optional `audience` (`human` or `agent`) and `project`. Other audience values select all. | `200`; visible gaps. |
 | `POST /api/v1/admin/gaps/{gap_id}/promote` | `gap.promote` | Required path `gap_id`; optional `project`. | `201`; hunt identifier and state. |
-| `GET /api/v1/admin/hunts` | `knowledge.read` | `open_only` boolean, default false; optional `project`. | `200`; visible hunts. |
-| `GET /api/v1/admin/hunts/{hunt_id}` | `knowledge.read` | Required path `hunt_id`; optional `project`. | `200`; one hunt. |
-| `POST /api/v1/admin/hunts/ask` | `hunt.manage` | `HuntAsk`; optional `project`. | `201`; hunt state, routed person, throttle state, and whether a message was delivered. |
+| `GET /api/v1/admin/hunts` | `knowledge.read` | `open_only` boolean, default false; optional `project`. | `200`; hunts filtered before serialization by their immutable topic snapshot. |
+| `GET /api/v1/admin/hunts/{hunt_id}` | `knowledge.read` | Required path `hunt_id`; optional `project`. | `200`; one authorized hunt; hidden and absent identifiers are both `404`. |
+| `POST /api/v1/admin/hunts/ask` | `hunt.manage` | `HuntAsk`; optional `Idempotency-Key` header and `project`. | `201` on creation or `200` on replay; persisted topics, routed person, delivery/throttle state and audit correlation. |
 | `GET /api/v1/admin/ontologies` | `knowledge.read` | Optional `project`. | `200`; stored ontology versions and active state. |
 | `POST /api/v1/admin/ontologies` | `project.config.write` | `OntologyUpload`; optional `project`. | `201`; ontology identifier and name. Invalid RDF returns `422`. |
 | `GET /api/v1/admin/ontologies/coverage` | `knowledge.read` | `top` integer 1–100, default 10; optional `project`. | `200`; anchored coverage and leading unanchored names. |

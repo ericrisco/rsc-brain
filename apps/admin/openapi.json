@@ -328,6 +328,11 @@
             ],
             "title": "Channels"
           },
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
           "language": {
             "anyOf": [
               {
@@ -370,7 +375,35 @@
             "title": "Topics"
           }
         },
+        "required": [
+          "expected_version"
+        ],
         "title": "PersonUpdate",
+        "type": "object"
+      },
+      "PreferenceMetadata": {
+        "properties": {
+          "locale": {
+            "default": "es",
+            "enum": [
+              "es",
+              "en"
+            ],
+            "title": "Locale",
+            "type": "string"
+          },
+          "theme": {
+            "default": "system",
+            "enum": [
+              "system",
+              "light",
+              "dark"
+            ],
+            "title": "Theme",
+            "type": "string"
+          }
+        },
+        "title": "PreferenceMetadata",
         "type": "object"
       },
       "ProjectCreate": {
@@ -416,6 +449,111 @@
           "reason"
         ],
         "title": "RejectDoc",
+        "type": "object"
+      },
+      "SessionEnvelope": {
+        "description": "The only browser-readable, authoritative capability envelope.",
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/SessionIdentity"
+          },
+          "is_owner": {
+            "title": "Is Owner",
+            "type": "boolean"
+          },
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/SessionMembership"
+            },
+            "title": "Memberships",
+            "type": "array"
+          },
+          "platform_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Platform Capabilities",
+            "type": "array"
+          },
+          "preference_metadata": {
+            "$ref": "#/components/schemas/PreferenceMetadata"
+          },
+          "user": {
+            "$ref": "#/components/schemas/SessionIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "user",
+          "is_owner",
+          "platform_capabilities",
+          "memberships",
+          "preference_metadata"
+        ],
+        "title": "SessionEnvelope",
+        "type": "object"
+      },
+      "SessionIdentity": {
+        "description": "Display-safe identity metadata; it intentionally contains no credential material.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role"
+        ],
+        "title": "SessionIdentity",
+        "type": "object"
+      },
+      "SessionMembership": {
+        "properties": {
+          "allowed_topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Topics",
+            "type": "array"
+          },
+          "can_curate": {
+            "title": "Can Curate",
+            "type": "boolean"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "role",
+          "capabilities",
+          "allowed_topics",
+          "can_curate"
+        ],
+        "title": "SessionMembership",
         "type": "object"
       },
       "SkillUpsert": {
@@ -571,6 +709,20 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VersionedCommand": {
+        "properties": {
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "VersionedCommand",
         "type": "object"
       }
     },
@@ -1028,22 +1180,6 @@
             "schema": {
               "title": "Connection Id",
               "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project"
             }
           }
         ],
@@ -1947,6 +2083,22 @@
                 }
               ],
               "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           }
         ],
@@ -2915,6 +3067,16 @@
           },
           {
             "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
             "name": "project",
             "required": false,
             "schema": {
@@ -2960,6 +3122,69 @@
           }
         ],
         "summary": "Delete Person",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "operationId": "get_person_api_v1_admin_persons__person_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Person Api V1 Admin Persons  Person Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Person",
         "tags": [
           "admin"
         ]
@@ -3038,11 +3263,19 @@
         ]
       }
     },
-    "/api/v1/admin/projects": {
+    "/api/v1/admin/persons/{person_id}/delete-impact": {
       "get": {
-        "description": "The projects this caller may know about.\n\nR01 (strengthened during T001): this route returned every slug in the instance, so any caller\nthat passed the old admin gate enumerated other tenants by name. Enumerating the whole instance\nis a platform operation; a project caller sees only the projects it is a member of.",
-        "operationId": "list_projects_api_v1_admin_projects_get",
+        "operationId": "person_delete_impact_api_v1_admin_persons__person_id__delete_impact_get",
         "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
           {
             "in": "query",
             "name": "project",
@@ -3066,7 +3299,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response List Projects Api V1 Admin Projects Get",
+                  "title": "Response Person Delete Impact Api V1 Admin Persons  Person Id  Delete Impact Get",
                   "type": "object"
                 }
               }
@@ -3089,6 +3322,35 @@
             "HTTPBearer": []
           }
         ],
+        "summary": "Person Delete Impact",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/projects": {
+      "get": {
+        "description": "The global platform inventory, capability-gated independently of memberships.",
+        "operationId": "list_projects_api_v1_admin_projects_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Projects Api V1 Admin Projects Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
         "summary": "List Projects",
         "tags": [
           "admin"
@@ -3096,24 +3358,6 @@
       },
       "post": {
         "operationId": "create_project_api_v1_admin_projects_post",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3679,8 +3923,34 @@
               ],
               "title": "Project"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionedCommand"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -3711,6 +3981,81 @@
           }
         ],
         "summary": "Archive Skill Admin",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/skills/{slug}/validate": {
+      "post": {
+        "operationId": "validate_skill_admin_api_v1_admin_skills__slug__validate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionedCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Validate Skill Admin Api V1 Admin Skills  Slug  Validate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Validate Skill Admin",
         "tags": [
           "admin"
         ]
@@ -4285,24 +4630,6 @@
     "/api/v1/admin/users/invite": {
       "post": {
         "operationId": "invite_user_api_v1_admin_users_invite_post",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -4577,9 +4904,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Me Api V1 Me Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SessionEnvelope"
                 }
               }
             },
