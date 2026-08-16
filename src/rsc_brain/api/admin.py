@@ -844,6 +844,7 @@ async def validate_skill_admin(
     slug: str,
     body: VersionedCommand,
     request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     scope: ProjectScope = Depends(_needs_config_write),
 ) -> dict[str, object]:
     from rsc_brain.skills.store import (
@@ -852,6 +853,10 @@ async def validate_skill_admin(
         SkillVersionConflict,
     )
 
+    if not idempotency_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Idempotency-Key is required"
+        )
     store = _skill_store(request)
     current = await store.get(scope, slug)  # type: ignore[attr-defined]
     if current is None:
@@ -866,7 +871,10 @@ async def validate_skill_admin(
     )
     try:
         transition = await store.validate(  # type: ignore[attr-defined]
-            scope, slug, expected_version=body.expected_version
+            scope,
+            slug,
+            expected_version=body.expected_version,
+            idempotency_key=idempotency_key,
         )
     except SkillNotFound as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
@@ -881,6 +889,7 @@ async def validate_skill_admin(
     return {
         **_skill_command_view(transition.skill),
         "audit_correlation": transition.audit_correlation,
+        "replayed": transition.replayed,
     }
 
 

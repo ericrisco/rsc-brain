@@ -219,11 +219,28 @@ class SkillStore:
             )
 
     async def validate(
-        self, scope: ProjectScope, slug: str, *, expected_version: int
+        self,
+        scope: ProjectScope,
+        slug: str,
+        *,
+        expected_version: int,
+        idempotency_key: str,
     ) -> SkillTransition:
-        """Validate dependencies and atomically promote one proposed skill to active."""
-        correlation = str(uuid.uuid4())
+        """Validate once; same-key retries return the persisted transition after restarts."""
+        correlation = self._command_correlation(
+            scope, action="validate", slug=slug, idempotency_key=idempotency_key
+        )
+        lock_key = self._advisory_key(correlation)
         async with session_scope(self._sm) as session:
+            await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+            prior = await session.scalar(
+                select(models.AuditLog.id).where(
+                    models.AuditLog.project_id == _pid(scope),
+                    models.AuditLog.principal_id == scope.principal_id,
+                    models.AuditLog.action == "skill_validate",
+                    models.AuditLog.trace_id == correlation,
+                )
+            )
             skill = await session.scalar(
                 select(models.Skill)
                 .where(
@@ -235,6 +252,10 @@ class SkillStore:
             )
             if skill is None:
                 raise SkillNotFound
+            if prior is not None:
+                return SkillTransition(
+                    skill=_row(skill), audit_correlation=correlation, replayed=True
+                )
             if skill.version != expected_version or skill.state != "proposed":
                 raise SkillVersionConflict
             if not await self._dependencies_exist(session, scope, skill.depends_on):
@@ -257,14 +278,10 @@ class SkillStore:
         idempotency_key: str,
     ) -> SkillTransition:
         """Archive once; same-key retries return the persisted outcome across app restarts."""
-        correlation = str(
-            uuid.uuid5(
-                uuid.UUID(scope.project_id),
-                f"skill-archive:{scope.principal_id}:{slug}:{idempotency_key}",
-            )
+        correlation = self._command_correlation(
+            scope, action="archive", slug=slug, idempotency_key=idempotency_key
         )
-        lock_digest = hashlib.sha256(correlation.encode()).digest()
-        lock_key = int.from_bytes(lock_digest[:8], "big", signed=True)
+        lock_key = self._advisory_key(correlation)
         async with session_scope(self._sm) as session:
             await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
             prior = await session.scalar(
@@ -297,6 +314,22 @@ class SkillStore:
             session.add(self._audit_row(scope, "skill_archive", correlation, skill))
             await session.flush()
             return SkillTransition(skill=_row(skill), audit_correlation=correlation)
+
+    @staticmethod
+    def _command_correlation(
+        scope: ProjectScope, *, action: str, slug: str, idempotency_key: str
+    ) -> str:
+        return str(
+            uuid.uuid5(
+                uuid.UUID(scope.project_id),
+                f"skill-{action}:{scope.principal_id}:{slug}:{idempotency_key}",
+            )
+        )
+
+    @staticmethod
+    def _advisory_key(correlation: str) -> int:
+        lock_digest = hashlib.sha256(correlation.encode()).digest()
+        return int.from_bytes(lock_digest[:8], "big", signed=True)
 
     @staticmethod
     async def _dependencies_exist(

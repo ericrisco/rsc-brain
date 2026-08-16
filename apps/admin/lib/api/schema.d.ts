@@ -3152,7 +3152,9 @@ export interface operations {
             query?: {
                 project?: string | null;
             };
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 slug: string;
             };
