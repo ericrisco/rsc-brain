@@ -60,3 +60,29 @@ def topic_clause(
     if forbidden:
         visible = and_(visible, ~column.op("&&")(sorted(forbidden)))
     return visible
+
+
+def fully_authorized_topic_clause(
+    column: InstrumentedAttribute[list[str]],
+    scope: ProjectScope,
+    *,
+    allow_untagged: bool = False,
+) -> ColumnElement[bool]:
+    """Require every real topic carried by a row to be present in ``scope``.
+
+    Console posture, counts and pagination use a stricter contract than a relevance search: a row
+    tagged for two topics is one indivisible observable, so an overlap with one topic cannot make
+    the other topic's existence visible.  PostgreSQL evaluates the subset predicate in the same
+    query that counts, orders and pages the rows; no forbidden row reaches Python first.
+
+    Workflow sentinels are not topics and are removed before comparing.  Untagged rows remain
+    fail-closed unless a caller explicitly identifies them as project-level metadata.
+    """
+    topics_only: Any = column
+    for sentinel in sorted(NON_TOPIC_TAGS):
+        topics_only = func.array_remove(topics_only, literal(sentinel))
+    topic_count = func.coalesce(func.cardinality(topics_only), 0)
+    all_granted = and_(topic_count > 0, topics_only.op("<@")(sorted(scope.allowed_topics)))
+    if allow_untagged:
+        return or_(topic_count == 0, all_granted)
+    return all_granted

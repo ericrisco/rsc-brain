@@ -12,16 +12,34 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
+import json
 import uuid
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Sequence
+from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.scope import PrincipalType, ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
-from rsc_brain.visibility import forbidden_topics, topic_clause
+from rsc_brain.visibility import fully_authorized_topic_clause
+
+
+class InvalidRecallCursor(ValueError):
+    """The caller supplied a continuation token this read model did not issue."""
+
+
+@dataclass(frozen=True, slots=True)
+class RecallPage:
+    """Authorized recall rows plus continuation metadata for the console."""
+
+    items: list[dict[str, object]]
+    next_cursor: str | None
+    total: int
+    freshness: dt.datetime
 
 
 async def _visibility(
@@ -34,10 +52,10 @@ async def _visibility(
     to a caller authorized for the project; a row that names topics is visible only to a caller who
     holds them.
     """
-    forbidden = await forbidden_topics(sessionmaker, scope)
+    del sessionmaker  # Kept in the frozen helper signature for its existing callers.
     return [
         models.AuditLog.project_id == uuid.UUID(scope.project_id),
-        topic_clause(models.AuditLog.topics_used, scope, forbidden, allow_untagged=True),
+        fully_authorized_topic_clause(models.AuditLog.topics_used, scope, allow_untagged=True),
     ]
 
 
@@ -236,7 +254,11 @@ async def activity_summary(
         "recalls": int(total or 0),
         "denied": int(denied or 0),
         "active_principals": int(active or 0),
-        "p95_duration_ms": round(float(p95), 1) if p95 is not None else None,
+        "p95_duration_ms": (
+            float(Decimal(str(p95)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+            if p95 is not None
+            else None
+        ),
         "recalls_per_day": per_day,
     }
 
@@ -267,6 +289,95 @@ async def recall_stream(
             .limit(limit)
         )
         return [_row_to_dict(row) for row in rows]
+
+
+def _encode_recall_cursor(row: models.AuditLog) -> str:
+    payload = json.dumps(
+        {"v": 1, "ts": row.ts.isoformat(), "id": row.id},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return urlsafe_b64encode(payload).decode().rstrip("=")
+
+
+def _decode_recall_cursor(value: str) -> tuple[dt.datetime, int]:
+    try:
+        padding = "=" * (-len(value) % 4)
+        raw = urlsafe_b64decode(f"{value}{padding}".encode())
+        payload = json.loads(raw)
+        if not isinstance(payload, dict) or payload.get("v") != 1:
+            raise ValueError
+        timestamp = dt.datetime.fromisoformat(payload["ts"])
+        row_id = int(payload["id"])
+        if timestamp.tzinfo is None or row_id < 1:
+            raise ValueError
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise InvalidRecallCursor("invalid recall cursor") from exc
+    return timestamp, row_id
+
+
+async def recall_page(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    scope: ProjectScope,
+    *,
+    principal_type: str | None = None,
+    denied: bool | None = None,
+    cursor: str | None = None,
+    limit: int = 100,
+) -> RecallPage:
+    """Page the authorized recall set with a stable, metadata-safe cursor.
+
+    Visibility enters both the total and item queries before ordering or pagination.  The cursor
+    contains only the last *authorized* row's timestamp and surrogate id; it can neither disclose
+    a filtered principal nor advance across raw tenant rows.
+    """
+    conditions: list[object] = [
+        *await _visibility(sessionmaker, scope),
+        models.AuditLog.action == "recall",
+    ]
+    if principal_type is not None:
+        conditions.append(models.AuditLog.principal_type == principal_type)
+    if denied is not None:
+        conditions.append(models.AuditLog.denied.is_(denied))
+
+    page_conditions = list(conditions)
+    if cursor is not None:
+        timestamp, row_id = _decode_recall_cursor(cursor)
+        page_conditions.append(
+            or_(
+                models.AuditLog.ts < timestamp,
+                and_(models.AuditLog.ts == timestamp, models.AuditLog.id < row_id),
+            )
+        )
+
+    async with sessionmaker() as session:
+        total, latest = (
+            await session.execute(
+                select(func.count(), func.max(models.AuditLog.ts)).where(*conditions)  # type: ignore[arg-type]
+            )
+        ).one()
+        rows = list(
+            await session.scalars(
+                select(models.AuditLog)
+                .where(*page_conditions)  # type: ignore[arg-type]
+                .order_by(models.AuditLog.ts.desc(), models.AuditLog.id.desc())
+                .limit(limit + 1)
+            )
+        )
+
+    has_more = len(rows) > limit
+    visible_rows = rows[:limit]
+    items: list[dict[str, object]] = []
+    for row in visible_rows:
+        item = _row_to_dict(row)
+        item["id"] = str(row.id)
+        items.append(item)
+    return RecallPage(
+        items=items,
+        next_cursor=_encode_recall_cursor(visible_rows[-1]) if has_more and visible_rows else None,
+        total=int(total or 0),
+        freshness=latest or dt.datetime.now(dt.UTC),
+    )
 
 
 async def set_query_text_logging(

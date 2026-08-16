@@ -373,6 +373,31 @@
         "title": "PersonUpdate",
         "type": "object"
       },
+      "PreferenceMetadata": {
+        "properties": {
+          "locale": {
+            "default": "es",
+            "enum": [
+              "es",
+              "en"
+            ],
+            "title": "Locale",
+            "type": "string"
+          },
+          "theme": {
+            "default": "system",
+            "enum": [
+              "system",
+              "light",
+              "dark"
+            ],
+            "title": "Theme",
+            "type": "string"
+          }
+        },
+        "title": "PreferenceMetadata",
+        "type": "object"
+      },
       "ProjectCreate": {
         "properties": {
           "name": {
@@ -404,6 +429,222 @@
         "title": "QueryTextLogging",
         "type": "object"
       },
+      "ReadPage_RecallView_": {
+        "properties": {
+          "freshness": {
+            "format": "date-time",
+            "title": "Freshness",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecallView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "total",
+          "freshness"
+        ],
+        "title": "ReadPage[RecallView]",
+        "type": "object"
+      },
+      "RecallView": {
+        "description": "Display-safe recall audit row returned by the observability stream.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "denied": {
+            "title": "Denied",
+            "type": "boolean"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "on_behalf_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Behalf Of"
+          },
+          "principal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal Id"
+          },
+          "principal_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal Type"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "query_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Hash"
+          },
+          "query_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Text"
+          },
+          "result_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Count"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool"
+          },
+          "topics_used": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics Used",
+            "type": "array"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "id",
+          "ts",
+          "project_id",
+          "user_id",
+          "principal_type",
+          "principal_id",
+          "on_behalf_of",
+          "trace_id",
+          "action",
+          "tool",
+          "query_hash",
+          "query_text",
+          "duration_ms",
+          "topics_used",
+          "result_count",
+          "denied"
+        ],
+        "title": "RecallView",
+        "type": "object"
+      },
       "RejectDoc": {
         "properties": {
           "reason": {
@@ -416,6 +657,111 @@
           "reason"
         ],
         "title": "RejectDoc",
+        "type": "object"
+      },
+      "SessionEnvelope": {
+        "description": "The only browser-readable, authoritative capability envelope.",
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/SessionIdentity"
+          },
+          "is_owner": {
+            "title": "Is Owner",
+            "type": "boolean"
+          },
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/SessionMembership"
+            },
+            "title": "Memberships",
+            "type": "array"
+          },
+          "platform_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Platform Capabilities",
+            "type": "array"
+          },
+          "preference_metadata": {
+            "$ref": "#/components/schemas/PreferenceMetadata"
+          },
+          "user": {
+            "$ref": "#/components/schemas/SessionIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "user",
+          "is_owner",
+          "platform_capabilities",
+          "memberships",
+          "preference_metadata"
+        ],
+        "title": "SessionEnvelope",
+        "type": "object"
+      },
+      "SessionIdentity": {
+        "description": "Display-safe identity metadata; it intentionally contains no credential material.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role"
+        ],
+        "title": "SessionIdentity",
+        "type": "object"
+      },
+      "SessionMembership": {
+        "properties": {
+          "allowed_topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Topics",
+            "type": "array"
+          },
+          "can_curate": {
+            "title": "Can Curate",
+            "type": "boolean"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "role",
+          "capabilities",
+          "allowed_topics",
+          "can_curate"
+        ],
+        "title": "SessionMembership",
         "type": "object"
       },
       "SkillUpsert": {
@@ -1028,22 +1374,6 @@
             "schema": {
               "title": "Connection Id",
               "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project"
             }
           }
         ],
@@ -2490,7 +2820,7 @@
     },
     "/api/v1/admin/observability/recalls": {
       "get": {
-        "description": "Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only\nwhen the project's logging is ON.",
+        "description": "Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only\nwhen the project's logging is ON.  The cursor advances across authorized rows only.",
         "operationId": "observability_recalls_api_v1_admin_observability_recalls_get",
         "parameters": [
           {
@@ -2527,6 +2857,22 @@
           },
           {
             "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -2559,9 +2905,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Observability Recalls Api V1 Admin Observability Recalls Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReadPage_RecallView_"
                 }
               }
             },
@@ -3040,26 +3384,8 @@
     },
     "/api/v1/admin/projects": {
       "get": {
-        "description": "The projects this caller may know about.\n\nR01 (strengthened during T001): this route returned every slug in the instance, so any caller\nthat passed the old admin gate enumerated other tenants by name. Enumerating the whole instance\nis a platform operation; a project caller sees only the projects it is a member of.",
+        "description": "The global platform inventory, capability-gated independently of memberships.",
         "operationId": "list_projects_api_v1_admin_projects_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -3072,16 +3398,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "security": [
@@ -3096,24 +3412,6 @@
       },
       "post": {
         "operationId": "create_project_api_v1_admin_projects_post",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -4285,24 +4583,6 @@
     "/api/v1/admin/users/invite": {
       "post": {
         "operationId": "invite_user_api_v1_admin_users_invite_post",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -4577,9 +4857,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Me Api V1 Me Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SessionEnvelope"
                 }
               }
             },
