@@ -40,3 +40,42 @@ class RecallView(BaseModel):
     topics_used: list[str]
     result_count: int | None
     denied: bool
+
+
+class ProductMetricDay(BaseModel):
+    """One exact server-owned recall count in the selected reporting window."""
+
+    day: str
+    recalls: int
+
+
+class ProductAdoptionMetrics(BaseModel):
+    recalls: int
+    active_principals: int
+    recalls_per_day: list[ProductMetricDay]
+
+
+class ProductQualityMetrics(BaseModel):
+    abstention_rate: float
+    hunts_answered_pct: float
+
+
+class ProductKnowledgeMetrics(BaseModel):
+    claims: int
+    disputed: int
+    open_gaps: int
+
+
+class ProductHealthMetrics(BaseModel):
+    extraction_errors: int
+    recall_p95_ms: float | None
+    tokens_by_capability: dict[str, int]
+
+
+class ProductMetricsEnvelope(BaseModel):
+    """The four permission-filtered product families exposed to the console."""
+
+    adoption: ProductAdoptionMetrics
+    quality: ProductQualityMetrics
+    knowledge: ProductKnowledgeMetrics
+    health: ProductHealthMetrics

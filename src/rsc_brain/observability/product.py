@@ -24,8 +24,8 @@ async def product_metrics(
     sessionmaker: async_sessionmaker[AsyncSession], scope: ProjectScope, *, window_days: int = 30
 ) -> dict[str, object]:
     pid = uuid.UUID(scope.project_id)
-    activity = await audit_mod.activity_summary(sessionmaker, scope)
     since = dt.datetime.now(dt.UTC) - dt.timedelta(days=window_days)
+    activity = await audit_mod.activity_summary(sessionmaker, scope, since=since)
     visible_claim = fully_authorized_topic_clause(models.Claim.tags, scope)
     visible_gap = fully_authorized_topic_clause(models.Gap.topics, scope)
     visible_document = fully_authorized_topic_clause(models.Document.doc_tags, scope)
@@ -45,16 +45,21 @@ async def product_metrics(
             visible_gap,
             models.Gap.status == "open",
         )
-        hunts_total = await _count_visible_hunts(session, pid, visible_gap)
+        hunts_total = await _count_visible_hunts(
+            session, pid, visible_gap, models.Hunt.created_at >= since
+        )
         hunts_answered = await _count_visible_hunts(
             session,
             pid,
             visible_gap,
             models.Hunt.state.in_(["ANSWERED", "INGESTED", "RESOLVED"]),
+            models.Hunt.created_at >= since,
         )
-        extraction_errors = await _count_visible_ingest_errors(session, pid, visible_document)
+        extraction_errors = await _count_visible_ingest_errors(
+            session, pid, visible_document, since=since
+        )
         tokens = {
-            str(capability): int(total) if isinstance(total, int) else 0
+            str(capability): int(total or 0)
             for capability, total in await session.execute(
                 select(models.TokenUsage.capability, func.sum(models.TokenUsage.tokens))
                 .where(
@@ -115,7 +120,11 @@ async def _count_visible_hunts(
 
 
 async def _count_visible_ingest_errors(
-    session: AsyncSession, pid: uuid.UUID, document_visibility: object
+    session: AsyncSession,
+    pid: uuid.UUID,
+    document_visibility: object,
+    *,
+    since: dt.datetime,
 ) -> int:
     """Count extraction errors only through their authorized owning document."""
     total = await session.scalar(
@@ -132,6 +141,7 @@ async def _count_visible_ingest_errors(
             models.IngestError.project_id == pid,
             models.Document.project_id == pid,
             document_visibility,  # type: ignore[arg-type]
+            models.IngestError.created_at >= since,
         )
     )
     return int(total or 0)

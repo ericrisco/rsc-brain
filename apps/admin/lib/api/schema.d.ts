@@ -1765,6 +1765,62 @@ export interface components {
              */
             theme: "system" | "light" | "dark";
         };
+        /** ProductAdoptionMetrics */
+        ProductAdoptionMetrics: {
+            /** Active Principals */
+            active_principals: number;
+            /** Recalls */
+            recalls: number;
+            /** Recalls Per Day */
+            recalls_per_day: components["schemas"]["ProductMetricDay"][];
+        };
+        /** ProductHealthMetrics */
+        ProductHealthMetrics: {
+            /** Extraction Errors */
+            extraction_errors: number;
+            /** Recall P95 Ms */
+            recall_p95_ms: number | null;
+            /** Tokens By Capability */
+            tokens_by_capability: {
+                [key: string]: number;
+            };
+        };
+        /** ProductKnowledgeMetrics */
+        ProductKnowledgeMetrics: {
+            /** Claims */
+            claims: number;
+            /** Disputed */
+            disputed: number;
+            /** Open Gaps */
+            open_gaps: number;
+        };
+        /**
+         * ProductMetricDay
+         * @description One exact server-owned recall count in the selected reporting window.
+         */
+        ProductMetricDay: {
+            /** Day */
+            day: string;
+            /** Recalls */
+            recalls: number;
+        };
+        /**
+         * ProductMetricsEnvelope
+         * @description The four permission-filtered product families exposed to the console.
+         */
+        ProductMetricsEnvelope: {
+            adoption: components["schemas"]["ProductAdoptionMetrics"];
+            health: components["schemas"]["ProductHealthMetrics"];
+            knowledge: components["schemas"]["ProductKnowledgeMetrics"];
+            quality: components["schemas"]["ProductQualityMetrics"];
+        };
+        /** ProductQualityMetrics */
+        ProductQualityMetrics: {
+            /** Abstention Rate */
+            abstention_rate: number;
+            /** Hunts Answered Pct */
+            hunts_answered_pct: number;
+        };
         /** ProjectCreate */
         ProjectCreate: {
             /** Name */
@@ -3289,9 +3345,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProductMetricsEnvelope"];
                 };
             };
             /** @description Validation Error */

@@ -263,7 +263,10 @@ async def query_audit(
 
 
 async def activity_summary(
-    sessionmaker: async_sessionmaker[AsyncSession], scope: ProjectScope
+    sessionmaker: async_sessionmaker[AsyncSession],
+    scope: ProjectScope,
+    *,
+    since: dt.datetime | None = None,
 ) -> dict[str, object]:
     """Recall activity aggregates for the dashboard (FR-13.2): total recalls, denied/abstained,
     distinct active principals, p95 duration, and recalls/day.
@@ -274,6 +277,9 @@ async def activity_summary(
     """
     visibility = await _visibility(sessionmaker, scope)
     recall_rows = models.AuditLog.action == "recall"
+    conditions = [*visibility, recall_rows]
+    if since is not None:
+        conditions.append(models.AuditLog.ts >= since)
     async with sessionmaker() as session:
         totals = (
             await session.execute(
@@ -282,12 +288,12 @@ async def activity_summary(
                     func.count().filter(models.AuditLog.denied.is_(True)),
                     func.count(func.distinct(models.AuditLog.principal_id)),
                     func.percentile_cont(0.95).within_group(models.AuditLog.duration_ms.asc()),
-                ).where(*visibility, recall_rows)  # type: ignore[arg-type]
+                ).where(*conditions)  # type: ignore[arg-type]
             )
         ).one()
         per_day_rows = await session.execute(
             select(func.date(models.AuditLog.ts), func.count())
-            .where(*visibility, recall_rows)  # type: ignore[arg-type]
+            .where(*conditions)  # type: ignore[arg-type]
             .group_by(func.date(models.AuditLog.ts))
             .order_by(func.date(models.AuditLog.ts))
         )

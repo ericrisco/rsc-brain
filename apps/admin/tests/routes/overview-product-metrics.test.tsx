@@ -12,11 +12,14 @@ import { LanguageProvider } from "@/lib/i18n/context";
 const useProductMetrics = vi.fn();
 const useHealth = vi.fn();
 const usePats = vi.fn();
+const replace = vi.fn();
+let pathname = "/";
+let search = "";
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
-  usePathname: () => "/",
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ replace, push: vi.fn() }),
+  usePathname: () => pathname,
+  useSearchParams: () => new URLSearchParams(search),
 }));
 
 vi.mock("@/lib/api/hooks", () => ({
@@ -99,6 +102,9 @@ const metrics = {
 
 describe("Overview decision surface", () => {
   beforeEach(() => {
+    pathname = "/";
+    search = "";
+    replace.mockReset();
     useProductMetrics.mockReset().mockReturnValue({ data: metrics, isLoading: false, isError: false });
     useHealth.mockReset().mockReturnValue({
       data: { database: "ok", pending_approval: 3, ingest_errors: 2 },
@@ -203,6 +209,9 @@ describe("Overview decision surface", () => {
 
 describe("canonical Product Metrics route", () => {
   beforeEach(() => {
+    pathname = "/product-metrics";
+    search = "";
+    replace.mockReset();
     useProductMetrics.mockReset().mockReturnValue({ data: metrics, isLoading: false, isError: false });
     useHealth.mockReset();
     usePats.mockReset();
@@ -270,5 +279,6 @@ describe("canonical Product Metrics route", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Métricas de producto" })).toBeVisible();
     await user.selectOptions(screen.getByRole("combobox", { name: "Ventana" }), "90");
     expect(useProductMetrics).toHaveBeenLastCalledWith("alpha", 90);
+    expect(replace).toHaveBeenLastCalledWith("/product-metrics?window=90", { scroll: false });
   });
 });

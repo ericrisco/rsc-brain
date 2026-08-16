@@ -32,7 +32,7 @@ from rsc_brain.api.authz import (
     merge_proposal_topics,
     object_topics,
 )
-from rsc_brain.api.read_models import ReadPage, RecallView
+from rsc_brain.api.read_models import ProductMetricsEnvelope, ReadPage, RecallView
 from rsc_brain.authorization import Allow, Capability, decide
 from rsc_brain.config.models import PublicLimits
 from rsc_brain.identity.service import IdentityService
@@ -1047,7 +1047,7 @@ async def resolve_merge_item(
     return {"proposal_id": proposal_id, "outcome": outcome}
 
 
-@router.get("/metrics/product")
+@router.get("/metrics/product", response_model=ProductMetricsEnvelope)
 async def product_metrics_endpoint(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),

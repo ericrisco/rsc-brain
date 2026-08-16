@@ -6,6 +6,8 @@ project-scoped; a request's trace_id is echoed for end-to-end correlation.
 
 from __future__ import annotations
 
+import datetime as dt
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 
@@ -19,6 +21,7 @@ from rsc_brain.observability.metrics import (
     RUNTIME_SERIES,
     render_metrics,
 )
+from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.store import PgRelationalStore
 
 from .conftest import Harness, unique_slug
@@ -96,6 +99,66 @@ async def test_product_metrics_has_the_four_families(
     body = response.json()
     assert set(body) == {"adoption", "quality", "knowledge", "health"}
     assert "tokens_by_capability" in body["health"]
+
+
+async def test_product_metrics_window_bounds_activity_and_bigint_usage(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("window"), [("general", 0)])
+    token = await _mint_pat(harness, project)
+    now = dt.datetime.now(dt.UTC)
+    async with harness.sm() as session:
+        session.add_all(
+            [
+                models.AuditLog(
+                    project_id=uuid.UUID(project),
+                    ts=now - dt.timedelta(days=40),
+                    principal_type="human",
+                    principal_id="old-principal",
+                    action="recall",
+                    topics_used=["general"],
+                    duration_ms=900,
+                ),
+                models.AuditLog(
+                    project_id=uuid.UUID(project),
+                    ts=now - dt.timedelta(days=1),
+                    principal_type="human",
+                    principal_id="current-principal",
+                    action="recall",
+                    topics_used=["general"],
+                    duration_ms=100,
+                ),
+                models.TokenUsage(
+                    id=uuid.uuid4(),
+                    project_id=uuid.UUID(project),
+                    capability="recall",
+                    day=(now - dt.timedelta(days=40)).date(),
+                    tokens=99,
+                    calls=1,
+                ),
+                models.TokenUsage(
+                    id=uuid.uuid4(),
+                    project_id=uuid.UUID(project),
+                    capability="recall",
+                    day=(now - dt.timedelta(days=1)).date(),
+                    tokens=11,
+                    calls=1,
+                ),
+            ]
+        )
+        await session.commit()
+
+    headers = {"Authorization": f"Bearer {token}"}
+    async with _client(harness, tmp_path) as client:
+        current = await client.get("/api/v1/admin/metrics/product?window_days=7", headers=headers)
+        wider = await client.get("/api/v1/admin/metrics/product?window_days=90", headers=headers)
+
+    assert current.status_code == wider.status_code == 200
+    assert current.json()["adoption"]["recalls"] == 1
+    assert wider.json()["adoption"]["recalls"] == 2
+    assert current.json()["health"]["tokens_by_capability"] == {"recall": 11}
+    assert wider.json()["health"]["tokens_by_capability"] == {"recall": 110}
 
 
 async def test_trace_id_is_echoed(build_harness: Callable[..., Harness], tmp_path: Path) -> None:
