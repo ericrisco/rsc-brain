@@ -56,12 +56,14 @@ describe("same-origin BFF contract (RED until T010)", () => {
     expect(await response.json()).toEqual({ detail: "rate limited" });
     expect(Object.fromEntries(response.headers.entries())).toEqual({
       "cache-control": "no-store",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'; sandbox",
       "content-disposition": 'attachment; filename="audit-atlas-20260816.csv"',
       "content-type": "application/problem+json",
       "retry-after": "17",
       "x-correlation-id": "corr_01K2",
       "x-request-id": "req_01K2",
       "x-trace-id": "trace_01K2",
+      "x-content-type-options": "nosniff",
     });
 
     const [target, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -81,6 +83,9 @@ describe("same-origin BFF contract (RED until T010)", () => {
         status: 409,
         headers: {
           "content-type": "application/json",
+          "content-disposition": 'attachment; filename="../../secrets"',
+          "retry-after": "999999",
+          "x-request-id": "unsafe reflected identifier",
           "x-trace-id": "trace-stale",
           location: "https://attacker.example/redirect",
           "set-cookie": "stolen=1",
@@ -112,7 +117,9 @@ describe("same-origin BFF contract (RED until T010)", () => {
     expect(await response.json()).toEqual({ detail: "stale", audit_correlation: 42 });
     expect(Object.fromEntries(response.headers.entries())).toEqual({
       "cache-control": "no-store",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'; sandbox",
       "content-type": "application/json",
+      "x-content-type-options": "nosniff",
       "x-trace-id": "trace-stale",
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -150,8 +157,10 @@ describe("same-origin BFF contract (RED until T010)", () => {
     expect(new Uint8Array(await download.arrayBuffer())).toEqual(binary);
     expect(Object.fromEntries(download.headers.entries())).toEqual({
       "cache-control": "no-store",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'; sandbox",
       "content-disposition": 'attachment; filename="evidence.bin"',
       "content-type": "application/octet-stream",
+      "x-content-type-options": "nosniff",
     });
 
     sessionToken = undefined;
@@ -178,6 +187,40 @@ describe("same-origin BFF contract (RED until T010)", () => {
       expect(rejected.headers.get("cache-control")).toBe("no-store");
     }
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("turns upstream redirects and transport failures into finite non-cacheable outcomes", async () => {
+    const { GET } = await import("@/app/api/proxy/[...path]/route");
+    const invoke = () =>
+      GET(new Request("http://console.test/api/proxy/api/v1/me"), {
+        params: Promise.resolve({ path: ["api", "v1", "me"] }),
+      });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(null, { status: 302, headers: { location: "https://attacker.example" } }),
+    );
+    const redirected = await invoke();
+    expect(redirected.status).toBe(502);
+    expect(await redirected.json()).toEqual({ error: "invalid_upstream_redirect" });
+    expect(Object.fromEntries(redirected.headers.entries())).toEqual({
+      "cache-control": "no-store",
+      "content-security-policy": "default-src 'none'; frame-ancestors 'none'; sandbox",
+      "content-type": "application/json",
+      "x-content-type-options": "nosniff",
+    });
+
+    fetchMock.mockRejectedValueOnce(new TypeError("internal host must not escape"));
+    const unavailable = await invoke();
+    expect(unavailable.status).toBe(502);
+    expect(await unavailable.json()).toEqual({ error: "upstream_unavailable" });
+    expect(JSON.stringify(Object.fromEntries(unavailable.headers.entries()))).not.toContain(
+      "internal host",
+    );
+
+    fetchMock.mockRejectedValueOnce(new DOMException("timed out", "TimeoutError"));
+    const timedOut = await invoke();
+    expect(timedOut.status).toBe(504);
+    expect(await timedOut.json()).toEqual({ error: "upstream_timeout" });
   });
 
   it("uses an allow-listed local return path and rejects every open-redirect form", async () => {
@@ -224,6 +267,7 @@ describe("same-origin BFF contract (RED until T010)", () => {
         "/login",
         "/metrics",
         "/connections-impersonated",
+        "/connections?returnTo=https://attacker.example",
         "/manage/users/../../api/proxy/api/v1/me",
         " /connections",
       ]) {
@@ -293,6 +337,12 @@ describe("same-origin BFF contract (RED until T010)", () => {
       messageKey: "errors.validation",
       fieldErrors: { email: "invalid email", password: "too short" },
     });
+    expect(
+      loaded.uiErrorFromResponse(new Response(null, { status: 409 }), {
+        detail: "stale",
+        audit_correlation: 42,
+      }),
+    ).toMatchObject({ kind: "conflict", messageKey: "errors.conflict", traceId: "42" });
     expect(loaded.networkUiError()).toEqual({
       kind: "network",
       messageKey: "errors.network",
