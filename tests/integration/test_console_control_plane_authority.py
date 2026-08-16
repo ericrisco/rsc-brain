@@ -12,10 +12,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 import httpx
+import pytest
 
 from rsc_brain.api.app import ApiDeps, create_app
 from rsc_brain.identity.service import IdentityService
 from tests.integration.conftest import Harness, unique_slug
+
+pytestmark = pytest.mark.integration
 
 _PASSWORD = "correct horse battery staple"  # Test fixture credential; never a production secret.
 
