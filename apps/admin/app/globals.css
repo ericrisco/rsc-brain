@@ -1,9 +1,176 @@
 @import "tailwindcss";
 
 :root {
-  color-scheme: light dark;
+  /* Ratified OKLCH sources: Instrument Neutral + Instrument Cyan. */
+  --instrument-neutral-50: oklch(0.985 0.002 230);
+  --instrument-neutral-100: oklch(0.965 0.003 230);
+  --instrument-neutral-200: oklch(0.925 0.004 230);
+  --instrument-neutral-300: oklch(0.86 0.005 230);
+  --instrument-neutral-400: oklch(0.7 0.006 230);
+  --instrument-neutral-500: oklch(0.56 0.007 230);
+  --instrument-neutral-600: oklch(0.44 0.008 230);
+  --instrument-neutral-700: oklch(0.34 0.008 230);
+  --instrument-neutral-800: oklch(0.25 0.008 230);
+  --instrument-neutral-900: oklch(0.18 0.008 230);
+  --instrument-neutral-950: oklch(0.125 0.006 230);
+  --instrument-cyan-50: oklch(0.97 0.03 210);
+  --instrument-cyan-100: oklch(0.93 0.055 210);
+  --instrument-cyan-200: oklch(0.86 0.09 210);
+  --instrument-cyan-300: oklch(0.78 0.12 210);
+  --instrument-cyan-400: oklch(0.71 0.14 210);
+  --instrument-cyan-500: oklch(0.650 0.150 210);
+  --instrument-cyan-600: oklch(0.56 0.14 210);
+  --instrument-cyan-700: oklch(0.47 0.12 210);
+  --instrument-cyan-800: oklch(0.38 0.09 210);
+  --instrument-cyan-900: oklch(0.3 0.065 210);
+  --instrument-cyan-950: oklch(0.22 0.04 210);
+
+  --space-unit: 0.25rem;
+  --radius-control: 0.25rem;
+  --radius-panel: 0.375rem;
+  --radius-overlay: 0.5rem;
+  --motion-fast: 120ms;
+  --motion-state: 160ms;
+  --motion-overlay: 200ms;
+  --motion-dialog: 240ms;
+
+  --ui-canvas: var(--instrument-neutral-50);
+  --ui-surface: oklch(1 0 0);
+  --ui-surface-subtle: var(--instrument-neutral-100);
+  --ui-text-primary: var(--instrument-neutral-950);
+  --ui-text-secondary: var(--instrument-neutral-600);
+  --ui-border: var(--instrument-neutral-200);
+  --ui-border-strong: var(--instrument-neutral-300);
+  --ui-interactive: var(--instrument-cyan-700);
+  --ui-interactive-hover: var(--instrument-cyan-800);
+  --ui-on-interactive: var(--instrument-neutral-50);
+  --ui-focus: var(--instrument-cyan-700);
+  --ui-selected: var(--instrument-cyan-100);
+  --ui-success: oklch(0.46 0.13 150);
+  --ui-success-muted: oklch(0.95 0.035 150);
+  --ui-warning: oklch(0.43 0.105 80);
+  --ui-warning-muted: oklch(0.95 0.04 80);
+  --ui-danger: oklch(0.52 0.19 25);
+  --ui-danger-muted: oklch(0.95 0.045 25);
+  --ui-info: var(--instrument-cyan-700);
+  --ui-info-muted: var(--instrument-cyan-50);
+  --ui-overlay: oklch(0.125 0.006 230 / 0.66);
+  color-scheme: light;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --ui-canvas: var(--instrument-neutral-950);
+  --ui-surface: var(--instrument-neutral-900);
+  --ui-surface-subtle: var(--instrument-neutral-800);
+  --ui-text-primary: var(--instrument-neutral-50);
+  --ui-text-secondary: var(--instrument-neutral-400);
+  --ui-border: var(--instrument-neutral-800);
+  --ui-border-strong: var(--instrument-neutral-700);
+  --ui-interactive: var(--instrument-cyan-400);
+  --ui-interactive-hover: var(--instrument-cyan-300);
+  --ui-on-interactive: var(--instrument-neutral-950);
+  --ui-focus: var(--instrument-cyan-400);
+  --ui-selected: var(--instrument-cyan-900);
+  --ui-success: oklch(0.76 0.13 150);
+  --ui-success-muted: oklch(0.25 0.045 150);
+  --ui-warning: oklch(0.8 0.13 80);
+  --ui-warning-muted: oklch(0.25 0.05 80);
+  --ui-danger: oklch(0.72 0.17 25);
+  --ui-danger-muted: oklch(0.25 0.055 25);
+  --ui-info: var(--instrument-cyan-400);
+  --ui-info-muted: var(--instrument-cyan-950);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="system"] {
+    --ui-canvas: var(--instrument-neutral-950);
+    --ui-surface: var(--instrument-neutral-900);
+    --ui-surface-subtle: var(--instrument-neutral-800);
+    --ui-text-primary: var(--instrument-neutral-50);
+    --ui-text-secondary: var(--instrument-neutral-400);
+    --ui-border: var(--instrument-neutral-800);
+    --ui-border-strong: var(--instrument-neutral-700);
+    --ui-interactive: var(--instrument-cyan-400);
+    --ui-interactive-hover: var(--instrument-cyan-300);
+    --ui-on-interactive: var(--instrument-neutral-950);
+    --ui-focus: var(--instrument-cyan-400);
+    --ui-selected: var(--instrument-cyan-900);
+    --ui-success: oklch(0.76 0.13 150);
+    --ui-success-muted: oklch(0.25 0.045 150);
+    --ui-warning: oklch(0.8 0.13 80);
+    --ui-warning-muted: oklch(0.25 0.05 80);
+    --ui-danger: oklch(0.72 0.17 25);
+    --ui-danger-muted: oklch(0.25 0.055 25);
+    --ui-info: var(--instrument-cyan-400);
+    --ui-info-muted: var(--instrument-cyan-950);
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--ui-canvas);
+  --color-surface: var(--ui-surface);
+  --color-surface-subtle: var(--ui-surface-subtle);
+  --color-text-primary: var(--ui-text-primary);
+  --color-text-secondary: var(--ui-text-secondary);
+  --color-border: var(--ui-border);
+  --color-border-strong: var(--ui-border-strong);
+  --color-interactive: var(--ui-interactive);
+  --color-interactive-hover: var(--ui-interactive-hover);
+  --color-on-interactive: var(--ui-on-interactive);
+  --color-focus: var(--ui-focus);
+  --color-selected: var(--ui-selected);
+  --color-success: var(--ui-success);
+  --color-success-muted: var(--ui-success-muted);
+  --color-warning: var(--ui-warning);
+  --color-warning-muted: var(--ui-warning-muted);
+  --color-danger: var(--ui-danger);
+  --color-danger-muted: var(--ui-danger-muted);
+  --color-info: var(--ui-info);
+  --color-info-muted: var(--ui-info-muted);
+  --color-overlay: var(--ui-overlay);
 }
 
 body {
-  @apply bg-neutral-50 text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100;
+  @apply bg-canvas text-text-primary antialiased;
+  min-height: 100vh;
+  font-family: var(--font-sans), "IBM Plex Sans Variable", system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--ui-selected);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+.font-mono,
+code,
+kbd,
+samp,
+time,
+[data-numeric] {
+  font-family: var(--font-mono), "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

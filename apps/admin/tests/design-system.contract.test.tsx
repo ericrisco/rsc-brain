@@ -105,7 +105,7 @@ describe("Quiet Control Room design-system contract (RED until T012)", () => {
 
     expect({
       sansPackage: packageJson.includes("@fontsource-variable/ibm-plex-sans"),
-      monoPackage: packageJson.includes("@fontsource-variable/ibm-plex-mono"),
+      monoPackage: packageJson.includes("@fontsource/ibm-plex-mono"),
       sansLoaded: /ibm-plex-sans/i.test(layout),
       monoLoaded: /ibm-plex-mono/i.test(layout),
       variablesApplied: /--font-(sans|mono)/.test(layout),
@@ -170,7 +170,7 @@ describe("Quiet Control Room design-system contract (RED until T012)", () => {
 
     expect({
       primitives: primitiveFiles.every((name) => existsSync(appFile(`components/ui/${name}.tsx`))),
-      catalogue: existsSync(appFile("app/design-system/page.tsx")),
+      catalogue: existsSync(appFile("components/design-system-catalog.tsx")),
       navigationLandmark: /<nav\b/.test(shell),
       skipLink: /href=["']#main-content["']/.test(shell),
       mainTarget: /id=["']main-content["']/.test(shell),
