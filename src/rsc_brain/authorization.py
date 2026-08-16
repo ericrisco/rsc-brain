@@ -36,6 +36,7 @@ from rsc_brain.scope import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_MEMBER,
     PROJECT_ROLE_VIEWER,
+    PlatformIdentityScope,
     PrincipalType,
     ProjectScope,
 )
@@ -132,7 +133,9 @@ class NotFoundEquivalent:
 Decision = Allow | Deny | NotFoundEquivalent
 
 
-def _allow(scope: ProjectScope, capability: Capability, topics: frozenset[str]) -> Allow:
+def _allow(
+    scope: ProjectScope | PlatformIdentityScope, capability: Capability, topics: frozenset[str]
+) -> Allow:
     return Allow(capability=capability, decision_id=str(uuid.uuid4()), effective_topics=topics)
 
 
@@ -159,7 +162,7 @@ def _topics_authorized(
 
 
 def decide(
-    scope: ProjectScope,
+    scope: ProjectScope | PlatformIdentityScope,
     capability: Capability,
     *,
     object_topics: Collection[str] | None = None,
@@ -187,13 +190,21 @@ def decide(
 
     if capability in _PLATFORM_CAPABILITIES:
         if scope.platform_role in PLATFORM_ADMIN_ROLES:
-            return _allow(scope, capability, frozenset(scope.allowed_topics))
+            # Platform identity is deliberately topic-free.  A legacy ProjectScope may still
+            # reach this central decision while token compatibility is retained, but platform
+            # routes resolve PlatformIdentityScope and never pass it to project stores.
+            return _allow(scope, capability, frozenset())
         return refuse("platform administration required")
 
     if capability is Capability.OPERATOR_METRICS_READ:
         # The operator credential contract does not exist yet (task T008). Until it does, the
         # operational scrape has NO authorized caller — which is the safe state, not a stub allow.
         return refuse("operator credential required")
+
+    # Platform authority cannot accidentally become content authority: no project-membership
+    # attributes exist on this type, so it is denied before a content rule is considered.
+    if isinstance(scope, PlatformIdentityScope):
+        return refuse("project membership required")
 
     topics_ok, topic_reason = _topics_authorized(scope, object_topics)
 
@@ -235,3 +246,26 @@ def decide(
         return _allow(scope, capability, frozenset(scope.allowed_topics))
 
     return refuse("unknown capability")  # pragma: no cover - exhaustive above
+
+
+def effective_platform_capabilities(scope: PlatformIdentityScope) -> list[str]:
+    """The authoritative, duplicate-free platform capabilities for an identity."""
+    return [
+        capability.value
+        for capability in Capability
+        if capability in _PLATFORM_CAPABILITIES and isinstance(decide(scope, capability), Allow)
+    ]
+
+
+def effective_project_capabilities(scope: ProjectScope) -> list[str]:
+    """The authoritative, duplicate-free project capabilities for one real membership.
+
+    The optional object facts are intentionally omitted: this is the menu of operations that are
+    available at the membership level.  Object routes still make their second, topic-aware
+    decision immediately before acting.
+    """
+    return [
+        capability.value
+        for capability in Capability
+        if capability not in _PLATFORM_CAPABILITIES and isinstance(decide(scope, capability), Allow)
+    ]

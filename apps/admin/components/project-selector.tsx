@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+import { Select } from "@/components/ui/select";
 import type { Me } from "@/lib/api/types";
 
 /**
@@ -13,13 +14,13 @@ export function ProjectSelector({ me }: { me: Me }) {
   const [selected, setSelected] = useState(me.memberships[0]?.project ?? "");
 
   if (me.memberships.length === 0 && !me.is_owner) {
-    return <span className="text-sm text-neutral-500">No projects</span>;
+    return <span className="text-sm text-text-secondary">No projects</span>;
   }
 
   return (
-    <select
+    <Select
       aria-label="Active project"
-      className="h-9 rounded-md border border-neutral-300 bg-transparent px-2 text-sm dark:border-neutral-700"
+      className="min-w-48"
       value={selected}
       onChange={(event) => setSelected(event.target.value)}
     >
@@ -29,6 +30,6 @@ export function ProjectSelector({ me }: { me: Me }) {
           {membership.project} ({membership.role})
         </option>
       ))}
-    </select>
+    </Select>
   );
 }

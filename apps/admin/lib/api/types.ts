@@ -1,203 +1,54 @@
-/**
- * App-level shapes for the JSON the console consumes. The request/path/verb contract is fully
- * typed from the generated OpenAPI (`schema.d.ts`) via `openapi-fetch`; these describe the
- * response bodies the bootstrap endpoints return. Tightening the API's response_model to make
- * these generated too is a follow-up — the drift-check already guards the whole contract.
- */
+import type { components } from "./schema";
 
-export interface Membership {
-  project: string;
-  role: "owner" | "project-admin" | "viewer" | "member";
-  allowed_topics: string[];
-  can_curate: boolean;
-}
+/** Browser authority comes from the generated OpenAPI envelope, never a parallel UI model. */
+export type Membership = components["schemas"]["SessionMembership"];
+export type Me = components["schemas"]["SessionEnvelope"];
 
-export interface Me {
-  user: { id: string; email: string; role: string };
-  is_owner: boolean;
-  memberships: Membership[];
-}
-
-export interface Pat {
-  id: string;
-  name: string | null;
-  project: string;
-  created_at: string | null;
-  expires_at: string | null;
-  revoked: boolean;
-}
-
-export interface PatList {
-  pats: Pat[];
-}
-
-export interface CreatedPat {
-  pat_id: string;
-  token: string;
-}
+export type Pat = components["schemas"]["SelfPat"];
+export type PatList = components["schemas"]["SelfPatList"];
+export type CreatedPat = components["schemas"]["CreatedPat"];
+export type RevokedPat = components["schemas"]["RevokedPat"];
 
 // --- SPEC-14 read observability -------------------------------------------------------------
 
-export interface Activity {
-  recalls: number;
-  denied: number;
-  active_principals: number;
-  p95_duration_ms: number | null;
-  recalls_per_day: { day: string; recalls: number }[];
-}
-
-export interface RecallRow {
-  id: number;
-  ts: string | null;
-  principal_type: string | null;
-  principal_id: string | null;
-  on_behalf_of: string | null;
-  query_text: string | null;
-  query_hash: string | null;
-  topics_used: string[];
-  result_count: number | null;
-  duration_ms: number | null;
-  denied: boolean;
-}
-
-export interface Health {
-  database: string;
-  pending_approval: number;
-  ingest_errors: number;
-}
-
-export interface PendingDoc {
-  document_id: string;
-  title: string | null;
-  proposed_tags: string[];
-  source_id: string | null;
-  preview: string;
-}
-
-export interface IngestRun {
-  document_id: string;
-  phase: string;
-  completed_stages: string[];
-  chunks_created: number;
-  claims_generated: number;
-  discarded_chunks: number;
-  error: string | null;
-}
+export type Activity = components["schemas"]["ActivityEnvelope"];
+export type RecallRow = components["schemas"]["RecallView"];
+export type RecallPage = components["schemas"]["ReadPage_RecallView_"];
+export type Health = components["schemas"]["HealthEnvelope"];
+export type PendingDoc = components["schemas"]["PendingDocumentView"];
+export type PendingDocList = components["schemas"]["PendingDocumentEnvelope"];
+export type IngestRun = components["schemas"]["IngestRunView"];
+export type IngestError = components["schemas"]["IngestErrorView"];
+export type Ingest = components["schemas"]["IngestEnvelope"];
 
 // --- SPEC-19 living knowledge ---------------------------------------------------------------
 
-export interface Gap {
-  id: string;
-  query_text: string | null;
-  topics: string[];
-  count: number;
-  status: string;
-  last_seen_at: string | null;
-}
-
-export interface Hunt {
-  id: string;
-  type: string;
-  state: string;
-  question: string | null;
-  person_id: string | null;
-  gap_id: string | null;
-  correction_id: string | null;
-  channel: string | null;
-  retries: number;
-  created_at: string | null;
-  asked_at: string | null;
-  answered_at: string | null;
-  expires_at: string | null;
-  resolved_at: string | null;
-}
-
-export interface DisputedClaim {
-  id: string;
-  text: string;
-  tags: string[];
-  credibility: number;
-  valid_to: string | null;
-}
-
-export interface ResolutionSide {
-  claim_id: string;
-  text: string;
-  credibility: number;
-  valid_to: string | null;
-}
-
-export interface Resolution {
-  verdict: string;
-  confidence: number;
-  judge_version: string;
-  winner: ResolutionSide;
-  loser: ResolutionSide;
-  created_at: string | null;
-}
-
-export interface Correction {
-  id: string;
-  target_claim: string;
-  new_claim: string | null;
-  status: string;
-  role_applied: string | null;
-  author_id: string | null;
-  on_behalf_of: string | null;
-  hunt_id: string | null;
-  before_text: string | null;
-  after_text: string | null;
-  created_at: string | null;
-  resolved_at: string | null;
-}
-
-export interface CorrectionMetrics {
-  total: number;
-  by_status: Record<string, number>;
-  applied: number;
-  routed_hunt: number;
-  rejected: number;
-  revert_rate: number;
-  correction_wars: number;
-  ownership_coverage: number;
-}
+export type Gap = components["schemas"]["GapView"];
+export type GapList = components["schemas"]["GapEnvelope"];
+export type Hunt = components["schemas"]["HuntView"];
+export type HuntList = components["schemas"]["HuntEnvelope"];
+export type DisputedClaim = components["schemas"]["DisputedClaimView"];
+export type DisputedClaimList = components["schemas"]["DisputedClaimEnvelope"];
+export type Resolution = components["schemas"]["ContradictionResolutionView"];
+export type ResolutionList = components["schemas"]["ContradictionResolutionEnvelope"];
+export type Correction = components["schemas"]["CorrectionView"];
+export type CorrectionList = components["schemas"]["CorrectionEnvelope"];
+export type CorrectionMetrics = components["schemas"]["CorrectionMetricsEnvelope"];
+export type CorrectionRevertResult = components["schemas"]["CorrectionRevertResult"];
 
 // --- SPEC-21 unified needs_review queue -----------------------------------------------------
 
-export interface ReviewItem {
-  source: string;
-  id: string;
-  preview: string;
-  detail: Record<string, unknown>;
-}
-
-export interface ReviewQueue {
-  items: ReviewItem[];
-  counts: Record<string, number>;
-}
+export type ReviewItem = components["schemas"]["ReviewItemView"];
+export type ReviewQueue = components["schemas"]["ReviewQueueEnvelope"];
+export type ChunkReviewResolution = components["schemas"]["ChunkReviewResolution"];
+export type MergeReviewResolution = components["schemas"]["MergeReviewResolution"];
 
 // --- SPEC-26 console release ----------------------------------------------------------------
 
-export interface UsageRow {
-  capability: string;
-  day: string;
-  tokens: number;
-  calls: number;
-}
-
-export interface AuditRow {
-  id: string;
-  ts: string | null;
-  principal_type: string | null;
-  principal_id: string | null;
-  action: string | null;
-  tool: string | null;
-  query_hash: string | null;
-  query_text: string | null;
-  topics_used: string[];
-  result_count: number | null;
-  denied: boolean;
-}
+export type Usage = components["schemas"]["UsageEnvelope"];
+export type UsageRow = components["schemas"]["UsageRowView"];
+export type Audit = components["schemas"]["AuditEnvelope"];
+export type AuditRow = components["schemas"]["AuditView"];
 
 export interface AuditFilters {
   action?: string;
@@ -209,35 +60,41 @@ export interface AuditFilters {
   until?: string;
 }
 
-export interface ProductMetrics {
-  adoption: { recalls: number; active_principals: number; recalls_per_day: unknown[] };
-  quality: { abstention_rate: number; hunts_answered_pct: number };
-  knowledge: { claims: number; disputed: number; open_gaps: number };
-  health: {
-    extraction_errors: number;
-    recall_p95_ms: number | null;
-    tokens_by_capability: Record<string, number>;
-  };
-}
+export type ProductMetrics = components["schemas"]["ProductMetricsEnvelope"];
 
-export interface GraphNodeView {
-  id: string;
-  name: string;
-  type: string;
-  anchored: boolean;
-}
+export type GraphNodeView = components["schemas"]["GraphNodeView"];
+export type GraphEdgeView = components["schemas"]["GraphEdgeView"];
+export type Neighborhood = components["schemas"]["EntityGraphEnvelope"];
 
-export interface GraphEdgeView {
-  source: string;
-  target: string;
-  type: string;
-}
+// --- Control-plane governance ---------------------------------------------------------------
 
-export interface Neighborhood {
-  center: GraphNodeView;
-  neighbors: GraphNodeView[];
-  edges: GraphEdgeView[];
-  total: number;
-  offset: number;
-  limit: number;
-}
+export type ProjectInventory = components["schemas"]["ProjectInventory"];
+export type ProjectInventoryItem = components["schemas"]["ProjectInventoryState"];
+export type ProjectState = components["schemas"]["ProjectState"];
+export type ProjectEnvelope = components["schemas"]["ProjectEnvelope"];
+export type ProjectTransition = components["schemas"]["ProjectTransition"];
+export type ProjectImpact = components["schemas"]["ProjectImpact"];
+export type ProjectDeleteResult = components["schemas"]["ProjectDeleteEnvelope"];
+
+export type UserPage = components["schemas"]["UserPage"];
+export type UserState = components["schemas"]["UserListState"];
+export type InviteResult = components["schemas"]["InviteEnvelope"];
+export type DisableResult = components["schemas"]["DisableEnvelope"];
+export type PasswordResetResult = components["schemas"]["PasswordResetEnvelope"];
+export type MembershipList = components["schemas"]["MembershipList"];
+export type MembershipState = components["schemas"]["MembershipState"];
+export type MembershipTransition = components["schemas"]["MembershipTransition"];
+export type CredentialList = components["schemas"]["CredentialList"];
+export type CredentialState = components["schemas"]["CredentialState"];
+export type CredentialEnvelope = components["schemas"]["CredentialEnvelope"];
+
+export type TopicList = components["schemas"]["TopicList"];
+export type TopicState = components["schemas"]["TopicState"];
+export type TopicEnvelope = components["schemas"]["TopicEnvelope"];
+export type TopicTransition = components["schemas"]["TopicTransition"];
+
+export type HuntCommand = components["schemas"]["HuntCommandView"];
+export type Skill = components["schemas"]["SkillView"];
+export type SkillList = components["schemas"]["SkillEnvelope"];
+export type SkillCreateResult = components["schemas"]["SkillCreateResult"];
+export type SkillCommand = components["schemas"]["SkillCommandView"];

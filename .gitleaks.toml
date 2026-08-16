@@ -47,4 +47,7 @@ regexes = [
   # including in history.
   '''sk-ABCDEFGH1234567890abcdef''',
   '''hunter2-real-value''',
+  # Stable idempotency marker used by the Hunt restart/replay integration contract. It is sent only
+  # as an Idempotency-Key to a disposable ASGI test app; it is not an API credential or bearer token.
+  '''hunt-topics-001''',
 ]

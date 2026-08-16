@@ -1,6 +1,67 @@
 {
   "components": {
     "schemas": {
+      "ActivityDay": {
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "recalls": {
+            "title": "Recalls",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "recalls"
+        ],
+        "title": "ActivityDay",
+        "type": "object"
+      },
+      "ActivityEnvelope": {
+        "properties": {
+          "active_principals": {
+            "title": "Active Principals",
+            "type": "integer"
+          },
+          "denied": {
+            "title": "Denied",
+            "type": "integer"
+          },
+          "p95_duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Duration Ms"
+          },
+          "recalls": {
+            "title": "Recalls",
+            "type": "integer"
+          },
+          "recalls_per_day": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityDay"
+            },
+            "title": "Recalls Per Day",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recalls",
+          "denied",
+          "active_principals",
+          "p95_duration_ms",
+          "recalls_per_day"
+        ],
+        "title": "ActivityEnvelope",
+        "type": "object"
+      },
       "ApproveDoc": {
         "properties": {
           "tags": {
@@ -20,6 +81,210 @@
           }
         },
         "title": "ApproveDoc",
+        "type": "object"
+      },
+      "AuditEnvelope": {
+        "properties": {
+          "audit": {
+            "items": {
+              "$ref": "#/components/schemas/AuditView"
+            },
+            "title": "Audit",
+            "type": "array"
+          },
+          "freshness": {
+            "format": "date-time",
+            "title": "Freshness",
+            "type": "string"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          }
+        },
+        "required": [
+          "audit",
+          "next_offset",
+          "freshness"
+        ],
+        "title": "AuditEnvelope",
+        "type": "object"
+      },
+      "AuditView": {
+        "description": "One display-safe, permission-filtered audit event.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "denied": {
+            "title": "Denied",
+            "type": "boolean"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "on_behalf_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Behalf Of"
+          },
+          "principal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal Id"
+          },
+          "principal_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal Type"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "query_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Hash"
+          },
+          "query_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Text"
+          },
+          "result_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Count"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool"
+          },
+          "topics_used": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics Used",
+            "type": "array"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "id",
+          "ts",
+          "project_id",
+          "user_id",
+          "principal_type",
+          "principal_id",
+          "on_behalf_of",
+          "trace_id",
+          "action",
+          "tool",
+          "query_hash",
+          "query_text",
+          "duration_ms",
+          "topics_used",
+          "result_count",
+          "denied"
+        ],
+        "title": "AuditView",
         "type": "object"
       },
       "Body_authorize_post_oauth_authorize_post": {
@@ -99,6 +364,302 @@
         "title": "ChunkApprove",
         "type": "object"
       },
+      "ChunkReviewResolution": {
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "outcome"
+        ],
+        "title": "ChunkReviewResolution",
+        "type": "object"
+      },
+      "ContradictionResolutionEnvelope": {
+        "properties": {
+          "resolutions": {
+            "items": {
+              "$ref": "#/components/schemas/ContradictionResolutionView"
+            },
+            "title": "Resolutions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "resolutions"
+        ],
+        "title": "ContradictionResolutionEnvelope",
+        "type": "object"
+      },
+      "ContradictionResolutionView": {
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "judge_version": {
+            "title": "Judge Version",
+            "type": "string"
+          },
+          "loser": {
+            "$ref": "#/components/schemas/ResolutionSideView"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          },
+          "winner": {
+            "$ref": "#/components/schemas/ResolutionSideView"
+          }
+        },
+        "required": [
+          "verdict",
+          "confidence",
+          "judge_version",
+          "winner",
+          "loser",
+          "created_at"
+        ],
+        "title": "ContradictionResolutionView",
+        "type": "object"
+      },
+      "CorrectionEnvelope": {
+        "properties": {
+          "corrections": {
+            "items": {
+              "$ref": "#/components/schemas/CorrectionView"
+            },
+            "title": "Corrections",
+            "type": "array"
+          }
+        },
+        "required": [
+          "corrections"
+        ],
+        "title": "CorrectionEnvelope",
+        "type": "object"
+      },
+      "CorrectionMetricsEnvelope": {
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "integer"
+          },
+          "by_status": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Status",
+            "type": "object"
+          },
+          "correction_wars": {
+            "title": "Correction Wars",
+            "type": "integer"
+          },
+          "ownership_coverage": {
+            "title": "Ownership Coverage",
+            "type": "number"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "integer"
+          },
+          "revert_rate": {
+            "title": "Revert Rate",
+            "type": "number"
+          },
+          "routed_hunt": {
+            "title": "Routed Hunt",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "by_status",
+          "applied",
+          "routed_hunt",
+          "rejected",
+          "revert_rate",
+          "correction_wars",
+          "ownership_coverage"
+        ],
+        "title": "CorrectionMetricsEnvelope",
+        "type": "object"
+      },
+      "CorrectionRevertResult": {
+        "properties": {
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "explanation"
+        ],
+        "title": "CorrectionRevertResult",
+        "type": "object"
+      },
+      "CorrectionView": {
+        "properties": {
+          "after_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Text"
+          },
+          "author_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Id"
+          },
+          "before_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Text"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "hunt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hunt Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "new_claim": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Claim"
+          },
+          "on_behalf_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Behalf Of"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "role_applied": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Applied"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "target_claim": {
+            "title": "Target Claim",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "target_claim",
+          "new_claim",
+          "status",
+          "role_applied",
+          "author_id",
+          "on_behalf_of",
+          "hunt_id",
+          "before_text",
+          "after_text",
+          "created_at",
+          "resolved_at"
+        ],
+        "title": "CorrectionView",
+        "type": "object"
+      },
       "CreatePatRequest": {
         "properties": {
           "name": {
@@ -123,6 +684,432 @@
         "title": "CreatePatRequest",
         "type": "object"
       },
+      "CreatedPat": {
+        "description": "The only response that contains newly issued credential material.",
+        "properties": {
+          "pat_id": {
+            "title": "Pat Id",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pat_id",
+          "token"
+        ],
+        "title": "CreatedPat",
+        "type": "object"
+      },
+      "CredentialCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "default": "pat",
+            "maxLength": 32,
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "CredentialCreate",
+        "type": "object"
+      },
+      "CredentialEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "credential": {
+            "$ref": "#/components/schemas/CredentialState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          }
+        },
+        "required": [
+          "credential",
+          "audit_correlation"
+        ],
+        "title": "CredentialEnvelope",
+        "type": "object"
+      },
+      "CredentialList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CredentialState"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CredentialList",
+        "type": "object"
+      },
+      "CredentialState": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "project",
+          "kind",
+          "name",
+          "status",
+          "version"
+        ],
+        "title": "CredentialState",
+        "type": "object"
+      },
+      "DisableCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_status": {
+            "title": "Expected Status",
+            "type": "string"
+          },
+          "impact_acknowledged": {
+            "title": "Impact Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "impact_acknowledged",
+          "expected_status"
+        ],
+        "title": "DisableCommand",
+        "type": "object"
+      },
+      "DisableEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/IdentityState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          },
+          "revocation": {
+            "$ref": "#/components/schemas/RevocationState"
+          }
+        },
+        "required": [
+          "identity",
+          "revocation",
+          "audit_correlation"
+        ],
+        "title": "DisableEnvelope",
+        "type": "object"
+      },
+      "DisputedClaimEnvelope": {
+        "properties": {
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/DisputedClaimView"
+            },
+            "title": "Claims",
+            "type": "array"
+          }
+        },
+        "required": [
+          "claims"
+        ],
+        "title": "DisputedClaimEnvelope",
+        "type": "object"
+      },
+      "DisputedClaimView": {
+        "properties": {
+          "credibility": {
+            "title": "Credibility",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "tags",
+          "credibility",
+          "valid_to"
+        ],
+        "title": "DisputedClaimView",
+        "type": "object"
+      },
+      "EntityGraphEnvelope": {
+        "properties": {
+          "center": {
+            "$ref": "#/components/schemas/GraphNodeView"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/GraphEdgeView"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "neighbors": {
+            "items": {
+              "$ref": "#/components/schemas/GraphNodeView"
+            },
+            "title": "Neighbors",
+            "type": "array"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "center",
+          "neighbors",
+          "edges",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "EntityGraphEnvelope",
+        "type": "object"
+      },
+      "GapEnvelope": {
+        "properties": {
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/GapView"
+            },
+            "title": "Gaps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "gaps"
+        ],
+        "title": "GapEnvelope",
+        "type": "object"
+      },
+      "GapView": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "query_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Text"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "query_text",
+          "topics",
+          "count",
+          "status",
+          "last_seen_at"
+        ],
+        "title": "GapView",
+        "type": "object"
+      },
+      "GraphEdgeView": {
+        "properties": {
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "type"
+        ],
+        "title": "GraphEdgeView",
+        "type": "object"
+      },
+      "GraphNodeView": {
+        "properties": {
+          "anchored": {
+            "title": "Anchored",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "type",
+          "anchored"
+        ],
+        "title": "GraphNodeView",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -134,6 +1121,29 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthEnvelope": {
+        "properties": {
+          "database": {
+            "title": "Database",
+            "type": "string"
+          },
+          "ingest_errors": {
+            "title": "Ingest Errors",
+            "type": "integer"
+          },
+          "pending_approval": {
+            "title": "Pending Approval",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "database",
+          "pending_approval",
+          "ingest_errors"
+        ],
+        "title": "HealthEnvelope",
         "type": "object"
       },
       "HuntAnswer": {
@@ -180,6 +1190,516 @@
         "title": "HuntAsk",
         "type": "object"
       },
+      "HuntCommandView": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "string"
+          },
+          "delivered": {
+            "title": "Delivered",
+            "type": "boolean"
+          },
+          "hunt_id": {
+            "title": "Hunt Id",
+            "type": "string"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "throttled": {
+            "title": "Throttled",
+            "type": "boolean"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hunt_id",
+          "state",
+          "person_id",
+          "throttled",
+          "delivered",
+          "topics",
+          "audit_correlation",
+          "replayed"
+        ],
+        "title": "HuntCommandView",
+        "type": "object"
+      },
+      "HuntDetailEnvelope": {
+        "properties": {
+          "hunt": {
+            "$ref": "#/components/schemas/HuntView"
+          }
+        },
+        "required": [
+          "hunt"
+        ],
+        "title": "HuntDetailEnvelope",
+        "type": "object"
+      },
+      "HuntEnvelope": {
+        "properties": {
+          "hunts": {
+            "items": {
+              "$ref": "#/components/schemas/HuntView"
+            },
+            "title": "Hunts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hunts"
+        ],
+        "title": "HuntEnvelope",
+        "type": "object"
+      },
+      "HuntView": {
+        "properties": {
+          "answered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Answered At"
+          },
+          "asked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asked At"
+          },
+          "channel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channel"
+          },
+          "correction_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "gap_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gap Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
+          },
+          "resolved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolved At"
+          },
+          "retries": {
+            "title": "Retries",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "state",
+          "question",
+          "topics",
+          "person_id",
+          "gap_id",
+          "correction_id",
+          "channel",
+          "retries",
+          "created_at",
+          "asked_at",
+          "answered_at",
+          "expires_at",
+          "resolved_at"
+        ],
+        "title": "HuntView",
+        "type": "object"
+      },
+      "IdentityMembershipEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/IdentityState"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/MembershipState"
+          }
+        },
+        "required": [
+          "identity",
+          "membership",
+          "audit_correlation"
+        ],
+        "title": "IdentityMembershipEnvelope",
+        "type": "object"
+      },
+      "IdentityState": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "status",
+          "version"
+        ],
+        "title": "IdentityState",
+        "type": "object"
+      },
+      "ImpactCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "impact_acknowledged": {
+            "title": "Impact Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "impact_acknowledged"
+        ],
+        "title": "ImpactCommand",
+        "type": "object"
+      },
+      "IngestEnvelope": {
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/IngestErrorView"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/IngestRunView"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs",
+          "errors"
+        ],
+        "title": "IngestEnvelope",
+        "type": "object"
+      },
+      "IngestErrorView": {
+        "properties": {
+          "chunk": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "chunk",
+          "stage",
+          "error"
+        ],
+        "title": "IngestErrorView",
+        "type": "object"
+      },
+      "IngestRunView": {
+        "properties": {
+          "chunks_created": {
+            "title": "Chunks Created",
+            "type": "integer"
+          },
+          "claims_generated": {
+            "title": "Claims Generated",
+            "type": "integer"
+          },
+          "completed_stages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Completed Stages",
+            "type": "array"
+          },
+          "discarded_chunks": {
+            "title": "Discarded Chunks",
+            "type": "integer"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "document_id",
+          "phase",
+          "completed_stages",
+          "chunks_created",
+          "claims_generated",
+          "discarded_chunks",
+          "error",
+          "updated_at"
+        ],
+        "title": "IngestRunView",
+        "type": "object"
+      },
+      "InvitationAccept": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "maxLength": 1024,
+            "minLength": 12,
+            "title": "Password",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ],
+        "title": "InvitationAccept",
+        "type": "object"
+      },
+      "InviteEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/IdentityState"
+          },
+          "invitation_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invitation Token"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/MembershipState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          }
+        },
+        "required": [
+          "identity",
+          "membership",
+          "expires_at",
+          "audit_correlation"
+        ],
+        "title": "InviteEnvelope",
+        "type": "object"
+      },
       "LoginRequest": {
         "properties": {
           "email": {
@@ -198,9 +1718,117 @@
         "title": "LoginRequest",
         "type": "object"
       },
-      "MembershipCreate": {
-        "description": "AUDIT-074: attaching a user to the caller's project.\n\nThe project is not a field \u2014 it comes from the token's scope (FR-12.3). The role is required\nrather than defaulted, because a membership created with a silently-chosen role is an authority\ndecision nobody made.",
+      "ManagementProblem": {
+        "additionalProperties": false,
+        "description": "Typed union envelope for safe management refusals and conflicts.",
         "properties": {
+          "audit_correlation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audit Correlation"
+          },
+          "can_delete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Can Delete"
+          },
+          "confirmation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmation"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current"
+          },
+          "dependencies": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dependencies"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "retry_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After"
+          }
+        },
+        "title": "ManagementProblem",
+        "type": "object"
+      },
+      "MembershipCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_topics": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Allowed Topics",
+            "type": "array"
+          },
           "can_curate": {
             "default": false,
             "title": "Can Curate",
@@ -222,6 +1850,199 @@
           "role"
         ],
         "title": "MembershipCreate",
+        "type": "object"
+      },
+      "MembershipEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/MembershipState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          }
+        },
+        "required": [
+          "membership",
+          "audit_correlation"
+        ],
+        "title": "MembershipEnvelope",
+        "type": "object"
+      },
+      "MembershipList": {
+        "properties": {
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/MembershipState"
+            },
+            "title": "Memberships",
+            "type": "array"
+          }
+        },
+        "required": [
+          "memberships"
+        ],
+        "title": "MembershipList",
+        "type": "object"
+      },
+      "MembershipState": {
+        "properties": {
+          "allowed_topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Topics",
+            "type": "array"
+          },
+          "can_curate": {
+            "title": "Can Curate",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "role",
+          "allowed_topics",
+          "can_curate",
+          "status",
+          "version"
+        ],
+        "title": "MembershipState",
+        "type": "object"
+      },
+      "MembershipTransition": {
+        "properties": {
+          "after": {
+            "$ref": "#/components/schemas/MembershipState"
+          },
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "before": {
+            "$ref": "#/components/schemas/MembershipState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          }
+        },
+        "required": [
+          "before",
+          "after",
+          "audit_correlation"
+        ],
+        "title": "MembershipTransition",
+        "type": "object"
+      },
+      "MembershipUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_topics": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Topics"
+          },
+          "can_curate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Can Curate"
+          },
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "MembershipUpdate",
+        "type": "object"
+      },
+      "MergeReviewResolution": {
+        "properties": {
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "outcome"
+        ],
+        "title": "MergeReviewResolution",
         "type": "object"
       },
       "OntologyUpload": {
@@ -262,6 +2083,160 @@
           "content"
         ],
         "title": "OntologyUpload",
+        "type": "object"
+      },
+      "PasswordResetComplete": {
+        "additionalProperties": false,
+        "properties": {
+          "new_password": {
+            "maxLength": 1024,
+            "minLength": 12,
+            "title": "New Password",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "new_password"
+        ],
+        "title": "PasswordResetComplete",
+        "type": "object"
+      },
+      "PasswordResetCompleteEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/IdentityState"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "status",
+          "audit_correlation"
+        ],
+        "title": "PasswordResetCompleteEnvelope",
+        "type": "object"
+      },
+      "PasswordResetEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          },
+          "reset_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reset Token"
+          }
+        },
+        "required": [
+          "expires_at",
+          "audit_correlation"
+        ],
+        "title": "PasswordResetEnvelope",
+        "type": "object"
+      },
+      "PendingDocumentEnvelope": {
+        "properties": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/PendingDocumentView"
+            },
+            "title": "Documents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "documents"
+        ],
+        "title": "PendingDocumentEnvelope",
+        "type": "object"
+      },
+      "PendingDocumentView": {
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "preview": {
+            "title": "Preview",
+            "type": "string"
+          },
+          "proposed_tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Proposed Tags",
+            "type": "array"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "document_id",
+          "title",
+          "proposed_tags",
+          "source_id",
+          "preview",
+          "content_type"
+        ],
+        "title": "PendingDocumentView",
         "type": "object"
       },
       "PersonCreate": {
@@ -328,6 +2303,11 @@
             ],
             "title": "Channels"
           },
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
           "language": {
             "anyOf": [
               {
@@ -370,16 +2350,199 @@
             "title": "Topics"
           }
         },
+        "required": [
+          "expected_version"
+        ],
         "title": "PersonUpdate",
         "type": "object"
       },
+      "PreferenceMetadata": {
+        "properties": {
+          "locale": {
+            "default": "es",
+            "enum": [
+              "es",
+              "en"
+            ],
+            "title": "Locale",
+            "type": "string"
+          },
+          "theme": {
+            "default": "system",
+            "enum": [
+              "system",
+              "light",
+              "dark"
+            ],
+            "title": "Theme",
+            "type": "string"
+          }
+        },
+        "title": "PreferenceMetadata",
+        "type": "object"
+      },
+      "ProductAdoptionMetrics": {
+        "properties": {
+          "active_principals": {
+            "title": "Active Principals",
+            "type": "integer"
+          },
+          "recalls": {
+            "title": "Recalls",
+            "type": "integer"
+          },
+          "recalls_per_day": {
+            "items": {
+              "$ref": "#/components/schemas/ProductMetricDay"
+            },
+            "title": "Recalls Per Day",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recalls",
+          "active_principals",
+          "recalls_per_day"
+        ],
+        "title": "ProductAdoptionMetrics",
+        "type": "object"
+      },
+      "ProductHealthMetrics": {
+        "properties": {
+          "extraction_errors": {
+            "title": "Extraction Errors",
+            "type": "integer"
+          },
+          "recall_p95_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall P95 Ms"
+          },
+          "tokens_by_capability": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Tokens By Capability",
+            "type": "object"
+          }
+        },
+        "required": [
+          "extraction_errors",
+          "recall_p95_ms",
+          "tokens_by_capability"
+        ],
+        "title": "ProductHealthMetrics",
+        "type": "object"
+      },
+      "ProductKnowledgeMetrics": {
+        "properties": {
+          "claims": {
+            "title": "Claims",
+            "type": "integer"
+          },
+          "disputed": {
+            "title": "Disputed",
+            "type": "integer"
+          },
+          "open_gaps": {
+            "title": "Open Gaps",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claims",
+          "disputed",
+          "open_gaps"
+        ],
+        "title": "ProductKnowledgeMetrics",
+        "type": "object"
+      },
+      "ProductMetricDay": {
+        "description": "One exact server-owned recall count in the selected reporting window.",
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "recalls": {
+            "title": "Recalls",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "recalls"
+        ],
+        "title": "ProductMetricDay",
+        "type": "object"
+      },
+      "ProductMetricsEnvelope": {
+        "description": "The four permission-filtered product families exposed to the console.",
+        "properties": {
+          "adoption": {
+            "$ref": "#/components/schemas/ProductAdoptionMetrics"
+          },
+          "health": {
+            "$ref": "#/components/schemas/ProductHealthMetrics"
+          },
+          "knowledge": {
+            "$ref": "#/components/schemas/ProductKnowledgeMetrics"
+          },
+          "quality": {
+            "$ref": "#/components/schemas/ProductQualityMetrics"
+          }
+        },
+        "required": [
+          "adoption",
+          "quality",
+          "knowledge",
+          "health"
+        ],
+        "title": "ProductMetricsEnvelope",
+        "type": "object"
+      },
+      "ProductQualityMetrics": {
+        "properties": {
+          "abstention_rate": {
+            "title": "Abstention Rate",
+            "type": "number"
+          },
+          "hunts_answered_pct": {
+            "title": "Hunts Answered Pct",
+            "type": "number"
+          }
+        },
+        "required": [
+          "abstention_rate",
+          "hunts_answered_pct"
+        ],
+        "title": "ProductQualityMetrics",
+        "type": "object"
+      },
       "ProjectCreate": {
+        "additionalProperties": false,
         "properties": {
           "name": {
+            "maxLength": 512,
+            "minLength": 1,
             "title": "Name",
             "type": "string"
           },
+          "settings": {
+            "additionalProperties": true,
+            "title": "Settings",
+            "type": "object"
+          },
           "slug": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$",
             "title": "Slug",
             "type": "string"
           }
@@ -389,6 +2552,292 @@
           "name"
         ],
         "title": "ProjectCreate",
+        "type": "object"
+      },
+      "ProjectDeleteEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "status",
+          "audit_correlation"
+        ],
+        "title": "ProjectDeleteEnvelope",
+        "type": "object"
+      },
+      "ProjectEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ProjectState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          }
+        },
+        "required": [
+          "project",
+          "audit_correlation"
+        ],
+        "title": "ProjectEnvelope",
+        "type": "object"
+      },
+      "ProjectImpact": {
+        "properties": {
+          "can_delete": {
+            "title": "Can Delete",
+            "type": "boolean"
+          },
+          "confirmation": {
+            "title": "Confirmation",
+            "type": "string"
+          },
+          "dependencies": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Dependencies",
+            "type": "object"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ProjectState"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project",
+          "version",
+          "dependencies",
+          "can_delete",
+          "confirmation"
+        ],
+        "title": "ProjectImpact",
+        "type": "object"
+      },
+      "ProjectInventory": {
+        "properties": {
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectInventoryState"
+            },
+            "title": "Projects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "projects"
+        ],
+        "title": "ProjectInventory",
+        "type": "object"
+      },
+      "ProjectInventoryState": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "membership_count": {
+            "title": "Membership Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "title": "Settings",
+            "type": "object"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "settings",
+          "status",
+          "version",
+          "membership_count"
+        ],
+        "title": "ProjectInventoryState",
+        "type": "object"
+      },
+      "ProjectState": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "title": "Settings",
+            "type": "object"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "settings",
+          "status",
+          "version"
+        ],
+        "title": "ProjectState",
+        "type": "object"
+      },
+      "ProjectTransition": {
+        "properties": {
+          "after": {
+            "$ref": "#/components/schemas/ProjectState"
+          },
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "before": {
+            "$ref": "#/components/schemas/ProjectState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          }
+        },
+        "required": [
+          "before",
+          "after",
+          "audit_correlation"
+        ],
+        "title": "ProjectTransition",
+        "type": "object"
+      },
+      "ProjectUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "ProjectUpdate",
+        "type": "object"
+      },
+      "PromoteGapResult": {
+        "properties": {
+          "hunt_id": {
+            "title": "Hunt Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hunt_id",
+          "state"
+        ],
+        "title": "PromoteGapResult",
         "type": "object"
       },
       "QueryTextLogging": {
@@ -402,6 +2851,222 @@
           "enabled"
         ],
         "title": "QueryTextLogging",
+        "type": "object"
+      },
+      "ReadPage_RecallView_": {
+        "properties": {
+          "freshness": {
+            "format": "date-time",
+            "title": "Freshness",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RecallView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor",
+          "total",
+          "freshness"
+        ],
+        "title": "ReadPage[RecallView]",
+        "type": "object"
+      },
+      "RecallView": {
+        "description": "Display-safe recall audit row returned by the observability stream.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "denied": {
+            "title": "Denied",
+            "type": "boolean"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "on_behalf_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Behalf Of"
+          },
+          "principal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal Id"
+          },
+          "principal_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal Type"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "query_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Hash"
+          },
+          "query_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Text"
+          },
+          "result_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Count"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool"
+          },
+          "topics_used": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics Used",
+            "type": "array"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "id",
+          "ts",
+          "project_id",
+          "user_id",
+          "principal_type",
+          "principal_id",
+          "on_behalf_of",
+          "trace_id",
+          "action",
+          "tool",
+          "query_hash",
+          "query_text",
+          "duration_ms",
+          "topics_used",
+          "result_count",
+          "denied"
+        ],
+        "title": "RecallView",
         "type": "object"
       },
       "RejectDoc": {
@@ -418,6 +3083,409 @@
         "title": "RejectDoc",
         "type": "object"
       },
+      "ResolutionSideView": {
+        "properties": {
+          "claim_id": {
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "credibility": {
+            "title": "Credibility",
+            "type": "number"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "valid_to": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Valid To"
+          }
+        },
+        "required": [
+          "claim_id",
+          "text",
+          "credibility",
+          "valid_to"
+        ],
+        "title": "ResolutionSideView",
+        "type": "object"
+      },
+      "ReviewItemView": {
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "detail": {
+            "additionalProperties": true,
+            "title": "Detail",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "preview": {
+            "title": "Preview",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "id",
+          "preview",
+          "detail",
+          "content_type"
+        ],
+        "title": "ReviewItemView",
+        "type": "object"
+      },
+      "ReviewQueueEnvelope": {
+        "properties": {
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewItemView"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "counts"
+        ],
+        "title": "ReviewQueueEnvelope",
+        "type": "object"
+      },
+      "RevocationState": {
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "oauth": {
+            "title": "Oauth",
+            "type": "string"
+          },
+          "pats": {
+            "title": "Pats",
+            "type": "string"
+          },
+          "sessions": {
+            "title": "Sessions",
+            "type": "string"
+          }
+        },
+        "required": [
+          "complete",
+          "sessions",
+          "pats",
+          "oauth"
+        ],
+        "title": "RevocationState",
+        "type": "object"
+      },
+      "RevokedPat": {
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "revoked": {
+            "title": "Revoked",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "revoked"
+        ],
+        "title": "RevokedPat",
+        "type": "object"
+      },
+      "SelfPat": {
+        "description": "One display-safe personal credential owned by the current user.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "revoked": {
+            "title": "Revoked",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "project",
+          "created_at",
+          "expires_at",
+          "revoked"
+        ],
+        "title": "SelfPat",
+        "type": "object"
+      },
+      "SelfPatList": {
+        "properties": {
+          "pats": {
+            "items": {
+              "$ref": "#/components/schemas/SelfPat"
+            },
+            "title": "Pats",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pats"
+        ],
+        "title": "SelfPatList",
+        "type": "object"
+      },
+      "SessionEnvelope": {
+        "description": "The only browser-readable, authoritative capability envelope.",
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/SessionIdentity"
+          },
+          "is_owner": {
+            "title": "Is Owner",
+            "type": "boolean"
+          },
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/SessionMembership"
+            },
+            "title": "Memberships",
+            "type": "array"
+          },
+          "platform_capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Platform Capabilities",
+            "type": "array"
+          },
+          "preference_metadata": {
+            "$ref": "#/components/schemas/PreferenceMetadata"
+          },
+          "user": {
+            "$ref": "#/components/schemas/SessionIdentity"
+          }
+        },
+        "required": [
+          "identity",
+          "user",
+          "is_owner",
+          "platform_capabilities",
+          "memberships",
+          "preference_metadata"
+        ],
+        "title": "SessionEnvelope",
+        "type": "object"
+      },
+      "SessionIdentity": {
+        "description": "Display-safe identity metadata; it intentionally contains no credential material.",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role"
+        ],
+        "title": "SessionIdentity",
+        "type": "object"
+      },
+      "SessionMembership": {
+        "properties": {
+          "allowed_topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Topics",
+            "type": "array"
+          },
+          "can_curate": {
+            "title": "Can Curate",
+            "type": "boolean"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "role",
+          "capabilities",
+          "allowed_topics",
+          "can_curate"
+        ],
+        "title": "SessionMembership",
+        "type": "object"
+      },
+      "SkillCommandView": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "string"
+          },
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Depends On",
+            "type": "array"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slug",
+          "status",
+          "stale",
+          "depends_on",
+          "version",
+          "audit_correlation",
+          "replayed"
+        ],
+        "title": "SkillCommandView",
+        "type": "object"
+      },
+      "SkillCreateResult": {
+        "properties": {
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_id",
+          "slug"
+        ],
+        "title": "SkillCreateResult",
+        "type": "object"
+      },
+      "SkillEnvelope": {
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillView"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "skills"
+        ],
+        "title": "SkillEnvelope",
+        "type": "object"
+      },
       "SkillUpsert": {
         "properties": {
           "markdown": {
@@ -430,6 +3498,47 @@
           "markdown"
         ],
         "title": "SkillUpsert",
+        "type": "object"
+      },
+      "SkillView": {
+        "properties": {
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Depends On",
+            "type": "array"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "status",
+          "stale",
+          "depends_on",
+          "version"
+        ],
+        "title": "SkillView",
         "type": "object"
       },
       "SourceCreate": {
@@ -472,9 +3581,23 @@
         "type": "object"
       },
       "TopicCreate": {
+        "additionalProperties": false,
         "properties": {
+          "hard_window_days": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard Window Days"
+          },
           "name": {
             "maxLength": 512,
+            "minLength": 1,
             "title": "Name",
             "type": "string"
           },
@@ -487,6 +3610,8 @@
           },
           "slug": {
             "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$",
             "title": "Slug",
             "type": "string"
           }
@@ -496,6 +3621,52 @@
           "name"
         ],
         "title": "TopicCreate",
+        "type": "object"
+      },
+      "TopicEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "granted_topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Granted Topics",
+            "type": "array"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "topic": {
+            "$ref": "#/components/schemas/TopicState"
+          },
+          "topic_id": {
+            "title": "Topic Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "topic_id",
+          "slug",
+          "granted_topics",
+          "audit_correlation"
+        ],
+        "title": "TopicEnvelope",
         "type": "object"
       },
       "TopicGrant": {
@@ -513,17 +3684,306 @@
         "title": "TopicGrant",
         "type": "object"
       },
-      "UserInvite": {
+      "TopicList": {
         "properties": {
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/TopicState"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "topics"
+        ],
+        "title": "TopicList",
+        "type": "object"
+      },
+      "TopicState": {
+        "properties": {
+          "hard_window_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard Window Days"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sensitivity": {
+            "title": "Sensitivity",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "sensitivity",
+          "hard_window_days",
+          "status",
+          "version"
+        ],
+        "title": "TopicState",
+        "type": "object"
+      },
+      "TopicTransition": {
+        "properties": {
+          "after": {
+            "$ref": "#/components/schemas/TopicState"
+          },
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "before": {
+            "$ref": "#/components/schemas/TopicState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          }
+        },
+        "required": [
+          "before",
+          "after",
+          "audit_correlation"
+        ],
+        "title": "TopicTransition",
+        "type": "object"
+      },
+      "TopicUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "hard_window_days": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard Window Days"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "sensitivity": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensitivity"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "TopicUpdate",
+        "type": "object"
+      },
+      "UsageDayTotal": {
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "tokens",
+          "calls"
+        ],
+        "title": "UsageDayTotal",
+        "type": "object"
+      },
+      "UsageEnvelope": {
+        "description": "Project-scoped usage with server-owned aggregates for one reporting window.",
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "capability": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capability"
+          },
+          "daily_totals": {
+            "items": {
+              "$ref": "#/components/schemas/UsageDayTotal"
+            },
+            "title": "Daily Totals",
+            "type": "array"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "total_calls": {
+            "title": "Total Calls",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          },
+          "usage": {
+            "items": {
+              "$ref": "#/components/schemas/UsageRowView"
+            },
+            "title": "Usage",
+            "type": "array"
+          },
+          "window_days": {
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "usage",
+          "capabilities",
+          "daily_totals",
+          "total_tokens",
+          "total_calls",
+          "window_days",
+          "project",
+          "capability"
+        ],
+        "title": "UsageEnvelope",
+        "type": "object"
+      },
+      "UsageRowView": {
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "capability": {
+            "title": "Capability",
+            "type": "string"
+          },
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "capability",
+          "day",
+          "tokens",
+          "calls"
+        ],
+        "title": "UsageRowView",
+        "type": "object"
+      },
+      "UserInvite": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_topics": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Allowed Topics",
+            "type": "array"
+          },
+          "can_curate": {
+            "default": false,
+            "title": "Can Curate",
+            "type": "boolean"
+          },
           "email": {
             "maxLength": 512,
+            "minLength": 3,
+            "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
             "title": "Email",
             "type": "string"
           },
-          "role": {
+          "platform_role": {
             "default": "member",
-            "maxLength": 128,
-            "title": "Role",
+            "maxLength": 32,
+            "title": "Platform Role",
+            "type": "string"
+          },
+          "project_role": {
+            "default": "member",
+            "maxLength": 32,
+            "title": "Project Role",
             "type": "string"
           }
         },
@@ -531,6 +3991,80 @@
           "email"
         ],
         "title": "UserInvite",
+        "type": "object"
+      },
+      "UserListState": {
+        "properties": {
+          "allowed_topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Topics",
+            "type": "array"
+          },
+          "can_curate": {
+            "title": "Can Curate",
+            "type": "boolean"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "status",
+          "version",
+          "role",
+          "allowed_topics",
+          "can_curate"
+        ],
+        "title": "UserListState",
+        "type": "object"
+      },
+      "UserPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UserListState"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "UserPage",
         "type": "object"
       },
       "ValidationError": {
@@ -571,6 +4105,35 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "rsc_brain__api__admin__VersionedCommand": {
+        "properties": {
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "VersionedCommand",
+        "type": "object"
+      },
+      "rsc_brain__api__management__VersionedCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "VersionedCommand",
         "type": "object"
       }
     },
@@ -737,6 +4300,17 @@
           },
           {
             "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
             "name": "project",
             "required": false,
             "schema": {
@@ -757,9 +4331,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Audit Api V1 Admin Audit Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AuditEnvelope"
                 }
               }
             },
@@ -986,9 +4558,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Disputed Claims Api V1 Admin Claims Disputed Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DisputedClaimEnvelope"
                 }
               }
             },
@@ -1028,22 +4598,6 @@
             "schema": {
               "title": "Connection Id",
               "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "project",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Project"
             }
           }
         ],
@@ -1109,9 +4663,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Contradiction Resolutions Api V1 Admin Contradictions Resolutions Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ContradictionResolutionEnvelope"
                 }
               }
             },
@@ -1214,9 +4766,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Corrections Api V1 Admin Corrections Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CorrectionEnvelope"
                 }
               }
             },
@@ -1271,9 +4821,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Correction Metrics Api V1 Admin Corrections Metrics Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CorrectionMetricsEnvelope"
                 }
               }
             },
@@ -1337,9 +4885,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Revert Correction Api V1 Admin Corrections  Correction Id  Revert Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CorrectionRevertResult"
                 }
               }
             },
@@ -1364,6 +4910,274 @@
         "summary": "Revert Correction",
         "tags": [
           "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/credentials/{credential_id}": {
+      "delete": {
+        "operationId": "revoke_credential_api_v1_admin_credentials__credential_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Credential",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/credentials/{credential_id}/rotate": {
+      "post": {
+        "operationId": "rotate_credential_api_v1_admin_credentials__credential_id__rotate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/rsc_brain__api__management__VersionedCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rotate Credential",
+        "tags": [
+          "admin-management"
         ]
       }
     },
@@ -1450,9 +5264,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Pending Document Previews Api V1 Admin Documents Pending Preview Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PendingDocumentEnvelope"
                 }
               }
             },
@@ -1675,9 +5487,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Project Gaps Api V1 Admin Gaps Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/GapEnvelope"
                 }
               }
             },
@@ -1741,9 +5551,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Promote Gap Api V1 Admin Gaps  Gap Id  Promote Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PromoteGapResult"
                 }
               }
             },
@@ -1832,9 +5640,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Entity Graph Endpoint Api V1 Admin Graph Entity Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/EntityGraphEnvelope"
                 }
               }
             },
@@ -1898,9 +5704,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Hunts Api V1 Admin Hunts Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HuntEnvelope"
                 }
               }
             },
@@ -1948,6 +5752,22 @@
               ],
               "title": "Project"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
           }
         ],
         "requestBody": {
@@ -1965,9 +5785,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Ask Hunt Api V1 Admin Hunts Ask Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HuntCommandView"
                 }
               }
             },
@@ -2030,9 +5848,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Hunt Api V1 Admin Hunts  Hunt Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HuntDetailEnvelope"
                 }
               }
             },
@@ -2062,7 +5878,6 @@
     },
     "/api/v1/admin/memberships": {
       "get": {
-        "description": "Who belongs to the caller's project, with the role and topic authority each holds.\n\nAUDIT-074: an administrator has to see this before granting anything \u2014 the topic grant refuses\nwithout a membership, and nothing reported whether one existed.",
         "operationId": "list_memberships_api_v1_admin_memberships_get",
         "parameters": [
           {
@@ -2087,13 +5902,61 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Memberships Api V1 Admin Memberships Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MembershipList"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           },
           "422": {
             "content": {
@@ -2106,18 +5969,12 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "List Memberships",
         "tags": [
-          "admin"
+          "admin-management"
         ]
       },
       "post": {
-        "description": "Attach a user to the caller's project (AUDIT-074).\n\n`add_membership` previously had one caller, the first owner's bootstrap, so every later user\nbelonged to no project and could be given nothing. No topic is granted here: authority stays a\nseparate explicit act, because empty authority is never all topics (AUDIT-020, R01).",
         "operationId": "create_membership_api_v1_admin_memberships_post",
         "parameters": [
           {
@@ -2134,6 +5991,22 @@
                 }
               ],
               "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           }
         ],
@@ -2152,13 +6025,61 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Membership Api V1 Admin Memberships Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MembershipEnvelope"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           },
           "422": {
             "content": {
@@ -2171,14 +6092,9 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "Create Membership",
         "tags": [
-          "admin"
+          "admin-management"
         ]
       }
     },
@@ -2246,6 +6162,138 @@
         "tags": [
           "admin"
         ]
+      },
+      "patch": {
+        "operationId": "update_membership_api_v1_admin_memberships__user_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipTransition"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Membership",
+        "tags": [
+          "admin-management"
+        ]
       }
     },
     "/api/v1/admin/metrics/product": {
@@ -2287,9 +6335,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Product Metrics Endpoint Api V1 Admin Metrics Product Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProductMetricsEnvelope"
                 }
               }
             },
@@ -2344,9 +6390,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Observability Activity Api V1 Admin Observability Activity Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ActivityEnvelope"
                 }
               }
             },
@@ -2401,9 +6445,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Observability Health Api V1 Admin Observability Health Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HealthEnvelope"
                 }
               }
             },
@@ -2458,9 +6500,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Observability Ingest Api V1 Admin Observability Ingest Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/IngestEnvelope"
                 }
               }
             },
@@ -2490,7 +6530,7 @@
     },
     "/api/v1/admin/observability/recalls": {
       "get": {
-        "description": "Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only\nwhen the project's logging is ON.",
+        "description": "Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only\nwhen the project's logging is ON.  The cursor advances across authorized rows only.",
         "operationId": "observability_recalls_api_v1_admin_observability_recalls_get",
         "parameters": [
           {
@@ -2527,6 +6567,22 @@
           },
           {
             "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -2559,9 +6615,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Observability Recalls Api V1 Admin Observability Recalls Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReadPage_RecallView_"
                 }
               }
             },
@@ -2915,6 +6969,16 @@
           },
           {
             "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
             "name": "project",
             "required": false,
             "schema": {
@@ -2960,6 +7024,69 @@
           }
         ],
         "summary": "Delete Person",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "operationId": "get_person_api_v1_admin_persons__person_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Person Api V1 Admin Persons  Person Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Person",
         "tags": [
           "admin"
         ]
@@ -3038,11 +7165,19 @@
         ]
       }
     },
-    "/api/v1/admin/projects": {
+    "/api/v1/admin/persons/{person_id}/delete-impact": {
       "get": {
-        "description": "The projects this caller may know about.\n\nR01 (strengthened during T001): this route returned every slug in the instance, so any caller\nthat passed the old admin gate enumerated other tenants by name. Enumerating the whole instance\nis a platform operation; a project caller sees only the projects it is a member of.",
-        "operationId": "list_projects_api_v1_admin_projects_get",
+        "operationId": "person_delete_impact_api_v1_admin_persons__person_id__delete_impact_get",
         "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
           {
             "in": "query",
             "name": "project",
@@ -3066,7 +7201,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": true,
-                  "title": "Response List Projects Api V1 Admin Projects Get",
+                  "title": "Response Person Delete Impact Api V1 Admin Persons  Person Id  Delete Impact Get",
                   "type": "object"
                 }
               }
@@ -3089,17 +7224,88 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "List Projects",
+        "summary": "Person Delete Impact",
         "tags": [
           "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/projects": {
+      "get": {
+        "operationId": "list_projects_api_v1_admin_projects_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectInventory"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          }
+        },
+        "summary": "List Projects",
+        "tags": [
+          "admin-management"
         ]
       },
       "post": {
         "operationId": "create_project_api_v1_admin_projects_post",
         "parameters": [
           {
-            "in": "query",
-            "name": "project",
+            "in": "header",
+            "name": "Idempotency-Key",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3110,7 +7316,7 @@
                   "type": "null"
                 }
               ],
-              "title": "Project"
+              "title": "Idempotency-Key"
             }
           }
         ],
@@ -3129,13 +7335,198 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Project Api V1 Admin Projects Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProjectEnvelope"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Management rate limit"
+          }
+        },
+        "summary": "Create Project",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/projects/{slug}": {
+      "delete": {
+        "operationId": "delete_project_api_v1_admin_projects__slug__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "confirm",
+            "required": true,
+            "schema": {
+              "title": "Confirm",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDeleteEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           },
           "422": {
             "content": {
@@ -3148,14 +7539,307 @@
             "description": "Validation Error"
           }
         },
-        "security": [
+        "summary": "Delete Project",
+        "tags": [
+          "admin-management"
+        ]
+      },
+      "get": {
+        "operationId": "read_project_api_v1_admin_projects__slug__get",
+        "parameters": [
           {
-            "HTTPBearer": []
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
           }
         ],
-        "summary": "Create Project",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Project",
         "tags": [
-          "admin"
+          "admin-management"
+        ]
+      },
+      "patch": {
+        "operationId": "update_project_api_v1_admin_projects__slug__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectTransition"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Project",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/projects/{slug}/delete-impact": {
+      "get": {
+        "operationId": "project_delete_impact_api_v1_admin_projects__slug__delete_impact_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectImpact"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Project Delete Impact",
+        "tags": [
+          "admin-management"
         ]
       }
     },
@@ -3202,9 +7886,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Review Queue Api V1 Admin Review Queue Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ReviewQueueEnvelope"
                 }
               }
             },
@@ -3287,9 +7969,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Resolve Chunk Item Api V1 Admin Review Queue Chunks  Chunk Id  Resolve Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ChunkReviewResolution"
                 }
               }
             },
@@ -3362,9 +8042,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Resolve Merge Item Api V1 Admin Review Queue Merges  Proposal Id  Resolve Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MergeReviewResolution"
                 }
               }
             },
@@ -3556,9 +8234,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Skills Admin Api V1 Admin Skills Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SkillEnvelope"
                 }
               }
             },
@@ -3621,9 +8297,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Skill Admin Api V1 Admin Skills Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SkillCreateResult"
                 }
               }
             },
@@ -3679,16 +8353,40 @@
               ],
               "title": "Project"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/rsc_brain__api__admin__VersionedCommand"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Archive Skill Admin Api V1 Admin Skills  Slug  Archive Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SkillCommandView"
                 }
               }
             },
@@ -3711,6 +8409,95 @@
           }
         ],
         "summary": "Archive Skill Admin",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/skills/{slug}/validate": {
+      "post": {
+        "operationId": "validate_skill_admin_api_v1_admin_skills__slug__validate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/rsc_brain__api__admin__VersionedCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillCommandView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Validate Skill Admin",
         "tags": [
           "admin"
         ]
@@ -3967,13 +8754,61 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Topics Api V1 Admin Topics Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/TopicList"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           },
           "422": {
             "content": {
@@ -3986,18 +8821,12 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "List Topics",
         "tags": [
-          "admin"
+          "admin-management"
         ]
       },
       "post": {
-        "description": "Create a topic, and record the creator's authority over it explicitly.\n\nTopic authority is never implied by a role \u2014 not even the project administrator's (AUDIT-020;\nR01 holds that the highest project role still sees only the topics it holds). Without the grant,\ndefining a topic would leave its own author unable to act on anything tagged with it, and the\nonly way out would be a direct database write. So the grant is made here, on the membership,\nwhere it is visible and revocable.",
         "operationId": "create_topic_api_v1_admin_topics_post",
         "parameters": [
           {
@@ -4014,6 +8843,22 @@
                 }
               ],
               "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           }
         ],
@@ -4032,13 +8877,61 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Topic Api V1 Admin Topics Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/TopicEnvelope"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           },
           "422": {
             "content": {
@@ -4051,14 +8944,143 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "Create Topic",
         "tags": [
-          "admin"
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/topics/{slug}": {
+      "patch": {
+        "operationId": "update_topic_api_v1_admin_topics__slug__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopicUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicTransition"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Topic",
+        "tags": [
+          "admin-management"
         ]
       }
     },
@@ -4232,6 +9254,23 @@
           },
           {
             "in": "query",
+            "name": "capability",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Capability"
+            }
+          },
+          {
+            "in": "query",
             "name": "project",
             "required": false,
             "schema": {
@@ -4252,9 +9291,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Usage Endpoint Api V1 Admin Usage Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/UsageEnvelope"
                 }
               }
             },
@@ -4282,6 +9319,133 @@
         ]
       }
     },
+    "/api/v1/admin/users": {
+      "get": {
+        "operationId": "list_users_api_v1_admin_users_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Users",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
     "/api/v1/admin/users/invite": {
       "post": {
         "operationId": "invite_user_api_v1_admin_users_invite_post",
@@ -4301,6 +9465,22 @@
               ],
               "title": "Project"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
           }
         ],
         "requestBody": {
@@ -4318,13 +9498,61 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Invite User Api V1 Admin Users Invite Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InviteEnvelope"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           },
           "422": {
             "content": {
@@ -4337,14 +9565,568 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "Invite User",
         "tags": [
-          "admin"
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/credentials": {
+      "get": {
+        "operationId": "list_credentials_api_v1_admin_users__user_id__credentials_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Credentials",
+        "tags": [
+          "admin-management"
+        ]
+      },
+      "post": {
+        "operationId": "create_credential_api_v1_admin_users__user_id__credentials_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Credential",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/disable": {
+      "post": {
+        "operationId": "disable_user_api_v1_admin_users__user_id__disable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DisableCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisableEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disable User",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/password-reset": {
+      "post": {
+        "operationId": "request_password_reset_api_v1_admin_users__user_id__password_reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImpactCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordResetEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Password Reset",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/auth/invitations/accept": {
+      "post": {
+        "operationId": "accept_invitation_api_v1_auth_invitations_accept_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationAccept"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityMembershipEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid or expired command"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Invitation",
+        "tags": [
+          "console-auth"
         ]
       }
     },
@@ -4415,6 +10197,57 @@
           }
         ],
         "summary": "Logout",
+        "tags": [
+          "console-auth"
+        ]
+      }
+    },
+    "/api/v1/auth/password-reset/complete": {
+      "post": {
+        "operationId": "complete_password_reset_api_v1_auth_password_reset_complete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetComplete"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordResetCompleteEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid or expired command"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Password Reset",
         "tags": [
           "console-auth"
         ]
@@ -4577,9 +10410,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Me Api V1 Me Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SessionEnvelope"
                 }
               }
             },
@@ -4683,9 +10514,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Pats Api V1 Me Pats Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SelfPatList"
                 }
               }
             },
@@ -4719,9 +10548,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Pat Api V1 Me Pats Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CreatedPat"
                 }
               }
             },
@@ -4768,9 +10595,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Revoke Pat Api V1 Me Pats  Pat Id  Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RevokedPat"
                 }
               }
             },

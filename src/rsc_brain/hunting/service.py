@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import security
@@ -25,7 +25,7 @@ from rsc_brain.audit import record_audit
 from rsc_brain.hunting.channels import Channel, NullChannel, OutboundMessage
 from rsc_brain.hunting.directory import PersonDirectory, PersonRow
 from rsc_brain.hunting.state_machine import HuntState, HuntType, check_transition, is_open
-from rsc_brain.scope import ProjectScope
+from rsc_brain.scope import PROJECT_ROLE_ADMIN, ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
 from rsc_brain.visibility import forbidden_topics, topic_clause
@@ -50,6 +50,7 @@ def _hunt_public(hunt: models.Hunt) -> dict[str, object]:
         "type": hunt.hunt_type,
         "state": hunt.state,
         "question": hunt.question,
+        "topics": list(hunt.topics or []),
         "person_id": str(hunt.person_id) if hunt.person_id else None,
         "gap_id": str(hunt.gap_id) if hunt.gap_id else None,
         "correction_id": str(hunt.correction_id) if hunt.correction_id else None,
@@ -72,6 +73,9 @@ class HuntOutcome:
     throttled: bool = False
     #: Whether a message actually went out. False for a throttled, quiet-hours or undelivered hunt.
     delivered: bool = True
+    topics: tuple[str, ...] = ()
+    audit_correlation: str | None = None
+    replayed: bool = False
 
 
 def _is_sent(throttled: bool, quiet: bool, can_deliver: bool) -> bool:
@@ -175,11 +179,39 @@ class HuntService:
         )
 
     async def create_manual(
-        self, scope: ProjectScope, *, question: str, topics: Sequence[str]
+        self,
+        scope: ProjectScope,
+        *,
+        question: str,
+        topics: Sequence[str],
+        idempotency_key: str | None = None,
+        authorize_directory: bool = False,
     ) -> HuntOutcome:
         """Trigger (c): an admin opens a hunt by hand (`brain hunt ask`)."""
+        hunt_id = (
+            uuid.uuid5(
+                uuid.UUID(scope.project_id),
+                f"manual-hunt:{scope.principal_id}:{idempotency_key}",
+            )
+            if idempotency_key
+            else None
+        )
+        audit_correlation = str(
+            uuid.uuid5(
+                uuid.UUID(scope.project_id),
+                f"manual-hunt-audit:{scope.principal_id}:{idempotency_key}",
+            )
+            if idempotency_key
+            else uuid.uuid4()
+        )
         return await self._open(
-            scope, hunt_type=HuntType.MANUAL, question=question, topics=tuple(topics)
+            scope,
+            hunt_type=HuntType.MANUAL,
+            question=question,
+            topics=tuple(topics),
+            command_hunt_id=hunt_id,
+            audit_correlation=audit_correlation,
+            authorize_directory=authorize_directory,
         )
 
     async def promote_agent_gap(self, scope: ProjectScope, gap_id: str) -> HuntOutcome | None:
@@ -199,21 +231,28 @@ class HuntService:
     async def list_hunts(
         self, scope: ProjectScope, *, open_only: bool = False, limit: int = 100
     ) -> list[dict[str, object]]:
-        """The project's hunts, newest first — for ``brain hunts list`` and the admin API.
-
-        A hunt has no topics of its own: it inherits them from the gap that raised it (R01), so a
-        hunt about a topic the caller cannot see is not listed. A hunt with no gap (a manual or
-        correction-review hunt) is a project-level record and stays visible.
-        """
+        """The project's hunts, newest first, filtered on the persisted topic snapshot."""
         forbidden = await forbidden_topics(self._sm, scope)
+        effective_topics = case(
+            (func.cardinality(models.Hunt.topics) > 0, models.Hunt.topics),
+            else_=func.coalesce(models.Gap.topics, models.Hunt.topics),
+        )
         query = (
             select(models.Hunt)
-            .outerjoin(models.Gap, models.Gap.id == models.Hunt.gap_id)
+            .outerjoin(
+                models.Gap,
+                (models.Hunt.gap_id == models.Gap.id)
+                & (models.Hunt.project_id == models.Gap.project_id),
+            )
             .where(
                 models.Hunt.project_id == _pid(scope),
-                or_(
-                    models.Hunt.gap_id.is_(None),
-                    topic_clause(models.Gap.topics, scope, forbidden, allow_untagged=True),
+                topic_clause(
+                    effective_topics,
+                    scope,
+                    forbidden,
+                    # An empty snapshot means its legacy writer supplied no recoverable topic.
+                    # Only a project administrator may inspect that legacy record.
+                    allow_untagged=scope.role == PROJECT_ROLE_ADMIN,
                 ),
             )
             .order_by(models.Hunt.created_at.desc())
@@ -227,17 +266,31 @@ class HuntService:
 
     async def get_hunt(self, scope: ProjectScope, hunt_id: str) -> dict[str, object] | None:
         """One hunt, or ``None`` when absent or outside the caller's topic visibility (R01/FR-4.3)."""
+        try:
+            hunt_uuid = uuid.UUID(hunt_id)
+        except ValueError:
+            return None
         forbidden = await forbidden_topics(self._sm, scope)
+        effective_topics = case(
+            (func.cardinality(models.Hunt.topics) > 0, models.Hunt.topics),
+            else_=func.coalesce(models.Gap.topics, models.Hunt.topics),
+        )
         async with self._sm() as session:
             hunt = await session.scalar(
                 select(models.Hunt)
-                .outerjoin(models.Gap, models.Gap.id == models.Hunt.gap_id)
+                .outerjoin(
+                    models.Gap,
+                    (models.Hunt.gap_id == models.Gap.id)
+                    & (models.Hunt.project_id == models.Gap.project_id),
+                )
                 .where(
-                    models.Hunt.id == uuid.UUID(hunt_id),
+                    models.Hunt.id == hunt_uuid,
                     models.Hunt.project_id == _pid(scope),
-                    or_(
-                        models.Hunt.gap_id.is_(None),
-                        topic_clause(models.Gap.topics, scope, forbidden, allow_untagged=True),
+                    topic_clause(
+                        effective_topics,
+                        scope,
+                        forbidden,
+                        allow_untagged=scope.role == PROJECT_ROLE_ADMIN,
                     ),
                 )
             )
@@ -256,79 +309,170 @@ class HuntService:
         topics: Sequence[str],
         gap_id: str | None = None,
         correction_id: str | None = None,
+        command_hunt_id: uuid.UUID | None = None,
+        audit_correlation: str | None = None,
+        authorize_directory: bool = False,
     ) -> HuntOutcome:
-        person = await self._directory.route(scope, topics)
+        topic_snapshot = tuple(dict.fromkeys(topic for topic in topics if topic))
+        correlation = audit_correlation or str(uuid.uuid4())
+        person = await self._directory.route(scope, topics, authorize_topics=authorize_directory)
         now = self._clock()
-        if person is None:
-            hunt_id = await self._persist_no_owner(
-                scope, hunt_type, question, gap_id, correction_id
-            )
-            await self._alert_admin(scope, f"hunt {hunt_id}: no owner for topics {list(topics)}")
-            return HuntOutcome(hunt_id=hunt_id, state=HuntState.NO_OWNER, person_id=None)
         token = security.mint_token("hunt_")
-        quiet = _in_quiet_hours(person, now)
+        quiet = _in_quiet_hours(person, now) if person is not None else False
+        throttled = False
         async with session_scope(self._sm) as session:
-            # Serialise all concurrent opens for this person, then check the caps in the SAME
-            # transaction as the insert — so 3 open / 5 per week hold even under concurrent
-            # creation (FR-6.5, AC#7); a throttled hunt is parked ROUTED and never sent (§7.1).
-            await self._lock_person(session, scope, person.id)
-            throttled = await self._over_limit(session, scope, person.id, now)
-            hunt = models.Hunt(
-                project_id=_pid(scope),
-                hunt_type=hunt_type.value,
-                gap_id=uuid.UUID(gap_id) if gap_id else None,
-                person_id=uuid.UUID(person.id),
-                correction_id=uuid.UUID(correction_id) if correction_id else None,
-                channel=_preferred_channel(person),
-                # DETECTED→ROUTED→CONSENT_REQUESTED→AWAITING (parked at ROUTED when throttled).
-                state=_open_state(
-                    throttled=throttled, quiet=quiet, can_deliver=self._can_deliver
-                ).value,
-                question=question,
-                # The token and the 72h deadline belong to the DELIVERY, not to the row: a hunt held
-                # for quiet hours (or by a cap, or by an install that cannot deliver) has told nobody a
-                # token, so storing its hash would leave a live credential nobody received, and
-                # counting down from creation would expire a question never asked.
-                magic_token_hash=(
-                    security.token_hash(token)
-                    if _is_sent(throttled, quiet, self._can_deliver)
-                    else None
-                ),
-                consent_requested_at=now,
-                asked_at=now if _is_sent(throttled, quiet, self._can_deliver) else None,
-                expires_at=(
-                    now + _EXPIRY if _is_sent(throttled, quiet, self._can_deliver) else None
-                ),
-                created_at=now,
+            if command_hunt_id is not None:
+                # The id is a UUIDv5 of project + principal + idempotency key.  The advisory lock
+                # makes concurrent retries serialize before either can deliver; the persisted id
+                # makes the replay survive an application restart without another schema object.
+                await session.execute(
+                    text("SELECT pg_advisory_xact_lock(:key)"),
+                    {"key": _advisory_key(scope.project_id, str(command_hunt_id))},
+                )
+                existing = await session.scalar(
+                    select(models.Hunt).where(
+                        models.Hunt.id == command_hunt_id,
+                        models.Hunt.project_id == _pid(scope),
+                    )
+                )
+                if existing is not None:
+                    return HuntOutcome(
+                        hunt_id=str(existing.id),
+                        state=existing.state,
+                        person_id=str(existing.person_id) if existing.person_id else None,
+                        throttled=(existing.state == HuntState.ROUTED.value and self._can_deliver),
+                        delivered=existing.asked_at is not None,
+                        topics=tuple(existing.topics or []),
+                        audit_correlation=correlation,
+                        replayed=True,
+                    )
+
+            if person is None:
+                hunt = models.Hunt(
+                    project_id=_pid(scope),
+                    hunt_type=hunt_type.value,
+                    gap_id=uuid.UUID(gap_id) if gap_id else None,
+                    correction_id=uuid.UUID(correction_id) if correction_id else None,
+                    state=HuntState.NO_OWNER.value,
+                    question=question,
+                    topics=list(topic_snapshot),
+                    created_at=now,
+                )
+                if command_hunt_id is not None:
+                    hunt.id = command_hunt_id
+                session.add(hunt)
+                await session.flush()
+                hunt_id = str(hunt.id)
+            else:
+                # Serialise all concurrent opens for this person, then check the caps in the SAME
+                # transaction as the insert — so 3 open / 5 per week hold even under concurrent
+                # creation (FR-6.5, AC#7); a throttled hunt is parked ROUTED and never sent (§7.1).
+                await self._lock_person(session, scope, person.id)
+                throttled = await self._over_limit(session, scope, person.id, now)
+                hunt = models.Hunt(
+                    project_id=_pid(scope),
+                    hunt_type=hunt_type.value,
+                    gap_id=uuid.UUID(gap_id) if gap_id else None,
+                    person_id=uuid.UUID(person.id),
+                    correction_id=uuid.UUID(correction_id) if correction_id else None,
+                    channel=_preferred_channel(person),
+                    state=_open_state(
+                        throttled=throttled, quiet=quiet, can_deliver=self._can_deliver
+                    ).value,
+                    question=question,
+                    topics=list(topic_snapshot),
+                    # The token and the 72h deadline belong to the DELIVERY, not to the row: a hunt
+                    # held for quiet hours/caps stores no live credential nobody received.
+                    magic_token_hash=(
+                        security.token_hash(token)
+                        if _is_sent(throttled, quiet, self._can_deliver)
+                        else None
+                    ),
+                    consent_requested_at=now,
+                    asked_at=now if _is_sent(throttled, quiet, self._can_deliver) else None,
+                    expires_at=(
+                        now + _EXPIRY if _is_sent(throttled, quiet, self._can_deliver) else None
+                    ),
+                    created_at=now,
+                )
+                if command_hunt_id is not None:
+                    hunt.id = command_hunt_id
+                session.add(hunt)
+                await session.flush()
+                hunt_id = str(hunt.id)
+
+        if person is None:
+            await self._alert_admin(
+                scope, f"hunt {hunt_id}: no owner for topics {list(topic_snapshot)}"
             )
-            session.add(hunt)
-            await session.flush()
-            hunt_id = str(hunt.id)
-        if throttled:
+            await self._audit(
+                scope,
+                "hunt_no_owner",
+                None,
+                trace_id=correlation,
+                topics=topic_snapshot,
+            )
             return HuntOutcome(
-                hunt_id=hunt_id, state=HuntState.ROUTED, person_id=person.id, throttled=True
+                hunt_id=hunt_id,
+                state=HuntState.NO_OWNER,
+                person_id=None,
+                topics=topic_snapshot,
+                audit_correlation=correlation,
+            )
+        if throttled:
+            await self._audit(
+                scope,
+                "hunt_throttled",
+                person.id,
+                trace_id=correlation,
+                topics=topic_snapshot,
+            )
+            return HuntOutcome(
+                hunt_id=hunt_id,
+                state=HuntState.ROUTED,
+                person_id=person.id,
+                throttled=True,
+                delivered=False,
+                topics=topic_snapshot,
+                audit_correlation=correlation,
             )
         if not self._can_deliver:
             # R28: nothing was sent and nobody was asked. Saying AWAITING_ANSWER here is what made an
             # unconfigured install look identical to a working one, with the gap left open behind a
             # record claiming somebody had been contacted.
-            await self._audit(scope, "hunt_undelivered", person.id)
+            await self._audit(
+                scope,
+                "hunt_undelivered",
+                person.id,
+                trace_id=correlation,
+                topics=topic_snapshot,
+            )
             return HuntOutcome(
                 hunt_id=hunt_id,
                 state=HuntState.ROUTED,
                 person_id=person.id,
                 delivered=False,
+                topics=topic_snapshot,
+                audit_correlation=correlation,
             )
         # A message is NEVER sent during quiet_hours — it waits for the next window (FR-6.5/3.4).
         if not quiet:
             await self._send_question(person, question, token)
-        await self._audit(scope, "hunt_opened", person.id)
+        await self._audit(
+            scope,
+            "hunt_opened",
+            person.id,
+            trace_id=correlation,
+            topics=topic_snapshot,
+        )
         return HuntOutcome(
             hunt_id=hunt_id,
             state=HuntState.SCHEDULED if quiet else HuntState.AWAITING_ANSWER,
             person_id=person.id,
             magic_token=token,
             delivered=not quiet,
+            topics=topic_snapshot,
+            audit_correlation=correlation,
         )
 
     async def _lock_person(
@@ -641,8 +785,25 @@ class HuntService:
             )
         )
 
-    async def _audit(self, scope: ProjectScope, action: str, person_id: str | None) -> None:
-        await record_audit(self._sm, scope, action=action, tool="hunting", result_count=0)
+    async def _audit(
+        self,
+        scope: ProjectScope,
+        action: str,
+        person_id: str | None,
+        *,
+        trace_id: str | None = None,
+        topics: Sequence[str] = (),
+    ) -> None:
+        del person_id  # retained in the internal contract for channel/audit attribution expansion
+        await record_audit(
+            self._sm,
+            scope,
+            action=action,
+            tool="hunting",
+            result_count=0,
+            trace_id=trace_id,
+            topics_used=topics,
+        )
 
 
 def _preferred_channel(person: PersonRow) -> str:
@@ -687,6 +848,8 @@ def _scope_from_hunt(hunt: models.Hunt) -> ProjectScope:
 
 
 async def _gap_topics(session: AsyncSession, hunt: models.Hunt) -> tuple[str, ...]:
+    if hunt.topics:
+        return tuple(hunt.topics)
     if hunt.gap_id is None:
         return ()
     gap = await session.get(models.Gap, hunt.gap_id)

@@ -10,6 +10,7 @@ Claude/ChatGPT interop is blocked-by-resource; this proves the flow the SDK will
 from __future__ import annotations
 
 import base64
+import datetime as dt
 import hashlib
 import os
 import secrets
@@ -18,11 +19,14 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+from sqlalchemy import update
 
+from rsc_brain import security
 from rsc_brain.api.app import ApiDeps, create_app
 from rsc_brain.identity.resolve import resolve_scope
 from rsc_brain.identity.sessions import login
 from rsc_brain.scope import PrincipalType
+from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import make_sync_engine, make_sync_sessionmaker
 
 from .conftest import Harness, unique_slug
@@ -41,12 +45,12 @@ def _pkce() -> tuple[str, str]:
     return verifier, challenge
 
 
-async def _make_user(harness: Harness, project_id: str) -> str:
+async def _make_user(harness: Harness, project_id: str, *, platform_role: str = "member") -> str:
     from rsc_brain.identity.service import IdentityService
 
     identity = IdentityService(harness.sm)
     email = f"{unique_slug('oauth')}@example.com"
-    invited = await identity.invite_user(email, role="member")
+    invited = await identity.invite_user(email, role=platform_role)
     user_id = await identity.accept_invitation(invited.token, PASSWORD)
     await identity.add_membership(user_id, project_id, allowed_topics=("general",))
     return email
@@ -111,6 +115,88 @@ async def _authorize_code(
         data={"consent": "allow", "membership_project_id": project_id},
         headers=auth,
     )
+
+
+async def _issue_access_token(
+    client: httpx.AsyncClient,
+    *,
+    client_id: str,
+    project_id: str,
+    auth: dict[str, str],
+) -> str:
+    """Issue an access token through the real DCR/consent/PKCE server path."""
+    verifier, challenge = _pkce()
+    redirect = await _authorize_code(
+        client,
+        client_id=client_id,
+        challenge=challenge,
+        project_id=project_id,
+        auth=auth,
+    )
+    assert redirect.status_code in (302, 303), redirect.text
+    code = parse_qs(urlparse(redirect.headers["location"]).query)["code"][0]
+    token_response = await client.post(
+        "/oauth/token",
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": REDIRECT_URI,
+            "client_id": client_id,
+            "code_verifier": verifier,
+        },
+    )
+    assert token_response.status_code == 200, token_response.text
+    return str(token_response.json()["access_token"])
+
+
+async def test_owner_oauth_inventory_and_dead_credentials(
+    build_harness: Callable[..., Harness], migrated_dsn: str
+) -> None:
+    """A real owner OAuth token reaches inventory; revoked and expired tokens remain 401."""
+    harness = build_harness()
+    slug = unique_slug("oauth-inventory")
+    project_id = await harness.setup_project(slug, [("general", 0)])
+    email = await _make_user(harness, project_id, platform_role="owner")
+    session_token = await login(harness.sm, email, PASSWORD)
+    assert session_token is not None
+    session_auth = {"Authorization": f"Bearer {session_token}"}
+
+    async for client in _client(harness, migrated_dsn):
+        client_id = await _register(client)
+        access = await _issue_access_token(
+            client, client_id=client_id, project_id=project_id, auth=session_auth
+        )
+        oauth_auth = {"Authorization": f"Bearer {access}"}
+
+        inventory = await client.get("/api/v1/admin/projects", headers=oauth_auth)
+        assert inventory.status_code == 200, inventory.text
+        assert slug in {item["slug"] for item in inventory.json()["projects"]}
+
+        connections = await client.get("/api/v1/me/connections", headers=session_auth)
+        assert connections.status_code == 200, connections.text
+        connection_id = connections.json()["connections"][0]["id"]
+        revoked = await client.delete(
+            f"/api/v1/me/connections/{connection_id}", headers=session_auth
+        )
+        assert revoked.status_code == 200, revoked.text
+        denied_revoked = await client.get("/api/v1/admin/projects", headers=oauth_auth)
+        assert denied_revoked.status_code == 401, denied_revoked.text
+
+        expired_access = await _issue_access_token(
+            client, client_id=client_id, project_id=project_id, auth=session_auth
+        )
+        async with harness.sm() as database:
+            await database.execute(
+                update(models.OAuthToken)
+                .where(models.OAuthToken.access_token_hash == security.token_hash(expired_access))
+                .values(expires_at=dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1))
+            )
+            await database.commit()
+        denied_expired = await client.get(
+            "/api/v1/admin/projects",
+            headers={"Authorization": f"Bearer {expired_access}"},
+        )
+        assert denied_expired.status_code == 401, denied_expired.text
 
 
 async def test_full_pkce_flow_and_scope(

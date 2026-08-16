@@ -9,17 +9,19 @@ that skill ``stale`` (a flag, not an archive — it stays servable).
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.scope import ProjectScope
 from rsc_brain.skills.frontmatter import SkillFrontmatter
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
+from rsc_brain.visibility import fully_authorized_topic_clause
 
 
 def _pid(scope: ProjectScope) -> uuid.UUID:
@@ -55,6 +57,25 @@ class SkillRow:
             state=self.state,
             version=self.version,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SkillTransition:
+    skill: SkillRow
+    audit_correlation: str
+    replayed: bool = False
+
+
+class SkillNotFound(Exception):
+    """The named skill is absent in the caller's project."""
+
+
+class SkillVersionConflict(Exception):
+    """The expected skill version is no longer current."""
+
+
+class SkillValidationConflict(Exception):
+    """A proposed skill cannot become active because its dependencies are invalid."""
 
 
 def _row(skill: models.Skill) -> SkillRow:
@@ -126,6 +147,28 @@ class SkillStore:
         async with self._sm() as session:
             return [_row(s) for s in await session.scalars(query)]
 
+    async def list_authorized(
+        self, scope: ProjectScope, *, state: str | None = None
+    ) -> list[SkillRow]:
+        """List console inventory rows only when every carried topic is authorized.
+
+        Unlike ``list_all`` (an internal management primitive), this is safe to expose as a read
+        model.  Unlike ``list_visible`` (the active-only execution catalogue), it preserves the
+        caller's optional lifecycle-state filter.
+        """
+        query = (
+            select(models.Skill)
+            .where(
+                models.Skill.project_id == _pid(scope),
+                fully_authorized_topic_clause(models.Skill.tags, scope),
+            )
+            .order_by(models.Skill.slug)
+        )
+        if state is not None:
+            query = query.where(models.Skill.state == state)
+        async with self._sm() as session:
+            return [_row(skill) for skill in await session.scalars(query)]
+
     async def list_visible(self, scope: ProjectScope, forbidden: frozenset[str]) -> list[SkillRow]:
         """Active skills whose tag-set the caller may see (FR-4.14): overlaps ``allowed_topics`` and
         carries no forbidden sensitive tag the caller doesn't own."""
@@ -174,6 +217,164 @@ class SkillStore:
                 .where(models.Skill.project_id == _pid(scope), models.Skill.slug == slug)
                 .values(state=state)
             )
+
+    async def validate(
+        self,
+        scope: ProjectScope,
+        slug: str,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> SkillTransition:
+        """Validate once; same-key retries return the persisted transition after restarts."""
+        correlation = self._command_correlation(
+            scope, action="validate", slug=slug, idempotency_key=idempotency_key
+        )
+        lock_key = self._advisory_key(correlation)
+        async with session_scope(self._sm) as session:
+            await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+            prior = await session.scalar(
+                select(models.AuditLog.id).where(
+                    models.AuditLog.project_id == _pid(scope),
+                    models.AuditLog.principal_id == scope.principal_id,
+                    models.AuditLog.action == "skill_validate",
+                    models.AuditLog.trace_id == correlation,
+                )
+            )
+            skill = await session.scalar(
+                select(models.Skill)
+                .where(
+                    models.Skill.project_id == _pid(scope),
+                    models.Skill.slug == slug,
+                    fully_authorized_topic_clause(models.Skill.tags, scope),
+                )
+                .with_for_update()
+            )
+            if skill is None:
+                raise SkillNotFound
+            if prior is not None:
+                return SkillTransition(
+                    skill=_row(skill), audit_correlation=correlation, replayed=True
+                )
+            if skill.version != expected_version or skill.state != "proposed":
+                raise SkillVersionConflict
+            if not await self._dependencies_exist(session, scope, skill.depends_on):
+                raise SkillValidationConflict
+            skill.state = "active"
+            skill.stale = False
+            skill.stale_reason = None
+            skill.stale_at = None
+            skill.version += 1
+            session.add(self._audit_row(scope, "skill_validate", correlation, skill))
+            await session.flush()
+            return SkillTransition(skill=_row(skill), audit_correlation=correlation)
+
+    async def archive(
+        self,
+        scope: ProjectScope,
+        slug: str,
+        *,
+        expected_version: int,
+        idempotency_key: str,
+    ) -> SkillTransition:
+        """Archive once; same-key retries return the persisted outcome across app restarts."""
+        correlation = self._command_correlation(
+            scope, action="archive", slug=slug, idempotency_key=idempotency_key
+        )
+        lock_key = self._advisory_key(correlation)
+        async with session_scope(self._sm) as session:
+            await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+            prior = await session.scalar(
+                select(models.AuditLog.id).where(
+                    models.AuditLog.project_id == _pid(scope),
+                    models.AuditLog.principal_id == scope.principal_id,
+                    models.AuditLog.action == "skill_archive",
+                    models.AuditLog.trace_id == correlation,
+                )
+            )
+            skill = await session.scalar(
+                select(models.Skill)
+                .where(
+                    models.Skill.project_id == _pid(scope),
+                    models.Skill.slug == slug,
+                    fully_authorized_topic_clause(models.Skill.tags, scope),
+                )
+                .with_for_update()
+            )
+            if skill is None:
+                raise SkillNotFound
+            if prior is not None:
+                return SkillTransition(
+                    skill=_row(skill), audit_correlation=correlation, replayed=True
+                )
+            if skill.version != expected_version or skill.state == "archived":
+                raise SkillVersionConflict
+            skill.state = "archived"
+            skill.version += 1
+            session.add(self._audit_row(scope, "skill_archive", correlation, skill))
+            await session.flush()
+            return SkillTransition(skill=_row(skill), audit_correlation=correlation)
+
+    @staticmethod
+    def _command_correlation(
+        scope: ProjectScope, *, action: str, slug: str, idempotency_key: str
+    ) -> str:
+        return str(
+            uuid.uuid5(
+                uuid.UUID(scope.project_id),
+                f"skill-{action}:{scope.principal_id}:{slug}:{idempotency_key}",
+            )
+        )
+
+    @staticmethod
+    def _advisory_key(correlation: str) -> int:
+        lock_digest = hashlib.sha256(correlation.encode()).digest()
+        return int.from_bytes(lock_digest[:8], "big", signed=True)
+
+    @staticmethod
+    async def _dependencies_exist(
+        session: AsyncSession, scope: ProjectScope, dependencies: Sequence[uuid.UUID]
+    ) -> bool:
+        wanted = set(dependencies)
+        if not wanted:
+            return True
+        topic_ids = set(
+            await session.scalars(
+                select(models.Topic.id).where(
+                    models.Topic.project_id == _pid(scope), models.Topic.id.in_(wanted)
+                )
+            )
+        )
+        entity_ids = set(
+            await session.scalars(
+                select(models.Entity.id).where(
+                    models.Entity.project_id == _pid(scope), models.Entity.id.in_(wanted)
+                )
+            )
+        )
+        return wanted <= topic_ids | entity_ids
+
+    @staticmethod
+    def _audit_row(
+        scope: ProjectScope, action: str, correlation: str, skill: models.Skill
+    ) -> models.AuditLog:
+        try:
+            user_id = uuid.UUID(scope.principal_id)
+        except ValueError:
+            user_id = None
+        return models.AuditLog(
+            project_id=_pid(scope),
+            user_id=user_id,
+            principal_type=scope.principal_type.value,
+            principal_id=scope.principal_id,
+            on_behalf_of=scope.on_behalf_of,
+            trace_id=correlation,
+            action=action,
+            tool="console",
+            topics_used=list(skill.tags),
+            result_count=skill.version,
+            denied=False,
+        )
 
     async def mark_stale_for(
         self, scope: ProjectScope, touched_ids: Sequence[str], *, reason: str

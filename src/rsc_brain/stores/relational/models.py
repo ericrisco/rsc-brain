@@ -103,6 +103,8 @@ class Project(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[dt.datetime] = _created_at()
     settings: Mapped[dict[str, object]] = mapped_column(JSONB, server_default="{}", nullable=False)
+    status: Mapped[str] = mapped_column(Text, server_default="active", nullable=False)
+    version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
 
 
 class User(Base):
@@ -113,6 +115,7 @@ class User(Base):
     password_hash: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, nullable=False)  # invited|active|disabled
     role: Mapped[str] = mapped_column(Text, nullable=False)  # owner|admin|member
+    version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
 
 
 class ProjectMembership(Base):
@@ -123,6 +126,8 @@ class ProjectMembership(Base):
     role: Mapped[str] = mapped_column(Text, nullable=False)  # project-admin|member|viewer
     allowed_topics: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     can_curate: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    status: Mapped[str] = mapped_column(Text, server_default="active", nullable=False)
+    version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
     __table_args__ = (UniqueConstraint("user_id", "project_id"),)
 
 
@@ -139,6 +144,8 @@ class PersonalAccessToken(Base):
     created_at: Mapped[dt.datetime] = _created_at()
     expires_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(Text, server_default="active", nullable=False)
+    version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
     __table_args__ = (
         CheckConstraint(
             "(membership_id IS NOT NULL) <> (agent_id IS NOT NULL)",
@@ -410,6 +417,8 @@ class Topic(Base):
     # Per-topic hard horizon (SPEC-13, FR-16.3): in `current` mode, claims older than this many
     # days are hidden by default; NULL = no window (the D16 default).
     hard_window_days: Mapped[int | None] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(Text, server_default="active", nullable=False)
+    version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
     __table_args__ = (
         UniqueConstraint("project_id", "slug"),
         Index("ix_topics_project_id_id", "project_id", "id"),
@@ -427,6 +436,9 @@ class Person(Base):
     # Hunting directory (SPEC-15, FR-6.1): quiet_hours {tz, start, end} + preferred language.
     quiet_hours: Mapped[dict[str, object]] = mapped_column(JSONB, server_default="{}")
     language: Mapped[str | None] = mapped_column(Text)
+    # Optimistic-concurrency token for console edits/deletes.  A server-owned integer keeps the
+    # contract stable across processes and avoids exposing PostgreSQL's transaction-local ``xmin``.
+    version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
     __table_args__ = (
         UniqueConstraint("project_id", "id"),
         Index("ix_persons_project_id_id", "project_id", "id"),
@@ -460,6 +472,10 @@ class Hunt(Base):
     channel: Mapped[str | None] = mapped_column(Text)
     state: Mapped[str] = mapped_column(Text, nullable=False)
     question: Mapped[str | None] = mapped_column(Text)
+    # Immutable authorization snapshot.  Manual hunts do not have a Gap from which their topic
+    # boundary can be recovered, so persisting it is what prevents a later directory edit from
+    # widening the hunt to the whole project.  Legacy rows migrate to the restrictive empty set.
+    topics: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}", nullable=False)
     answer: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = _created_at()
     resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
@@ -569,7 +585,9 @@ class EmbeddingCache(Base):
 class AuditLog(Base):
     __tablename__ = "audit_log"
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
-    project_id: Mapped[uuid.UUID] = _project_fk()
+    # Audit evidence deliberately survives a hard project delete. The UUID remains mandatory and
+    # indexed, but is historical attribution rather than a live parent reference.
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     ts: Mapped[dt.datetime] = _created_at()
     user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     # Agent principals (FR-14.3), consumed by SPEC-04 from v0.1.
@@ -796,6 +814,36 @@ class AgentWriteIdempotency(Base):
             "idempotency_key",
             name="uq_agent_write_idempotency_project_principal_key",  # generated name is 66 chars
         ),
+    )
+
+
+class ManagementCommand(Base):
+    """Durable, secret-free result of one console management command.
+
+    The ledger is deliberately not tenant-FK constrained: project deletion must retain both the
+    command result and its audit correlation. ``project_id`` is still mandatory and indexed so
+    every replay remains attributable to the scope in which it happened.
+    """
+
+    __tablename__ = "management_commands"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    principal_id: Mapped[str] = mapped_column(Text, nullable=False)
+    operation: Mapped[str] = mapped_column(Text, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    request_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    response: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    audit_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(Text, server_default="completed", nullable=False)
+    created_at: Mapped[dt.datetime] = _created_at()
+    __table_args__ = (
+        UniqueConstraint(
+            "principal_id",
+            "operation",
+            "idempotency_key",
+            name="uq_management_commands_principal_operation_key",
+        ),
+        Index("ix_management_commands_project_id_created", "project_id", "created_at"),
     )
 
 

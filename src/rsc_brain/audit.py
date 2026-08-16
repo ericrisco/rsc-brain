@@ -11,17 +11,42 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import hashlib
+import hmac
 import io
+import json
 import uuid
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from binascii import Error as Base64Error
 from collections.abc import Sequence
+from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from rsc_brain.scope import PrincipalType, ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
-from rsc_brain.visibility import forbidden_topics, topic_clause
+from rsc_brain.visibility import fully_authorized_topic_clause
+
+
+class InvalidRecallCursor(ValueError):
+    """The caller supplied a continuation token this read model did not issue."""
+
+
+class RecallCursorSigningUnavailable(RuntimeError):
+    """The database connection has no server-side credential from which to derive a signing key."""
+
+
+@dataclass(frozen=True, slots=True)
+class RecallPage:
+    """Authorized recall rows plus continuation metadata for the console."""
+
+    items: list[dict[str, object]]
+    next_cursor: str | None
+    total: int
+    freshness: dt.datetime
 
 
 async def _visibility(
@@ -34,10 +59,10 @@ async def _visibility(
     to a caller authorized for the project; a row that names topics is visible only to a caller who
     holds them.
     """
-    forbidden = await forbidden_topics(sessionmaker, scope)
+    del sessionmaker  # Kept in the frozen helper signature for its existing callers.
     return [
         models.AuditLog.project_id == uuid.UUID(scope.project_id),
-        topic_clause(models.AuditLog.topics_used, scope, forbidden, allow_untagged=True),
+        fully_authorized_topic_clause(models.AuditLog.topics_used, scope, allow_untagged=True),
     ]
 
 
@@ -54,29 +79,65 @@ async def record_audit(
     result_count: int | None = None,
     denied: bool = False,
     trace_id: str | None = None,
-) -> None:
+) -> int:
     # `query_text` is persisted verbatim only when the caller passes it (do_recall passes it solely
     # when the project's query_text_logging is ON, FR-13.9) — record_audit itself never fetches it.
-    is_human = scope.principal_type is PrincipalType.HUMAN
     async with session_scope(sessionmaker) as session:
-        session.add(
-            models.AuditLog(
-                project_id=uuid.UUID(scope.project_id),
-                user_id=uuid.UUID(scope.principal_id) if is_human else None,
-                principal_type=scope.principal_type.value,
-                principal_id=scope.principal_id,
-                on_behalf_of=scope.on_behalf_of,
-                trace_id=trace_id,
-                action=action,
-                tool=tool,
-                query_hash=query_hash,
-                query_text=query_text,
-                duration_ms=duration_ms,
-                topics_used=list(topics_used),
-                result_count=result_count,
-                denied=denied,
-            )
+        return await record_audit_in_session(
+            session,
+            scope,
+            action=action,
+            tool=tool,
+            query_hash=query_hash,
+            query_text=query_text,
+            duration_ms=duration_ms,
+            topics_used=topics_used,
+            result_count=result_count,
+            denied=denied,
+            trace_id=trace_id,
         )
+
+
+async def record_audit_in_session(
+    session: AsyncSession,
+    scope: ProjectScope,
+    *,
+    action: str,
+    tool: str | None = None,
+    query_hash: str | None = None,
+    query_text: str | None = None,
+    duration_ms: int | None = None,
+    topics_used: Sequence[str] = (),
+    result_count: int | None = None,
+    denied: bool = False,
+    trace_id: str | None = None,
+) -> int:
+    """Append an audit outcome to the caller's existing transaction.
+
+    Management mutations use this form so state, audit correlation and idempotency result become
+    durable together; other call sites keep the standalone convenience wrapper above.
+    """
+
+    is_human = scope.principal_type is PrincipalType.HUMAN
+    row = models.AuditLog(
+        project_id=uuid.UUID(scope.project_id),
+        user_id=uuid.UUID(scope.principal_id) if is_human else None,
+        principal_type=scope.principal_type.value,
+        principal_id=scope.principal_id,
+        on_behalf_of=scope.on_behalf_of,
+        trace_id=trace_id,
+        action=action,
+        tool=tool,
+        query_hash=query_hash,
+        query_text=query_text,
+        duration_ms=duration_ms,
+        topics_used=list(topics_used),
+        result_count=result_count,
+        denied=denied,
+    )
+    session.add(row)
+    await session.flush()
+    return row.id
 
 
 async def query_text_logging_enabled(
@@ -134,6 +195,7 @@ async def query_audit_raw(
     since: str | None = None,
     until: str | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[dict[str, object]]:
     """Filterable audit query WITHOUT topic visibility — project scope only.
 
@@ -161,7 +223,8 @@ async def query_audit_raw(
     statement = (
         select(models.AuditLog)
         .where(*conditions)  # type: ignore[arg-type]
-        .order_by(models.AuditLog.ts.desc())
+        .order_by(models.AuditLog.ts.desc(), models.AuditLog.id.desc())
+        .offset(offset)
         .limit(limit)
     )
     async with sessionmaker() as session:
@@ -181,6 +244,7 @@ async def query_audit(
     since: str | None = None,
     until: str | None = None,
     limit: int = 100,
+    offset: int = 0,
 ) -> list[dict[str, object]]:
     """The audit log as THIS caller may see it: project scope plus topic visibility (R01).
 
@@ -198,11 +262,15 @@ async def query_audit(
         since=since,
         until=until,
         limit=limit,
+        offset=offset,
     )
 
 
 async def activity_summary(
-    sessionmaker: async_sessionmaker[AsyncSession], scope: ProjectScope
+    sessionmaker: async_sessionmaker[AsyncSession],
+    scope: ProjectScope,
+    *,
+    since: dt.datetime | None = None,
 ) -> dict[str, object]:
     """Recall activity aggregates for the dashboard (FR-13.2): total recalls, denied/abstained,
     distinct active principals, p95 duration, and recalls/day.
@@ -213,6 +281,9 @@ async def activity_summary(
     """
     visibility = await _visibility(sessionmaker, scope)
     recall_rows = models.AuditLog.action == "recall"
+    conditions = [*visibility, recall_rows]
+    if since is not None:
+        conditions.append(models.AuditLog.ts >= since)
     async with sessionmaker() as session:
         totals = (
             await session.execute(
@@ -221,12 +292,12 @@ async def activity_summary(
                     func.count().filter(models.AuditLog.denied.is_(True)),
                     func.count(func.distinct(models.AuditLog.principal_id)),
                     func.percentile_cont(0.95).within_group(models.AuditLog.duration_ms.asc()),
-                ).where(*visibility, recall_rows)  # type: ignore[arg-type]
+                ).where(*conditions)  # type: ignore[arg-type]
             )
         ).one()
         per_day_rows = await session.execute(
             select(func.date(models.AuditLog.ts), func.count())
-            .where(*visibility, recall_rows)  # type: ignore[arg-type]
+            .where(*conditions)  # type: ignore[arg-type]
             .group_by(func.date(models.AuditLog.ts))
             .order_by(func.date(models.AuditLog.ts))
         )
@@ -236,7 +307,11 @@ async def activity_summary(
         "recalls": int(total or 0),
         "denied": int(denied or 0),
         "active_principals": int(active or 0),
-        "p95_duration_ms": round(float(p95), 1) if p95 is not None else None,
+        "p95_duration_ms": (
+            float(Decimal(str(p95)).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+            if p95 is not None
+            else None
+        ),
         "recalls_per_day": per_day,
     }
 
@@ -267,6 +342,170 @@ async def recall_stream(
             .limit(limit)
         )
         return [_row_to_dict(row) for row in rows]
+
+
+def _cursor_signing_key(sessionmaker: async_sessionmaker[AsyncSession]) -> bytes:
+    """Derive a domain-separated cursor key from the existing database credential.
+
+    The database password is already required secret application material in every supported
+    deployment.  Domain separation means the derived bytes cannot be used as the database
+    credential, while every replica connected with that credential verifies the same stateless
+    cursor.  We deliberately fail closed for passwordless URLs instead of inventing a predictable
+    fallback or a per-process key that breaks across replicas and restarts.
+    """
+    bind = sessionmaker.kw.get("bind")
+    if not isinstance(bind, AsyncEngine) or not bind.url.password:
+        raise RecallCursorSigningUnavailable("cursor signing requires a credentialed database URL")
+    namespace = f"{bind.url.username or ''}/{bind.url.database or ''}".encode()
+    return hmac.new(
+        bind.url.password.encode(),
+        b"rsc-brain:console-recall-cursor:v1\0" + namespace,
+        hashlib.sha256,
+    ).digest()
+
+
+def _cursor_context(
+    scope: ProjectScope, *, principal_type: str | None, denied: bool | None
+) -> bytes:
+    """Canonical associated data that prevents cross-authority/filter replay."""
+    return json.dumps(
+        {
+            "aud": "console-observability-recalls",
+            "project_id": scope.project_id,
+            "principal_id": scope.principal_id,
+            "principal_type": scope.principal_type.value,
+            "on_behalf_of": scope.on_behalf_of,
+            "allowed_topics": sorted(scope.allowed_topics),
+            "role": scope.role,
+            "filters": {"principal_type": principal_type, "denied": denied},
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+
+
+def _b64encode(value: bytes) -> str:
+    return urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def _b64decode(value: str) -> bytes:
+    return urlsafe_b64decode(f"{value}{'=' * (-len(value) % 4)}".encode())
+
+
+def _cursor_signature(key: bytes, encoded_position: str, context: bytes) -> bytes:
+    return hmac.new(
+        key,
+        b"rsc-brain:recall-page:v1\0" + context + b"\0" + encoded_position.encode(),
+        hashlib.sha256,
+    ).digest()
+
+
+def _encode_recall_cursor(row: models.AuditLog, *, key: bytes, context: bytes) -> str:
+    payload = json.dumps(
+        {"v": 1, "ts": row.ts.isoformat(), "id": row.id},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    position = _b64encode(payload)
+    signature = _b64encode(_cursor_signature(key, position, context))
+    return f"{position}.{signature}"
+
+
+def _decode_recall_cursor(value: str, *, key: bytes, context: bytes) -> tuple[dt.datetime, int]:
+    try:
+        position, signature, *unexpected = value.split(".")
+        if unexpected or not position or not signature:
+            raise ValueError
+        supplied_signature = _b64decode(signature)
+        expected_signature = _cursor_signature(key, position, context)
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            raise ValueError
+        raw = _b64decode(position)
+        payload = json.loads(raw)
+        if not isinstance(payload, dict) or payload.get("v") != 1:
+            raise ValueError
+        timestamp = dt.datetime.fromisoformat(payload["ts"])
+        row_id = int(payload["id"])
+        if timestamp.tzinfo is None or row_id < 1:
+            raise ValueError
+    except (Base64Error, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise InvalidRecallCursor("invalid recall cursor") from exc
+    return timestamp, row_id
+
+
+async def recall_page(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    scope: ProjectScope,
+    *,
+    principal_type: str | None = None,
+    denied: bool | None = None,
+    cursor: str | None = None,
+    limit: int = 100,
+) -> RecallPage:
+    """Page the authorized recall set with a stable, metadata-safe cursor.
+
+    Visibility enters both the total and item queries before ordering or pagination.  The cursor
+    contains only the last *authorized* row's timestamp and surrogate id; it can neither disclose
+    a filtered principal nor advance across raw tenant rows.
+    """
+    conditions: list[object] = [
+        *await _visibility(sessionmaker, scope),
+        models.AuditLog.action == "recall",
+    ]
+    if principal_type is not None:
+        conditions.append(models.AuditLog.principal_type == principal_type)
+    if denied is not None:
+        conditions.append(models.AuditLog.denied.is_(denied))
+
+    context = _cursor_context(scope, principal_type=principal_type, denied=denied)
+    signing_key: bytes | None = None
+    page_conditions = list(conditions)
+    if cursor is not None:
+        signing_key = _cursor_signing_key(sessionmaker)
+        timestamp, row_id = _decode_recall_cursor(cursor, key=signing_key, context=context)
+        page_conditions.append(
+            or_(
+                models.AuditLog.ts < timestamp,
+                and_(models.AuditLog.ts == timestamp, models.AuditLog.id < row_id),
+            )
+        )
+
+    async with sessionmaker() as session:
+        total, latest = (
+            await session.execute(
+                select(func.count(), func.max(models.AuditLog.ts)).where(*conditions)  # type: ignore[arg-type]
+            )
+        ).one()
+        rows = list(
+            await session.scalars(
+                select(models.AuditLog)
+                .where(*page_conditions)  # type: ignore[arg-type]
+                .order_by(models.AuditLog.ts.desc(), models.AuditLog.id.desc())
+                .limit(limit + 1)
+            )
+        )
+
+    has_more = len(rows) > limit
+    visible_rows = rows[:limit]
+    items: list[dict[str, object]] = []
+    for row in visible_rows:
+        item = _row_to_dict(row)
+        item["id"] = str(row.id)
+        items.append(item)
+    return RecallPage(
+        items=items,
+        next_cursor=(
+            _encode_recall_cursor(
+                visible_rows[-1],
+                key=signing_key or _cursor_signing_key(sessionmaker),
+                context=context,
+            )
+            if has_more and visible_rows
+            else None
+        ),
+        total=int(total or 0),
+        freshness=latest or dt.datetime.now(dt.UTC),
+    )
 
 
 async def set_query_text_logging(

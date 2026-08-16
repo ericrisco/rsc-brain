@@ -2,7 +2,12 @@
 
 # Permissions reference
 
-rsc-brain binds an authenticated principal to one project before data access. The resulting project scope carries the principal type, project, allowed topics, project role, platform role, curation flag, and any validated delegation. Downstream stores receive this combined scope rather than a caller-supplied project identifier.
+rsc-brain uses two distinct authority types. Project-owned data requires a `ProjectScope`, which
+binds an authenticated principal to one real membership and carries its project, allowed topics,
+project role, platform role, curation flag, and validated delegation. Downstream stores receive
+this combined scope rather than a caller-supplied project identifier. Platform lifecycle operations
+resolve a separate `PlatformIdentityScope` with only the authenticated human identity and platform
+role: it has no project, membership, topics, or curation state and cannot authorize content.
 
 ## Principal and credential types
 
@@ -10,17 +15,19 @@ rsc-brain binds an authenticated principal to one project before data access. Th
 
 | Principal type | Identity source | Authority characteristics |
 |---|---|---|
-| `human` | Active user plus a project membership | Can hold a platform role, project role, topic set, and `can_curate`. Human credentials can reach REST administration when the named capability permits it. |
+| `human` | Active user; a project membership is additionally required for `ProjectScope` | Can hold a platform role, project role, topic set, and `can_curate`. A platform scope contains only the active identity and platform role; a project scope requires the real membership. |
 | `agent` | Active agent record bound to one project | Holds an allowed-topic set and the fixed project role `agent`. It has no platform role, project-management role, or console capability. |
 
-The authority object is a `ProjectScope`. Its project cannot be replaced later by a request parameter. A delegated agent remains an agent and retains the agent role.
+`ProjectScope` is the authority object accepted by project-owned boundaries; its project cannot be
+replaced later by a request parameter. `PlatformIdentityScope` is accepted only by named platform
+operations. A delegated agent remains an agent and retains the agent role.
 
 ### Credentials
 
 | Credential | Prefix or form | Scope and lifetime | Storage and revocation |
 |---|---|---|---|
 | Password | Email and password | Authenticates a human for console sign-in. Passwords do not carry project scope. | Argon2id hash. Unknown email, wrong password, and inactive user share one response. |
-| Console session | `cks_…` | User-scoped across memberships; expires after 7 days. An admin API request made with a session must select an authorized project with `project=<slug>`. | Only a SHA-256 token hash is stored. Logout, expiry, or user deactivation stops resolution. |
+| Console session | `cks_…` | User-scoped across memberships; expires after 7 days. A project-scoped admin API request made with a session must select an authorized project with `project=<slug>`; platform routes do not require it. | Only a SHA-256 token hash is stored. Logout, expiry, or user deactivation stops resolution. |
 | Human personal access token | `ck_…` | Bound to one project membership; optional expiry at the data-model level. | Plaintext is returned at issuance and not persisted. Revocation, expiry, or user deactivation stops resolution. |
 | Agent personal access token | `ck_…` | Bound to one agent and one project. | Same hashed-at-rest token handling; inactive agents and revoked tokens do not resolve. |
 | OAuth access token | Opaque bearer token | Bound to the membership selected during consent; expires after at most 3600 seconds. | SHA-256 hash; resolved against current membership and user state on every call. |
@@ -50,7 +57,7 @@ Authorization is deny-by-default. The server names one capability for each opera
 |---|---|---|---|---|---|---|
 | `platform.project.create` | allow | no grant from project role | no | no | no | Platform authority still arrives through an authenticated human scope. |
 | `platform.user.invite` | allow | no grant from project role | no | no | no | Creates a platform user invitation. |
-| `platform.project.list_all` | allow | no grant from project role | no | no | no | Without this capability, project listing is membership-limited. |
+| `platform.project.list_all` | allow | no grant from project role | no | no | no | Global inventory is capability-gated; no project role or `project` query can widen it. |
 | `platform.credential.revoke` | allow | no grant from project role | no | no | no | Covers administrator revocation of another user's OAuth connection. |
 | `project.manage.read` | no grant from platform role | allow | no | no | no | Used for project-management lists, audit views, people, sources, and pending documents. |
 | `project.config.write` | no grant from platform role | allow | no | no | no | Used for topics, sources, people, skills, and ontologies. |
@@ -101,7 +108,7 @@ An agent can delegate only to an active human member of the agent's project. Eff
 | REST credential is invalid, revoked, expired, or belongs to a disabled principal | HTTP `401`. |
 | Authenticated REST caller lacks a capability and object existence is not sensitive | HTTP `403` with a capability-specific reason. |
 | REST target is absent, belongs to another project, or is hidden and existence is sensitive | HTTP `404` with the same not-found shape. |
-| Console session omits an authorized `project` selection for an admin route | HTTP `404`; it does not reveal whether another project exists. |
+| Console session omits an authorized `project` selection for a project-scoped admin route | HTTP `404`; it does not reveal whether another project exists. Platform operations do not use a project selection. |
 | MCP credential or delegation does not resolve | `AUTH_INVALID`. |
 | MCP recall or timeline has no visible result | `found: false` with an empty result, whether data is absent or hidden. |
 | MCP skill or document is absent or hidden | The same empty-result shape in both cases. |

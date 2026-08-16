@@ -23,6 +23,7 @@ Return to the [project overview](../README.md).
 | Look up MCP tools, errors, quotas, and provenance | AI-tool integrator | [MCP reference](reference/mcp.md) |
 | Look up REST operations and response contracts | API integrator | [REST API reference](reference/rest-api.md) |
 | Look up roles, capabilities, and topic rules | Administrator, security reviewer | [Permissions reference](reference/permissions.md) |
+| Inspect the console API-to-route authority boundary | Console contributor, security reviewer | [Console control-plane authority](reference/console-control-plane-authority.md) |
 
 ## I operate an installation
 

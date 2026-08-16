@@ -13,14 +13,15 @@ actually designates was locked out of it.
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -32,6 +33,44 @@ from rsc_brain.api.authz import (
     merge_proposal_topics,
     object_topics,
 )
+from rsc_brain.api.read_models import (
+    ActivityEnvelope,
+    AuditEnvelope,
+    ChunkReviewResolution,
+    ContradictionResolutionEnvelope,
+    ContradictionResolutionView,
+    CorrectionEnvelope,
+    CorrectionMetricsEnvelope,
+    CorrectionRevertResult,
+    CorrectionView,
+    DisputedClaimEnvelope,
+    DisputedClaimView,
+    EntityGraphEnvelope,
+    GapEnvelope,
+    GapView,
+    HealthEnvelope,
+    HuntCommandView,
+    HuntDetailEnvelope,
+    HuntEnvelope,
+    HuntView,
+    IngestEnvelope,
+    MergeReviewResolution,
+    PendingDocumentEnvelope,
+    PendingDocumentView,
+    ProductMetricsEnvelope,
+    PromoteGapResult,
+    ReadPage,
+    RecallView,
+    ReviewItemView,
+    ReviewQueueEnvelope,
+    SkillCommandView,
+    SkillCreateResult,
+    SkillEnvelope,
+    SkillView,
+    UsageDayTotal,
+    UsageEnvelope,
+    UsageRowView,
+)
 from rsc_brain.authorization import Allow, Capability, decide
 from rsc_brain.config.models import PublicLimits
 from rsc_brain.identity.service import IdentityService
@@ -42,6 +81,7 @@ from rsc_brain.scope import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_MEMBER,
     PROJECT_ROLE_VIEWER,
+    PlatformIdentityScope,
     Principal,
     PrincipalType,
     ProjectScope,
@@ -49,6 +89,7 @@ from rsc_brain.scope import (
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.ingest_repository import IngestRepository
 from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+from rsc_brain.visibility import fully_authorized_topic_clause
 
 # SPEC-04 §3.1's project roles, validated where the refusal reaches the caller (AUDIT-074).
 _PROJECT_ROLES = (PROJECT_ROLE_ADMIN, PROJECT_ROLE_MEMBER, PROJECT_ROLE_VIEWER)
@@ -136,6 +177,7 @@ class PersonUpdate(BaseModel):
     channels: dict[str, str] | None = None
     quiet_hours: dict[str, str] | None = None
     language: str | None = Field(default=None, max_length=SLUG_MAX)
+    expected_version: int = Field(ge=1)
 
 
 class HuntAsk(BaseModel):
@@ -146,6 +188,10 @@ class HuntAsk(BaseModel):
 class SkillUpsert(BaseModel):
     # The full skill file: OKF frontmatter + body. Bounded like any other public body (R38).
     markdown: str = Field(max_length=JSON_BODY_MAX)
+
+
+class VersionedCommand(BaseModel):
+    expected_version: int = Field(ge=1)
 
 
 class ChunkApprove(BaseModel):
@@ -240,6 +286,40 @@ async def _identified_scope(
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
 
 
+async def _identified_platform_scope(
+    request: Request, credentials: HTTPAuthorizationCredentials | None
+) -> PlatformIdentityScope:
+    """Resolve only a credential's authenticated platform identity.
+
+    PAT and OAuth credentials remain compatible with platform routes, but their project binding is
+    intentionally discarded rather than trusted as global authority.  The platform role is read
+    from the freshly resolved active user and is then decided centrally.  A console session uses
+    the same identity-only scope, so a ``project`` query parameter cannot widen either lane.
+    """
+    from rsc_brain.identity.resolve import resolve_scope
+    from rsc_brain.identity.sessions import resolve_session
+
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing bearer token")
+    token = credentials.credentials
+    sessionmaker = _sm(request)
+    project_scope = await resolve_scope(sessionmaker, token)
+    if project_scope is not None:
+        return PlatformIdentityScope(
+            principal_id=project_scope.principal_id,
+            principal_type=project_scope.principal_type,
+            platform_role=project_scope.platform_role,
+        )
+    user = await resolve_session(sessionmaker, token)
+    if user is not None:
+        return PlatformIdentityScope(
+            principal_id=user.user_id,
+            principal_type=PrincipalType.HUMAN,
+            platform_role=user.role,
+        )
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
+
+
 def _requires(
     capability: Capability,
 ) -> Callable[..., Coroutine[Any, Any, ProjectScope]]:
@@ -256,6 +336,26 @@ def _requires(
         project: str | None = None,
     ) -> ProjectScope:
         scope = await _identified_scope(request, credentials, project)
+        enforce(decide(scope, capability))
+        return scope
+
+    return dependency
+
+
+def _requires_platform(
+    capability: Capability,
+) -> Callable[..., Coroutine[Any, Any, PlatformIdentityScope]]:
+    """Resolve an identity-only scope and decide a platform capability.
+
+    This dependency accepts session, PAT, and OAuth credentials.  It never resolves or creates a
+    project scope, so an optional ``?project=`` supplied by a caller is semantically inert.
+    """
+
+    async def dependency(
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    ) -> PlatformIdentityScope:
+        scope = await _identified_platform_scope(request, credentials)
         enforce(decide(scope, capability))
         return scope
 
@@ -287,9 +387,10 @@ _needs_knowledge_read = _requires(Capability.KNOWLEDGE_READ)
 _needs_review_decide = _requires(Capability.KNOWLEDGE_REVIEW_DECIDE)
 _needs_usage_read = _requires(Capability.USAGE_READ)
 _needs_hunt_manage = _requires(Capability.HUNT_MANAGE)
-_needs_platform_project_create = _requires(Capability.PLATFORM_PROJECT_CREATE)
-_needs_platform_user_invite = _requires(Capability.PLATFORM_USER_INVITE)
-_needs_platform_credential_revoke = _requires(Capability.PLATFORM_CREDENTIAL_REVOKE)
+_needs_platform_project_list_all = _requires_platform(Capability.PLATFORM_PROJECT_LIST_ALL)
+_needs_platform_project_create = _requires_platform(Capability.PLATFORM_PROJECT_CREATE)
+_needs_platform_user_invite = _requires_platform(Capability.PLATFORM_USER_INVITE)
+_needs_platform_credential_revoke = _requires_platform(Capability.PLATFORM_CREDENTIAL_REVOKE)
 
 
 def _identity(request: Request) -> IdentityService:
@@ -305,27 +406,17 @@ def _repo(request: Request) -> IngestRepository:
 
 @router.get("/projects")
 async def list_projects(
-    request: Request, scope: ProjectScope = Depends(_needs_manage_read)
+    request: Request, scope: PlatformIdentityScope = Depends(_needs_platform_project_list_all)
 ) -> dict[str, object]:
-    """The projects this caller may know about.
-
-    R01 (strengthened during T001): this route returned every slug in the instance, so any caller
-    that passed the old admin gate enumerated other tenants by name. Enumerating the whole instance
-    is a platform operation; a project caller sees only the projects it is a member of.
-    """
-    identity = _identity(request)
-    if isinstance(
-        decide(scope, Capability.PLATFORM_PROJECT_LIST_ALL), Allow
-    ):  # platform administration
-        return {"projects": await identity.list_projects()}
-    return {"projects": await identity.list_projects_for_user(scope.principal_id)}
+    """The global platform inventory, capability-gated independently of memberships."""
+    return {"projects": [{"slug": slug} for slug in await _identity(request).list_projects()]}
 
 
 @router.post("/projects", status_code=status.HTTP_201_CREATED)
 async def create_project(
     body: ProjectCreate,
     request: Request,
-    scope: ProjectScope = Depends(_needs_platform_project_create),
+    scope: PlatformIdentityScope = Depends(_needs_platform_project_create),
 ) -> dict[str, object]:
     project_id = await _identity(request).create_project(body.slug, body.name)
     return {"project_id": project_id, "slug": body.slug}
@@ -336,7 +427,9 @@ async def create_project(
 
 @router.post("/users/invite", status_code=status.HTTP_201_CREATED)
 async def invite_user(
-    body: UserInvite, request: Request, scope: ProjectScope = Depends(_needs_platform_user_invite)
+    body: UserInvite,
+    request: Request,
+    scope: PlatformIdentityScope = Depends(_needs_platform_user_invite),
 ) -> dict[str, object]:
     issued = await _identity(request).invite_user(body.email, role=body.role)
     # The invitation token is shown once (the console surfaces it to the inviter).
@@ -604,12 +697,12 @@ async def list_pending_documents(
     }
 
 
-@router.get("/gaps")
+@router.get("/gaps", response_model=GapEnvelope)
 async def list_project_gaps(
     request: Request,
     scope: ProjectScope = Depends(_needs_manage_read),
     audience: str | None = None,
-) -> dict[str, object]:
+) -> GapEnvelope:
     """Project gaps. ``audience=agent`` returns the separate agent-gap view (FR-14.6); ``human``
     the human-driven gaps eligible for the trigger; omitted returns all."""
     gaps = await list_gaps(
@@ -617,41 +710,43 @@ async def list_project_gaps(
         scope,
         audience=audience if audience in {"human", "agent"} else None,
     )
-    return {"gaps": gaps}
+    return GapEnvelope(gaps=[GapView.model_validate(gap) for gap in gaps])
 
 
 def _knowledge_store(request: Request) -> KnowledgeStore:
     return KnowledgeStore(_deps(request).sessionmaker)  # type: ignore[attr-defined]
 
 
-@router.get("/corrections")
+@router.get("/corrections", response_model=CorrectionEnvelope)
 async def list_corrections(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),
     status_filter: str | None = None,
     target_claim: str | None = None,
     author: str | None = None,
-) -> dict[str, object]:
+) -> CorrectionEnvelope:
     """Corrections feed (SPEC-19, FR-15.12): feed / by-claim / by-person; the ``pending_confirmation``
     queue is ``status_filter=pending_confirmation``."""
     rows = await _knowledge_store(request).list_corrections(
         scope, status=status_filter, target_claim=target_claim, author=author
     )
-    return {"corrections": rows}
+    return CorrectionEnvelope(corrections=[CorrectionView.model_validate(row) for row in rows])
 
 
-@router.get("/corrections/metrics")
+@router.get("/corrections/metrics", response_model=CorrectionMetricsEnvelope)
 async def correction_metrics(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> CorrectionMetricsEnvelope:
     """The Learning-Layer §7 metrics (SPEC-19, FR-15.12/§3.3)."""
-    return await _knowledge_store(request).correction_metrics(scope)
+    return CorrectionMetricsEnvelope.model_validate(
+        await _knowledge_store(request).correction_metrics(scope)
+    )
 
 
-@router.post("/corrections/{correction_id}/revert")
+@router.post("/corrections/{correction_id}/revert", response_model=CorrectionRevertResult)
 async def revert_correction(
     correction_id: str, request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> CorrectionRevertResult:
     """Revert a correction (FR-15.8).
 
     The one mutation whose matrix row is not a pure role: the project administrator OR the owner of
@@ -698,25 +793,27 @@ async def revert_correction(
     await audit_mod.record_audit(
         sessionmaker, scope, action=f"correct_knowledge:{outcome.status}", tool="console"
     )
-    return {"status": outcome.status, "explanation": outcome.explanation}
+    return CorrectionRevertResult(status=outcome.status, explanation=outcome.explanation)
 
 
-@router.get("/claims/disputed")
+@router.get("/claims/disputed", response_model=DisputedClaimEnvelope)
 async def list_disputed_claims(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> DisputedClaimEnvelope:
     """Claims currently flagged disputed (SPEC-19, FR-13.5)."""
     rows = await _knowledge_store(request).list_disputed_claims(scope)
-    return {"claims": rows}
+    return DisputedClaimEnvelope(claims=[DisputedClaimView.model_validate(row) for row in rows])
 
 
-@router.get("/contradictions/resolutions")
+@router.get("/contradictions/resolutions", response_model=ContradictionResolutionEnvelope)
 async def list_contradiction_resolutions(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> ContradictionResolutionEnvelope:
     """Resolved contradictions — who won, by what score (SPEC-19, FR-13.5/FR-5.3)."""
     rows = await _knowledge_store(request).list_contradiction_resolutions(scope)
-    return {"resolutions": rows}
+    return ContradictionResolutionEnvelope(
+        resolutions=[ContradictionResolutionView.model_validate(row) for row in rows]
+    )
 
 
 def _skill_store(request: Request) -> object:
@@ -725,30 +822,38 @@ def _skill_store(request: Request) -> object:
     return SkillStore(_deps(request).sessionmaker)  # type: ignore[attr-defined]
 
 
-@router.get("/skills")
-async def list_skills_admin(
-    request: Request, scope: ProjectScope = Depends(_needs_knowledge_read), state: str | None = None
-) -> dict[str, object]:
-    """List a project's skills (SPEC-20, FR-7.1). Read — console-consumable."""
-    rows = await _skill_store(request).list_all(scope, state=state)  # type: ignore[attr-defined]
+def _skill_view(skill: object) -> dict[str, object]:
+    """Closed lifecycle summary; instructions, owners and topic labels stay off collection reads."""
     return {
-        "skills": [
-            {
-                "slug": s.slug,
-                "title": s.title,
-                "state": s.state,
-                "stale": s.stale,
-                "tags": list(s.tags),
-            }
-            for s in rows
-        ]
+        "slug": skill.slug,  # type: ignore[attr-defined]
+        "title": skill.title,  # type: ignore[attr-defined]
+        "status": skill.state,  # type: ignore[attr-defined]
+        "stale": skill.stale,  # type: ignore[attr-defined]
+        "depends_on": list(skill.depends_on),  # type: ignore[attr-defined]
+        "version": skill.version,  # type: ignore[attr-defined]
     }
 
 
-@router.post("/skills", status_code=status.HTTP_201_CREATED)
+def _skill_command_view(skill: object) -> dict[str, object]:
+    """Mutation result without collection-only presentation copy."""
+    view = _skill_view(skill)
+    view.pop("title")
+    return view
+
+
+@router.get("/skills", response_model=SkillEnvelope)
+async def list_skills_admin(
+    request: Request, scope: ProjectScope = Depends(_needs_knowledge_read), state: str | None = None
+) -> SkillEnvelope:
+    """List a project's skills (SPEC-20, FR-7.1). Read — console-consumable."""
+    rows = await _skill_store(request).list_authorized(scope, state=state)  # type: ignore[attr-defined]
+    return SkillEnvelope(skills=[SkillView.model_validate(_skill_view(skill)) for skill in rows])
+
+
+@router.post("/skills", status_code=status.HTTP_201_CREATED, response_model=SkillCreateResult)
 async def create_skill_admin(
     body: SkillUpsert, request: Request, scope: ProjectScope = Depends(_needs_config_write)
-) -> dict[str, object]:
+) -> SkillCreateResult:
     """Create a skill from its markdown (OKF frontmatter + body)."""
     from rsc_brain.skills.frontmatter import SkillFrontmatterError, parse_skill
 
@@ -758,60 +863,170 @@ async def create_skill_admin(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
+    if frontmatter.state != "proposed" or frontmatter.version < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="console-created skills must begin proposed with a positive version",
+        )
+    try:
+        for dependency in frontmatter.depends_on:
+            uuid.UUID(dependency)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="skill dependencies must be identifiers",
+        ) from exc
+    decide_object(scope, Capability.PROJECT_CONFIG_WRITE, frontmatter.tags)
     skill_id = await _skill_store(request).create(scope, frontmatter, skill_body)  # type: ignore[attr-defined]
-    return {"skill_id": skill_id, "slug": frontmatter.slug}
+    return SkillCreateResult(skill_id=skill_id, slug=frontmatter.slug)
 
 
-@router.post("/skills/{slug}/archive")
+@router.post("/skills/{slug}/validate", response_model=SkillCommandView)
+async def validate_skill_admin(
+    slug: str,
+    body: VersionedCommand,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    scope: ProjectScope = Depends(_needs_config_write),
+) -> SkillCommandView:
+    from rsc_brain.skills.store import (
+        SkillNotFound,
+        SkillValidationConflict,
+        SkillVersionConflict,
+    )
+
+    if not idempotency_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Idempotency-Key is required"
+        )
+    store = _skill_store(request)
+    current = await store.get(scope, slug)  # type: ignore[attr-defined]
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    enforce(
+        decide(
+            scope,
+            Capability.PROJECT_CONFIG_WRITE,
+            object_topics=current.tags,
+            sensitive_existence=True,
+        )
+    )
+    try:
+        transition = await store.validate(  # type: ignore[attr-defined]
+            scope,
+            slug,
+            expected_version=body.expected_version,
+            idempotency_key=idempotency_key,
+        )
+    except SkillNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+    except SkillVersionConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="version conflict"
+        ) from exc
+    except SkillValidationConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="skill dependencies are not valid"
+        ) from exc
+    return SkillCommandView.model_validate(
+        {
+            **_skill_command_view(transition.skill),
+            "audit_correlation": transition.audit_correlation,
+            "replayed": transition.replayed,
+        }
+    )
+
+
+@router.post("/skills/{slug}/archive", response_model=SkillCommandView)
 async def archive_skill_admin(
-    slug: str, request: Request, scope: ProjectScope = Depends(_needs_config_write)
-) -> dict[str, object]:
-    await _skill_store(request).set_state(scope, slug, "archived")  # type: ignore[attr-defined]
-    return {"slug": slug, "archived": True}
+    slug: str,
+    body: VersionedCommand,
+    request: Request,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    scope: ProjectScope = Depends(_needs_config_write),
+) -> SkillCommandView:
+    from rsc_brain.skills.store import SkillNotFound, SkillVersionConflict
+
+    if not idempotency_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Idempotency-Key is required"
+        )
+    store = _skill_store(request)
+    current = await store.get(scope, slug)  # type: ignore[attr-defined]
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    enforce(
+        decide(
+            scope,
+            Capability.PROJECT_CONFIG_WRITE,
+            object_topics=current.tags,
+            sensitive_existence=True,
+        )
+    )
+    try:
+        transition = await store.archive(  # type: ignore[attr-defined]
+            scope,
+            slug,
+            expected_version=body.expected_version,
+            idempotency_key=idempotency_key,
+        )
+    except SkillNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+    except SkillVersionConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="version conflict"
+        ) from exc
+    return SkillCommandView.model_validate(
+        {
+            **_skill_command_view(transition.skill),
+            "audit_correlation": transition.audit_correlation,
+            "replayed": transition.replayed,
+        }
+    )
 
 
-@router.get("/review-queue")
+@router.get("/review-queue", response_model=ReviewQueueEnvelope)
 async def review_queue(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),
     source: str | None = None,
-) -> dict[str, object]:
+) -> ReviewQueueEnvelope:
     """The unified needs_review queue (SPEC-21, FR-13.6): all four sources, filterable by source."""
     from rsc_brain.review.queue import list_review_queue
 
-    items = await list_review_queue(
+    all_items = await list_review_queue(
         _deps(request).sessionmaker,  # type: ignore[attr-defined]
         scope,
-        source=source,
     )
     counts: dict[str, int] = {}
-    for item in items:
+    for item in all_items:
         counts[item.source] = counts.get(item.source, 0) + 1
-    return {
-        "items": [
-            {
-                "source": i.source,
-                "id": i.id,
-                "preview": i.preview,
-                "detail": i.detail,
+    items = [item for item in all_items if source is None or item.source == source]
+    return ReviewQueueEnvelope(
+        items=[
+            ReviewItemView(
+                source=i.source,
+                id=i.id,
+                preview=i.preview,
+                detail=i.detail,
                 # R08: held chunks, agent submissions and guardrail catches are untrusted text shown
                 # for a decision; the marker travels with them (FR-14.8).
-                "content_type": UNTRUSTED,
-            }
+                content_type=UNTRUSTED,
+            )
             for i in items
         ],
-        "counts": counts,
-    }
+        counts=counts,
+    )
 
 
-@router.post("/review-queue/chunks/{chunk_id}/resolve")
+@router.post("/review-queue/chunks/{chunk_id}/resolve", response_model=ChunkReviewResolution)
 async def resolve_chunk_item(
     chunk_id: str,
     body: ChunkApprove,
     request: Request,
     approve: bool,
     scope: ProjectScope = Depends(_needs_identity),
-) -> dict[str, object]:
+) -> ChunkReviewResolution:
     """Approve (embed + curator tags + recallable) or reject a needs_review chunk (FR-1.5/4.4/14.4).
 
     Curation is the one capability ``can_curate`` grants, and only inside its own topics: the
@@ -845,16 +1060,16 @@ async def resolve_chunk_item(
         action=f"review:chunk:{outcome}",
         tool="console",
     )
-    return {"chunk_id": chunk_id, "outcome": outcome}
+    return ChunkReviewResolution(chunk_id=chunk_id, outcome=outcome)
 
 
-@router.post("/review-queue/merges/{proposal_id}/resolve")
+@router.post("/review-queue/merges/{proposal_id}/resolve", response_model=MergeReviewResolution)
 async def resolve_merge_item(
     proposal_id: str,
     request: Request,
     approve: bool,
     scope: ProjectScope = Depends(_needs_identity),
-) -> dict[str, object]:
+) -> MergeReviewResolution:
     """Approve (apply the merge) or reject an entity-merge proposal (FR-1.9)."""
     from rsc_brain.review.resolve import resolve_merge
 
@@ -875,10 +1090,10 @@ async def resolve_merge_item(
         action=f"review:merge:{outcome}",
         tool="console",
     )
-    return {"proposal_id": proposal_id, "outcome": outcome}
+    return MergeReviewResolution(proposal_id=proposal_id, outcome=outcome)
 
 
-@router.get("/metrics/product")
+@router.get("/metrics/product", response_model=ProductMetricsEnvelope)
 async def product_metrics_endpoint(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),
@@ -917,7 +1132,7 @@ async def project_timeline(
     return {"timeline": output.model_dump()}
 
 
-@router.get("/audit")
+@router.get("/audit", response_model=AuditEnvelope)
 async def list_audit(
     request: Request,
     scope: ProjectScope = Depends(_needs_manage_read),
@@ -929,7 +1144,8 @@ async def list_audit(
     since: str | None = None,
     until: str | None = None,
     limit: int = Query(default=100, ge=1, le=ADMIN_PAGE_MAX),
-) -> dict[str, object]:
+    offset: int = Query(default=0, ge=0),
+) -> AuditEnvelope:
     """Filterable audit log (SPEC-26 FR-13.7). Project-scoped in-query (a project-admin sees only
     their project); `query_text` is NULL when `query_text_logging` is OFF (FR-13.9)."""
     rows = await audit_mod.query_audit(
@@ -942,9 +1158,15 @@ async def list_audit(
         denied=denied,
         since=since,
         until=until,
-        limit=limit,
+        limit=limit + 1,
+        offset=offset,
     )
-    return {"audit": rows}
+    has_next = len(rows) > limit
+    return AuditEnvelope(
+        audit=rows[:limit],
+        next_offset=offset + limit if has_next else None,
+        freshness=dt.datetime.now(dt.UTC),
+    )
 
 
 @router.get("/audit/export", response_class=Response)
@@ -983,12 +1205,13 @@ async def export_audit(
     )
 
 
-@router.get("/usage")
+@router.get("/usage", response_model=UsageEnvelope)
 async def usage_endpoint(
     request: Request,
     scope: ProjectScope = Depends(_needs_usage_read),
     days: int = Query(default=7, ge=1, le=WINDOW_DAYS_MAX),
-) -> dict[str, object]:
+    capability: str | None = Query(default=None, max_length=NAME_MAX),
+) -> UsageEnvelope:
     """This project's per-capability/day token + call usage (SPEC-26 FR-13.7, AUDIT-021 R12).
 
     Same source as ``brain usage``, so the console figures always match the CLI. The counters used to
@@ -996,18 +1219,44 @@ async def usage_endpoint(
     """
     from rsc_brain.gateway.usage import usage_by_day
 
-    rows = await usage_by_day(_sm(request), days=days, project_id=scope.project_id)
-    return {"usage": rows}
+    raw_rows = await usage_by_day(_sm(request), days=days, project_id=scope.project_id)
+    async with _sm(request)() as session:
+        project_slug = await session.scalar(
+            select(models.Project.slug).where(models.Project.id == uuid.UUID(scope.project_id))
+        )
+    rows = [UsageRowView.model_validate(row) for row in raw_rows]
+    capabilities = sorted({row.capability for row in rows})
+    if capability is not None:
+        rows = [row for row in rows if row.capability == capability]
+
+    by_day: dict[str, UsageDayTotal] = {}
+    for row in rows:
+        current = by_day.get(row.day)
+        by_day[row.day] = UsageDayTotal(
+            day=row.day,
+            tokens=(current.tokens if current else 0) + row.tokens,
+            calls=(current.calls if current else 0) + row.calls,
+        )
+    return UsageEnvelope(
+        usage=rows,
+        capabilities=capabilities,
+        daily_totals=[by_day[day] for day in sorted(by_day)],
+        total_tokens=sum(row.tokens for row in rows),
+        total_calls=sum(row.calls for row in rows),
+        window_days=days,
+        project=str(project_slug or scope.project_id),
+        capability=capability,
+    )
 
 
-@router.get("/graph/entity")
+@router.get("/graph/entity", response_model=EntityGraphEnvelope)
 async def entity_graph_endpoint(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),
     name: str = Query(default="", max_length=NAME_MAX),
     limit: int = Query(default=25, ge=1, le=ADMIN_PAGE_MAX),
     offset: int = Query(default=0, ge=0),
-) -> dict[str, object]:
+) -> EntityGraphEnvelope:
     """A bounded, paginated neighborhood of one entity (SPEC-26 FR-13.8). Permission-scoped: an
     entity with no visible claims is indistinguishable from a non-existent one (404, FR-4.3)."""
     from rsc_brain.knowledge.entity_graph import entity_neighborhood
@@ -1019,29 +1268,31 @@ async def entity_graph_endpoint(
     )
     if view is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="entity not found")
-    return {
-        "center": {
-            "id": view.center.id,
-            "name": view.center.name,
-            "type": view.center.type,
-            "anchored": view.center.anchored,
-        },
-        "neighbors": [
-            {"id": n.id, "name": n.name, "type": n.type, "anchored": n.anchored}
-            for n in view.neighbors
-        ],
-        "edges": [{"source": e.source, "target": e.target, "type": e.type} for e in view.edges],
-        "total": view.total,
-        "offset": view.offset,
-        "limit": view.limit,
-    }
+    return EntityGraphEnvelope.model_validate(
+        {
+            "center": {
+                "id": view.center.id,
+                "name": view.center.name,
+                "type": view.center.type,
+                "anchored": view.center.anchored,
+            },
+            "neighbors": [
+                {"id": n.id, "name": n.name, "type": n.type, "anchored": n.anchored}
+                for n in view.neighbors
+            ],
+            "edges": [{"source": e.source, "target": e.target, "type": e.type} for e in view.edges],
+            "total": view.total,
+            "offset": view.offset,
+            "limit": view.limit,
+        }
+    )
 
 
 @router.delete("/connections/{connection_id}")
 async def admin_revoke_connection(
     connection_id: str,
     request: Request,
-    scope: ProjectScope = Depends(_needs_platform_credential_revoke),
+    scope: PlatformIdentityScope = Depends(_needs_platform_credential_revoke),
 ) -> dict[str, object]:
     """Admin revokes any user's OAuth connection (FR-4.13 admin part). Stops resolving <5s."""
     from rsc_brain.identity import sessions
@@ -1057,58 +1308,90 @@ class QueryTextLogging(BaseModel):
     enabled: bool
 
 
-@router.get("/observability/activity")
+@router.get("/observability/activity", response_model=ActivityEnvelope)
 async def observability_activity(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> ActivityEnvelope:
     """Activity dashboard aggregates (FR-13.2): recalls/day, active principals, p95, denied."""
-    return await audit_mod.activity_summary(_sm(request), scope)
+    return ActivityEnvelope.model_validate(await audit_mod.activity_summary(_sm(request), scope))
 
 
-@router.get("/observability/recalls")
+@router.get("/observability/recalls", response_model=ReadPage[RecallView])
 async def observability_recalls(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),
     principal_type: str | None = None,
     denied: bool | None = None,
+    cursor: str | None = None,
     limit: int = Query(default=100, ge=1, le=ADMIN_PAGE_MAX),
-) -> dict[str, object]:
+) -> ReadPage[RecallView]:
     """Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only
-    when the project's logging is ON."""
-    return {
-        "recalls": await audit_mod.recall_stream(
+    when the project's logging is ON.  The cursor advances across authorized rows only."""
+    try:
+        page = await audit_mod.recall_page(
             _sm(request),
             scope,
             principal_type=principal_type,
             denied=denied,
+            cursor=cursor,
             limit=limit,
         )
-    }
+    except audit_mod.InvalidRecallCursor as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="invalid cursor"
+        ) from exc
+    except audit_mod.RecallCursorSigningUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="pagination temporarily unavailable",
+        ) from exc
+    return ReadPage[RecallView](
+        items=[RecallView.model_validate(item) for item in page.items],
+        next_cursor=page.next_cursor,
+        total=page.total,
+        freshness=page.freshness,
+    )
 
 
-@router.get("/observability/health")
+@router.get("/observability/health", response_model=HealthEnvelope)
 async def observability_health(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> HealthEnvelope:
     """Service health (FR-13.2): the pending-approval queue depth + extraction error count."""
     sm = _deps(request).sessionmaker  # type: ignore[attr-defined]
     pid = uuid.UUID(scope.project_id)
+    document_visible = fully_authorized_topic_clause(models.Document.doc_tags, scope)
     async with sm() as session:
         pending = await session.scalar(
             select(func.count())
             .select_from(models.Document)
-            .where(models.Document.project_id == pid, models.Document.status == "pending_approval")
+            .where(
+                models.Document.project_id == pid,
+                models.Document.status == "pending_approval",
+                document_visible,
+            )
         )
         errors = await session.scalar(
             select(func.count())
             .select_from(models.IngestError)
-            .where(models.IngestError.project_id == pid)
+            .join(
+                models.Document,
+                and_(
+                    models.Document.project_id == models.IngestError.project_id,
+                    models.Document.id == models.IngestError.document_id,
+                ),
+            )
+            .where(
+                models.IngestError.project_id == pid,
+                models.Document.project_id == pid,
+                document_visible,
+            )
         )
-    return {
-        "database": "ok",
-        "pending_approval": int(pending or 0),
-        "ingest_errors": int(errors or 0),
-    }
+    return HealthEnvelope(
+        database="ok",
+        pending_approval=int(pending or 0),
+        ingest_errors=int(errors or 0),
+    )
 
 
 @router.get("/settings/query-text-logging")
@@ -1147,14 +1430,32 @@ class RejectDoc(BaseModel):
     reason: str = Field(max_length=FREE_TEXT_MAX)
 
 
-@router.get("/observability/ingest")
+@router.get("/observability/ingest", response_model=IngestEnvelope)
 async def observability_ingest(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> IngestEnvelope:
     """Ingest runs per document (stage checkpoints) + extraction errors with their chunk (FR-13.4)."""
-    repo = IngestRepository(_deps(request).sessionmaker)  # type: ignore[attr-defined]
-    runs = await repo.list_run_statuses(scope)
+    pid = uuid.UUID(scope.project_id)
+    document_visible = fully_authorized_topic_clause(models.Document.doc_tags, scope)
     async with _deps(request).sessionmaker() as session:  # type: ignore[attr-defined]
+        runs = list(
+            await session.scalars(
+                select(models.IngestRun)
+                .join(
+                    models.Document,
+                    and_(
+                        models.Document.project_id == models.IngestRun.project_id,
+                        models.Document.id == models.IngestRun.document_id,
+                    ),
+                )
+                .where(
+                    models.IngestRun.project_id == pid,
+                    models.Document.project_id == pid,
+                    document_visible,
+                )
+                .order_by(models.IngestRun.started_at)
+            )
+        )
         error_rows = await session.execute(
             select(
                 models.IngestError.document_id,
@@ -1162,7 +1463,18 @@ async def observability_ingest(
                 models.IngestError.stage,
                 models.IngestError.error,
             )
-            .where(models.IngestError.project_id == uuid.UUID(scope.project_id))
+            .join(
+                models.Document,
+                and_(
+                    models.Document.project_id == models.IngestError.project_id,
+                    models.Document.id == models.IngestError.document_id,
+                ),
+            )
+            .where(
+                models.IngestError.project_id == pid,
+                models.Document.project_id == pid,
+                document_visible,
+            )
             .order_by(models.IngestError.created_at.desc())
             .limit(200)
         )
@@ -1170,28 +1482,30 @@ async def observability_ingest(
             {"document_id": str(doc) if doc else None, "chunk": chunk, "stage": stage, "error": err}
             for doc, chunk, stage, err in error_rows.all()
         ]
-    return {
-        "runs": [
-            {
-                "document_id": r.document_id,
-                "phase": r.phase,
-                "completed_stages": list(r.completed_stages),
-                "chunks_created": r.chunks_created,
-                "claims_generated": r.claims_generated,
-                "discarded_chunks": r.discarded_chunks,
-                "error": r.error,
-                "updated_at": r.updated_at.isoformat() if r.updated_at else None,  # AUDIT-091
-            }
-            for r in runs
-        ],
-        "errors": errors,
-    }
+    return IngestEnvelope.model_validate(
+        {
+            "runs": [
+                {
+                    "document_id": str(r.document_id),
+                    "phase": r.phase,
+                    "completed_stages": list(r.completed_stages),
+                    "chunks_created": r.chunks_created,
+                    "claims_generated": r.claims_generated,
+                    "discarded_chunks": r.discarded_chunks,
+                    "error": r.error,
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                }
+                for r in runs
+            ],
+            "errors": errors,
+        }
+    )
 
 
-@router.get("/documents/pending/preview")
+@router.get("/documents/pending/preview", response_model=PendingDocumentEnvelope)
 async def pending_document_previews(
     request: Request, scope: ProjectScope = Depends(_needs_manage_read)
-) -> dict[str, object]:
+) -> PendingDocumentEnvelope:
     """The D13 queue with a text preview + proposed (editable) tags + source, for the console."""
     repo = IngestRepository(_deps(request).sessionmaker)  # type: ignore[attr-defined]
     pending = await repo.list_documents_by_status(scope, "pending_approval")
@@ -1221,7 +1535,9 @@ async def pending_document_previews(
                     "content_type": UNTRUSTED,
                 }
             )
-    return {"documents": out}
+    return PendingDocumentEnvelope(
+        documents=[PendingDocumentView.model_validate(document) for document in out]
+    )
 
 
 @router.post("/documents/{document_id}/approve")
@@ -1294,16 +1610,18 @@ def _hunts(request: Request) -> object:
 async def list_persons(
     request: Request, scope: ProjectScope = Depends(_needs_manage_read)
 ) -> dict[str, object]:
-    rows = await _directory(request).list(scope)  # type: ignore[attr-defined]
+    rows = await _directory(request).list_authorized(scope)  # type: ignore[attr-defined]
     return {
         "persons": [
             {
                 "id": p.id,
                 "name": p.name,
                 "topics": list(p.topics),
-                "channels": p.channels,
-                "quiet_hours": p.quiet_hours,
                 "language": p.language,
+                "channel_types": sorted(p.channels),
+                "has_quiet_hours": bool(p.quiet_hours),
+                "active_hunts": p.active_hunts,
+                "version": p.version,
             }
             for p in rows
         ]
@@ -1314,6 +1632,7 @@ async def list_persons(
 async def create_person(
     body: PersonCreate, request: Request, scope: ProjectScope = Depends(_needs_config_write)
 ) -> dict[str, object]:
+    decide_object(scope, Capability.PROJECT_CONFIG_WRITE, body.topics)
     person_id = await _directory(request).add(  # type: ignore[attr-defined]
         scope,
         name=body.name,
@@ -1322,7 +1641,63 @@ async def create_person(
         quiet_hours=body.quiet_hours,
         language=body.language,
     )
-    return {"person_id": person_id, "name": body.name}
+    return {"person_id": person_id, "name": body.name, "version": 1}
+
+
+@router.get("/persons/{person_id}")
+async def get_person(
+    person_id: str,
+    request: Request,
+    scope: ProjectScope = Depends(_needs_manage_read),
+) -> dict[str, object]:
+    person = await _directory(request).get_authorized(scope, person_id)  # type: ignore[attr-defined]
+    if person is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    enforce(
+        decide(
+            scope,
+            Capability.PROJECT_MANAGE_READ,
+            object_topics=person.topics,
+            sensitive_existence=True,
+        )
+    )
+    return {
+        "person": {
+            "id": person.id,
+            "name": person.name,
+            "topics": list(person.topics),
+            "channels": person.channels,
+            "quiet_hours": person.quiet_hours,
+            "language": person.language,
+            "active_hunts": person.active_hunts,
+            "version": person.version,
+        }
+    }
+
+
+@router.get("/persons/{person_id}/delete-impact")
+async def person_delete_impact(
+    person_id: str,
+    request: Request,
+    scope: ProjectScope = Depends(_needs_manage_read),
+) -> dict[str, object]:
+    person = await _directory(request).delete_impact(scope, person_id)  # type: ignore[attr-defined]
+    if person is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    enforce(
+        decide(
+            scope,
+            Capability.PROJECT_MANAGE_READ,
+            object_topics=person.topics,
+            sensitive_existence=True,
+        )
+    )
+    return {
+        "person_id": person.id,
+        "can_delete": person.active_hunts == 0,
+        "active_hunts": person.active_hunts,
+        "version": person.version,
+    }
 
 
 @router.patch("/persons/{person_id}")
@@ -1332,71 +1707,148 @@ async def update_person(
     request: Request,
     scope: ProjectScope = Depends(_needs_config_write),
 ) -> dict[str, object]:
-    await _directory(request).update(  # type: ignore[attr-defined]
+    from rsc_brain.hunting.directory import PersonVersionConflict
+
+    current = await _directory(request).get_authorized(scope, person_id)  # type: ignore[attr-defined]
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    decide_object(
         scope,
-        person_id,
-        topics=body.topics,
-        channels=body.channels,
-        quiet_hours=body.quiet_hours,
-        language=body.language,
+        Capability.PROJECT_CONFIG_WRITE,
+        [*current.topics, *(body.topics or [])],
     )
-    return {"person_id": person_id, "updated": True}
+    try:
+        updated = await _directory(request).update(  # type: ignore[attr-defined]
+            scope,
+            person_id,
+            topics=body.topics,
+            channels=body.channels,
+            quiet_hours=body.quiet_hours,
+            language=body.language,
+            expected_version=body.expected_version,
+            authorize_topics=True,
+        )
+    except PersonVersionConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="version conflict"
+        ) from exc
+    if updated is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    return {
+        "person_id": person_id,
+        "updated": True,
+        "version": updated.version,
+        "language": updated.language,
+    }
 
 
 @router.delete("/persons/{person_id}")
 async def delete_person(
-    person_id: str, request: Request, scope: ProjectScope = Depends(_needs_config_write)
+    person_id: str,
+    request: Request,
+    expected_version: int = Query(ge=1),
+    scope: ProjectScope = Depends(_needs_config_write),
 ) -> dict[str, object]:
-    await _directory(request).remove(scope, person_id)  # type: ignore[attr-defined]
+    from rsc_brain.hunting.directory import PersonDependencyConflict, PersonVersionConflict
+
+    current = await _directory(request).get_authorized(scope, person_id)  # type: ignore[attr-defined]
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    decide_object(scope, Capability.PROJECT_CONFIG_WRITE, current.topics)
+    try:
+        removed = await _directory(request).remove(  # type: ignore[attr-defined]
+            scope,
+            person_id,
+            expected_version=expected_version,
+            authorize_topics=True,
+        )
+    except PersonVersionConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="version conflict"
+        ) from exc
+    except PersonDependencyConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"reason": "active hunts", "active_hunts": exc.active_hunts},
+        ) from exc
+    if not removed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     return {"person_id": person_id, "removed": True}
 
 
-@router.get("/hunts")
+@router.get("/hunts", response_model=HuntEnvelope)
 async def list_hunts(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),
     open_only: bool = False,
-) -> dict[str, object]:
+) -> HuntEnvelope:
     hunts = await _hunts(request).list_hunts(scope, open_only=open_only)  # type: ignore[attr-defined]
-    return {"hunts": hunts}
+    return HuntEnvelope(hunts=[HuntView.model_validate(hunt) for hunt in hunts])
 
 
-@router.get("/hunts/{hunt_id}")
+@router.get("/hunts/{hunt_id}", response_model=HuntDetailEnvelope)
 async def get_hunt(
     hunt_id: str, request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> HuntDetailEnvelope:
     hunt = await _hunts(request).get_hunt(scope, hunt_id)  # type: ignore[attr-defined]
     if hunt is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="hunt not found")
-    return {"hunt": hunt}
+    return HuntDetailEnvelope(hunt=HuntView.model_validate(hunt))
 
 
-@router.post("/hunts/ask", status_code=status.HTTP_201_CREATED)
+@router.post("/hunts/ask", status_code=status.HTTP_201_CREATED, response_model=HuntCommandView)
 async def ask_hunt(
-    body: HuntAsk, request: Request, scope: ProjectScope = Depends(_needs_hunt_manage)
-) -> dict[str, object]:
+    body: HuntAsk,
+    request: Request,
+    response: Response,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    scope: ProjectScope = Depends(_needs_hunt_manage),
+) -> HuntCommandView:
     """Open a MANUAL hunt (FR-6.2c) routed by topic overlap (NO_OWNER if unowned).
 
     The question is routed to whoever owns the topics it names, so the caller must hold them.
     """
     decide_object(scope, Capability.HUNT_MANAGE, body.topics)
     outcome = await _hunts(request).create_manual(  # type: ignore[attr-defined]
-        scope, question=body.question, topics=body.topics
+        scope,
+        question=body.question,
+        topics=body.topics,
+        idempotency_key=idempotency_key,
+        authorize_directory=True,
     )
-    return {
-        "hunt_id": outcome.hunt_id,
-        "state": str(outcome.state),
-        "person_id": outcome.person_id,
-        "throttled": outcome.throttled,
+    # A same-key replay may outlive a membership/topic change.  Re-check the persisted snapshot,
+    # not merely the topics echoed in this retry, before returning the original result.
+    enforce(
+        decide(
+            scope,
+            Capability.HUNT_MANAGE,
+            object_topics=outcome.topics,
+            sensitive_existence=outcome.replayed,
+        )
+    )
+    if outcome.replayed:
+        response.status_code = status.HTTP_200_OK
+    return HuntCommandView(
+        hunt_id=outcome.hunt_id,
+        state=str(outcome.state),
+        person_id=outcome.person_id,
+        throttled=outcome.throttled,
         # R28: an operator has to be able to tell "asked" from "recorded but never sent".
-        "delivered": outcome.delivered,
-    }
+        delivered=outcome.delivered,
+        topics=list(outcome.topics),
+        audit_correlation=outcome.audit_correlation,
+        replayed=outcome.replayed,
+    )
 
 
-@router.post("/gaps/{gap_id}/promote", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/gaps/{gap_id}/promote",
+    status_code=status.HTTP_201_CREATED,
+    response_model=PromoteGapResult,
+)
 async def promote_gap(
     gap_id: str, request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
-) -> dict[str, object]:
+) -> PromoteGapResult:
     """Promote an agent gap to a hunt (FR-14.6 — agent gaps never trigger automatically).
 
     Promoting sends the gap's question to a human owner, so it needs the gap-promotion capability
@@ -1411,7 +1863,7 @@ async def promote_gap(
     outcome = await _hunts(request).promote_agent_gap(scope, gap_id)  # type: ignore[attr-defined]
     if outcome is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="gap not found")
-    return {"hunt_id": outcome.hunt_id, "state": str(outcome.state)}
+    return PromoteGapResult(hunt_id=outcome.hunt_id, state=str(outcome.state))
 
 
 # --- ontology (SPEC-24, FR-17.1/17.7 — optional, off by default) -------------

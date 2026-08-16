@@ -9,14 +9,22 @@ auditable; a revoked PAT/session stops resolving in <5s.
 
 from __future__ import annotations
 
+import datetime as dt
+import uuid
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from rsc_brain.authorization import effective_platform_capabilities
 from rsc_brain.identity import sessions
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.identity.sessions import SessionUser
+from rsc_brain.scope import PlatformIdentityScope, PrincipalType
+from rsc_brain.stores.relational import models
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -34,6 +42,66 @@ class CreatePatRequest(BaseModel):
     name: str | None = None
 
 
+class SelfPat(BaseModel):
+    """One display-safe personal credential owned by the current user."""
+
+    id: str
+    name: str | None
+    project: str
+    created_at: dt.datetime | None
+    expires_at: dt.datetime | None
+    revoked: bool
+
+
+class SelfPatList(BaseModel):
+    pats: list[SelfPat]
+
+
+class CreatedPat(BaseModel):
+    """The only response that contains newly issued credential material."""
+
+    pat_id: str
+    token: str
+
+
+class RevokedPat(BaseModel):
+    ok: bool
+    revoked: str
+
+
+class SessionIdentity(BaseModel):
+    """Display-safe identity metadata; it intentionally contains no credential material."""
+
+    id: str
+    email: str
+    role: str
+
+
+class SessionMembership(BaseModel):
+    project: str
+    role: str
+    capabilities: list[str]
+    allowed_topics: list[str]
+    can_curate: bool
+
+
+class PreferenceMetadata(BaseModel):
+    theme: Literal["system", "light", "dark"] = "system"
+    locale: Literal["es", "en"] = "es"
+
+
+class SessionEnvelope(BaseModel):
+    """The only browser-readable, authoritative capability envelope."""
+
+    identity: SessionIdentity
+    # Compatibility alias until the separately versioned removal of the old field.
+    user: SessionIdentity
+    is_owner: bool
+    platform_capabilities: list[str]
+    memberships: list[SessionMembership]
+    preference_metadata: PreferenceMetadata
+
+
 def _sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:
     sessionmaker: async_sessionmaker[AsyncSession] = request.app.state.deps.sessionmaker
     return sessionmaker
@@ -45,10 +113,24 @@ async def _session_user(
 ) -> SessionUser:
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing session")
-    user = await sessions.resolve_session(_sessionmaker(request), credentials.credentials)
-    if user is None:
+    sessionmaker = _sessionmaker(request)
+    user = await sessions.resolve_session(sessionmaker, credentials.credentials)
+    if user is not None:
+        return user
+    # `/me` is the common authority reread for all human console credentials. PAT and OAuth are
+    # project-bound, but resolve to the same global identity and fresh memberships as a session.
+    from rsc_brain.identity.resolve import resolve_scope
+
+    scope = await resolve_scope(sessionmaker, credentials.credentials)
+    if scope is None or scope.principal_type is not PrincipalType.HUMAN:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid session")
-    return user
+    async with sessionmaker() as session:
+        identity = await session.scalar(
+            select(models.User).where(models.User.id == uuid.UUID(scope.principal_id))
+        )
+    if identity is None or identity.status != "active":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid session")
+    return SessionUser(user_id=str(identity.id), email=identity.email, role=identity.role)
 
 
 @auth_router.post("/login")
@@ -92,27 +174,37 @@ async def logout(
     return {"ok": True}
 
 
-@me_router.get("")
-async def me(request: Request, user: SessionUser = Depends(_session_user)) -> dict[str, object]:
+@me_router.get("", response_model=SessionEnvelope)
+async def me(request: Request, user: SessionUser = Depends(_session_user)) -> SessionEnvelope:
     memberships = await sessions.list_memberships(_sessionmaker(request), user.user_id)
-    return {
-        "user": {"id": user.user_id, "email": user.email, "role": user.role},
-        "is_owner": user.is_owner,
-        "memberships": sessions.memberships_payload(memberships),
-    }
+    identity = SessionIdentity(id=user.user_id, email=user.email, role=user.role)
+    platform_scope = PlatformIdentityScope(
+        principal_id=user.user_id,
+        principal_type=PrincipalType.HUMAN,
+        platform_role=user.role,
+    )
+    return SessionEnvelope(
+        identity=identity,
+        user=identity,
+        is_owner=user.is_owner,
+        platform_capabilities=effective_platform_capabilities(platform_scope),
+        memberships=sessions.memberships_payload(
+            memberships, user_id=user.user_id, platform_role=user.role
+        ),
+        preference_metadata=PreferenceMetadata(),
+    )
 
 
-@me_router.get("/pats")
-async def list_pats(
-    request: Request, user: SessionUser = Depends(_session_user)
-) -> dict[str, object]:
-    return {"pats": await sessions.list_user_pats(_sessionmaker(request), user.user_id)}
+@me_router.get("/pats", response_model=SelfPatList)
+async def list_pats(request: Request, user: SessionUser = Depends(_session_user)) -> SelfPatList:
+    rows = await sessions.list_user_pats(_sessionmaker(request), user.user_id)
+    return SelfPatList(pats=[SelfPat.model_validate(row) for row in rows])
 
 
-@me_router.post("/pats", status_code=status.HTTP_201_CREATED)
+@me_router.post("/pats", status_code=status.HTTP_201_CREATED, response_model=CreatedPat)
 async def create_pat(
     body: CreatePatRequest, request: Request, user: SessionUser = Depends(_session_user)
-) -> dict[str, object]:
+) -> CreatedPat:
     sessionmaker = _sessionmaker(request)
     membership_id = await sessions.membership_for(sessionmaker, user.user_id, body.project)
     if membership_id is None:
@@ -120,18 +212,18 @@ async def create_pat(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     issued = await IdentityService(sessionmaker).issue_pat(membership_id, name=body.name)
     # The secret is shown exactly once.
-    return {"pat_id": issued.id, "token": issued.token}
+    return CreatedPat(pat_id=issued.id, token=issued.token)
 
 
-@me_router.delete("/pats/{pat_id}")
+@me_router.delete("/pats/{pat_id}", response_model=RevokedPat)
 async def revoke_pat(
     pat_id: str, request: Request, user: SessionUser = Depends(_session_user)
-) -> dict[str, object]:
+) -> RevokedPat:
     sessionmaker = _sessionmaker(request)
     if not await sessions.owns_pat(sessionmaker, user.user_id, pat_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     await IdentityService(sessionmaker).revoke_pat(pat_id)
-    return {"ok": True, "revoked": pat_id}
+    return RevokedPat(ok=True, revoked=pat_id)
 
 
 @me_router.get("/connections")
