@@ -190,6 +190,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/credentials/{credential_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke Credential */
+        delete: operations["revoke_credential_api_v1_admin_credentials__credential_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/credentials/{credential_id}/rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate Credential */
+        post: operations["rotate_credential_api_v1_admin_credentials__credential_id__rotate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/documents/pending": {
         parameters: {
             query?: never;
@@ -402,23 +436,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Memberships
-         * @description Who belongs to the caller's project, with the role and topic authority each holds.
-         *
-         *     AUDIT-074: an administrator has to see this before granting anything — the topic grant refuses
-         *     without a membership, and nothing reported whether one existed.
-         */
+        /** List Memberships */
         get: operations["list_memberships_api_v1_admin_memberships_get"];
         put?: never;
-        /**
-         * Create Membership
-         * @description Attach a user to the caller's project (AUDIT-074).
-         *
-         *     `add_membership` previously had one caller, the first owner's bootstrap, so every later user
-         *     belonged to no project and could be given nothing. No topic is granted here: authority stays a
-         *     separate explicit act, because empty authority is never all topics (AUDIT-020, R01).
-         */
+        /** Create Membership */
         post: operations["create_membership_api_v1_admin_memberships_post"];
         delete?: never;
         options?: never;
@@ -443,7 +464,8 @@ export interface paths {
         delete: operations["delete_membership_api_v1_admin_memberships__user_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update Membership */
+        patch: operations["update_membership_api_v1_admin_memberships__user_id__patch"];
         trace?: never;
     };
     "/api/v1/admin/metrics/product": {
@@ -653,14 +675,47 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /**
-         * List Projects
-         * @description The global platform inventory, capability-gated independently of memberships.
-         */
+        /** List Projects */
         get: operations["list_projects_api_v1_admin_projects_get"];
         put?: never;
         /** Create Project */
         post: operations["create_project_api_v1_admin_projects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/projects/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Project */
+        get: operations["read_project_api_v1_admin_projects__slug__get"];
+        put?: never;
+        post?: never;
+        /** Delete Project */
+        delete: operations["delete_project_api_v1_admin_projects__slug__delete"];
+        options?: never;
+        head?: never;
+        /** Update Project */
+        patch: operations["update_project_api_v1_admin_projects__slug__patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/projects/{slug}/delete-impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Project Delete Impact */
+        get: operations["project_delete_impact_api_v1_admin_projects__slug__delete_impact_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -859,21 +914,29 @@ export interface paths {
         /** List Topics */
         get: operations["list_topics_api_v1_admin_topics_get"];
         put?: never;
-        /**
-         * Create Topic
-         * @description Create a topic, and record the creator's authority over it explicitly.
-         *
-         *     Topic authority is never implied by a role — not even the project administrator's (AUDIT-020;
-         *     R01 holds that the highest project role still sees only the topics it holds). Without the grant,
-         *     defining a topic would leave its own author unable to act on anything tagged with it, and the
-         *     only way out would be a direct database write. So the grant is made here, on the membership,
-         *     where it is visible and revocable.
-         */
+        /** Create Topic */
         post: operations["create_topic_api_v1_admin_topics_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/topics/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Topic */
+        patch: operations["update_topic_api_v1_admin_topics__slug__patch"];
         trace?: never;
     };
     "/api/v1/admin/topics/{slug}/grants": {
@@ -939,6 +1002,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Users */
+        get: operations["list_users_api_v1_admin_users_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users/invite": {
         parameters: {
             query?: never;
@@ -950,6 +1030,75 @@ export interface paths {
         put?: never;
         /** Invite User */
         post: operations["invite_user_api_v1_admin_users_invite_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Credentials */
+        get: operations["list_credentials_api_v1_admin_users__user_id__credentials_get"];
+        put?: never;
+        /** Create Credential */
+        post: operations["create_credential_api_v1_admin_users__user_id__credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disable User */
+        post: operations["disable_user_api_v1_admin_users__user_id__disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{user_id}/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request Password Reset */
+        post: operations["request_password_reset_api_v1_admin_users__user_id__password_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/invitations/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept Invitation */
+        post: operations["accept_invitation_api_v1_auth_invitations_accept_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -994,6 +1143,23 @@ export interface paths {
         put?: never;
         /** Logout */
         post: operations["logout_api_v1_auth_logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password-reset/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Complete Password Reset */
+        post: operations["complete_password_reset_api_v1_auth_password_reset_complete_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1283,6 +1449,64 @@ export interface components {
             /** Project */
             project: string;
         };
+        /** CredentialCreate */
+        CredentialCreate: {
+            /**
+             * Kind
+             * @default pat
+             */
+            kind: string;
+            /** Name */
+            name?: string | null;
+        };
+        /** CredentialEnvelope */
+        CredentialEnvelope: {
+            /** Audit Correlation */
+            audit_correlation: number;
+            credential: components["schemas"]["CredentialState"];
+            /** Replayed */
+            replayed?: boolean | null;
+            /** Secret */
+            secret?: string | null;
+        };
+        /** CredentialList */
+        CredentialList: {
+            /** Items */
+            items: components["schemas"]["CredentialState"][];
+        };
+        /** CredentialState */
+        CredentialState: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Name */
+            name: string | null;
+            /** Project */
+            project: string;
+            /** Status */
+            status: string;
+            /** User Id */
+            user_id: string;
+            /** Version */
+            version: number;
+        };
+        /** DisableCommand */
+        DisableCommand: {
+            /** Expected Status */
+            expected_status: string;
+            /** Impact Acknowledged */
+            impact_acknowledged: boolean;
+        };
+        /** DisableEnvelope */
+        DisableEnvelope: {
+            /** Audit Correlation */
+            audit_correlation: number;
+            identity: components["schemas"]["IdentityState"];
+            /** Replayed */
+            replayed?: boolean | null;
+            revocation: components["schemas"]["RevocationState"];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1308,6 +1532,49 @@ export interface components {
             /** Topics */
             topics?: string[];
         };
+        /** IdentityMembershipEnvelope */
+        IdentityMembershipEnvelope: {
+            /** Audit Correlation */
+            audit_correlation: number;
+            identity: components["schemas"]["IdentityState"];
+            membership: components["schemas"]["MembershipState"];
+        };
+        /** IdentityState */
+        IdentityState: {
+            /** Email */
+            email: string;
+            /** Id */
+            id: string;
+            /** Status */
+            status: string;
+            /** Version */
+            version: number;
+        };
+        /** ImpactCommand */
+        ImpactCommand: {
+            /** Impact Acknowledged */
+            impact_acknowledged: boolean;
+        };
+        /** InvitationAccept */
+        InvitationAccept: {
+            /** Password */
+            password: string;
+            /** Token */
+            token: string;
+        };
+        /** InviteEnvelope */
+        InviteEnvelope: {
+            /** Audit Correlation */
+            audit_correlation: number;
+            /** Expires At */
+            expires_at: string;
+            identity: components["schemas"]["IdentityState"];
+            /** Invitation Token */
+            invitation_token?: string | null;
+            membership: components["schemas"]["MembershipState"];
+            /** Replayed */
+            replayed?: boolean | null;
+        };
         /** LoginRequest */
         LoginRequest: {
             /** Email */
@@ -1316,14 +1583,35 @@ export interface components {
             password: string;
         };
         /**
-         * MembershipCreate
-         * @description AUDIT-074: attaching a user to the caller's project.
-         *
-         *     The project is not a field — it comes from the token's scope (FR-12.3). The role is required
-         *     rather than defaulted, because a membership created with a silently-chosen role is an authority
-         *     decision nobody made.
+         * ManagementProblem
+         * @description Typed union envelope for safe management refusals and conflicts.
          */
+        ManagementProblem: {
+            /** Audit Correlation */
+            audit_correlation?: number | null;
+            /** Can Delete */
+            can_delete?: boolean | null;
+            /** Confirmation */
+            confirmation?: string | null;
+            /** Current */
+            current?: {
+                [key: string]: unknown;
+            } | null;
+            /** Dependencies */
+            dependencies?: {
+                [key: string]: number;
+            } | null;
+            /** Detail */
+            detail?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Retry After */
+            retry_after?: number | null;
+        };
+        /** MembershipCreate */
         MembershipCreate: {
+            /** Allowed Topics */
+            allowed_topics?: string[];
             /**
              * Can Curate
              * @default false
@@ -1333,6 +1621,56 @@ export interface components {
             role: string;
             /** User Id */
             user_id: string;
+        };
+        /** MembershipEnvelope */
+        MembershipEnvelope: {
+            /** Audit Correlation */
+            audit_correlation: number;
+            membership: components["schemas"]["MembershipState"];
+            /** Replayed */
+            replayed?: boolean | null;
+        };
+        /** MembershipList */
+        MembershipList: {
+            /** Memberships */
+            memberships: components["schemas"]["MembershipState"][];
+        };
+        /** MembershipState */
+        MembershipState: {
+            /** Allowed Topics */
+            allowed_topics: string[];
+            /** Can Curate */
+            can_curate: boolean;
+            /** Id */
+            id: string;
+            /** Role */
+            role: string;
+            /** Status */
+            status: string;
+            /** User Id */
+            user_id: string;
+            /** Version */
+            version: number;
+        };
+        /** MembershipTransition */
+        MembershipTransition: {
+            after: components["schemas"]["MembershipState"];
+            /** Audit Correlation */
+            audit_correlation: number;
+            before: components["schemas"]["MembershipState"];
+            /** Replayed */
+            replayed?: boolean | null;
+        };
+        /** MembershipUpdate */
+        MembershipUpdate: {
+            /** Allowed Topics */
+            allowed_topics?: string[] | null;
+            /** Can Curate */
+            can_curate?: boolean | null;
+            /** Expected Version */
+            expected_version: number;
+            /** Role */
+            role?: string | null;
         };
         /** OntologyUpload */
         OntologyUpload: {
@@ -1351,6 +1689,32 @@ export interface components {
             name: string;
             /** Uri Base */
             uri_base?: string | null;
+        };
+        /** PasswordResetComplete */
+        PasswordResetComplete: {
+            /** New Password */
+            new_password: string;
+            /** Token */
+            token: string;
+        };
+        /** PasswordResetCompleteEnvelope */
+        PasswordResetCompleteEnvelope: {
+            /** Audit Correlation */
+            audit_correlation: number;
+            identity: components["schemas"]["IdentityState"];
+            /** Status */
+            status: string;
+        };
+        /** PasswordResetEnvelope */
+        PasswordResetEnvelope: {
+            /** Audit Correlation */
+            audit_correlation: number;
+            /** Expires At */
+            expires_at: string;
+            /** Replayed */
+            replayed?: boolean | null;
+            /** Reset Token */
+            reset_token?: string | null;
         };
         /** PersonCreate */
         PersonCreate: {
@@ -1405,8 +1769,106 @@ export interface components {
         ProjectCreate: {
             /** Name */
             name: string;
+            /** Settings */
+            settings?: {
+                [key: string]: unknown;
+            };
             /** Slug */
             slug: string;
+        };
+        /** ProjectDeleteEnvelope */
+        ProjectDeleteEnvelope: {
+            /** Audit Correlation */
+            audit_correlation: number;
+            /** Project */
+            project: string;
+            /** Replayed */
+            replayed?: boolean | null;
+            /** Status */
+            status: string;
+        };
+        /** ProjectEnvelope */
+        ProjectEnvelope: {
+            /** Audit Correlation */
+            audit_correlation: number;
+            project: components["schemas"]["ProjectState"];
+            /** Replayed */
+            replayed?: boolean | null;
+        };
+        /** ProjectImpact */
+        ProjectImpact: {
+            /** Can Delete */
+            can_delete: boolean;
+            /** Confirmation */
+            confirmation: string;
+            /** Dependencies */
+            dependencies: {
+                [key: string]: number;
+            };
+            project: components["schemas"]["ProjectState"];
+            /** Version */
+            version: number;
+        };
+        /** ProjectInventory */
+        ProjectInventory: {
+            /** Projects */
+            projects: components["schemas"]["ProjectInventoryState"][];
+        };
+        /** ProjectInventoryState */
+        ProjectInventoryState: {
+            /** Id */
+            id: string;
+            /** Membership Count */
+            membership_count: number;
+            /** Name */
+            name: string;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** Slug */
+            slug: string;
+            /** Status */
+            status: string;
+            /** Version */
+            version: number;
+        };
+        /** ProjectState */
+        ProjectState: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Settings */
+            settings: {
+                [key: string]: unknown;
+            };
+            /** Slug */
+            slug: string;
+            /** Status */
+            status: string;
+            /** Version */
+            version: number;
+        };
+        /** ProjectTransition */
+        ProjectTransition: {
+            after: components["schemas"]["ProjectState"];
+            /** Audit Correlation */
+            audit_correlation: number;
+            before: components["schemas"]["ProjectState"];
+            /** Replayed */
+            replayed?: boolean | null;
+        };
+        /** ProjectUpdate */
+        ProjectUpdate: {
+            /** Expected Version */
+            expected_version: number;
+            /** Name */
+            name?: string | null;
+            /** Settings */
+            settings?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** QueryTextLogging */
         QueryTextLogging: {
@@ -1469,6 +1931,17 @@ export interface components {
         RejectDoc: {
             /** Reason */
             reason: string;
+        };
+        /** RevocationState */
+        RevocationState: {
+            /** Complete */
+            complete: boolean;
+            /** Oauth */
+            oauth: string;
+            /** Pats */
+            pats: string;
+            /** Sessions */
+            sessions: string;
         };
         /**
          * SessionEnvelope
@@ -1539,6 +2012,8 @@ export interface components {
         };
         /** TopicCreate */
         TopicCreate: {
+            /** Hard Window Days */
+            hard_window_days?: number | null;
             /** Name */
             name: string;
             /**
@@ -1548,6 +2023,20 @@ export interface components {
             sensitivity: number;
             /** Slug */
             slug: string;
+        };
+        /** TopicEnvelope */
+        TopicEnvelope: {
+            /** Audit Correlation */
+            audit_correlation: number;
+            /** Granted Topics */
+            granted_topics: string[];
+            /** Replayed */
+            replayed?: boolean | null;
+            /** Slug */
+            slug: string;
+            topic: components["schemas"]["TopicState"];
+            /** Topic Id */
+            topic_id: string;
         };
         /**
          * TopicGrant
@@ -1562,15 +2051,93 @@ export interface components {
             /** User Id */
             user_id: string;
         };
+        /** TopicList */
+        TopicList: {
+            /** Topics */
+            topics: components["schemas"]["TopicState"][];
+        };
+        /** TopicState */
+        TopicState: {
+            /** Hard Window Days */
+            hard_window_days: number | null;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Sensitivity */
+            sensitivity: number;
+            /** Slug */
+            slug: string;
+            /** Status */
+            status: string;
+            /** Version */
+            version: number;
+        };
+        /** TopicTransition */
+        TopicTransition: {
+            after: components["schemas"]["TopicState"];
+            /** Audit Correlation */
+            audit_correlation: number;
+            before: components["schemas"]["TopicState"];
+            /** Replayed */
+            replayed?: boolean | null;
+        };
+        /** TopicUpdate */
+        TopicUpdate: {
+            /** Expected Version */
+            expected_version: number;
+            /** Hard Window Days */
+            hard_window_days?: number | null;
+            /** Name */
+            name?: string | null;
+            /** Sensitivity */
+            sensitivity?: number | null;
+        };
         /** UserInvite */
         UserInvite: {
+            /** Allowed Topics */
+            allowed_topics?: string[];
+            /**
+             * Can Curate
+             * @default false
+             */
+            can_curate: boolean;
             /** Email */
             email: string;
             /**
-             * Role
+             * Platform Role
              * @default member
              */
+            platform_role: string;
+            /**
+             * Project Role
+             * @default member
+             */
+            project_role: string;
+        };
+        /** UserListState */
+        UserListState: {
+            /** Allowed Topics */
+            allowed_topics: string[];
+            /** Can Curate */
+            can_curate: boolean;
+            /** Email */
+            email: string;
+            /** Id */
+            id: string;
+            /** Role */
             role: string;
+            /** Status */
+            status: string;
+            /** Version */
+            version: number;
+        };
+        /** UserPage */
+        UserPage: {
+            /** Items */
+            items: components["schemas"]["UserListState"][];
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -1586,7 +2153,12 @@ export interface components {
             type: string;
         };
         /** VersionedCommand */
-        VersionedCommand: {
+        rsc_brain__api__admin__VersionedCommand: {
+            /** Expected Version */
+            expected_version: number;
+        };
+        /** VersionedCommand */
+        rsc_brain__api__management__VersionedCommand: {
             /** Expected Version */
             expected_version: number;
         };
@@ -1887,6 +2459,171 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_credential_api_v1_admin_credentials__credential_id__delete: {
+        parameters: {
+            query: {
+                expected_version: number;
+                project?: string | null;
+            };
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialEnvelope"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rotate_credential_api_v1_admin_credentials__credential_id__rotate_post: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["rsc_brain__api__management__VersionedCommand"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialEnvelope"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
                 };
             };
             /** @description Validation Error */
@@ -2274,9 +3011,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["MembershipList"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
                 };
             };
             /** @description Validation Error */
@@ -2295,7 +3075,9 @@ export interface operations {
             query?: {
                 project?: string | null;
             };
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2311,9 +3093,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["MembershipEnvelope"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
                 };
             };
             /** @description Validation Error */
@@ -2349,6 +3174,90 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_membership_api_v1_admin_memberships__user_id__patch: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembershipTransition"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
                 };
             };
             /** @description Validation Error */
@@ -2864,9 +3773,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProjectInventory"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
                 };
             };
         };
@@ -2874,7 +3826,9 @@ export interface operations {
     create_project_api_v1_admin_projects_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2890,9 +3844,376 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ProjectEnvelope"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Management rate limit */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+        };
+    };
+    read_project_api_v1_admin_projects__slug__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectState"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_project_api_v1_admin_projects__slug__delete: {
+        parameters: {
+            query: {
+                expected_version: number;
+                confirm: string;
+            };
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectDeleteEnvelope"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_project_api_v1_admin_projects__slug__patch: {
+        parameters: {
+            query?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProjectUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectTransition"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    project_delete_impact_api_v1_admin_projects__slug__delete_impact_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectImpact"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
                 };
             };
             /** @description Validation Error */
@@ -3172,7 +4493,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["VersionedCommand"];
+                "application/json": components["schemas"]["rsc_brain__api__admin__VersionedCommand"];
             };
         };
         responses: {
@@ -3213,7 +4534,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["VersionedCommand"];
+                "application/json": components["schemas"]["rsc_brain__api__admin__VersionedCommand"];
             };
         };
         responses: {
@@ -3362,9 +4683,52 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["TopicList"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
                 };
             };
             /** @description Validation Error */
@@ -3383,7 +4747,9 @@ export interface operations {
             query?: {
                 project?: string | null;
             };
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3399,9 +4765,136 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["TopicEnvelope"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_topic_api_v1_admin_topics__slug__patch: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TopicUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopicTransition"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
                 };
             };
             /** @description Validation Error */
@@ -3524,10 +5017,92 @@ export interface operations {
             };
         };
     };
+    list_users_api_v1_admin_users_get: {
+        parameters: {
+            query?: {
+                project?: string | null;
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPage"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     invite_user_api_v1_admin_users_invite_post: {
         parameters: {
-            query?: never;
-            header?: never;
+            query?: {
+                project?: string | null;
+            };
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3543,9 +5118,424 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["InviteEnvelope"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_credentials_api_v1_admin_users__user_id__credentials_get: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialList"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_credential_api_v1_admin_users__user_id__credentials_post: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialEnvelope"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disable_user_api_v1_admin_users__user_id__disable_post: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DisableCommand"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisableEnvelope"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    request_password_reset_api_v1_admin_users__user_id__password_reset_post: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImpactCommand"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasswordResetEnvelope"];
+                };
+            };
+            /** @description Invalid management command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Insufficient authority */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Not found or concealed */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Version or command conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_invitation_api_v1_auth_invitations_accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InvitationAccept"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityMembershipEnvelope"];
+                };
+            };
+            /** @description Invalid or expired command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
                 };
             };
             /** @description Validation Error */
@@ -3612,6 +5602,48 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    complete_password_reset_api_v1_auth_password_reset_complete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordResetComplete"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PasswordResetCompleteEnvelope"];
+                };
+            };
+            /** @description Invalid or expired command */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementProblem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -38,7 +38,7 @@ async def forbidden_topics(
 
 
 def topic_clause(
-    column: InstrumentedAttribute[list[str]],
+    column: ColumnElement[list[str]] | InstrumentedAttribute[list[str]],
     scope: ProjectScope,
     forbidden: frozenset[str],
     *,
@@ -63,7 +63,7 @@ def topic_clause(
 
 
 def fully_authorized_topic_clause(
-    column: InstrumentedAttribute[list[str]],
+    column: ColumnElement[list[str]] | InstrumentedAttribute[list[str]],
     scope: ProjectScope,
     *,
     allow_untagged: bool = False,

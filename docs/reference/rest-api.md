@@ -13,7 +13,7 @@ The API uses several credential lanes. An OpenAPI bearer marker identifies the H
 | Project-scoped `/api/v1/admin/*` operations | Personal access token, OAuth access token, or console session bearer. A PAT or OAuth token already carries its project. A console session must also send `project=<slug>` and must belong to that project. |
 | Platform `/api/v1/admin/*` operations | Personal access token, OAuth access token, or console session bearer. All resolve a current identity-only platform scope; no credential's project binding or `project` query grants platform authority. |
 | Base ingestion and document routes | Project-scoped personal access token or OAuth access token. Console sessions are not resolved by this lane. |
-| `/api/v1/me*` | Console session bearer. |
+| `/api/v1/me*` | Console session bearer; human PAT and OAuth credentials are also accepted for the authoritative `/me` reread. |
 | `POST /api/v1/auth/login` | Email and password in JSON; no prior bearer. |
 | `POST /api/v1/auth/logout` | A console session bearer is useful but optional at runtime; a supplied session is revoked. |
 | OAuth discovery, registration, and token exchange | No bearer. Authorization consent requires a console session cookie or `cks_…` bearer. |
@@ -54,10 +54,15 @@ Unless a row says otherwise, fields are JSON properties. “Optional” means th
 
 | Model | Fields |
 |---|---|
-| `ProjectCreate` | Required `slug` string and `name` string. |
-| `TopicCreate` | Required `slug` string (maximum 128 characters) and `name` string (maximum 512); optional `sensitivity` integer from 0 through 10, default 0. |
+| `ProjectCreate` | Required lowercase DNS-style `slug` and `name`; optional `settings` object, default empty. |
+| `ProjectUpdate` | Required integer `expected_version`; optional `name` and complete replacement `settings`. |
+| `TopicCreate` | Required `slug` string (maximum 128 characters) and `name` string (maximum 512); optional `sensitivity` integer from 0 through 10, default 0, and `hard_window_days`. |
+| `TopicUpdate` | Required integer `expected_version`; optional `name`, `sensitivity`, and `hard_window_days`. |
+| `MembershipCreate` | Required target `user_id` and project `role`; optional restrictive `allowed_topics` and `can_curate`. |
+| `MembershipUpdate` | Required integer `expected_version`; optional `role`, complete replacement `allowed_topics`, and `can_curate`. |
+| `CredentialCreate` | Optional `name`; `kind` currently accepts `pat`. |
 | `SourceCreate` | Required `name` string (maximum 512); `type` string (maximum 128), default `folder`; `policy` string (maximum 128), default `llm`; `default_tags` array, maximum 100 items; `review_if_sensitive` boolean, default true. |
-| `UserInvite` | Required `email` string (maximum 512); `role` string (maximum 128), default `member`. |
+| `UserInvite` | Required normalized email; optional `platform_role`, `project_role`, restrictive existing `allowed_topics`, and `can_curate`. A project administrator can create only a platform `member`; assigning `admin` or `owner` additionally requires platform invite authority. |
 | `PersonCreate` | Required `name` string (maximum 512); `topics` array, maximum 100; `channels` object; `quiet_hours` object; optional `language` string, maximum 128. |
 | `PersonUpdate` | Optional `topics` array, maximum 100; optional `channels`, `quiet_hours`, and `language`, with language maximum 128. |
 | `HuntAsk` | Required `question` string, maximum 65,536 characters; `topics` array, maximum 100. |
@@ -79,13 +84,26 @@ Platform operations ignore it; it cannot switch or widen their identity-only sco
 
 | Operation | Authority | Input | Success |
 |---|---|---|---|
-| `GET /api/v1/admin/projects` | `platform.project.list_all` | No additional input. | `200`; global inventory containing project `slug` objects. `403` for every authenticated caller without the capability, including a project administrator and calls carrying `?project=`. |
-| `POST /api/v1/admin/projects` | `platform.project.create` | `ProjectCreate`. | `201`; project identifier and slug. |
-| `POST /api/v1/admin/users/invite` | `platform.user.invite` | `UserInvite`. | `201`; user identifier and single-display invitation token. |
+| `GET /api/v1/admin/projects` | Platform owner. | No additional input. | `200`; exact global lifecycle inventory with settings, status, version, and membership count. |
+| `GET /api/v1/admin/projects/{slug}` | Platform owner. | Project slug. | `200`; lifecycle/settings state without project content. |
+| `POST /api/v1/admin/projects` | Platform owner. | `ProjectCreate`; stable `Idempotency-Key` recommended. | `201`; authoritative project state and audit correlation. A same-key retry is `200` with `replayed: true`. |
+| `PATCH /api/v1/admin/projects/{slug}` | Platform owner. | `ProjectUpdate`; stable `Idempotency-Key`. | `200`; exact before/after state. A stale version is audited `409` with current state. |
+| `GET /api/v1/admin/projects/{slug}/delete-impact` | Platform owner. | Project slug. | `200`; dependency counts, current version, confirmation text, and `can_delete`. |
+| `DELETE /api/v1/admin/projects/{slug}` | Platform owner. | `expected_version`, exact `confirm`, and stable `Idempotency-Key`. | `200`; recoverable hard multistore deletion. The durable `deleting` checkpoint resumes after an AGE/filesystem interruption, and only a completed saga is replayed. The `default` project is an audited `409`; replay survives deletion. |
+| `GET /api/v1/admin/users` | Project administrator. | Optional opaque `cursor` and bounded `limit`. | `200`; scoped identities and current authority. |
+| `POST /api/v1/admin/users/invite` | Project administrator. | `UserInvite`; stable `Idempotency-Key`. | `201`; identity, restrictive membership, expiry, one-display invitation token, and audit correlation. |
+| `POST /api/v1/admin/users/{user_id}/password-reset` | Project administrator. | Acknowledged impact; stable `Idempotency-Key`. | `201`; one-display reset token and expiry. |
+| `POST /api/v1/admin/users/{user_id}/disable` | Project administrator for a single-project identity; platform administrator with membership for a cross-project identity. | Expected active status and acknowledged impact; stable `Idempotency-Key`. | `200`; disabled identity plus complete session/PAT/OAuth revocation. Cross-project impact without platform authority is an audited `403` with no side effect. |
+| `GET /api/v1/admin/users/{user_id}/credentials` | Project administrator. | Target user. | `200`; PAT metadata only, never secret values or hashes. |
+| `POST /api/v1/admin/users/{user_id}/credentials` | Project administrator. | `CredentialCreate`; stable `Idempotency-Key`. | `201`; active metadata and a secret shown exactly once. |
+| `POST /api/v1/admin/credentials/{credential_id}/rotate` | Project administrator. | Expected version; stable `Idempotency-Key`. | `201`; advanced metadata and a new secret shown exactly once; old secret stops resolving. |
+| `DELETE /api/v1/admin/credentials/{credential_id}` | Project administrator. | `expected_version`; stable `Idempotency-Key`. | `200`; revoked metadata. Stale versions are audited `409`. |
 | `GET /api/v1/admin/topics` | `project.manage.read` | No additional input. | `200`; topic slugs and sensitivity values. |
 | `POST /api/v1/admin/topics` | `project.config.write` | `TopicCreate`. | `201`; topic identifier, slug, and the creator's resulting topic grant. |
+| `PATCH /api/v1/admin/topics/{slug}` | Project administrator. | `TopicUpdate`; stable `Idempotency-Key`. | `200`; exact before/after topic state and incremented version; stale writes are audited `409`. |
 | `GET /api/v1/admin/memberships` | `project.manage.read` | No additional input. | `200`; each member's identifier, email, role, topic authority and curate flag. |
 | `POST /api/v1/admin/memberships` | `project.config.write` | `MembershipCreate`; the project comes from the caller's scope, never the body. | `201`; membership identifier, user and role. `400` on an unknown role; `409` when the membership already exists. |
+| `PATCH /api/v1/admin/memberships/{user_id}` | Project administrator. | `MembershipUpdate`; stable `Idempotency-Key`. | `200`; exact before/after authority and incremented version. Live session/PAT/OAuth reads see changes immediately. |
 | `DELETE /api/v1/admin/memberships/{user_id}` | `project.config.write` | No body. | `200`; the detached user. `404` when there is no such membership in the caller's project. |
 | `POST /api/v1/admin/topics/{slug}/grants` | `project.config.write` | `TopicGrant`; the project comes from the caller's scope, never the body. | `201`; the principal's resulting topic authority. `400` when the slug is not a topic of that project; `404` when the user has no membership there, so denied stays indistinguishable from absent. |
 | `DELETE /api/v1/admin/topics/{slug}/grants/{user_id}` | `project.config.write` | No body. | `200`; the principal's remaining topic authority. Idempotent. `404` when the user has no membership in the caller's project. |
@@ -166,6 +184,8 @@ These routes resolve only a project-scoped PAT or OAuth access token.
 | Operation | Authentication and input | Success |
 |---|---|---|
 | `POST /api/v1/auth/login` | Public; `LoginRequest`. | `200`; newly issued `session_token`. |
+| `POST /api/v1/auth/invitations/accept` | Public; one-display invitation token and password. | `200`; authoritative active identity, unchanged membership, and one persisted audit correlation. The token is single-use. |
+| `POST /api/v1/auth/password-reset/complete` | Public; one-display reset token and new password. | `200`; authoritative active identity, `completed` status, and one persisted audit correlation. The token is single-use. |
 | `POST /api/v1/auth/logout` | Optional console session bearer. | `200`; `{ "ok": true }`. A supplied session is revoked; an absent bearer is still idempotent success. |
 | `GET /api/v1/me` | Console session bearer. | `200`; user identity, owner flag, and project memberships with roles, topics, and curation flags. |
 | `GET /api/v1/me/pats` | Console session bearer. | `200`; the user's PAT metadata across memberships. Plaintext tokens are never listed. |

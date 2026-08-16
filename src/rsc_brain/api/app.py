@@ -68,6 +68,10 @@ class ApiDeps:
     # reported as undelivered rather than as awaiting an answer nobody was asked for.
     hunting: HuntingConfig | None = None
 
+    # Console-management commands share one injectable rate-limit boundary. Production falls back
+    # to the Postgres QuotaService; tests can pin time and thresholds without replacing a handler.
+    management_limiter: object | None = None
+
     def service(self) -> tuple[IngestService, IngestRepository]:
         from rsc_brain.knowledge.contradictions import ContradictionResolver
         from rsc_brain.knowledge.judge import LlmJudge
@@ -206,12 +210,17 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     # the injected stores available for the REST endpoints.
     app.state.deps = deps
     _register_routes(app)
+    from fastapi import APIRouter
+    from fastapi.routing import APIRoute
+
     from rsc_brain.api.admin import router as admin_router
     from rsc_brain.api.console import auth_router, me_router
 
     # R28: the hunt reply path. Built here from configuration (channel + the install's own origin)
     # so the link a message carries and the route that serves it are the same install's.
     from rsc_brain.api.hunt import router as hunt_router
+    from rsc_brain.api.management import auth_router as management_auth_router
+    from rsc_brain.api.management import router as management_router
     from rsc_brain.hunting.factory import build_hunt_service
 
     hunting = deps.hunting
@@ -224,7 +233,27 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
         gateway=deps.gateway,
     )
     app.include_router(hunt_router)
-    app.include_router(admin_router)
+    # The versioned governance surface intentionally precedes the legacy admin router: matching
+    # lifecycle paths are owned by the stricter optimistic/idempotent contract, while every other
+    # admin path continues to fall through to the legacy control-plane router.
+    app.include_router(management_router)
+    managed_operations = {
+        (route.path, method)
+        for route in management_router.routes
+        if isinstance(route, APIRoute)
+        for method in (route.methods or set())
+    }
+    legacy_router = APIRouter()
+    legacy_router.routes.extend(
+        route
+        for route in admin_router.routes
+        if not isinstance(route, APIRoute)
+        or not any(
+            (route.path, method) in managed_operations for method in (route.methods or set())
+        )
+    )
+    app.include_router(legacy_router)
+    app.include_router(management_auth_router)
     app.include_router(auth_router)
     app.include_router(me_router)
     from rsc_brain.api.oauth.routes import router as oauth_router

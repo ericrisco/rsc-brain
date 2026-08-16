@@ -123,6 +123,187 @@
         "title": "CreatePatRequest",
         "type": "object"
       },
+      "CredentialCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "default": "pat",
+            "maxLength": 32,
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "CredentialCreate",
+        "type": "object"
+      },
+      "CredentialEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "credential": {
+            "$ref": "#/components/schemas/CredentialState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          }
+        },
+        "required": [
+          "credential",
+          "audit_correlation"
+        ],
+        "title": "CredentialEnvelope",
+        "type": "object"
+      },
+      "CredentialList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CredentialState"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CredentialList",
+        "type": "object"
+      },
+      "CredentialState": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "project",
+          "kind",
+          "name",
+          "status",
+          "version"
+        ],
+        "title": "CredentialState",
+        "type": "object"
+      },
+      "DisableCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_status": {
+            "title": "Expected Status",
+            "type": "string"
+          },
+          "impact_acknowledged": {
+            "title": "Impact Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "impact_acknowledged",
+          "expected_status"
+        ],
+        "title": "DisableCommand",
+        "type": "object"
+      },
+      "DisableEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/IdentityState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          },
+          "revocation": {
+            "$ref": "#/components/schemas/RevocationState"
+          }
+        },
+        "required": [
+          "identity",
+          "revocation",
+          "audit_correlation"
+        ],
+        "title": "DisableEnvelope",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -180,6 +361,138 @@
         "title": "HuntAsk",
         "type": "object"
       },
+      "IdentityMembershipEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/IdentityState"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/MembershipState"
+          }
+        },
+        "required": [
+          "identity",
+          "membership",
+          "audit_correlation"
+        ],
+        "title": "IdentityMembershipEnvelope",
+        "type": "object"
+      },
+      "IdentityState": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "status",
+          "version"
+        ],
+        "title": "IdentityState",
+        "type": "object"
+      },
+      "ImpactCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "impact_acknowledged": {
+            "title": "Impact Acknowledged",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "impact_acknowledged"
+        ],
+        "title": "ImpactCommand",
+        "type": "object"
+      },
+      "InvitationAccept": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "maxLength": 1024,
+            "minLength": 12,
+            "title": "Password",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ],
+        "title": "InvitationAccept",
+        "type": "object"
+      },
+      "InviteEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/IdentityState"
+          },
+          "invitation_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invitation Token"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/MembershipState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          }
+        },
+        "required": [
+          "identity",
+          "membership",
+          "expires_at",
+          "audit_correlation"
+        ],
+        "title": "InviteEnvelope",
+        "type": "object"
+      },
       "LoginRequest": {
         "properties": {
           "email": {
@@ -198,9 +511,117 @@
         "title": "LoginRequest",
         "type": "object"
       },
-      "MembershipCreate": {
-        "description": "AUDIT-074: attaching a user to the caller's project.\n\nThe project is not a field \u2014 it comes from the token's scope (FR-12.3). The role is required\nrather than defaulted, because a membership created with a silently-chosen role is an authority\ndecision nobody made.",
+      "ManagementProblem": {
+        "additionalProperties": false,
+        "description": "Typed union envelope for safe management refusals and conflicts.",
         "properties": {
+          "audit_correlation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audit Correlation"
+          },
+          "can_delete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Can Delete"
+          },
+          "confirmation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirmation"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current"
+          },
+          "dependencies": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dependencies"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "retry_after": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry After"
+          }
+        },
+        "title": "ManagementProblem",
+        "type": "object"
+      },
+      "MembershipCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_topics": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Allowed Topics",
+            "type": "array"
+          },
           "can_curate": {
             "default": false,
             "title": "Can Curate",
@@ -222,6 +643,181 @@
           "role"
         ],
         "title": "MembershipCreate",
+        "type": "object"
+      },
+      "MembershipEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "membership": {
+            "$ref": "#/components/schemas/MembershipState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          }
+        },
+        "required": [
+          "membership",
+          "audit_correlation"
+        ],
+        "title": "MembershipEnvelope",
+        "type": "object"
+      },
+      "MembershipList": {
+        "properties": {
+          "memberships": {
+            "items": {
+              "$ref": "#/components/schemas/MembershipState"
+            },
+            "title": "Memberships",
+            "type": "array"
+          }
+        },
+        "required": [
+          "memberships"
+        ],
+        "title": "MembershipList",
+        "type": "object"
+      },
+      "MembershipState": {
+        "properties": {
+          "allowed_topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Topics",
+            "type": "array"
+          },
+          "can_curate": {
+            "title": "Can Curate",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "role",
+          "allowed_topics",
+          "can_curate",
+          "status",
+          "version"
+        ],
+        "title": "MembershipState",
+        "type": "object"
+      },
+      "MembershipTransition": {
+        "properties": {
+          "after": {
+            "$ref": "#/components/schemas/MembershipState"
+          },
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "before": {
+            "$ref": "#/components/schemas/MembershipState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          }
+        },
+        "required": [
+          "before",
+          "after",
+          "audit_correlation"
+        ],
+        "title": "MembershipTransition",
+        "type": "object"
+      },
+      "MembershipUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_topics": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Topics"
+          },
+          "can_curate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Can Curate"
+          },
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "MembershipUpdate",
         "type": "object"
       },
       "OntologyUpload": {
@@ -262,6 +858,89 @@
           "content"
         ],
         "title": "OntologyUpload",
+        "type": "object"
+      },
+      "PasswordResetComplete": {
+        "additionalProperties": false,
+        "properties": {
+          "new_password": {
+            "maxLength": 1024,
+            "minLength": 12,
+            "title": "New Password",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "new_password"
+        ],
+        "title": "PasswordResetComplete",
+        "type": "object"
+      },
+      "PasswordResetCompleteEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/IdentityState"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "identity",
+          "status",
+          "audit_correlation"
+        ],
+        "title": "PasswordResetCompleteEnvelope",
+        "type": "object"
+      },
+      "PasswordResetEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          },
+          "reset_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reset Token"
+          }
+        },
+        "required": [
+          "expires_at",
+          "audit_correlation"
+        ],
+        "title": "PasswordResetEnvelope",
         "type": "object"
       },
       "PersonCreate": {
@@ -407,12 +1086,23 @@
         "type": "object"
       },
       "ProjectCreate": {
+        "additionalProperties": false,
         "properties": {
           "name": {
+            "maxLength": 512,
+            "minLength": 1,
             "title": "Name",
             "type": "string"
           },
+          "settings": {
+            "additionalProperties": true,
+            "title": "Settings",
+            "type": "object"
+          },
           "slug": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$",
             "title": "Slug",
             "type": "string"
           }
@@ -422,6 +1112,274 @@
           "name"
         ],
         "title": "ProjectCreate",
+        "type": "object"
+      },
+      "ProjectDeleteEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "status",
+          "audit_correlation"
+        ],
+        "title": "ProjectDeleteEnvelope",
+        "type": "object"
+      },
+      "ProjectEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ProjectState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          }
+        },
+        "required": [
+          "project",
+          "audit_correlation"
+        ],
+        "title": "ProjectEnvelope",
+        "type": "object"
+      },
+      "ProjectImpact": {
+        "properties": {
+          "can_delete": {
+            "title": "Can Delete",
+            "type": "boolean"
+          },
+          "confirmation": {
+            "title": "Confirmation",
+            "type": "string"
+          },
+          "dependencies": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Dependencies",
+            "type": "object"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ProjectState"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project",
+          "version",
+          "dependencies",
+          "can_delete",
+          "confirmation"
+        ],
+        "title": "ProjectImpact",
+        "type": "object"
+      },
+      "ProjectInventory": {
+        "properties": {
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectInventoryState"
+            },
+            "title": "Projects",
+            "type": "array"
+          }
+        },
+        "required": [
+          "projects"
+        ],
+        "title": "ProjectInventory",
+        "type": "object"
+      },
+      "ProjectInventoryState": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "membership_count": {
+            "title": "Membership Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "title": "Settings",
+            "type": "object"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "settings",
+          "status",
+          "version",
+          "membership_count"
+        ],
+        "title": "ProjectInventoryState",
+        "type": "object"
+      },
+      "ProjectState": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "settings": {
+            "additionalProperties": true,
+            "title": "Settings",
+            "type": "object"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "settings",
+          "status",
+          "version"
+        ],
+        "title": "ProjectState",
+        "type": "object"
+      },
+      "ProjectTransition": {
+        "properties": {
+          "after": {
+            "$ref": "#/components/schemas/ProjectState"
+          },
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "before": {
+            "$ref": "#/components/schemas/ProjectState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          }
+        },
+        "required": [
+          "before",
+          "after",
+          "audit_correlation"
+        ],
+        "title": "ProjectTransition",
+        "type": "object"
+      },
+      "ProjectUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "ProjectUpdate",
         "type": "object"
       },
       "QueryTextLogging": {
@@ -667,6 +1625,34 @@
         "title": "RejectDoc",
         "type": "object"
       },
+      "RevocationState": {
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "oauth": {
+            "title": "Oauth",
+            "type": "string"
+          },
+          "pats": {
+            "title": "Pats",
+            "type": "string"
+          },
+          "sessions": {
+            "title": "Sessions",
+            "type": "string"
+          }
+        },
+        "required": [
+          "complete",
+          "sessions",
+          "pats",
+          "oauth"
+        ],
+        "title": "RevocationState",
+        "type": "object"
+      },
       "SessionEnvelope": {
         "description": "The only browser-readable, authoritative capability envelope.",
         "properties": {
@@ -826,9 +1812,23 @@
         "type": "object"
       },
       "TopicCreate": {
+        "additionalProperties": false,
         "properties": {
+          "hard_window_days": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard Window Days"
+          },
           "name": {
             "maxLength": 512,
+            "minLength": 1,
             "title": "Name",
             "type": "string"
           },
@@ -841,6 +1841,8 @@
           },
           "slug": {
             "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-z0-9](?:[a-z0-9-]{0,126}[a-z0-9])?$",
             "title": "Slug",
             "type": "string"
           }
@@ -850,6 +1852,52 @@
           "name"
         ],
         "title": "TopicCreate",
+        "type": "object"
+      },
+      "TopicEnvelope": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "granted_topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Granted Topics",
+            "type": "array"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "topic": {
+            "$ref": "#/components/schemas/TopicState"
+          },
+          "topic_id": {
+            "title": "Topic Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "topic_id",
+          "slug",
+          "granted_topics",
+          "audit_correlation"
+        ],
+        "title": "TopicEnvelope",
         "type": "object"
       },
       "TopicGrant": {
@@ -867,17 +1915,190 @@
         "title": "TopicGrant",
         "type": "object"
       },
-      "UserInvite": {
+      "TopicList": {
         "properties": {
+          "topics": {
+            "items": {
+              "$ref": "#/components/schemas/TopicState"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "topics"
+        ],
+        "title": "TopicList",
+        "type": "object"
+      },
+      "TopicState": {
+        "properties": {
+          "hard_window_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard Window Days"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sensitivity": {
+            "title": "Sensitivity",
+            "type": "integer"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "sensitivity",
+          "hard_window_days",
+          "status",
+          "version"
+        ],
+        "title": "TopicState",
+        "type": "object"
+      },
+      "TopicTransition": {
+        "properties": {
+          "after": {
+            "$ref": "#/components/schemas/TopicState"
+          },
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "integer"
+          },
+          "before": {
+            "$ref": "#/components/schemas/TopicState"
+          },
+          "replayed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Replayed"
+          }
+        },
+        "required": [
+          "before",
+          "after",
+          "audit_correlation"
+        ],
+        "title": "TopicTransition",
+        "type": "object"
+      },
+      "TopicUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
+          "hard_window_days": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hard Window Days"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "sensitivity": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sensitivity"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "TopicUpdate",
+        "type": "object"
+      },
+      "UserInvite": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_topics": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Allowed Topics",
+            "type": "array"
+          },
+          "can_curate": {
+            "default": false,
+            "title": "Can Curate",
+            "type": "boolean"
+          },
           "email": {
             "maxLength": 512,
+            "minLength": 3,
+            "pattern": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
             "title": "Email",
             "type": "string"
           },
-          "role": {
+          "platform_role": {
             "default": "member",
-            "maxLength": 128,
-            "title": "Role",
+            "maxLength": 32,
+            "title": "Platform Role",
+            "type": "string"
+          },
+          "project_role": {
+            "default": "member",
+            "maxLength": 32,
+            "title": "Project Role",
             "type": "string"
           }
         },
@@ -885,6 +2106,80 @@
           "email"
         ],
         "title": "UserInvite",
+        "type": "object"
+      },
+      "UserListState": {
+        "properties": {
+          "allowed_topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Topics",
+            "type": "array"
+          },
+          "can_curate": {
+            "title": "Can Curate",
+            "type": "boolean"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "status",
+          "version",
+          "role",
+          "allowed_topics",
+          "can_curate"
+        ],
+        "title": "UserListState",
+        "type": "object"
+      },
+      "UserPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UserListState"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "UserPage",
         "type": "object"
       },
       "ValidationError": {
@@ -927,7 +2222,22 @@
         "title": "ValidationError",
         "type": "object"
       },
-      "VersionedCommand": {
+      "rsc_brain__api__admin__VersionedCommand": {
+        "properties": {
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "VersionedCommand",
+        "type": "object"
+      },
+      "rsc_brain__api__management__VersionedCommand": {
+        "additionalProperties": false,
         "properties": {
           "expected_version": {
             "minimum": 1.0,
@@ -1719,6 +3029,274 @@
         ]
       }
     },
+    "/api/v1/admin/credentials/{credential_id}": {
+      "delete": {
+        "operationId": "revoke_credential_api_v1_admin_credentials__credential_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Revoke Credential",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/credentials/{credential_id}/rotate": {
+      "post": {
+        "operationId": "rotate_credential_api_v1_admin_credentials__credential_id__rotate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "title": "Credential Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/rsc_brain__api__management__VersionedCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rotate Credential",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
     "/api/v1/admin/documents/pending": {
       "get": {
         "operationId": "list_pending_documents_api_v1_admin_documents_pending_get",
@@ -2430,7 +4008,6 @@
     },
     "/api/v1/admin/memberships": {
       "get": {
-        "description": "Who belongs to the caller's project, with the role and topic authority each holds.\n\nAUDIT-074: an administrator has to see this before granting anything \u2014 the topic grant refuses\nwithout a membership, and nothing reported whether one existed.",
         "operationId": "list_memberships_api_v1_admin_memberships_get",
         "parameters": [
           {
@@ -2455,13 +4032,61 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Memberships Api V1 Admin Memberships Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MembershipList"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           },
           "422": {
             "content": {
@@ -2474,18 +4099,12 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "List Memberships",
         "tags": [
-          "admin"
+          "admin-management"
         ]
       },
       "post": {
-        "description": "Attach a user to the caller's project (AUDIT-074).\n\n`add_membership` previously had one caller, the first owner's bootstrap, so every later user\nbelonged to no project and could be given nothing. No topic is granted here: authority stays a\nseparate explicit act, because empty authority is never all topics (AUDIT-020, R01).",
         "operationId": "create_membership_api_v1_admin_memberships_post",
         "parameters": [
           {
@@ -2502,6 +4121,22 @@
                 }
               ],
               "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           }
         ],
@@ -2520,13 +4155,61 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Membership Api V1 Admin Memberships Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MembershipEnvelope"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           },
           "422": {
             "content": {
@@ -2539,14 +4222,9 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "Create Membership",
         "tags": [
-          "admin"
+          "admin-management"
         ]
       }
     },
@@ -2613,6 +4291,138 @@
         "summary": "Delete Membership",
         "tags": [
           "admin"
+        ]
+      },
+      "patch": {
+        "operationId": "update_membership_api_v1_admin_memberships__user_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipTransition"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Membership",
+        "tags": [
+          "admin-management"
         ]
       }
     },
@@ -3560,34 +5370,94 @@
     },
     "/api/v1/admin/projects": {
       "get": {
-        "description": "The global platform inventory, capability-gated independently of memberships.",
         "operationId": "list_projects_api_v1_admin_projects_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Projects Api V1 Admin Projects Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProjectInventory"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "List Projects",
         "tags": [
-          "admin"
+          "admin-management"
         ]
       },
       "post": {
         "operationId": "create_project_api_v1_admin_projects_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3603,13 +5473,198 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Project Api V1 Admin Projects Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProjectEnvelope"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Management rate limit"
+          }
+        },
+        "summary": "Create Project",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/projects/{slug}": {
+      "delete": {
+        "operationId": "delete_project_api_v1_admin_projects__slug__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "confirm",
+            "required": true,
+            "schema": {
+              "title": "Confirm",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDeleteEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           },
           "422": {
             "content": {
@@ -3622,14 +5677,307 @@
             "description": "Validation Error"
           }
         },
-        "security": [
+        "summary": "Delete Project",
+        "tags": [
+          "admin-management"
+        ]
+      },
+      "get": {
+        "operationId": "read_project_api_v1_admin_projects__slug__get",
+        "parameters": [
           {
-            "HTTPBearer": []
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
           }
         ],
-        "summary": "Create Project",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectState"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Read Project",
         "tags": [
-          "admin"
+          "admin-management"
+        ]
+      },
+      "patch": {
+        "operationId": "update_project_api_v1_admin_projects__slug__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectTransition"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Project",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/projects/{slug}/delete-impact": {
+      "get": {
+        "operationId": "project_delete_impact_api_v1_admin_projects__slug__delete_impact_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectImpact"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Project Delete Impact",
+        "tags": [
+          "admin-management"
         ]
       }
     },
@@ -4175,7 +6523,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/VersionedCommand"
+                "$ref": "#/components/schemas/rsc_brain__api__admin__VersionedCommand"
               }
             }
           },
@@ -4266,7 +6614,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/VersionedCommand"
+                "$ref": "#/components/schemas/rsc_brain__api__admin__VersionedCommand"
               }
             }
           },
@@ -4558,13 +6906,61 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Topics Api V1 Admin Topics Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/TopicList"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           },
           "422": {
             "content": {
@@ -4577,18 +6973,12 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "List Topics",
         "tags": [
-          "admin"
+          "admin-management"
         ]
       },
       "post": {
-        "description": "Create a topic, and record the creator's authority over it explicitly.\n\nTopic authority is never implied by a role \u2014 not even the project administrator's (AUDIT-020;\nR01 holds that the highest project role still sees only the topics it holds). Without the grant,\ndefining a topic would leave its own author unable to act on anything tagged with it, and the\nonly way out would be a direct database write. So the grant is made here, on the membership,\nwhere it is visible and revocable.",
         "operationId": "create_topic_api_v1_admin_topics_post",
         "parameters": [
           {
@@ -4605,6 +6995,22 @@
                 }
               ],
               "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           }
         ],
@@ -4623,13 +7029,61 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Topic Api V1 Admin Topics Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/TopicEnvelope"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           },
           "422": {
             "content": {
@@ -4642,14 +7096,143 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "Create Topic",
         "tags": [
-          "admin"
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/topics/{slug}": {
+      "patch": {
+        "operationId": "update_topic_api_v1_admin_topics__slug__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopicUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicTransition"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Topic",
+        "tags": [
+          "admin-management"
         ]
       }
     },
@@ -4873,9 +7456,170 @@
         ]
       }
     },
+    "/api/v1/admin/users": {
+      "get": {
+        "operationId": "list_users_api_v1_admin_users_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Users",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
     "/api/v1/admin/users/invite": {
       "post": {
         "operationId": "invite_user_api_v1_admin_users_invite_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -4891,13 +7635,61 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Invite User Api V1 Admin Users Invite Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/InviteEnvelope"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
           },
           "422": {
             "content": {
@@ -4910,14 +7702,568 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
         "summary": "Invite User",
         "tags": [
-          "admin"
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/credentials": {
+      "get": {
+        "operationId": "list_credentials_api_v1_admin_users__user_id__credentials_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Credentials",
+        "tags": [
+          "admin-management"
+        ]
+      },
+      "post": {
+        "operationId": "create_credential_api_v1_admin_users__user_id__credentials_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Credential",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/disable": {
+      "post": {
+        "operationId": "disable_user_api_v1_admin_users__user_id__disable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DisableCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DisableEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Disable User",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{user_id}/password-reset": {
+      "post": {
+        "operationId": "request_password_reset_api_v1_admin_users__user_id__password_reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImpactCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordResetEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid management command"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Authentication required"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Insufficient authority"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Not found or concealed"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Version or command conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Password Reset",
+        "tags": [
+          "admin-management"
+        ]
+      }
+    },
+    "/api/v1/auth/invitations/accept": {
+      "post": {
+        "operationId": "accept_invitation_api_v1_auth_invitations_accept_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationAccept"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityMembershipEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid or expired command"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Invitation",
+        "tags": [
+          "console-auth"
         ]
       }
     },
@@ -4988,6 +8334,57 @@
           }
         ],
         "summary": "Logout",
+        "tags": [
+          "console-auth"
+        ]
+      }
+    },
+    "/api/v1/auth/password-reset/complete": {
+      "post": {
+        "operationId": "complete_password_reset_api_v1_auth_password_reset_complete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordResetComplete"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordResetCompleteEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementProblem"
+                }
+              }
+            },
+            "description": "Invalid or expired command"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Password Reset",
         "tags": [
           "console-auth"
         ]

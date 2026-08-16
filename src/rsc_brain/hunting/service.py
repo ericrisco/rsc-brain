@@ -17,7 +17,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import security
@@ -233,12 +233,21 @@ class HuntService:
     ) -> list[dict[str, object]]:
         """The project's hunts, newest first, filtered on the persisted topic snapshot."""
         forbidden = await forbidden_topics(self._sm, scope)
+        effective_topics = case(
+            (func.cardinality(models.Hunt.topics) > 0, models.Hunt.topics),
+            else_=func.coalesce(models.Gap.topics, models.Hunt.topics),
+        )
         query = (
             select(models.Hunt)
+            .outerjoin(
+                models.Gap,
+                (models.Hunt.gap_id == models.Gap.id)
+                & (models.Hunt.project_id == models.Gap.project_id),
+            )
             .where(
                 models.Hunt.project_id == _pid(scope),
                 topic_clause(
-                    models.Hunt.topics,
+                    effective_topics,
                     scope,
                     forbidden,
                     # An empty snapshot means its legacy writer supplied no recoverable topic.
@@ -262,13 +271,23 @@ class HuntService:
         except ValueError:
             return None
         forbidden = await forbidden_topics(self._sm, scope)
+        effective_topics = case(
+            (func.cardinality(models.Hunt.topics) > 0, models.Hunt.topics),
+            else_=func.coalesce(models.Gap.topics, models.Hunt.topics),
+        )
         async with self._sm() as session:
             hunt = await session.scalar(
-                select(models.Hunt).where(
+                select(models.Hunt)
+                .outerjoin(
+                    models.Gap,
+                    (models.Hunt.gap_id == models.Gap.id)
+                    & (models.Hunt.project_id == models.Gap.project_id),
+                )
+                .where(
                     models.Hunt.id == hunt_uuid,
                     models.Hunt.project_id == _pid(scope),
                     topic_clause(
-                        models.Hunt.topics,
+                        effective_topics,
                         scope,
                         forbidden,
                         allow_untagged=scope.role == PROJECT_ROLE_ADMIN,
