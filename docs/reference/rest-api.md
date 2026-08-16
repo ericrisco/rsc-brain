@@ -31,7 +31,7 @@ The admin surface makes named capability decisions:
 |---|---|
 | `platform.project.create` | Create a project. |
 | `platform.user.invite` | Invite a platform user. |
-| `platform.project.list_all` | Widen project listing from the caller's memberships to every project. |
+| `platform.project.list_all` | Gate access to the exclusively global project inventory; without it the endpoint returns `403`. |
 | `platform.credential.revoke` | Revoke another user's OAuth connection. |
 | `project.manage.read` | Project-management lists, audit access, people, sources, pending documents, and project metadata. |
 | `project.config.write` | Create or change topics, sources, people, skills, and ontologies. |

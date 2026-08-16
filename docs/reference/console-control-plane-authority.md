@@ -7,10 +7,11 @@ UX-SPEC-01. It is intentionally API-authoritative: the browser may reflect a cap
 route may infer it from a role label or enforce it only by hiding an action.
 
 `ProjectScope` always carries the authenticated principal, selected project, membership role,
-allowed topics, curation flag, and the effective capability decision. Project content, counts,
-pagination, exports, and graph state require it. `PlatformIdentityScope` resolves an
-authenticated platform identity only; it is never a substitute for `ProjectScope`, contains no
-project or membership data, and exposes no project content.
+allowed topics, and curation flag. The server derives effective capability decisions from that
+scope and any target facts at the decision boundary; decisions do not travel inside the scope.
+Project content, counts, pagination, exports, and graph state require it. `PlatformIdentityScope`
+resolves an authenticated platform identity only; it is never a substitute for `ProjectScope`,
+contains no project or membership data, and exposes no project content.
 
 ## Session envelope
 

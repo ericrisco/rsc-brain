@@ -27,7 +27,7 @@ operations. A delegated agent remains an agent and retains the agent role.
 | Credential | Prefix or form | Scope and lifetime | Storage and revocation |
 |---|---|---|---|
 | Password | Email and password | Authenticates a human for console sign-in. Passwords do not carry project scope. | Argon2id hash. Unknown email, wrong password, and inactive user share one response. |
-| Console session | `cks_…` | User-scoped across memberships; expires after 7 days. An admin API request made with a session must select an authorized project with `project=<slug>`. | Only a SHA-256 token hash is stored. Logout, expiry, or user deactivation stops resolution. |
+| Console session | `cks_…` | User-scoped across memberships; expires after 7 days. A project-scoped admin API request made with a session must select an authorized project with `project=<slug>`; platform routes do not require it. | Only a SHA-256 token hash is stored. Logout, expiry, or user deactivation stops resolution. |
 | Human personal access token | `ck_…` | Bound to one project membership; optional expiry at the data-model level. | Plaintext is returned at issuance and not persisted. Revocation, expiry, or user deactivation stops resolution. |
 | Agent personal access token | `ck_…` | Bound to one agent and one project. | Same hashed-at-rest token handling; inactive agents and revoked tokens do not resolve. |
 | OAuth access token | Opaque bearer token | Bound to the membership selected during consent; expires after at most 3600 seconds. | SHA-256 hash; resolved against current membership and user state on every call. |
