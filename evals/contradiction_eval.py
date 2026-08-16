@@ -52,44 +52,68 @@ class ContradictionReport:
         return self.correct / self.total if self.total else 1.0
 
     @property
-    def cross_lingual_accuracy(self) -> float:
+    def cross_lingual_accuracy(self) -> float | None:
+        """``None`` when the population was never measured — AUDIT-082.
+
+        This used to return 1.0 for an empty population, so a set whose language metadata was
+        missing reported "cross-lingual: 100%" for something nobody had checked, and the gate
+        silently collapsed back to the aggregate. Not-measured and measured-perfect are different
+        facts and must not share an encoding.
+        """
         correct, total = self.cross_lingual
-        return correct / total if total else 1.0
+        return correct / total if total else None
 
     @property
-    def same_language_accuracy(self) -> float:
+    def same_language_accuracy(self) -> float | None:
         correct, total = self.same_language
-        return correct / total if total else 1.0
+        return correct / total if total else None
+
+    @property
+    def unclassified(self) -> int:
+        """Pairs counted in the aggregate but in neither population (AUDIT-082)."""
+        return self.total - self.same_language[1] - self.cross_lingual[1]
 
     def passes_gate(self, threshold: float) -> bool:
-        """Both populations must clear the threshold, not their blend.
+        """Both populations must clear the threshold, and both must have been measured.
 
-        A blended number lets a strong same-language score carry a weak cross-lingual one, which is
-        precisely the configuration an operator running Spanish and English must not be told is safe.
-        A population with no cases scores 1.0 and cannot block the gate.
+        AUDIT-082: the previous version failed OPEN in four ways an adversarial review enumerated —
+        an empty run scored 1.0 and passed at any threshold; a set with no declared languages
+        collapsed the gate to the aggregate, i.e. exactly the pre-fix behaviour; and pairs whose
+        languages went missing were dropped from both populations while still counting toward the
+        aggregate, so the very failures the gate exists to catch could vanish from it. Every one of
+        those is the most likely way for the metadata to be wrong, which is the worst possible thing
+        to fail open on.
+
+        A gate that cannot say it measured something must not say it passed.
         """
-        return (
-            self.accuracy >= threshold
-            and self.cross_lingual_accuracy >= threshold
-            and self.same_language_accuracy >= threshold
-        )
+        if not self.total:
+            return False  # nothing was judged; an empty run is not a green one
+        if self.unclassified:
+            return False  # some pair escaped classification: the gate cannot speak for it
+        for measured in (self.same_language_accuracy, self.cross_lingual_accuracy):
+            if measured is None or measured < threshold:
+                return False
+        return self.accuracy >= threshold
 
     def as_dict(self) -> dict[str, object]:
         return {
             "total": self.total,
             "correct": self.correct,
             "accuracy": round(self.accuracy, 4),
-            "same_language": {
-                "correct": self.same_language[0],
-                "total": self.same_language[1],
-                "accuracy": round(self.same_language_accuracy, 4),
-            },
-            "cross_lingual": {
-                "correct": self.cross_lingual[0],
-                "total": self.cross_lingual[1],
-                "accuracy": round(self.cross_lingual_accuracy, 4),
-            },
+            # AUDIT-082: `null`, never 1.0, for a population that was never measured — any consumer
+            # reading "accuracy: 1.0" for zero cases is being handed manufactured confidence.
+            "same_language": _population(self.same_language, self.same_language_accuracy),
+            "cross_lingual": _population(self.cross_lingual, self.cross_lingual_accuracy),
+            "unclassified": self.unclassified,
         }
+
+
+def _population(counts: tuple[int, int], accuracy: float | None) -> dict[str, object]:
+    return {
+        "correct": counts[0],
+        "total": counts[1],
+        "accuracy": None if accuracy is None else round(accuracy, 4),
+    }
 
 
 def score_verdicts(
@@ -102,6 +126,15 @@ def score_verdicts(
     ``languages`` is optional so a set that does not declare them still scores; those pairs land in
     neither population rather than being counted as same-language, which would flatter the gate.
     """
+    # AUDIT-082: `languages` got no length check while `expected`/`predicted` got `strict=True`, so
+    # a caller building it from a filtered source shifted every later pair into the WRONG population
+    # and the report looked entirely normal. Inconsistent strictness on the axis that decides the
+    # gate is worse than no stratification at all.
+    if languages is not None and len(languages) != len(expected):
+        raise ValueError(
+            f"languages has {len(languages)} entries for {len(expected)} pairs; a positional "
+            "mismatch silently attributes results to the wrong language population"
+        )
     pairs = list(zip(expected, predicted, strict=True))
     correct = sum(1 for e, p in pairs if e == p.value)
     same_correct = same_total = cross_correct = cross_total = 0

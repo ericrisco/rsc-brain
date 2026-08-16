@@ -27,10 +27,19 @@ def test_the_pdf_image_does_not_need_a_gui_stack() -> None:
         "cv2 needs a GUI stack unless the headless build is used; installing docling alone leaves an "
         "image that cannot parse a PDF"
     )
+    # Check for INSTALLATION, not mention: the AUDIT-083 comment names the GUI libraries it removed,
+    # and a substring test over the whole file flagged that comment as if it were an apt line. A grep
+    # that cannot tell prose from an instruction is the same weakness AUDIT-079 is about, inverted.
+    instructions = "\n".join(
+        line for line in dockerfile.splitlines() if not line.strip().startswith("#")
+    ).lower()
     for gui_lib in ("libgl1", "libxcb1", "libx11"):
-        assert gui_lib not in dockerfile.lower(), (
+        assert gui_lib not in instructions, (
             f"{gui_lib} was added to a server image; the headless build removes the need for it"
         )
+    assert "opencv_python.libs" in dockerfile, (
+        "the build does not assert the GUI distribution is gone, so a later resolve can restore it"
+    )
 
 
 def test_the_pdf_image_does_not_need_a_cxx_compiler_at_runtime() -> None:

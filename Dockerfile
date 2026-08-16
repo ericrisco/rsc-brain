@@ -31,7 +31,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         # package alone produced a 9.48 GB PDF-capable image that still could not parse a PDF. The fix
         # is NOT to add X11 and OpenGL to a server image: the headless build provides the same `cv2`
         # with none of the GUI dependencies, which is both smaller and a narrower attack surface.
-        uv pip install --python /app/.venv/bin/python --force-reinstall opencv-python-headless; \
+        # AUDIT-083: `--force-reinstall opencv-python-headless` left BOTH distributions installed.
+        # Measured in the build image: opencv_python.libs still shipped 87 MB of libQt5Core/Gui/
+        # Widgets/XcbQpa, libX11-xcb and a bundled OpenSSL 1.1.1k (2021, EOL) — the exact GUI stack
+        # the AUDIT-067 comment claims to have avoided. Worse, `opencv-python` stayed a satisfied
+        # requirement, so any later resolve could silently restore the GUI `.so` and break the
+        # import again. Uninstall both, install the headless build alone, and fail the BUILD if the
+        # GUI distribution is still present rather than discovering it on a host months later.
+        uv pip uninstall --python /app/.venv/bin/python opencv-python opencv-python-headless || true; \
+        uv pip install --python /app/.venv/bin/python opencv-python-headless && \
+        test ! -d /app/.venv/lib/python3.12/site-packages/opencv_python.libs; \
     else \
         echo "PDF backend not installed (INSTALL_PDF_BACKEND=false); markdown/text ingestion only"; \
     fi

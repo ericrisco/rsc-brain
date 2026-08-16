@@ -29,7 +29,11 @@ _CONFIG_CANDIDATES = [Path("config.yaml"), Path("config.example.yaml")]
 # package (`packages = ["src/rsc_brain"]`), so on a container, a pip install or a Helm deployment the
 # file cannot exist and both commands died with a bare exit code 2. The candidates below keep the
 # checkout case working and let an install pass its own set explicitly.
-_GOLDEN_CANDIDATES = [Path("evals/golden.yaml"), Path("/etc/rsc-brain/golden.yaml")]
+# AUDIT-081: the installed location comes FIRST. It used to be second, so an operator who did exactly
+# what INSTALL.md says — install their own set at /etc/rsc-brain/golden.yaml — and then ran from the
+# source tree silently got the repository's two fictional companies instead, with nothing naming the
+# file that was read. The composition now always reports its `path` for the same reason.
+_GOLDEN_CANDIDATES = [Path("/etc/rsc-brain/golden.yaml"), Path("evals/golden.yaml")]
 GOLDEN_OPTION = typer.Option(
     None,
     "--golden",
@@ -370,19 +374,62 @@ def _load_golden(explicit: Path | None = None) -> dict[str, object]:
             "calibrated against YOUR corpus — the repository's golden set describes fictional "
             f"companies and would calibrate the wrong threshold. Looked in: {looked}. Pass "
             "--golden PATH with a YAML file holding a `cases` list, or install one at "
-            f"{_GOLDEN_CANDIDATES[-1]}.",
+            f"{_GOLDEN_CANDIDATES[0]}.",
             err=True,
         )
         raise typer.Exit(code=2)
-    cases = yaml.safe_load(path.read_text(encoding="utf-8")).get("cases", [])
-    families = Counter(c["family"] for c in cases)
+    cases = _validated_cases(path)
+    families = Counter(str(c["family"]) for c in cases)
     must_find = sum(1 for c in cases if c.get("must_find"))
     return {
+        "path": str(path),  # AUDIT-081: never leave which file was read to inference.
         "total": len(cases),
         "families": dict(families),
         "must_find": must_find,
         "must_abstain": len(cases) - must_find,
     }
+
+
+def _refuse(reason: str, path: Path) -> typer.Exit:
+    """AUDIT-080: every malformed shape used to be a traceback, and a missing `cases` key was
+    reported as a SUCCESSFUL set of zero cases — the AUDIT-072 defect verbatim, at the one place an
+    operator cannot detect it. A calibration set the product cannot use is a refusal with a reason."""
+    typer.echo(
+        f"unusable calibration set at {path}: {reason}. It must be a YAML mapping with a `cases` "
+        "list, each case a mapping carrying at least `family` and `must_find`.",
+        err=True,
+    )
+    return typer.Exit(code=2)
+
+
+def _validated_cases(path: Path) -> list[dict[str, object]]:
+    """The set's cases, or a refusal naming what is wrong with the file (AUDIT-080)."""
+    try:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        # Only the position, never the offending source line: a mis-set --golden in CI would
+        # otherwise echo a line of whatever file it pointed at into a build log.
+        mark = getattr(exc, "problem_mark", None)
+        where = f" at line {mark.line + 1}" if mark is not None else ""
+        raise _refuse(f"not valid YAML{where}", path) from exc
+    if loaded is None:
+        raise _refuse("the file is empty", path)
+    if not isinstance(loaded, dict):
+        raise _refuse(f"the top level is a {type(loaded).__name__}, not a mapping", path)
+    if "cases" not in loaded:
+        raise _refuse("there is no `cases` key", path)
+    cases = loaded["cases"]
+    if not isinstance(cases, list):
+        raise _refuse(f"`cases` is a {type(cases).__name__}, not a list", path)
+    if not cases:
+        raise _refuse("`cases` is empty, so nothing can be calibrated against it", path)
+    for index, case in enumerate(cases):
+        if not isinstance(case, dict):
+            raise _refuse(f"case {index} is a {type(case).__name__}, not a mapping", path)
+        missing = [field for field in ("family", "must_find") if field not in case]
+        if missing:
+            raise _refuse(f"case {index} is missing {', '.join(missing)}", path)
+    return cases
 
 
 def eval_command(

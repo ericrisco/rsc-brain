@@ -141,11 +141,22 @@ brain eval --golden /path/to/your-golden.yaml        # what your set contains
 brain calibrate --golden /path/to/your-golden.yaml   # the set + the current default
 ```
 
-The calibration set is a YAML file with a `cases` list, each case carrying the question, the family,
-and whether the answer must be found or must be abstained from. **No default set is shipped on
-purpose**: this repository's golden set describes two fictional companies, and calibrating against it
-would give you a confidently wrong threshold for your own knowledge. Install your own at
-`/etc/rsc-brain/golden.yaml` or pass `--golden` each time.
+The calibration set is a YAML file with a `cases` list, each case a mapping carrying at least
+`family` and `must_find`. A set the product cannot use is refused with the reason, naming the file —
+it is never reported as a successful set of zero cases.
+
+**No default set is installed on purpose**: this repository's golden set describes two fictional
+companies, and calibrating against it would give you a confidently wrong threshold for your own
+knowledge. Install your own at `/etc/rsc-brain/golden.yaml` or pass `--golden` each time.
+
+Resolution order, because it used to be the other way round and the difference was invisible:
+
+1. `--golden PATH`, if given — it replaces the search entirely.
+2. `/etc/rsc-brain/golden.yaml`, the installed location.
+3. `evals/golden.yaml`, relative to the working directory — **the repository's fictional set**,
+   reachable only when you run from a source checkout.
+
+Every run reports the `path` it read, so you can always tell which of the three you got.
 
 Until you have done this, treat every `found: true` as unverified: the system will answer questions
 whose subject it has never seen, from knowledge that is credible but irrelevant.
