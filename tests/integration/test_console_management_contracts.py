@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, TypeGuard
 
 import httpx
 import pytest
@@ -134,6 +134,20 @@ def _status(failures: list[str], label: str, response: httpx.Response, expected:
         payload = _object(response)
         shape = f"keys={sorted(payload)}" if payload is not None else "non-object response"
         failures.append(f"{label}: expected HTTP {expected}, got {response.status_code} ({shape})")
+    payload = _object(response)
+    if payload is not None and _contains_boolean_version(payload):
+        failures.append(f"{label}: every response version must reject bool as an integer version")
+
+
+def _contains_boolean_version(value: object) -> bool:
+    if isinstance(value, dict):
+        return any(
+            (name == "version" and isinstance(item, bool)) or _contains_boolean_version(item)
+            for name, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_boolean_version(item) for item in value)
+    return False
 
 
 def _required(
@@ -174,10 +188,14 @@ def _int_field(
     failures: list[str], label: str, payload: Mapping[str, object] | None, name: str
 ) -> int | None:
     value = payload.get(name) if payload is not None else None
-    if isinstance(value, bool) or not isinstance(value, int):
+    if not _is_version(value):
         failures.append(f"{label}: {name} must be an integer server version")
         return None
     return value
+
+
+def _is_version(value: object) -> TypeGuard[int]:
+    return not isinstance(value, bool) and isinstance(value, int)
 
 
 def _str_field(
@@ -219,6 +237,39 @@ def _contains_secret(responses: Iterable[httpx.Response], secrets: Iterable[str]
     )
 
 
+def _idempotent_replay(
+    failures: list[str],
+    label: str,
+    original: httpx.Response,
+    replay: httpx.Response,
+    *,
+    original_status: int,
+    secret_fields: Iterable[str] = (),
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
+    """Require one authoritative transition and an exact, non-secret replay envelope."""
+
+    _status(failures, label, original, original_status)
+    _status(failures, f"{label} replay", replay, 200)
+    original_payload = _object(original)
+    replay_payload = _object(replay)
+    if original_payload is None or replay_payload is None:
+        failures.append(f"{label}: original and replay must both be object envelopes")
+        return original_payload, replay_payload
+    expected = {
+        name: value for name, value in original_payload.items() if name not in set(secret_fields)
+    }
+    expected["replayed"] = True
+    if replay_payload != expected:
+        failures.append(
+            f"{label}: same idempotency key must return exact prior outcome plus replayed=true"
+        )
+    if replay_payload.get("audit_correlation") != original_payload.get("audit_correlation"):
+        failures.append(f"{label}: replay must reuse the original persisted audit correlation")
+    if any(name in replay_payload for name in secret_fields):
+        failures.append(f"{label}: replay exposed a single-display secret")
+    return original_payload, replay_payload
+
+
 async def _issue_oauth(harness: Harness, membership_id: str, token: str) -> None:
     async with harness.sm() as session:
         client = models.OAuthClient(client_id=f"contract-{uuid.uuid4().hex}", client_metadata={})
@@ -255,6 +306,7 @@ async def _user_row(harness: Harness, user_id: str) -> dict[str, object] | None:
         "status": row.status,
         "role": row.role,
         "password_hash": row.password_hash,
+        "version": getattr(row, "version", None),
     }
 
 
@@ -283,6 +335,7 @@ async def _require_audit(
     principal_id: str,
     action: str,
     denied: bool = False,
+    forbidden_values: Iterable[str] = (),
 ) -> None:
     correlation = _correlation_id(failures, label, payload)
     if correlation is None:
@@ -303,6 +356,9 @@ async def _require_audit(
     actual = {name: row.get(name) for name in expected}
     if actual != expected:
         failures.append(f"{label}: persisted audit mismatch; expected {expected}, got {actual}")
+    serialized = repr(row)
+    if any(value and value in serialized for value in forbidden_values):
+        failures.append(f"{label}: audit row leaked forbidden cross-project identifiers")
 
 
 async def _matching_audits(
@@ -327,16 +383,17 @@ async def _matching_audits(
 
 async def _project_row(harness: Harness, slug: str) -> dict[str, object] | None:
     async with harness.sm() as session:
-        row = (
-            await session.execute(
-                select(models.Project.id, models.Project.name, models.Project.settings).where(
-                    models.Project.slug == slug
-                )
-            )
-        ).one_or_none()
+        row = await session.scalar(select(models.Project).where(models.Project.slug == slug))
     if row is None:
         return None
-    return {"id": str(row.id), "slug": slug, "name": row.name, "settings": row.settings}
+    return {
+        "id": str(row.id),
+        "slug": slug,
+        "name": row.name,
+        "settings": row.settings,
+        "status": getattr(row, "status", None),
+        "version": getattr(row, "version", None),
+    }
 
 
 async def _membership_row(
@@ -357,6 +414,8 @@ async def _membership_row(
         "role": row.role,
         "allowed_topics": list(row.allowed_topics),
         "can_curate": row.can_curate,
+        "status": getattr(row, "status", None),
+        "version": getattr(row, "version", None),
     }
 
 
@@ -369,10 +428,20 @@ async def _topic_row(harness: Harness, project_id: str, slug: str) -> dict[str, 
         )
     if row is None:
         return None
-    return {"slug": row.slug, "name": row.name, "sensitivity": row.sensitivity}
+    return {
+        "id": str(row.id),
+        "slug": row.slug,
+        "name": row.name,
+        "sensitivity": row.sensitivity,
+        "hard_window_days": row.hard_window_days,
+        "status": getattr(row, "status", None),
+        "version": getattr(row, "version", None),
+    }
 
 
-async def _topic_state(harness: Harness, project_id: str) -> tuple[tuple[str, str, str, int], ...]:
+async def _topic_state(
+    harness: Harness, project_id: str
+) -> tuple[tuple[str, str, str, int, int | None, object, object], ...]:
     async with harness.sm() as session:
         rows = (
             await session.scalars(
@@ -381,7 +450,18 @@ async def _topic_state(harness: Harness, project_id: str) -> tuple[tuple[str, st
                 .order_by(models.Topic.slug)
             )
         ).all()
-    return tuple((str(row.id), row.slug, row.name, row.sensitivity) for row in rows)
+    return tuple(
+        (
+            str(row.id),
+            row.slug,
+            row.name,
+            row.sensitivity,
+            row.hard_window_days,
+            getattr(row, "status", None),
+            getattr(row, "version", None),
+        )
+        for row in rows
+    )
 
 
 async def _rate_window_count(
@@ -409,7 +489,7 @@ async def _pat_is_active(harness: Harness, pat_id: str) -> bool:
 
 async def _membership_pat_state(
     harness: Harness, membership_id: str
-) -> tuple[tuple[str, str | None, str | None], ...]:
+) -> tuple[tuple[str, str | None, str, str | None, str | None, object, object], ...]:
     async with harness.sm() as session:
         credentials = (
             await session.scalars(
@@ -423,7 +503,11 @@ async def _membership_pat_state(
             (
                 str(credential.id),
                 credential.name,
+                credential.token_hash,
+                credential.expires_at.isoformat() if credential.expires_at is not None else None,
                 credential.revoked_at.isoformat() if credential.revoked_at is not None else None,
+                getattr(credential, "status", None),
+                getattr(credential, "version", None),
             )
             for credential in credentials
         )
@@ -506,57 +590,62 @@ async def test_actor_matrix_separates_platform_and_project_authority(
         )
         owner_disable = await client.post(
             f"/api/v1/admin/users/{target.user['id']}/disable?project={project_slug}",
-            headers=owner_headers,
+            headers={**owner_headers, "Idempotency-Key": "actor-owner-disable"},
             json={"expected_status": "active", "impact_acknowledged": True},
         )
         owner_credential_revoke = await client.delete(
             f"/api/v1/admin/credentials/{target_pat.id}?project={project_slug}",
-            headers=owner_headers,
+            headers={**owner_headers, "Idempotency-Key": "actor-owner-credential"},
             params={"expected_version": 1},
         )
         owner_membership_mutation = await client.patch(
             f"/api/v1/admin/memberships/{target.user['id']}?project={project_slug}",
-            headers=owner_headers,
+            headers={**owner_headers, "Idempotency-Key": "actor-owner-membership"},
             json={"expected_version": 1, "role": "project-admin"},
         )
         owner_project_content = await client.post(
             f"/api/v1/admin/topics?project={project_slug}",
-            headers=owner_headers,
+            headers={**owner_headers, "Idempotency-Key": "actor-owner-topic"},
             json={"slug": owner_slug, "name": "must stay hidden"},
         )
         admin_global_inventory = await client.get("/api/v1/admin/projects", headers=admin_headers)
         admin_global_create = await client.post(
             "/api/v1/admin/projects",
-            headers=admin_headers,
+            headers={**admin_headers, "Idempotency-Key": "actor-admin-global"},
             json={"slug": denied_project_slug, "name": "must not exist"},
         )
         admin_project_content = await client.post(
             f"/api/v1/admin/topics?project={project_slug}",
-            headers=admin_headers,
+            headers={**admin_headers, "Idempotency-Key": "actor-admin-topic"},
             json={"slug": admin_topic_slug, "name": "project control"},
         )
         curator_mutation = await client.post(
             f"/api/v1/admin/topics?project={project_slug}",
-            headers=curator_headers,
+            headers={**curator_headers, "Idempotency-Key": "actor-curator-topic"},
             json={"slug": curator_slug, "name": "no admin write"},
         )
         member_mutation = await client.post(
             f"/api/v1/admin/topics?project={project_slug}",
-            headers=member_headers,
+            headers={**member_headers, "Idempotency-Key": "actor-member-topic"},
             json={"slug": member_slug, "name": "no admin write"},
         )
         viewer_mutation = await client.post(
             f"/api/v1/admin/topics?project={project_slug}",
-            headers=viewer_headers,
+            headers={**viewer_headers, "Idempotency-Key": "actor-viewer-topic"},
             json={"slug": viewer_slug, "name": "no admin write"},
         )
         foreign_project = await client.post(
             f"/api/v1/admin/topics?project={project_slug}",
-            headers=foreign_headers,
+            headers={**foreign_headers, "Idempotency-Key": "actor-foreign-topic"},
             json={"slug": foreign_topic_slug, "name": "foreign"},
         )
         foreign_project_read = await client.get(
             f"/api/v1/admin/projects/{project_slug}", headers=foreign_headers
+        )
+        foreign_project_settings = await client.patch(
+            f"/api/v1/admin/projects/{project_slug}",
+            headers={**foreign_headers, "Idempotency-Key": "actor-foreign-project"},
+            json={"expected_version": 1, "settings": {"retention_days": 999}},
         )
         foreign_user_list = await client.get(
             f"/api/v1/admin/users?project={project_slug}", headers=foreign_headers
@@ -573,49 +662,52 @@ async def test_actor_matrix_separates_platform_and_project_authority(
         )
         rejected_credential = await client.post(
             f"/api/v1/admin/topics?project={project_slug}",
-            headers={"Authorization": "Bearer rejected-credential"},
+            headers={
+                "Authorization": "Bearer rejected-credential",
+                "Idempotency-Key": "actor-rejected-credential",
+            },
             json={"slug": invalid_slug, "name": "rejected"},
         )
         malformed_role = await client.post(
             f"/api/v1/admin/memberships?project={project_slug}",
-            headers=admin_headers,
+            headers={**admin_headers, "Idempotency-Key": "actor-invalid-role"},
             json={"user_id": owner_without_membership.user["id"], "role": "not-a-project-role"},
         )
         denied_disable = await client.post(
             f"/api/v1/admin/users/{target.user['id']}/disable?project={project_slug}",
-            headers=viewer_headers,
+            headers={**viewer_headers, "Idempotency-Key": "actor-viewer-disable"},
             json={"expected_status": "active", "impact_acknowledged": True},
         )
         denied_credential = await client.post(
             f"/api/v1/admin/users/{target.user['id']}/credentials?project={project_slug}",
-            headers=curator_headers,
+            headers={**curator_headers, "Idempotency-Key": "actor-curator-credential"},
             json={"name": "must-not-exist", "kind": "pat"},
         )
         denied_membership = await client.patch(
             f"/api/v1/admin/memberships/{target.user['id']}?project={project_slug}",
-            headers=member_headers,
+            headers={**member_headers, "Idempotency-Key": "actor-member-membership"},
             json={"expected_version": 1, "role": "project-admin"},
         )
         foreign_disable = await client.post(
             f"/api/v1/admin/users/{target.user['id']}/disable?project={project_slug}",
-            headers=foreign_headers,
+            headers={**foreign_headers, "Idempotency-Key": "actor-foreign-disable"},
             json={"expected_status": "active", "impact_acknowledged": True},
         )
         foreign_credential = await client.delete(
             f"/api/v1/admin/credentials/{target_pat.id}?project={project_slug}",
-            headers=foreign_headers,
+            headers={**foreign_headers, "Idempotency-Key": "actor-foreign-credential"},
             params={"expected_version": 1},
         )
         foreign_membership = await client.patch(
             f"/api/v1/admin/memberships/{target.user['id']}?project={project_slug}",
-            headers=foreign_headers,
+            headers={**foreign_headers, "Idempotency-Key": "actor-foreign-membership"},
             json={"expected_version": 1, "role": "project-admin"},
         )
 
     failures: list[str] = []
     for label, response, expected in (
         ("owner without membership reads platform inventory", platform_inventory, 200),
-        ("owner without membership cannot read project settings", owner_project_read, 404),
+        ("owner without membership reads project lifecycle/settings", owner_project_read, 200),
         ("owner without membership cannot list project users", owner_user_list, 404),
         ("owner without membership cannot list project credentials", owner_credential_list, 404),
         ("owner without membership cannot list project memberships", owner_membership_list, 404),
@@ -640,6 +732,7 @@ async def test_actor_matrix_separates_platform_and_project_authority(
         ("viewer cannot mutate project configuration", viewer_mutation, 403),
         ("project-admin cannot reach foreign project", foreign_project, 404),
         ("foreign project-admin cannot read project settings", foreign_project_read, 404),
+        ("foreign project-admin cannot patch project settings", foreign_project_settings, 404),
         ("foreign project-admin cannot list users", foreign_user_list, 404),
         ("foreign project-admin cannot list credentials", foreign_credential_list, 404),
         ("foreign project-admin cannot list memberships", foreign_membership_list, 404),
@@ -654,6 +747,45 @@ async def test_actor_matrix_separates_platform_and_project_authority(
         ("foreign admin cannot alter project membership", foreign_membership, 404),
     ):
         _status(failures, label, response, expected)
+    foreign_absent_responses = (
+        ("foreign topic create", foreign_project),
+        ("foreign project read", foreign_project_read),
+        ("foreign project update", foreign_project_settings),
+        ("foreign user list", foreign_user_list),
+        ("foreign credential list", foreign_credential_list),
+        ("foreign membership list", foreign_membership_list),
+        ("foreign topic list", foreign_topic_list),
+        ("foreign user mutation", foreign_disable),
+        ("foreign credential mutation", foreign_credential),
+        ("foreign membership mutation", foreign_membership),
+    )
+    foreign_fingerprints: list[tuple[int, frozenset[str], object, object]] = []
+    cross_project_values = (
+        project_id,
+        project_slug,
+        target.user["id"],
+        target_pat.id,
+        foreign_topic_slug,
+    )
+    for label, response in foreign_absent_responses:
+        payload = _object(response)
+        correlation = _correlation_id(failures, label, payload)
+        if payload is None or set(payload) != {"detail", "audit_correlation"}:
+            failures.append(f"{label}: 404 body must use the exact absence allowlist")
+            continue
+        fingerprint = (
+            response.status_code,
+            frozenset(payload),
+            payload.get("detail"),
+            type(payload.get("audit_correlation")),
+        )
+        foreign_fingerprints.append(fingerprint)
+        if payload.get("detail") != "not found" or correlation is None:
+            failures.append(f"{label}: 404 must be generic absence plus a safe correlation")
+        if _contains_secret((response,), cross_project_values):
+            failures.append(f"{label}: response/header leaked a project-B identifier")
+    if foreign_fingerprints and len(set(foreign_fingerprints)) != 1:
+        failures.append("foreign 404 responses are distinguishable by status, shape or detail")
     inventory_payload = _required(
         failures, "owner platform inventory", platform_inventory, {"projects"}
     )
@@ -676,6 +808,22 @@ async def test_actor_matrix_separates_platform_and_project_authority(
         for project in inventory_projects
     ):
         failures.append("owner platform inventory exposed fields outside lifecycle metadata")
+    owner_project_payload = _required(
+        failures,
+        "owner project lifecycle/settings",
+        owner_project_read,
+        {"id", "slug", "name", "settings", "status", "version"},
+    )
+    if owner_project_payload is not None and (
+        set(owner_project_payload) != {"id", "slug", "name", "settings", "status", "version"}
+        or owner_project_payload.get("id") != (project_before or {}).get("id")
+        or owner_project_payload.get("slug") != project_slug
+        or owner_project_payload.get("name") != (project_before or {}).get("name")
+        or owner_project_payload.get("settings") != (project_before or {}).get("settings")
+        or owner_project_payload.get("status") != "active"
+        or not _is_version(owner_project_payload.get("version"))
+    ):
+        failures.append("owner project read must be exact lifecycle/settings without content")
     if await _project_row(harness, project_slug) != project_before:
         failures.append("denied project operations changed the existing project")
     if await _project_row(harness, denied_project_slug) is not None:
@@ -715,12 +863,6 @@ async def test_actor_matrix_separates_platform_and_project_authority(
         action=f"topic:create target={admin_topic_slug}",
     )
     for label, response, principal_id, action in (
-        (
-            "owner project read denial",
-            owner_project_read,
-            owner_without_membership.user["id"],
-            f"project:read target={project_slug}",
-        ),
         (
             "owner user list denial",
             owner_user_list,
@@ -803,37 +945,43 @@ async def test_actor_matrix_separates_platform_and_project_authority(
             "foreign topic create denial",
             foreign_project,
             foreign_admin.user["id"],
-            f"topic:create target={foreign_topic_slug}",
+            "topic:create denied",
         ),
         (
             "foreign project read denial",
             foreign_project_read,
             foreign_admin.user["id"],
-            f"project:read target={project_slug}",
+            "project:read denied",
+        ),
+        (
+            "foreign project update denial",
+            foreign_project_settings,
+            foreign_admin.user["id"],
+            "project:update denied",
         ),
         (
             "foreign user list denial",
             foreign_user_list,
             foreign_admin.user["id"],
-            f"identity:list target={project_slug}",
+            "identity:list denied",
         ),
         (
             "foreign credential list denial",
             foreign_credential_list,
             foreign_admin.user["id"],
-            f"credential:list target={target.user['id']}",
+            "credential:list denied",
         ),
         (
             "foreign membership list denial",
             foreign_membership_list,
             foreign_admin.user["id"],
-            f"membership:list target={project_slug}",
+            "membership:list denied",
         ),
         (
             "foreign topic list denial",
             foreign_topic_list,
             foreign_admin.user["id"],
-            f"topic:list target={project_slug}",
+            "topic:list denied",
         ),
         (
             "invalid role denial",
@@ -845,7 +993,7 @@ async def test_actor_matrix_separates_platform_and_project_authority(
             "viewer user denial",
             denied_disable,
             viewer_actor.user["id"],
-            f"identity:disable target={target.user['id']}",
+            "identity:disable denied",
         ),
         (
             "curator credential denial",
@@ -863,30 +1011,35 @@ async def test_actor_matrix_separates_platform_and_project_authority(
             "foreign user denial",
             foreign_disable,
             foreign_admin.user["id"],
-            f"identity:disable target={target.user['id']}",
+            "identity:disable denied",
         ),
         (
             "foreign credential denial",
             foreign_credential,
             foreign_admin.user["id"],
-            f"credential:revoke target={target_pat.id}",
+            "credential:revoke denied",
         ),
         (
             "foreign membership denial",
             foreign_membership,
             foreign_admin.user["id"],
-            f"membership:update target={target.user['id']}",
+            "membership:update denied",
         ),
     ):
         await _require_audit(
             failures,
             label,
             harness,
-            project_id,
+            foreign_id if principal_id == foreign_admin.user["id"] else project_id,
             _object(response),
             principal_id=principal_id,
             action=action,
             denied=True,
+            forbidden_values=(
+                (project_id, project_slug, target.user["id"], target_pat.id, foreign_topic_slug)
+                if principal_id == foreign_admin.user["id"]
+                else ()
+            ),
         )
     assert foreign_admin.user["id"] != admin_actor.user["id"]
     assert not failures, "\n".join(failures)
@@ -904,9 +1057,19 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
     async with _client(harness, tmp_path) as client:
         headers, _ = await _session(client, owner)
         default_before = await client.get("/api/v1/admin/projects/default", headers=headers)
+        create_headers = {**headers, "Idempotency-Key": "project-create-contract"}
         created = await client.post(
             "/api/v1/admin/projects",
-            headers=headers,
+            headers=create_headers,
+            json={
+                "slug": target_slug,
+                "name": "Lifecycle original",
+                "settings": {"retention_days": 14},
+            },
+        )
+        create_replay = await client.post(
+            "/api/v1/admin/projects",
+            headers=create_headers,
             json={
                 "slug": target_slug,
                 "name": "Lifecycle original",
@@ -920,7 +1083,7 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
         created_version = (
             created_project.get("version") if isinstance(created_project, dict) else None
         )
-        if not isinstance(created_version, int):
+        if not _is_version(created_version):
             created_version = -1
         created_db = await _project_row(harness, target_slug)
         if created_db is not None:
@@ -928,9 +1091,19 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
                 str(created_db["id"]), "known-topic", "Known", sensitivity=4
             )
         before = await client.get(f"/api/v1/admin/projects/{target_slug}", headers=headers)
+        update_headers = {**headers, "Idempotency-Key": "project-update-contract"}
         update = await client.patch(
             f"/api/v1/admin/projects/{target_slug}",
-            headers=headers,
+            headers=update_headers,
+            json={
+                "expected_version": created_version,
+                "name": "Lifecycle renamed",
+                "settings": {"retention_days": 30},
+            },
+        )
+        update_replay = await client.patch(
+            f"/api/v1/admin/projects/{target_slug}",
+            headers=update_headers,
             json={
                 "expected_version": created_version,
                 "name": "Lifecycle renamed",
@@ -940,11 +1113,11 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
         update_payload = _object(update)
         updated_after = update_payload.get("after") if isinstance(update_payload, dict) else None
         current_version = updated_after.get("version") if isinstance(updated_after, dict) else None
-        if not isinstance(current_version, int):
+        if not _is_version(current_version):
             current_version = -1
         stale = await client.patch(
             f"/api/v1/admin/projects/{target_slug}",
-            headers=headers,
+            headers={**headers, "Idempotency-Key": "project-update-stale-contract"},
             json={
                 "expected_version": created_version,
                 "name": "stale",
@@ -960,20 +1133,26 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
         )
         default_payload = _object(default_before)
         default_version = default_payload.get("version") if default_payload is not None else None
-        if not isinstance(default_version, int):
+        if not _is_version(default_version):
             default_version = -1
         default_delete = await client.delete(
             "/api/v1/admin/projects/default",
-            headers=headers,
+            headers={**headers, "Idempotency-Key": "project-delete-default-contract"},
             params={"expected_version": default_version, "confirm": "default"},
         )
         default_after = await client.get("/api/v1/admin/projects/default", headers=headers)
         default_impact_after = await client.get(
             "/api/v1/admin/projects/default/delete-impact", headers=headers
         )
+        delete_headers = {**headers, "Idempotency-Key": "project-delete-contract"}
         removed = await client.delete(
             f"/api/v1/admin/projects/{target_slug}",
-            headers=headers,
+            headers=delete_headers,
+            params={"expected_version": current_version, "confirm": target_slug},
+        )
+        removed_replay = await client.delete(
+            f"/api/v1/admin/projects/{target_slug}",
+            headers=delete_headers,
             params={"expected_version": current_version, "confirm": target_slug},
         )
         after_delete = await client.get(f"/api/v1/admin/projects/{target_slug}", headers=headers)
@@ -983,8 +1162,10 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
     for label, response, expected in (
         ("default project read before protection check", default_before, 200),
         ("project create", created, 201),
+        ("project create replay", create_replay, 200),
         ("project reread before mutation", before, 200),
         ("project update", update, 200),
+        ("project update replay", update_replay, 200),
         ("stale project update", stale, 409),
         ("project reread after mutation", reread, 200),
         ("pre-delete inventory", inventory_before_delete, 200),
@@ -994,10 +1175,20 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
         ("default survives rejected delete", default_after, 200),
         ("default impact survives rejected delete", default_impact_after, 200),
         ("confirmed project delete", removed, 200),
+        ("confirmed project delete replay", removed_replay, 200),
         ("deleted project is absent", after_delete, 404),
         ("post-delete inventory", inventory_after, 200),
     ):
         _status(failures, label, response, expected)
+    create_idempotent, _ = _idempotent_replay(
+        failures, "project create", created, create_replay, original_status=201
+    )
+    update_idempotent, _ = _idempotent_replay(
+        failures, "project update", update, update_replay, original_status=200
+    )
+    delete_idempotent, _ = _idempotent_replay(
+        failures, "project delete", removed, removed_replay, original_status=200
+    )
     create_envelope = _required(
         failures, "project create", created, {"project", "audit_correlation"}
     )
@@ -1069,7 +1260,9 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
         failures.append(
             "project update: current version must advance from the response's old version"
         )
-    stale_payload = _required(failures, "stale project update", stale, {"current"})
+    stale_payload = _required(
+        failures, "stale project update", stale, {"current", "audit_correlation"}
+    )
     if _mapping_field(failures, "stale project update", stale_payload, "current") != update_after:
         failures.append("stale project update: conflict must return the unchanged current state")
     inventory_before_payload = _required(
@@ -1198,9 +1391,9 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
         failures.append("default project was removed despite the conflict response")
     audit_project_id = target_id or str(uuid.UUID(int=0))
     for label, payload, action in (
-        ("project create", create_envelope, f"project:create target={target_slug}"),
-        ("project update", updated, f"project:update target={target_slug}"),
-        ("project delete", removed_payload, f"project:delete target={target_slug}"),
+        ("project create", create_idempotent, f"project:create target={target_slug}"),
+        ("project update", update_idempotent, f"project:update target={target_slug}"),
+        ("project delete", delete_idempotent, f"project:delete target={target_slug}"),
     ):
         await _require_audit(
             failures,
@@ -1221,6 +1414,32 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
         action="project:delete target=default",
         denied=True,
     )
+    await _require_audit(
+        failures,
+        "stale project update",
+        harness,
+        audit_project_id,
+        stale_payload,
+        principal_id=owner.user["id"],
+        action=f"project:update target={target_slug}",
+        denied=True,
+    )
+    for action in (
+        f"project:create target={target_slug}",
+        f"project:update target={target_slug}",
+        f"project:delete target={target_slug}",
+    ):
+        audit_rows = await _matching_audits(
+            harness,
+            audit_project_id,
+            principal_id=owner.user["id"],
+            action=action,
+            denied=False,
+        )
+        if len(audit_rows) != 1:
+            failures.append(
+                f"project idempotency: {action} persisted {len(audit_rows)} audit outcomes"
+            )
     assert default_id != audit_project_id
     assert not failures, "\n".join(failures)
 
@@ -1249,9 +1468,10 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
     async with _client(harness, tmp_path) as client:
         # Re-login the real admin on this client; every user lifecycle call itself stays HTTP-only.
         admin_headers, _ = await _session(client, admin)
+        invite_headers = {**admin_headers, "Idempotency-Key": "identity-invite-contract"}
         invited = await client.post(
             f"/api/v1/admin/users/invite?project={project_slug}",
-            headers=admin_headers,
+            headers=invite_headers,
             json={
                 "email": target_email,
                 "platform_role": "member",
@@ -1269,6 +1489,33 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
         )
         invitation_token = (
             invite_payload.get("invitation_token") if isinstance(invite_payload, dict) else None
+        )
+        invited_user_db_before_command_replay = (
+            await _user_row(harness, invited_user_id) if invited_user_id is not None else None
+        )
+        invited_membership_db_before_command_replay = (
+            await _membership_row(harness, project_id, invited_user_id)
+            if invited_user_id is not None
+            else None
+        )
+        invite_replay = await client.post(
+            f"/api/v1/admin/users/invite?project={project_slug}",
+            headers=invite_headers,
+            json={
+                "email": target_email,
+                "platform_role": "member",
+                "project_role": "project-admin",
+                "allowed_topics": ["general"],
+                "can_curate": False,
+            },
+        )
+        invited_user_db_after_command_replay = (
+            await _user_row(harness, invited_user_id) if invited_user_id is not None else None
+        )
+        invited_membership_db_after_command_replay = (
+            await _membership_row(harness, project_id, invited_user_id)
+            if invited_user_id is not None
+            else None
         )
         accept = await client.post(
             "/api/v1/auth/invitations/accept",
@@ -1359,13 +1606,19 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
             },
         )
 
+        reset_headers = {**admin_headers, "Idempotency-Key": "identity-reset-contract"}
         reset_active = await client.post(
             f"/api/v1/admin/users/{target.user['id']}/password-reset?project={project_slug}",
-            headers=admin_headers,
+            headers=reset_headers,
             json={"impact_acknowledged": True},
         )
         reset_payload = _object(reset_active)
         reset_token = reset_payload.get("reset_token") if reset_payload is not None else None
+        reset_command_replay = await client.post(
+            f"/api/v1/admin/users/{target.user['id']}/password-reset?project={project_slug}",
+            headers=reset_headers,
+            json={"impact_acknowledged": True},
+        )
         reset_complete = await client.post(
             "/api/v1/auth/password-reset/complete",
             json={
@@ -1408,11 +1661,21 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
         before_oauth = await client.get("/api/v1/admin/topics", headers=oauth_headers)
 
         started = time.monotonic()
+        disable_headers = {**admin_headers, "Idempotency-Key": "identity-disable-contract"}
         disabled = await client.post(
             f"/api/v1/admin/users/{target.user['id']}/disable?project={project_slug}",
-            headers=admin_headers,
+            headers=disable_headers,
             json={"expected_status": "active", "impact_acknowledged": True},
         )
+        disabled_user_db_before_replay = await _user_row(harness, target.user["id"])
+        disabled_credentials_before_replay = await _membership_pat_state(harness, membership_id)
+        disable_replay = await client.post(
+            f"/api/v1/admin/users/{target.user['id']}/disable?project={project_slug}",
+            headers=disable_headers,
+            json={"expected_status": "active", "impact_acknowledged": True},
+        )
+        disabled_user_db_after_replay = await _user_row(harness, target.user["id"])
+        disabled_credentials_after_replay = await _membership_pat_state(harness, membership_id)
         after_session = await client.get(
             f"/api/v1/admin/topics?project={project_slug}", headers=session_headers
         )
@@ -1430,6 +1693,7 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
 
     for label, response, expected in (
         ("project-scoped user invite", invited, 201),
+        ("project-scoped user invite replay", invite_replay, 200),
         ("single-use invitation accept", accept, 200),
         ("invitation replay", accept_again, 400),
         ("users before invitation replay", users_before_invitation_replay, 200),
@@ -1442,6 +1706,7 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
         ("users second page", users_page_two, 200),
         ("old password after reset", old_login, 401),
         ("password reset completion", reset_complete, 200),
+        ("password reset command replay", reset_command_replay, 200),
         ("new password after reset", current_login, 200),
         ("reset token replay", reset_replay, 400),
         ("live session before disable", before_session, 200),
@@ -1451,8 +1716,45 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
         ("disabled PAT", after_pat, 401),
         ("disabled OAuth", after_oauth, 401),
         ("users reread after disable", users_after_disable, 200),
+        ("disable command replay", disable_replay, 200),
     ):
         _status(failures, label, response, expected)
+    invite_idempotent, _ = _idempotent_replay(
+        failures,
+        "user invite",
+        invited,
+        invite_replay,
+        original_status=201,
+        secret_fields={"invitation_token"},
+    )
+    reset_idempotent, _ = _idempotent_replay(
+        failures,
+        "password reset command",
+        reset_active,
+        reset_command_replay,
+        original_status=201,
+        secret_fields={"reset_token"},
+    )
+    disable_idempotent, _ = _idempotent_replay(
+        failures,
+        "disable command",
+        disabled,
+        disable_replay,
+        original_status=200,
+    )
+    if (
+        invited_user_db_before_command_replay is None
+        or invited_user_db_before_command_replay != invited_user_db_after_command_replay
+        or invited_membership_db_before_command_replay is None
+        or invited_membership_db_before_command_replay != invited_membership_db_after_command_replay
+    ):
+        failures.append("user invite replay changed or duplicated persisted identity authority")
+    if (
+        disabled_user_db_before_replay is None
+        or disabled_user_db_before_replay != disabled_user_db_after_replay
+        or disabled_credentials_before_replay != disabled_credentials_after_replay
+    ):
+        failures.append("disable replay changed identity or credential revocation state")
     invite_envelope = _required(
         failures,
         "user invite",
@@ -1464,14 +1766,14 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
     if invited_identity is not None and (
         invited_identity.get("email") != target_email
         or invited_identity.get("status") != "invited"
-        or not isinstance(invited_identity.get("version"), int)
+        or not _is_version(invited_identity.get("version"))
     ):
         failures.append("user invite: identity must expose exact invited state and version")
     if invited_membership is not None and (
         invited_membership.get("role") != "project-admin"
         or invited_membership.get("allowed_topics") != ["general"]
         or invited_membership.get("can_curate") is not False
-        or not isinstance(invited_membership.get("version"), int)
+        or not _is_version(invited_membership.get("version"))
     ):
         failures.append("user invite: scoped restrictive membership differs from request")
     accept_payload = _required(
@@ -1493,7 +1795,7 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
         failures.append("invitation accept: identity transition is not exact")
     invited_version = invited_identity.get("version") if invited_identity is not None else None
     if (
-        isinstance(invited_version, int)
+        _is_version(invited_version)
         and accepted_version is not None
         and accepted_version <= invited_version
     ):
@@ -1642,8 +1944,7 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
         reset_complete_identity.get("id") != target.user["id"]
         or reset_complete_identity.get("email") != target.email
         or reset_complete_identity.get("status") != "active"
-        or isinstance(reset_complete_identity.get("version"), bool)
-        or not isinstance(reset_complete_identity.get("version"), int)
+        or not _is_version(reset_complete_identity.get("version"))
     ):
         failures.append("password reset completion: authoritative active identity is not exact")
     _status(failures, "disable active user", disabled, 200)
@@ -1687,6 +1988,7 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
         failures.append("disable: users reread does not show the disabled target")
     invite_secret = _str_field(failures, "user invite", invite_envelope, "invitation_token")
     secret_responses: Sequence[httpx.Response] = (
+        invite_replay,
         accept,
         accept_again,
         users_before_invitation_replay,
@@ -1698,9 +2000,11 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
         users_page_one,
         users_page_two,
         reset_active,
+        reset_command_replay,
         reset_complete,
         reset_replay,
         disabled,
+        disable_replay,
         users_after_disable,
     )
     if invite_secret is not None and (
@@ -1722,15 +2026,15 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
     if any(secret in caplog.text for secret in emitted_secrets):
         failures.append("identity lifecycle secret escaped DEBUG diagnostics")
     for label, audit_payload, action in (
-        ("user invite", invite_envelope, f"identity:invite target={target_email}"),
+        ("user invite", invite_idempotent, f"identity:invite target={target_email}"),
         ("invitation accept", accept_payload, f"identity:accept target={target.user['id']}"),
-        ("password reset", reset_envelope, f"identity:reset target={target.user['id']}"),
+        ("password reset", reset_idempotent, f"identity:reset target={target.user['id']}"),
         (
             "password reset complete",
             reset_complete_envelope,
             f"identity:reset-complete target={target.user['id']}",
         ),
-        ("disable", payload, f"identity:disable target={target.user['id']}"),
+        ("disable", disable_idempotent, f"identity:disable target={target.user['id']}"),
     ):
         await _require_audit(
             failures,
@@ -1760,6 +2064,22 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
         or accepted_audits[0].get("id") != accepted_correlation
     ):
         failures.append("invitation replay changed or duplicated the accepted audit outcome")
+    for action in (
+        f"identity:invite target={target_email}",
+        f"identity:reset target={target.user['id']}",
+        f"identity:disable target={target.user['id']}",
+    ):
+        identity_audit_rows = await _matching_audits(
+            harness,
+            project_id,
+            principal_id=admin.user["id"],
+            action=action,
+            denied=False,
+        )
+        if len(identity_audit_rows) != 1:
+            failures.append(
+                f"identity idempotency: {action} persisted {len(identity_audit_rows)} audit outcomes"
+            )
     assert not failures, "\n".join(failures)
 
 
@@ -1820,9 +2140,9 @@ async def test_credentials_are_secret_once_rotatable_revocable_and_audited(
         )
         rotate_version = rotate_before.get("version") if rotate_before is not None else None
         revoke_version = revoke_before.get("version") if revoke_before is not None else None
-        if not isinstance(rotate_version, int):
+        if not _is_version(rotate_version):
             rotate_version = -1
-        if not isinstance(revoke_version, int):
+        if not _is_version(revoke_version):
             revoke_version = -1
 
         create_headers = {**admin_headers, "Idempotency-Key": "credential-create-contract"}
@@ -1906,7 +2226,7 @@ async def test_credentials_are_secret_once_rotatable_revocable_and_audited(
         or created_meta.get("kind") != "pat"
         or created_meta.get("name") != "console-created"
         or created_meta.get("status") != "active"
-        or not isinstance(created_meta.get("version"), int)
+        or not _is_version(created_meta.get("version"))
     ):
         failures.append("credential create: metadata is not the exact active target credential")
     if rotate_before is None or revoke_before is None:
@@ -1921,7 +2241,7 @@ async def test_credentials_are_secret_once_rotatable_revocable_and_audited(
             or metadata.get("project") != project_slug
             or metadata.get("kind") != "pat"
             or metadata.get("status") != "active"
-            or not isinstance(metadata.get("version"), int)
+            or not _is_version(metadata.get("version"))
         ):
             failures.append(f"{label}: missing exact id/version/status from server list")
     if isinstance(rotated_secret, str) and rotated_secret == rotate_target.token:
@@ -1939,8 +2259,8 @@ async def test_credentials_are_secret_once_rotatable_revocable_and_audited(
     if rotated_meta is not None and (
         rotated_meta.get("id") != rotate_id
         or rotated_meta.get("status") != "active"
-        or not isinstance(rotated_meta_version, int)
-        or (isinstance(rotated_meta_version, int) and rotated_meta_version <= rotate_version)
+        or not _is_version(rotated_meta_version)
+        or (_is_version(rotated_meta_version) and rotated_meta_version <= rotate_version)
     ):
         failures.append("credential rotate: metadata must advance the listed server version")
     create_replay_payload = _required(
@@ -1975,7 +2295,12 @@ async def test_credentials_are_secret_once_rotatable_revocable_and_audited(
         or "secret" in rotate_replay_payload
     ):
         failures.append("credential rotate replay duplicated state or redisplayed the secret")
-    rotate_conflict = _required(failures, "credential stale rotate", rotate_stale, {"current"})
+    rotate_conflict = _required(
+        failures,
+        "credential stale rotate",
+        rotate_stale,
+        {"current", "audit_correlation"},
+    )
     if rotate_conflict is not None and rotate_conflict.get("current") != rotated_meta:
         failures.append("credential stale rotate did not return the unchanged current metadata")
     revoked_payload = _required(
@@ -1986,8 +2311,8 @@ async def test_credentials_are_secret_once_rotatable_revocable_and_audited(
     if revoked_meta is not None and (
         revoked_meta.get("id") != revoke_id
         or revoked_meta.get("status") != "revoked"
-        or not isinstance(revoked_meta_version, int)
-        or (isinstance(revoked_meta_version, int) and revoked_meta_version <= revoke_version)
+        or not _is_version(revoked_meta_version)
+        or (_is_version(revoked_meta_version) and revoked_meta_version <= revoke_version)
     ):
         failures.append("credential revoke: state/version did not advance to revoked")
     revoke_replay_payload = _required(
@@ -2005,7 +2330,12 @@ async def test_credentials_are_secret_once_rotatable_revocable_and_audited(
         or revoke_replay_payload.get("audit_correlation") != revoked_correlation
     ):
         failures.append("credential revoke replay was not the same authoritative outcome")
-    revoke_conflict = _required(failures, "credential stale revoke", revoke_stale, {"current"})
+    revoke_conflict = _required(
+        failures,
+        "credential stale revoke",
+        revoke_stale,
+        {"current", "audit_correlation"},
+    )
     if revoke_conflict is not None and revoke_conflict.get("current") != revoked_meta:
         failures.append("credential stale revoke did not preserve the revoked current state")
     after_payload = _required(failures, "credential reread", after, {"items"})
@@ -2091,6 +2421,20 @@ async def test_credentials_are_secret_once_rotatable_revocable_and_audited(
             principal_id=admin.user["id"],
             action=action,
         )
+    for label, payload, action in (
+        ("credential stale rotate", rotate_conflict, f"credential:rotate target={rotate_id}"),
+        ("credential stale revoke", revoke_conflict, f"credential:revoke target={revoke_id}"),
+    ):
+        await _require_audit(
+            failures,
+            label,
+            harness,
+            project_id,
+            payload,
+            principal_id=admin.user["id"],
+            action=action,
+            denied=True,
+        )
     assert not failures, "\n".join(failures)
 
 
@@ -2102,6 +2446,14 @@ async def test_admin_session_pat_and_oauth_share_one_authority_and_audit_contrac
     project_id = await harness.setup_project(project_slug, [("general", 0)])
     identity = IdentityService(harness.sm)
     failures: list[str] = []
+    credential_target = await _active_user(identity)
+    credential_membership_id = await identity.add_membership(
+        credential_target.user["id"], project_id, role="member", allowed_topics=("general",)
+    )
+    seed_credential = await identity.issue_pat(credential_membership_id, name="third-party-seed")
+    membership_targets = {
+        kind: await _active_user(identity) for kind in ("session", "pat", "oauth")
+    }
 
     async with _client(harness, tmp_path) as client:
         admin, session_headers, _ = await _actor_with_membership(
@@ -2121,20 +2473,66 @@ async def test_admin_session_pat_and_oauth_share_one_authority_and_audit_contrac
             ("pat", {"Authorization": f"Bearer {pat.token}"}, ""),
             ("oauth", {"Authorization": f"Bearer {oauth_token}"}, ""),
         )
-        reads: list[tuple[str, httpx.Response]] = []
-        writes: list[tuple[str, str, httpx.Response]] = []
+        results: list[
+            tuple[
+                str,
+                httpx.Response,
+                httpx.Response,
+                httpx.Response,
+                ActiveUser,
+                httpx.Response,
+                httpx.Response,
+                str,
+                httpx.Response,
+            ]
+        ] = []
         for kind, headers, query in credential_headers:
-            reads.append((kind, await client.get(f"/api/v1/admin/topics{query}", headers=headers)))
-            slug = unique_slug(f"parity-{kind}")
-            writes.append(
+            target = membership_targets[kind]
+            topic_slug = unique_slug(f"parity-{kind}")
+            idempotency_headers = {
+                **headers,
+                "Idempotency-Key": f"auth-parity-credential-{kind}",
+            }
+            users = await client.get(f"/api/v1/admin/users{query}", headers=headers)
+            credentials = await client.get(
+                f"/api/v1/admin/users/{credential_target.user['id']}/credentials{query}",
+                headers=headers,
+            )
+            credential_create = await client.post(
+                f"/api/v1/admin/users/{credential_target.user['id']}/credentials{query}",
+                headers=idempotency_headers,
+                json={"name": f"created-through-{kind}", "kind": "pat"},
+            )
+            membership_create = await client.post(
+                f"/api/v1/admin/memberships{query}",
+                headers={
+                    **headers,
+                    "Idempotency-Key": f"auth-parity-membership-{kind}",
+                },
+                json={
+                    "user_id": target.user["id"],
+                    "role": "viewer",
+                    "allowed_topics": [],
+                    "can_curate": False,
+                },
+            )
+            topics = await client.get(f"/api/v1/admin/topics{query}", headers=headers)
+            topic_create = await client.post(
+                f"/api/v1/admin/topics{query}",
+                headers={**headers, "Idempotency-Key": f"auth-parity-topic-{kind}"},
+                json={"slug": topic_slug, "name": f"Created through {kind}"},
+            )
+            results.append(
                 (
                     kind,
-                    slug,
-                    await client.post(
-                        f"/api/v1/admin/topics{query}",
-                        headers=headers,
-                        json={"slug": slug, "name": f"Created through {kind}"},
-                    ),
+                    users,
+                    credentials,
+                    credential_create,
+                    target,
+                    membership_create,
+                    topics,
+                    topic_slug,
+                    topic_create,
                 )
             )
 
@@ -2142,21 +2540,146 @@ async def test_admin_session_pat_and_oauth_share_one_authority_and_audit_contrac
         failures.append("auth parity control: PAT was not a live project credential")
     if await resolve_scope(harness.sm, oauth_token) is None:
         failures.append("auth parity control: OAuth token was not a live project credential")
-    for kind, response in reads:
-        _status(failures, f"{kind} admin read", response, 200)
-    for kind, slug, response in writes:
-        _status(failures, f"{kind} admin mutation", response, 201)
-        if await _topic_row(harness, project_id, slug) is None:
-            failures.append(f"{kind} admin mutation did not persist its topic")
-        await _require_audit(
-            failures,
-            f"{kind} admin mutation",
-            harness,
-            project_id,
-            _object(response),
-            principal_id=admin.user["id"],
-            action=f"topic:create target={slug}",
+    status_fingerprints: list[tuple[int, int, int, int, int, int]] = []
+    for (
+        kind,
+        users,
+        credentials,
+        credential_create,
+        membership_target,
+        membership_create,
+        topics,
+        topic_slug,
+        topic_create,
+    ) in results:
+        for surface, response, expected in (
+            ("user list", users, 200),
+            ("third-party credential list", credentials, 200),
+            ("third-party credential create", credential_create, 201),
+            ("membership create", membership_create, 201),
+            ("topic list", topics, 200),
+            ("topic create", topic_create, 201),
+        ):
+            _status(failures, f"{kind} {surface}", response, expected)
+        status_fingerprints.append(
+            (
+                users.status_code,
+                credentials.status_code,
+                credential_create.status_code,
+                membership_create.status_code,
+                topics.status_code,
+                topic_create.status_code,
+            )
         )
+        users_payload = _required(failures, f"{kind} user list", users, {"items"})
+        user_rows = _list_field(failures, f"{kind} user list", users_payload, "items")
+        if user_rows is not None and not any(
+            isinstance(row, dict)
+            and row.get("id") == credential_target.user["id"]
+            and row.get("email") == credential_target.email
+            and row.get("role") == "member"
+            for row in user_rows
+        ):
+            failures.append(f"{kind} user list did not expose the same scoped target")
+        credential_list_payload = _required(
+            failures, f"{kind} credential list", credentials, {"items"}
+        )
+        credential_rows = _list_field(
+            failures, f"{kind} credential list", credential_list_payload, "items"
+        )
+        if credential_rows is not None and not any(
+            isinstance(row, dict)
+            and row.get("id") == seed_credential.id
+            and row.get("user_id") == credential_target.user["id"]
+            and row.get("status") == "active"
+            and _is_version(row.get("version"))
+            for row in credential_rows
+        ):
+            failures.append(f"{kind} credential list did not expose exact third-party metadata")
+        credential_payload = _required(
+            failures,
+            f"{kind} credential create",
+            credential_create,
+            {"credential", "secret", "audit_correlation"},
+        )
+        credential_meta = _mapping_field(
+            failures, f"{kind} credential create", credential_payload, "credential"
+        )
+        credential_id = _uuid_string(
+            credential_meta.get("id") if credential_meta is not None else None
+        )
+        credential_secret = _str_field(
+            failures, f"{kind} credential create", credential_payload, "secret"
+        )
+        if credential_meta is not None and (
+            credential_meta.get("id") != credential_id
+            or credential_meta.get("user_id") != credential_target.user["id"]
+            or credential_meta.get("project") != project_slug
+            or credential_meta.get("kind") != "pat"
+            or credential_meta.get("name") != f"created-through-{kind}"
+            or credential_meta.get("status") != "active"
+            or not _is_version(credential_meta.get("version"))
+        ):
+            failures.append(f"{kind} credential create returned non-authoritative metadata")
+        if (
+            credential_secret is not None
+            and await resolve_scope(harness.sm, credential_secret) is None
+        ):
+            failures.append(f"{kind} third-party credential was not live after creation")
+        membership_payload = _required(
+            failures,
+            f"{kind} membership create",
+            membership_create,
+            {"membership", "audit_correlation"},
+        )
+        membership_meta = _mapping_field(
+            failures, f"{kind} membership create", membership_payload, "membership"
+        )
+        expected_membership = {
+            "id": _uuid_string(membership_meta.get("id") if membership_meta is not None else None),
+            "user_id": membership_target.user["id"],
+            "role": "viewer",
+            "allowed_topics": [],
+            "can_curate": False,
+            "status": "active",
+            "version": membership_meta.get("version") if membership_meta is not None else None,
+        }
+        if (
+            membership_meta != expected_membership
+            or not _is_version(expected_membership["version"])
+            or await _membership_row(harness, project_id, membership_target.user["id"]) is None
+        ):
+            failures.append(f"{kind} membership create did not persist exact authority")
+        if await _topic_row(harness, project_id, topic_slug) is None:
+            failures.append(f"{kind} topic mutation did not persist its topic")
+        for label, payload, action in (
+            (
+                f"{kind} credential create",
+                credential_payload,
+                f"credential:create target={credential_id}",
+            ),
+            (
+                f"{kind} membership create",
+                membership_payload,
+                f"membership:create target={membership_target.user['id']}",
+            ),
+            (
+                f"{kind} topic create",
+                _object(topic_create),
+                f"topic:create target={topic_slug}",
+            ),
+        ):
+            await _require_audit(
+                failures,
+                label,
+                harness,
+                project_id,
+                payload,
+                principal_id=admin.user["id"],
+                action=action,
+            )
+    if status_fingerprints and len(set(status_fingerprints)) != 1:
+        failures.append("session, PAT and OAuth produced different management decisions")
     assert not failures, "\n".join(failures)
 
 
@@ -2182,7 +2705,7 @@ async def test_management_rate_limit_is_a_deterministic_429_contract(
             [
                 await client.post(
                     "/api/v1/admin/projects",
-                    headers=owner_headers,
+                    headers={**owner_headers, "Idempotency-Key": f"rate-contract-{index}"},
                     json={"slug": slug, "name": f"Rate contract {index}"},
                 )
                 for index, slug in enumerate(slugs)
@@ -2238,8 +2761,7 @@ async def test_management_rate_limit_is_a_deterministic_429_contract(
                 or state.get("name") != f"Rate contract {index}"
                 or state.get("settings") != {}
                 or state.get("status") != "active"
-                or isinstance(state.get("version"), bool)
-                or not isinstance(state.get("version"), int)
+                or not _is_version(state.get("version"))
             )
         ):
             failures.append(f"management rate limit: allowed DB fingerprint {index} is not exact")
@@ -2269,17 +2791,27 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
     target = await _active_user(identity)
     topic_slug = unique_slug("sensitive")
     failures: list[str] = []
+    membership_before = await _membership_row(harness, project_id, target.user["id"])
+    topics_before = await _topic_state(harness, project_id)
 
     async with _client(harness, tmp_path) as client:
         admin, admin_headers, _ = await _actor_with_membership(
             identity, client, project_id, project_role="project-admin"
         )
         target_session_headers, target_session = await _session(client, target)
+        membership_headers = {**admin_headers, "Idempotency-Key": "membership-create-contract"}
         membership = await client.post(
             f"/api/v1/admin/memberships?project={project_slug}",
-            headers=admin_headers,
+            headers=membership_headers,
             json={"user_id": target.user["id"], "role": "viewer", "can_curate": False},
         )
+        membership_db_before_replay = await _membership_row(harness, project_id, target.user["id"])
+        membership_replay = await client.post(
+            f"/api/v1/admin/memberships?project={project_slug}",
+            headers=membership_headers,
+            json={"user_id": target.user["id"], "role": "viewer", "can_curate": False},
+        )
+        membership_db_after_replay = await _membership_row(harness, project_id, target.user["id"])
         memberships_after_create = await client.get(
             f"/api/v1/admin/memberships?project={project_slug}", headers=admin_headers
         )
@@ -2290,7 +2822,7 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
         membership_version = (
             created_meta_raw.get("version") if isinstance(created_meta_raw, dict) else None
         )
-        if not isinstance(membership_version, int):
+        if not _is_version(membership_version):
             membership_version = -1
         stored_membership = await _membership_row(harness, project_id, target.user["id"])
         if stored_membership is None:
@@ -2300,9 +2832,10 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
         else:
             membership_id = str(stored_membership["id"])
         target_pat = await identity.issue_pat(membership_id, name="authority-transition")
+        change_headers = {**admin_headers, "Idempotency-Key": "membership-update-contract"}
         changed = await client.patch(
             f"/api/v1/admin/memberships/{target.user['id']}?project={project_slug}",
-            headers=admin_headers,
+            headers=change_headers,
             json={
                 "expected_version": membership_version,
                 "role": "member",
@@ -2310,9 +2843,21 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
                 "can_curate": True,
             },
         )
+        changed_db_before_replay = await _membership_row(harness, project_id, target.user["id"])
+        changed_replay = await client.patch(
+            f"/api/v1/admin/memberships/{target.user['id']}?project={project_slug}",
+            headers=change_headers,
+            json={
+                "expected_version": membership_version,
+                "role": "member",
+                "allowed_topics": ["general"],
+                "can_curate": True,
+            },
+        )
+        changed_db_after_replay = await _membership_row(harness, project_id, target.user["id"])
         stale_membership = await client.patch(
             f"/api/v1/admin/memberships/{target.user['id']}?project={project_slug}",
-            headers=admin_headers,
+            headers={**admin_headers, "Idempotency-Key": "membership-update-stale"},
             json={
                 "expected_version": membership_version,
                 "role": "project-admin",
@@ -2321,32 +2866,64 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
         memberships_after_stale = await client.get(
             f"/api/v1/admin/memberships?project={project_slug}", headers=admin_headers
         )
+        topic_headers = {**admin_headers, "Idempotency-Key": "topic-create-contract"}
         topic = await client.post(
             f"/api/v1/admin/topics?project={project_slug}",
-            headers=admin_headers,
-            json={"slug": topic_slug, "name": "Sensitive", "sensitivity": 4},
+            headers=topic_headers,
+            json={
+                "slug": topic_slug,
+                "name": "Sensitive",
+                "sensitivity": 4,
+                "hard_window_days": 45,
+            },
         )
+        topic_db_before_replay = await _topic_row(harness, project_id, topic_slug)
+        topic_replay = await client.post(
+            f"/api/v1/admin/topics?project={project_slug}",
+            headers=topic_headers,
+            json={
+                "slug": topic_slug,
+                "name": "Sensitive",
+                "sensitivity": 4,
+                "hard_window_days": 45,
+            },
+        )
+        topic_db_after_replay = await _topic_row(harness, project_id, topic_slug)
         topics_after_create = await client.get(
             f"/api/v1/admin/topics?project={project_slug}", headers=admin_headers
         )
         topic_payload = _object(topic)
         topic_meta_raw = topic_payload.get("topic") if topic_payload is not None else None
         topic_version = topic_meta_raw.get("version") if isinstance(topic_meta_raw, dict) else None
-        if not isinstance(topic_version, int):
+        if not _is_version(topic_version):
             topic_version = -1
         scope_after_topic_create = await resolve_scope(harness.sm, target_pat.token)
+        topic_update_headers = {**admin_headers, "Idempotency-Key": "topic-update-contract"}
         edited_topic = await client.patch(
             f"/api/v1/admin/topics/{topic_slug}?project={project_slug}",
-            headers=admin_headers,
+            headers=topic_update_headers,
             json={
                 "expected_version": topic_version,
                 "name": "Highly sensitive",
                 "sensitivity": 5,
+                "hard_window_days": 60,
             },
         )
+        topic_update_db_before_replay = await _topic_row(harness, project_id, topic_slug)
+        edited_topic_replay = await client.patch(
+            f"/api/v1/admin/topics/{topic_slug}?project={project_slug}",
+            headers=topic_update_headers,
+            json={
+                "expected_version": topic_version,
+                "name": "Highly sensitive",
+                "sensitivity": 5,
+                "hard_window_days": 60,
+            },
+        )
+        topic_update_db_after_replay = await _topic_row(harness, project_id, topic_slug)
         stale_topic = await client.patch(
             f"/api/v1/admin/topics/{topic_slug}?project={project_slug}",
-            headers=admin_headers,
+            headers={**admin_headers, "Idempotency-Key": "topic-update-stale"},
             json={
                 "expected_version": topic_version,
                 "sensitivity": 1,
@@ -2359,11 +2936,12 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
         changed_version = (
             changed_after_raw.get("version") if isinstance(changed_after_raw, dict) else None
         )
-        if not isinstance(changed_version, int):
+        if not _is_version(changed_version):
             changed_version = -1
+        grant_headers = {**admin_headers, "Idempotency-Key": "membership-grant-contract"}
         grant_sensitive = await client.patch(
             f"/api/v1/admin/memberships/{target.user['id']}?project={project_slug}",
-            headers=admin_headers,
+            headers=grant_headers,
             json={
                 "expected_version": changed_version,
                 "role": "member",
@@ -2371,18 +2949,34 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
                 "can_curate": True,
             },
         )
+        grant_db_before_replay = await _membership_row(harness, project_id, target.user["id"])
+        grant_replay = await client.patch(
+            f"/api/v1/admin/memberships/{target.user['id']}?project={project_slug}",
+            headers=grant_headers,
+            json={
+                "expected_version": changed_version,
+                "role": "member",
+                "allowed_topics": ["general", topic_slug],
+                "can_curate": True,
+            },
+        )
+        grant_db_after_replay = await _membership_row(harness, project_id, target.user["id"])
         grant_payload_raw = _object(grant_sensitive)
         grant_after_raw = grant_payload_raw.get("after") if grant_payload_raw is not None else None
         grant_version = (
             grant_after_raw.get("version") if isinstance(grant_after_raw, dict) else None
         )
-        if not isinstance(grant_version, int):
+        if not _is_version(grant_version):
             grant_version = -1
         scope_after_grant = await resolve_scope(harness.sm, target_pat.token)
+        pat_after_grant = await client.get(
+            "/api/v1/me", headers={"Authorization": f"Bearer {target_pat.token}"}
+        )
         started = time.monotonic()
+        revoke_headers = {**admin_headers, "Idempotency-Key": "membership-revoke-contract"}
         revoke_sensitive = await client.patch(
             f"/api/v1/admin/memberships/{target.user['id']}?project={project_slug}",
-            headers=admin_headers,
+            headers=revoke_headers,
             json={
                 "expected_version": grant_version,
                 "role": "member",
@@ -2390,7 +2984,22 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
                 "can_curate": True,
             },
         )
+        revoke_db_before_replay = await _membership_row(harness, project_id, target.user["id"])
+        revoke_replay = await client.patch(
+            f"/api/v1/admin/memberships/{target.user['id']}?project={project_slug}",
+            headers=revoke_headers,
+            json={
+                "expected_version": grant_version,
+                "role": "member",
+                "allowed_topics": ["general"],
+                "can_curate": True,
+            },
+        )
+        revoke_db_after_replay = await _membership_row(harness, project_id, target.user["id"])
         scope_after_revoke = await resolve_scope(harness.sm, target_pat.token)
+        pat_after_revoke = await client.get(
+            "/api/v1/me", headers={"Authorization": f"Bearer {target_pat.token}"}
+        )
         session_after_revoke = await client.get("/api/v1/me", headers=target_session_headers)
         revocation_elapsed = time.monotonic() - started
         topics_after_stale = await client.get(
@@ -2402,21 +3011,67 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
 
     for label, response, expected in (
         ("membership create", membership, 201),
+        ("membership create replay", membership_replay, 200),
         ("membership immediate reread", memberships_after_create, 200),
         ("membership update", changed, 200),
+        ("membership update replay", changed_replay, 200),
         ("stale membership update", stale_membership, 409),
         ("membership reread after stale update", memberships_after_stale, 200),
         ("topic create", topic, 201),
+        ("topic create replay", topic_replay, 200),
         ("topic immediate reread", topics_after_create, 200),
         ("topic update", edited_topic, 200),
+        ("topic update replay", edited_topic_replay, 200),
         ("stale topic update", stale_topic, 409),
         ("topic reread after stale update", topics_after_stale, 200),
         ("grant sensitive topic", grant_sensitive, 200),
+        ("grant sensitive topic replay", grant_replay, 200),
+        ("PAT reread after authority grant", pat_after_grant, 200),
         ("revoke sensitive topic", revoke_sensitive, 200),
+        ("revoke sensitive topic replay", revoke_replay, 200),
+        ("PAT reread after authority reduction", pat_after_revoke, 200),
         ("session reread after authority reduction", session_after_revoke, 200),
         ("membership final reread", memberships_final, 200),
     ):
         _status(failures, label, response, expected)
+    created_membership_idempotent, _ = _idempotent_replay(
+        failures,
+        "membership create",
+        membership,
+        membership_replay,
+        original_status=201,
+    )
+    changed_idempotent, _ = _idempotent_replay(
+        failures, "membership update", changed, changed_replay, original_status=200
+    )
+    created_topic_idempotent, _ = _idempotent_replay(
+        failures, "topic create", topic, topic_replay, original_status=201
+    )
+    edited_topic_idempotent, _ = _idempotent_replay(
+        failures, "topic update", edited_topic, edited_topic_replay, original_status=200
+    )
+    grant_idempotent, _ = _idempotent_replay(
+        failures, "membership topic grant", grant_sensitive, grant_replay, original_status=200
+    )
+    revoke_idempotent, _ = _idempotent_replay(
+        failures, "membership topic revoke", revoke_sensitive, revoke_replay, original_status=200
+    )
+    for label, before_replay, after_replay in (
+        (
+            "membership create",
+            membership_db_before_replay,
+            membership_db_after_replay,
+        ),
+        ("membership update", changed_db_before_replay, changed_db_after_replay),
+        ("topic create", topic_db_before_replay, topic_db_after_replay),
+        ("topic update", topic_update_db_before_replay, topic_update_db_after_replay),
+        ("membership topic grant", grant_db_before_replay, grant_db_after_replay),
+        ("membership topic revoke", revoke_db_before_replay, revoke_db_after_replay),
+    ):
+        if before_replay is None or before_replay != after_replay:
+            failures.append(f"{label}: replay changed or duplicated persisted state")
+    if membership_before is not None:
+        failures.append("membership create precondition: target already had project authority")
     created_membership = _required(
         failures, "membership create", membership, {"membership", "audit_correlation"}
     )
@@ -2433,16 +3088,19 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
         "role": "viewer",
         "allowed_topics": [],
         "can_curate": False,
+        "status": "active",
         "version": (
             created_membership_meta.get("version") if created_membership_meta is not None else None
         ),
     }
-    if created_membership_meta != expected_membership_create or not isinstance(
-        expected_membership_create["version"], int
+    if created_membership_meta != expected_membership_create or not _is_version(
+        expected_membership_create["version"]
     ):
         failures.append(
             "membership create: exact restrictive state and integer server version are required"
         )
+    if membership_db_before_replay != created_membership_meta:
+        failures.append("membership create: HTTP state differs from complete persisted snapshot")
     membership_listing = _required(
         failures, "membership immediate reread", memberships_after_create, {"memberships"}
     )
@@ -2480,12 +3138,17 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
     if changed_after != expected_changed:
         failures.append("membership update: after must exactly reflect requested authority")
     if (
-        isinstance(expected_membership_create["version"], int)
+        _is_version(expected_membership_create["version"])
         and changed_after_version is not None
         and changed_after_version <= expected_membership_create["version"]
     ):
         failures.append("membership update: server version did not advance")
-    stale_payload = _required(failures, "stale membership update", stale_membership, {"current"})
+    stale_payload = _required(
+        failures,
+        "stale membership update",
+        stale_membership,
+        {"current", "audit_correlation"},
+    )
     if stale_payload is not None and stale_payload.get("current") != changed_after:
         failures.append("stale membership update: conflict did not return unchanged current state")
     stale_listing = _required(
@@ -2532,11 +3195,14 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
         "slug": topic_slug,
         "name": "Sensitive",
         "sensitivity": 4,
+        "hard_window_days": 45,
         "status": "active",
         "version": topic_create_version,
     }
     if created_topic_meta != expected_topic_create:
         failures.append("topic create: exact sensitive state and server version are required")
+    if topic_db_before_replay != created_topic_meta:
+        failures.append("topic create: HTTP state differs from complete persisted snapshot")
     edited_payload = _required(
         failures, "topic update", edited_topic, {"before", "after", "audit_correlation"}
     )
@@ -2547,6 +3213,7 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
         **(created_topic_meta or {}),
         "name": "Highly sensitive",
         "sensitivity": 5,
+        "hard_window_days": 60,
         "version": topic_after_version,
     }
     if topic_before != created_topic_meta or topic_after != expected_topic_after:
@@ -2557,7 +3224,9 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
         and topic_after_version <= topic_create_version
     ):
         failures.append("topic update: server version did not advance")
-    stale_topic_payload = _required(failures, "stale topic update", stale_topic, {"current"})
+    stale_topic_payload = _required(
+        failures, "stale topic update", stale_topic, {"current", "audit_correlation"}
+    )
     if stale_topic_payload is not None and stale_topic_payload.get("current") != topic_after:
         failures.append("stale topic update: conflict did not return unchanged current state")
     topic_final_listing = _required(
@@ -2619,26 +3288,30 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
         failures.append(
             f"membership topic revoke took {revocation_elapsed:.3f}s to reach PAT/session reads"
         )
-    session_payload = _object(session_after_revoke)
-    session_memberships = (
-        session_payload.get("memberships") if session_payload is not None else None
-    )
-    session_membership = (
-        next(
-            (
-                row
-                for row in session_memberships
-                if isinstance(row, dict) and row.get("project") == project_slug
-            ),
-            None,
+    for label, response, expected_topics in (
+        ("PAT after grant", pat_after_grant, ["general", topic_slug]),
+        ("PAT after revoke", pat_after_revoke, ["general"]),
+        ("session after revoke", session_after_revoke, ["general"]),
+    ):
+        me_payload = _required(failures, label, response, {"memberships"})
+        me_memberships = _list_field(failures, label, me_payload, "memberships")
+        me_membership = (
+            next(
+                (
+                    row
+                    for row in me_memberships
+                    if isinstance(row, dict) and row.get("project") == project_slug
+                ),
+                None,
+            )
+            if me_memberships is not None
+            else None
         )
-        if isinstance(session_memberships, list)
-        else None
-    )
-    if not isinstance(session_membership, dict) or session_membership.get("allowed_topics") != [
-        "general"
-    ]:
-        failures.append("membership topic revoke: live console session retained stale authority")
+        if (
+            not isinstance(me_membership, dict)
+            or me_membership.get("allowed_topics") != expected_topics
+        ):
+            failures.append(f"{label}: live credential retained stale effective authority")
     final_listing = _required(
         failures, "membership final reread", memberships_final, {"memberships"}
     )
@@ -2657,15 +3330,47 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
     )
     if final_row != revoke_after:
         failures.append("membership final reread differs from the last authoritative transition")
+    if changed_db_before_replay != changed_after:
+        failures.append("membership update: HTTP after differs from complete persisted snapshot")
+    if grant_db_before_replay != grant_after:
+        failures.append("membership grant: HTTP after differs from complete persisted snapshot")
+    if (
+        revoke_db_before_replay != revoke_after
+        or await _membership_row(harness, project_id, target.user["id"]) != revoke_after
+    ):
+        failures.append("membership revoke: final persisted authority is not exact")
+    if (
+        topic_update_db_before_replay != topic_after
+        or await _topic_row(harness, project_id, topic_slug) != topic_after
+    ):
+        failures.append("topic update: HTTP after differs from complete persisted snapshot")
+    topics_persisted = await _topic_state(harness, project_id)
+    if (
+        tuple(row for row in topics_persisted if row[1] != topic_slug) != topics_before
+        or sum(row[1] == topic_slug for row in topics_persisted) != 1
+    ):
+        failures.append("topic idempotency changed baseline taxonomy or duplicated the topic")
     for label, payload, action in (
-        ("membership create", created_membership, f"membership:create target={target.user['id']}"),
-        ("membership update", changed_payload, f"membership:update target={target.user['id']}"),
-        ("topic create", created_topic, f"topic:create target={topic_slug}"),
-        ("topic update", edited_payload, f"topic:update target={topic_slug}"),
-        ("membership topic grant", grant_payload, f"membership:update target={target.user['id']}"),
+        (
+            "membership create",
+            created_membership_idempotent,
+            f"membership:create target={target.user['id']}",
+        ),
+        (
+            "membership update",
+            changed_idempotent,
+            f"membership:update target={target.user['id']}",
+        ),
+        ("topic create", created_topic_idempotent, f"topic:create target={topic_slug}"),
+        ("topic update", edited_topic_idempotent, f"topic:update target={topic_slug}"),
+        (
+            "membership topic grant",
+            grant_idempotent,
+            f"membership:update target={target.user['id']}",
+        ),
         (
             "membership topic revoke",
-            revoke_payload,
+            revoke_idempotent,
             f"membership:update target={target.user['id']}",
         ),
     ):
@@ -2678,5 +3383,40 @@ async def test_membership_and_topic_transitions_use_current_versions_and_exact_r
             principal_id=admin.user["id"],
             action=action,
         )
+    for label, payload, action in (
+        (
+            "stale membership update",
+            stale_payload,
+            f"membership:update target={target.user['id']}",
+        ),
+        ("stale topic update", stale_topic_payload, f"topic:update target={topic_slug}"),
+    ):
+        await _require_audit(
+            failures,
+            label,
+            harness,
+            project_id,
+            payload,
+            principal_id=admin.user["id"],
+            action=action,
+            denied=True,
+        )
+    for action, expected_count in (
+        (f"membership:create target={target.user['id']}", 1),
+        (f"membership:update target={target.user['id']}", 3),
+        (f"topic:create target={topic_slug}", 1),
+        (f"topic:update target={topic_slug}", 1),
+    ):
+        rows = await _matching_audits(
+            harness,
+            project_id,
+            principal_id=admin.user["id"],
+            action=action,
+            denied=False,
+        )
+        if len(rows) != expected_count:
+            failures.append(
+                f"membership/topic idempotency: {action} persisted {len(rows)} audit outcomes"
+            )
     assert target_session
     assert not failures, "\n".join(failures)
