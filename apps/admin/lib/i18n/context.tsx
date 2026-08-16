@@ -43,8 +43,14 @@ function detectInitial(): Locale {
   return browser === "es" ? "es" : "en";
 }
 
-export function LanguageProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>("en");
+export function LanguageProvider({
+  children,
+  initialLocale = "en",
+}: {
+  children: ReactNode;
+  initialLocale?: Locale;
+}) {
+  const [locale, setLocaleState] = useState<Locale>(initialLocale);
 
   // Resolve the persisted/browser locale on the client only, to avoid a hydration mismatch.
   useEffect(() => setLocaleState(detectInitial()), []);
@@ -55,6 +61,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   const setLocale = useCallback((next: Locale) => {
     setLocaleState(next);
     window.localStorage.setItem(STORAGE_KEY, next);
+    document.cookie = `${STORAGE_KEY}=${next}; Path=/; Max-Age=31536000; SameSite=Lax`;
   }, []);
 
   const t = useCallback<TranslateFn>(

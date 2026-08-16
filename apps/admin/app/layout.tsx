@@ -1,5 +1,14 @@
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import { cookies } from "next/headers";
+import type { CSSProperties, ReactNode } from "react";
+
+import "@fontsource-variable/ibm-plex-sans/index.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
+import "@fontsource/ibm-plex-mono/600.css";
+
+import { ThemeScript } from "@/components/theme-script";
+import type { Locale } from "@/lib/i18n/messages";
 
 import { Providers } from "./providers";
 import "./globals.css";
@@ -9,11 +18,25 @@ export const metadata: Metadata = {
   description: "Admin console for rsc-brain — consumes only the typed REST admin API.",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const cookieStore = await cookies();
+  const localeCookie = cookieStore.get("rsc-brain.locale")?.value;
+  const locale: Locale = localeCookie === "es" ? "es" : "en";
+
   return (
-    <html lang="en">
-      <body>
-        <Providers>{children}</Providers>
+    <html lang={locale} data-theme="system" suppressHydrationWarning>
+      <head>
+        <ThemeScript />
+      </head>
+      <body
+        style={
+          {
+            "--font-sans": '"IBM Plex Sans Variable"',
+            "--font-mono": '"IBM Plex Mono"',
+          } as CSSProperties
+        }
+      >
+        <Providers locale={locale}>{children}</Providers>
       </body>
     </html>
   );

@@ -2,6 +2,7 @@
 
 import { useI18n } from "@/lib/i18n/context";
 import { LOCALES, type Locale } from "@/lib/i18n/messages";
+import { Select } from "@/components/ui/select";
 
 const LABELS: Record<Locale, string> = { en: "English", es: "Español" };
 
@@ -9,9 +10,9 @@ const LABELS: Record<Locale, string> = { en: "English", es: "Español" };
 export function LanguageSelector() {
   const { locale, setLocale, t } = useI18n();
   return (
-    <select
+    <Select
       aria-label={t("common.language")}
-      className="h-9 rounded-md border border-neutral-300 bg-transparent px-2 text-sm dark:border-neutral-700"
+      className="min-w-28"
       value={locale}
       onChange={(event) => setLocale(event.target.value as Locale)}
     >
@@ -20,6 +21,6 @@ export function LanguageSelector() {
           {LABELS[code]}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }
