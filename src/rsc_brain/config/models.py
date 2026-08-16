@@ -79,7 +79,18 @@ class CapabilityConfig(BaseModel):
 
 
 class CapabilitiesConfig(BaseModel):
-    """The five configurable capabilities (FR-9.1)."""
+    """The configurable capabilities (FR-9.1).
+
+    AUDIT-077: `reranker` used to be required like the rest. FR-3.6 makes the reranker **optional and
+    P2**, `RerankerConfig.enabled` is `False` by default, and the product contains no call site for
+    it — so every operator had to choose a provider and a model name for a capability that is off,
+    unimplemented and never invoked, and `brain verify` then reported "every capability is
+    configured" for a route that leads nowhere. Against G1 that is one of five mandatory decisions
+    being dead weight.
+
+    It stays configurable, and becomes required the moment `reranker.enabled` is true (validated on
+    `AppConfig`, which is where both halves are visible).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -87,7 +98,7 @@ class CapabilitiesConfig(BaseModel):
     judge: CapabilityConfig
     topicalizer: CapabilityConfig
     embedder: CapabilityConfig
-    reranker: CapabilityConfig
+    reranker: CapabilityConfig | None = None
 
     @model_validator(mode="after")
     def _anchor_embedder_dimension(self) -> CapabilitiesConfig:
@@ -101,7 +112,19 @@ class CapabilitiesConfig(BaseModel):
         return self
 
     def get(self, capability: Capability) -> CapabilityConfig:
-        return getattr(self, capability.value)  # type: ignore[no-any-return]
+        """The route for ``capability``, or a refusal naming it.
+
+        AUDIT-077: an optional route means this can now be absent. Returning ``None`` to a caller
+        that expects a route is how a missing configuration becomes an ``AttributeError`` three
+        frames away, so the refusal happens here and says which capability is unconfigured.
+        """
+        route: CapabilityConfig | None = getattr(self, capability.value)
+        if route is None:
+            raise ValueError(
+                f"capability {capability.value!r} has no configured model route; "
+                f"set capabilities.{capability.value} to use it"
+            )
+        return route
 
 
 Weight = Annotated[float, Field(ge=0.0, le=1.0)]
@@ -415,6 +438,7 @@ class AppConfig(BaseModel):
     capabilities: CapabilitiesConfig
     recall: RecallConfig = Field(default_factory=RecallConfig)
     reranker: RerankerConfig = Field(default_factory=RerankerConfig)
+    # (the validator that ties `reranker.enabled` to its route lives after the field block)
     vision: VisionConfig = Field(default_factory=VisionConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     ingest: IngestConfig = Field(default_factory=IngestConfig)
@@ -424,3 +448,17 @@ class AppConfig(BaseModel):
     hunting: HuntingConfig = Field(default_factory=HuntingConfig)
     limits: PublicLimits = Field(default_factory=PublicLimits)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+
+    @model_validator(mode="after")
+    def _reranker_route_required_only_when_enabled(self) -> AppConfig:
+        """AUDIT-077: optional is not ignorable.
+
+        The route stops being mandatory for everyone, and starts being mandatory for whoever turns
+        the feature on — refused here, at load, rather than at the first call that finds no route.
+        """
+        if self.reranker.enabled and self.capabilities.reranker is None:
+            raise ValueError(
+                "reranker.enabled is true but capabilities.reranker has no model route; "
+                "configure the route or leave the reranker disabled (FR-3.6 makes it optional)"
+            )
+        return self
