@@ -40,7 +40,7 @@ The configuration-file selector and configuration values are separate concerns: 
 | `capabilities.judge` | object | required | Contradiction and decision model route. |
 | `capabilities.topicalizer` | object | required | Topic classification model route. |
 | `capabilities.embedder` | object | required | Embedding model route. |
-| `capabilities.reranker` | object | required | Reranking model route. |
+| `capabilities.reranker` | object | optional | Reranking model route. Required only when `reranker.enabled` is true (FR-3.6); the reranker is disabled by default and the recall path does not call it. |
 
 Every capability object has the same fields:
 

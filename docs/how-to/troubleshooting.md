@@ -48,7 +48,7 @@ database and that its schema is at the exact migration head.
 
 ## Capabilities check fails
 
-All five routes are required: `extractor`, `judge`, `topicalizer`, `embedder`, and `reranker`.
+Four routes are required: `extractor`, `judge`, `topicalizer` and `embedder`. `reranker` is optional (FR-3.6, disabled by default) and its route is required only when `reranker.enabled` is true.
 Each needs a provider and model. The embedder must return 1024-dimensional vectors.
 
 Compare the effective environment with the [configuration reference](../reference/configuration.md).
