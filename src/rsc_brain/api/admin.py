@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import audit as audit_mod
@@ -380,6 +381,21 @@ async def create_topic(
     return {"topic_id": topic_id, "slug": body.slug, "granted_topics": list(granted)}
 
 
+def _membership_target(user_id: str) -> uuid.UUID:
+    """The target principal's id, or a not-found refusal.
+
+    AUDIT-078: every new route passed this straight into `uuid.UUID(...)` inside the service, so a
+    malformed value raised `ValueError` and surfaced as a 500 with a traceback — a third response
+    class alongside 201/404, emitted BEFORE the membership lookup and therefore distinguishable at
+    zero cost. `api/authz.py` had already ratified the rule this now follows: "a malformed
+    identifier is absent, not an error that confirms the route".
+    """
+    try:
+        return uuid.UUID(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+
+
 @router.get("/memberships")
 async def list_memberships(
     request: Request, scope: ProjectScope = Depends(_needs_manage_read)
@@ -405,6 +421,7 @@ async def create_membership(
     separate explicit act, because empty authority is never all topics (AUDIT-020, R01).
     """
     identity = _identity(request)
+    _membership_target(body.user_id)
     if body.role not in _PROJECT_ROLES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -415,11 +432,31 @@ async def create_membership(
             status_code=status.HTTP_409_CONFLICT,
             detail="a membership is unique per user and project",
         )
-    membership_id = await identity.add_membership(
-        body.user_id, scope.project_id, role=body.role, can_curate=body.can_curate
-    )
+    try:
+        membership_id = await identity.add_membership(
+            body.user_id, scope.project_id, role=body.role, can_curate=body.can_curate
+        )
+    except IntegrityError as exc:
+        # AUDIT-078: the pre-check above and this write are separate transactions, so two concurrent
+        # creates both pass it and the loser meets the unique constraint — which is the real arbiter
+        # and holds. It used to surface as a 500, i.e. the same request answered 409 a second earlier.
+        # A violated user foreign key lands here too, and answers as absent rather than confirming
+        # from a 500-vs-201 split whether a given id exists somewhere on the instance.
+        if "project_memberships" in str(exc.orig):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="a membership is unique per user and project",
+            ) from exc
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
     await audit_mod.record_audit(
-        _sm(request), scope, action="membership:create", tool="console", topics_used=[]
+        _sm(request),
+        scope,
+        # AUDIT-078: the trail used to say an authority change happened and never for WHOM, which is
+        # the one question a permission audit exists to answer. No target column exists, so the
+        # target rides in the action until one does.
+        action=f"membership:create user_id={body.user_id} role={body.role}",
+        tool="console",
+        topics_used=[],
     )
     return {"membership_id": membership_id, "user_id": body.user_id, "role": body.role}
 
@@ -429,10 +466,15 @@ async def delete_membership(
     user_id: str, request: Request, scope: ProjectScope = Depends(_needs_config_write)
 ) -> dict[str, object]:
     """Detach a user from the caller's project; their access tokens stop resolving with it."""
+    _membership_target(user_id)
     if not await _identity(request).remove_membership(user_id, scope.project_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
     await audit_mod.record_audit(
-        _sm(request), scope, action="membership:remove", tool="console", topics_used=[]
+        _sm(request),
+        scope,
+        action=f"membership:remove user_id={user_id}",
+        tool="console",
+        topics_used=[],
     )
     return {"removed": user_id}
 
@@ -453,6 +495,22 @@ async def _change_authority(
     project's taxonomy is refused by the service (§3.2).
     """
     identity = _identity(request)
+    _membership_target(user_id)
+    if action == "grant":
+        # AUDIT-078: this route was gated by `_needs_config_write` alone, which calls `decide` with
+        # no `object_topics` — and `_topics_authorized(scope, None)` returns True. So a project-admin
+        # holding only `general` could POST /topics/payroll/grants for their OWN user id and read
+        # every sensitivity-4 chunk on the next request. `project-admin` implied all topics, which is
+        # exactly what R01/AUDIT-020 and docs/reference/permissions.md say it must never do — cited,
+        # verbatim, in this module's own docstrings.
+        #
+        # Subset semantics, the rule five other mutations already follow: you may only hand over
+        # authority you hold. Self-granting a held topic stays a no-op; self-granting an unheld one
+        # is now refused, so no separate self-target rule is needed.
+        #
+        # Revoking deliberately does NOT require it: escalation needs authority, de-escalation does
+        # not, and requiring it would strand a topic nobody present can withdraw.
+        enforce(decide(scope, Capability.PROJECT_CONFIG_WRITE, object_topics=[slug]))
     current = await identity.membership_topics(user_id, scope.project_id)
     if current is None:
         # Denied ≡ absent: an administrator of this project learns nothing about memberships
@@ -468,7 +526,8 @@ async def _change_authority(
     await audit_mod.record_audit(
         _sm(request),
         scope,
-        action=f"topic:{action}",
+        # AUDIT-078: the topic was recorded and the recipient was not.
+        action=f"topic:{action} user_id={user_id}",
         tool="console",
         topics_used=[slug],
     )
