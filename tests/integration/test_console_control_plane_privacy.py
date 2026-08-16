@@ -43,6 +43,7 @@ class _Seed:
     project_slug: str
     project_id: str
     other_project_id: str
+    audit_day: str
     visible_document_id: str
     hidden_document_id: str
     mixed_document_id: str
@@ -400,6 +401,7 @@ async def _seed_read_models(harness: Harness) -> _Seed:
         project_slug=project_slug,
         project_id=project_id,
         other_project_id=other_id,
+        audit_day=str(audit_anchor.date()),
         visible_document_id=str(visible_document.id),
         hidden_document_id=str(hidden_document.id),
         mixed_document_id=str(mixed_document.id),
@@ -668,7 +670,7 @@ async def test_allow_side_full_topic_read_models_are_complete(
     assert metrics.json()["adoption"] == {
         "recalls": 4,
         "active_principals": 4,
-        "recalls_per_day": [{"day": str(dt.datetime.now(dt.UTC).date()), "recalls": 4}],
+        "recalls_per_day": [{"day": seed.audit_day, "recalls": 4}],
     }
     assert metrics.json()["quality"] == {"abstention_rate": 0.75, "hunts_answered_pct": 0.667}
     # The graph's three topic-tagged relations are claims too; all six are authorized here.
@@ -773,7 +775,7 @@ async def test_general_only_metrics_filter_mixed_topic_aggregates_before_countin
     assert payload["adoption"] == {
         "recalls": 2,
         "active_principals": 2,
-        "recalls_per_day": [{"day": str(dt.datetime.now(dt.UTC).date()), "recalls": 2}],
+        "recalls_per_day": [{"day": seed.audit_day, "recalls": 2}],
     }, "hidden and mixed audit rows leaked through activity aggregates"
     assert payload["quality"] == {"abstention_rate": 0.5, "hunts_answered_pct": 1.0}, (
         "hidden and mixed audit/gap-backed hunt rows changed quality aggregates"
