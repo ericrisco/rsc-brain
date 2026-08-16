@@ -1137,7 +1137,12 @@ async def observability_recalls(
         )
     except audit_mod.InvalidRecallCursor as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="invalid cursor"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="invalid cursor"
+        ) from exc
+    except audit_mod.RecallCursorSigningUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="pagination temporarily unavailable",
         ) from exc
     return ReadPage[RecallView](
         items=[RecallView.model_validate(item) for item in page.items],
