@@ -162,6 +162,17 @@ class RecallConfig(BaseModel):
     tau: Weight = Field(
         default=0.45, description="Relevance threshold τ below which recall abstains (D2)."
     )
+    # spec `reranked-abstention`: τ over the BLENDED score cannot meet G4 — measured on a real host,
+    # the answerable and unanswerable populations overlap on embedding similarity by -0.032, and no
+    # scalar separates overlapping populations. When the reranker is enabled the gate reads its
+    # relevance score instead, which is a different quantity and therefore needs its own threshold.
+    tau_rerank: Weight = Field(
+        default=0.5,
+        description="Relevance threshold below which recall abstains when the reranker is enabled.",
+    )
+    rerank_candidates: int = Field(
+        default=10, ge=1, le=50, description="How many top candidates the reranker scores (R38)."
+    )
     weights: ScoreWeights = Field(default_factory=ScoreWeights)
     half_life_days: int = Field(
         default=365, gt=0, description="Freshness half-life default (FR-3.2)."

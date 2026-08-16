@@ -56,6 +56,9 @@ class ApiDeps:
     # How the service is reached from outside (AUDIT-038 / R51): the advertised origin and which
     # proxies may influence it. None means nothing about the request is trusted.
     ingress: IngressConfig | None = None
+    # spec `reranked-abstention`: FR-3.6 is opt-in and off by default, so this stays False and the
+    # recall path is byte-identical to SPEC-06 until an operator turns it on.
+    reranker_enabled: bool = False
 
     # R37: set in production so an accepted upload is queued rather than processed on the request
     # thread. Left None by tests and the CLI, where a synchronous ingest is the point.
@@ -94,12 +97,19 @@ class ApiDeps:
         )
 
     def retriever(self) -> PgRetriever:
+        from rsc_brain.recall.reranker import LlmReranker
+
         return PgRetriever(
             sessionmaker=self.sessionmaker,
             gateway=self.gateway,
             graph_store=AgeGraphStore(self.sessionmaker),
             config=self.recall_config or RecallConfig(),
             ontology=OntologyRecall(self.sessionmaker),
+            # spec `reranked-abstention`: constructed only when the operator enabled it, so an
+            # install that has not opted in takes the SPEC-06 blended path with nothing added. The
+            # capability's route was mandatory to configure and had no call site until now
+            # (AUDIT-077); this is that call site.
+            reranker=LlmReranker(self.gateway) if self.reranker_enabled else None,
         )
 
 
@@ -122,6 +132,7 @@ def _deps_from_config() -> tuple[ApiDeps, AsyncEngine]:
         data_dir=dependencies.data_dir,
         config=dependencies.pipeline_config,
         recall_config=dependencies.recall_config,
+        reranker_enabled=dependencies.reranker_enabled,
         sync_sessionmaker=make_sync_sessionmaker(make_sync_engine()),
         ingress=dependencies.ingress,
         hunting=dependencies.hunting,

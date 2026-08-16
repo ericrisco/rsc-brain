@@ -39,6 +39,7 @@ class RuntimeDependencies:
     limits: PublicLimits
     ingress: IngressConfig
     hunting: HuntingConfig
+    reranker_enabled: bool
     data_dir: str
 
     async def dispose(self) -> None:
@@ -111,6 +112,9 @@ def build(role: Role) -> RuntimeDependencies:
             default_tag=settings.ingest.default_tag,
         ),
         recall_config=settings.recall,
+        # spec `reranked-abstention`: one place decides it, so the API and the worker
+        # can never disagree about whether abstention is reranked (R53).
+        reranker_enabled=settings.reranker.enabled,
         limits=settings.limits,
         ingress=settings.ingress,
         hunting=settings.hunting,

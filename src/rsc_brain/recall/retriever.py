@@ -27,6 +27,7 @@ from rsc_brain.ontology.recall import OntologyRecall
 from rsc_brain.recall.gaps import register_gap
 from rsc_brain.recall.interfaces import Fragment, RecallResult
 from rsc_brain.recall.permissions import chunk_visibility_clause, sensitive_tags
+from rsc_brain.recall.reranker import Reranker, abstains
 from rsc_brain.recall.scoring import score_fragment
 from rsc_brain.recall.temporal_intent import TemporalKind, TemporalMode, classify
 from rsc_brain.scope import ProjectScope
@@ -111,11 +112,14 @@ class PgRetriever:
         config: RecallConfig | None = None,
         contradiction_resolver: object | None = None,
         ontology: OntologyRecall | None = None,
+        reranker: Reranker | None = None,
     ) -> None:
         self._sm = sessionmaker
         self._gateway = gateway
         self._graph = graph_store
         self._config = config or RecallConfig()
+        # spec `reranked-abstention`: None keeps the SPEC-06 blended-threshold behaviour exactly.
+        self._reranker = reranker
         # Optional on-consume contradiction re-check (FR-3.4). None keeps SPEC-06 behaviour.
         self._resolver = contradiction_resolver
         # Optional bounded ontology query-expansion (SPEC-24, FR-17.5). None (default) OR a project
@@ -205,7 +209,23 @@ class PgRetriever:
             key=lambda item: item[1],
             reverse=True,
         )
-        if scored[0][1] < self._config.tau:
+        # spec `reranked-abstention`: the reranker decides ONLY whether to answer (FR-3.3). The
+        # blend above still decides order (FR-3.2), and this runs on candidates the in-query
+        # permission filter already reduced (FR-4.2) — it can never widen what a caller may see.
+        # `None` means the seam had no opinion (unavailable provider, nothing to score), and the
+        # blended threshold governs, so a degraded provider never silently answers or refuses
+        # everything.
+        verdict: bool | None = None
+        if self._reranker is not None:
+            page = scored[: self._config.rerank_candidates]
+            verdict = await abstains(
+                self._reranker,
+                query,
+                [candidate.text for candidate, _ in page],
+                self._config.tau_rerank,
+            )
+        should_abstain = verdict if verdict is not None else scored[0][1] < self._config.tau
+        if should_abstain:
             await register_gap(self._sm, scope, query, topics=topics_hint or ())
             return RecallResult(found=False, gap_registered=True)
 
