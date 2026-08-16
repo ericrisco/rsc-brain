@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import get_args
 from urllib.parse import unquote, urlsplit
 
-from click import Command, Group
 from pydantic import BaseModel
 from typer.main import get_command
 
@@ -336,7 +335,26 @@ def check_reference_contract(repository: Path) -> list[Finding]:
         if not path.is_file():
             continue
         documented = collect_documented_tokens([path])
-        for interface in sorted(missing_coverage(collector(repository), documented)):
+        inventory = collector(repository)
+        if not inventory:
+            # A coverage rule compares an inventory against the docs. An EMPTY inventory subtracts
+            # to nothing, so the rule reports "fully documented" having checked no interface at
+            # all — the gate passes precisely when its collector is broken. This product always
+            # ships CLI commands, MCP tools, config fields and REST operations, so an empty
+            # inventory is never a true observation; it is the collector failing.
+            findings.append(
+                Finding(
+                    rule=rule,
+                    path=Path(relative),
+                    line=1,
+                    message=(
+                        f"{collector.__name__} returned an empty inventory, so this coverage rule "
+                        "would pass without checking anything — treat as a broken collector"
+                    ),
+                )
+            )
+            continue
+        for interface in sorted(missing_coverage(inventory, documented)):
             findings.append(
                 Finding(
                     rule=rule,
@@ -439,15 +457,26 @@ def missing_coverage(inventory: Iterable[str], documented: Iterable[str]) -> set
 
 
 def _walk_click_commands(
-    command: Command,
+    command: object,
     prefix: tuple[str, ...],
     inventory: set[str],
 ) -> None:
-    if isinstance(command, Group):
-        for name, child in sorted(command.commands.items()):
-            path = (*prefix, name)
-            inventory.add("brain " + " ".join(path))
-            _walk_click_commands(child, path, inventory)
+    """Walk a Typer/Click command tree, duck-typed on ``.commands``.
+
+    This used to branch on ``isinstance(command, click.Group)``. Typer 0.27 vendors its own click,
+    so the root became an instance of ``typer._click.core.Command`` and that test silently turned
+    false — the walk stopped at the root and the CLI inventory came back **empty**, which
+    ``missing_coverage`` reports as "nothing undocumented". A dependency bump could therefore turn
+    this whole gate green over zero commands. Which class typer wraps is typer's business; whether
+    a command holds subcommands is the question this walk actually asks.
+    """
+    children = getattr(command, "commands", None)
+    if not isinstance(children, dict):
+        return
+    for name, child in sorted(children.items()):
+        path = (*prefix, name)
+        inventory.add("brain " + " ".join(path))
+        _walk_click_commands(child, path, inventory)
 
 
 def _is_tool_decorator(decorator: ast.expr) -> bool:

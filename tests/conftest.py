@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from testcontainers.postgres import PostgresContainer
+from testcontainers.community.postgres import PostgresContainer
 
 from rsc_brain.config.models import ANCHORED_EMBEDDING_DIM, CapabilitiesConfig, CapabilityConfig
 from rsc_brain.gateway.model_gateway import CompletionFn, EmbeddingFn, ModelGateway
