@@ -29,7 +29,7 @@ export default function ObservabilityPage() {
     if (me && !project && me.memberships[0]) setProject(me.memberships[0].project);
   }, [me, project]);
 
-  if (!me) return <main className="p-6 text-sm text-neutral-500">{t("common.loading")}</main>;
+  if (!me) return <main className="p-6 text-sm text-text-secondary">{t("common.loading")}</main>;
 
   return (
     <main className="mx-auto max-w-5xl space-y-6 p-6">
@@ -37,7 +37,7 @@ export default function ObservabilityPage() {
         <h1 className="text-xl font-semibold">{t("observability.title")}</h1>
         <select
           aria-label={t("common.project")}
-          className="h-9 rounded-md border border-neutral-300 bg-transparent px-2 text-sm dark:border-neutral-700"
+          className="h-9 rounded-[var(--radius-control)] border border-border-strong bg-surface px-2 text-sm text-text-primary"
           value={project}
           onChange={(e) => setProject(e.target.value)}
         >
@@ -55,7 +55,7 @@ export default function ObservabilityPage() {
           <ApprovalQueue project={project} />
         </>
       ) : (
-        <p className="text-sm text-neutral-500">{t("common.selectProject")}</p>
+        <p className="text-sm text-text-secondary">{t("common.selectProject")}</p>
       )}
     </main>
   );
@@ -102,7 +102,7 @@ function RecallStream({ project }: { project: string }) {
         </div>
         <select
           aria-label={t("observability.principalFilter")}
-          className="h-8 rounded-md border border-neutral-300 bg-transparent px-2 text-sm dark:border-neutral-700"
+          className="h-9 rounded-[var(--radius-control)] border border-border-strong bg-surface px-2 text-sm text-text-primary"
           value={principal}
           onChange={(e) => setPrincipal(e.target.value)}
         >
@@ -113,10 +113,10 @@ function RecallStream({ project }: { project: string }) {
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
-          <p className="text-sm text-neutral-500">{t("observability.noQueries")}</p>
+          <p className="text-sm text-text-secondary">{t("observability.noQueries")}</p>
         ) : (
           <table className="w-full text-left text-sm">
-            <thead className="text-neutral-500">
+            <thead className="text-text-secondary">
               <tr>
                 <th className="py-1">{t("observability.query")}</th>
                 <th>{t("observability.principal")}</th>
@@ -127,7 +127,7 @@ function RecallStream({ project }: { project: string }) {
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="border-t border-neutral-100 dark:border-neutral-800">
+                <tr key={r.id} className="border-t border-border">
                   <td className="py-1 font-mono text-xs">{r.query_text ?? r.query_hash}</td>
                   <td>{r.principal_type}</td>
                   <td>{r.result_count ?? 0}</td>
@@ -156,7 +156,7 @@ function ApprovalQueue({ project }: { project: string }) {
       </CardHeader>
       <CardContent className="space-y-3">
         {docs.length === 0 ? (
-          <p className="text-sm text-neutral-500">{t("observability.nothingPending")}</p>
+          <p className="text-sm text-text-secondary">{t("observability.nothingPending")}</p>
         ) : (
           docs.map((doc) => (
             <PendingRow
@@ -191,9 +191,9 @@ function PendingRow({
   const t = useT();
   const [edited, setEdited] = useState(tags.join(", "));
   return (
-    <div className="rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
+    <div className="rounded-[var(--radius-panel)] border border-border p-3">
       <p className="font-medium">{title}</p>
-      <p className="mt-1 line-clamp-2 text-sm text-neutral-500">{preview}</p>
+      <p className="mt-1 line-clamp-2 text-sm text-text-secondary">{preview}</p>
       <div className="mt-2 flex items-center gap-2">
         <Input
           aria-label={t("observability.proposedTags")}

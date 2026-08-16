@@ -52,6 +52,7 @@
   --ui-warning-muted: oklch(0.95 0.04 80);
   --ui-danger: oklch(0.52 0.19 25);
   --ui-danger-muted: oklch(0.95 0.045 25);
+  --ui-on-danger: var(--instrument-neutral-50);
   --ui-info: var(--instrument-cyan-700);
   --ui-info-muted: var(--instrument-cyan-50);
   --ui-overlay: oklch(0.125 0.006 230 / 0.66);
@@ -81,6 +82,7 @@
   --ui-warning-muted: oklch(0.25 0.05 80);
   --ui-danger: oklch(0.72 0.17 25);
   --ui-danger-muted: oklch(0.25 0.055 25);
+  --ui-on-danger: var(--instrument-neutral-950);
   --ui-info: var(--instrument-cyan-400);
   --ui-info-muted: var(--instrument-cyan-950);
   color-scheme: dark;
@@ -106,6 +108,7 @@
     --ui-warning-muted: oklch(0.25 0.05 80);
     --ui-danger: oklch(0.72 0.17 25);
     --ui-danger-muted: oklch(0.25 0.055 25);
+    --ui-on-danger: var(--instrument-neutral-950);
     --ui-info: var(--instrument-cyan-400);
     --ui-info-muted: var(--instrument-cyan-950);
     color-scheme: dark;
@@ -131,6 +134,7 @@
   --color-warning-muted: var(--ui-warning-muted);
   --color-danger: var(--ui-danger);
   --color-danger-muted: var(--ui-danger-muted);
+  --color-on-danger: var(--ui-on-danger);
   --color-info: var(--ui-info);
   --color-info-muted: var(--ui-info-muted);
   --color-overlay: var(--ui-overlay);

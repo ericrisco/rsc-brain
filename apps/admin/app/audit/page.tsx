@@ -61,7 +61,7 @@ function AuditView({ project }: { project: string }) {
           />
           <select
             aria-label={t("audit.principalType")}
-            className="h-9 rounded-md border border-neutral-300 bg-transparent px-2 text-sm dark:border-neutral-700"
+            className="h-9 rounded-[var(--radius-control)] border border-border-strong bg-surface px-2 text-sm text-text-primary"
             value={draft.principal_type ?? ""}
             onChange={(e) => set("principal_type", e.target.value || undefined)}
           >
@@ -113,10 +113,10 @@ function AuditView({ project }: { project: string }) {
         </div>
 
         {rows.length === 0 ? (
-          <p className="text-sm text-neutral-500">{t("audit.empty")}</p>
+          <p className="text-sm text-text-secondary">{t("audit.empty")}</p>
         ) : (
           <table className="w-full text-left text-sm">
-            <thead className="text-neutral-500">
+            <thead className="text-text-secondary">
               <tr>
                 <th className="py-1">{t("audit.ts")}</th>
                 <th>{t("audit.principal")}</th>
@@ -129,11 +129,11 @@ function AuditView({ project }: { project: string }) {
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.id} className="border-t border-neutral-100 dark:border-neutral-800">
+                <tr key={row.id} className="border-t border-border">
                   <td className="py-1 whitespace-nowrap">{formatDateTime(row.ts, locale)}</td>
                   <td>
                     {row.principal_type}
-                    <span className="text-neutral-400">:{(row.principal_id ?? "").slice(0, 8)}</span>
+                    <span className="text-text-secondary">:{(row.principal_id ?? "").slice(0, 8)}</span>
                   </td>
                   <td>{row.action}</td>
                   <td>{row.tool ?? "—"}</td>

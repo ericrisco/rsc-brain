@@ -1,13 +1,18 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { axe } from "jest-axe";
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { DesignSystemCatalog } from "@/components/design-system-catalog";
 import { ThemeSelector } from "@/components/theme-selector";
+import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
+import { Menu, MenuItem } from "@/components/ui/menu";
 import { Tabs } from "@/components/ui/tabs";
+import { Toast } from "@/components/ui/toast";
+import { Tooltip } from "@/components/ui/tooltip";
+import { LanguageProvider, useI18n } from "@/lib/i18n/context";
 
 function InteractiveTabs() {
   const [value, setValue] = useState("first");
@@ -24,6 +29,11 @@ function InteractiveTabs() {
       {value === "first" ? "First panel" : "Second panel"}
     </Tabs>
   );
+}
+
+function LocaleProbe() {
+  const { locale } = useI18n();
+  return <output>{locale}</output>;
 }
 
 describe("design-system runtime", () => {
@@ -82,5 +92,56 @@ describe("design-system runtime", () => {
 
     expect(screen.getByRole("dialog", { name: "Revoke credential" })).toBeVisible();
     expect(screen.getByText("Immediate effect")).toBeVisible();
+  });
+
+  it("operates menus with arrow keys and restores focus on Escape", async () => {
+    const user = userEvent.setup();
+    render(
+      <Menu label="Actions">
+        <MenuItem>Inspect</MenuItem>
+        <MenuItem>Archive</MenuItem>
+      </Menu>,
+    );
+
+    const trigger = screen.getByRole("button", { name: "Actions" });
+    await user.click(trigger);
+    await user.keyboard("{ArrowDown}");
+    await waitFor(() => expect(screen.getByRole("menuitem", { name: "Inspect" })).toHaveFocus());
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("menuitem", { name: "Archive" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("connects tooltip descriptions and exposes dismissible live feedback", async () => {
+    const user = userEvent.setup();
+    const onDismiss = vi.fn();
+    render(
+      <>
+        <Tooltip content="Copy identifier">
+          <Button>Copy</Button>
+        </Tooltip>
+        <Toast title="Saved" description="Policy updated" onDismiss={onDismiss} duration={0} />
+      </>,
+    );
+
+    expect(screen.getByRole("button", { name: "Copy" })).toHaveAccessibleDescription("Copy identifier");
+    expect(screen.getByRole("status")).toHaveTextContent("Policy updated");
+    await user.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("treats the server locale as authoritative during hydration", () => {
+    window.localStorage.setItem("rsc-brain.locale", "en");
+    render(
+      <LanguageProvider initialLocale="es">
+        <LocaleProbe />
+      </LanguageProvider>,
+    );
+
+    expect(screen.getByText("es")).toBeVisible();
+    expect(document.documentElement.lang).toBe("es");
+    expect(window.localStorage.getItem("rsc-brain.locale")).toBe("es");
   });
 });

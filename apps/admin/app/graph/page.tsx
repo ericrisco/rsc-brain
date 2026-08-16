@@ -55,18 +55,18 @@ function GraphView({ project }: { project: string }) {
         </div>
 
         {name && !isFetching && !data ? (
-          <p className="text-sm text-neutral-500">{t("graph.notFound")}</p>
+          <p className="text-sm text-text-secondary">{t("graph.notFound")}</p>
         ) : null}
 
         {data ? (
           <>
-            <div className="rounded-md border border-neutral-200 p-3 dark:border-neutral-800">
-              <p className="text-xs text-neutral-500">{t("graph.center")}</p>
+            <div className="rounded-[var(--radius-panel)] border border-border p-3">
+              <p className="text-xs text-text-secondary">{t("graph.center")}</p>
               <p className="font-medium">
                 {data.center.name}{" "}
-                <span className="text-neutral-400">({data.center.type})</span>
+                <span className="text-text-secondary">({data.center.type})</span>
                 {data.center.anchored ? (
-                  <span className="ml-2 rounded bg-emerald-100 px-1 text-xs text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200">
+                  <span className="ml-2 rounded bg-success-muted px-1 text-xs text-success">
                     {t("graph.anchored")}
                   </span>
                 ) : null}
@@ -74,14 +74,14 @@ function GraphView({ project }: { project: string }) {
             </div>
 
             <div>
-              <p className="mb-1 text-sm text-neutral-500">
+              <p className="mb-1 text-sm text-text-secondary">
                 {t("graph.showing", { shown: data.neighbors.length, total: data.total })}
               </p>
               {data.neighbors.length === 0 ? (
-                <p className="text-sm text-neutral-400">{t("common.none")}</p>
+                <p className="text-sm text-text-secondary">{t("common.none")}</p>
               ) : (
                 <table className="w-full text-left text-sm">
-                  <thead className="text-neutral-500">
+                  <thead className="text-text-secondary">
                     <tr>
                       <th className="py-1">{t("graph.neighbors")}</th>
                       <th>{t("graph.type")}</th>
@@ -96,7 +96,7 @@ function GraphView({ project }: { project: string }) {
                       return (
                         <tr
                           key={neighbor.id}
-                          className="border-t border-neutral-100 dark:border-neutral-800"
+                          className="border-t border-border"
                         >
                           <td className="py-1">
                             <button

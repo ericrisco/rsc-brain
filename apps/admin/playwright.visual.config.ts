@@ -10,6 +10,8 @@ const viewports = [
 
 const themes = ["system", "light", "dark"] as const;
 const locales = ["en", "es"] as const;
+const externalBaseUrl = process.env.PLAYWRIGHT_BASE_URL;
+const localBaseUrl = "http://127.0.0.1:3102";
 
 /**
  * A visual spec runs once per viewport/theme/locale project. Specs can read
@@ -23,8 +25,16 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   reporter: process.env.CI ? "github" : "list",
   snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",
+  webServer: externalBaseUrl
+    ? undefined
+    : {
+        command: "npm run build && npm run start -- --hostname 127.0.0.1 --port 3102",
+        url: `${localBaseUrl}/login`,
+        reuseExistingServer: !process.env.CI,
+        timeout: 120_000,
+      },
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000",
+    baseURL: externalBaseUrl ?? localBaseUrl,
     trace: "retain-on-failure",
   },
   projects: viewports.flatMap(({ name: viewportName, viewport }) =>

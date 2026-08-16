@@ -32,7 +32,7 @@ export default function ConnectionsPage() {
   }, [me, project]);
 
   if (!me) {
-    return <main className="p-6 text-sm text-neutral-500">{t("common.loading")}</main>;
+    return <main className="p-6 text-sm text-text-secondary">{t("common.loading")}</main>;
   }
 
   async function onCreate(event: FormEvent) {
@@ -47,7 +47,7 @@ export default function ConnectionsPage() {
       <header className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">{t("connections.title")}</h1>
-          <p className="text-sm text-neutral-500">{t("connections.subtitle")}</p>
+          <p className="text-sm text-text-secondary">{t("connections.subtitle")}</p>
         </div>
         <Link href="/" className="text-sm underline">
           ← {t("connections.back")}
@@ -65,7 +65,7 @@ export default function ConnectionsPage() {
               <Label htmlFor="project">{t("common.project")}</Label>
               <select
                 id="project"
-                className="h-9 rounded-md border border-neutral-300 bg-transparent px-2 text-sm dark:border-neutral-700"
+                className="h-9 rounded-[var(--radius-control)] border border-border-strong bg-surface px-2 text-sm text-text-primary"
                 value={project}
                 onChange={(event) => setProject(event.target.value)}
               >
@@ -91,7 +91,7 @@ export default function ConnectionsPage() {
           </form>
 
           {freshToken ? (
-            <div className="mt-4 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm dark:bg-amber-950">
+            <div className="mt-4 rounded-[var(--radius-panel)] border border-warning bg-warning-muted p-3 text-sm">
               <p className="mb-1 font-medium">{t("connections.copyNow")}</p>
               <code className="break-all">{freshToken}</code>
             </div>
@@ -108,7 +108,7 @@ export default function ConnectionsPage() {
             {(patList?.pats ?? []).map((pat) => (
               <li
                 key={pat.id}
-                className="flex items-center justify-between rounded-md border border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800"
+                className="flex items-center justify-between rounded-[var(--radius-panel)] border border-border px-3 py-2 text-sm"
               >
                 <span>
                   <span className="font-medium">{pat.name ?? t("connections.unnamed")}</span> ·{" "}
@@ -126,7 +126,7 @@ export default function ConnectionsPage() {
               </li>
             ))}
             {(patList?.pats ?? []).length === 0 ? (
-              <li className="text-sm text-neutral-500">{t("connections.empty")}</li>
+              <li className="text-sm text-text-secondary">{t("connections.empty")}</li>
             ) : null}
           </ul>
         </CardContent>
@@ -138,7 +138,7 @@ export default function ConnectionsPage() {
           <CardDescription>{t("connections.oauthDesc")}</CardDescription>
         </CardHeader>
         <CardContent>
-          <p className="text-sm text-neutral-500">{t("connections.oauthBody")}</p>
+          <p className="text-sm text-text-secondary">{t("connections.oauthBody")}</p>
         </CardContent>
       </Card>
     </main>

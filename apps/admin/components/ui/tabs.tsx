@@ -30,7 +30,7 @@ export function Tabs({
               type="button"
               role="tab"
               id={`tab-${item.value}`}
-              aria-controls={`panel-${item.value}`}
+              aria-controls={selected && children ? `panel-${item.value}` : undefined}
               aria-selected={selected}
               tabIndex={selected ? 0 : -1}
               onClick={() => onValueChange(item.value)}
