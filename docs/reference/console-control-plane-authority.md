@@ -2,7 +2,10 @@
 
 # Console control-plane authority matrix
 
-Status: implementation contract for Console Control Plane T001. This reference records the
+Status: **prospective SDD contract** produced by Console Control Plane T001. It becomes the live API
+reference only when T002 is green and the existing REST/permissions references are updated in the
+same revision. Until then, [REST API reference](rest-api.md) and
+[permissions](permissions.md) describe the deployed behavior. This document records the
 endpoint-to-UI boundary approved in UX-SPEC-01. It is intentionally API-authoritative: the
 browser may reflect a capability, but no route may infer it from a role label or enforce it only
 by hiding an action.
@@ -24,6 +27,16 @@ project content.
 | `memberships[]` | Discoverable project memberships | Each member contains `project`, presentation-only `role`, `capabilities`, `allowed_topics`, and `can_curate`. |
 | `memberships[].capabilities` | Current membership capability decisions | Capability strings are authoritative; clients do not derive them from `role` or `can_curate`. |
 | `preference_metadata` | Server-held non-secret preference state | Contains display preferences only and never credential material. |
+
+The envelope has exactly `identity`, the temporary display-safe compatibility alias `user`,
+`is_owner`, `platform_capabilities`, `memberships`, and `preference_metadata`. Identity objects have
+exactly `id`, `email`, and presentation-only platform `role`; membership objects have exactly
+`project`, presentation-only `role`, `capabilities`, `allowed_topics`, and `can_curate`. The
+compatibility alias is removed only through a separately versioned API change.
+
+`preference_metadata` has exactly `theme` and `locale`. Until a user saves an override, their
+effective defaults are `theme: "system"` and `locale: "es"`; allowed persisted values are
+`system|light|dark` and `es|en`. These are display preferences, never credential storage.
 
 Platform capabilities do not add a membership or topic authority. Conversely, a membership
 capability does not add platform inventory authority.
