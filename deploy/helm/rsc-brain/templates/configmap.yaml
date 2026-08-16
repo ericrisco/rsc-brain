@@ -9,6 +9,9 @@ metadata:
     {{- include "rsc-brain.labels" . | nindent 4 }}
 data:
   RSC_BRAIN_DOMAIN: {{ .Values.ingress.domain | quote }}
+  {{- /* AUDIT-084: the switch travels with the route. Shipping the route alone configured a
+     capability that could never run, and the operator had no way to tell. */}}
+  RSC_BRAIN_RERANKER__ENABLED: {{ .Values.reranker.enabled | quote }}
   {{- range $layer := list "embedder" "extractor" "judge" "topicalizer" "reranker" }}
   {{- $cfg := index $.Values.gateway $layer }}
   {{- if $cfg }}

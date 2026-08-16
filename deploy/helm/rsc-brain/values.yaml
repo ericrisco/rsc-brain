@@ -123,3 +123,7 @@ securityContext:
 # ingress.domain alone does not set that field. Use valueFrom Secret refs for credentials. The console
 # receives only console.extraEnv, so model configuration and credentials cannot leak into it.
 extraEnv: []
+
+# AUDIT-084: compose/Helm parity for the switch, not just the route. Opt-in (FR-3.6).
+reranker:
+  enabled: false

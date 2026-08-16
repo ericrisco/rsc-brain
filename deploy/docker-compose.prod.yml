@@ -57,6 +57,11 @@ x-app-env: &app-env
   RSC_BRAIN_CAPABILITIES__RERANKER__PROVIDER: ${RSC_BRAIN_CAPABILITIES__RERANKER__PROVIDER:-ollama}
   RSC_BRAIN_CAPABILITIES__RERANKER__MODEL: ${RSC_BRAIN_CAPABILITIES__RERANKER__MODEL:-bge-reranker-v2-m3}
   RSC_BRAIN_CAPABILITIES__RERANKER__API_BASE: ${RSC_BRAIN_CAPABILITIES__RERANKER__API_BASE:-http://ollama:11434}
+  # AUDIT-084: the three route variables above were shipped and this switch was not, so an
+  # operator who set `reranker.enabled` in .env the way every other key is set got nothing —
+  # `--env-file` feeds interpolation, not the container. The topology carried the configuration
+  # for a capability that could never run. Opt-in (FR-3.6): still off unless asked for.
+  RSC_BRAIN_RERANKER__ENABLED: ${RSC_BRAIN_RERANKER__ENABLED:-false}
 
 services:
   # AUDIT-061: the image runs as uid 10001, but Docker creates fresh named volumes owned by root —
