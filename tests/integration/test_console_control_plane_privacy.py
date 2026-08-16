@@ -42,9 +42,11 @@ _HIDDEN = "hidden"
 class _Seed:
     project_slug: str
     project_id: str
+    other_project_id: str
     visible_document_id: str
     hidden_document_id: str
     mixed_document_id: str
+    visible_audit_ids: tuple[str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +55,7 @@ class _GraphSeed:
     visible_neighbor: str
     hidden_neighbor: str
     mixed_neighbor: str
+    foreign_neighbor: str
 
 
 def _client(harness: Harness, tmp_path: Path) -> httpx.AsyncClient:
@@ -95,6 +98,7 @@ async def _seed_read_models(harness: Harness) -> _Seed:
     other_id = await harness.setup_project(other_slug, [(_VISIBLE, 0), (_HIDDEN, 4)])
     project_uuid = uuid.UUID(project_id)
     other_uuid = uuid.UUID(other_id)
+    audit_anchor = dt.datetime.now(dt.UTC).replace(microsecond=0)
 
     visible_document = models.Document(
         project_id=project_uuid,
@@ -164,6 +168,59 @@ async def _seed_read_models(harness: Harness) -> _Seed:
         count=321,
         status="open",
     )
+    visible_success_audit = models.AuditLog(
+        project_id=project_uuid,
+        principal_type="human",
+        principal_id="visible-success-principal",
+        action="recall",
+        duration_ms=11,
+        topics_used=[_VISIBLE],
+        result_count=1,
+        ts=audit_anchor,
+    )
+    hidden_audit = models.AuditLog(
+        project_id=project_uuid,
+        principal_type="human",
+        principal_id="hidden-principal",
+        action="recall",
+        duration_ms=9_999,
+        topics_used=[_HIDDEN],
+        result_count=987,
+        denied=True,
+        ts=audit_anchor - dt.timedelta(seconds=1),
+    )
+    mixed_audit = models.AuditLog(
+        project_id=project_uuid,
+        principal_type="human",
+        principal_id="mixed-hidden-principal",
+        action="recall",
+        duration_ms=8_888,
+        topics_used=[_VISIBLE, _HIDDEN],
+        result_count=654,
+        denied=True,
+        ts=audit_anchor - dt.timedelta(seconds=2),
+    )
+    visible_abstained_audit = models.AuditLog(
+        project_id=project_uuid,
+        principal_type="human",
+        principal_id="visible-abstained-principal",
+        action="recall",
+        duration_ms=12,
+        topics_used=[_VISIBLE],
+        result_count=0,
+        denied=True,
+        ts=audit_anchor - dt.timedelta(seconds=3),
+    )
+    other_audit = models.AuditLog(
+        project_id=other_uuid,
+        principal_type="human",
+        principal_id="other-principal",
+        action="recall",
+        duration_ms=321,
+        topics_used=[_VISIBLE],
+        result_count=321,
+        ts=audit_anchor - dt.timedelta(seconds=4),
+    )
 
     async with harness.sm() as session:
         session.add_all(
@@ -215,54 +272,11 @@ async def _seed_read_models(harness: Harness) -> _Seed:
                     object="Elsewhere",
                     tags=[_VISIBLE],
                 ),
-                models.AuditLog(
-                    project_id=project_uuid,
-                    principal_type="human",
-                    principal_id="visible-success-principal",
-                    action="recall",
-                    duration_ms=11,
-                    topics_used=[_VISIBLE],
-                    result_count=1,
-                ),
-                models.AuditLog(
-                    project_id=project_uuid,
-                    principal_type="human",
-                    principal_id="visible-abstained-principal",
-                    action="recall",
-                    duration_ms=12,
-                    topics_used=[_VISIBLE],
-                    result_count=0,
-                    denied=True,
-                ),
-                models.AuditLog(
-                    project_id=project_uuid,
-                    principal_type="human",
-                    principal_id="hidden-principal",
-                    action="recall",
-                    duration_ms=9_999,
-                    topics_used=[_HIDDEN],
-                    result_count=987,
-                    denied=True,
-                ),
-                models.AuditLog(
-                    project_id=project_uuid,
-                    principal_type="human",
-                    principal_id="mixed-hidden-principal",
-                    action="recall",
-                    duration_ms=8_888,
-                    topics_used=[_VISIBLE, _HIDDEN],
-                    result_count=654,
-                    denied=True,
-                ),
-                models.AuditLog(
-                    project_id=other_uuid,
-                    principal_type="human",
-                    principal_id="other-principal",
-                    action="recall",
-                    duration_ms=321,
-                    topics_used=[_VISIBLE],
-                    result_count=321,
-                ),
+                visible_success_audit,
+                hidden_audit,
+                mixed_audit,
+                visible_abstained_audit,
+                other_audit,
                 models.Skill(
                     project_id=project_uuid,
                     slug="visible-playbook",
@@ -385,29 +399,40 @@ async def _seed_read_models(harness: Harness) -> _Seed:
     return _Seed(
         project_slug=project_slug,
         project_id=project_id,
+        other_project_id=other_id,
         visible_document_id=str(visible_document.id),
         hidden_document_id=str(hidden_document.id),
         mixed_document_id=str(mixed_document.id),
+        visible_audit_ids=(str(visible_success_audit.id), str(visible_abstained_audit.id)),
     )
 
 
-async def _seed_topic_graph(harness: Harness, project_id: str) -> _GraphSeed:
-    """Wire an authorized centre to real visible and hidden AGE neighbours.
+async def _seed_topic_graph(
+    harness: Harness, project_id: str, other_project_id: str
+) -> _GraphSeed:
+    """Wire homonymous project graphs to catch both topic and tenant leaks.
 
     The same claims that authorize graph identities carry the topic tags.  Thus the hidden
-    neighbour is a physical candidate, not a homonymous fallback or a fabricated 404 path.
+    neighbours are physical candidates, not homonymous fallbacks or fabricated 404 paths.  The
+    foreign project deliberately reuses their deterministic identities under a visible claim: if
+    the relational authorization drops its project predicate, those foreign claims authorize the
+    current project's hidden physical nodes.  Its separate AGE graph also has one foreign-only
+    neighbour, so losing graph-namespace isolation is observable too.
     """
     project_uuid = uuid.UUID(project_id)
+    other_project_uuid = uuid.UUID(other_project_id)
     center = "VISIBLE graph center"
     visible_neighbor = "VISIBLE graph neighbor"
     hidden_neighbor = "HIDDEN graph neighbor"
     mixed_neighbor = "MIXED hidden graph neighbor"
+    foreign_neighbor = "OTHER PROJECT graph neighbor"
     center_type = "team"
     neighbor_type = "person"
     center_id = str(entity_id(center_type, center))
     visible_id = str(entity_id(neighbor_type, visible_neighbor))
     hidden_id = str(entity_id(neighbor_type, hidden_neighbor))
     mixed_id = str(entity_id(neighbor_type, mixed_neighbor))
+    foreign_id = str(entity_id(neighbor_type, foreign_neighbor))
 
     async with harness.sm() as session:
         session.add_all(
@@ -434,6 +459,30 @@ async def _seed_topic_graph(harness: Harness, project_id: str) -> _GraphSeed:
                     project_id=project_uuid,
                     name=mixed_neighbor,
                     normalized_name=normalize_name(mixed_neighbor),
+                    type=neighbor_type,
+                ),
+                models.Entity(
+                    project_id=other_project_uuid,
+                    name=center,
+                    normalized_name=normalize_name(center),
+                    type=center_type,
+                ),
+                models.Entity(
+                    project_id=other_project_uuid,
+                    name=hidden_neighbor,
+                    normalized_name=normalize_name(hidden_neighbor),
+                    type=neighbor_type,
+                ),
+                models.Entity(
+                    project_id=other_project_uuid,
+                    name=mixed_neighbor,
+                    normalized_name=normalize_name(mixed_neighbor),
+                    type=neighbor_type,
+                ),
+                models.Entity(
+                    project_id=other_project_uuid,
+                    name=foreign_neighbor,
+                    normalized_name=normalize_name(foreign_neighbor),
                     type=neighbor_type,
                 ),
                 models.Claim(
@@ -465,6 +514,36 @@ async def _seed_topic_graph(harness: Harness, project_id: str) -> _GraphSeed:
                     object=mixed_neighbor,
                     object_entity_key=uuid.UUID(mixed_id),
                     tags=[_VISIBLE, _HIDDEN],
+                ),
+                models.Claim(
+                    project_id=other_project_uuid,
+                    text="OTHER PROJECT visibly authorizes target hidden identity",
+                    subject=center,
+                    subject_entity_key=uuid.UUID(center_id),
+                    predicate="relates_to",
+                    object=hidden_neighbor,
+                    object_entity_key=uuid.UUID(hidden_id),
+                    tags=[_VISIBLE],
+                ),
+                models.Claim(
+                    project_id=other_project_uuid,
+                    text="OTHER PROJECT visibly authorizes target mixed identity",
+                    subject=center,
+                    subject_entity_key=uuid.UUID(center_id),
+                    predicate="relates_to",
+                    object=mixed_neighbor,
+                    object_entity_key=uuid.UUID(mixed_id),
+                    tags=[_VISIBLE],
+                ),
+                models.Claim(
+                    project_id=other_project_uuid,
+                    text="OTHER PROJECT exclusive graph relation",
+                    subject=center,
+                    subject_entity_key=uuid.UUID(center_id),
+                    predicate="relates_to",
+                    object=foreign_neighbor,
+                    object_entity_key=uuid.UUID(foreign_id),
+                    tags=[_VISIBLE],
                 ),
             ]
         )
@@ -510,11 +589,49 @@ async def _seed_topic_graph(harness: Harness, project_id: str) -> _GraphSeed:
             ),
         ],
     )
+    other_graph_scope: ProjectScope = harness.scope(
+        other_project_id, allowed_topics=[_VISIBLE, _HIDDEN]
+    )
+    await graph.create_graph(other_graph_scope)
+    await graph.upsert_nodes(
+        other_graph_scope,
+        [
+            GraphNode(
+                id=center_id,
+                labels=frozenset({"Entity"}),
+                properties={"name": center, "type": center_type},
+            ),
+            GraphNode(
+                id=hidden_id,
+                labels=frozenset({"Entity"}),
+                properties={"name": hidden_neighbor, "type": neighbor_type},
+            ),
+            GraphNode(
+                id=mixed_id,
+                labels=frozenset({"Entity"}),
+                properties={"name": mixed_neighbor, "type": neighbor_type},
+            ),
+            GraphNode(
+                id=foreign_id,
+                labels=frozenset({"Entity"}),
+                properties={"name": foreign_neighbor, "type": neighbor_type},
+            ),
+        ],
+    )
+    await graph.upsert_edges(
+        other_graph_scope,
+        [
+            GraphEdge(source_id=center_id, target_id=hidden_id, type="FOREIGN_VISIBLE_ALIAS"),
+            GraphEdge(source_id=center_id, target_id=mixed_id, type="FOREIGN_MIXED_ALIAS"),
+            GraphEdge(source_id=center_id, target_id=foreign_id, type="FOREIGN_ONLY"),
+        ],
+    )
     return _GraphSeed(
         center=center,
         visible_neighbor=visible_neighbor,
         hidden_neighbor=hidden_neighbor,
         mixed_neighbor=mixed_neighbor,
+        foreign_neighbor=foreign_neighbor,
     )
 
 
@@ -524,7 +641,7 @@ async def test_allow_side_full_topic_read_models_are_complete(
     """The authorized control proves every seeded row is real and reachable."""
     harness = build_harness()
     seed = await _seed_read_models(harness)
-    graph_seed = await _seed_topic_graph(harness, seed.project_id)
+    graph_seed = await _seed_topic_graph(harness, seed.project_id, seed.other_project_id)
     async with _client(harness, tmp_path) as client:
         headers = await _session_headers(
             harness, client, seed.project_id, topics=(_VISIBLE, _HIDDEN)
@@ -561,52 +678,82 @@ async def test_allow_side_full_topic_read_models_are_complete(
     assert health.json()["pending_approval"] == 3
     assert health.json()["ingest_errors"] == 3
     assert ingest.status_code == 200, ingest.text
-    assert {run["document_id"] for run in ingest.json()["runs"]} == {
+    runs = ingest.json()["runs"]
+    assert len(runs) == 3, "the full-topic run control must not hide or duplicate rows"
+    assert {run["document_id"] for run in runs} == {
         seed.visible_document_id,
         seed.hidden_document_id,
         seed.mixed_document_id,
     }
-    assert {error["chunk"] for error in ingest.json()["errors"]} == {
+    errors = ingest.json()["errors"]
+    assert len(errors) == 3, "the full-topic error control must not hide or duplicate rows"
+    assert {error["chunk"] for error in errors} == {
         "VISIBLE-error",
         "HIDDEN-error",
         "MIXED-hidden-error",
     }
     assert skills.status_code == 200, skills.text
-    assert {skill["slug"] for skill in skills.json()["skills"]} == {
+    skill_rows = skills.json()["skills"]
+    assert len(skill_rows) == 3, "the full-topic skill control must not hide or duplicate rows"
+    assert {skill["slug"] for skill in skill_rows} == {
         "visible-playbook",
         "hidden-playbook",
         "mixed-hidden-playbook",
     }
     assert graph.status_code == 200, graph.text
-    assert {neighbor["name"] for neighbor in graph.json()["neighbors"]} == {
+    neighbors = graph.json()["neighbors"]
+    assert len(neighbors) == 3, "the target graph must not import or duplicate foreign nodes"
+    assert {neighbor["name"] for neighbor in neighbors} == {
         graph_seed.visible_neighbor,
         graph_seed.hidden_neighbor,
         graph_seed.mixed_neighbor,
     }
-    assert {edge["type"] for edge in graph.json()["edges"]} == {
+    edges = graph.json()["edges"]
+    assert len(edges) == 3, "the target graph must not import or duplicate foreign edges"
+    assert {edge["type"] for edge in edges} == {
         "RELATES_TO",
         "HIDDEN_RELATES_TO",
         "MIXED_HIDDEN_RELATES_TO",
     }
     assert graph.json()["total"] == 3
+    assert graph_seed.foreign_neighbor not in graph.text
+    assert "FOREIGN_ONLY" not in graph.text
 
 
-async def test_platform_owner_without_membership_cannot_read_project_activity(
-    build_harness: Callable[..., Harness], tmp_path: Path
+@pytest.mark.parametrize(
+    "surface",
+    ("metrics", "health", "activity", "recalls", "ingest", "skills", "graph"),
+)
+async def test_platform_owner_without_membership_cannot_read_project_content(
+    surface: str, build_harness: Callable[..., Harness], tmp_path: Path
 ) -> None:
-    """A platform role alone is never project membership or topic authority."""
+    """A platform role alone never grants any project content surface."""
     harness = build_harness()
     seed = await _seed_read_models(harness)
+    graph_name = "VISIBLE graph center"
+    if surface == "graph":
+        graph_seed = await _seed_topic_graph(harness, seed.project_id, seed.other_project_id)
+        graph_name = graph_seed.center
+    routes: dict[str, tuple[str, dict[str, str]]] = {
+        "metrics": ("/api/v1/admin/metrics/product", {"project": seed.project_slug}),
+        "health": ("/api/v1/admin/observability/health", {"project": seed.project_slug}),
+        "activity": ("/api/v1/admin/observability/activity", {"project": seed.project_slug}),
+        "recalls": ("/api/v1/admin/observability/recalls", {"project": seed.project_slug}),
+        "ingest": ("/api/v1/admin/observability/ingest", {"project": seed.project_slug}),
+        "skills": ("/api/v1/admin/skills", {"project": seed.project_slug}),
+        "graph": (
+            "/api/v1/admin/graph/entity",
+            {"project": seed.project_slug, "name": graph_name},
+        ),
+    }
+    path, params = routes[surface]
     async with _client(harness, tmp_path) as client:
         owner_without_membership = await _session_headers(
             harness, client, None, topics=(), platform_role="owner"
         )
-        response = await client.get(
-            f"/api/v1/admin/observability/activity?project={seed.project_slug}",
-            headers=owner_without_membership,
-        )
+        response = await client.get(path, params=params, headers=owner_without_membership)
 
-    assert response.status_code == 404, response.text
+    assert response.status_code == 404, f"{surface}: {response.text}"
 
 
 async def test_general_only_metrics_filter_mixed_topic_aggregates_before_counting(
@@ -638,6 +785,70 @@ async def test_general_only_metrics_filter_mixed_topic_aggregates_before_countin
         "hidden or mixed document-backed extraction errors changed product health"
     )
     assert payload["health"]["recall_p95_ms"] == 12.0
+
+
+async def test_general_only_recall_cursor_pages_the_authorized_set_without_metadata_leaks(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    """RED: the opaque cursor advances across authorized rows, never the raw tenant set.
+
+    The physical ordering is visible, hidden, mixed, visible, then foreign.  A raw-row cursor or
+    overlap-only filter therefore creates a hole, repeats a row, inflates ``total`` or carries
+    forbidden metadata.  This deliberately requires T004's ``ReadPage`` instead of preserving the
+    legacy offset/limit response.
+    """
+    harness = build_harness()
+    seed = await _seed_read_models(harness)
+    async with _client(harness, tmp_path) as client:
+        headers = await _session_headers(harness, client, seed.project_id, topics=(_VISIBLE,))
+        first_page = await client.get(
+            "/api/v1/admin/observability/recalls",
+            params={"project": seed.project_slug, "limit": 1},
+            headers=headers,
+        )
+
+        assert first_page.status_code == 200, first_page.text
+        first = first_page.json()
+        assert isinstance(first, dict)
+        assert set(first) == {"items", "next_cursor", "total", "freshness"}, (
+            "recalls must expose the T004 ReadPage contract, not the legacy unpaged envelope"
+        )
+        assert isinstance(first["items"], list)
+        assert len(first["items"]) == 1
+        assert first["total"] == 2, "count disclosed hidden, mixed, or foreign recall rows"
+        assert first["items"][0]["id"] == seed.visible_audit_ids[0]
+        assert first["freshness"] is not None
+        cursor = first["next_cursor"]
+        assert isinstance(cursor, str) and cursor
+        assert not any(
+            marker in cursor
+            for marker in ("hidden-principal", "mixed-hidden-principal", "other-principal")
+        ), "opaque continuation carried forbidden row metadata"
+
+        second_page = await client.get(
+            "/api/v1/admin/observability/recalls",
+            params={"project": seed.project_slug, "limit": 1, "cursor": cursor},
+            headers=headers,
+        )
+
+    assert second_page.status_code == 200, second_page.text
+    second = second_page.json()
+    assert isinstance(second, dict)
+    assert set(second) == {"items", "next_cursor", "total", "freshness"}
+    assert isinstance(second["items"], list)
+    assert len(second["items"]) == 1
+    assert second["total"] == 2
+    assert second["items"][0]["id"] == seed.visible_audit_ids[1]
+    assert second["next_cursor"] is None
+    assert second["freshness"] is not None
+
+    collected = [first["items"][0]["id"], second["items"][0]["id"]]
+    assert collected == list(seed.visible_audit_ids), "authorized cursor pages had a gap or repeat"
+    combined = first_page.text + second_page.text
+    assert "hidden-principal" not in combined
+    assert "mixed-hidden-principal" not in combined
+    assert "other-principal" not in combined
+    assert _HIDDEN not in combined
 
 
 async def test_general_only_observability_filters_document_backed_posture_and_errors(
@@ -695,7 +906,7 @@ async def test_graph_filters_real_hidden_candidate_before_counting_edges_or_pagi
     """RED: a visible centre returns 200, but its physical hidden neighbour must stay invisible."""
     harness = build_harness()
     seed = await _seed_read_models(harness)
-    graph_seed = await _seed_topic_graph(harness, seed.project_id)
+    graph_seed = await _seed_topic_graph(harness, seed.project_id, seed.other_project_id)
     async with _client(harness, tmp_path) as client:
         headers = await _session_headers(harness, client, seed.project_id, topics=(_VISIBLE,))
         first_page = await client.get(
@@ -729,11 +940,17 @@ async def test_graph_filters_real_hidden_candidate_before_counting_edges_or_pagi
     assert "HIDDEN_RELATES_TO" not in first_page.text
     assert graph_seed.mixed_neighbor not in first_page.text
     assert "MIXED_HIDDEN_RELATES_TO" not in first_page.text
+    assert graph_seed.foreign_neighbor not in first_page.text
+    assert "FOREIGN_ONLY" not in first_page.text
+    assert "FOREIGN_VISIBLE_ALIAS" not in first_page.text
+    assert "FOREIGN_MIXED_ALIAS" not in first_page.text
 
     assert second_page.status_code == 200, second_page.text
     second = second_page.json()
     assert second["total"] == 1 and second["limit"] == 1 and second["offset"] == 1
     assert second["neighbors"] == [] and second["edges"] == []
+    assert graph_seed.foreign_neighbor not in second_page.text
+    assert "FOREIGN_ONLY" not in second_page.text
 
 
 async def test_empty_topic_membership_returns_empty_every_topic_filtered_read_model(
@@ -742,7 +959,7 @@ async def test_empty_topic_membership_returns_empty_every_topic_filtered_read_mo
     """An empty grant selects no topic-bearing metrics, posture, activity, skills, or graph."""
     harness = build_harness()
     seed = await _seed_read_models(harness)
-    graph_seed = await _seed_topic_graph(harness, seed.project_id)
+    graph_seed = await _seed_topic_graph(harness, seed.project_id, seed.other_project_id)
     async with _client(harness, tmp_path) as client:
         headers = await _session_headers(harness, client, seed.project_id, topics=())
         metrics = await client.get(
@@ -753,6 +970,11 @@ async def test_empty_topic_membership_returns_empty_every_topic_filtered_read_mo
         )
         activity = await client.get(
             f"/api/v1/admin/observability/activity?project={seed.project_slug}", headers=headers
+        )
+        recalls = await client.get(
+            "/api/v1/admin/observability/recalls",
+            params={"project": seed.project_slug, "limit": 1},
+            headers=headers,
         )
         ingest = await client.get(
             f"/api/v1/admin/observability/ingest?project={seed.project_slug}", headers=headers
@@ -786,6 +1008,14 @@ async def test_empty_topic_membership_returns_empty_every_topic_filtered_read_mo
         "p95_duration_ms": None,
         "recalls_per_day": [],
     }
+    assert recalls.status_code == 200, recalls.text
+    recall_page = recalls.json()
+    assert isinstance(recall_page, dict)
+    assert set(recall_page) == {"items", "next_cursor", "total", "freshness"}
+    assert recall_page["items"] == []
+    assert recall_page["next_cursor"] is None
+    assert recall_page["total"] == 0
+    assert recall_page["freshness"] is not None
     assert ingest.status_code == 200, ingest.text
     assert ingest.json()["runs"] == []
     assert ingest.json()["errors"] == []
