@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "./client";
+import { networkUiError, uiErrorFromResponse } from "./ui-error";
 import type {
   Activity,
   AuditFilters,
@@ -30,9 +31,14 @@ export function useMe() {
     queryKey: ["me"],
     retry: false,
     queryFn: async (): Promise<Me> => {
-      const { data, error } = await api.GET("/api/v1/me");
-      if (error) throw new Error("unauthenticated");
-      return data as unknown as Me;
+      try {
+        const { data, error, response } = await api.GET("/api/v1/me");
+        if (error) throw uiErrorFromResponse(response, error);
+        return data;
+      } catch (error) {
+        if (error && typeof error === "object" && "kind" in error) throw error;
+        throw networkUiError();
+      }
     },
   });
 }

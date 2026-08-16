@@ -333,7 +333,8 @@ describe("route-complete authenticated application shell (RED until T014)", () =
     expect(window.localStorage.getItem("rsc-brain.rail")).toBe("compact");
     expect(railToggle).toHaveAttribute("aria-expanded", "false");
 
-    await user.click(screen.getByRole("button", { name: "Log out" }));
+    await user.click(screen.getByRole("button", { name: "operator@example.invalid" }));
+    await user.click(screen.getByRole("menuitem", { name: "Log out" }));
     await waitFor(() => expect(logout).toHaveBeenCalledTimes(1));
     expect(clear).toHaveBeenCalledTimes(1);
     expect(replace).toHaveBeenCalledWith("/login");

@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,15 +11,28 @@ const replace = vi.fn();
 vi.mock("next/navigation", () => ({
   usePathname: () => "/audit",
   useRouter: () => ({ replace }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock("@/lib/api/hooks", () => ({
   useMe: () => ({
     data: {
-      id: "user-1",
-      email: "operator@example.invalid",
-      memberships: [{ project: "atlas", role: "viewer", topics: ["general"] }],
+      identity: { id: "user-1", email: "operator@example.invalid", role: "member" },
+      user: { id: "user-1", email: "operator@example.invalid", role: "member" },
+      is_owner: false,
+      platform_capabilities: [],
+      memberships: [
+        {
+          project: "atlas",
+          role: "viewer",
+          capabilities: ["project.manage.read"],
+          allowed_topics: ["general"],
+          can_curate: false,
+        },
+      ],
+      preference_metadata: { theme: "system", locale: "en" },
     },
+    isLoading: false,
     isError: false,
   }),
 }));
@@ -37,9 +51,11 @@ describe("responsive application shell", () => {
   it("exposes primary navigation in a modal drawer and restores trigger focus", async () => {
     const user = userEvent.setup();
     render(
-      <LanguageProvider initialLocale="en">
-        <PageShell title="Audit">{(project) => <p>Project {project}</p>}</PageShell>
-      </LanguageProvider>,
+      <QueryClientProvider client={new QueryClient()}>
+        <LanguageProvider initialLocale="en">
+          <PageShell title="Audit">{(project) => <p>Project {project}</p>}</PageShell>
+        </LanguageProvider>
+      </QueryClientProvider>,
     );
 
     const trigger = screen.getByRole("button", { name: "Open primary navigation" });
