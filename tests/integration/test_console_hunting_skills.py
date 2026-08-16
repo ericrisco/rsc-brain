@@ -69,7 +69,15 @@ _PERSON_COLLECTION_FIELDS = frozenset(
 _SKILL_CREATE_FIELDS = frozenset({"skill_id", "slug"})
 _SKILL_VIEW_FIELDS = frozenset({"slug", "title", "status", "stale", "depends_on", "version"})
 _SKILL_VALIDATE_FIELDS = frozenset(
-    {"slug", "status", "stale", "depends_on", "version", "audit_correlation"}
+    {
+        "slug",
+        "status",
+        "stale",
+        "depends_on",
+        "version",
+        "audit_correlation",
+        "replayed",
+    }
 )
 _SKILL_ARCHIVE_FIELDS = frozenset(
     {
@@ -947,15 +955,24 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
             f"/api/v1/admin/skills?project={slug}", headers=headers, json={"markdown": markdown}
         )
         listing = await client.get(f"/api/v1/admin/skills?project={slug}", headers=headers)
+        validate_headers = {**headers, "Idempotency-Key": "validate-skill-001"}
         validated = await client.post(
             f"/api/v1/admin/skills/{skill_slug}/validate?project={slug}",
-            headers=headers,
+            headers=validate_headers,
             json={"expected_version": initial_version},
         )
         listed_after_validation = await client.get(
             f"/api/v1/admin/skills?project={slug}", headers=headers
         )
         db_after_validation = await _skill_db_state(harness, project_id, skill_slug)
+        restarted_client, _ = _client(harness, tmp_path)
+        async with restarted_client as restarted:
+            validate_replay = await restarted.post(
+                f"/api/v1/admin/skills/{skill_slug}/validate?project={slug}",
+                headers=validate_headers,
+                json={"expected_version": initial_version},
+            )
+        db_after_validate_replay = await _skill_db_state(harness, project_id, skill_slug)
         archive_headers = {**headers, "Idempotency-Key": "archive-skill-001"}
         archived = await client.post(
             f"/api/v1/admin/skills/{skill_slug}/archive?project={slug}",
@@ -984,6 +1001,7 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
         ("create", created, 201),
         ("list", listing, 200),
         ("validate", validated, 200),
+        ("validate replay after restart", validate_replay, 200),
         ("list after validate", listed_after_validation, 200),
         ("archive", archived, 200),
         ("archive replay", replay, 200),
@@ -995,6 +1013,7 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
         ("create", created, _SKILL_CREATE_FIELDS),
         ("list", listing, frozenset({"skills"})),
         ("validate", validated, _SKILL_VALIDATE_FIELDS),
+        ("validate replay after restart", validate_replay, _SKILL_VALIDATE_FIELDS),
         ("list after validate", listed_after_validation, frozenset({"skills"})),
         ("archive", archived, _SKILL_ARCHIVE_FIELDS),
         ("archive replay", replay, _SKILL_ARCHIVE_FIELDS),
@@ -1040,6 +1059,34 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
             )
         if not body.get("audit_correlation"):
             failures.append("validate: audit correlation missing")
+        if body.get("replayed") is not False:
+            failures.append("validate: first command must report replayed=false")
+    if validate_replay.status_code == 200:
+        validation_body = _object(validated)
+        replay_body = _object(validate_replay)
+        if replay_body.get("replayed") is not True:
+            failures.append("validate replay: idempotent replay flag missing")
+        if replay_body != {**validation_body, "replayed": True}:
+            failures.append("validate replay: original result changed beyond replayed flag")
+    if db_after_validation != db_after_validate_replay:
+        failures.append("validate replay: duplicate transition mutated authoritative skill state")
+    validation_correlation = _object(validated).get("audit_correlation")
+    if isinstance(validation_correlation, str):
+        async with harness.sm() as session:
+            validation_audits = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(models.AuditLog)
+                    .where(
+                        models.AuditLog.project_id == _uuid(project_id),
+                        models.AuditLog.action == "skill_validate",
+                        models.AuditLog.trace_id == validation_correlation,
+                    )
+                )
+                or 0
+            )
+        if validation_audits != 1:
+            failures.append("validate replay: audit outcome was duplicated or missing")
     validated_view = find_skill(listed_after_validation)
     if validated_view is None or any(
         (
@@ -1111,6 +1158,7 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
             created,
             listing,
             validated,
+            validate_replay,
             listed_after_validation,
             archived,
             replay,
