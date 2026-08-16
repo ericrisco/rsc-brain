@@ -1,6 +1,67 @@
 {
   "components": {
     "schemas": {
+      "ActivityDay": {
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "recalls": {
+            "title": "Recalls",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "recalls"
+        ],
+        "title": "ActivityDay",
+        "type": "object"
+      },
+      "ActivityEnvelope": {
+        "properties": {
+          "active_principals": {
+            "title": "Active Principals",
+            "type": "integer"
+          },
+          "denied": {
+            "title": "Denied",
+            "type": "integer"
+          },
+          "p95_duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Duration Ms"
+          },
+          "recalls": {
+            "title": "Recalls",
+            "type": "integer"
+          },
+          "recalls_per_day": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityDay"
+            },
+            "title": "Recalls Per Day",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recalls",
+          "denied",
+          "active_principals",
+          "p95_duration_ms",
+          "recalls_per_day"
+        ],
+        "title": "ActivityEnvelope",
+        "type": "object"
+      },
       "ApproveDoc": {
         "properties": {
           "tags": {
@@ -121,6 +182,25 @@
           "project"
         ],
         "title": "CreatePatRequest",
+        "type": "object"
+      },
+      "CreatedPat": {
+        "description": "The only response that contains newly issued credential material.",
+        "properties": {
+          "pat_id": {
+            "title": "Pat Id",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pat_id",
+          "token"
+        ],
+        "title": "CreatedPat",
         "type": "object"
       },
       "CredentialCreate": {
@@ -317,6 +397,29 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HealthEnvelope": {
+        "properties": {
+          "database": {
+            "title": "Database",
+            "type": "string"
+          },
+          "ingest_errors": {
+            "title": "Ingest Errors",
+            "type": "integer"
+          },
+          "pending_approval": {
+            "title": "Pending Approval",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "database",
+          "pending_approval",
+          "ingest_errors"
+        ],
+        "title": "HealthEnvelope",
+        "type": "object"
+      },
       "HuntAnswer": {
         "additionalProperties": false,
         "description": "A JSON answer, for a client that is not the browser form.",
@@ -422,6 +525,125 @@
           "impact_acknowledged"
         ],
         "title": "ImpactCommand",
+        "type": "object"
+      },
+      "IngestEnvelope": {
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/IngestErrorView"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/IngestRunView"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs",
+          "errors"
+        ],
+        "title": "IngestEnvelope",
+        "type": "object"
+      },
+      "IngestErrorView": {
+        "properties": {
+          "chunk": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "chunk",
+          "stage",
+          "error"
+        ],
+        "title": "IngestErrorView",
+        "type": "object"
+      },
+      "IngestRunView": {
+        "properties": {
+          "chunks_created": {
+            "title": "Chunks Created",
+            "type": "integer"
+          },
+          "claims_generated": {
+            "title": "Claims Generated",
+            "type": "integer"
+          },
+          "completed_stages": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Completed Stages",
+            "type": "array"
+          },
+          "discarded_chunks": {
+            "title": "Discarded Chunks",
+            "type": "integer"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "phase": {
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document_id",
+          "phase",
+          "completed_stages",
+          "chunks_created",
+          "claims_generated",
+          "discarded_chunks",
+          "error"
+        ],
+        "title": "IngestRunView",
         "type": "object"
       },
       "InvitationAccept": {
@@ -941,6 +1163,77 @@
           "audit_correlation"
         ],
         "title": "PasswordResetEnvelope",
+        "type": "object"
+      },
+      "PendingDocumentEnvelope": {
+        "properties": {
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/PendingDocumentView"
+            },
+            "title": "Documents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "documents"
+        ],
+        "title": "PendingDocumentEnvelope",
+        "type": "object"
+      },
+      "PendingDocumentView": {
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "preview": {
+            "title": "Preview",
+            "type": "string"
+          },
+          "proposed_tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Proposed Tags",
+            "type": "array"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "document_id",
+          "title",
+          "proposed_tags",
+          "source_id",
+          "preview",
+          "content_type"
+        ],
+        "title": "PendingDocumentView",
         "type": "object"
       },
       "PersonCreate": {
@@ -1795,6 +2088,102 @@
           "oauth"
         ],
         "title": "RevocationState",
+        "type": "object"
+      },
+      "RevokedPat": {
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "revoked": {
+            "title": "Revoked",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "revoked"
+        ],
+        "title": "RevokedPat",
+        "type": "object"
+      },
+      "SelfPat": {
+        "description": "One display-safe personal credential owned by the current user.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "revoked": {
+            "title": "Revoked",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "project",
+          "created_at",
+          "expires_at",
+          "revoked"
+        ],
+        "title": "SelfPat",
+        "type": "object"
+      },
+      "SelfPatList": {
+        "properties": {
+          "pats": {
+            "items": {
+              "$ref": "#/components/schemas/SelfPat"
+            },
+            "title": "Pats",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pats"
+        ],
+        "title": "SelfPatList",
         "type": "object"
       },
       "SessionEnvelope": {
@@ -3524,9 +3913,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Pending Document Previews Api V1 Admin Documents Pending Preview Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/PendingDocumentEnvelope"
                 }
               }
             },
@@ -4664,9 +5051,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Observability Activity Api V1 Admin Observability Activity Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ActivityEnvelope"
                 }
               }
             },
@@ -4721,9 +5106,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Observability Health Api V1 Admin Observability Health Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HealthEnvelope"
                 }
               }
             },
@@ -4778,9 +5161,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Observability Ingest Api V1 Admin Observability Ingest Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/IngestEnvelope"
                 }
               }
             },
@@ -8793,9 +9174,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Pats Api V1 Me Pats Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SelfPatList"
                 }
               }
             },
@@ -8829,9 +9208,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Pat Api V1 Me Pats Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/CreatedPat"
                 }
               }
             },
@@ -8878,9 +9255,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Revoke Pat Api V1 Me Pats  Pat Id  Delete",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RevokedPat"
                 }
               }
             },

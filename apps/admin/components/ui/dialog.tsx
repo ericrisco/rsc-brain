@@ -12,6 +12,7 @@ export function Dialog({
   children,
   actions,
   destructive = false,
+  cancelLabel = "Cancel",
 }: {
   open: boolean;
   onClose: () => void;
@@ -20,6 +21,7 @@ export function Dialog({
   children?: ReactNode;
   actions?: ReactNode;
   destructive?: boolean;
+  cancelLabel?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
@@ -28,8 +30,14 @@ export function Dialog({
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
-    if (!open && dialog.open) dialog.close();
+    if (open && !dialog.open) {
+      if (typeof dialog.showModal === "function") dialog.showModal();
+      else dialog.setAttribute("open", "");
+    }
+    if (!open && dialog.open) {
+      if (typeof dialog.close === "function") dialog.close();
+      else dialog.removeAttribute("open");
+    }
   }, [open]);
 
   return (
@@ -57,7 +65,7 @@ export function Dialog({
       {children ? <div className="px-5 py-5">{children}</div> : null}
       <div className="flex flex-wrap justify-end gap-2 border-t border-border bg-surface-subtle/55 px-5 py-4">
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {cancelLabel}
         </Button>
         {actions ?? (destructive ? <Button variant="destructive">Confirm</Button> : null)}
       </div>
