@@ -310,6 +310,28 @@ class IdentityService:
                 for user_id, email, role, topics, can_curate in rows
             ]
 
+    async def list_topics(self, project_id: str) -> list[dict[str, object]]:
+        """A project's taxonomy: slug, name and sensitivity, ordered by slug.
+
+        AUDIT-075: topics could be created from the CLI and never read back. That left AUDIT-073's
+        grant refusing an input — "a grant may only name a topic of the membership's own project" —
+        without exposing the valid set anywhere an operator could reach. Sensitivity travels with it
+        because granting a topic at `>= 3` is a different decision from granting one at 0, and a
+        listing that hides that invites the wrong grant.
+        """
+        async with self._sm() as session:
+            rows = (
+                await session.execute(
+                    select(models.Topic.slug, models.Topic.name, models.Topic.sensitivity)
+                    .where(models.Topic.project_id == uuid.UUID(project_id))
+                    .order_by(models.Topic.slug)
+                )
+            ).all()
+            return [
+                {"slug": slug, "name": name, "sensitivity": sensitivity}
+                for slug, name, sensitivity in rows
+            ]
+
     async def list_topic_slugs(self, project_id: str) -> list[str]:
         """The project's topic slugs, ordered — the set an explicit grant can draw from."""
         async with self._sm() as session:
