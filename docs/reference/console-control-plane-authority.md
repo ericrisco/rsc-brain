@@ -2,19 +2,15 @@
 
 # Console control-plane authority matrix
 
-Status: **prospective SDD contract** produced by Console Control Plane T001. It becomes the live API
-reference only when T002 is green and the existing REST/permissions references are updated in the
-same revision. Until then, [REST API reference](rest-api.md) and
-[permissions](permissions.md) describe the deployed behavior. This document records the
-endpoint-to-UI boundary approved in UX-SPEC-01. It is intentionally API-authoritative: the
-browser may reflect a capability, but no route may infer it from a role label or enforce it only
-by hiding an action.
+Status: **current API contract**. This document records the endpoint-to-UI boundary approved in
+UX-SPEC-01. It is intentionally API-authoritative: the browser may reflect a capability, but no
+route may infer it from a role label or enforce it only by hiding an action.
 
 `ProjectScope` always carries the authenticated principal, selected project, membership role,
 allowed topics, curation flag, and the effective capability decision. Project content, counts,
-pagination, exports, and graph state require it. `PlatformInventoryScope` resolves an
-authenticated platform identity only; it is never a substitute for `ProjectScope` and exposes no
-project content.
+pagination, exports, and graph state require it. `PlatformIdentityScope` resolves an
+authenticated platform identity only; it is never a substitute for `ProjectScope`, contains no
+project or membership data, and exposes no project content.
 
 ## Session envelope
 
@@ -46,11 +42,11 @@ capability does not add platform inventory authority.
 | Endpoint / field or command | Required capability | Required scope | Console route | Authority boundary |
 | --- | --- | --- | --- | --- |
 | `GET /api/v1/me` → `SessionEnvelope` fields above | Authenticated session | Identity scope | all authenticated routes | Supplies the only browser-readable capability source. |
-| `GET /api/v1/admin/projects` → `ProjectPage` | `platform.project.list_all` | `PlatformInventoryScope` | `/manage/projects` | Owner/admin inventory and posture only; an owner with no membership is allowed. Any caller without the capability receives `403`, including a direct URL with `?project=`. |
-| `POST /api/v1/admin/projects` → lifecycle result | `platform.project.create` | `PlatformInventoryScope` | `/manage/projects` | Project lifecycle creates no content membership. |
+| `GET /api/v1/admin/projects` → `ProjectPage` | `platform.project.list_all` | `PlatformIdentityScope` | `/manage/projects` | Owner/admin inventory and posture only; an owner with no membership is allowed. Any caller without the capability receives `403`, including a direct URL with `?project=`. |
+| `POST /api/v1/admin/projects` → lifecycle result | `platform.project.create` | `PlatformIdentityScope` | `/manage/projects` | Project lifecycle creates no content membership. |
 | project settings and topic/membership reads or mutations | `project.manage.read`, `project.config.write`, or `project.settings.write` as applicable | `ProjectScope` | `/manage/projects`, `/manage/users`, `/manage/topics` | A project administrator acts only in the scoped project and visible topics. |
 | self PAT and connection commands | Authenticated session and self-ownership | Identity scope; project membership only when issuing a PAT | `/connections` | Every authenticated identity can manage only its own credentials. |
-| third-party credential revoke | `platform.credential.revoke` | `PlatformInventoryScope` | `/manage/users` | Separate from self-service and from project-content authority. |
+| third-party credential revoke | `platform.credential.revoke` | `PlatformIdentityScope` | `/manage/users` | Separate from self-service and from project-content authority. |
 | knowledge lists, details, posture, and bounded graph reads | `knowledge.read` | `ProjectScope` | `/`, `/knowledge`, `/graph`, `/product-metrics` | Topic filtering occurs before any item, count, cursor, aggregate, or graph expansion. |
 | review decisions and document lifecycle decisions | `knowledge.review.decide` or explicit document-lifecycle capability | `ProjectScope` plus target topics | `/review`, `/observability` | `can_curate` grants only explicitly assigned review decisions and never administration. |
 | scoped observability reads | `knowledge.read` | `ProjectScope` | `/observability` | Query/privacy policy and topic filtering apply before telemetry aggregation. |
@@ -60,7 +56,7 @@ capability does not add platform inventory authority.
 
 ## Route-level non-disclosure rules
 
-- `/` is a scoped overview unless `PlatformInventoryScope` is selected solely for authorized
+- `/` is a scoped overview unless `PlatformIdentityScope` is selected solely for authorized
   platform posture. It must not aggregate project content across memberships.
 - `/connections` is self-service. It does not confer third-party credential administration.
 - `/observability`, `/knowledge`, `/review`, `/usage`, `/audit`, `/product-metrics`, and `/graph`
