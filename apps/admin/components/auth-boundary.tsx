@@ -32,14 +32,25 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
 
   if (isLoading || (!data && !isError)) {
     return (
-      <main
-        id="main-content"
-        role="status"
-        aria-label={t("common.loadingConsole")}
-        className="grid min-h-screen place-items-center bg-canvas text-sm text-text-secondary"
+      <div
+        data-testid="shell-layout"
+        className="min-h-screen bg-canvas lg:grid lg:grid-cols-[14.5rem_minmax(0,1fr)]"
       >
-        <span>{t("common.loading")}</span>
-      </main>
+        <aside aria-hidden="true" className="hidden border-r border-border bg-surface lg:block" />
+        <div className="min-w-0">
+          <header className="h-14 border-b border-border bg-canvas">
+            <span className="sr-only">rsc-brain</span>
+          </header>
+          <main
+            id="main-content"
+            role="status"
+            aria-label={t("common.loadingConsole")}
+            className="grid min-h-[calc(100vh-3.5rem)] place-items-center text-sm text-text-secondary"
+          >
+            <span>{t("common.loading")}</span>
+          </main>
+        </div>
+      </div>
     );
   }
 
@@ -48,21 +59,34 @@ export function AuthBoundary({ children }: { children: ReactNode }) {
   if (isError || !data) {
     const messageKey = uiError?.messageKey ?? "errors.unexpected";
     return (
-      <main id="main-content" className="mx-auto grid min-h-screen max-w-3xl place-items-center p-6">
-        <Banner
-          tone="danger"
-          title={t(messageKey)}
-          actions={
-            typeof refetch === "function" ? (
-              <Button variant="outline" onClick={() => void refetch()}>
-                {t("common.retry")}
-              </Button>
-            ) : undefined
-          }
-        >
-          {uiError?.traceId ? `${t("common.traceId")}: ${uiError.traceId}` : t("common.tryAgain")}
-        </Banner>
-      </main>
+      <div
+        data-testid="shell-layout"
+        className="min-h-screen bg-canvas lg:grid lg:grid-cols-[14.5rem_minmax(0,1fr)]"
+      >
+        <aside aria-hidden="true" className="hidden border-r border-border bg-surface lg:block" />
+        <div className="min-w-0">
+          <header className="h-14 border-b border-border bg-canvas">
+            <span className="sr-only">rsc-brain</span>
+          </header>
+          <main id="main-content" className="mx-auto grid min-h-[calc(100vh-3.5rem)] max-w-3xl place-items-center p-6">
+            <Banner
+              tone="danger"
+              title={t(messageKey)}
+              actions={
+                typeof refetch === "function" ? (
+                  <Button variant="outline" onClick={() => void refetch()}>
+                    {t("common.retry")}
+                  </Button>
+                ) : undefined
+              }
+            >
+              {uiError?.traceId
+                ? `${t("common.traceId")}: ${uiError.traceId}`
+                : t("common.tryAgain")}
+            </Banner>
+          </main>
+        </div>
+      </div>
     );
   }
 

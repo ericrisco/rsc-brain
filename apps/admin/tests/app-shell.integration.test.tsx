@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ComponentType, ReactNode } from "react";
@@ -105,6 +106,9 @@ describe("route-complete authenticated application shell (RED until T014)", () =
   });
 
   it("declares 14 authenticated destinations plus login, grouped by operator decision", async () => {
+    expect(existsSync(resolve(process.cwd(), "app/(console)/layout.tsx"))).toBe(true);
+    expect(existsSync(resolve(process.cwd(), "app/(public)/layout.tsx"))).toBe(true);
+    expect(existsSync(resolve(process.cwd(), "app/(public)/login/page.tsx"))).toBe(true);
     const loaded = await load<{
       AUTH_ROUTE: "/login";
       CONSOLE_NAV_GROUPS: Array<{
@@ -158,14 +162,20 @@ describe("route-complete authenticated application shell (RED until T014)", () =
   it("removes the old project frame before cancelling and invalidating scope-bound queries", async () => {
     const loaded = await load<{
       ProjectScopeProvider: ComponentType<{ session: SessionEnvelope; children: ReactNode }>;
+      ProjectScopeContent: ComponentType<{ children: ReactNode }>;
       useProjectScope: () => {
         project: string;
+        scope: string;
+        revision: number;
+        status: "ready" | "switching";
+        queryKey: (resource: string, filters?: unknown) => readonly unknown[];
         switchProject: (project: string) => Promise<void>;
       };
     }>("lib/scope/project-scope.tsx");
     expect(loaded?.ProjectScopeProvider, "ProjectScopeProvider must exist").toBeTypeOf("function");
+    expect(loaded?.ProjectScopeContent, "ProjectScopeContent must isolate scoped frames").toBeTypeOf("function");
     expect(loaded?.useProjectScope, "useProjectScope must exist").toBeTypeOf("function");
-    if (!loaded) return;
+    if (!loaded?.ProjectScopeContent) return;
     const scopeModule = loaded;
 
     let releaseCancel: (() => void) | undefined;
@@ -182,6 +192,8 @@ describe("route-complete authenticated application shell (RED until T014)", () =
       return (
         <>
           <p>Secret frame for {scope.project}</p>
+          <p>{`${scope.status}:${scope.scope}:${scope.revision}`}</p>
+          <output>{JSON.stringify(scope.queryKey("audit", { denied: true }))}</output>
           <button type="button" onClick={() => void scope.switchProject("beta")}>
             Switch to beta
           </button>
@@ -191,11 +203,15 @@ describe("route-complete authenticated application shell (RED until T014)", () =
 
     harness(
       <loaded.ProjectScopeProvider session={fullSession}>
-        <Probe />
+        <loaded.ProjectScopeContent>
+          <Probe />
+        </loaded.ProjectScopeContent>
       </loaded.ProjectScopeProvider>,
       queryClient,
     );
     expect(screen.getByText("Secret frame for alpha")).toBeVisible();
+    expect(screen.getByText("ready:alpha:0")).toBeVisible();
+    expect(screen.getByText('["scope","user-1","alpha",0,"audit",{"denied":true}]')).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Switch to beta" }));
     expect(screen.queryByText("Secret frame for alpha")).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Switching project");
@@ -209,6 +225,8 @@ describe("route-complete authenticated application shell (RED until T014)", () =
 
     await act(async () => releaseCancel?.());
     await waitFor(() => expect(screen.getByText("Secret frame for beta")).toBeVisible());
+    expect(screen.getByText("ready:beta:1")).toBeVisible();
+    expect(screen.getByText('["scope","user-1","beta",1,"audit",{"denied":true}]')).toBeVisible();
     expect(remove).toHaveBeenCalledTimes(1);
     expect(invalidate).toHaveBeenCalledTimes(1);
     const removePredicate = (remove.mock.calls[0]?.[0] as {
@@ -233,6 +251,8 @@ describe("route-complete authenticated application shell (RED until T014)", () =
       </loaded.AuthBoundary>,
     );
     expect(screen.getByRole("status")).toHaveAccessibleName("Loading console");
+    expect(screen.getByTestId("shell-layout").className).toContain("14.5rem");
+    expect(screen.getByRole("banner")).toHaveClass("h-14");
     expect(screen.queryByText("Private route")).not.toBeInTheDocument();
     expect(replace).not.toHaveBeenCalled();
 
@@ -276,6 +296,7 @@ describe("route-complete authenticated application shell (RED until T014)", () =
     expect(screen.getByRole("alert")).toHaveTextContent(
       "The service could not be reached. Check your connection and retry.",
     );
+    expect(screen.getByTestId("shell-layout").className).toContain("14.5rem");
     expect(screen.getByText(/trace-42/)).toBeVisible();
     expect(replace).not.toHaveBeenCalled();
     expect(screen.queryByText("Private route")).not.toBeInTheDocument();
@@ -322,6 +343,7 @@ describe("route-complete authenticated application shell (RED until T014)", () =
     );
     expect(screen.getByText("operator@example.invalid")).toBeVisible();
     expect(screen.getByText("Scoped content for alpha")).toBeVisible();
+    expect(within(screen.getByRole("combobox", { name: "Project" })).queryByRole("option", { name: "All" })).not.toBeInTheDocument();
 
     const layout = screen.getByTestId("shell-layout");
     expect(layout).toHaveAttribute("data-rail-state", "expanded");
@@ -372,5 +394,98 @@ describe("route-complete authenticated application shell (RED until T014)", () =
     expect(within(navigation).queryByRole("link", { name: /topics/i })).not.toBeInTheDocument();
     expect(within(navigation).getByRole("link", { name: "Living knowledge" })).toBeVisible();
     expect(within(navigation).getByRole("link", { name: "Usage & costs" })).toBeVisible();
+  });
+
+  it("denies direct project-management rendering after a capability is revoked", async () => {
+    const loaded = await load<{
+      AppShell: ComponentType<{
+        title: string;
+        children: (project: string) => ReactNode;
+      }>;
+    }>("components/app-shell.tsx");
+    expect(loaded?.AppShell).toBeTypeOf("function");
+    if (!loaded) return;
+
+    pathname = "/manage/users";
+    meResult = {
+      data: {
+        ...fullSession,
+        is_owner: false,
+        platform_capabilities: [],
+        memberships: [
+          {
+            ...fullSession.memberships[0]!,
+            role: "project-admin",
+            capabilities: ["knowledge.read"],
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    };
+
+    harness(
+      <loaded.AppShell title="Users">{() => <p>Private user inventory</p>}</loaded.AppShell>,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("You do not have permission");
+    expect(screen.queryByText("Private user inventory")).not.toBeInTheDocument();
+  });
+
+  it("offers global scope only on an explicit platform route", async () => {
+    const loaded = await load<{
+      AppShell: ComponentType<{
+        title: string;
+        children: (project: string) => ReactNode;
+      }>;
+    }>("components/app-shell.tsx");
+    expect(loaded?.AppShell).toBeTypeOf("function");
+    if (!loaded) return;
+
+    pathname = "/manage/projects";
+    harness(
+      <loaded.AppShell title="Projects">
+        {(project) => <p>{project === "" ? "Global inventory" : `Project ${project}`}</p>}
+      </loaded.AppShell>,
+    );
+    expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue("");
+    expect(screen.getByRole("option", { name: "All" })).toBeVisible();
+    expect(screen.getByText("Global inventory")).toBeVisible();
+  });
+
+  it("keeps shell geometry mounted while a project switch blocks scoped content", async () => {
+    const loaded = await load<{
+      AppShell: ComponentType<{
+        title: string;
+        children: (project: string) => ReactNode;
+      }>;
+    }>("components/app-shell.tsx");
+    expect(loaded?.AppShell).toBeTypeOf("function");
+    if (!loaded) return;
+
+    let releaseCancel: (() => void) | undefined;
+    const cancelGate = new Promise<void>((resolveCancel) => {
+      releaseCancel = resolveCancel;
+    });
+    const queryClient = new QueryClient();
+    vi.spyOn(queryClient, "cancelQueries").mockReturnValue(cancelGate);
+    vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue();
+
+    const user = userEvent.setup();
+    pathname = "/knowledge";
+    harness(
+      <loaded.AppShell title="Knowledge">
+        {(project) => <p>Confidential knowledge for {project}</p>}
+      </loaded.AppShell>,
+      queryClient,
+    );
+    await user.selectOptions(screen.getByRole("combobox", { name: "Project" }), "beta");
+
+    expect(screen.getByTestId("desktop-navigation")).toBeInTheDocument();
+    expect(screen.getByRole("banner")).toHaveClass("h-14");
+    expect(screen.queryByText("Confidential knowledge for alpha")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Switching project");
+
+    await act(async () => releaseCancel?.());
+    await waitFor(() => expect(screen.getByText("Confidential knowledge for beta")).toBeVisible());
   });
 });
