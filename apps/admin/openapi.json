@@ -1085,6 +1085,150 @@
         "title": "PreferenceMetadata",
         "type": "object"
       },
+      "ProductAdoptionMetrics": {
+        "properties": {
+          "active_principals": {
+            "title": "Active Principals",
+            "type": "integer"
+          },
+          "recalls": {
+            "title": "Recalls",
+            "type": "integer"
+          },
+          "recalls_per_day": {
+            "items": {
+              "$ref": "#/components/schemas/ProductMetricDay"
+            },
+            "title": "Recalls Per Day",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recalls",
+          "active_principals",
+          "recalls_per_day"
+        ],
+        "title": "ProductAdoptionMetrics",
+        "type": "object"
+      },
+      "ProductHealthMetrics": {
+        "properties": {
+          "extraction_errors": {
+            "title": "Extraction Errors",
+            "type": "integer"
+          },
+          "recall_p95_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall P95 Ms"
+          },
+          "tokens_by_capability": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Tokens By Capability",
+            "type": "object"
+          }
+        },
+        "required": [
+          "extraction_errors",
+          "recall_p95_ms",
+          "tokens_by_capability"
+        ],
+        "title": "ProductHealthMetrics",
+        "type": "object"
+      },
+      "ProductKnowledgeMetrics": {
+        "properties": {
+          "claims": {
+            "title": "Claims",
+            "type": "integer"
+          },
+          "disputed": {
+            "title": "Disputed",
+            "type": "integer"
+          },
+          "open_gaps": {
+            "title": "Open Gaps",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "claims",
+          "disputed",
+          "open_gaps"
+        ],
+        "title": "ProductKnowledgeMetrics",
+        "type": "object"
+      },
+      "ProductMetricDay": {
+        "description": "One exact server-owned recall count in the selected reporting window.",
+        "properties": {
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "recalls": {
+            "title": "Recalls",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "recalls"
+        ],
+        "title": "ProductMetricDay",
+        "type": "object"
+      },
+      "ProductMetricsEnvelope": {
+        "description": "The four permission-filtered product families exposed to the console.",
+        "properties": {
+          "adoption": {
+            "$ref": "#/components/schemas/ProductAdoptionMetrics"
+          },
+          "health": {
+            "$ref": "#/components/schemas/ProductHealthMetrics"
+          },
+          "knowledge": {
+            "$ref": "#/components/schemas/ProductKnowledgeMetrics"
+          },
+          "quality": {
+            "$ref": "#/components/schemas/ProductQualityMetrics"
+          }
+        },
+        "required": [
+          "adoption",
+          "quality",
+          "knowledge",
+          "health"
+        ],
+        "title": "ProductMetricsEnvelope",
+        "type": "object"
+      },
+      "ProductQualityMetrics": {
+        "properties": {
+          "abstention_rate": {
+            "title": "Abstention Rate",
+            "type": "number"
+          },
+          "hunts_answered_pct": {
+            "title": "Hunts Answered Pct",
+            "type": "number"
+          }
+        },
+        "required": [
+          "abstention_rate",
+          "hunts_answered_pct"
+        ],
+        "title": "ProductQualityMetrics",
+        "type": "object"
+      },
       "ProjectCreate": {
         "additionalProperties": false,
         "properties": {
@@ -4465,9 +4609,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Product Metrics Endpoint Api V1 Admin Metrics Product Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ProductMetricsEnvelope"
                 }
               }
             },

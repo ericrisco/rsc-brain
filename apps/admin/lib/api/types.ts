@@ -195,16 +195,7 @@ export interface AuditFilters {
   until?: string;
 }
 
-export interface ProductMetrics {
-  adoption: { recalls: number; active_principals: number; recalls_per_day: unknown[] };
-  quality: { abstention_rate: number; hunts_answered_pct: number };
-  knowledge: { claims: number; disputed: number; open_gaps: number };
-  health: {
-    extraction_errors: number;
-    recall_p95_ms: number | null;
-    tokens_by_capability: Record<string, number>;
-  };
-}
+export type ProductMetrics = components["schemas"]["ProductMetricsEnvelope"];
 
 export interface GraphNodeView {
   id: string;

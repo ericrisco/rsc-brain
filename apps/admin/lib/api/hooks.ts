@@ -405,11 +405,16 @@ export function useProductMetrics(project: string, windowDays = 30) {
     queryKey: ["metrics", project, windowDays],
     enabled: !!project,
     queryFn: async (): Promise<ProductMetrics> => {
-      const { data, error } = await api.GET("/api/v1/admin/metrics/product", {
-        params: { query: { project, window_days: windowDays } },
-      });
-      if (error) throw new Error("failed to load product metrics");
-      return data as unknown as ProductMetrics;
+      try {
+        const { data, error, response } = await api.GET("/api/v1/admin/metrics/product", {
+          params: { query: { project, window_days: windowDays } },
+        });
+        if (error) throw uiErrorFromResponse(response, error);
+        return data;
+      } catch (error) {
+        if (error && typeof error === "object" && "kind" in error) throw error;
+        throw networkUiError();
+      }
     },
   });
 }
