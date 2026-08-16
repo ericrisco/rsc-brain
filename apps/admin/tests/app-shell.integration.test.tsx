@@ -237,6 +237,83 @@ describe("route-complete authenticated application shell (RED until T014)", () =
     expect(window.localStorage.getItem("rsc-brain.project.user-1")).toBe("beta");
   });
 
+  it("purges the current project frame when authority narrows without a project switch", async () => {
+    const loaded = await load<{
+      ProjectScopeProvider: ComponentType<{ session: SessionEnvelope; children: ReactNode }>;
+      ProjectScopeContent: ComponentType<{ children: ReactNode }>;
+      useProjectScope: () => {
+        project: string;
+        revision: number;
+        status: "ready" | "switching";
+        membership?: SessionEnvelope["memberships"][number];
+      };
+    }>("lib/scope/project-scope.tsx");
+    expect(loaded?.ProjectScopeProvider).toBeTypeOf("function");
+    if (!loaded) return;
+
+    let releaseCancel: (() => void) | undefined;
+    const cancelGate = new Promise<void>((resolveCancel) => {
+      releaseCancel = resolveCancel;
+    });
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(["kb", "alpha", "security"], { secret: "old-scope" });
+    queryClient.setQueryData(["kb", "beta"], { public: true });
+    queryClient.setQueryData(["me"], fullSession);
+    const cancel = vi.spyOn(queryClient, "cancelQueries").mockReturnValue(cancelGate);
+    const remove = vi.spyOn(queryClient, "removeQueries");
+
+    function Probe() {
+      const scope = loaded!.useProjectScope();
+      return (
+        <>
+          <p>{`Private frame ${scope.project}`}</p>
+          <p>{`${scope.status}:${scope.revision}:${scope.membership?.allowed_topics.join(",")}`}</p>
+        </>
+      );
+    }
+
+    const renderTree = (session: SessionEnvelope) => (
+      <QueryClientProvider client={queryClient}>
+        <LanguageProvider initialLocale="en">
+          <loaded.ProjectScopeProvider session={session}>
+            <loaded.ProjectScopeContent>
+              <Probe />
+            </loaded.ProjectScopeContent>
+          </loaded.ProjectScopeProvider>
+        </LanguageProvider>
+      </QueryClientProvider>
+    );
+    const view = render(renderTree(fullSession));
+    expect(screen.getByText("ready:0:general")).toBeVisible();
+
+    const narrowedSession: SessionEnvelope = {
+      ...fullSession,
+      memberships: fullSession.memberships.map((membership) =>
+        membership.project === "alpha"
+          ? { ...membership, capabilities: ["knowledge.read"], allowed_topics: [] }
+          : membership,
+      ),
+    };
+    view.rerender(renderTree(narrowedSession));
+
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Switching project"));
+    expect(screen.queryByText("Private frame alpha")).not.toBeInTheDocument();
+    const predicate = (cancel.mock.calls[0]?.[0] as {
+      predicate?: (query: { queryKey: readonly unknown[] }) => boolean;
+    }).predicate;
+    expect(predicate?.({ queryKey: ["kb", "alpha", "security"] })).toBe(true);
+    expect(predicate?.({ queryKey: ["kb", "beta"] })).toBe(false);
+    expect(predicate?.({ queryKey: ["me"] })).toBe(false);
+    expect(remove).not.toHaveBeenCalled();
+
+    await act(async () => releaseCancel?.());
+    await waitFor(() => expect(screen.getByText("ready:1:")).toBeVisible());
+    expect(screen.getByText("Private frame alpha")).toBeVisible();
+    expect(queryClient.getQueryData(["kb", "alpha", "security"])).toBeUndefined();
+    expect(queryClient.getQueryData(["kb", "beta"])).toEqual({ public: true });
+    expect(queryClient.getQueryData(["me"])).toEqual(fullSession);
+  });
+
   it("renders a stable auth state and returns expired sessions only to a safe local route", async () => {
     const loaded = await load<{
       AuthBoundary: ComponentType<{ children: ReactNode }>;

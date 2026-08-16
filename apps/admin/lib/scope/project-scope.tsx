@@ -46,6 +46,31 @@ function queryBelongsToProject(queryKey: readonly unknown[], project: string): b
   return project.length > 0 && queryKey.some((part) => containsProject(part, project));
 }
 
+function queryBelongsToScope(queryKey: readonly unknown[], project: string): boolean {
+  if (project) return queryBelongsToProject(queryKey, project);
+  return (
+    (queryKey[0] === "scope" && queryKey.some((part) => containsProject(part, "platform"))) ||
+    (queryKey[0] === "management" && queryKey[1] === "projects")
+  );
+}
+
+function authorityFingerprint(session: Me, project: string): string {
+  if (!project) {
+    return JSON.stringify({
+      owner: session.is_owner,
+      capabilities: [...session.platform_capabilities].sort(),
+    });
+  }
+  const membership = session.memberships.find((item) => item.project === project);
+  if (!membership) return "absent";
+  return JSON.stringify({
+    role: membership.role,
+    capabilities: [...membership.capabilities].sort(),
+    topics: [...membership.allowed_topics].sort(),
+    canCurate: membership.can_curate,
+  });
+}
+
 export function ProjectScopeProvider({
   session,
   allowGlobal = false,
@@ -61,6 +86,8 @@ export function ProjectScopeProvider({
   const [revision, setRevision] = useState(0);
   const [isSwitching, setIsSwitching] = useState(false);
   const transition = useRef(0);
+  const authority = authorityFingerprint(session, project);
+  const trackedAuthority = useRef({ project, authority });
 
   const isAllowedProject = useCallback(
     (candidate: string) =>
@@ -112,6 +139,35 @@ export function ProjectScopeProvider({
     if (isAllowedProject(project)) return;
     void switchProject(firstProject);
   }, [firstProject, isAllowedProject, project, switchProject]);
+
+  useEffect(() => {
+    const previous = trackedAuthority.current;
+    trackedAuthority.current = { project, authority };
+    if (
+      previous.project !== project ||
+      previous.authority === authority ||
+      !isAllowedProject(project)
+    ) {
+      return;
+    }
+
+    const currentTransition = ++transition.current;
+    const predicate = (query: { queryKey: readonly unknown[] }) =>
+      queryBelongsToScope(query.queryKey, project);
+    setIsSwitching(true);
+    void (async () => {
+      try {
+        await queryClient.cancelQueries({ predicate });
+      } catch {
+        // Removal below is the privacy boundary; a cancellation transport error cannot retain data.
+      } finally {
+        if (currentTransition !== transition.current) return;
+        queryClient.removeQueries({ predicate });
+        setRevision((current) => current + 1);
+        setIsSwitching(false);
+      }
+    })();
+  }, [authority, isAllowedProject, project, queryClient]);
 
   const membership = session.memberships.find((item) => item.project === project);
   const scope = project || "platform";
