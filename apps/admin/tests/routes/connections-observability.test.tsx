@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { axe } from "jest-axe";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LanguageProvider } from "@/lib/i18n/context";
@@ -122,7 +123,7 @@ describe("Connections access control center", () => {
     const loaded = await loadPage("app/(console)/connections/page.tsx");
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getByRole("heading", { level: 1, name: "My connections" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Access posture" })).toBeVisible();
@@ -133,6 +134,7 @@ describe("Connections access control center", () => {
     expect(within(table).getByText("Active")).toBeVisible();
     expect(screen.getByText("Not available in this release")).toBeVisible();
     expect(screen.queryByText("Available in v0.2")).not.toBeInTheDocument();
+    expect(await axe(container)).toHaveNoViolations();
   });
 
   it("keeps a newly issued secret in one ephemeral, explicitly acknowledged region", async () => {
@@ -239,7 +241,7 @@ describe("Observability operational workspace", () => {
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
     const user = userEvent.setup();
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Overview",
@@ -252,6 +254,7 @@ describe("Observability operational workspace", () => {
     expect(useActivity).toHaveBeenLastCalledWith("alpha", { paused: true });
     await user.click(screen.getByRole("tab", { name: "Recalls" }));
     expect(replace).toHaveBeenCalledWith("/observability?tab=recalls", { scroll: false });
+    expect(await axe(container)).toHaveNoViolations();
   });
 
   it("does not expose the approval surface outside project administration", async () => {

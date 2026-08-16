@@ -5,6 +5,7 @@ import type { ComponentType } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { axe } from "jest-axe";
 
 import { LanguageProvider } from "@/lib/i18n/context";
 
@@ -169,7 +170,7 @@ describe("Platform project governance", () => {
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
     const user = userEvent.setup();
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getByRole("heading", { level: 1, name: "Projects" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Platform project inventory" })).toHaveTextContent("Platform scope");
@@ -183,6 +184,7 @@ describe("Platform project governance", () => {
     await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Beta");
     await user.click(within(dialog).getByRole("button", { name: "Create project" }));
     await waitFor(() => expect(createProject).toHaveBeenCalledWith({ slug: "beta", name: "Beta", settings: {} }));
+    expect(await axe(container)).toHaveNoViolations();
   });
 
   it("requires server impact and exact confirmation before destructive deletion", async () => {
@@ -220,7 +222,7 @@ describe("Project identity administration", () => {
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
     const user = userEvent.setup();
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getByRole("region", { name: "Access administration" })).toHaveTextContent("alpha");
     const table = screen.getByRole("table", { name: "User directory" });
@@ -234,12 +236,14 @@ describe("Project identity administration", () => {
     await user.click(screen.getByRole("button", { name: "Invite user" }));
     const invite = screen.getByRole("dialog", { name: "Invite user" });
     await user.type(within(invite).getByRole("textbox", { name: "Email" }), "grace@example.invalid");
+    await user.click(within(invite).getByRole("checkbox", { name: /Security security/i }));
     await user.click(within(invite).getByRole("button", { name: "Create invitation" }));
-    expect(inviteUser).toHaveBeenCalledWith({ email: "grace@example.invalid", projectRole: "member", platformRole: "member", allowedTopics: [], canCurate: false });
+    expect(inviteUser).toHaveBeenCalledWith({ email: "grace@example.invalid", projectRole: "member", platformRole: "member", allowedTopics: ["security"], canCurate: false });
     const secret = await screen.findByRole("region", { name: "Invitation secret" });
     expect(secret).toHaveTextContent("invite_once_42");
     expect(JSON.stringify(window.localStorage)).not.toContain("invite_once_42");
     expect(JSON.stringify(window.sessionStorage)).not.toContain("invite_once_42");
+    expect(await axe(container)).toHaveNoViolations();
   });
 });
 
@@ -258,7 +262,7 @@ describe("Authorization topic governance", () => {
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
     const user = userEvent.setup();
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getByRole("heading", { level: 1, name: "Topics" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Authorization boundary" })).toHaveTextContent("retrieval and administration");
@@ -276,6 +280,13 @@ describe("Authorization topic governance", () => {
     await user.type(within(dialog).getByRole("spinbutton", { name: "Hard retention (days)" }), "90");
     await user.click(within(dialog).getByRole("button", { name: "Create topic" }));
     await waitFor(() => expect(createTopic).toHaveBeenCalledWith({ slug: "legal", name: "Legal", sensitivity: 4, hardWindowDays: 90 }));
+
+    await user.click(within(table).getByRole("button", { name: "Manage Security authority" }));
+    const authority = screen.getByRole("dialog", { name: "Manage topic authority" });
+    await user.selectOptions(within(authority).getByRole("combobox", { name: "Project member" }), "user-ada");
+    await user.click(within(authority).getByRole("button", { name: "Grant topic" }));
+    await waitFor(() => expect(grantTopic).toHaveBeenCalledWith({ slug: "security", userId: "user-ada" }));
+    expect(await axe(container)).toHaveNoViolations();
   });
 });
 
@@ -297,7 +308,7 @@ describe("Human hunting operations", () => {
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
     const user = userEvent.setup();
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getByRole("region", { name: "Hunt operations" })).toHaveTextContent("secure owner link");
     expect(screen.getByRole("checkbox", { name: "Open hunts only" })).toBeChecked();
@@ -311,6 +322,7 @@ describe("Human hunting operations", () => {
     await user.type(within(dialog).getByRole("textbox", { name: "Topics" }), "security, general");
     await user.click(within(dialog).getByRole("button", { name: "Start hunt" }));
     await waitFor(() => expect(askHunt).toHaveBeenCalledWith({ question: "Who owns incident response?", topics: ["security", "general"] }));
+    expect(await axe(container)).toHaveNoViolations();
   });
 });
 
@@ -328,7 +340,7 @@ describe("Skill lifecycle governance", () => {
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
     const user = userEvent.setup();
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getByRole("region", { name: "Skill governance" })).toHaveTextContent("proposed → active → archived");
     const table = screen.getByRole("table", { name: "Skill lifecycle" });
@@ -337,5 +349,6 @@ describe("Skill lifecycle governance", () => {
     await user.click(within(table).getByRole("button", { name: "Validate Rotate keys" }));
     await waitFor(() => expect(validateSkill).toHaveBeenCalledWith({ slug: "rotate-keys", expectedVersion: 7 }));
     expect(document.body).not.toHaveTextContent(/instructions body/i);
+    expect(await axe(container)).toHaveNoViolations();
   });
 });

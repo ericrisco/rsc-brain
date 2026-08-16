@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useAskHunt, useHunts } from "@/lib/api/hooks";
 import type { Hunt } from "@/lib/api/types";
 import { useI18n } from "@/lib/i18n/context";
@@ -80,6 +81,7 @@ function HuntingWorkspace({ project }: { project: string }) {
           <label className="flex items-center gap-2 text-sm"><input aria-label={t("hunting.openOnly")} type="checkbox" checked={openOnly} onChange={(event) => setOpenOnly(event.target.checked)} />{t("hunting.openOnly")}</label>
         </CardHeader>
         <CardContent>
+          {query.isLoading ? <Skeleton className="h-64 w-full" /> : null}
           {query.isError ? <p role="alert" className="text-sm text-danger">{t("hunting.loadError")}</p> : null}
           {!query.isLoading && !query.isError ? <DataTable caption={t("hunting.table")} columns={columns} rows={query.data?.hunts ?? []} rowKey={(hunt) => hunt.id} emptyTitle={t("hunting.empty")} /> : null}
         </CardContent>

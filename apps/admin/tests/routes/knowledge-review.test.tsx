@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { axe } from "jest-axe";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LanguageProvider } from "@/lib/i18n/context";
@@ -239,7 +240,7 @@ describe("Living knowledge workspace", () => {
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
     const user = userEvent.setup();
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getByRole("heading", { level: 1, name: "Living knowledge" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Knowledge posture" })).toBeVisible();
@@ -252,6 +253,7 @@ describe("Living knowledge workspace", () => {
     ]);
     await user.click(screen.getByRole("tab", { name: "Hunts" }));
     expect(replace).toHaveBeenCalledWith("/knowledge?area=hunts&audience=human", { scroll: false });
+    expect(await axe(container)).toHaveNoViolations();
   });
 
   it("renders gap evidence as a table and confirms agent-gap promotion", async () => {
@@ -333,7 +335,7 @@ describe("Unified review workspace", () => {
     const loaded = await loadPage("app/(console)/review/page.tsx");
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getByRole("heading", { level: 1, name: "Review queue" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Review queue" })).toBeVisible();
@@ -342,6 +344,7 @@ describe("Unified review workspace", () => {
     expect(within(evidence).getByText("Untrusted preview")).toBeVisible();
     expect(within(evidence).getByText("doc-1")).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Source" })).toHaveValue("guardrail");
+    expect(await axe(container)).toHaveNoViolations();
   });
 
   it("edits chunk topics and resolves from explicit review evidence", async () => {

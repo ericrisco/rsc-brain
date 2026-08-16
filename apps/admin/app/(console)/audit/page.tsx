@@ -115,7 +115,7 @@ function AuditWorkspace({ project }: { project: string }) {
     },
     {
       key: "inspect",
-      label: "",
+      label: t("audit.actions"),
       render: (row) => (
         <Button
           aria-label={t("audit.inspect", { id: String(row.id) })}

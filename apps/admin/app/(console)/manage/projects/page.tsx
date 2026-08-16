@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { AlertDialog, Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   useCreateProject,
   useDeleteProject,
@@ -136,6 +137,7 @@ function ProjectsWorkspace() {
           <CardDescription>{t("projects.inventoryHelp")}</CardDescription>
         </CardHeader>
         <CardContent>
+          {query.isLoading ? <Skeleton className="h-64 w-full" /> : null}
           {query.isError ? <p role="alert" className="text-sm text-danger">{t("projects.loadError")}</p> : null}
           {!query.isLoading && !query.isError ? (
             <DataTable caption={t("projects.table")} columns={columns} rows={query.data?.projects ?? []} rowKey={(project) => project.id} emptyTitle={t("projects.empty")} />

@@ -4,6 +4,7 @@ import type { ComponentType } from "react";
 
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { axe } from "jest-axe";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LanguageProvider } from "@/lib/i18n/context";
@@ -92,7 +93,7 @@ describe("Usage exploration", () => {
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
     const user = userEvent.setup();
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getByRole("heading", { level: 1, name: "Usage" })).toBeVisible();
     const summary = screen.getByRole("region", { name: "Usage summary" });
@@ -108,6 +109,7 @@ describe("Usage exploration", () => {
     await user.selectOptions(screen.getByRole("combobox", { name: "Window" }), "90");
     expect(replace).toHaveBeenCalledWith("/usage?window=90&capability=all", { scroll: false });
     expect(useUsage).toHaveBeenLastCalledWith("alpha", 30, undefined);
+    expect(await axe(container)).toHaveNoViolations();
   });
 });
 
@@ -150,7 +152,7 @@ describe("Audit investigation", () => {
     const loaded = await loadPage("app/(console)/audit/page.tsx");
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getByText("Action: recall")).toBeVisible();
     expect(screen.getByText("Denied only")).toBeVisible();
@@ -163,6 +165,7 @@ describe("Audit investigation", () => {
       50,
       0,
     );
+    expect(await axe(container)).toHaveNoViolations();
   });
 
   it("opens privacy-safe event evidence and paginates on the server", async () => {
@@ -210,7 +213,7 @@ describe("Bounded entity explorer", () => {
     const loaded = await loadPage("app/(console)/graph/page.tsx");
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     const detail = screen.getByRole("region", { name: "Entity details" });
     expect(detail).toHaveTextContent("RSC");
@@ -221,6 +224,7 @@ describe("Bounded entity explorer", () => {
     expect(within(table).getByText("owns")).toBeVisible();
     expect(within(table).getByText("Outgoing")).toBeVisible();
     expect(screen.getByText("25 entities per page maximum")).toBeVisible();
+    expect(await axe(container)).toHaveNoViolations();
   });
 
   it("preserves a URL history trail while following and paging", async () => {

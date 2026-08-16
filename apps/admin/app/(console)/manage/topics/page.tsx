@@ -10,7 +10,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { useCreateTopic, useGrantTopic, useRevokeTopic, useTopics, useUpdateTopic } from "@/lib/api/hooks";
+import { Select } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useCreateTopic, useGrantTopic, useRevokeTopic, useTopics, useUpdateTopic, useUsers } from "@/lib/api/hooks";
 import type { TopicState } from "@/lib/api/types";
 import { useI18n } from "@/lib/i18n/context";
 
@@ -26,6 +28,7 @@ export default function TopicsPage() {
 function TopicsWorkspace({ project }: { project: string }) {
   const { t } = useI18n();
   const query = useTopics(project);
+  const users = useUsers(project);
   const create = useCreateTopic(project);
   const update = useUpdateTopic(project);
   const grant = useGrantTopic(project);
@@ -128,6 +131,7 @@ function TopicsWorkspace({ project }: { project: string }) {
       <Card>
         <CardHeader><CardTitle>{t("topics.inventory")}</CardTitle><CardDescription>{t("topics.inventoryHelp")}</CardDescription></CardHeader>
         <CardContent>
+          {query.isLoading ? <Skeleton className="h-64 w-full" /> : null}
           {query.isError ? <p role="alert" className="text-sm text-danger">{t("topics.loadError")}</p> : null}
           {!query.isLoading && !query.isError ? <DataTable caption={t("topics.table")} columns={columns} rows={query.data?.topics ?? []} rowKey={(topic) => topic.id} emptyTitle={t("topics.empty")} /> : null}
         </CardContent>
@@ -145,7 +149,12 @@ function TopicsWorkspace({ project }: { project: string }) {
           <Button disabled={!authorityTarget || !userId.trim() || grant.isPending} onClick={() => void changeAuthority("grant")}>{t("topics.grant")}</Button>
         </>
       )}>
-        <Field label={t("topics.userId")}><Input aria-label={t("topics.userId")} value={userId} onChange={(event) => setUserId(event.target.value)} /></Field>
+        <Field label={t("topics.user")}>
+          <Select aria-label={t("topics.user")} value={userId} disabled={users.isLoading || users.isError} onChange={(event) => setUserId(event.target.value)}>
+            <option value="">{users.isError ? t("topics.usersUnavailable") : users.isLoading ? t("common.loading") : t("topics.chooseUser")}</option>
+            {(users.data?.items ?? []).map((user) => <option key={user.id} value={user.id}>{user.email}</option>)}
+          </Select>
+        </Field>
       </Dialog>
     </div>
   );

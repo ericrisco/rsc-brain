@@ -227,7 +227,17 @@ function ScopeShell({
                 <LanguageSelector />
                 <ThemeSelector />
               </div>
-              <Menu label={session.identity.email} aria-label={t("nav.account")}>
+              <Menu
+                label={(
+                  <>
+                    <span aria-hidden="true" className="font-mono sm:hidden">••</span>
+                    <span className="sr-only sm:not-sr-only sm:max-w-64 sm:truncate">
+                      {session.identity.email}
+                    </span>
+                  </>
+                )}
+                aria-label={t("nav.account")}
+              >
                 <MenuItem onClick={() => void signOut()}>{t("common.logOut")}</MenuItem>
               </Menu>
             </div>

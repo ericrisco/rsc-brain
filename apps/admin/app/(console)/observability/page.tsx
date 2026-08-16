@@ -187,8 +187,10 @@ function OperationalOverview({
               className="px-4 py-5 sm:border-r sm:border-border sm:last:border-r-0"
             >
               <dt className="text-xs text-text-secondary">{signal.label}</dt>
-              <dd className="mt-2 font-mono text-2xl font-medium tabular-nums">{signal.value}</dd>
-              <p className="mt-1 text-xs text-text-tertiary">{signal.detail}</p>
+              <dd className="mt-2">
+                <span className="font-mono text-2xl font-medium tabular-nums">{signal.value}</span>
+                <span className="mt-1 block text-xs text-text-tertiary">{signal.detail}</span>
+              </dd>
             </div>
           ))}
         </dl>

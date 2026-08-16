@@ -1,10 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ComponentType } from "react";
+import type { ComponentType, ReactNode } from "react";
 
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { axe } from "jest-axe";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LanguageProvider } from "@/lib/i18n/context";
@@ -20,6 +21,12 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace, push: vi.fn() }),
   usePathname: () => pathname,
   useSearchParams: () => new URLSearchParams(search),
+}));
+
+vi.mock("next/link", () => ({
+  default: ({ href, children }: { href: string; children: ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
 }));
 
 vi.mock("@/lib/api/hooks", () => ({
@@ -141,7 +148,7 @@ describe("Overview decision surface", () => {
     const loaded = await loadPage("app/(console)/page.tsx");
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getByRole("heading", { level: 1, name: "Overview" })).toBeVisible();
     const rail = screen.getByRole("region", { name: "Control plane posture" });
@@ -172,6 +179,7 @@ describe("Overview decision surface", () => {
     expect(
       screen.queryAllByRole("link").some((link) => link.getAttribute("href") === "/metrics"),
     ).toBe(false);
+    expect(await axe(container)).toHaveNoViolations();
   });
 
   it("orders only supported attention signals by operational severity", async () => {
@@ -227,7 +235,7 @@ describe("canonical Product Metrics route", () => {
     const loaded = await loadPage("app/(console)/product-metrics/page.tsx");
     expect(loaded?.default).toBeTypeOf("function");
     if (!loaded) return;
-    renderPage(loaded.default);
+    const { container } = renderPage(loaded.default);
 
     expect(screen.getByRole("heading", { level: 1, name: "Product metrics" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Window" })).toHaveValue("30");
@@ -238,6 +246,7 @@ describe("canonical Product Metrics route", () => {
       "Health",
     ]);
     expect(screen.queryByText(/north star/i)).not.toBeInTheDocument();
+    expect(await axe(container)).toHaveNoViolations();
   });
 
   it("preserves zero versus unknown and gives every family an operational drill-down", async () => {

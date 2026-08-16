@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { AlertDialog, Dialog } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useArchiveSkill, useCreateSkill, useSkills, useValidateSkill } from "@/lib/api/hooks";
 import type { Skill } from "@/lib/api/types";
 import { useI18n } from "@/lib/i18n/context";
@@ -108,6 +109,7 @@ function SkillsWorkspace({ project }: { project: string }) {
           <label className="grid gap-1 text-xs font-medium text-text-secondary">{t("skills.state")}<Select aria-label={t("skills.state")} value={selectedState} onChange={(event) => updateState(event.target.value)}><option value="all">{t("common.all")}</option><option value="proposed">proposed</option><option value="active">active</option><option value="archived">archived</option></Select></label>
         </CardHeader>
         <CardContent>
+          {query.isLoading ? <Skeleton className="h-64 w-full" /> : null}
           {query.isError ? <p role="alert" className="text-sm text-danger">{t("skills.loadError")}</p> : null}
           {!query.isLoading && !query.isError ? <DataTable caption={t("skills.table")} columns={columns} rows={query.data?.skills ?? []} rowKey={(skill) => skill.slug} emptyTitle={t("skills.empty")} /> : null}
         </CardContent>

@@ -11,6 +11,7 @@ import { DataTable, type DataColumn } from "@/components/ui/data-table";
 import { AlertDialog, Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   useCreateUserCredential,
   useDisableUser,
@@ -20,11 +21,12 @@ import {
   useRequestPasswordReset,
   useRevokeUserCredential,
   useRotateUserCredential,
+  useTopics,
   useUpdateMembership,
   useUserCredentials,
   useUsers,
 } from "@/lib/api/hooks";
-import type { CredentialState, UserState } from "@/lib/api/types";
+import type { CredentialState, TopicState, UserState } from "@/lib/api/types";
 import { useI18n } from "@/lib/i18n/context";
 
 type EphemeralSecret = { kind: "invitation" | "credential" | "reset"; value: string };
@@ -43,6 +45,7 @@ function UsersWorkspace({ project }: { project: string }) {
   const users = useUsers(project);
   const me = useMe();
   const memberships = useMemberships(project);
+  const topics = useTopics(project);
   const invite = useInviteUser(project);
   const disable = useDisableUser(project);
   const resetPassword = useRequestPasswordReset(project);
@@ -57,13 +60,13 @@ function UsersWorkspace({ project }: { project: string }) {
   const [email, setEmail] = useState("");
   const [projectRole, setProjectRole] = useState("member");
   const [platformRole, setPlatformRole] = useState("member");
-  const [inviteTopics, setInviteTopics] = useState("");
+  const [inviteTopics, setInviteTopics] = useState<string[]>([]);
   const [inviteCurate, setInviteCurate] = useState(false);
   const [credentialOpen, setCredentialOpen] = useState(false);
   const [credentialName, setCredentialName] = useState("");
   const [membershipOpen, setMembershipOpen] = useState(false);
   const [memberRole, setMemberRole] = useState("member");
-  const [memberTopics, setMemberTopics] = useState("");
+  const [memberTopics, setMemberTopics] = useState<string[]>([]);
   const [memberCurate, setMemberCurate] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<CredentialState | null>(null);
@@ -80,10 +83,15 @@ function UsersWorkspace({ project }: { project: string }) {
         email: email.trim(),
         projectRole,
         platformRole,
-        allowedTopics: splitList(inviteTopics),
+        allowedTopics: inviteTopics,
         canCurate: inviteCurate,
       });
       setInviteOpen(false);
+      setEmail("");
+      setProjectRole("member");
+      setPlatformRole("member");
+      setInviteTopics([]);
+      setInviteCurate(false);
       if (result.invitation_token) setSecret({ kind: "invitation", value: result.invitation_token });
     } catch {
       setError(t("users.commandError"));
@@ -96,6 +104,7 @@ function UsersWorkspace({ project }: { project: string }) {
     try {
       const result = await createCredential.mutateAsync({ userId: selected.id, name: credentialName.trim(), kind: "pat" });
       setCredentialOpen(false);
+      setCredentialName("");
       if (result.secret) setSecret({ kind: "credential", value: result.secret });
     } catch {
       setError(t("users.commandError"));
@@ -110,7 +119,7 @@ function UsersWorkspace({ project }: { project: string }) {
         userId: selected.id,
         expectedVersion: membership.version,
         role: memberRole,
-        allowedTopics: splitList(memberTopics),
+        allowedTopics: memberTopics,
         canCurate: memberCurate,
       });
       setMembershipOpen(false);
@@ -189,10 +198,12 @@ function UsersWorkspace({ project }: { project: string }) {
       </section>
       {secret ? <SecretPanel secret={secret} onDismiss={() => setSecret(null)} /> : null}
       {error ? <p role="alert" className="text-sm text-danger">{error}</p> : null}
+      {memberships.isError ? <p role="alert" className="text-sm text-danger">{t("users.membershipsUnavailable")}</p> : null}
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(22rem,0.75fr)]">
         <Card>
           <CardHeader><CardTitle>{t("users.directory")}</CardTitle><CardDescription>{t("users.directoryHelp")}</CardDescription></CardHeader>
           <CardContent>
+            {users.isLoading ? <Skeleton className="h-72 w-full" /> : null}
             {users.isError ? <p role="alert" className="text-sm text-danger">{t("users.loadError")}</p> : null}
             {!users.isLoading && !users.isError ? <DataTable caption={t("users.table")} columns={columns} rows={users.data?.items ?? []} rowKey={(user) => user.id} emptyTitle={t("users.empty")} /> : null}
           </CardContent>
@@ -201,10 +212,13 @@ function UsersWorkspace({ project }: { project: string }) {
           project={project}
           user={selected}
           credentials={credentials.data?.items ?? []}
+          credentialsLoading={credentials.isLoading}
+          credentialsError={credentials.isError}
+          canEditMembership={Boolean(membership) && !memberships.isLoading && !memberships.isError}
           onEditMembership={() => {
             if (!membership) return;
             setMemberRole(membership.role);
-            setMemberTopics(membership.allowed_topics.join(", "));
+            setMemberTopics(membership.allowed_topics);
             setMemberCurate(membership.can_curate);
             setMembershipOpen(true);
           }}
@@ -221,7 +235,13 @@ function UsersWorkspace({ project }: { project: string }) {
           <Field label={t("users.email")} wide><Input aria-label={t("users.email")} type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></Field>
           <Field label={t("users.projectRole")}><Select aria-label={t("users.projectRole")} value={projectRole} onChange={(event) => setProjectRole(event.target.value)}><option value="member">member</option><option value="viewer">viewer</option><option value="project-admin">project-admin</option></Select></Field>
           <Field label={t("users.platformRole")}><Select aria-label={t("users.platformRole")} value={platformRole} disabled={!canAssignPlatformRole} onChange={(event) => setPlatformRole(event.target.value)}><option value="member">member</option>{canAssignPlatformRole ? <option value="admin">admin</option> : null}</Select></Field>
-          <Field label={t("users.topics")} wide><Input aria-label={t("users.topics")} value={inviteTopics} onChange={(event) => setInviteTopics(event.target.value)} placeholder={t("users.topicsPlaceholder")} /></Field>
+          <TopicPicker
+            topics={topics.data?.topics ?? []}
+            selected={inviteTopics}
+            onChange={setInviteTopics}
+            loading={topics.isLoading}
+            error={topics.isError}
+          />
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={inviteCurate} onChange={(event) => setInviteCurate(event.target.checked)} />{t("users.canCurate")}</label>
         </div>
       </Dialog>
@@ -233,7 +253,13 @@ function UsersWorkspace({ project }: { project: string }) {
       <Dialog open={membershipOpen} onClose={() => setMembershipOpen(false)} title={t("users.editMembership")} description={membership ? t("users.versionedMembership", { version: membership.version }) : undefined} actions={<Button disabled={!membership || updateMembership.isPending} onClick={() => void submitMembership()}>{t("users.saveAccess")}</Button>}>
         <div className="grid gap-4">
           <Field label={t("users.projectRole")}><Select aria-label={t("users.projectRole")} value={memberRole} onChange={(event) => setMemberRole(event.target.value)}><option value="member">member</option><option value="viewer">viewer</option><option value="project-admin">project-admin</option></Select></Field>
-          <Field label={t("users.topics")}><Input aria-label={t("users.topics")} value={memberTopics} onChange={(event) => setMemberTopics(event.target.value)} /></Field>
+          <TopicPicker
+            topics={topics.data?.topics ?? []}
+            selected={memberTopics}
+            onChange={setMemberTopics}
+            loading={topics.isLoading}
+            error={topics.isError}
+          />
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={memberCurate} onChange={(event) => setMemberCurate(event.target.checked)} />{t("users.canCurate")}</label>
         </div>
       </Dialog>
@@ -244,10 +270,13 @@ function UsersWorkspace({ project }: { project: string }) {
   );
 }
 
-function UserDetail({ project, user, credentials, onEditMembership, onCreateCredential, onRotate, onRevoke, onReset, onDisable }: {
+function UserDetail({ project, user, credentials, credentialsLoading, credentialsError, canEditMembership, onEditMembership, onCreateCredential, onRotate, onRevoke, onReset, onDisable }: {
   project: string;
   user: UserState | null;
   credentials: CredentialState[];
+  credentialsLoading: boolean;
+  credentialsError: boolean;
+  canEditMembership: boolean;
   onEditMembership: () => void;
   onCreateCredential: () => void;
   onRotate: (credential: CredentialState) => Promise<void>;
@@ -269,7 +298,7 @@ function UserDetail({ project, user, credentials, onEditMembership, onCreateCred
                 <Detail label={t("users.topics")} value={user.allowed_topics.join(", ") || t("common.none")} wide />
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={onEditMembership}>{t("users.editAccess")}</Button>
+                <Button size="sm" variant="outline" disabled={!canEditMembership} onClick={onEditMembership}>{t("users.editAccess")}</Button>
                 <Button size="sm" variant="outline" onClick={onCreateCredential}>{t("users.createCredential")}</Button>
                 <Button size="sm" variant="outline" onClick={onReset}>{t("users.resetPassword")}</Button>
                 <Button size="sm" variant="destructive" onClick={onDisable}>{t("users.disable")}</Button>
@@ -277,12 +306,15 @@ function UserDetail({ project, user, credentials, onEditMembership, onCreateCred
               <div>
                 <h3 className="text-sm font-semibold">{t("users.credentials")}</h3>
                 <div className="mt-2 space-y-2">
-                  {credentials.length ? credentials.map((credential) => (
+                  {credentialsLoading ? <Skeleton className="h-20 w-full" /> : null}
+                  {credentialsError ? <p role="alert" className="text-sm text-danger">{t("users.credentialsUnavailable")}</p> : null}
+                  {!credentialsLoading && !credentialsError && credentials.length ? credentials.map((credential) => (
                     <div key={credential.id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-border p-3 text-sm">
                       <div><p className="font-medium">{credential.name ?? credential.kind}</p><p className="font-mono text-xs text-text-secondary">{credential.status} · v{credential.version}</p></div>
                       <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => void onRotate(credential)}>{t("users.rotate")}</Button><Button size="sm" variant="destructive" onClick={() => onRevoke(credential)}>{t("users.revoke")}</Button></div>
                     </div>
-                  )) : <p className="text-sm text-text-secondary">{t("users.noCredentials")}</p>}
+                  )) : null}
+                  {!credentialsLoading && !credentialsError && !credentials.length ? <p className="text-sm text-text-secondary">{t("users.noCredentials")}</p> : null}
                 </div>
               </div>
             </>
@@ -314,6 +346,40 @@ function Detail({ label, value, wide = false }: { label: string; value: string; 
   return <div className={wide ? "col-span-2" : undefined}><p className="text-xs uppercase tracking-[0.08em] text-text-secondary">{label}</p><p className="mt-1 break-all">{value}</p></div>;
 }
 
-function splitList(value: string) {
-  return Array.from(new Set(value.split(",").map((item) => item.trim()).filter(Boolean)));
+function TopicPicker({ topics, selected, onChange, loading, error }: {
+  topics: TopicState[];
+  selected: string[];
+  onChange: (topics: string[]) => void;
+  loading: boolean;
+  error: boolean;
+}) {
+  const { t } = useI18n();
+  return (
+    <fieldset className="grid gap-2 sm:col-span-2">
+      <legend className="text-sm font-medium">{t("users.topics")}</legend>
+      <p className="text-xs text-text-secondary">{t("users.topicSelectionHelp")}</p>
+      {loading ? <Skeleton className="h-20 w-full" /> : null}
+      {error ? <p role="alert" className="text-sm text-danger">{t("users.topicsUnavailable")}</p> : null}
+      {!loading && !error ? (
+        topics.length ? (
+          <div className="grid gap-2 rounded-[var(--radius-panel)] border border-border p-3 sm:grid-cols-2">
+            {topics.map((topic) => (
+              <label key={topic.id} className="flex min-h-10 items-center gap-2 rounded px-2 text-sm hover:bg-surface-subtle">
+                <input
+                  type="checkbox"
+                  checked={selected.includes(topic.slug)}
+                  onChange={(event) => onChange(
+                    event.target.checked
+                      ? [...selected, topic.slug]
+                      : selected.filter((slug) => slug !== topic.slug),
+                  )}
+                />
+                <span><span className="font-medium">{topic.name}</span> <span className="font-mono text-xs text-text-secondary">{topic.slug}</span></span>
+              </label>
+            ))}
+          </div>
+        ) : <p className="text-sm text-text-secondary">{t("users.noTopicsAvailable")}</p>
+      ) : null}
+    </fieldset>
+  );
 }
