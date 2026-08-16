@@ -26,12 +26,55 @@ source release or supply a registry overlay with immutable image tags.
 
 4. Resolve every reported cross-project violation before migration.
 5. Create and retain a verified [backup](backup-and-restore.md).
-6. Record the currently deployed application tag and configuration revision for rollback.
+6. Record the currently deployed version, so a rollback can name it:
+
+   ```bash
+   curl -fsS "https://<your-domain>/api/v1/version"
+   ```
+
+   The answer is the published version this instance runs, or that version with a `+dev` marker when
+   the build is not a published release. It needs no credential and answers even when the database
+   is unreachable. Inside the instance, `brain --version` reports the full build identity, which
+   also distinguishes two different unpublished builds.
+
+   Until 0.13.0 this step could not be performed: the image was always tagged `latest` and no
+   interface reported a version, so an operator on `main` and an operator on the published release
+   recorded the same string.
+
+## If a version is withdrawn
+
+A published version found defective or vulnerable is **marked withdrawn — never deleted**. Deleting
+it would break every installation already pinned to it, which is the opposite of what a rollback
+needs.
+
+A withdrawn version:
+
+- stops being recommended, and is not what you get by following the current instructions;
+- carries a stated reason in its release notes;
+- **remains installable** when you name it explicitly, so an installation pinned to it keeps
+  starting and a rollback through it still works;
+- is never removed from the registry.
+
+If you are running one, upgrade past it. If you must stay on it briefly, you can — that is the point
+of not deleting it.
 
 ## Upgrade a Compose deployment
 
-The canonical Compose file builds `rsc-brain/app:latest` from the checked-out source; it does not
-consume a release-tag variable. Check out the intended release, retain your protected environment
+Two paths, and both are supported.
+
+**Installing a published version** (recommended, and much faster — no source build):
+
+```bash
+RSC_BRAIN_VERSION=<version> docker compose --env-file deploy/.env \
+  -f deploy/docker-compose.version.yml \
+  -f deploy/compose.models.yml \
+  up -d
+```
+
+Rolling back is the same command with the previous version. Nothing is rebuilt.
+
+**Building from source** is unchanged and stays supported. The canonical Compose file builds
+`rsc-brain/app:latest` from the checked-out source; it does not consume a release-tag variable. Check out the intended release, retain your protected environment
 and model overlay, then rebuild with the same complete file set used for installation:
 
 ```bash

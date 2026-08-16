@@ -10,16 +10,24 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 RECORD="deploy/helm/COMPOSE_SOURCE.sha256"
 
+# SPEC release-identity: the install-by-version topology is DERIVED from the canonical compose the
+# same way the chart is, so it belongs under the same guard. Without this it would be the only
+# deployment definition in the repository that nothing reconciles — in a repository that already
+# decided this question once.
+
 if [[ ! -f "$RECORD" ]]; then
   echo "parity guard: missing $RECORD" >&2
   exit 1
 fi
 
 if shasum -a 256 -c "$RECORD" >/dev/null 2>&1; then
-  echo "parity guard OK: chart is reconciled with $(awk '{print $2}' "$RECORD")."
+  echo "parity guard OK: reconciled with $(awk '{printf "%s ", $2}' "$RECORD")"
 else
-  echo "parity guard FAILED: the canonical compose changed without updating the Helm chart." >&2
-  echo "Reconcile deploy/helm/rsc-brain + deploy/helm/PARITY.md, then re-record:" >&2
-  echo "  shasum -a 256 deploy/docker-compose.prod.yml > $RECORD" >&2
+  echo "parity guard FAILED: a guarded deployment definition changed without reconciling." >&2
+  shasum -a 256 -c "$RECORD" 2>&1 | grep -v ': OK$' | sed 's/^/  /' >&2
+  echo "Reconcile deploy/helm/rsc-brain + deploy/helm/PARITY.md, then re-record BOTH files:" >&2
+  # Re-recording only the canonical file would silently drop the other from the guard — an
+  # instruction that breaks the protection it is printed to restore.
+  echo "  shasum -a 256 deploy/docker-compose.prod.yml deploy/docker-compose.version.yml > $RECORD" >&2
   exit 1
 fi

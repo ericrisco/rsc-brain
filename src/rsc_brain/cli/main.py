@@ -12,7 +12,6 @@ from collections.abc import Callable
 
 import typer
 
-from rsc_brain import __version__
 from rsc_brain.cli._common import JSON_OPTION, State, emit_not_implemented, json_enabled
 from rsc_brain.cli.admin import audit as _audit
 from rsc_brain.cli.admin import projects_app, topics_app, users_app
@@ -41,6 +40,7 @@ from rsc_brain.cli.installer import verify as _verify
 from rsc_brain.cli.installer import wait_for_schema as _wait_for_schema
 from rsc_brain.cli.ontology import ontology_app
 from rsc_brain.cli.skills import skills_app
+from rsc_brain.identity_release import full as build_identity
 
 # FR-10.1 subcommands, in the order the spec lists them.
 COMMANDS: tuple[str, ...] = (
@@ -110,7 +110,9 @@ def _main(
     version: bool = typer.Option(False, "--version", help="Show version and exit."),
 ) -> None:
     if version:
-        typer.echo(__version__)
+        # SPEC release-identity: the FULL form. Printing the package version reported 0.13.0 on a
+        # build forty-nine commits past the tag — the defect this closes.
+        typer.echo(build_identity())
         raise typer.Exit(code=0)
     ctx.obj = State(json_output=json_output)
     if ctx.invoked_subcommand is None:

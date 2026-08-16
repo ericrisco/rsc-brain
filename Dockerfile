@@ -3,6 +3,23 @@
 # selected by the compose command. Multi-stage uv build; runs as a non-root user (12-factor).
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS build
 WORKDIR /app
+
+# SPEC release-identity: the artifact carries the identity it will report, fixed here because the
+# artifact IS the thing being identified. The value is what `git describe --tags --always --dirty`
+# yields for the source this image was built from.
+#
+# The build FAILS on an empty value rather than producing an image that quietly reports "not a
+# published release" while being one. That is the AUDIT-083 rule — assert the property where it is
+# created, not months later on an operator's host — and it matters more here than usual, because an
+# unstamped image does not crash: it lies quietly, and only in the direction of understatement.
+#
+# Placed FIRST on purpose. Sitting at the end of the build stage it would still be correct and would
+# still fail — after the twenty-five minutes the PDF backend takes. A guard that only reports at the
+# end of the expensive work teaches people to skip it.
+ARG RSC_BRAIN_BUILD_IDENTITY
+RUN test -n "${RSC_BRAIN_BUILD_IDENTITY}" \
+    || { echo "build identity is empty: pass --build-arg RSC_BRAIN_BUILD_IDENTITY=\$(git describe --tags --always --dirty)" >&2; exit 1; }
+
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never
@@ -92,9 +109,13 @@ COPY --from=build --chown=rsc:rsc /app /app
 # toolchain to a production runtime to feed a JIT this workload never benefits from would be worse on
 # both counts, so the image declares eager mode. `TORCHDYNAMO_DISABLE` is the legacy alias of the same
 # switch (both measured working); the current name is set here.
+# Re-declared: a multi-stage build drops build arguments between stages, so an identity that
+# existed only in the build stage would be an identity the running process cannot read.
+ARG RSC_BRAIN_BUILD_IDENTITY
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    TORCH_COMPILE_DISABLE=1
+    TORCH_COMPILE_DISABLE=1 \
+    RSC_BRAIN_BUILD_IDENTITY=${RSC_BRAIN_BUILD_IDENTITY}
 USER rsc
 
 EXPOSE 8080

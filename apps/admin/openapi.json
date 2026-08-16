@@ -4854,6 +4854,32 @@
         "summary": "Upload Document"
       }
     },
+    "/api/v1/version": {
+      "get": {
+        "description": "Which published version this instance is, or that it is not one.\n\nThe answer is the *public form* of the build identity: coarse on purpose. Two different\ndevelopment builds answer identically; only `brain --version` separates them.",
+        "operationId": "read_version_api_v1_version_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Read Version Api V1 Version Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Read Version",
+        "tags": [
+          "version"
+        ]
+      }
+    },
     "/hunt/{token}/answer": {
       "post": {
         "description": "The same operation for a non-browser client. 404 for any token that does not resolve.",
