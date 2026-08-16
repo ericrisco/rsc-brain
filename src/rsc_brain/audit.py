@@ -11,16 +11,19 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
+import hashlib
+import hmac
 import io
 import json
 import uuid
 from base64 import urlsafe_b64decode, urlsafe_b64encode
+from binascii import Error as Base64Error
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from rsc_brain.scope import PrincipalType, ProjectScope
 from rsc_brain.stores.relational import models
@@ -30,6 +33,10 @@ from rsc_brain.visibility import fully_authorized_topic_clause
 
 class InvalidRecallCursor(ValueError):
     """The caller supplied a continuation token this read model did not issue."""
+
+
+class RecallCursorSigningUnavailable(RuntimeError):
+    """The database connection has no server-side credential from which to derive a signing key."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,19 +298,83 @@ async def recall_stream(
         return [_row_to_dict(row) for row in rows]
 
 
-def _encode_recall_cursor(row: models.AuditLog) -> str:
+def _cursor_signing_key(sessionmaker: async_sessionmaker[AsyncSession]) -> bytes:
+    """Derive a domain-separated cursor key from the existing database credential.
+
+    The database password is already required secret application material in every supported
+    deployment.  Domain separation means the derived bytes cannot be used as the database
+    credential, while every replica connected with that credential verifies the same stateless
+    cursor.  We deliberately fail closed for passwordless URLs instead of inventing a predictable
+    fallback or a per-process key that breaks across replicas and restarts.
+    """
+    bind = sessionmaker.kw.get("bind")
+    if not isinstance(bind, AsyncEngine) or not bind.url.password:
+        raise RecallCursorSigningUnavailable("cursor signing requires a credentialed database URL")
+    namespace = f"{bind.url.username or ''}/{bind.url.database or ''}".encode()
+    return hmac.new(
+        bind.url.password.encode(),
+        b"rsc-brain:console-recall-cursor:v1\0" + namespace,
+        hashlib.sha256,
+    ).digest()
+
+
+def _cursor_context(
+    scope: ProjectScope, *, principal_type: str | None, denied: bool | None
+) -> bytes:
+    """Canonical associated data that prevents cross-authority/filter replay."""
+    return json.dumps(
+        {
+            "aud": "console-observability-recalls",
+            "project_id": scope.project_id,
+            "principal_id": scope.principal_id,
+            "principal_type": scope.principal_type.value,
+            "on_behalf_of": scope.on_behalf_of,
+            "allowed_topics": sorted(scope.allowed_topics),
+            "role": scope.role,
+            "filters": {"principal_type": principal_type, "denied": denied},
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+
+
+def _b64encode(value: bytes) -> str:
+    return urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def _b64decode(value: str) -> bytes:
+    return urlsafe_b64decode(f"{value}{'=' * (-len(value) % 4)}".encode())
+
+
+def _cursor_signature(key: bytes, encoded_position: str, context: bytes) -> bytes:
+    return hmac.new(
+        key,
+        b"rsc-brain:recall-page:v1\0" + context + b"\0" + encoded_position.encode(),
+        hashlib.sha256,
+    ).digest()
+
+
+def _encode_recall_cursor(row: models.AuditLog, *, key: bytes, context: bytes) -> str:
     payload = json.dumps(
         {"v": 1, "ts": row.ts.isoformat(), "id": row.id},
         separators=(",", ":"),
         sort_keys=True,
     ).encode()
-    return urlsafe_b64encode(payload).decode().rstrip("=")
+    position = _b64encode(payload)
+    signature = _b64encode(_cursor_signature(key, position, context))
+    return f"{position}.{signature}"
 
 
-def _decode_recall_cursor(value: str) -> tuple[dt.datetime, int]:
+def _decode_recall_cursor(value: str, *, key: bytes, context: bytes) -> tuple[dt.datetime, int]:
     try:
-        padding = "=" * (-len(value) % 4)
-        raw = urlsafe_b64decode(f"{value}{padding}".encode())
+        position, signature, *unexpected = value.split(".")
+        if unexpected or not position or not signature:
+            raise ValueError
+        supplied_signature = _b64decode(signature)
+        expected_signature = _cursor_signature(key, position, context)
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            raise ValueError
+        raw = _b64decode(position)
         payload = json.loads(raw)
         if not isinstance(payload, dict) or payload.get("v") != 1:
             raise ValueError
@@ -311,7 +382,7 @@ def _decode_recall_cursor(value: str) -> tuple[dt.datetime, int]:
         row_id = int(payload["id"])
         if timestamp.tzinfo is None or row_id < 1:
             raise ValueError
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (Base64Error, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise InvalidRecallCursor("invalid recall cursor") from exc
     return timestamp, row_id
 
@@ -340,9 +411,12 @@ async def recall_page(
     if denied is not None:
         conditions.append(models.AuditLog.denied.is_(denied))
 
+    context = _cursor_context(scope, principal_type=principal_type, denied=denied)
+    signing_key: bytes | None = None
     page_conditions = list(conditions)
     if cursor is not None:
-        timestamp, row_id = _decode_recall_cursor(cursor)
+        signing_key = _cursor_signing_key(sessionmaker)
+        timestamp, row_id = _decode_recall_cursor(cursor, key=signing_key, context=context)
         page_conditions.append(
             or_(
                 models.AuditLog.ts < timestamp,
@@ -374,7 +448,15 @@ async def recall_page(
         items.append(item)
     return RecallPage(
         items=items,
-        next_cursor=_encode_recall_cursor(visible_rows[-1]) if has_more and visible_rows else None,
+        next_cursor=(
+            _encode_recall_cursor(
+                visible_rows[-1],
+                key=signing_key or _cursor_signing_key(sessionmaker),
+                context=context,
+            )
+            if has_more and visible_rows
+            else None
+        ),
         total=int(total or 0),
         freshness=latest or dt.datetime.now(dt.UTC),
     )

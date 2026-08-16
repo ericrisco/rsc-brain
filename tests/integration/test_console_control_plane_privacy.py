@@ -14,7 +14,9 @@ respectively, so their aggregates belong in the filter.
 from __future__ import annotations
 
 import datetime as dt
+import json
 import uuid
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +44,7 @@ _HIDDEN = "hidden"
 class _Seed:
     project_slug: str
     project_id: str
+    other_project_slug: str
     other_project_id: str
     audit_day: str
     visible_document_id: str
@@ -400,6 +403,7 @@ async def _seed_read_models(harness: Harness) -> _Seed:
     return _Seed(
         project_slug=project_slug,
         project_id=project_id,
+        other_project_slug=other_slug,
         other_project_id=other_id,
         audit_day=str(audit_anchor.date()),
         visible_document_id=str(visible_document.id),
@@ -849,6 +853,138 @@ async def test_general_only_recall_cursor_pages_the_authorized_set_without_metad
     assert "mixed-hidden-principal" not in combined
     assert "other-principal" not in combined
     assert _HIDDEN not in combined
+
+
+def _forge_cursor_position(cursor: str) -> str:
+    """Rewrite the visible position while retaining any integrity suffix unchanged."""
+    position, separator, integrity = cursor.partition(".")
+    padding = "=" * (-len(position) % 4)
+    payload = json.loads(urlsafe_b64decode(f"{position}{padding}"))
+    payload["id"] = int(payload["id"]) + 1
+    rewritten = (
+        urlsafe_b64encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
+        .decode()
+        .rstrip("=")
+    )
+    return f"{rewritten}{separator}{integrity}"
+
+
+async def test_recall_cursor_rejects_a_forged_position(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    harness = build_harness()
+    seed = await _seed_read_models(harness)
+    async with _client(harness, tmp_path) as client:
+        headers = await _session_headers(harness, client, seed.project_id, topics=(_VISIBLE,))
+        first = await client.get(
+            "/api/v1/admin/observability/recalls",
+            params={"project": seed.project_slug, "limit": 1},
+            headers=headers,
+        )
+        cursor = first.json()["next_cursor"]
+        assert isinstance(cursor, str) and cursor
+        forged = await client.get(
+            "/api/v1/admin/observability/recalls",
+            params={
+                "project": seed.project_slug,
+                "limit": 1,
+                "cursor": _forge_cursor_position(cursor),
+            },
+            headers=headers,
+        )
+
+    assert forged.status_code == 400
+    assert "hidden-principal" not in forged.text
+
+
+async def test_recall_cursor_is_bound_to_project_scope(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    harness = build_harness()
+    seed = await _seed_read_models(harness)
+    identity = IdentityService(harness.sm)
+    email = f"{unique_slug('privacy-cursor-project')}@example.com"
+    invitation = await identity.invite_user(email)
+    user_id = await identity.accept_invitation(invitation.token, _PASSWORD)
+    await identity.add_membership(user_id, seed.project_id, allowed_topics=(_VISIBLE,))
+    await identity.add_membership(user_id, seed.other_project_id, allowed_topics=(_VISIBLE,))
+
+    async with _client(harness, tmp_path) as client:
+        login = await client.post(
+            "/api/v1/auth/login", json={"email": email, "password": _PASSWORD}
+        )
+        headers = {"Authorization": f"Bearer {login.json()['session_token']}"}
+        first = await client.get(
+            "/api/v1/admin/observability/recalls",
+            params={"project": seed.project_slug, "limit": 1},
+            headers=headers,
+        )
+        cursor = first.json()["next_cursor"]
+        assert isinstance(cursor, str) and cursor
+        replay = await client.get(
+            "/api/v1/admin/observability/recalls",
+            params={"project": seed.other_project_slug, "limit": 1, "cursor": cursor},
+            headers=headers,
+        )
+
+    assert replay.status_code == 400
+    assert "other-principal" not in replay.text
+
+
+async def test_recall_cursor_is_bound_to_principal_identity(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    harness = build_harness()
+    seed = await _seed_read_models(harness)
+    async with _client(harness, tmp_path) as client:
+        first_headers = await _session_headers(harness, client, seed.project_id, topics=(_VISIBLE,))
+        second_headers = await _session_headers(
+            harness, client, seed.project_id, topics=(_VISIBLE,)
+        )
+        first = await client.get(
+            "/api/v1/admin/observability/recalls",
+            params={"project": seed.project_slug, "limit": 1},
+            headers=first_headers,
+        )
+        cursor = first.json()["next_cursor"]
+        assert isinstance(cursor, str) and cursor
+        replay = await client.get(
+            "/api/v1/admin/observability/recalls",
+            params={"project": seed.project_slug, "limit": 1, "cursor": cursor},
+            headers=second_headers,
+        )
+
+    assert replay.status_code == 400
+    assert "hidden-principal" not in replay.text
+
+
+async def test_recall_cursor_is_bound_to_filters(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    harness = build_harness()
+    seed = await _seed_read_models(harness)
+    async with _client(harness, tmp_path) as client:
+        headers = await _session_headers(harness, client, seed.project_id, topics=(_VISIBLE,))
+        first = await client.get(
+            "/api/v1/admin/observability/recalls",
+            params={"project": seed.project_slug, "limit": 1},
+            headers=headers,
+        )
+        cursor = first.json()["next_cursor"]
+        assert isinstance(cursor, str) and cursor
+        replay = await client.get(
+            "/api/v1/admin/observability/recalls",
+            params={
+                "project": seed.project_slug,
+                "limit": 1,
+                "cursor": cursor,
+                "denied": True,
+            },
+            headers=headers,
+        )
+
+    assert replay.status_code == 400
+    assert "hidden-principal" not in replay.text
 
 
 async def test_general_only_observability_filters_document_backed_posture_and_errors(
