@@ -200,7 +200,7 @@ async def test_hunting_endpoints_round_trip(
 
         patched = await client.patch(
             f"/api/v1/admin/persons/{person_id}",
-            json={"language": "en"},
+            json={"language": "en", "expected_version": 1},
             headers=headers,
         )
         assert patched.status_code == 200
@@ -224,8 +224,12 @@ async def test_hunting_endpoints_round_trip(
         agent_gaps = await client.get("/api/v1/admin/gaps?audience=agent", headers=headers)
         assert agent_gaps.status_code == 200 and agent_gaps.json()["gaps"] == []
 
-        removed = await client.delete(f"/api/v1/admin/persons/{person_id}", headers=headers)
-        assert removed.status_code == 200
+        removed = await client.delete(
+            f"/api/v1/admin/persons/{person_id}",
+            params={"expected_version": patched.json()["version"]},
+            headers=headers,
+        )
+        assert removed.status_code == 409, "an active hunt must block removal of its owner"
 
 
 async def test_timeline_endpoint_has_contract_parity(

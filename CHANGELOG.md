@@ -11,6 +11,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Added the console Hunting Directory and Skill Lifecycle contracts: immutable topic-scoped hunts,
+  minimized person collections with dependency-aware versioned deletion, and audited optimistic
+  skill validation/archive commands with durable replay semantics.
 - Added a Diátaxis-based public documentation set for installation, first use, operations,
   configuration, REST, MCP, security, architecture, and troubleshooting.
 - Added executable documentation, MCP transport, platform-overlay, and Helm regression checks.

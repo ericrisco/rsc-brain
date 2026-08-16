@@ -67,9 +67,7 @@ _PERSON_COLLECTION_FIELDS = frozenset(
     }
 )
 _SKILL_CREATE_FIELDS = frozenset({"skill_id", "slug"})
-_SKILL_VIEW_FIELDS = frozenset(
-    {"slug", "title", "status", "stale", "depends_on", "version"}
-)
+_SKILL_VIEW_FIELDS = frozenset({"slug", "title", "status", "stale", "depends_on", "version"})
 _SKILL_VALIDATE_FIELDS = frozenset(
     {"slug", "status", "stale", "depends_on", "version", "audit_correlation"}
 )
@@ -605,11 +603,7 @@ async def test_manual_hunt_persists_topics_and_replays_idempotently(
         if len(matching) != 1 or matching[0].get("topics") != ["general"]:
             failures.append("list after restart: immutable topic snapshot missing or duplicated")
         legacy = next(
-            (
-                item
-                for item in hunt_rows
-                if isinstance(item, dict) and item.get("id") == legacy_id
-            ),
+            (item for item in hunt_rows if isinstance(item, dict) and item.get("id") == legacy_id),
             None,
         )
         if not isinstance(legacy, dict) or legacy.get("topics") != []:
@@ -621,23 +615,17 @@ async def test_manual_hunt_persists_topics_and_replays_idempotently(
         if detail_hunt.get("topics") != ["general"]:
             failures.append("detail after restart: immutable topic snapshot missing")
     legacy_hunt = _dict_field(_object(legacy_detail), "hunt")
-    if (
-        legacy_detail.status_code == 200
-        and (set(legacy_hunt) != _HUNT_VIEW_FIELDS or legacy_hunt.get("topics") != [])
+    if legacy_detail.status_code == 200 and (
+        set(legacy_hunt) != _HUNT_VIEW_FIELDS or legacy_hunt.get("topics") != []
     ):
         failures.append("detail: legacy HuntView was not minimized or normalized to empty topics")
     if restricted_list.status_code == 200:
         restricted_rows = _list_field(_object(restricted_list), "hunts")
         if any(
-            not isinstance(item, dict) or set(item) != _HUNT_VIEW_FIELDS
-            for item in restricted_rows
+            not isinstance(item, dict) or set(item) != _HUNT_VIEW_FIELDS for item in restricted_rows
         ):
             failures.append("restricted list: a HuntView did not match the closed schema")
-        restricted_ids = {
-            item.get("id")
-            for item in restricted_rows
-            if isinstance(item, dict)
-        }
+        restricted_ids = {item.get("id") for item in restricted_rows if isinstance(item, dict)}
         if first_id in restricted_ids:
             failures.append("restricted list: disclosed a hunt outside topic authority")
     if _body_signature(restricted_detail) != _body_signature(missing_detail):
@@ -1022,11 +1010,7 @@ async def test_skill_view_dependency_validation_archive_replay_and_stale_version
         if any(not isinstance(item, dict) or set(item) != _SKILL_VIEW_FIELDS for item in skills):
             failures.append("list: a SkillView did not match the minimized closed schema")
         return next(
-            (
-                item
-                for item in skills
-                if isinstance(item, dict) and item.get("slug") == skill_slug
-            ),
+            (item for item in skills if isinstance(item, dict) and item.get("slug") == skill_slug),
             None,
         )
 

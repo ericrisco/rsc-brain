@@ -617,7 +617,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get Person */
+        get: operations["get_person_api_v1_admin_persons__person_id__get"];
         put?: never;
         post?: never;
         /** Delete Person */
@@ -626,6 +627,23 @@ export interface paths {
         head?: never;
         /** Update Person */
         patch: operations["update_person_api_v1_admin_persons__person_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/admin/persons/{person_id}/delete-impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Person Delete Impact */
+        get: operations["person_delete_impact_api_v1_admin_persons__person_id__delete_impact_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/admin/projects": {
@@ -637,11 +655,7 @@ export interface paths {
         };
         /**
          * List Projects
-         * @description The projects this caller may know about.
-         *
-         *     R01 (strengthened during T001): this route returned every slug in the instance, so any caller
-         *     that passed the old admin gate enumerated other tenants by name. Enumerating the whole instance
-         *     is a platform operation; a project caller sees only the projects it is a member of.
+         * @description The global platform inventory, capability-gated independently of memberships.
          */
         get: operations["list_projects_api_v1_admin_projects_get"];
         put?: never;
@@ -773,6 +787,23 @@ export interface paths {
         put?: never;
         /** Archive Skill Admin */
         post: operations["archive_skill_admin_api_v1_admin_skills__slug__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/skills/{slug}/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate Skill Admin */
+        post: operations["validate_skill_admin_api_v1_admin_skills__slug__validate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1344,6 +1375,8 @@ export interface components {
             channels?: {
                 [key: string]: string;
             } | null;
+            /** Expected Version */
+            expected_version: number;
             /** Language */
             language?: string | null;
             /** Quiet Hours */
@@ -1352,6 +1385,21 @@ export interface components {
             } | null;
             /** Topics */
             topics?: string[] | null;
+        };
+        /** PreferenceMetadata */
+        PreferenceMetadata: {
+            /**
+             * Locale
+             * @default es
+             * @enum {string}
+             */
+            locale: "es" | "en";
+            /**
+             * Theme
+             * @default system
+             * @enum {string}
+             */
+            theme: "system" | "light" | "dark";
         };
         /** ProjectCreate */
         ProjectCreate: {
@@ -1369,6 +1417,46 @@ export interface components {
         RejectDoc: {
             /** Reason */
             reason: string;
+        };
+        /**
+         * SessionEnvelope
+         * @description The only browser-readable, authoritative capability envelope.
+         */
+        SessionEnvelope: {
+            identity: components["schemas"]["SessionIdentity"];
+            /** Is Owner */
+            is_owner: boolean;
+            /** Memberships */
+            memberships: components["schemas"]["SessionMembership"][];
+            /** Platform Capabilities */
+            platform_capabilities: string[];
+            preference_metadata: components["schemas"]["PreferenceMetadata"];
+            user: components["schemas"]["SessionIdentity"];
+        };
+        /**
+         * SessionIdentity
+         * @description Display-safe identity metadata; it intentionally contains no credential material.
+         */
+        SessionIdentity: {
+            /** Email */
+            email: string;
+            /** Id */
+            id: string;
+            /** Role */
+            role: string;
+        };
+        /** SessionMembership */
+        SessionMembership: {
+            /** Allowed Topics */
+            allowed_topics: string[];
+            /** Can Curate */
+            can_curate: boolean;
+            /** Capabilities */
+            capabilities: string[];
+            /** Project */
+            project: string;
+            /** Role */
+            role: string;
         };
         /** SkillUpsert */
         SkillUpsert: {
@@ -1444,6 +1532,11 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /** VersionedCommand */
+        VersionedCommand: {
+            /** Expected Version */
+            expected_version: number;
         };
     };
     responses: never;
@@ -1587,9 +1680,7 @@ export interface operations {
     };
     admin_revoke_connection_api_v1_admin_connections__connection_id__delete: {
         parameters: {
-            query?: {
-                project?: string | null;
-            };
+            query?: never;
             header?: never;
             path: {
                 connection_id: string;
@@ -2045,7 +2136,9 @@ export interface operations {
             query?: {
                 project?: string | null;
             };
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2560,9 +2653,45 @@ export interface operations {
             };
         };
     };
-    delete_person_api_v1_admin_persons__person_id__delete: {
+    get_person_api_v1_admin_persons__person_id__get: {
         parameters: {
             query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path: {
+                person_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_person_api_v1_admin_persons__person_id__delete: {
+        parameters: {
+            query: {
+                expected_version: number;
                 project?: string | null;
             };
             header?: never;
@@ -2634,13 +2763,15 @@ export interface operations {
             };
         };
     };
-    list_projects_api_v1_admin_projects_get: {
+    person_delete_impact_api_v1_admin_persons__person_id__delete_impact_get: {
         parameters: {
             query?: {
                 project?: string | null;
             };
             header?: never;
-            path?: never;
+            path: {
+                person_id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -2667,11 +2798,31 @@ export interface operations {
             };
         };
     };
+    list_projects_api_v1_admin_projects_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     create_project_api_v1_admin_projects_post: {
         parameters: {
-            query?: {
-                project?: string | null;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -2960,13 +3111,58 @@ export interface operations {
             query?: {
                 project?: string | null;
             };
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VersionedCommand"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validate_skill_admin_api_v1_admin_skills__slug__validate_post: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
             header?: never;
             path: {
                 slug: string;
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VersionedCommand"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -3277,9 +3473,7 @@ export interface operations {
     };
     invite_user_api_v1_admin_users_invite_post: {
         parameters: {
-            query?: {
-                project?: string | null;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -3480,9 +3674,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SessionEnvelope"];
                 };
             };
         };

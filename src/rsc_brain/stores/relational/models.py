@@ -427,6 +427,9 @@ class Person(Base):
     # Hunting directory (SPEC-15, FR-6.1): quiet_hours {tz, start, end} + preferred language.
     quiet_hours: Mapped[dict[str, object]] = mapped_column(JSONB, server_default="{}")
     language: Mapped[str | None] = mapped_column(Text)
+    # Optimistic-concurrency token for console edits/deletes.  A server-owned integer keeps the
+    # contract stable across processes and avoids exposing PostgreSQL's transaction-local ``xmin``.
+    version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
     __table_args__ = (
         UniqueConstraint("project_id", "id"),
         Index("ix_persons_project_id_id", "project_id", "id"),
@@ -460,6 +463,10 @@ class Hunt(Base):
     channel: Mapped[str | None] = mapped_column(Text)
     state: Mapped[str] = mapped_column(Text, nullable=False)
     question: Mapped[str | None] = mapped_column(Text)
+    # Immutable authorization snapshot.  Manual hunts do not have a Gap from which their topic
+    # boundary can be recovered, so persisting it is what prevents a later directory edit from
+    # widening the hunt to the whole project.  Legacy rows migrate to the restrictive empty set.
+    topics: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}", nullable=False)
     answer: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = _created_at()
     resolved_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))

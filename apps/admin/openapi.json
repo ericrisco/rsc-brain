@@ -328,6 +328,11 @@
             ],
             "title": "Channels"
           },
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          },
           "language": {
             "anyOf": [
               {
@@ -370,6 +375,9 @@
             "title": "Topics"
           }
         },
+        "required": [
+          "expected_version"
+        ],
         "title": "PersonUpdate",
         "type": "object"
       },
@@ -427,222 +435,6 @@
           "enabled"
         ],
         "title": "QueryTextLogging",
-        "type": "object"
-      },
-      "ReadPage_RecallView_": {
-        "properties": {
-          "freshness": {
-            "format": "date-time",
-            "title": "Freshness",
-            "type": "string"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/RecallView"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "next_cursor": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Next Cursor"
-          },
-          "total": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Total"
-          }
-        },
-        "required": [
-          "items",
-          "next_cursor",
-          "total",
-          "freshness"
-        ],
-        "title": "ReadPage[RecallView]",
-        "type": "object"
-      },
-      "RecallView": {
-        "description": "Display-safe recall audit row returned by the observability stream.",
-        "properties": {
-          "action": {
-            "title": "Action",
-            "type": "string"
-          },
-          "denied": {
-            "title": "Denied",
-            "type": "boolean"
-          },
-          "duration_ms": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Duration Ms"
-          },
-          "id": {
-            "title": "Id",
-            "type": "string"
-          },
-          "on_behalf_of": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "On Behalf Of"
-          },
-          "principal_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Principal Id"
-          },
-          "principal_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Principal Type"
-          },
-          "project_id": {
-            "title": "Project Id",
-            "type": "string"
-          },
-          "query_hash": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Query Hash"
-          },
-          "query_text": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Query Text"
-          },
-          "result_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Result Count"
-          },
-          "tool": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tool"
-          },
-          "topics_used": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Topics Used",
-            "type": "array"
-          },
-          "trace_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Trace Id"
-          },
-          "ts": {
-            "anyOf": [
-              {
-                "format": "date-time",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Ts"
-          },
-          "user_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "User Id"
-          }
-        },
-        "required": [
-          "id",
-          "ts",
-          "project_id",
-          "user_id",
-          "principal_type",
-          "principal_id",
-          "on_behalf_of",
-          "trace_id",
-          "action",
-          "tool",
-          "query_hash",
-          "query_text",
-          "duration_ms",
-          "topics_used",
-          "result_count",
-          "denied"
-        ],
-        "title": "RecallView",
         "type": "object"
       },
       "RejectDoc": {
@@ -917,6 +709,20 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "VersionedCommand": {
+        "properties": {
+          "expected_version": {
+            "minimum": 1.0,
+            "title": "Expected Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "VersionedCommand",
         "type": "object"
       }
     },
@@ -2278,6 +2084,22 @@
               ],
               "title": "Project"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
           }
         ],
         "requestBody": {
@@ -2820,7 +2642,7 @@
     },
     "/api/v1/admin/observability/recalls": {
       "get": {
-        "description": "Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only\nwhen the project's logging is ON.  The cursor advances across authorized rows only.",
+        "description": "Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only\nwhen the project's logging is ON.",
         "operationId": "observability_recalls_api_v1_admin_observability_recalls_get",
         "parameters": [
           {
@@ -2857,22 +2679,6 @@
           },
           {
             "in": "query",
-            "name": "cursor",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Cursor"
-            }
-          },
-          {
-            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -2905,7 +2711,9 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReadPage_RecallView_"
+                  "additionalProperties": true,
+                  "title": "Response Observability Recalls Api V1 Admin Observability Recalls Get",
+                  "type": "object"
                 }
               }
             },
@@ -3259,6 +3067,16 @@
           },
           {
             "in": "query",
+            "name": "expected_version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Expected Version",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
             "name": "project",
             "required": false,
             "schema": {
@@ -3304,6 +3122,69 @@
           }
         ],
         "summary": "Delete Person",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "operationId": "get_person_api_v1_admin_persons__person_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Person Api V1 Admin Persons  Person Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Person",
         "tags": [
           "admin"
         ]
@@ -3377,6 +3258,71 @@
           }
         ],
         "summary": "Update Person",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/persons/{person_id}/delete-impact": {
+      "get": {
+        "operationId": "person_delete_impact_api_v1_admin_persons__person_id__delete_impact_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "person_id",
+            "required": true,
+            "schema": {
+              "title": "Person Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Person Delete Impact Api V1 Admin Persons  Person Id  Delete Impact Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Person Delete Impact",
         "tags": [
           "admin"
         ]
@@ -3977,8 +3923,34 @@
               ],
               "title": "Project"
             }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionedCommand"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -4009,6 +3981,81 @@
           }
         ],
         "summary": "Archive Skill Admin",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/skills/{slug}/validate": {
+      "post": {
+        "operationId": "validate_skill_admin_api_v1_admin_skills__slug__validate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VersionedCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Validate Skill Admin Api V1 Admin Skills  Slug  Validate Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Validate Skill Admin",
         "tags": [
           "admin"
         ]
