@@ -95,5 +95,23 @@ Reconciled after a real-host install run changed the canonical compose:
   met a bare "password authentication failed". Helm is unaffected: its release name already scopes
   its resources.
 
+### AUDIT-084 / AUDIT-085 — the reranker switch, and a route that could serve it
+
+Compose declared the reranker's three route variables and **not** `RSC_BRAIN_RERANKER__ENABLED`, so an
+operator who set it in `.env` got nothing: `--env-file` feeds interpolation, and a container receives
+only what the compose file declares. The topology carried the configuration for a capability that
+could never run.
+
+| Concern | Compose | Chart |
+| --- | --- | --- |
+| `reranker.enabled` | `RSC_BRAIN_RERANKER__ENABLED`, default `false` | `.Values.reranker.enabled`, default `false`, rendered by the configmap |
+| reranker route model | `qwen2.5:3b-instruct` | `qwen2.5:3b-instruct` |
+
+Both defaults changed away from `bge-reranker-v2-m3`: it is a **cross-encoder**, and the only
+implementation is LLM-based (`complete_structured`), so that route could not work on either topology.
+The models may differ between the two targets — the chart has always targeted larger hardware — but
+whether the route can serve the implementation must not, and a unit test pins exactly that rather than
+the string.
+
 Not verified locally: `helm lint` and the chart's rendered-security tests need the `helm` binary,
 which is absent from the authoring machine. CI is the gate for the chart half of this change.

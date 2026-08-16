@@ -55,8 +55,17 @@ x-app-env: &app-env
   RSC_BRAIN_CAPABILITIES__TOPICALIZER__API_BASE: ${RSC_BRAIN_CAPABILITIES__TOPICALIZER__API_BASE:-http://ollama:11434}
   RSC_BRAIN_CAPABILITIES__TOPICALIZER__API_KEY: ${RSC_BRAIN_CAPABILITIES__TOPICALIZER__API_KEY:-}
   RSC_BRAIN_CAPABILITIES__RERANKER__PROVIDER: ${RSC_BRAIN_CAPABILITIES__RERANKER__PROVIDER:-ollama}
-  RSC_BRAIN_CAPABILITIES__RERANKER__MODEL: ${RSC_BRAIN_CAPABILITIES__RERANKER__MODEL:-bge-reranker-v2-m3}
+  # AUDIT-085: this shipped as `bge-reranker-v2-m3`, a CROSS-ENCODER. The only implementation is
+  # LLM-based (`complete_structured`), so that default could not work — abstention appeared enabled
+  # and silently fell back on every query. Same family as AUDIT-058's 768-dim embedder against a
+  # 1024 anchor: a default that cannot start. A dedicated reranker needs a rerank adapter first.
+  RSC_BRAIN_CAPABILITIES__RERANKER__MODEL: ${RSC_BRAIN_CAPABILITIES__RERANKER__MODEL:-qwen2.5:3b-instruct}
   RSC_BRAIN_CAPABILITIES__RERANKER__API_BASE: ${RSC_BRAIN_CAPABILITIES__RERANKER__API_BASE:-http://ollama:11434}
+  # AUDIT-084: the three route variables above were shipped and this switch was not, so an
+  # operator who set `reranker.enabled` in .env the way every other key is set got nothing —
+  # `--env-file` feeds interpolation, not the container. The topology carried the configuration
+  # for a capability that could never run. Opt-in (FR-3.6): still off unless asked for.
+  RSC_BRAIN_RERANKER__ENABLED: ${RSC_BRAIN_RERANKER__ENABLED:-false}
 
 services:
   # AUDIT-061: the image runs as uid 10001, but Docker creates fresh named volumes owned by root —
