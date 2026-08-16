@@ -409,9 +409,7 @@ async def _seed_read_models(harness: Harness) -> _Seed:
     )
 
 
-async def _seed_topic_graph(
-    harness: Harness, project_id: str, other_project_id: str
-) -> _GraphSeed:
+async def _seed_topic_graph(harness: Harness, project_id: str, other_project_id: str) -> _GraphSeed:
     """Wire homonymous project graphs to catch both topic and tenant leaks.
 
     The same claims that authorize graph identities carry the topic tags.  Thus the hidden
@@ -876,9 +874,9 @@ async def test_general_only_observability_filters_document_backed_posture_and_er
         "a hidden or mixed document changed the ingest error aggregate"
     )
     assert ingest.status_code == 200, ingest.text
-    assert [run["document_id"] for run in ingest.json()["runs"]] == [
-        seed.visible_document_id
-    ], "a hidden or mixed document-backed ingest run was served"
+    assert [run["document_id"] for run in ingest.json()["runs"]] == [seed.visible_document_id], (
+        "a hidden or mixed document-backed ingest run was served"
+    )
     assert [error["chunk"] for error in ingest.json()["errors"]] == ["VISIBLE-error"], (
         "a hidden or mixed document-backed extraction error was served"
     )

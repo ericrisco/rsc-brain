@@ -20,7 +20,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -32,6 +32,7 @@ from rsc_brain.api.authz import (
     merge_proposal_topics,
     object_topics,
 )
+from rsc_brain.api.read_models import ReadPage, RecallView
 from rsc_brain.authorization import Allow, Capability, decide
 from rsc_brain.config.models import PublicLimits
 from rsc_brain.identity.service import IdentityService
@@ -50,6 +51,7 @@ from rsc_brain.scope import (
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.ingest_repository import IngestRepository
 from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+from rsc_brain.visibility import fully_authorized_topic_clause
 
 # SPEC-04 §3.1's project roles, validated where the refusal reaches the caller (AUDIT-074).
 _PROJECT_ROLES = (PROJECT_ROLE_ADMIN, PROJECT_ROLE_MEMBER, PROJECT_ROLE_VIEWER)
@@ -778,7 +780,7 @@ async def list_skills_admin(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read), state: str | None = None
 ) -> dict[str, object]:
     """List a project's skills (SPEC-20, FR-7.1). Read — console-consumable."""
-    rows = await _skill_store(request).list_all(scope, state=state)  # type: ignore[attr-defined]
+    rows = await _skill_store(request).list_authorized(scope, state=state)  # type: ignore[attr-defined]
     return {
         "skills": [
             {
@@ -1113,25 +1115,36 @@ async def observability_activity(
     return await audit_mod.activity_summary(_sm(request), scope)
 
 
-@router.get("/observability/recalls")
+@router.get("/observability/recalls", response_model=ReadPage[RecallView])
 async def observability_recalls(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),
     principal_type: str | None = None,
     denied: bool | None = None,
+    cursor: str | None = None,
     limit: int = Query(default=100, ge=1, le=ADMIN_PAGE_MAX),
-) -> dict[str, object]:
+) -> ReadPage[RecallView]:
     """Live recall stream (FR-13.3/14.3): filter by principal + denial; query_text present only
-    when the project's logging is ON."""
-    return {
-        "recalls": await audit_mod.recall_stream(
+    when the project's logging is ON.  The cursor advances across authorized rows only."""
+    try:
+        page = await audit_mod.recall_page(
             _sm(request),
             scope,
             principal_type=principal_type,
             denied=denied,
+            cursor=cursor,
             limit=limit,
         )
-    }
+    except audit_mod.InvalidRecallCursor as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="invalid cursor"
+        ) from exc
+    return ReadPage[RecallView](
+        items=[RecallView.model_validate(item) for item in page.items],
+        next_cursor=page.next_cursor,
+        total=page.total,
+        freshness=page.freshness,
+    )
 
 
 @router.get("/observability/health")
@@ -1141,16 +1154,32 @@ async def observability_health(
     """Service health (FR-13.2): the pending-approval queue depth + extraction error count."""
     sm = _deps(request).sessionmaker  # type: ignore[attr-defined]
     pid = uuid.UUID(scope.project_id)
+    document_visible = fully_authorized_topic_clause(models.Document.doc_tags, scope)
     async with sm() as session:
         pending = await session.scalar(
             select(func.count())
             .select_from(models.Document)
-            .where(models.Document.project_id == pid, models.Document.status == "pending_approval")
+            .where(
+                models.Document.project_id == pid,
+                models.Document.status == "pending_approval",
+                document_visible,
+            )
         )
         errors = await session.scalar(
             select(func.count())
             .select_from(models.IngestError)
-            .where(models.IngestError.project_id == pid)
+            .join(
+                models.Document,
+                and_(
+                    models.Document.project_id == models.IngestError.project_id,
+                    models.Document.id == models.IngestError.document_id,
+                ),
+            )
+            .where(
+                models.IngestError.project_id == pid,
+                models.Document.project_id == pid,
+                document_visible,
+            )
         )
     return {
         "database": "ok",
@@ -1200,9 +1229,27 @@ async def observability_ingest(
     request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
 ) -> dict[str, object]:
     """Ingest runs per document (stage checkpoints) + extraction errors with their chunk (FR-13.4)."""
-    repo = IngestRepository(_deps(request).sessionmaker)  # type: ignore[attr-defined]
-    runs = await repo.list_run_statuses(scope)
+    pid = uuid.UUID(scope.project_id)
+    document_visible = fully_authorized_topic_clause(models.Document.doc_tags, scope)
     async with _deps(request).sessionmaker() as session:  # type: ignore[attr-defined]
+        runs = list(
+            await session.scalars(
+                select(models.IngestRun)
+                .join(
+                    models.Document,
+                    and_(
+                        models.Document.project_id == models.IngestRun.project_id,
+                        models.Document.id == models.IngestRun.document_id,
+                    ),
+                )
+                .where(
+                    models.IngestRun.project_id == pid,
+                    models.Document.project_id == pid,
+                    document_visible,
+                )
+                .order_by(models.IngestRun.started_at)
+            )
+        )
         error_rows = await session.execute(
             select(
                 models.IngestError.document_id,
@@ -1210,7 +1257,18 @@ async def observability_ingest(
                 models.IngestError.stage,
                 models.IngestError.error,
             )
-            .where(models.IngestError.project_id == uuid.UUID(scope.project_id))
+            .join(
+                models.Document,
+                and_(
+                    models.Document.project_id == models.IngestError.project_id,
+                    models.Document.id == models.IngestError.document_id,
+                ),
+            )
+            .where(
+                models.IngestError.project_id == pid,
+                models.Document.project_id == pid,
+                document_visible,
+            )
             .order_by(models.IngestError.created_at.desc())
             .limit(200)
         )
@@ -1221,7 +1279,7 @@ async def observability_ingest(
     return {
         "runs": [
             {
-                "document_id": r.document_id,
+                "document_id": str(r.document_id),
                 "phase": r.phase,
                 "completed_stages": list(r.completed_stages),
                 "chunks_created": r.chunks_created,

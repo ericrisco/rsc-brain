@@ -20,6 +20,7 @@ from rsc_brain.scope import ProjectScope
 from rsc_brain.skills.frontmatter import SkillFrontmatter
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
+from rsc_brain.visibility import fully_authorized_topic_clause
 
 
 def _pid(scope: ProjectScope) -> uuid.UUID:
@@ -125,6 +126,28 @@ class SkillStore:
             query = query.where(models.Skill.state == state)
         async with self._sm() as session:
             return [_row(s) for s in await session.scalars(query)]
+
+    async def list_authorized(
+        self, scope: ProjectScope, *, state: str | None = None
+    ) -> list[SkillRow]:
+        """List console inventory rows only when every carried topic is authorized.
+
+        Unlike ``list_all`` (an internal management primitive), this is safe to expose as a read
+        model.  Unlike ``list_visible`` (the active-only execution catalogue), it preserves the
+        caller's optional lifecycle-state filter.
+        """
+        query = (
+            select(models.Skill)
+            .where(
+                models.Skill.project_id == _pid(scope),
+                fully_authorized_topic_clause(models.Skill.tags, scope),
+            )
+            .order_by(models.Skill.slug)
+        )
+        if state is not None:
+            query = query.where(models.Skill.state == state)
+        async with self._sm() as session:
+            return [_row(skill) for skill in await session.scalars(query)]
 
     async def list_visible(self, scope: ProjectScope, forbidden: frozenset[str]) -> list[SkillRow]:
         """Active skills whose tag-set the caller may see (FR-4.14): overlaps ``allowed_topics`` and
