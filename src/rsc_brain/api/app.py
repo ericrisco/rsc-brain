@@ -228,8 +228,12 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(me_router)
     from rsc_brain.api.oauth.routes import router as oauth_router
+    from rsc_brain.api.version import router as version_router
 
     app.include_router(oauth_router)
+    # SPEC release-identity: unauthenticated, and mounted before the catch-all MCP mount so the
+    # edge's existing `/api/v1/*` rule reaches it with no Caddyfile or ingress change.
+    app.include_router(version_router)
     app.mount("/", normalize_mcp_security_headers(mcp_server.streamable_http_app()))
     return app
 

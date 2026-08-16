@@ -182,6 +182,21 @@ The REST schema currently binds these defaults to specific request models and qu
 | `logging.level` | string | `INFO` | Declared process log level. Current API logging setup uses `INFO` directly and does not consume this field. |
 | `logging.json` | boolean | `true` | Declared output-format switch. `json` is the public alias for the internal `json_format` field. Current logging setup emits JSON regardless of this value. |
 
+## Build identity
+
+`RSC_BRAIN_BUILD_IDENTITY` is **not configuration and not an override.** The image build writes it,
+and it is the only thing that determines what an instance reports as its version — through
+`brain --version` and through `GET /api/v1/version`.
+
+Setting it in a deployment environment lets the deployment declare a version the code is not, which
+is the exact defect the identity exists to close: before this, `brain --version` reported `0.13.0` on
+a build forty-nine commits past that tag, so a development instance and the published release were
+indistinguishable. A value an operator can set reintroduces that with better ergonomics.
+
+A build with no stamp — a source checkout run through `uv run` — reports the version line it descends
+from with an explicit marker that it is **not** a published release. It never reports the bare
+version, because an unknown build claiming to be a release is worse than one saying it does not know.
+
 ## Runtime consumption
 
 The production composition root currently passes loaded capability routes, ingestion profile/tag settings, recall settings, public limits, ingress, hunting delivery, and data directory into runtime dependencies. Database setup resolves `database.dsn` independently, with the environment variable taking priority.
