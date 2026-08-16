@@ -1438,6 +1438,56 @@ export interface components {
             /** Tags */
             tags?: string[] | null;
         };
+        /** AuditEnvelope */
+        AuditEnvelope: {
+            /** Audit */
+            audit: components["schemas"]["AuditView"][];
+            /**
+             * Freshness
+             * Format: date-time
+             */
+            freshness: string;
+            /** Next Offset */
+            next_offset: number | null;
+        };
+        /**
+         * AuditView
+         * @description One display-safe, permission-filtered audit event.
+         */
+        AuditView: {
+            /** Action */
+            action: string;
+            /** Denied */
+            denied: boolean;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Id */
+            id: number;
+            /** On Behalf Of */
+            on_behalf_of: string | null;
+            /** Principal Id */
+            principal_id: string | null;
+            /** Principal Type */
+            principal_type: string | null;
+            /** Project Id */
+            project_id: string;
+            /** Query Hash */
+            query_hash: string | null;
+            /** Query Text */
+            query_text: string | null;
+            /** Result Count */
+            result_count: number | null;
+            /** Tool */
+            tool: string | null;
+            /** Topics Used */
+            topics_used: string[];
+            /** Trace Id */
+            trace_id: string | null;
+            /** Ts */
+            ts: string | null;
+            /** User Id */
+            user_id: string | null;
+        };
         /** Body_authorize_post_oauth_authorize_post */
         Body_authorize_post_oauth_authorize_post: {
             /** Consent */
@@ -1640,6 +1690,20 @@ export interface components {
             /** Valid To */
             valid_to: string | null;
         };
+        /** EntityGraphEnvelope */
+        EntityGraphEnvelope: {
+            center: components["schemas"]["GraphNodeView"];
+            /** Edges */
+            edges: components["schemas"]["GraphEdgeView"][];
+            /** Limit */
+            limit: number;
+            /** Neighbors */
+            neighbors: components["schemas"]["GraphNodeView"][];
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** GapEnvelope */
         GapEnvelope: {
             /** Gaps */
@@ -1659,6 +1723,26 @@ export interface components {
             status: string;
             /** Topics */
             topics: string[];
+        };
+        /** GraphEdgeView */
+        GraphEdgeView: {
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Type */
+            type: string;
+        };
+        /** GraphNodeView */
+        GraphNodeView: {
+            /** Anchored */
+            anchored: boolean;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Type */
+            type: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -2483,6 +2567,48 @@ export interface components {
             /** Sensitivity */
             sensitivity?: number | null;
         };
+        /** UsageDayTotal */
+        UsageDayTotal: {
+            /** Calls */
+            calls: number;
+            /** Day */
+            day: string;
+            /** Tokens */
+            tokens: number;
+        };
+        /**
+         * UsageEnvelope
+         * @description Project-scoped usage with server-owned aggregates for one reporting window.
+         */
+        UsageEnvelope: {
+            /** Capabilities */
+            capabilities: string[];
+            /** Capability */
+            capability: string | null;
+            /** Daily Totals */
+            daily_totals: components["schemas"]["UsageDayTotal"][];
+            /** Project */
+            project: string;
+            /** Total Calls */
+            total_calls: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Usage */
+            usage: components["schemas"]["UsageRowView"][];
+            /** Window Days */
+            window_days: number;
+        };
+        /** UsageRowView */
+        UsageRowView: {
+            /** Calls */
+            calls: number;
+            /** Capability */
+            capability: string;
+            /** Day */
+            day: string;
+            /** Tokens */
+            tokens: number;
+        };
         /** UserInvite */
         UserInvite: {
             /** Allowed Topics */
@@ -2592,6 +2718,7 @@ export interface operations {
                 since?: string | null;
                 until?: string | null;
                 limit?: number;
+                offset?: number;
                 project?: string | null;
             };
             header?: never;
@@ -2606,9 +2733,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["AuditEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -3244,9 +3369,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["EntityGraphEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -5345,6 +5468,7 @@ export interface operations {
         parameters: {
             query?: {
                 days?: number;
+                capability?: string | null;
                 project?: string | null;
             };
             header?: never;
@@ -5359,9 +5483,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["UsageEnvelope"];
                 };
             };
             /** @description Validation Error */

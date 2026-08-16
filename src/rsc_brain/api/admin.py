@@ -13,6 +13,7 @@ actually designates was locked out of it.
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from collections.abc import Callable, Coroutine
 from typing import Any
@@ -34,6 +35,7 @@ from rsc_brain.api.authz import (
 )
 from rsc_brain.api.read_models import (
     ActivityEnvelope,
+    AuditEnvelope,
     ChunkReviewResolution,
     ContradictionResolutionEnvelope,
     ContradictionResolutionView,
@@ -43,6 +45,7 @@ from rsc_brain.api.read_models import (
     CorrectionView,
     DisputedClaimEnvelope,
     DisputedClaimView,
+    EntityGraphEnvelope,
     GapEnvelope,
     GapView,
     HealthEnvelope,
@@ -58,6 +61,9 @@ from rsc_brain.api.read_models import (
     RecallView,
     ReviewItemView,
     ReviewQueueEnvelope,
+    UsageDayTotal,
+    UsageEnvelope,
+    UsageRowView,
 )
 from rsc_brain.authorization import Allow, Capability, decide
 from rsc_brain.config.models import PublicLimits
@@ -1116,7 +1122,7 @@ async def project_timeline(
     return {"timeline": output.model_dump()}
 
 
-@router.get("/audit")
+@router.get("/audit", response_model=AuditEnvelope)
 async def list_audit(
     request: Request,
     scope: ProjectScope = Depends(_needs_manage_read),
@@ -1128,7 +1134,8 @@ async def list_audit(
     since: str | None = None,
     until: str | None = None,
     limit: int = Query(default=100, ge=1, le=ADMIN_PAGE_MAX),
-) -> dict[str, object]:
+    offset: int = Query(default=0, ge=0),
+) -> AuditEnvelope:
     """Filterable audit log (SPEC-26 FR-13.7). Project-scoped in-query (a project-admin sees only
     their project); `query_text` is NULL when `query_text_logging` is OFF (FR-13.9)."""
     rows = await audit_mod.query_audit(
@@ -1141,9 +1148,15 @@ async def list_audit(
         denied=denied,
         since=since,
         until=until,
-        limit=limit,
+        limit=limit + 1,
+        offset=offset,
     )
-    return {"audit": rows}
+    has_next = len(rows) > limit
+    return AuditEnvelope(
+        audit=rows[:limit],
+        next_offset=offset + limit if has_next else None,
+        freshness=dt.datetime.now(dt.UTC),
+    )
 
 
 @router.get("/audit/export", response_class=Response)
@@ -1182,12 +1195,13 @@ async def export_audit(
     )
 
 
-@router.get("/usage")
+@router.get("/usage", response_model=UsageEnvelope)
 async def usage_endpoint(
     request: Request,
     scope: ProjectScope = Depends(_needs_usage_read),
     days: int = Query(default=7, ge=1, le=WINDOW_DAYS_MAX),
-) -> dict[str, object]:
+    capability: str | None = Query(default=None, max_length=NAME_MAX),
+) -> UsageEnvelope:
     """This project's per-capability/day token + call usage (SPEC-26 FR-13.7, AUDIT-021 R12).
 
     Same source as ``brain usage``, so the console figures always match the CLI. The counters used to
@@ -1195,18 +1209,44 @@ async def usage_endpoint(
     """
     from rsc_brain.gateway.usage import usage_by_day
 
-    rows = await usage_by_day(_sm(request), days=days, project_id=scope.project_id)
-    return {"usage": rows}
+    raw_rows = await usage_by_day(_sm(request), days=days, project_id=scope.project_id)
+    async with _sm(request)() as session:
+        project_slug = await session.scalar(
+            select(models.Project.slug).where(models.Project.id == uuid.UUID(scope.project_id))
+        )
+    rows = [UsageRowView.model_validate(row) for row in raw_rows]
+    capabilities = sorted({row.capability for row in rows})
+    if capability is not None:
+        rows = [row for row in rows if row.capability == capability]
+
+    by_day: dict[str, UsageDayTotal] = {}
+    for row in rows:
+        current = by_day.get(row.day)
+        by_day[row.day] = UsageDayTotal(
+            day=row.day,
+            tokens=(current.tokens if current else 0) + row.tokens,
+            calls=(current.calls if current else 0) + row.calls,
+        )
+    return UsageEnvelope(
+        usage=rows,
+        capabilities=capabilities,
+        daily_totals=[by_day[day] for day in sorted(by_day)],
+        total_tokens=sum(row.tokens for row in rows),
+        total_calls=sum(row.calls for row in rows),
+        window_days=days,
+        project=str(project_slug or scope.project_id),
+        capability=capability,
+    )
 
 
-@router.get("/graph/entity")
+@router.get("/graph/entity", response_model=EntityGraphEnvelope)
 async def entity_graph_endpoint(
     request: Request,
     scope: ProjectScope = Depends(_needs_knowledge_read),
     name: str = Query(default="", max_length=NAME_MAX),
     limit: int = Query(default=25, ge=1, le=ADMIN_PAGE_MAX),
     offset: int = Query(default=0, ge=0),
-) -> dict[str, object]:
+) -> EntityGraphEnvelope:
     """A bounded, paginated neighborhood of one entity (SPEC-26 FR-13.8). Permission-scoped: an
     entity with no visible claims is indistinguishable from a non-existent one (404, FR-4.3)."""
     from rsc_brain.knowledge.entity_graph import entity_neighborhood
@@ -1218,22 +1258,24 @@ async def entity_graph_endpoint(
     )
     if view is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="entity not found")
-    return {
-        "center": {
-            "id": view.center.id,
-            "name": view.center.name,
-            "type": view.center.type,
-            "anchored": view.center.anchored,
-        },
-        "neighbors": [
-            {"id": n.id, "name": n.name, "type": n.type, "anchored": n.anchored}
-            for n in view.neighbors
-        ],
-        "edges": [{"source": e.source, "target": e.target, "type": e.type} for e in view.edges],
-        "total": view.total,
-        "offset": view.offset,
-        "limit": view.limit,
-    }
+    return EntityGraphEnvelope.model_validate(
+        {
+            "center": {
+                "id": view.center.id,
+                "name": view.center.name,
+                "type": view.center.type,
+                "anchored": view.center.anchored,
+            },
+            "neighbors": [
+                {"id": n.id, "name": n.name, "type": n.type, "anchored": n.anchored}
+                for n in view.neighbors
+            ],
+            "edges": [{"source": e.source, "target": e.target, "type": e.type} for e in view.edges],
+            "total": view.total,
+            "offset": view.offset,
+            "limit": view.limit,
+        }
+    )
 
 
 @router.delete("/connections/{connection_id}")

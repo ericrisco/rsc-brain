@@ -45,26 +45,10 @@ export type MergeReviewResolution = components["schemas"]["MergeReviewResolution
 
 // --- SPEC-26 console release ----------------------------------------------------------------
 
-export interface UsageRow {
-  capability: string;
-  day: string;
-  tokens: number;
-  calls: number;
-}
-
-export interface AuditRow {
-  id: string;
-  ts: string | null;
-  principal_type: string | null;
-  principal_id: string | null;
-  action: string | null;
-  tool: string | null;
-  query_hash: string | null;
-  query_text: string | null;
-  topics_used: string[];
-  result_count: number | null;
-  denied: boolean;
-}
+export type Usage = components["schemas"]["UsageEnvelope"];
+export type UsageRow = components["schemas"]["UsageRowView"];
+export type Audit = components["schemas"]["AuditEnvelope"];
+export type AuditRow = components["schemas"]["AuditView"];
 
 export interface AuditFilters {
   action?: string;
@@ -78,24 +62,6 @@ export interface AuditFilters {
 
 export type ProductMetrics = components["schemas"]["ProductMetricsEnvelope"];
 
-export interface GraphNodeView {
-  id: string;
-  name: string;
-  type: string;
-  anchored: boolean;
-}
-
-export interface GraphEdgeView {
-  source: string;
-  target: string;
-  type: string;
-}
-
-export interface Neighborhood {
-  center: GraphNodeView;
-  neighbors: GraphNodeView[];
-  edges: GraphEdgeView[];
-  total: number;
-  offset: number;
-  limit: number;
-}
+export type GraphNodeView = components["schemas"]["GraphNodeView"];
+export type GraphEdgeView = components["schemas"]["GraphEdgeView"];
+export type Neighborhood = components["schemas"]["EntityGraphEnvelope"];

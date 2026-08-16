@@ -83,6 +83,210 @@
         "title": "ApproveDoc",
         "type": "object"
       },
+      "AuditEnvelope": {
+        "properties": {
+          "audit": {
+            "items": {
+              "$ref": "#/components/schemas/AuditView"
+            },
+            "title": "Audit",
+            "type": "array"
+          },
+          "freshness": {
+            "format": "date-time",
+            "title": "Freshness",
+            "type": "string"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          }
+        },
+        "required": [
+          "audit",
+          "next_offset",
+          "freshness"
+        ],
+        "title": "AuditEnvelope",
+        "type": "object"
+      },
+      "AuditView": {
+        "description": "One display-safe, permission-filtered audit event.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "denied": {
+            "title": "Denied",
+            "type": "boolean"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "on_behalf_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Behalf Of"
+          },
+          "principal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal Id"
+          },
+          "principal_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal Type"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "query_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Hash"
+          },
+          "query_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Text"
+          },
+          "result_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Count"
+          },
+          "tool": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool"
+          },
+          "topics_used": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics Used",
+            "type": "array"
+          },
+          "trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trace Id"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Id"
+          }
+        },
+        "required": [
+          "id",
+          "ts",
+          "project_id",
+          "user_id",
+          "principal_type",
+          "principal_id",
+          "on_behalf_of",
+          "trace_id",
+          "action",
+          "tool",
+          "query_hash",
+          "query_text",
+          "duration_ms",
+          "topics_used",
+          "result_count",
+          "denied"
+        ],
+        "title": "AuditView",
+        "type": "object"
+      },
       "Body_authorize_post_oauth_authorize_post": {
         "properties": {
           "consent": {
@@ -740,6 +944,49 @@
         "title": "DisputedClaimView",
         "type": "object"
       },
+      "EntityGraphEnvelope": {
+        "properties": {
+          "center": {
+            "$ref": "#/components/schemas/GraphNodeView"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/GraphEdgeView"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "neighbors": {
+            "items": {
+              "$ref": "#/components/schemas/GraphNodeView"
+            },
+            "title": "Neighbors",
+            "type": "array"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "center",
+          "neighbors",
+          "edges",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "EntityGraphEnvelope",
+        "type": "object"
+      },
       "GapEnvelope": {
         "properties": {
           "gaps": {
@@ -810,6 +1057,57 @@
           "last_seen_at"
         ],
         "title": "GapView",
+        "type": "object"
+      },
+      "GraphEdgeView": {
+        "properties": {
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "type"
+        ],
+        "title": "GraphEdgeView",
+        "type": "object"
+      },
+      "GraphNodeView": {
+        "properties": {
+          "anchored": {
+            "title": "Anchored",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "type",
+          "anchored"
+        ],
+        "title": "GraphNodeView",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -3334,6 +3632,122 @@
         "title": "TopicUpdate",
         "type": "object"
       },
+      "UsageDayTotal": {
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "day",
+          "tokens",
+          "calls"
+        ],
+        "title": "UsageDayTotal",
+        "type": "object"
+      },
+      "UsageEnvelope": {
+        "description": "Project-scoped usage with server-owned aggregates for one reporting window.",
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "capability": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capability"
+          },
+          "daily_totals": {
+            "items": {
+              "$ref": "#/components/schemas/UsageDayTotal"
+            },
+            "title": "Daily Totals",
+            "type": "array"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "total_calls": {
+            "title": "Total Calls",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "title": "Total Tokens",
+            "type": "integer"
+          },
+          "usage": {
+            "items": {
+              "$ref": "#/components/schemas/UsageRowView"
+            },
+            "title": "Usage",
+            "type": "array"
+          },
+          "window_days": {
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "usage",
+          "capabilities",
+          "daily_totals",
+          "total_tokens",
+          "total_calls",
+          "window_days",
+          "project",
+          "capability"
+        ],
+        "title": "UsageEnvelope",
+        "type": "object"
+      },
+      "UsageRowView": {
+        "properties": {
+          "calls": {
+            "title": "Calls",
+            "type": "integer"
+          },
+          "capability": {
+            "title": "Capability",
+            "type": "string"
+          },
+          "day": {
+            "title": "Day",
+            "type": "string"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "capability",
+          "day",
+          "tokens",
+          "calls"
+        ],
+        "title": "UsageRowView",
+        "type": "object"
+      },
       "UserInvite": {
         "additionalProperties": false,
         "properties": {
@@ -3683,6 +4097,17 @@
           },
           {
             "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
             "name": "project",
             "required": false,
             "schema": {
@@ -3703,9 +4128,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Audit Api V1 Admin Audit Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/AuditEnvelope"
                 }
               }
             },
@@ -5014,9 +5437,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Entity Graph Endpoint Api V1 Admin Graph Entity Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/EntityGraphEnvelope"
                 }
               }
             },
@@ -8642,6 +9063,23 @@
           },
           {
             "in": "query",
+            "name": "capability",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Capability"
+            }
+          },
+          {
+            "in": "query",
             "name": "project",
             "required": false,
             "schema": {
@@ -8662,9 +9100,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Usage Endpoint Api V1 Admin Usage Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/UsageEnvelope"
                 }
               }
             },

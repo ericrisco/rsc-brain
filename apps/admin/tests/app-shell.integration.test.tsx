@@ -393,7 +393,7 @@ describe("route-complete authenticated application shell (RED until T014)", () =
     expect(within(navigation).queryByRole("link", { name: /users/i })).not.toBeInTheDocument();
     expect(within(navigation).queryByRole("link", { name: /topics/i })).not.toBeInTheDocument();
     expect(within(navigation).getByRole("link", { name: "Living knowledge" })).toBeVisible();
-    expect(within(navigation).getByRole("link", { name: "Usage & costs" })).toBeVisible();
+    expect(within(navigation).getByRole("link", { name: "Usage" })).toBeVisible();
   });
 
   it("denies direct project-management rendering after a capability is revoked", async () => {
