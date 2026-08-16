@@ -51,7 +51,9 @@ def _rerecord_instructions() -> list[str]:
     return [
         line
         for line in GUARD.read_text(encoding="utf-8").splitlines()
-        if re.search(r"shasum\s+-a\s+256\s+(?!-c\b)[^|]*>\s*\$?[\w/.]*(RECORD|COMPOSE_SOURCE)", line)
+        if re.search(
+            r"shasum\s+-a\s+256\s+(?!-c\b)[^|]*>\s*\$?[\w/.]*(RECORD|COMPOSE_SOURCE)", line
+        )
     ]
 
 
