@@ -1190,6 +1190,76 @@
         "title": "HuntAsk",
         "type": "object"
       },
+      "HuntCommandView": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "string"
+          },
+          "delivered": {
+            "title": "Delivered",
+            "type": "boolean"
+          },
+          "hunt_id": {
+            "title": "Hunt Id",
+            "type": "string"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "throttled": {
+            "title": "Throttled",
+            "type": "boolean"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hunt_id",
+          "state",
+          "person_id",
+          "throttled",
+          "delivered",
+          "topics",
+          "audit_correlation",
+          "replayed"
+        ],
+        "title": "HuntCommandView",
+        "type": "object"
+      },
+      "HuntDetailEnvelope": {
+        "properties": {
+          "hunt": {
+            "$ref": "#/components/schemas/HuntView"
+          }
+        },
+        "required": [
+          "hunt"
+        ],
+        "title": "HuntDetailEnvelope",
+        "type": "object"
+      },
       "HuntEnvelope": {
         "properties": {
           "hunts": {
@@ -3324,6 +3394,86 @@
         "title": "SessionMembership",
         "type": "object"
       },
+      "SkillCommandView": {
+        "properties": {
+          "audit_correlation": {
+            "title": "Audit Correlation",
+            "type": "string"
+          },
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Depends On",
+            "type": "array"
+          },
+          "replayed": {
+            "title": "Replayed",
+            "type": "boolean"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slug",
+          "status",
+          "stale",
+          "depends_on",
+          "version",
+          "audit_correlation",
+          "replayed"
+        ],
+        "title": "SkillCommandView",
+        "type": "object"
+      },
+      "SkillCreateResult": {
+        "properties": {
+          "skill_id": {
+            "title": "Skill Id",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill_id",
+          "slug"
+        ],
+        "title": "SkillCreateResult",
+        "type": "object"
+      },
+      "SkillEnvelope": {
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/SkillView"
+            },
+            "title": "Skills",
+            "type": "array"
+          }
+        },
+        "required": [
+          "skills"
+        ],
+        "title": "SkillEnvelope",
+        "type": "object"
+      },
       "SkillUpsert": {
         "properties": {
           "markdown": {
@@ -3336,6 +3486,47 @@
           "markdown"
         ],
         "title": "SkillUpsert",
+        "type": "object"
+      },
+      "SkillView": {
+        "properties": {
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Depends On",
+            "type": "array"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "status",
+          "stale",
+          "depends_on",
+          "version"
+        ],
+        "title": "SkillView",
         "type": "object"
       },
       "SourceCreate": {
@@ -5582,9 +5773,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Ask Hunt Api V1 Admin Hunts Ask Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HuntCommandView"
                 }
               }
             },
@@ -5647,9 +5836,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Hunt Api V1 Admin Hunts  Hunt Id  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HuntDetailEnvelope"
                 }
               }
             },
@@ -8035,9 +8222,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response List Skills Admin Api V1 Admin Skills Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SkillEnvelope"
                 }
               }
             },
@@ -8100,9 +8285,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Create Skill Admin Api V1 Admin Skills Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SkillCreateResult"
                 }
               }
             },
@@ -8191,9 +8374,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Archive Skill Admin Api V1 Admin Skills  Slug  Archive Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SkillCommandView"
                 }
               }
             },
@@ -8282,9 +8463,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Validate Skill Admin Api V1 Admin Skills  Slug  Validate Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SkillCommandView"
                 }
               }
             },

@@ -1778,6 +1778,29 @@ export interface components {
             /** Topics */
             topics?: string[];
         };
+        /** HuntCommandView */
+        HuntCommandView: {
+            /** Audit Correlation */
+            audit_correlation: string;
+            /** Delivered */
+            delivered: boolean;
+            /** Hunt Id */
+            hunt_id: string;
+            /** Person Id */
+            person_id: string | null;
+            /** Replayed */
+            replayed: boolean;
+            /** State */
+            state: string;
+            /** Throttled */
+            throttled: boolean;
+            /** Topics */
+            topics: string[];
+        };
+        /** HuntDetailEnvelope */
+        HuntDetailEnvelope: {
+            hunt: components["schemas"]["HuntView"];
+        };
         /** HuntEnvelope */
         HuntEnvelope: {
             /** Hunts */
@@ -2457,10 +2480,54 @@ export interface components {
             /** Role */
             role: string;
         };
+        /** SkillCommandView */
+        SkillCommandView: {
+            /** Audit Correlation */
+            audit_correlation: string;
+            /** Depends On */
+            depends_on: string[];
+            /** Replayed */
+            replayed: boolean;
+            /** Slug */
+            slug: string;
+            /** Stale */
+            stale: boolean;
+            /** Status */
+            status: string;
+            /** Version */
+            version: number;
+        };
+        /** SkillCreateResult */
+        SkillCreateResult: {
+            /** Skill Id */
+            skill_id: string;
+            /** Slug */
+            slug: string;
+        };
+        /** SkillEnvelope */
+        SkillEnvelope: {
+            /** Skills */
+            skills: components["schemas"]["SkillView"][];
+        };
         /** SkillUpsert */
         SkillUpsert: {
             /** Markdown */
             markdown: string;
+        };
+        /** SkillView */
+        SkillView: {
+            /** Depends On */
+            depends_on: string[];
+            /** Slug */
+            slug: string;
+            /** Stale */
+            stale: boolean;
+            /** Status */
+            status: string;
+            /** Title */
+            title: string;
+            /** Version */
+            version: number;
         };
         /** SourceCreate */
         SourceCreate: {
@@ -3438,9 +3505,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["HuntCommandView"];
                 };
             };
             /** @description Validation Error */
@@ -3473,9 +3538,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["HuntDetailEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -4906,9 +4969,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SkillEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -4943,9 +5004,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SkillCreateResult"];
                 };
             };
             /** @description Validation Error */
@@ -4984,9 +5043,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SkillCommandView"];
                 };
             };
             /** @description Validation Error */
@@ -5025,9 +5082,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SkillCommandView"];
                 };
             };
             /** @description Validation Error */

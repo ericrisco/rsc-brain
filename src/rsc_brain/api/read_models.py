@@ -131,6 +131,49 @@ class HuntEnvelope(BaseModel):
     hunts: list[HuntView]
 
 
+class HuntDetailEnvelope(BaseModel):
+    hunt: HuntView
+
+
+class HuntCommandView(BaseModel):
+    hunt_id: str
+    state: str
+    person_id: str | None
+    throttled: bool
+    delivered: bool
+    topics: list[str]
+    audit_correlation: str
+    replayed: bool
+
+
+class SkillView(BaseModel):
+    slug: str
+    title: str
+    status: str
+    stale: bool
+    depends_on: list[str]
+    version: int
+
+
+class SkillEnvelope(BaseModel):
+    skills: list[SkillView]
+
+
+class SkillCreateResult(BaseModel):
+    skill_id: str
+    slug: str
+
+
+class SkillCommandView(BaseModel):
+    slug: str
+    status: str
+    stale: bool
+    depends_on: list[str]
+    version: int
+    audit_correlation: str
+    replayed: bool
+
+
 class DisputedClaimView(BaseModel):
     id: str
     text: str

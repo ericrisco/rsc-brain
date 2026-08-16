@@ -65,3 +65,36 @@ export type ProductMetrics = components["schemas"]["ProductMetricsEnvelope"];
 export type GraphNodeView = components["schemas"]["GraphNodeView"];
 export type GraphEdgeView = components["schemas"]["GraphEdgeView"];
 export type Neighborhood = components["schemas"]["EntityGraphEnvelope"];
+
+// --- Control-plane governance ---------------------------------------------------------------
+
+export type ProjectInventory = components["schemas"]["ProjectInventory"];
+export type ProjectInventoryItem = components["schemas"]["ProjectInventoryState"];
+export type ProjectState = components["schemas"]["ProjectState"];
+export type ProjectEnvelope = components["schemas"]["ProjectEnvelope"];
+export type ProjectTransition = components["schemas"]["ProjectTransition"];
+export type ProjectImpact = components["schemas"]["ProjectImpact"];
+export type ProjectDeleteResult = components["schemas"]["ProjectDeleteEnvelope"];
+
+export type UserPage = components["schemas"]["UserPage"];
+export type UserState = components["schemas"]["UserListState"];
+export type InviteResult = components["schemas"]["InviteEnvelope"];
+export type DisableResult = components["schemas"]["DisableEnvelope"];
+export type PasswordResetResult = components["schemas"]["PasswordResetEnvelope"];
+export type MembershipList = components["schemas"]["MembershipList"];
+export type MembershipState = components["schemas"]["MembershipState"];
+export type MembershipTransition = components["schemas"]["MembershipTransition"];
+export type CredentialList = components["schemas"]["CredentialList"];
+export type CredentialState = components["schemas"]["CredentialState"];
+export type CredentialEnvelope = components["schemas"]["CredentialEnvelope"];
+
+export type TopicList = components["schemas"]["TopicList"];
+export type TopicState = components["schemas"]["TopicState"];
+export type TopicEnvelope = components["schemas"]["TopicEnvelope"];
+export type TopicTransition = components["schemas"]["TopicTransition"];
+
+export type HuntCommand = components["schemas"]["HuntCommandView"];
+export type Skill = components["schemas"]["SkillView"];
+export type SkillList = components["schemas"]["SkillEnvelope"];
+export type SkillCreateResult = components["schemas"]["SkillCreateResult"];
+export type SkillCommand = components["schemas"]["SkillCommandView"];
