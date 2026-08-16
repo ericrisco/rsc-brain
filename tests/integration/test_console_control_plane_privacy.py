@@ -42,6 +42,9 @@ _HIDDEN = "hidden"
 class _Seed:
     project_slug: str
     project_id: str
+    visible_document_id: str
+    hidden_document_id: str
+    mixed_document_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +52,7 @@ class _GraphSeed:
     center: str
     visible_neighbor: str
     hidden_neighbor: str
+    mixed_neighbor: str
 
 
 def _client(harness: Harness, tmp_path: Path) -> httpx.AsyncClient:
@@ -143,6 +147,23 @@ async def _seed_read_models(harness: Harness) -> _Seed:
         count=654,
         status="open",
     )
+    other_document = models.Document(
+        project_id=other_uuid,
+        logical_id="other-health",
+        version=1,
+        checksum="other-health-checksum",
+        title="OTHER PROJECT health document",
+        status="pending_approval",
+        doc_tags=[_VISIBLE],
+    )
+    other_gap = models.Gap(
+        project_id=other_uuid,
+        query_hash="other-product-gap",
+        query_text="OTHER PROJECT product gap",
+        topics=[_VISIBLE],
+        count=321,
+        status="open",
+    )
 
     async with harness.sm() as session:
         session.add_all(
@@ -150,26 +171,11 @@ async def _seed_read_models(harness: Harness) -> _Seed:
                 visible_document,
                 hidden_document,
                 mixed_document,
-                models.Document(
-                    project_id=other_uuid,
-                    logical_id="other-health",
-                    version=1,
-                    checksum="other-health-checksum",
-                    title="OTHER PROJECT health document",
-                    status="pending_approval",
-                    doc_tags=[_VISIBLE],
-                ),
+                other_document,
                 visible_gap,
                 hidden_gap,
                 mixed_gap,
-                models.Gap(
-                    project_id=other_uuid,
-                    query_hash="other-product-gap",
-                    query_text="OTHER PROJECT product gap",
-                    topics=[_VISIBLE],
-                    count=321,
-                    status="open",
-                ),
+                other_gap,
             ]
         )
         await session.flush()
@@ -322,6 +328,33 @@ async def _seed_read_models(harness: Harness) -> _Seed:
                     stage="extract",
                     error="MIXED hidden extraction failure",
                 ),
+                models.IngestError(
+                    project_id=other_uuid,
+                    document_id=other_document.id,
+                    chunk_ref="OTHER-PROJECT-error",
+                    stage="extract",
+                    error="OTHER PROJECT extraction failure",
+                ),
+                models.IngestRun(
+                    project_id=project_uuid,
+                    document_id=visible_document.id,
+                    phase="pending_approval",
+                ),
+                models.IngestRun(
+                    project_id=project_uuid,
+                    document_id=hidden_document.id,
+                    phase="pending_approval",
+                ),
+                models.IngestRun(
+                    project_id=project_uuid,
+                    document_id=mixed_document.id,
+                    phase="pending_approval",
+                ),
+                models.IngestRun(
+                    project_id=other_uuid,
+                    document_id=other_document.id,
+                    phase="pending_approval",
+                ),
                 models.Hunt(
                     project_id=project_uuid,
                     gap_id=visible_gap.id,
@@ -340,10 +373,22 @@ async def _seed_read_models(harness: Harness) -> _Seed:
                     state="ASKED",
                     question="MIXED hidden hunt",
                 ),
+                models.Hunt(
+                    project_id=other_uuid,
+                    gap_id=other_gap.id,
+                    state="ANSWERED",
+                    question="OTHER PROJECT hunt",
+                ),
             ]
         )
         await session.commit()
-    return _Seed(project_slug=project_slug, project_id=project_id)
+    return _Seed(
+        project_slug=project_slug,
+        project_id=project_id,
+        visible_document_id=str(visible_document.id),
+        hidden_document_id=str(hidden_document.id),
+        mixed_document_id=str(mixed_document.id),
+    )
 
 
 async def _seed_topic_graph(harness: Harness, project_id: str) -> _GraphSeed:
@@ -356,11 +401,13 @@ async def _seed_topic_graph(harness: Harness, project_id: str) -> _GraphSeed:
     center = "VISIBLE graph center"
     visible_neighbor = "VISIBLE graph neighbor"
     hidden_neighbor = "HIDDEN graph neighbor"
+    mixed_neighbor = "MIXED hidden graph neighbor"
     center_type = "team"
     neighbor_type = "person"
     center_id = str(entity_id(center_type, center))
     visible_id = str(entity_id(neighbor_type, visible_neighbor))
     hidden_id = str(entity_id(neighbor_type, hidden_neighbor))
+    mixed_id = str(entity_id(neighbor_type, mixed_neighbor))
 
     async with harness.sm() as session:
         session.add_all(
@@ -383,6 +430,12 @@ async def _seed_topic_graph(harness: Harness, project_id: str) -> _GraphSeed:
                     normalized_name=normalize_name(hidden_neighbor),
                     type=neighbor_type,
                 ),
+                models.Entity(
+                    project_id=project_uuid,
+                    name=mixed_neighbor,
+                    normalized_name=normalize_name(mixed_neighbor),
+                    type=neighbor_type,
+                ),
                 models.Claim(
                     project_id=project_uuid,
                     text="VISIBLE graph relation",
@@ -402,6 +455,16 @@ async def _seed_topic_graph(harness: Harness, project_id: str) -> _GraphSeed:
                     object=hidden_neighbor,
                     object_entity_key=uuid.UUID(hidden_id),
                     tags=[_HIDDEN],
+                ),
+                models.Claim(
+                    project_id=project_uuid,
+                    text="MIXED hidden graph relation",
+                    subject=center,
+                    subject_entity_key=uuid.UUID(center_id),
+                    predicate="relates_to",
+                    object=mixed_neighbor,
+                    object_entity_key=uuid.UUID(mixed_id),
+                    tags=[_VISIBLE, _HIDDEN],
                 ),
             ]
         )
@@ -428,6 +491,11 @@ async def _seed_topic_graph(harness: Harness, project_id: str) -> _GraphSeed:
                 labels=frozenset({"Entity"}),
                 properties={"name": hidden_neighbor, "type": neighbor_type},
             ),
+            GraphNode(
+                id=mixed_id,
+                labels=frozenset({"Entity"}),
+                properties={"name": mixed_neighbor, "type": neighbor_type},
+            ),
         ],
     )
     await graph.upsert_edges(
@@ -435,12 +503,18 @@ async def _seed_topic_graph(harness: Harness, project_id: str) -> _GraphSeed:
         [
             GraphEdge(source_id=center_id, target_id=visible_id, type="RELATES_TO"),
             GraphEdge(source_id=center_id, target_id=hidden_id, type="HIDDEN_RELATES_TO"),
+            GraphEdge(
+                source_id=center_id,
+                target_id=mixed_id,
+                type="MIXED_HIDDEN_RELATES_TO",
+            ),
         ],
     )
     return _GraphSeed(
         center=center,
         visible_neighbor=visible_neighbor,
         hidden_neighbor=hidden_neighbor,
+        mixed_neighbor=mixed_neighbor,
     )
 
 
@@ -461,12 +535,15 @@ async def test_allow_side_full_topic_read_models_are_complete(
         health = await client.get(
             f"/api/v1/admin/observability/health?project={seed.project_slug}", headers=headers
         )
+        ingest = await client.get(
+            f"/api/v1/admin/observability/ingest?project={seed.project_slug}", headers=headers
+        )
         skills = await client.get(
             f"/api/v1/admin/skills?project={seed.project_slug}", headers=headers
         )
         graph = await client.get(
             "/api/v1/admin/graph/entity",
-            params={"project": seed.project_slug, "name": graph_seed.center, "limit": 2},
+            params={"project": seed.project_slug, "name": graph_seed.center, "limit": 3},
             headers=headers,
         )
 
@@ -477,12 +554,23 @@ async def test_allow_side_full_topic_read_models_are_complete(
         "recalls_per_day": [{"day": str(dt.datetime.now(dt.UTC).date()), "recalls": 4}],
     }
     assert metrics.json()["quality"] == {"abstention_rate": 0.75, "hunts_answered_pct": 0.667}
-    # The graph's two topic-tagged relations are claims too; all five are authorized here.
-    assert metrics.json()["knowledge"] == {"claims": 5, "disputed": 2, "open_gaps": 3}
+    # The graph's three topic-tagged relations are claims too; all six are authorized here.
+    assert metrics.json()["knowledge"] == {"claims": 6, "disputed": 2, "open_gaps": 3}
     assert metrics.json()["health"]["extraction_errors"] == 3
     assert health.status_code == 200, health.text
     assert health.json()["pending_approval"] == 3
     assert health.json()["ingest_errors"] == 3
+    assert ingest.status_code == 200, ingest.text
+    assert {run["document_id"] for run in ingest.json()["runs"]} == {
+        seed.visible_document_id,
+        seed.hidden_document_id,
+        seed.mixed_document_id,
+    }
+    assert {error["chunk"] for error in ingest.json()["errors"]} == {
+        "VISIBLE-error",
+        "HIDDEN-error",
+        "MIXED-hidden-error",
+    }
     assert skills.status_code == 200, skills.text
     assert {skill["slug"] for skill in skills.json()["skills"]} == {
         "visible-playbook",
@@ -493,11 +581,14 @@ async def test_allow_side_full_topic_read_models_are_complete(
     assert {neighbor["name"] for neighbor in graph.json()["neighbors"]} == {
         graph_seed.visible_neighbor,
         graph_seed.hidden_neighbor,
+        graph_seed.mixed_neighbor,
     }
     assert {edge["type"] for edge in graph.json()["edges"]} == {
         "RELATES_TO",
         "HIDDEN_RELATES_TO",
+        "MIXED_HIDDEN_RELATES_TO",
     }
+    assert graph.json()["total"] == 3
 
 
 async def test_platform_owner_without_membership_cannot_read_project_activity(
@@ -572,6 +663,9 @@ async def test_general_only_observability_filters_document_backed_posture_and_er
         "a hidden or mixed document changed the ingest error aggregate"
     )
     assert ingest.status_code == 200, ingest.text
+    assert [run["document_id"] for run in ingest.json()["runs"]] == [
+        seed.visible_document_id
+    ], "a hidden or mixed document-backed ingest run was served"
     assert [error["chunk"] for error in ingest.json()["errors"]] == ["VISIBLE-error"], (
         "a hidden or mixed document-backed extraction error was served"
     )
@@ -633,6 +727,8 @@ async def test_graph_filters_real_hidden_candidate_before_counting_edges_or_pagi
     assert [edge["type"] for edge in first["edges"]] == ["RELATES_TO"]
     assert graph_seed.hidden_neighbor not in first_page.text
     assert "HIDDEN_RELATES_TO" not in first_page.text
+    assert graph_seed.mixed_neighbor not in first_page.text
+    assert "MIXED_HIDDEN_RELATES_TO" not in first_page.text
 
     assert second_page.status_code == 200, second_page.text
     second = second_page.json()
@@ -657,6 +753,9 @@ async def test_empty_topic_membership_returns_empty_every_topic_filtered_read_mo
         )
         activity = await client.get(
             f"/api/v1/admin/observability/activity?project={seed.project_slug}", headers=headers
+        )
+        ingest = await client.get(
+            f"/api/v1/admin/observability/ingest?project={seed.project_slug}", headers=headers
         )
         skills = await client.get(
             f"/api/v1/admin/skills?project={seed.project_slug}", headers=headers
@@ -687,6 +786,9 @@ async def test_empty_topic_membership_returns_empty_every_topic_filtered_read_mo
         "p95_duration_ms": None,
         "recalls_per_day": [],
     }
+    assert ingest.status_code == 200, ingest.text
+    assert ingest.json()["runs"] == []
+    assert ingest.json()["errors"] == []
     assert skills.status_code == 200, skills.text
     assert skills.json()["skills"] == []
     assert graph.status_code == 404, graph.text
