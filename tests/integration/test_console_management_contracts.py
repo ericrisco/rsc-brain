@@ -1,9 +1,9 @@
 """RED HTTP contracts for complete console-governance lifecycles (T005).
 
 The tests describe the management API the console needs rather than accepting today's partial
-routes.  Authorization and persistence probes use the real ASGI app and Postgres.  The sole fault
-injection is a deterministic rate-limit outcome at the service boundary: it proves HTTP translation
-without introducing a timing-sensitive global request counter.
+routes. Authorization, persistence and rate-limit probes use the real ASGI app and Postgres. The
+management limiter is a deterministic wrapper around the production Postgres quota collaborator,
+injected through the API dependency boundary that T006 must expose.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import TypedDict
 
@@ -27,7 +27,8 @@ from rsc_brain.audit import query_audit_raw
 from rsc_brain.identity.resolve import resolve_scope
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.identity.sessions import resolve_session
-from rsc_brain.mcp.auth import RateLimitedError
+from rsc_brain.mcp.quotas import QuotaConfig, QuotaService
+from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
 from tests.integration.conftest import Harness, unique_slug
 
@@ -48,10 +49,28 @@ class ActiveUser:
     user: UserShape
 
 
-def _client(harness: Harness, tmp_path: Path) -> httpx.AsyncClient:
-    app = create_app(
-        deps=ApiDeps(sessionmaker=harness.sm, gateway=harness.gateway, data_dir=str(tmp_path))
-    )
+class FixedWindowManagementLimiter:
+    """Real Postgres quota accounting behind T006's injectable management boundary."""
+
+    def __init__(self, quota: QuotaService, *, now: dt.datetime) -> None:
+        self._quota = quota
+        self._now = now
+        self.calls: list[tuple[str, str]] = []
+
+    async def consume(self, scope: ProjectScope, operation: str) -> None:
+        self.calls.append((scope.principal_id, operation))
+        await self._quota.consume(scope, "write", now=self._now)
+
+
+def _client(
+    harness: Harness, tmp_path: Path, *, management_limiter: object | None = None
+) -> httpx.AsyncClient:
+    deps = ApiDeps(sessionmaker=harness.sm, gateway=harness.gateway, data_dir=str(tmp_path))
+    if management_limiter is not None and "management_limiter" in {
+        field.name for field in fields(ApiDeps)
+    }:
+        object.__setattr__(deps, "management_limiter", management_limiter)
+    app = create_app(deps=deps)
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
         base_url="http://test",
@@ -155,7 +174,7 @@ def _int_field(
     failures: list[str], label: str, payload: Mapping[str, object] | None, name: str
 ) -> int | None:
     value = payload.get(name) if payload is not None else None
-    if not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, int):
         failures.append(f"{label}: {name} must be an integer server version")
         return None
     return value
@@ -224,6 +243,21 @@ async def _user_status(harness: Harness, user_id: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+async def _user_row(harness: Harness, user_id: str) -> dict[str, object] | None:
+    async with harness.sm() as session:
+        row = await session.scalar(select(models.User).where(models.User.id == uuid.UUID(user_id)))
+    if row is None:
+        return None
+    return {
+        "id": str(row.id),
+        "email": row.email,
+        "display_name": row.display_name,
+        "status": row.status,
+        "role": row.role,
+        "password_hash": row.password_hash,
+    }
+
+
 def _correlation_id(
     failures: list[str], label: str, payload: Mapping[str, object] | None
 ) -> int | None:
@@ -269,6 +303,26 @@ async def _require_audit(
     actual = {name: row.get(name) for name in expected}
     if actual != expected:
         failures.append(f"{label}: persisted audit mismatch; expected {expected}, got {actual}")
+
+
+async def _matching_audits(
+    harness: Harness,
+    project_id: str,
+    *,
+    principal_id: str,
+    action: str,
+    denied: bool | None,
+) -> list[dict[str, object]]:
+    return await query_audit_raw(
+        harness.sm,
+        project_id,
+        principal_type="human",
+        principal_id=principal_id,
+        action=action,
+        tool="console",
+        denied=denied,
+        limit=500,
+    )
 
 
 async def _project_row(harness: Harness, slug: str) -> dict[str, object] | None:
@@ -318,6 +372,31 @@ async def _topic_row(harness: Harness, project_id: str, slug: str) -> dict[str, 
     return {"slug": row.slug, "name": row.name, "sensitivity": row.sensitivity}
 
 
+async def _topic_state(harness: Harness, project_id: str) -> tuple[tuple[str, str, str, int], ...]:
+    async with harness.sm() as session:
+        rows = (
+            await session.scalars(
+                select(models.Topic)
+                .where(models.Topic.project_id == uuid.UUID(project_id))
+                .order_by(models.Topic.slug)
+            )
+        ).all()
+    return tuple((str(row.id), row.slug, row.name, row.sensitivity) for row in rows)
+
+
+async def _rate_window_count(
+    harness: Harness, principal_id: str, window_start: dt.datetime
+) -> int | None:
+    async with harness.sm() as session:
+        value = await session.scalar(
+            select(models.PrincipalRateWindow.count).where(
+                models.PrincipalRateWindow.principal_id == principal_id,
+                models.PrincipalRateWindow.window_start == window_start,
+            )
+        )
+    return value if isinstance(value, int) else None
+
+
 async def _pat_is_active(harness: Harness, pat_id: str) -> bool:
     async with harness.sm() as session:
         credential = await session.scalar(
@@ -365,8 +444,11 @@ async def test_actor_matrix_separates_platform_and_project_authority(
         target.user["id"], project_id, role="member", allowed_topics=("general",)
     )
     target_pat = await identity.issue_pat(target_membership_id, name="matrix-target")
+    project_before = await _project_row(harness, project_slug)
+    user_before = await _user_row(harness, target.user["id"])
     membership_before = await _membership_row(harness, project_id, target.user["id"])
     credential_before = await _membership_pat_state(harness, target_membership_id)
+    topics_before = await _topic_state(harness, project_id)
     denied_project_slug = unique_slug("admin-global-denied")
     admin_topic_slug = unique_slug("admin-content")
     owner_slug = unique_slug("owner-content")
@@ -400,8 +482,43 @@ async def test_actor_matrix_separates_platform_and_project_authority(
         viewer_actor, viewer_headers, _ = await _actor_with_membership(
             identity, client, project_id, project_role="viewer"
         )
+        malformed_membership_before = await _membership_row(
+            harness, project_id, owner_without_membership.user["id"]
+        )
+        malformed_user_before = await _user_row(harness, owner_without_membership.user["id"])
 
         platform_inventory = await client.get("/api/v1/admin/projects", headers=owner_headers)
+        owner_project_read = await client.get(
+            f"/api/v1/admin/projects/{project_slug}", headers=owner_headers
+        )
+        owner_user_list = await client.get(
+            f"/api/v1/admin/users?project={project_slug}", headers=owner_headers
+        )
+        owner_credential_list = await client.get(
+            f"/api/v1/admin/users/{target.user['id']}/credentials?project={project_slug}",
+            headers=owner_headers,
+        )
+        owner_membership_list = await client.get(
+            f"/api/v1/admin/memberships?project={project_slug}", headers=owner_headers
+        )
+        owner_topic_list = await client.get(
+            f"/api/v1/admin/topics?project={project_slug}", headers=owner_headers
+        )
+        owner_disable = await client.post(
+            f"/api/v1/admin/users/{target.user['id']}/disable?project={project_slug}",
+            headers=owner_headers,
+            json={"expected_status": "active", "impact_acknowledged": True},
+        )
+        owner_credential_revoke = await client.delete(
+            f"/api/v1/admin/credentials/{target_pat.id}?project={project_slug}",
+            headers=owner_headers,
+            params={"expected_version": 1},
+        )
+        owner_membership_mutation = await client.patch(
+            f"/api/v1/admin/memberships/{target.user['id']}?project={project_slug}",
+            headers=owner_headers,
+            json={"expected_version": 1, "role": "project-admin"},
+        )
         owner_project_content = await client.post(
             f"/api/v1/admin/topics?project={project_slug}",
             headers=owner_headers,
@@ -438,6 +555,22 @@ async def test_actor_matrix_separates_platform_and_project_authority(
             headers=foreign_headers,
             json={"slug": foreign_topic_slug, "name": "foreign"},
         )
+        foreign_project_read = await client.get(
+            f"/api/v1/admin/projects/{project_slug}", headers=foreign_headers
+        )
+        foreign_user_list = await client.get(
+            f"/api/v1/admin/users?project={project_slug}", headers=foreign_headers
+        )
+        foreign_credential_list = await client.get(
+            f"/api/v1/admin/users/{target.user['id']}/credentials?project={project_slug}",
+            headers=foreign_headers,
+        )
+        foreign_membership_list = await client.get(
+            f"/api/v1/admin/memberships?project={project_slug}", headers=foreign_headers
+        )
+        foreign_topic_list = await client.get(
+            f"/api/v1/admin/topics?project={project_slug}", headers=foreign_headers
+        )
         rejected_credential = await client.post(
             f"/api/v1/admin/topics?project={project_slug}",
             headers={"Authorization": "Bearer rejected-credential"},
@@ -473,10 +606,31 @@ async def test_actor_matrix_separates_platform_and_project_authority(
             headers=foreign_headers,
             params={"expected_version": 1},
         )
+        foreign_membership = await client.patch(
+            f"/api/v1/admin/memberships/{target.user['id']}?project={project_slug}",
+            headers=foreign_headers,
+            json={"expected_version": 1, "role": "project-admin"},
+        )
 
     failures: list[str] = []
     for label, response, expected in (
         ("owner without membership reads platform inventory", platform_inventory, 200),
+        ("owner without membership cannot read project settings", owner_project_read, 404),
+        ("owner without membership cannot list project users", owner_user_list, 404),
+        ("owner without membership cannot list project credentials", owner_credential_list, 404),
+        ("owner without membership cannot list project memberships", owner_membership_list, 404),
+        ("owner without membership cannot list project topics", owner_topic_list, 404),
+        ("owner without membership cannot disable a project user", owner_disable, 404),
+        (
+            "owner without membership cannot revoke a project credential",
+            owner_credential_revoke,
+            404,
+        ),
+        (
+            "owner without membership cannot alter a project membership",
+            owner_membership_mutation,
+            404,
+        ),
         ("owner without membership cannot mutate project content", owner_project_content, 404),
         ("project-admin cannot read platform inventory", admin_global_inventory, 403),
         ("project-admin cannot create a global project", admin_global_create, 403),
@@ -485,6 +639,11 @@ async def test_actor_matrix_separates_platform_and_project_authority(
         ("member cannot mutate project configuration", member_mutation, 403),
         ("viewer cannot mutate project configuration", viewer_mutation, 403),
         ("project-admin cannot reach foreign project", foreign_project, 404),
+        ("foreign project-admin cannot read project settings", foreign_project_read, 404),
+        ("foreign project-admin cannot list users", foreign_user_list, 404),
+        ("foreign project-admin cannot list credentials", foreign_credential_list, 404),
+        ("foreign project-admin cannot list memberships", foreign_membership_list, 404),
+        ("foreign project-admin cannot list topics", foreign_topic_list, 404),
         ("rejected credential", rejected_credential, 401),
         ("bad membership role", malformed_role, 400),
         ("viewer cannot disable users", denied_disable, 403),
@@ -492,6 +651,7 @@ async def test_actor_matrix_separates_platform_and_project_authority(
         ("member cannot alter memberships", denied_membership, 403),
         ("foreign admin cannot disable project user", foreign_disable, 404),
         ("foreign admin cannot revoke project credential", foreign_credential, 404),
+        ("foreign admin cannot alter project membership", foreign_membership, 404),
     ):
         _status(failures, label, response, expected)
     inventory_payload = _required(
@@ -516,21 +676,34 @@ async def test_actor_matrix_separates_platform_and_project_authority(
         for project in inventory_projects
     ):
         failures.append("owner platform inventory exposed fields outside lifecycle metadata")
+    if await _project_row(harness, project_slug) != project_before:
+        failures.append("denied project operations changed the existing project")
     if await _project_row(harness, denied_project_slug) is not None:
         failures.append("denied project create persisted a project")
-    if await _user_status(harness, target.user["id"]) != "active":
-        failures.append("denied user mutation changed the target status")
+    if await _user_row(harness, target.user["id"]) != user_before:
+        failures.append("denied user operations changed the target identity")
     if not await _pat_is_active(harness, target_pat.id):
         failures.append("denied credential mutation revoked the target credential")
     if await _membership_pat_state(harness, target_membership_id) != credential_before:
         failures.append("denied credential mutations changed persisted credentials")
     if await _membership_row(harness, project_id, target.user["id"]) != membership_before:
         failures.append("denied membership mutation changed persisted authority")
+    if (
+        malformed_membership_before is not None
+        or await _membership_row(harness, project_id, owner_without_membership.user["id"])
+        is not None
+    ):
+        failures.append("invalid membership role created or changed a membership")
+    if await _user_row(harness, owner_without_membership.user["id"]) != malformed_user_before:
+        failures.append("invalid membership role changed the target identity")
     for slug in forbidden_slugs:
         if await _topic_row(harness, project_id, slug) is not None:
             failures.append(f"denied topic mutation persisted {slug}")
     if await _topic_row(harness, project_id, admin_topic_slug) is None:
         failures.append("authorized project-admin topic mutation did not persist")
+    topics_after = await _topic_state(harness, project_id)
+    if tuple(row for row in topics_after if row[1] != admin_topic_slug) != topics_before:
+        failures.append("denied topic operations changed the pre-existing taxonomy")
     admin_payload = _object(admin_project_content)
     await _require_audit(
         failures,
@@ -541,30 +714,168 @@ async def test_actor_matrix_separates_platform_and_project_authority(
         principal_id=admin_actor.user["id"],
         action=f"topic:create target={admin_topic_slug}",
     )
-    for label, response, actor, action in (
+    for label, response, principal_id, action in (
+        (
+            "owner project read denial",
+            owner_project_read,
+            owner_without_membership.user["id"],
+            f"project:read target={project_slug}",
+        ),
+        (
+            "owner user list denial",
+            owner_user_list,
+            owner_without_membership.user["id"],
+            f"identity:list target={project_slug}",
+        ),
+        (
+            "owner credential list denial",
+            owner_credential_list,
+            owner_without_membership.user["id"],
+            f"credential:list target={target.user['id']}",
+        ),
+        (
+            "owner membership list denial",
+            owner_membership_list,
+            owner_without_membership.user["id"],
+            f"membership:list target={project_slug}",
+        ),
+        (
+            "owner topic list denial",
+            owner_topic_list,
+            owner_without_membership.user["id"],
+            f"topic:list target={project_slug}",
+        ),
+        (
+            "owner user mutation denial",
+            owner_disable,
+            owner_without_membership.user["id"],
+            f"identity:disable target={target.user['id']}",
+        ),
+        (
+            "owner credential mutation denial",
+            owner_credential_revoke,
+            owner_without_membership.user["id"],
+            f"credential:revoke target={target_pat.id}",
+        ),
+        (
+            "owner membership mutation denial",
+            owner_membership_mutation,
+            owner_without_membership.user["id"],
+            f"membership:update target={target.user['id']}",
+        ),
+        (
+            "owner topic create denial",
+            owner_project_content,
+            owner_without_membership.user["id"],
+            f"topic:create target={owner_slug}",
+        ),
+        (
+            "project-admin global list denial",
+            admin_global_inventory,
+            admin_actor.user["id"],
+            "project:list target=global",
+        ),
+        (
+            "project-admin global create denial",
+            admin_global_create,
+            admin_actor.user["id"],
+            f"project:create target={denied_project_slug}",
+        ),
         (
             "curator topic denial",
             curator_mutation,
-            curator_actor,
+            curator_actor.user["id"],
             f"topic:create target={curator_slug}",
         ),
         (
-            "member membership denial",
-            denied_membership,
-            member_actor,
-            f"membership:update target={target.user['id']}",
+            "member topic denial",
+            member_mutation,
+            member_actor.user["id"],
+            f"topic:create target={member_slug}",
+        ),
+        (
+            "viewer topic denial",
+            viewer_mutation,
+            viewer_actor.user["id"],
+            f"topic:create target={viewer_slug}",
+        ),
+        (
+            "foreign topic create denial",
+            foreign_project,
+            foreign_admin.user["id"],
+            f"topic:create target={foreign_topic_slug}",
+        ),
+        (
+            "foreign project read denial",
+            foreign_project_read,
+            foreign_admin.user["id"],
+            f"project:read target={project_slug}",
+        ),
+        (
+            "foreign user list denial",
+            foreign_user_list,
+            foreign_admin.user["id"],
+            f"identity:list target={project_slug}",
+        ),
+        (
+            "foreign credential list denial",
+            foreign_credential_list,
+            foreign_admin.user["id"],
+            f"credential:list target={target.user['id']}",
+        ),
+        (
+            "foreign membership list denial",
+            foreign_membership_list,
+            foreign_admin.user["id"],
+            f"membership:list target={project_slug}",
+        ),
+        (
+            "foreign topic list denial",
+            foreign_topic_list,
+            foreign_admin.user["id"],
+            f"topic:list target={project_slug}",
+        ),
+        (
+            "invalid role denial",
+            malformed_role,
+            admin_actor.user["id"],
+            f"membership:create target={owner_without_membership.user['id']}",
         ),
         (
             "viewer user denial",
             denied_disable,
-            viewer_actor,
+            viewer_actor.user["id"],
             f"identity:disable target={target.user['id']}",
         ),
         (
             "curator credential denial",
             denied_credential,
-            curator_actor,
+            curator_actor.user["id"],
             f"credential:create target={target.user['id']}",
+        ),
+        (
+            "member membership denial",
+            denied_membership,
+            member_actor.user["id"],
+            f"membership:update target={target.user['id']}",
+        ),
+        (
+            "foreign user denial",
+            foreign_disable,
+            foreign_admin.user["id"],
+            f"identity:disable target={target.user['id']}",
+        ),
+        (
+            "foreign credential denial",
+            foreign_credential,
+            foreign_admin.user["id"],
+            f"credential:revoke target={target_pat.id}",
+        ),
+        (
+            "foreign membership denial",
+            foreign_membership,
+            foreign_admin.user["id"],
+            f"membership:update target={target.user['id']}",
         ),
     ):
         await _require_audit(
@@ -573,7 +884,7 @@ async def test_actor_matrix_separates_platform_and_project_authority(
             harness,
             project_id,
             _object(response),
-            principal_id=actor.user["id"],
+            principal_id=principal_id,
             action=action,
             denied=True,
         )
@@ -640,6 +951,7 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
             },
         )
         reread = await client.get(f"/api/v1/admin/projects/{target_slug}", headers=headers)
+        inventory_before_delete = await client.get("/api/v1/admin/projects", headers=headers)
         impact = await client.get(
             f"/api/v1/admin/projects/{target_slug}/delete-impact", headers=headers
         )
@@ -656,6 +968,9 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
             params={"expected_version": default_version, "confirm": "default"},
         )
         default_after = await client.get("/api/v1/admin/projects/default", headers=headers)
+        default_impact_after = await client.get(
+            "/api/v1/admin/projects/default/delete-impact", headers=headers
+        )
         removed = await client.delete(
             f"/api/v1/admin/projects/{target_slug}",
             headers=headers,
@@ -672,10 +987,12 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
         ("project update", update, 200),
         ("stale project update", stale, 409),
         ("project reread after mutation", reread, 200),
+        ("pre-delete inventory", inventory_before_delete, 200),
         ("delete impact", impact, 200),
         ("default delete impact", default_impact, 200),
         ("default project protection", default_delete, 409),
         ("default survives rejected delete", default_after, 200),
+        ("default impact survives rejected delete", default_impact_after, 200),
         ("confirmed project delete", removed, 200),
         ("deleted project is absent", after_delete, 404),
         ("post-delete inventory", inventory_after, 200),
@@ -685,6 +1002,25 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
         failures, "project create", created, {"project", "audit_correlation"}
     )
     create_state = _mapping_field(failures, "project create", create_envelope, "project")
+    default_state = _required(
+        failures,
+        "default project",
+        default_before,
+        {"id", "slug", "name", "settings", "status", "version"},
+    )
+    default_version_checked = _int_field(failures, "default project", default_state, "version")
+    expected_default: dict[str, object] = {
+        "id": default_id,
+        "slug": "default",
+        "name": "Default",
+        "settings": {},
+        "status": "active",
+        "version": default_version_checked,
+    }
+    if default_state != expected_default:
+        failures.append(
+            f"default project: expected exact protected state {expected_default}, got {default_state}"
+        )
     before_payload = _required(
         failures, "project before", before, {"id", "slug", "name", "settings", "version"}
     )
@@ -736,30 +1072,115 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
     stale_payload = _required(failures, "stale project update", stale, {"current"})
     if _mapping_field(failures, "stale project update", stale_payload, "current") != update_after:
         failures.append("stale project update: conflict must return the unchanged current state")
+    inventory_before_payload = _required(
+        failures, "pre-delete inventory", inventory_before_delete, {"projects"}
+    )
+    inventory_before_rows = _list_field(
+        failures, "pre-delete inventory", inventory_before_payload, "projects"
+    )
+    expected_inventory = {
+        "default": {**(default_state or {}), "membership_count": 0},
+        target_slug: {**(update_after or {}), "membership_count": 0},
+    }
+    inventory_by_slug = (
+        {
+            row.get("slug"): row
+            for row in inventory_before_rows
+            if isinstance(row, dict) and isinstance(row.get("slug"), str)
+        }
+        if inventory_before_rows is not None
+        else {}
+    )
+    if inventory_before_rows is not None and (
+        len(inventory_by_slug) != len(inventory_before_rows)
+        or inventory_by_slug != expected_inventory
+        or any(
+            set(row)
+            != {
+                "id",
+                "slug",
+                "name",
+                "settings",
+                "status",
+                "version",
+                "membership_count",
+            }
+            for row in inventory_before_rows
+            if isinstance(row, dict)
+        )
+    ):
+        failures.append("project inventory: seeded rows, schema or lifecycle values are not exact")
+    target_dependencies = {
+        "topics": 1,
+        "memberships": 0,
+        "credentials": 0,
+        "documents": 0,
+        "claims": 0,
+        "hunts": 0,
+        "skills": 0,
+    }
+    default_dependencies = dict.fromkeys(target_dependencies, 0)
     impact_payload = _required(
         failures,
         "delete impact",
         impact,
         {"project", "version", "dependencies", "can_delete", "confirmation"},
     )
-    if impact_payload is not None:
-        dependencies = impact_payload.get("dependencies")
-        if not isinstance(dependencies, dict) or dependencies.get("topics") != 1:
-            failures.append("delete impact: known seeded topic count must be reported as topics=1")
-        if (
-            impact_payload.get("confirmation") != target_slug
-            or impact_payload.get("can_delete") is not True
-        ):
-            failures.append(
-                "delete impact: confirmation and can_delete must match the known target"
-            )
+    expected_impact = {
+        "project": update_after,
+        "version": current_version_checked,
+        "dependencies": target_dependencies,
+        "can_delete": True,
+        "confirmation": target_slug,
+    }
+    if impact_payload != expected_impact:
+        failures.append(
+            f"delete impact: expected exact dependency preview {expected_impact}, got {impact_payload}"
+        )
     protected = _required(
-        failures, "default delete impact", default_impact, {"can_delete", "confirmation"}
+        failures,
+        "default delete impact",
+        default_impact,
+        {"project", "version", "dependencies", "can_delete", "confirmation"},
     )
-    if protected is not None and protected.get("can_delete") is not False:
-        failures.append("default delete impact: default project must be protected")
-    if _object(default_after) != _object(default_before):
+    expected_default_impact = {
+        "project": default_state,
+        "version": default_version_checked,
+        "dependencies": default_dependencies,
+        "can_delete": False,
+        "confirmation": "default",
+    }
+    if protected != expected_default_impact:
+        failures.append("default delete impact: protected preview is not exact")
+    default_conflict = _required(
+        failures,
+        "default project protection",
+        default_delete,
+        {
+            "current",
+            "dependencies",
+            "can_delete",
+            "confirmation",
+            "reason",
+            "audit_correlation",
+        },
+    )
+    expected_default_conflict = {
+        "current": default_state,
+        "dependencies": default_dependencies,
+        "can_delete": False,
+        "confirmation": "default",
+        "reason": "protected_default",
+        "audit_correlation": (
+            default_conflict.get("audit_correlation") if default_conflict is not None else None
+        ),
+    }
+    if default_conflict != expected_default_conflict:
+        failures.append("default delete conflict: exact protected state and impact are required")
+    if _object(default_after) != default_state:
         failures.append("default project changed after a rejected delete")
+    if _object(default_impact_after) != protected:
+        failures.append("default dependency impact changed after the rejected delete")
     removed_payload = _required(
         failures, "project delete", removed, {"project", "status", "audit_correlation"}
     )
@@ -769,10 +1190,8 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
         failures.append("project delete: authoritative outcome must name the deleted project")
     inventory_payload = _required(failures, "post-delete inventory", inventory_after, {"projects"})
     projects = _list_field(failures, "post-delete inventory", inventory_payload, "projects")
-    if projects is not None and any(
-        isinstance(project, dict) and project.get("slug") == target_slug for project in projects
-    ):
-        failures.append("project delete: deleted project remained in platform inventory")
+    if projects != [{**(default_state or {}), "membership_count": 0}]:
+        failures.append("project delete: inventory must contain exactly the unchanged default row")
     if await _project_row(harness, target_slug) is not None:
         failures.append("project delete: target project remained in authoritative persistence")
     if await _project_row(harness, "default") is None:
@@ -792,6 +1211,16 @@ async def test_project_lifecycle_uses_response_versions_impact_and_real_delete(
             principal_id=owner.user["id"],
             action=action,
         )
+    await _require_audit(
+        failures,
+        "default project protection",
+        harness,
+        default_id,
+        default_conflict,
+        principal_id=owner.user["id"],
+        action="project:delete target=default",
+        denied=True,
+    )
     assert default_id != audit_project_id
     assert not failures, "\n".join(failures)
 
@@ -848,12 +1277,53 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
                 "password": _PASSWORD,
             },
         )
+        users_before_invitation_replay = await client.get(
+            f"/api/v1/admin/users?project={project_slug}",
+            headers=admin_headers,
+            params={"limit": 100},
+        )
+        memberships_before_invitation_replay = await client.get(
+            f"/api/v1/admin/memberships?project={project_slug}", headers=admin_headers
+        )
+        accepted_user_db_before_replay = (
+            await _user_row(harness, invited_user_id) if invited_user_id is not None else None
+        )
+        accepted_membership_db_before_replay = (
+            await _membership_row(harness, project_id, invited_user_id)
+            if invited_user_id is not None
+            else None
+        )
+        invitation_audit_before_replay = await query_audit_raw(harness.sm, project_id, limit=500)
+        replay_password = "a replay must never replace the accepted password"
         accept_again = await client.post(
             "/api/v1/auth/invitations/accept",
             json={
                 "token": invitation_token if isinstance(invitation_token, str) else "missing",
-                "password": _PASSWORD,
+                "password": replay_password,
             },
+        )
+        invitation_audit_after_replay = await query_audit_raw(harness.sm, project_id, limit=500)
+        users_after_invitation_replay = await client.get(
+            f"/api/v1/admin/users?project={project_slug}",
+            headers=admin_headers,
+            params={"limit": 100},
+        )
+        memberships_after_invitation_replay = await client.get(
+            f"/api/v1/admin/memberships?project={project_slug}", headers=admin_headers
+        )
+        accepted_user_db_after_replay = (
+            await _user_row(harness, invited_user_id) if invited_user_id is not None else None
+        )
+        accepted_membership_db_after_replay = (
+            await _membership_row(harness, project_id, invited_user_id)
+            if invited_user_id is not None
+            else None
+        )
+        accepted_password_login = await client.post(
+            "/api/v1/auth/login", json={"email": target_email, "password": _PASSWORD}
+        )
+        replay_password_login = await client.post(
+            "/api/v1/auth/login", json={"email": target_email, "password": replay_password}
         )
 
         # A total-safe continuation keeps later contracts observable while the HTTP create lane is
@@ -962,9 +1432,16 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
         ("project-scoped user invite", invited, 201),
         ("single-use invitation accept", accept, 200),
         ("invitation replay", accept_again, 400),
+        ("users before invitation replay", users_before_invitation_replay, 200),
+        ("memberships before invitation replay", memberships_before_invitation_replay, 200),
+        ("users after invitation replay", users_after_invitation_replay, 200),
+        ("memberships after invitation replay", memberships_after_invitation_replay, 200),
+        ("accepted invitation password survives replay", accepted_password_login, 200),
+        ("invitation replay password is invalid", replay_password_login, 401),
         ("users first page", users_page_one, 200),
         ("users second page", users_page_two, 200),
         ("old password after reset", old_login, 401),
+        ("password reset completion", reset_complete, 200),
         ("new password after reset", current_login, 200),
         ("reset token replay", reset_replay, 400),
         ("live session before disable", before_session, 200),
@@ -998,11 +1475,129 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
     ):
         failures.append("user invite: scoped restrictive membership differs from request")
     accept_payload = _required(
-        failures, "invitation accept", accept, {"identity", "audit_correlation"}
+        failures, "invitation accept", accept, {"identity", "membership", "audit_correlation"}
     )
     accepted_identity = _mapping_field(failures, "invitation accept", accept_payload, "identity")
-    if accepted_identity is not None and accepted_identity.get("status") != "active":
-        failures.append("invitation accept: identity did not become active")
+    accepted_membership = _mapping_field(
+        failures, "invitation accept", accept_payload, "membership"
+    )
+    accepted_version = _int_field(
+        failures, "invitation accept identity", accepted_identity, "version"
+    )
+    expected_accepted_identity = {
+        **(invited_identity or {}),
+        "status": "active",
+        "version": accepted_version,
+    }
+    if accepted_identity != expected_accepted_identity:
+        failures.append("invitation accept: identity transition is not exact")
+    invited_version = invited_identity.get("version") if invited_identity is not None else None
+    if (
+        isinstance(invited_version, int)
+        and accepted_version is not None
+        and accepted_version <= invited_version
+    ):
+        failures.append("invitation accept: identity version did not advance")
+    if accepted_membership != invited_membership:
+        failures.append("invitation accept: project membership changed during activation")
+
+    replay_user_payloads = (
+        (
+            "users before invitation replay",
+            _required(
+                failures,
+                "users before invitation replay",
+                users_before_invitation_replay,
+                {"items", "next_cursor"},
+            ),
+        ),
+        (
+            "users after invitation replay",
+            _required(
+                failures,
+                "users after invitation replay",
+                users_after_invitation_replay,
+                {"items", "next_cursor"},
+            ),
+        ),
+    )
+    replay_user_rows: list[dict[str, object] | None] = []
+    for label, listing in replay_user_payloads:
+        rows = _list_field(failures, label, listing, "items")
+        replay_user_rows.append(
+            next(
+                (row for row in rows if isinstance(row, dict) and row.get("id") == invited_user_id),
+                None,
+            )
+            if rows is not None
+            else None
+        )
+    replay_membership_payloads = (
+        (
+            "memberships before invitation replay",
+            _required(
+                failures,
+                "memberships before invitation replay",
+                memberships_before_invitation_replay,
+                {"memberships"},
+            ),
+        ),
+        (
+            "memberships after invitation replay",
+            _required(
+                failures,
+                "memberships after invitation replay",
+                memberships_after_invitation_replay,
+                {"memberships"},
+            ),
+        ),
+    )
+    replay_membership_rows: list[dict[str, object] | None] = []
+    for label, listing in replay_membership_payloads:
+        rows = _list_field(failures, label, listing, "memberships")
+        replay_membership_rows.append(
+            next(
+                (
+                    row
+                    for row in rows
+                    if isinstance(row, dict) and row.get("user_id") == invited_user_id
+                ),
+                None,
+            )
+            if rows is not None
+            else None
+        )
+    if (
+        replay_user_rows[0] is None
+        or replay_user_rows[0] != replay_user_rows[1]
+        or any(
+            replay_user_rows[0].get(name) != value
+            for name, value in (accepted_identity or {}).items()
+        )
+    ):
+        failures.append("invitation replay changed HTTP identity state or version")
+    if (
+        replay_membership_rows[0] is None
+        or replay_membership_rows[0] != replay_membership_rows[1]
+        or replay_membership_rows[0] != accepted_membership
+    ):
+        failures.append("invitation replay changed HTTP membership state or version")
+    if (
+        accepted_user_db_before_replay is None
+        or accepted_user_db_before_replay != accepted_user_db_after_replay
+        or accepted_membership_db_before_replay is None
+        or accepted_membership_db_before_replay != accepted_membership_db_after_replay
+    ):
+        failures.append("invitation replay changed persisted identity or membership state")
+    if invitation_audit_after_replay != invitation_audit_before_replay:
+        failures.append("invitation replay changed the persisted audit trail")
+    replay_payload = _object(accept_again)
+    if replay_payload is not None and {
+        "identity",
+        "membership",
+        "audit_correlation",
+    }.intersection(replay_payload):
+        failures.append("invitation replay returned mutable state or a second audit outcome")
     page_items: list[object] = []
     for label, response in (
         ("users first page", users_page_one),
@@ -1032,6 +1627,25 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
         {"reset_token", "expires_at", "audit_correlation"},
     )
     reset_secret = _str_field(failures, "reset active user", reset_envelope, "reset_token")
+    reset_complete_envelope = _required(
+        failures,
+        "password reset completion",
+        reset_complete,
+        {"identity", "status", "audit_correlation"},
+    )
+    reset_complete_identity = _mapping_field(
+        failures, "password reset completion", reset_complete_envelope, "identity"
+    )
+    if reset_complete_envelope is not None and reset_complete_envelope.get("status") != "completed":
+        failures.append("password reset completion: status must be exactly completed")
+    if reset_complete_identity is not None and (
+        reset_complete_identity.get("id") != target.user["id"]
+        or reset_complete_identity.get("email") != target.email
+        or reset_complete_identity.get("status") != "active"
+        or isinstance(reset_complete_identity.get("version"), bool)
+        or not isinstance(reset_complete_identity.get("version"), int)
+    ):
+        failures.append("password reset completion: authoritative active identity is not exact")
     _status(failures, "disable active user", disabled, 200)
     payload = _required(
         failures, "disable", disabled, {"identity", "revocation", "audit_correlation"}
@@ -1075,6 +1689,12 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
     secret_responses: Sequence[httpx.Response] = (
         accept,
         accept_again,
+        users_before_invitation_replay,
+        memberships_before_invitation_replay,
+        users_after_invitation_replay,
+        memberships_after_invitation_replay,
+        accepted_password_login,
+        replay_password_login,
         users_page_one,
         users_page_two,
         reset_active,
@@ -1107,7 +1727,7 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
         ("password reset", reset_envelope, f"identity:reset target={target.user['id']}"),
         (
             "password reset complete",
-            _object(reset_complete),
+            reset_complete_envelope,
             f"identity:reset-complete target={target.user['id']}",
         ),
         ("disable", payload, f"identity:disable target={target.user['id']}"),
@@ -1125,6 +1745,21 @@ async def test_user_invite_reset_disable_is_http_only_single_use_and_revokes_eve
             ),
             action=action,
         )
+    accept_action = f"identity:accept target={target.user['id']}"
+    accepted_correlation = _correlation_id(failures, "invitation accept", accept_payload)
+    accepted_audits = await _matching_audits(
+        harness,
+        project_id,
+        principal_id=target.user["id"],
+        action=accept_action,
+        denied=None,
+    )
+    if (
+        len(accepted_audits) != 1
+        or accepted_correlation is None
+        or accepted_audits[0].get("id") != accepted_correlation
+    ):
+        failures.append("invitation replay changed or duplicated the accepted audit outcome")
     assert not failures, "\n".join(failures)
 
 
@@ -1262,8 +1897,11 @@ async def test_credentials_are_secret_once_rotatable_revocable_and_audited(
     created_secret = _str_field(failures, "credential create", created_payload, "secret")
     rotated_secret = _str_field(failures, "credential rotate", rotated_payload, "secret")
     created_id = _uuid_string(created_meta.get("id") if created_meta is not None else None)
+    if created_id is None:
+        failures.append("credential create: server id must be a canonical UUID")
     if created_meta is not None and (
-        created_meta.get("user_id") != target.user["id"]
+        created_meta.get("id") != created_id
+        or created_meta.get("user_id") != target.user["id"]
         or created_meta.get("project") != project_slug
         or created_meta.get("kind") != "pat"
         or created_meta.get("name") != "console-created"
@@ -1383,6 +2021,8 @@ async def test_credentials_are_secret_once_rotatable_revocable_and_audited(
         ]
         if len(matching_created) != 1:
             failures.append("credential create replay duplicated the credential")
+        elif matching_created[0] != created_meta:
+            failures.append("credential reread changed the created UUID metadata")
     if after_items is not None and isinstance(before_items, list):
         if len(after_items) != len(before_items) + 1:
             failures.append(
@@ -1523,39 +2163,99 @@ async def test_admin_session_pat_and_oauth_share_one_authority_and_audit_contrac
 async def test_management_rate_limit_is_a_deterministic_429_contract(
     build_harness: Callable[..., Harness],
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     harness = build_harness()
     identity = IdentityService(harness.sm)
+    default_id = await identity.ensure_default_project()
     owner = await _active_user(identity, platform_role="owner")
-    slug = unique_slug("rate-limited-project")
+    allowed = 2
+    fixed_now = dt.datetime(2030, 1, 1, 12, 0, 43, tzinfo=dt.UTC)
+    limiter = FixedWindowManagementLimiter(
+        QuotaService(harness.sm, QuotaConfig(human_rate_per_min=allowed)), now=fixed_now
+    )
+    slugs = tuple(unique_slug(f"rate-project-{index}") for index in range(allowed + 1))
+    limiter_is_injectable = "management_limiter" in {field.name for field in fields(ApiDeps)}
 
-    async def limited_create(_service: IdentityService, *_args: object, **_kwargs: object) -> str:
-        raise RateLimitedError("management command budget exhausted", retry_after=17)
-
-    # Fault injection is only at the rate-limit boundary. Authentication, authorization, ASGI and
-    # persistence remain real; there is no request-count race or global mutable budget.
-    monkeypatch.setattr(IdentityService, "create_project", limited_create)
-    async with _client(harness, tmp_path) as client:
+    async with _client(harness, tmp_path, management_limiter=limiter) as client:
         owner_headers, _ = await _session(client, owner)
-        response = await client.post(
-            "/api/v1/admin/projects",
-            headers=owner_headers,
-            json={"slug": slug, "name": "Must be rate limited"},
+        responses = tuple(
+            [
+                await client.post(
+                    "/api/v1/admin/projects",
+                    headers=owner_headers,
+                    json={"slug": slug, "name": f"Rate contract {index}"},
+                )
+                for index, slug in enumerate(slugs)
+            ]
         )
 
     failures: list[str] = []
-    _status(failures, "management rate limit", response, 429)
-    if response.headers.get("Retry-After") != "17":
+    if not limiter_is_injectable:
+        failures.append("management rate limit: ApiDeps must expose management_limiter")
+    for index, response in enumerate(responses[:allowed]):
+        _status(failures, f"management request {index + 1} within budget", response, 201)
+    limited = responses[-1]
+    _status(failures, "management request N+1", limited, 429)
+    if limited.headers.get("Retry-After") != "17":
         failures.append("management rate limit: Retry-After must preserve the service delay")
-    payload = _required(failures, "management rate limit", response, {"detail", "retry_after"})
+    payload = _required(
+        failures,
+        "management request N+1",
+        limited,
+        {"detail", "retry_after", "audit_correlation"},
+    )
     if payload is not None and (
-        payload.get("detail") != "management command budget exhausted"
-        or payload.get("retry_after") != 17
+        payload.get("detail") != "rate limit exceeded" or payload.get("retry_after") != 17
     ):
         failures.append("management rate limit: safe typed body differs from the service outcome")
-    if await _project_row(harness, slug) is not None:
-        failures.append("management rate limit: rejected command persisted a project")
+    expected_calls = [(owner.user["id"], "project:create")] * (allowed + 1)
+    if limiter.calls != expected_calls:
+        failures.append(
+            f"management rate limit: injectable boundary calls {limiter.calls} != {expected_calls}"
+        )
+    window_start = fixed_now.replace(second=0, microsecond=0)
+    if await _rate_window_count(harness, owner.user["id"], window_start) != allowed + 1:
+        failures.append("management rate limit: Postgres counter fingerprint is not exactly N+1")
+    for index, (slug, response) in enumerate(
+        zip(slugs[:allowed], responses[:allowed], strict=True)
+    ):
+        envelope = _required(
+            failures,
+            f"management request {index + 1} within budget",
+            response,
+            {"project", "audit_correlation"},
+        )
+        state = _mapping_field(
+            failures, f"management request {index + 1} within budget", envelope, "project"
+        )
+        persisted = await _project_row(harness, slug)
+        if (
+            state is None
+            or persisted is None
+            or (
+                state.get("id") != persisted.get("id")
+                or state.get("slug") != slug
+                or state.get("name") != f"Rate contract {index}"
+                or state.get("settings") != {}
+                or state.get("status") != "active"
+                or isinstance(state.get("version"), bool)
+                or not isinstance(state.get("version"), int)
+            )
+        ):
+            failures.append(f"management rate limit: allowed DB fingerprint {index} is not exact")
+    rejected_slug = slugs[-1]
+    if await _project_row(harness, rejected_slug) is not None:
+        failures.append("management rate limit: N+1 command changed the project DB fingerprint")
+    await _require_audit(
+        failures,
+        "management request N+1",
+        harness,
+        default_id,
+        payload,
+        principal_id=owner.user["id"],
+        action=f"project:create target={rejected_slug}",
+        denied=True,
+    )
     assert not failures, "\n".join(failures)
 
 
