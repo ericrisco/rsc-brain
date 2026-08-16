@@ -88,13 +88,22 @@ async def test_session_is_an_authoritative_capability_envelope(
     # Existing membership data is the allow-side control; the next fields are the missing contract.
     assert response.json()["memberships"][0]["project"] == project_slug
     envelope = response.json()
+    assert "identity" in envelope, envelope
     assert envelope["identity"]["id"] == user_id
+    assert envelope["identity"]["email"] == email
+    assert set(envelope["identity"]).isdisjoint(
+        {"password", "password_hash", "session_token", "token", "token_hash"}
+    )
     assert "platform.project.list_all" in envelope["platform_capabilities"]
     membership = envelope["memberships"][0]
     assert membership["allowed_topics"] == ["general"]
     assert membership["can_curate"] is True
     assert "project.manage.read" in membership["capabilities"]
-    assert "preference_metadata" in envelope
+    assert all(
+        capability.startswith("platform.") for capability in envelope["platform_capabilities"]
+    )
+    assert all(not capability.startswith("platform.") for capability in membership["capabilities"])
+    assert envelope["preference_metadata"] == {"theme": "system", "locale": "es"}
 
 
 async def test_owner_platform_inventory_does_not_require_project_membership(
@@ -148,5 +157,10 @@ async def test_project_admin_cannot_bypass_platform_inventory_via_direct_api_url
     # The membership is real and useful, but it must not become platform inventory authority.
     assert session.status_code == 200, session.text
     assert session.json()["memberships"][0]["project"] == project_slug
-    assert direct.status_code == 403, direct.text
-    assert project_parameter.status_code == 403, project_parameter.text
+    assert (direct.status_code, project_parameter.status_code) == (403, 403), {
+        "direct": direct.text,
+        "with_project": project_parameter.text,
+    }
+    envelope = session.json()
+    assert "platform.project.list_all" not in envelope["platform_capabilities"]
+    assert "platform.project.list_all" not in envelope["memberships"][0]["capabilities"]
