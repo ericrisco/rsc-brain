@@ -105,6 +105,10 @@ describe("design-system runtime", () => {
 
     const trigger = screen.getByRole("button", { name: "Actions" });
     await user.click(trigger);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+    expect(trigger).toHaveFocus();
+
     await user.keyboard("{ArrowDown}");
     await waitFor(() => expect(screen.getByRole("menuitem", { name: "Inspect" })).toHaveFocus());
     await user.keyboard("{ArrowDown}");
