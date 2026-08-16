@@ -1,12 +1,12 @@
-import { useId, type ReactElement, type ReactNode } from "react";
+"use client";
+
+import { cloneElement, useId, type ReactElement, type ReactNode } from "react";
 
 export function Tooltip({ content, children }: { content: ReactNode; children: ReactElement }) {
   const id = useId();
   return (
     <span className="group/tooltip relative inline-flex">
-      <span aria-describedby={id} className="inline-flex">
-        {children}
-      </span>
+      {cloneElement(children, { "aria-describedby": id } as Record<string, string>)}
       <span
         id={id}
         role="tooltip"
