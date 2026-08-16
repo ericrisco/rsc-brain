@@ -12,6 +12,6 @@ const themeBootstrap = `
 })();`;
 
 /** Runs before hydration so System/Light/Dark never flashes the wrong canvas. */
-export function ThemeScript() {
-  return <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />;
+export function ThemeScript({ nonce }: { nonce: string }) {
+  return <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeBootstrap }} />;
 }

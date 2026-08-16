@@ -1,10 +1,18 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { extname, resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 const appFile = (relativePath: string) => resolve(process.cwd(), relativePath);
 const readAppFile = (relativePath: string) => readFileSync(appFile(relativePath), "utf8");
+
+function productionTsxFiles(directory: string): string[] {
+  return readdirSync(appFile(directory), { withFileTypes: true }).flatMap((entry) => {
+    const relativePath = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) return productionTsxFiles(relativePath);
+    return extname(entry.name) === ".tsx" ? [relativePath] : [];
+  });
+}
 
 const primitiveFiles = [
   "badge",
@@ -33,10 +41,10 @@ const primitiveFiles = [
 ] as const;
 
 /**
- * RED until T012. These checks pin decisions rather than class-name snapshots: OKLCH source
+ * These checks pin decisions rather than class-name snapshots: OKLCH source
  * colours, semantic roles, deterministic first paint, brand assets and one primitive catalogue.
  */
-describe("Quiet Control Room design-system contract (RED until T012)", () => {
+describe("Quiet Control Room design-system contract", () => {
   it("defines the complete semantic colour system from the ratified OKLCH source", () => {
     const css = readAppFile("app/globals.css");
     const requiredTokens = [
@@ -56,6 +64,7 @@ describe("Quiet Control Room design-system contract (RED until T012)", () => {
       "--color-warning-muted",
       "--color-danger",
       "--color-danger-muted",
+      "--color-on-danger",
     ];
 
     expect({
@@ -123,6 +132,8 @@ describe("Quiet Control Room design-system contract (RED until T012)", () => {
     const themeScript = existsSync(appFile("components/theme-script.tsx"))
       ? readAppFile("components/theme-script.tsx")
       : "";
+    const middleware = readAppFile("middleware.ts");
+    const scriptDirective = middleware.match(/script-src[^"`]*/)?.[0] ?? "";
 
     expect({
       themeAttribute: /data-theme/.test(`${layout}\n${themeScript}`),
@@ -132,6 +143,10 @@ describe("Quiet Control Room design-system contract (RED until T012)", () => {
       localeCookie: /rsc-brain\.locale/.test(layout),
       localeAwareHtml: /<html[^>]+lang=\{locale\}/.test(layout),
       hydrationSafe: /suppressHydrationWarning/.test(layout),
+      nonceForwarded: /<ThemeScript nonce=\{nonce\}/.test(layout),
+      cspNonce: /Content-Security-Policy/.test(middleware) && /'nonce-\$\{nonce\}'/.test(middleware),
+      strictDynamic: scriptDirective.includes("'strict-dynamic'"),
+      noUnsafeInlineScript: !scriptDirective.includes("'unsafe-inline'"),
     }).toEqual({
       themeAttribute: true,
       prePaintScript: true,
@@ -140,6 +155,10 @@ describe("Quiet Control Room design-system contract (RED until T012)", () => {
       localeCookie: true,
       localeAwareHtml: true,
       hydrationSafe: true,
+      nonceForwarded: true,
+      cspNonce: true,
+      strictDynamic: true,
+      noUnsafeInlineScript: true,
     });
   });
 
@@ -172,30 +191,26 @@ describe("Quiet Control Room design-system contract (RED until T012)", () => {
       primitives: primitiveFiles.every((name) => existsSync(appFile(`components/ui/${name}.tsx`))),
       catalogue: existsSync(appFile("components/design-system-catalog.tsx")),
       navigationLandmark: /<nav\b/.test(shell),
+      mobileNavigation: /<Drawer\b/.test(shell) && /nav\.openPrimary/.test(shell),
       skipLink: /href=["']#main-content["']/.test(shell),
       mainTarget: /id=["']main-content["']/.test(shell),
     }).toEqual({
       primitives: true,
       catalogue: true,
       navigationLandmark: true,
+      mobileNavigation: true,
       skipLink: true,
       mainTarget: true,
     });
   });
 
-  it("removes direct neutral/dark utility styling from shared production components", () => {
-    const sharedFiles = [
-      "components/page-shell.tsx",
-      "components/language-selector.tsx",
-      "components/project-selector.tsx",
-      "components/ui/button.tsx",
-      "components/ui/card.tsx",
-      "components/ui/input.tsx",
-      "components/ui/label.tsx",
-    ];
-    const violations = sharedFiles.filter((path) => {
+  it("uses semantic theme tokens throughout every production route and component", () => {
+    const productionFiles = [...productionTsxFiles("app"), ...productionTsxFiles("components")];
+    const violations = productionFiles.filter((path) => {
       const source = readAppFile(path);
-      return /(?:^|\s)(?:dark:|(?:bg|text|border|ring|placeholder)-neutral-)/m.test(source);
+      return /(?:dark:|(?:bg|text|border|ring|placeholder)-(?:neutral|slate|gray|zinc|stone|red|green|amber|emerald|white)-)/m.test(
+        source,
+      );
     });
 
     expect(violations).toEqual([]);

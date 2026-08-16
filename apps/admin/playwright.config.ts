@@ -1,9 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
-/**
- * E2E tests expect an explicitly supplied deployed/base URL. Keeping webServer out
- * of this config makes `--list` deterministic and avoids starting a process in CI.
- */
+const externalBaseUrl = process.env.PLAYWRIGHT_BASE_URL;
+const localBaseUrl = "http://127.0.0.1:3102";
+
 export default defineConfig({
   testDir: "./tests/e2e",
   testMatch: "**/*.e2e.spec.ts",
@@ -11,8 +10,16 @@ export default defineConfig({
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "list",
+  webServer: externalBaseUrl
+    ? undefined
+    : {
+        command: "npm run build && npm run start -- --hostname 127.0.0.1 --port 3102",
+        url: `${localBaseUrl}/login`,
+        reuseExistingServer: !process.env.CI,
+        timeout: 120_000,
+      },
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:3000",
+    baseURL: externalBaseUrl ?? localBaseUrl,
     trace: "retain-on-failure",
   },
 });

@@ -2,27 +2,51 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { BrandMark } from "@/components/brand-mark";
 import { LanguageSelector } from "@/components/language-selector";
 import { ThemeSelector } from "@/components/theme-selector";
+import { Button } from "@/components/ui/button";
+import { Drawer } from "@/components/ui/drawer";
 import { PageHeader } from "@/components/ui/page-header";
 import { Select } from "@/components/ui/select";
 import { useMe } from "@/lib/api/hooks";
 import { useT } from "@/lib/i18n/context";
 
 const navigation = [
-  ["/", "Overview"],
-  ["/knowledge", "Knowledge"],
-  ["/review", "Review"],
-  ["/graph", "Graph"],
-  ["/observability", "Observability"],
-  ["/connections", "Connections"],
-  ["/audit", "Audit"],
-  ["/usage", "Usage"],
-  ["/product-metrics", "Product metrics"],
+  ["/", "nav.overview"],
+  ["/knowledge", "nav.knowledge"],
+  ["/review", "nav.review"],
+  ["/graph", "nav.graph"],
+  ["/observability", "nav.observability"],
+  ["/connections", "nav.connections"],
+  ["/audit", "nav.audit"],
+  ["/usage", "nav.usage"],
+  ["/metrics", "nav.metrics"],
 ] as const;
+
+function NavigationLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+  const t = useT();
+  return navigation.map(([href, labelKey]) => {
+    const active = href === "/" ? pathname === href : pathname.startsWith(href);
+    return (
+      <Link
+        key={href}
+        href={href}
+        aria-current={active ? "page" : undefined}
+        onClick={onNavigate}
+        className={`flex min-h-11 items-center rounded-[var(--radius-control)] border-l-2 px-3 text-sm transition-colors duration-[var(--motion-fast)] ${
+          active
+            ? "border-l-interactive bg-selected font-medium text-text-primary"
+            : "border-l-transparent text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
+        }`}
+      >
+        {t(labelKey)}
+      </Link>
+    );
+  });
+}
 
 /**
  * Shared chrome for the SPEC-26 views: auth guard, project selector, language selector, and a back
@@ -42,6 +66,13 @@ export function PageShell({
   const t = useT();
   const { data: me, isError } = useMe();
   const [project, setProject] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const navigationTriggerRef = useRef<HTMLButtonElement>(null);
+
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    window.requestAnimationFrame(() => navigationTriggerRef.current?.focus());
+  };
 
   useEffect(() => {
     if (isError) router.replace("/login");
@@ -65,24 +96,8 @@ export function PageShell({
           <div className="flex h-14 items-center border-b border-border px-4">
             <BrandMark />
           </div>
-          <nav aria-label="Primary" className="flex-1 space-y-1 px-2 py-3">
-            {navigation.map(([href, label]) => {
-              const active = href === "/" ? pathname === href : pathname.startsWith(href);
-              return (
-                <Link
-                  key={href}
-                  href={href}
-                  aria-current={active ? "page" : undefined}
-                  className={`flex min-h-10 items-center rounded-[var(--radius-control)] border-l-2 px-3 text-sm transition-colors duration-[var(--motion-fast)] ${
-                    active
-                      ? "border-l-interactive bg-selected font-medium text-text-primary"
-                      : "border-l-transparent text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
-                  }`}
-                >
-                  {label}
-                </Link>
-              );
-            })}
+          <nav aria-label={t("nav.primaryLabel")} className="flex-1 space-y-1 px-2 py-3">
+            <NavigationLinks pathname={pathname} />
           </nav>
           <p className="border-t border-border px-4 py-3 font-mono text-[0.6875rem] text-text-secondary">
             CONTROL PLANE / 0.13
@@ -90,7 +105,20 @@ export function PageShell({
         </aside>
         <div className="min-w-0">
           <header className="sticky top-0 z-40 flex min-h-14 flex-wrap items-center justify-between gap-2 border-b border-border bg-canvas px-4 lg:px-6">
-            <div className="lg:hidden">
+            <div className="flex items-center gap-2 lg:hidden">
+              <Button
+                ref={navigationTriggerRef}
+                variant="ghost"
+                size="icon"
+                aria-label={t("nav.openPrimary")}
+                aria-expanded={drawerOpen}
+                aria-controls="primary-navigation-drawer"
+                onClick={() => setDrawerOpen(true)}
+              >
+                <span aria-hidden="true" className="font-mono text-lg leading-none">
+                  ≡
+                </span>
+              </Button>
               <BrandMark compact />
             </div>
             <div className="ml-auto flex flex-wrap items-center gap-2">
@@ -116,6 +144,17 @@ export function PageShell({
           </main>
         </div>
       </div>
+      <Drawer
+        id="primary-navigation-drawer"
+        open={drawerOpen}
+        onClose={closeDrawer}
+        title={t("nav.drawerTitle")}
+        closeLabel={t("common.close")}
+      >
+        <nav aria-label={t("nav.primaryLabel")} className="space-y-1">
+          <NavigationLinks pathname={pathname} onNavigate={closeDrawer} />
+        </nav>
+      </Drawer>
     </>
   );
 }

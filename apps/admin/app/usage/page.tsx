@@ -36,7 +36,7 @@ function UsageTable({ project }: { project: string }) {
           {t("usage.days")}
           <select
             aria-label={t("usage.days")}
-            className="h-8 rounded-md border border-neutral-300 bg-transparent px-2 dark:border-neutral-700"
+            className="h-9 rounded-[var(--radius-control)] border border-border-strong bg-surface px-2 text-text-primary"
             value={days}
             onChange={(event) => setDays(Number(event.target.value))}
           >
@@ -50,10 +50,10 @@ function UsageTable({ project }: { project: string }) {
       </CardHeader>
       <CardContent>
         {rows.length === 0 ? (
-          <p className="text-sm text-neutral-500">{t("usage.empty")}</p>
+          <p className="text-sm text-text-secondary">{t("usage.empty")}</p>
         ) : (
           <table className="w-full text-left text-sm">
-            <thead className="text-neutral-500">
+            <thead className="text-text-secondary">
               <tr>
                 <th className="py-1">{t("usage.day")}</th>
                 <th>{t("usage.capability")}</th>
@@ -65,7 +65,7 @@ function UsageTable({ project }: { project: string }) {
               {rows.map((row) => (
                 <tr
                   key={`${row.day}-${row.capability}`}
-                  className="border-t border-neutral-100 dark:border-neutral-800"
+                  className="border-t border-border"
                 >
                   <td className="py-1 font-mono text-xs">{row.day}</td>
                   <td>{row.capability}</td>
@@ -73,7 +73,7 @@ function UsageTable({ project }: { project: string }) {
                   <td className="text-right">{formatNumber(row.calls, locale)}</td>
                 </tr>
               ))}
-              <tr className="border-t border-neutral-300 font-medium dark:border-neutral-600">
+              <tr className="border-t border-border-strong font-medium">
                 <td className="py-1">{t("usage.total")}</td>
                 <td />
                 <td className="text-right">{formatNumber(totalTokens, locale)}</td>

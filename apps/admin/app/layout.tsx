@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import type { CSSProperties, ReactNode } from "react";
 
 import "@fontsource-variable/ibm-plex-sans/index.css";
@@ -20,13 +20,15 @@ export const metadata: Metadata = {
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const cookieStore = await cookies();
+  const requestHeaders = await headers();
+  const nonce = requestHeaders.get("x-nonce") ?? "";
   const localeCookie = cookieStore.get("rsc-brain.locale")?.value;
   const locale: Locale = localeCookie === "es" ? "es" : "en";
 
   return (
     <html lang={locale} data-theme="system" suppressHydrationWarning>
       <head>
-        <ThemeScript />
+        <ThemeScript nonce={nonce} />
       </head>
       <body
         style={

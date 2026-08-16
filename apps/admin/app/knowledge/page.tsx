@@ -34,7 +34,7 @@ export default function KnowledgePage() {
     if (me && !project && me.memberships[0]) setProject(me.memberships[0].project);
   }, [me, project]);
 
-  if (!me) return <main className="p-6 text-sm text-neutral-500">{t("common.loading")}</main>;
+  if (!me) return <main className="p-6 text-sm text-text-secondary">{t("common.loading")}</main>;
 
   return (
     <main className="mx-auto max-w-5xl space-y-6 p-6">
@@ -42,7 +42,7 @@ export default function KnowledgePage() {
         <h1 className="text-xl font-semibold">{t("knowledge.title")}</h1>
         <select
           aria-label={t("common.project")}
-          className="h-9 rounded-md border border-neutral-300 bg-transparent px-2 text-sm dark:border-neutral-700"
+          className="h-9 rounded-[var(--radius-control)] border border-border-strong bg-surface px-2 text-sm text-text-primary"
           value={project}
           onChange={(e) => setProject(e.target.value)}
         >
@@ -63,7 +63,7 @@ export default function KnowledgePage() {
           <Corrections project={project} />
         </>
       ) : (
-        <p className="text-sm text-neutral-500">{t("common.selectProject")}</p>
+        <p className="text-sm text-text-secondary">{t("common.selectProject")}</p>
       )}
     </main>
   );
@@ -114,12 +114,12 @@ function Gaps({ project }: { project: string }) {
         </Button>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
-        {gaps.length === 0 && <p className="text-neutral-500">{t("knowledge.noGaps")}</p>}
+        {gaps.length === 0 && <p className="text-text-secondary">{t("knowledge.noGaps")}</p>}
         {gaps.map((g) => (
-          <div key={g.id} className="flex items-center justify-between border-b py-1 dark:border-neutral-800">
+          <div key={g.id} className="flex items-center justify-between border-b border-border py-1">
             <span>
-              <span className="font-mono text-xs text-neutral-500">×{g.count}</span>{" "}
-              {g.query_text ?? t("knowledge.queryTextHidden")} <span className="text-neutral-400">{g.topics.join(", ")}</span>
+              <span className="font-mono text-xs text-text-secondary">×{g.count}</span>{" "}
+              {g.query_text ?? t("knowledge.queryTextHidden")} <span className="text-text-secondary">{g.topics.join(", ")}</span>
             </span>
             {agents && (
               <Button variant="outline" onClick={() => promote.mutate(g.id)} disabled={promote.isPending}>
@@ -144,14 +144,14 @@ function Hunts({ project }: { project: string }) {
         <CardDescription>{t("knowledge.huntsDesc")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-1 text-sm">
-        {hunts.length === 0 && <p className="text-neutral-500">{t("knowledge.noHunts")}</p>}
+        {hunts.length === 0 && <p className="text-text-secondary">{t("knowledge.noHunts")}</p>}
         {hunts.map((h) => (
-          <div key={h.id} className="flex items-center justify-between border-b py-1 dark:border-neutral-800">
+          <div key={h.id} className="flex items-center justify-between border-b border-border py-1">
             <span>
-              <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-xs dark:bg-neutral-800">{h.state}</span>{" "}
-              <span className="text-neutral-400">{h.type}</span> {h.question ?? ""}
+              <span className="rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-xs">{h.state}</span>{" "}
+              <span className="text-text-secondary">{h.type}</span> {h.question ?? ""}
             </span>
-            <span className="text-xs text-neutral-400">{h.retries > 0 ? t("knowledge.retries", { n: h.retries }) : ""}</span>
+            <span className="text-xs text-text-secondary">{h.retries > 0 ? t("knowledge.retries", { n: h.retries }) : ""}</span>
           </div>
         ))}
       </CardContent>
@@ -169,10 +169,10 @@ function Disputed({ project }: { project: string }) {
         <CardTitle>{t("knowledge.disputedTitle")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-1 text-sm">
-        {claims.length === 0 && <p className="text-neutral-500">{t("knowledge.nothingDisputed")}</p>}
+        {claims.length === 0 && <p className="text-text-secondary">{t("knowledge.nothingDisputed")}</p>}
         {claims.map((c) => (
-          <div key={c.id} className="border-b py-1 dark:border-neutral-800">
-            {c.text} <span className="text-neutral-400">{t("knowledge.cred", { value: c.credibility.toFixed(2) })}</span>
+          <div key={c.id} className="border-b border-border py-1">
+            {c.text} <span className="text-text-secondary">{t("knowledge.cred", { value: c.credibility.toFixed(2) })}</span>
           </div>
         ))}
       </CardContent>
@@ -191,13 +191,13 @@ function Resolutions({ project }: { project: string }) {
         <CardDescription>{t("knowledge.resolutionsDesc")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
-        {resolutions.length === 0 && <p className="text-neutral-500">{t("knowledge.noResolutions")}</p>}
+        {resolutions.length === 0 && <p className="text-text-secondary">{t("knowledge.noResolutions")}</p>}
         {resolutions.map((r, i) => (
-          <div key={i} className="border-b py-1 dark:border-neutral-800">
-            <span className="text-green-700 dark:text-green-400">✓ {r.winner.text}</span>{" "}
-            <span className="text-neutral-400">({r.winner.credibility.toFixed(2)})</span> {t("knowledge.vs")}{" "}
-            <span className="text-red-700 line-through dark:text-red-400">{r.loser.text}</span>{" "}
-            <span className="text-neutral-400">({r.loser.credibility.toFixed(2)}) — {t("knowledge.judge")} {r.confidence.toFixed(2)}</span>
+          <div key={i} className="border-b border-border py-1">
+            <span className="text-success">✓ {r.winner.text}</span>{" "}
+            <span className="text-text-secondary">({r.winner.credibility.toFixed(2)})</span> {t("knowledge.vs")}{" "}
+            <span className="text-danger line-through">{r.loser.text}</span>{" "}
+            <span className="text-text-secondary">({r.loser.credibility.toFixed(2)}) — {t("knowledge.judge")} {r.confidence.toFixed(2)}</span>
           </div>
         ))}
       </CardContent>
@@ -223,14 +223,14 @@ function Corrections({ project }: { project: string }) {
         </Button>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
-        {revert.isError && <p className="text-red-600">{(revert.error as Error).message}</p>}
-        {corrections.length === 0 && <p className="text-neutral-500">{t("knowledge.noCorrections")}</p>}
+        {revert.isError && <p className="text-danger">{(revert.error as Error).message}</p>}
+        {corrections.length === 0 && <p className="text-text-secondary">{t("knowledge.noCorrections")}</p>}
         {corrections.map((c) => (
-          <div key={c.id} className="flex items-center justify-between border-b py-1 dark:border-neutral-800">
+          <div key={c.id} className="flex items-center justify-between border-b border-border py-1">
             <span>
-              <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-xs dark:bg-neutral-800">{c.status}</span>{" "}
-              <span className="text-neutral-400 line-through">{c.before_text ?? ""}</span> →{" "}
-              {c.after_text ?? ""} <span className="text-neutral-400">({c.role_applied})</span>
+              <span className="rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-xs">{c.status}</span>{" "}
+              <span className="text-text-secondary line-through">{c.before_text ?? ""}</span> →{" "}
+              {c.after_text ?? ""} <span className="text-text-secondary">({c.role_applied})</span>
             </span>
             {c.status === "applied" && (
               <Button variant="outline" onClick={() => revert.mutate(c.id)} disabled={revert.isPending}>

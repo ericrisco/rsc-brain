@@ -22,7 +22,7 @@ export default function DashboardPage() {
   }, [isError, router]);
 
   if (isLoading || !me) {
-    return <main className="p-6 text-sm text-neutral-500">{t("common.loading")}</main>;
+    return <main className="p-6 text-sm text-text-secondary">{t("common.loading")}</main>;
   }
 
   async function onLogout() {
@@ -46,7 +46,7 @@ export default function DashboardPage() {
       <header className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">{t("nav.title")}</h1>
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-text-secondary">
             {me.user.email} · {me.user.role}
           </p>
         </div>

@@ -10,7 +10,7 @@ const buttonVariants = cva(
       variant: {
         default: "bg-interactive text-on-interactive hover:bg-interactive-hover",
         outline: "border-border-strong bg-surface text-text-primary hover:bg-surface-subtle",
-        destructive: "bg-danger text-white hover:brightness-90",
+        destructive: "bg-danger text-on-danger hover:brightness-90",
         ghost: "text-text-primary hover:bg-surface-subtle",
       },
       size: {
@@ -26,6 +26,16 @@ const buttonVariants = cva(
 export type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> &
   VariantProps<typeof buttonVariants>;
 
-export function Button({ className, variant, size, ...props }: ButtonProps) {
-  return <button type="button" className={cn(buttonVariants({ variant, size }), className)} {...props} />;
-}
+export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { className, variant, size, ...props },
+  ref,
+) {
+  return (
+    <button
+      ref={ref}
+      type="button"
+      className={cn(buttonVariants({ variant, size }), className)}
+      {...props}
+    />
+  );
+});

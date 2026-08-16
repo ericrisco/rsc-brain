@@ -44,9 +44,9 @@ function MetricsGrid({ project }: { project: string }) {
         <Row label={t("metrics.extractionErrors")} value={num(data?.health.extraction_errors)} />
         <Row label={t("metrics.p95")} value={num(data?.health.recall_p95_ms)} />
         <div className="pt-2">
-          <p className="text-xs text-neutral-500">{t("metrics.tokensByCapability")}</p>
+          <p className="text-xs text-text-secondary">{t("metrics.tokensByCapability")}</p>
           {Object.keys(tokens).length === 0 ? (
-            <p className="text-sm text-neutral-400">—</p>
+            <p className="text-sm text-text-secondary">—</p>
           ) : (
             Object.entries(tokens).map(([capability, value]) => (
               <Row key={capability} label={capability} value={num(value)} />
@@ -72,7 +72,7 @@ function Family({ title, children }: { title: string; children: React.ReactNode 
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between text-sm">
-      <span className="text-neutral-500">{label}</span>
+      <span className="text-text-secondary">{label}</span>
       <span className="font-medium">{value}</span>
     </div>
   );

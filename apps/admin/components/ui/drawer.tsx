@@ -5,14 +5,18 @@ import { useEffect, useId, useRef, type ReactNode } from "react";
 import { Button } from "./button";
 
 export function Drawer({
+  id,
   open,
   onClose,
   title,
+  closeLabel,
   children,
 }: {
+  id?: string;
   open: boolean;
   onClose: () => void;
   title: string;
+  closeLabel: string;
   children: ReactNode;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -27,6 +31,7 @@ export function Drawer({
 
   return (
     <dialog
+      id={id}
       ref={ref}
       aria-labelledby={titleId}
       onCancel={(event) => {
@@ -42,7 +47,7 @@ export function Drawer({
             {title}
           </p>
           <Button variant="ghost" size="sm" onClick={onClose}>
-            Close
+            {closeLabel}
           </Button>
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div>

@@ -24,7 +24,7 @@ export default function ReviewPage() {
     if (me && !project && me.memberships[0]) setProject(me.memberships[0].project);
   }, [me, project]);
 
-  if (!me) return <main className="p-6 text-sm text-neutral-500">{t("common.loading")}</main>;
+  if (!me) return <main className="p-6 text-sm text-text-secondary">{t("common.loading")}</main>;
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
@@ -32,7 +32,7 @@ export default function ReviewPage() {
         <h1 className="text-xl font-semibold">{t("review.title")}</h1>
         <select
           aria-label={t("common.project")}
-          className="h-9 rounded-md border border-neutral-300 bg-transparent px-2 text-sm dark:border-neutral-700"
+          className="h-9 rounded-[var(--radius-control)] border border-border-strong bg-surface px-2 text-sm text-text-primary"
           value={project}
           onChange={(e) => setProject(e.target.value)}
         >
@@ -46,7 +46,7 @@ export default function ReviewPage() {
       {project ? (
         <Queue project={project} />
       ) : (
-        <p className="text-sm text-neutral-500">{t("common.selectProject")}</p>
+        <p className="text-sm text-text-secondary">{t("common.selectProject")}</p>
       )}
     </main>
   );
@@ -71,17 +71,17 @@ function Queue({ project }: { project: string }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2 text-sm">
-        {items.length === 0 && <p className="text-neutral-500">{t("review.nothingToReview")}</p>}
+        {items.length === 0 && <p className="text-text-secondary">{t("review.nothingToReview")}</p>}
         {items.map((item) => {
           const isChunk = ["ambiguous_table", "guardrail", "agent_submission"].includes(item.source);
           const isMerge = item.source === "entity_merge";
           return (
             <div
               key={`${item.source}:${item.id}`}
-              className="flex items-center justify-between gap-3 border-b py-1 dark:border-neutral-800"
+              className="flex items-center justify-between gap-3 border-b border-border py-1"
             >
               <span className="min-w-0 flex-1 truncate">
-                <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-xs dark:bg-neutral-800">
+                <span className="rounded bg-surface-subtle px-1.5 py-0.5 font-mono text-xs">
                   {item.source}
                 </span>{" "}
                 {item.preview}
