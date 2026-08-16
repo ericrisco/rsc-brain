@@ -24,7 +24,11 @@ import {
   isActiveRoute,
   type ConsoleRoute,
 } from "@/lib/navigation/routes";
-import { ProjectScopeProvider, useProjectScope } from "@/lib/scope/project-scope";
+import {
+  ProjectScopeContent,
+  ProjectScopeProvider,
+  useProjectScope,
+} from "@/lib/scope/project-scope";
 
 const RAIL_STORAGE_KEY = "rsc-brain.rail";
 
@@ -108,7 +112,7 @@ function ScopeShell({
   const router = useRouter();
   const queryClient = useQueryClient();
   const t = useT();
-  const { project, capabilities, switchProject } = useProjectScope();
+  const { project, capabilities, isSwitching, switchProject } = useProjectScope();
   const [compact, setCompact] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const navigationTriggerRef = useRef<HTMLButtonElement>(null);
@@ -208,9 +212,13 @@ function ScopeShell({
                 aria-label={t("common.project")}
                 className="max-w-48 min-w-32"
                 value={project}
+                disabled={isSwitching}
+                aria-busy={isSwitching}
                 onChange={(event) => void switchProject(event.target.value)}
               >
-                {session.platform_capabilities.length > 0 ? <option value="">{t("common.all")}</option> : null}
+                {selectedRoute?.scope === "platform" ? (
+                  <option value="">{t("common.all")}</option>
+                ) : null}
                 {session.memberships.map((membership) => (
                   <option key={membership.project} value={membership.project}>{membership.project}</option>
                 ))}
@@ -231,15 +239,17 @@ function ScopeShell({
             className="mx-auto max-w-[96rem] space-y-6 px-4 py-6 lg:px-8 lg:py-8"
           >
             <PageHeader title={title} description={description} />
-            {!routeAllowed ? (
-              <div role="alert" className="rounded-[var(--radius-panel)] border border-danger/40 bg-danger-muted p-4 text-sm">
-                {t("errors.forbidden")}
-              </div>
-            ) : project || selectedRoute?.scope !== "project" ? (
-              children(project)
-            ) : (
-              <p className="text-sm text-text-secondary">{t("common.selectProject")}</p>
-            )}
+            <ProjectScopeContent>
+              {!routeAllowed ? (
+                <div role="alert" className="rounded-[var(--radius-panel)] border border-danger/40 bg-danger-muted p-4 text-sm">
+                  {t("errors.forbidden")}
+                </div>
+              ) : project || selectedRoute?.scope !== "project" ? (
+                children(project)
+              ) : (
+                <p className="text-sm text-text-secondary">{t("common.selectProject")}</p>
+              )}
+            </ProjectScopeContent>
           </main>
         </div>
       </div>
@@ -279,9 +289,11 @@ function AuthenticatedShell({
   children: (project: string) => ReactNode;
 }) {
   const { data: session } = useMe();
+  const pathname = usePathname();
   if (!session) return null;
+  const selectedRoute = CONSOLE_ROUTES.find((route) => isActiveRoute(pathname, route.href));
   return (
-    <ProjectScopeProvider session={session}>
+    <ProjectScopeProvider session={session} allowGlobal={selectedRoute?.scope === "platform"}>
       <ScopeShell session={session} title={title} description={description}>
         {children}
       </ScopeShell>

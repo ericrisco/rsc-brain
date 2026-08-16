@@ -15,15 +15,19 @@ import {
 import type { Me, Membership } from "@/lib/api/types";
 import { useT } from "@/lib/i18n/context";
 
-interface ProjectScopeValue {
+export interface ProjectScopeState {
   project: string;
+  scope: string;
+  revision: number;
+  status: "ready" | "switching";
   membership?: Membership;
   capabilities: readonly string[];
   isSwitching: boolean;
+  queryKey: (resource: string, filters?: unknown) => readonly unknown[];
   switchProject: (project: string) => Promise<void>;
 }
 
-const ProjectScopeContext = createContext<ProjectScopeValue | null>(null);
+const ProjectScopeContext = createContext<ProjectScopeState | null>(null);
 
 function storageKey(userId: string): string {
   return `rsc-brain.project.${userId}`;
@@ -42,20 +46,27 @@ function queryBelongsToProject(queryKey: readonly unknown[], project: string): b
   return project.length > 0 && queryKey.some((part) => containsProject(part, project));
 }
 
-export function ProjectScopeProvider({ session, children }: { session: Me; children: ReactNode }) {
+export function ProjectScopeProvider({
+  session,
+  allowGlobal = false,
+  children,
+}: {
+  session: Me;
+  allowGlobal?: boolean;
+  children: ReactNode;
+}) {
   const queryClient = useQueryClient();
-  const t = useT();
   const firstProject = session.memberships[0]?.project ?? "";
-  const [project, setProject] = useState(firstProject);
+  const [project, setProject] = useState(allowGlobal ? "" : firstProject);
+  const [revision, setRevision] = useState(0);
   const [isSwitching, setIsSwitching] = useState(false);
   const transition = useRef(0);
 
   const isAllowedProject = useCallback(
     (candidate: string) =>
       session.memberships.some((membership) => membership.project === candidate) ||
-      (candidate === "" &&
-        (session.platform_capabilities.length > 0 || session.memberships.length === 0)),
-    [session.memberships, session.platform_capabilities.length],
+      (candidate === "" && (allowGlobal || session.memberships.length === 0)),
+    [allowGlobal, session.memberships],
   );
 
   const switchProject = useCallback(
@@ -74,7 +85,8 @@ export function ProjectScopeProvider({ session, children }: { session: Me; child
       }
 
       setProject(nextProject);
-      window.localStorage.setItem(storageKey(session.identity.id), nextProject);
+      setRevision((current) => current + 1);
+      if (nextProject) window.localStorage.setItem(storageKey(session.identity.id), nextProject);
       if (nextProject) {
         await queryClient.invalidateQueries({
           predicate: (query) => queryBelongsToProject(query.queryKey, nextProject),
@@ -86,11 +98,15 @@ export function ProjectScopeProvider({ session, children }: { session: Me; child
   );
 
   useEffect(() => {
+    if (allowGlobal) {
+      if (project !== "") void switchProject("");
+      return;
+    }
     const preferred = window.localStorage.getItem(storageKey(session.identity.id));
     if (preferred && preferred !== project && isAllowedProject(preferred)) {
       void switchProject(preferred);
     }
-  }, [isAllowedProject, project, session.identity.id, switchProject]);
+  }, [allowGlobal, isAllowedProject, project, session.identity.id, switchProject]);
 
   useEffect(() => {
     if (isAllowedProject(project)) return;
@@ -98,35 +114,57 @@ export function ProjectScopeProvider({ session, children }: { session: Me; child
   }, [firstProject, isAllowedProject, project, switchProject]);
 
   const membership = session.memberships.find((item) => item.project === project);
-  const value = useMemo<ProjectScopeValue>(
+  const scope = project || "platform";
+  const queryKey = useCallback(
+    (resource: string, filters?: unknown) =>
+      [
+        "scope",
+        session.identity.id,
+        scope,
+        revision,
+        resource,
+        ...(filters === undefined ? [] : [filters]),
+      ] as const,
+    [revision, scope, session.identity.id],
+  );
+  const value = useMemo<ProjectScopeState>(
     () => ({
       project,
+      scope,
+      revision,
+      status: isSwitching ? "switching" : "ready",
       membership,
       capabilities: membership?.capabilities ?? [],
       isSwitching,
+      queryKey,
       switchProject,
     }),
-    [isSwitching, membership, project, switchProject],
+    [isSwitching, membership, project, queryKey, revision, scope, switchProject],
   );
 
   return (
-    <ProjectScopeContext.Provider value={value}>
-      {isSwitching ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className="grid min-h-[12rem] place-items-center text-sm text-text-secondary"
-        >
-          {t("common.switchingProject")}
-        </div>
-      ) : (
-        children
-      )}
-    </ProjectScopeContext.Provider>
+    <ProjectScopeContext.Provider value={value}>{children}</ProjectScopeContext.Provider>
   );
 }
 
-export function useProjectScope(): ProjectScopeValue {
+export function ProjectScopeContent({ children }: { children: ReactNode }) {
+  const { isSwitching } = useProjectScope();
+  const t = useT();
+  if (isSwitching) {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="grid min-h-[12rem] place-items-center text-sm text-text-secondary"
+      >
+        {t("common.switchingProject")}
+      </div>
+    );
+  }
+  return children;
+}
+
+export function useProjectScope(): ProjectScopeState {
   const value = useContext(ProjectScopeContext);
   if (!value) throw new Error("useProjectScope must be used within ProjectScopeProvider");
   return value;
