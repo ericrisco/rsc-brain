@@ -76,6 +76,9 @@ def test_a_document_stuck_before_processing_can_be_retried() -> None:
     service = (REPO / "src" / "rsc_brain" / "ingest" / "service.py").read_text(encoding="utf-8")
     assert "AUDIT-069" in service, "the dedup short-circuit still ignores the existing status"
     head = service[service.index("checksum = hashlib") : service.index("source_row = await")]
-    assert "status" in head, (
-        "the checksum short-circuit must consider whether the existing document ever progressed"
+    # NOT `"status" in head`: the BUGGY code read `IngestOutcome(existing.id, existing.status, ...)`,
+    # so that assertion passed on the very defect it was written to catch — reproduced by review.
+    assert "existing.status !=" in head, (
+        "the checksum short-circuit does not compare the existing document's status, so a failed "
+        "document is still indistinguishable from a processed one"
     )

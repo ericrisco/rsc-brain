@@ -47,7 +47,10 @@ def test_a_successful_attempt_does_not_report_the_previous_failure() -> None:
         "a new attempt does not clear the previous attempt's failure, so a processed document can "
         "report an error it has since overcome"
     )
-    assert "error" in body, "ensure_run must reset the run's error when an attempt begins"
+    # NOT `"error" in body`: the word appears six times inside the comment above, so that
+    # assertion passed with the reset deleted — reproduced. Match the statement, and note that the
+    # real protection is behavioural, in tests/integration/test_the_run_error_is_a_state_machine.py.
+    assert "run.error = None" in body, "ensure_run does not reset the run's error"
 
 
 def test_every_tag_the_pipeline_assigns_becomes_a_governable_topic() -> None:
