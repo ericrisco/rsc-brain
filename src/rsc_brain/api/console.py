@@ -9,14 +9,18 @@ auditable; a revoked PAT/session stops resolving in <5s.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from rsc_brain.authorization import effective_platform_capabilities
 from rsc_brain.identity import sessions
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.identity.sessions import SessionUser
+from rsc_brain.scope import PlatformIdentityScope, PrincipalType
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -32,6 +36,39 @@ class LoginRequest(BaseModel):
 class CreatePatRequest(BaseModel):
     project: str
     name: str | None = None
+
+
+class SessionIdentity(BaseModel):
+    """Display-safe identity metadata; it intentionally contains no credential material."""
+
+    id: str
+    email: str
+    role: str
+
+
+class SessionMembership(BaseModel):
+    project: str
+    role: str
+    capabilities: list[str]
+    allowed_topics: list[str]
+    can_curate: bool
+
+
+class PreferenceMetadata(BaseModel):
+    theme: Literal["system", "light", "dark"] = "system"
+    locale: Literal["es", "en"] = "es"
+
+
+class SessionEnvelope(BaseModel):
+    """The only browser-readable, authoritative capability envelope."""
+
+    identity: SessionIdentity
+    # Compatibility alias until the separately versioned removal of the old field.
+    user: SessionIdentity
+    is_owner: bool
+    platform_capabilities: list[str]
+    memberships: list[SessionMembership]
+    preference_metadata: PreferenceMetadata
 
 
 def _sessionmaker(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -92,14 +129,25 @@ async def logout(
     return {"ok": True}
 
 
-@me_router.get("")
-async def me(request: Request, user: SessionUser = Depends(_session_user)) -> dict[str, object]:
+@me_router.get("", response_model=SessionEnvelope)
+async def me(request: Request, user: SessionUser = Depends(_session_user)) -> SessionEnvelope:
     memberships = await sessions.list_memberships(_sessionmaker(request), user.user_id)
-    return {
-        "user": {"id": user.user_id, "email": user.email, "role": user.role},
-        "is_owner": user.is_owner,
-        "memberships": sessions.memberships_payload(memberships),
-    }
+    identity = SessionIdentity(id=user.user_id, email=user.email, role=user.role)
+    platform_scope = PlatformIdentityScope(
+        principal_id=user.user_id,
+        principal_type=PrincipalType.HUMAN,
+        platform_role=user.role,
+    )
+    return SessionEnvelope(
+        identity=identity,
+        user=identity,
+        is_owner=user.is_owner,
+        platform_capabilities=effective_platform_capabilities(platform_scope),
+        memberships=sessions.memberships_payload(
+            memberships, user_id=user.user_id, platform_role=user.role
+        ),
+        preference_metadata=PreferenceMetadata(),
+    )
 
 
 @me_router.get("/pats")

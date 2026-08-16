@@ -42,6 +42,7 @@ from rsc_brain.scope import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_MEMBER,
     PROJECT_ROLE_VIEWER,
+    PlatformIdentityScope,
     Principal,
     PrincipalType,
     ProjectScope,
@@ -240,6 +241,40 @@ async def _identified_scope(
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
 
 
+async def _identified_platform_scope(
+    request: Request, credentials: HTTPAuthorizationCredentials | None
+) -> PlatformIdentityScope:
+    """Resolve only a credential's authenticated platform identity.
+
+    PAT and OAuth credentials remain compatible with platform routes, but their project binding is
+    intentionally discarded rather than trusted as global authority.  The platform role is read
+    from the freshly resolved active user and is then decided centrally.  A console session uses
+    the same identity-only scope, so a ``project`` query parameter cannot widen either lane.
+    """
+    from rsc_brain.identity.resolve import resolve_scope
+    from rsc_brain.identity.sessions import resolve_session
+
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing bearer token")
+    token = credentials.credentials
+    sessionmaker = _sm(request)
+    project_scope = await resolve_scope(sessionmaker, token)
+    if project_scope is not None:
+        return PlatformIdentityScope(
+            principal_id=project_scope.principal_id,
+            principal_type=project_scope.principal_type,
+            platform_role=project_scope.platform_role,
+        )
+    user = await resolve_session(sessionmaker, token)
+    if user is not None:
+        return PlatformIdentityScope(
+            principal_id=user.user_id,
+            principal_type=PrincipalType.HUMAN,
+            platform_role=user.role,
+        )
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid token")
+
+
 def _requires(
     capability: Capability,
 ) -> Callable[..., Coroutine[Any, Any, ProjectScope]]:
@@ -256,6 +291,26 @@ def _requires(
         project: str | None = None,
     ) -> ProjectScope:
         scope = await _identified_scope(request, credentials, project)
+        enforce(decide(scope, capability))
+        return scope
+
+    return dependency
+
+
+def _requires_platform(
+    capability: Capability,
+) -> Callable[..., Coroutine[Any, Any, PlatformIdentityScope]]:
+    """Resolve an identity-only scope and decide a platform capability.
+
+    This dependency accepts session, PAT, and OAuth credentials.  It never resolves or creates a
+    project scope, so an optional ``?project=`` supplied by a caller is semantically inert.
+    """
+
+    async def dependency(
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    ) -> PlatformIdentityScope:
+        scope = await _identified_platform_scope(request, credentials)
         enforce(decide(scope, capability))
         return scope
 
@@ -287,9 +342,10 @@ _needs_knowledge_read = _requires(Capability.KNOWLEDGE_READ)
 _needs_review_decide = _requires(Capability.KNOWLEDGE_REVIEW_DECIDE)
 _needs_usage_read = _requires(Capability.USAGE_READ)
 _needs_hunt_manage = _requires(Capability.HUNT_MANAGE)
-_needs_platform_project_create = _requires(Capability.PLATFORM_PROJECT_CREATE)
-_needs_platform_user_invite = _requires(Capability.PLATFORM_USER_INVITE)
-_needs_platform_credential_revoke = _requires(Capability.PLATFORM_CREDENTIAL_REVOKE)
+_needs_platform_project_list_all = _requires_platform(Capability.PLATFORM_PROJECT_LIST_ALL)
+_needs_platform_project_create = _requires_platform(Capability.PLATFORM_PROJECT_CREATE)
+_needs_platform_user_invite = _requires_platform(Capability.PLATFORM_USER_INVITE)
+_needs_platform_credential_revoke = _requires_platform(Capability.PLATFORM_CREDENTIAL_REVOKE)
 
 
 def _identity(request: Request) -> IdentityService:
@@ -305,27 +361,17 @@ def _repo(request: Request) -> IngestRepository:
 
 @router.get("/projects")
 async def list_projects(
-    request: Request, scope: ProjectScope = Depends(_needs_manage_read)
+    request: Request, scope: PlatformIdentityScope = Depends(_needs_platform_project_list_all)
 ) -> dict[str, object]:
-    """The projects this caller may know about.
-
-    R01 (strengthened during T001): this route returned every slug in the instance, so any caller
-    that passed the old admin gate enumerated other tenants by name. Enumerating the whole instance
-    is a platform operation; a project caller sees only the projects it is a member of.
-    """
-    identity = _identity(request)
-    if isinstance(
-        decide(scope, Capability.PLATFORM_PROJECT_LIST_ALL), Allow
-    ):  # platform administration
-        return {"projects": await identity.list_projects()}
-    return {"projects": await identity.list_projects_for_user(scope.principal_id)}
+    """The global platform inventory, capability-gated independently of memberships."""
+    return {"projects": [{"slug": slug} for slug in await _identity(request).list_projects()]}
 
 
 @router.post("/projects", status_code=status.HTTP_201_CREATED)
 async def create_project(
     body: ProjectCreate,
     request: Request,
-    scope: ProjectScope = Depends(_needs_platform_project_create),
+    scope: PlatformIdentityScope = Depends(_needs_platform_project_create),
 ) -> dict[str, object]:
     project_id = await _identity(request).create_project(body.slug, body.name)
     return {"project_id": project_id, "slug": body.slug}
@@ -336,7 +382,9 @@ async def create_project(
 
 @router.post("/users/invite", status_code=status.HTTP_201_CREATED)
 async def invite_user(
-    body: UserInvite, request: Request, scope: ProjectScope = Depends(_needs_platform_user_invite)
+    body: UserInvite,
+    request: Request,
+    scope: PlatformIdentityScope = Depends(_needs_platform_user_invite),
 ) -> dict[str, object]:
     issued = await _identity(request).invite_user(body.email, role=body.role)
     # The invitation token is shown once (the console surfaces it to the inviter).
@@ -1041,7 +1089,7 @@ async def entity_graph_endpoint(
 async def admin_revoke_connection(
     connection_id: str,
     request: Request,
-    scope: ProjectScope = Depends(_needs_platform_credential_revoke),
+    scope: PlatformIdentityScope = Depends(_needs_platform_credential_revoke),
 ) -> dict[str, object]:
     """Admin revokes any user's OAuth connection (FR-4.13 admin part). Stops resolving <5s."""
     from rsc_brain.identity import sessions

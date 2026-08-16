@@ -81,7 +81,6 @@ def _client(harness: Harness, tmp_path: Path) -> httpx.AsyncClient:
 
 
 MANAGEMENT_READS = (
-    "/api/v1/admin/projects",
     "/api/v1/admin/sources",
     "/api/v1/admin/documents/pending",
     "/api/v1/admin/gaps",
@@ -99,7 +98,8 @@ async def test_project_admin_reaches_the_management_surface(
     legitimate owner out is as much a defect as one that admits a curator.
     """
     harness = build_harness()
-    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    slug = unique_slug("acme")
+    project = await harness.setup_project(slug, TOPICS)
     headers = {"Authorization": f"Bearer {await _project_admin_pat(harness, project)}"}
 
     async with _client(harness, tmp_path) as client:
@@ -110,9 +110,36 @@ async def test_project_admin_reaches_the_management_surface(
         )
         assert created.status_code == 201, created.text
 
+        # T002: project administration stays useful inside its one project, but the global
+        # inventory has a separate platform capability and must reject this PAT.
+        inventory = await client.get("/api/v1/admin/projects", headers=headers)
+        assert inventory.status_code == 403, inventory.text
+
         for path in MANAGEMENT_READS:
             response = await client.get(path, headers=headers)
             assert response.status_code == 200, f"{path}: {response.text}"
+
+
+async def test_owner_pat_reaches_global_project_inventory(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    """PAT compatibility does not turn its project binding into global authority.
+
+    The credential resolves a current user identity; the owner role's independently decided
+    platform capability is what admits inventory.  T002's session-only owner-without-membership
+    control covers the complementary no-membership case.
+    """
+    harness = build_harness()
+    slug = unique_slug("acme")
+    project = await harness.setup_project(slug, TOPICS)
+    headers = {
+        "Authorization": f"Bearer {await _mint_pat(harness, project, can_curate=False, role='owner')}"
+    }
+
+    async with _client(harness, tmp_path) as client:
+        response = await client.get("/api/v1/admin/projects", headers=headers)
+    assert response.status_code == 200, response.text
+    assert slug in {item["slug"] for item in response.json()["projects"]}
 
 
 async def test_curator_member_is_denied_the_management_surface(

@@ -98,6 +98,31 @@ class Principal:
             platform_role=self.platform_role,
         )
 
+    def platform_scope(self) -> PlatformIdentityScope:
+        """Return identity-only authority for a platform operation.
+
+        This deliberately carries neither a project nor membership-derived state.  A platform
+        decision made from it can therefore never be passed to a project-owned store.
+        """
+        return PlatformIdentityScope(
+            principal_id=self.id,
+            principal_type=self.type,
+            platform_role=self.platform_role,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PlatformIdentityScope:
+    """An authenticated identity for platform operations, never project content.
+
+    Unlike :class:`ProjectScope`, this type has no project identifier, membership role, topic
+    grant, or curation flag.  It is consequently not accepted by any project data boundary.
+    """
+
+    principal_id: str
+    principal_type: PrincipalType
+    platform_role: str = PLATFORM_ROLE_MEMBER
+
 
 @dataclass(frozen=True, slots=True)
 class ProjectScope:

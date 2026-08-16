@@ -18,7 +18,9 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import security
+from rsc_brain.authorization import effective_project_capabilities
 from rsc_brain.identity.login_budget import LoginBudget, normalize_account
+from rsc_brain.scope import Principal, PrincipalType
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
 
@@ -310,11 +312,29 @@ async def revoke_connection(
         )
 
 
-def memberships_payload(memberships: Sequence[MembershipInfo]) -> list[dict[str, object]]:
+def memberships_payload(
+    memberships: Sequence[MembershipInfo], *, user_id: str, platform_role: str
+) -> list[dict[str, object]]:
+    """Display-safe memberships with server-decided effective capabilities.
+
+    ``role`` and ``can_curate`` remain presentation metadata.  They are never a browser-side
+    permission input: the capabilities are computed by the same central decision module used by
+    the API routes, from a scope bound to this real membership.
+    """
     return [
         {
             "project": m.project_slug,
             "role": m.role,
+            "capabilities": effective_project_capabilities(
+                Principal(
+                    id=user_id,
+                    type=PrincipalType.HUMAN,
+                    allowed_topics=frozenset(m.allowed_topics),
+                    can_curate=m.can_curate,
+                    role=m.role,
+                    platform_role=platform_role,
+                ).scope_for(m.project_id)
+            ),
             "allowed_topics": list(m.allowed_topics),
             "can_curate": m.can_curate,
         }

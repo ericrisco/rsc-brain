@@ -10,7 +10,8 @@ The API uses several credential lanes. An OpenAPI bearer marker identifies the H
 
 | Route family | Accepted authentication |
 |---|---|
-| `/api/v1/admin/*` | Personal access token, OAuth access token, or console session bearer. A PAT or OAuth token already carries its project. A console session must also send `project=<slug>` and must belong to that project. |
+| Project-scoped `/api/v1/admin/*` operations | Personal access token, OAuth access token, or console session bearer. A PAT or OAuth token already carries its project. A console session must also send `project=<slug>` and must belong to that project. |
+| Platform `/api/v1/admin/*` operations | Personal access token, OAuth access token, or console session bearer. All resolve a current identity-only platform scope; no credential's project binding or `project` query grants platform authority. |
 | Base ingestion and document routes | Project-scoped personal access token or OAuth access token. Console sessions are not resolved by this lane. |
 | `/api/v1/me*` | Console session bearer. |
 | `POST /api/v1/auth/login` | Email and password in JSON; no prior bearer. |
@@ -22,7 +23,7 @@ Use `Authorization: Bearer <token>` for bearer routes. Tokens are resolved again
 
 ## Authorization
 
-Bearer scope comes from the token, never from a request body, path slug, or `project` query parameter. For console-session calls to `/api/v1/admin/*`, `project` selects one existing membership; it does not create authority.
+Bearer scope comes from the token, never from a request body, path slug, or `project` query parameter. For project-scoped console-session calls, `project` selects one existing membership; it does not create authority. Platform operations use an identity-only platform scope, so `project` is ignored and never widens authority.
 
 The admin surface makes named capability decisions:
 
@@ -72,11 +73,13 @@ Unless a row says otherwise, fields are JSON properties. “Optional” means th
 
 ## Admin project and identity operations
 
-Every operation in this table also accepts optional query parameter `project`. It is needed to bind a console session to a membership and does not switch a PAT or OAuth token to another project.
+Project-scoped operations in this table accept optional query parameter `project`. It is needed to
+bind a console session to a membership and does not switch a PAT or OAuth token to another project.
+Platform operations ignore it; it cannot switch or widen their identity-only scope.
 
 | Operation | Authority | Input | Success |
 |---|---|---|---|
-| `GET /api/v1/admin/projects` | `project.manage.read`; `platform.project.list_all` widens the result | No additional input. | `200`; `projects` is every project for a platform administrator or the caller's memberships otherwise. |
+| `GET /api/v1/admin/projects` | `platform.project.list_all` | No additional input. | `200`; global inventory containing project `slug` objects. `403` for every authenticated caller without the capability, including a project administrator and calls carrying `?project=`. |
 | `POST /api/v1/admin/projects` | `platform.project.create` | `ProjectCreate`. | `201`; project identifier and slug. |
 | `POST /api/v1/admin/users/invite` | `platform.user.invite` | `UserInvite`. | `201`; user identifier and single-display invitation token. |
 | `GET /api/v1/admin/topics` | `project.manage.read` | No additional input. | `200`; topic slugs and sensitivity values. |
