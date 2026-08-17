@@ -39,6 +39,11 @@ class RecallResult:
     found: bool
     fragments: tuple[Fragment, ...] = ()
     gap_registered: bool = False
+    #: AUDIT-096: why the reranker could not decide this abstention, when one was configured, and
+    #: ``None`` when it decided (or when none is configured). An install whose reranker route is down
+    #: silently reverts to the blended threshold that measurably cannot meet G4 — and without this,
+    #: nothing anywhere distinguishes "the judge said answer" from "the judge never ran".
+    degraded: str | None = None
 
 
 class Retriever(Protocol):

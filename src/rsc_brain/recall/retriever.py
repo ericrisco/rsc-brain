@@ -27,7 +27,7 @@ from rsc_brain.ontology.recall import OntologyRecall
 from rsc_brain.recall.gaps import register_gap
 from rsc_brain.recall.interfaces import Fragment, RecallResult
 from rsc_brain.recall.permissions import chunk_visibility_clause, sensitive_tags
-from rsc_brain.recall.reranker import Reranker, abstains
+from rsc_brain.recall.reranker import Reranker, decide
 from rsc_brain.recall.scoring import score_fragment
 from rsc_brain.recall.temporal_intent import TemporalKind, TemporalMode, classify
 from rsc_brain.scope import ProjectScope
@@ -215,23 +215,33 @@ class PgRetriever:
         # `None` means the seam had no opinion (unavailable provider, nothing to score), and the
         # blended threshold governs, so a degraded provider never silently answers or refuses
         # everything.
+        # AUDIT-096: the verdict AND the reason, from one scoring call. Until this, the reason was
+        # computed nowhere and the result carried no trace of it, so an install whose reranker route
+        # was down reverted to the blended threshold — the one measured incapable of meeting G4 —
+        # with nothing anywhere to say so. The failure that hid behind it twice is worse than a silent
+        # regression: a G4 measurement cannot tell a judge that scored badly from one that never ran.
         verdict: bool | None = None
+        degraded: str | None = None
         if self._reranker is not None:
             page = scored[: self._config.rerank_candidates]
-            verdict = await abstains(
+            decision = await decide(
                 self._reranker,
                 query,
                 [candidate.text for candidate, _ in page],
                 self._config.tau_rerank,
             )
+            verdict, degraded = decision.abstains, decision.degradation
         should_abstain = verdict if verdict is not None else scored[0][1] < self._config.tau
         if should_abstain:
             await register_gap(self._sm, scope, query, topics=topics_hint or ())
-            return RecallResult(found=False, gap_registered=True)
+            return RecallResult(found=False, gap_registered=True, degraded=degraded)
 
         # The page is cut HERE, after the temporal filter has removed what is not eligible (R23).
         return RecallResult(
-            found=True, fragments=self._assemble(scored[:top_k]), gap_registered=False
+            found=True,
+            fragments=self._assemble(scored[:top_k]),
+            gap_registered=False,
+            degraded=degraded,
         )
 
     # --- steps ---------------------------------------------------------------
