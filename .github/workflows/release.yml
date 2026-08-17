@@ -97,6 +97,26 @@ jobs:
           context: apps/admin
           push: true
           tags: ghcr.io/${{ github.repository }}/console:${{ steps.identity.outputs.version }}
+      # The data component is Postgres with two extensions and moves far more slowly than the
+      # application, so clarify decided it is published "only when it changes" and it carries its
+      # own content tag rather than the release version.
+      #
+      # "Only when it changes" was implemented as NEVER. The install-by-version topology named
+      # `db:pg16-age-pgvector` and nothing published it, so the first real install failed with
+      # `denied` — a deployment definition pointing at an artifact that had never existed. Found by
+      # installing, which is the only thing that could have found it.
+      #
+      # Published on every release under its stable content tag: republishing an identical image
+      # costs almost nothing because the layers already exist, and it guarantees the tag the
+      # topology names is always there. Change detection would be the optimisation; existing is the
+      # requirement.
+      - name: Build and push the data component
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: docker/db.Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository }}/db:pg16-age-pgvector
 
   # Atomicity, as the spec defines it: a version is published only when ALL of its artifacts and its
   # evidence are. This job declares it, and it runs last because it depends on every one of them —
@@ -115,5 +135,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag || \
-            gh release edit "${GITHUB_REF_NAME}" --draft=false
+          # A tag carrying a prerelease suffix must be published AS a prerelease. `gh release
+          # create` does not infer it from the name, so v0.13.1-rc1 landed as a full release — and a
+          # release candidate presented as final is what an operator gets when they ask for the
+          # latest version. Found on the first real publication.
+          prerelease=""
+          case "${GITHUB_REF_NAME}" in *-rc*|*-alpha*|*-beta*|*-pre*) prerelease="--prerelease";; esac
+          gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag ${prerelease} || \
+            gh release edit "${GITHUB_REF_NAME}" --draft=false ${prerelease}
