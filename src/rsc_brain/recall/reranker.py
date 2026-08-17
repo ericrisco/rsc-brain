@@ -23,6 +23,7 @@ and this decides only whether to answer at all (FR-3.3).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -97,6 +98,51 @@ class LlmReranker:
                 f"the model returned {len(out.scores)} scores for {len(passages)} passages"
             )
         return [_clamp01(s) for s in out.scores]
+
+
+@dataclass(frozen=True, slots=True)
+class Decision:
+    """What the seam decided, and — in the same breath — whether it decided at all.
+
+    AUDIT-096: `abstains` and `degradation_of` each answer half of this, and each costs a model call,
+    so a caller that wanted both paid twice per recall. Nothing in the product ever did: the retriever
+    took the verdict and dropped the reason on the floor for as long as both functions existed. An
+    observability path priced at double the query cost is one nobody switches on, which is a design
+    fault and not an oversight by its callers.
+    """
+
+    #: ``True``/``False`` from the reranker, or ``None`` when the seam had no opinion.
+    abstains: bool | None
+    #: Why there was no opinion. ``None`` whenever ``abstains`` is not ``None``.
+    degradation: str | None
+
+
+async def decide(
+    reranker: Reranker, query: str, passages: Sequence[str], threshold: float
+) -> Decision:
+    """The verdict and the reason, from ONE scoring call.
+
+    This is what callers should use. `abstains` and `degradation_of` remain for the callers that only
+    want one half, and `degradation_of` re-scores — so it is a diagnostic, never the second half of a
+    pair.
+    """
+    if not passages:
+        return Decision(abstains=None, degradation="no candidates to score")
+    try:
+        scores = await reranker.relevance(query, passages)
+    except RerankerUnavailable as exc:
+        return Decision(
+            abstains=None,
+            degradation=(
+                f"reranker unavailable, abstention fell back to the blended threshold: {exc}"
+            ),
+        )
+    if len(scores) != len(passages):
+        raise ValueError(
+            f"reranker returned {len(scores)} scores for {len(passages)} passages: the contract is "
+            "one score per passage, in order — a short list mis-attributes every score after the gap"
+        )
+    return Decision(abstains=max(scores) < threshold, degradation=None)
 
 
 async def abstains(
