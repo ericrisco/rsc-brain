@@ -58,6 +58,12 @@ jobs:
       # The one extra scope, granted to the one job that needs it. Widening the workflow default
       # instead would hand it to the evidence jobs, which only read the source.
       packages: write
+      # AUDIT-094: signing the provenance statement. `id-token` mints the short-lived OIDC identity
+      # that proves the statement was produced by this workflow on this repository; `attestations`
+      # is what lets it be recorded so an operator can look it up later. Both are scoped to this
+      # job for the same reason `packages: write` is — the evidence jobs must not be able to sign.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,6 +89,7 @@ jobs:
       # Named by the version tag, never `latest`: `latest` is what made two different deployments
       # indistinguishable in the first place.
       - name: Build and push the application
+        id: app
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
@@ -92,6 +99,7 @@ jobs:
             RSC_BRAIN_BUILD_IDENTITY=${{ steps.identity.outputs.value }}
           tags: ghcr.io/${{ github.repository }}/app:${{ steps.identity.outputs.version }}
       - name: Build and push the console
+        id: console
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: apps/admin
@@ -111,12 +119,43 @@ jobs:
       # topology names is always there. Change detection would be the optimisation; existing is the
       # requirement.
       - name: Build and push the data component
+        id: db
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
           file: docker/db.Dockerfile
           push: true
           tags: ghcr.io/${{ github.repository }}/db:pg16-age-pgvector
+
+      # AUDIT-094: the spec recorded provenance attestation as "assumed yes unless objected". It was
+      # no. `gh attestation verify` against the first published digest answered HTTP 404 — the same
+      # shape as every other finding this campaign produced: a declaration pointing at nothing.
+      #
+      # What this adds that the SBOM and the CVE scan do not: those describe what is *inside* an
+      # artifact. Neither says the artifact came from this repository's CI at this commit, so an
+      # operator pulling `ghcr.io/…/app:0.13.1` has no way to tell it from an image someone else
+      # pushed to a name that looks like ours. That is the question provenance answers.
+      #
+      # Placed after every push so a partial publication signs nothing, which is the same atomicity
+      # rule the `release` job below enforces for the version as a whole.
+      - name: Attest the application
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}/app
+          subject-digest: ${{ steps.app.outputs.digest }}
+          push-to-registry: true
+      - name: Attest the console
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}/console
+          subject-digest: ${{ steps.console.outputs.digest }}
+          push-to-registry: true
+      - name: Attest the data component
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}/db
+          subject-digest: ${{ steps.db.outputs.digest }}
+          push-to-registry: true
 
   # Atomicity, as the spec defines it: a version is published only when ALL of its artifacts and its
   # evidence are. This job declares it, and it runs last because it depends on every one of them —
