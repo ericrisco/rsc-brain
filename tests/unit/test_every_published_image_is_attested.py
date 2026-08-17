@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -33,11 +34,12 @@ WORKFLOW = REPO / ".github" / "workflows" / "release.yml"
 ATTEST_ACTION = "actions/attest-build-provenance"
 
 
-def _workflow() -> dict:
-    return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+def _workflow() -> dict[str, Any]:
+    parsed: dict[str, Any] = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    return parsed
 
 
-def _steps() -> list[dict]:
+def _steps() -> list[dict[str, Any]]:
     return [step for job in _workflow()["jobs"].values() for step in (job.get("steps") or [])]
 
 
