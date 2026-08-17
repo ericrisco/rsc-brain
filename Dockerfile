@@ -42,7 +42,26 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ARG INSTALL_PDF_BACKEND=false
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$INSTALL_PDF_BACKEND" = "true" ]; then \
+        # AUDIT-095: docling depends on torch, and torch's default wheel on PyPI for linux is the
+        # CUDA build. It drags the whole NVIDIA runtime in as hard dependencies. Measured inside the
+        # published 0.13.1-rc2 image: nvidia 2724 MB, torch 1127 MB (2.13.0+cu130), triton 691 MB —
+        # 4.5 GB of a 5.9 GB filesystem, in a product that runs no model locally. Inference is
+        # remote through litellm, and OCR runs on onnxruntime since AUDIT-087. Not one of those
+        # bytes ever executes; they are downloaded, stored, backed up and scanned for CVEs forever.
+        #
+        # Install the CPU build FIRST, from PyTorch's own CPU index, so docling's resolve finds its
+        # torch requirement already satisfied and never reaches for the CUDA wheel. Ordering is the
+        # mechanism: replacing torch afterwards would leave the nvidia packages behind as orphans,
+        # still installed and still counted.
+        uv pip install --python /app/.venv/bin/python \
+            --index-url https://download.pytorch.org/whl/cpu torch torchvision && \
         uv pip install --python /app/.venv/bin/python docling && \
+        # Assert it here, in the build, rather than discovering on an operator's host that the image
+        # grew by four gigabytes again — the AUDIT-083 rule. A later docling release that tightens
+        # its torch pin can silently pull the CUDA wheel back in; this is what stops it shipping.
+        test ! -d /app/.venv/lib/python3.12/site-packages/nvidia && \
+        test ! -d /app/.venv/lib/python3.12/site-packages/triton && \
+        /app/.venv/bin/python -c "import torch, sys; sys.exit('CUDA build reinstalled: ' + torch.__version__) if 'cu' in torch.__version__.split('+')[-1] else None" && \
         # AUDIT-067: docling pulls the full OpenCV wheel, whose `cv2` links against libxcb, libGL,
         # libgthread and libglib — measured with `ldd` inside the built image. Installing the Python
         # package alone produced a 9.48 GB PDF-capable image that still could not parse a PDF. The fix
