@@ -73,6 +73,25 @@ RSC_BRAIN_VERSION=<version> docker compose --env-file deploy/.env \
 
 Rolling back is the same command with the previous version. Nothing is rebuilt.
 
+### Verify where an image came from, before you run it
+
+Each published image carries a signed provenance statement naming the repository, the workflow, and
+the commit that built it. Check it before an upgrade, and treat a failure as a reason to stop:
+
+```bash
+for component in app console db; do
+  gh attestation verify "oci://ghcr.io/ericrisco/rsc-brain/${component}:<version>" \
+    --repo ericrisco/rsc-brain
+done
+```
+
+The data component is pinned by content rather than by release version, so use
+`db:pg16-age-pgvector` in its place.
+
+This answers a different question from the SBOM and the vulnerability scan published alongside each
+release. Those describe what is inside an artifact; this says the artifact is the one this project's
+CI built, rather than an image pushed by someone else to a similar name.
+
 **Building from source** is unchanged and stays supported. The canonical Compose file builds
 `rsc-brain/app:latest` from the checked-out source; it does not consume a release-tag variable. Check out the intended release, retain your protected environment
 and model overlay, then rebuild with the same complete file set used for installation:
