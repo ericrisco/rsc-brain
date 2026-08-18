@@ -70,8 +70,11 @@ extraEnv:
     value: http://model-gateway.models.svc.cluster.local:11434
   - name: RSC_BRAIN_CAPABILITIES__RERANKER__PROVIDER
     value: ollama
+  # A CHAT model, not a cross-encoder — the reranker calls `complete_structured` (AUDIT-085). Note
+  # that `extraEnv` OVERRIDES `capabilities.reranker.model` from values.yaml, so a cross-encoder
+  # copied in here disables abstention on a chart whose own default is correct (AUDIT-097).
   - name: RSC_BRAIN_CAPABILITIES__RERANKER__MODEL
-    value: bge-reranker-v2-m3
+    value: qwen2.5:3b-instruct
   - name: RSC_BRAIN_CAPABILITIES__RERANKER__API_BASE
     value: http://model-gateway.models.svc.cluster.local:11434
 ```

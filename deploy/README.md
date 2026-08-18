@@ -95,7 +95,10 @@ services:
       RSC_BRAIN_CAPABILITIES__EMBEDDER__MODEL: bge-m3
       RSC_BRAIN_CAPABILITIES__EMBEDDER__API_BASE: http://model-host:11434
       RSC_BRAIN_CAPABILITIES__RERANKER__PROVIDER: ollama
-      RSC_BRAIN_CAPABILITIES__RERANKER__MODEL: bge-reranker-v2-m3
+      # A CHAT model, not a cross-encoder. The reranker implementation calls `complete_structured`,
+      # so a rerank-API model such as `bge-reranker-v2-m3` fails every call and abstention silently
+      # reverts to the blended threshold (AUDIT-085, AUDIT-097).
+      RSC_BRAIN_CAPABILITIES__RERANKER__MODEL: qwen2.5:3b-instruct
       RSC_BRAIN_CAPABILITIES__RERANKER__API_BASE: http://model-host:11434
       RSC_BRAIN_INGRESS__PUBLIC_ORIGIN: ${RSC_BRAIN_INGRESS__PUBLIC_ORIGIN:?public HTTPS origin required}
   worker: *model-routes
