@@ -1,6 +1,8 @@
 # Golden eval set (SPEC-02, PRD §12.1). Each case: id, family, question, user, project,
 # must_find, and (for hits) an expected answer/claim. Users & memberships are defined in
-# evals/README.md. `must_find: false` cases (abstain/denied/cross_project/injection) must return
+# `users.yaml` beside this file — AUDIT-098: this line used to point at evals/README.md, which never
+# mentioned a single one of them, so the `denied` and `cross_project` families (11 of 47 cases) could
+# not be run by anyone who was not the author. `must_find: false` cases (abstain/denied/cross_project/injection) must return
 # the same indistinguishable "found:false" (FR-4.3). Consumed by `brain eval` (SPEC-06).
 cases:
   # --- family: hit (normal answers present + permitted) ---

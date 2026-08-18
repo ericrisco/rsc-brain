@@ -1,0 +1,47 @@
+# Eval principals and their topic memberships (SPEC-02 E12.4, FR-4.2/4.14).
+#
+# AUDIT-098: `golden.yaml` said "Users & memberships are defined in evals/README.md" and the README
+# never mentioned a single user. The four names existed only as opaque strings inside golden.yaml, so
+# the `denied` (6) and `cross_project` (5) families — 11 of 47 cases, and the whole of the G2
+# permission-leak measurement — could not be run by anyone who was not the author, from memory.
+#
+# A pointer that asserts the definition exists is worse than silence: it stops the reader looking.
+# Same shape as release-identity's "assumed yes unless objected" (AUDIT-094) and the parity guard's
+# header teaching the command that disarms it (AUDIT-097).
+#
+# These grants are DERIVED from the corpus, not chosen. Every must-find case pins the topics its
+# principal needs (the tags of the document holding its expected answer), and every denied case pins
+# a topic that principal must NOT have. The first reconstruction attempt gave alice and dave full
+# access; the tests rejected it, because `d5` and `d6` then had nothing to be denied by.
+#
+#   alice  needs engineering (h2, h12), general (h1, h4), sales (h3, e1, e3)
+#          must NOT have hr or payroll        -> d6 "Salary review scores for engineering?"
+#   bob    general only                       -> d1, d3 (acme-payroll-bands-es), d2, d4 (hr)
+#   dave   needs corp (h7, t3, t4, t8), delivery (h8)
+#          must NOT have personnel            -> d5 "Globex personnel emergency contacts"
+#   erin   needs corp, delivery, legal (h9 globex-contract-en, h10 globex-sla-table-en)
+#          must NOT have personnel
+#
+# Cross-project cases work by asking a member of one project a question whose answer lives in the
+# other; the answer must be indistinguishable from "does not exist" (FR-4.3).
+#
+# `can_curate` is false for every principal on purpose. A role never implies topic authority (R01,
+# AUDIT-020), and a curator flag here would let a permission case pass on the role instead of on the
+# grant — which would stop the corpus measuring what it claims to.
+users:
+  alice:
+    project: acme
+    allowed_topics: [general, engineering, sales]
+    can_curate: false
+  bob:
+    project: acme
+    allowed_topics: [general]
+    can_curate: false
+  dave:
+    project: globex
+    allowed_topics: [corp, delivery]
+    can_curate: false
+  erin:
+    project: globex
+    allowed_topics: [corp, delivery, legal]
+    can_curate: false
