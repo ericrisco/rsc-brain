@@ -58,7 +58,7 @@ def _real_probes() -> dict[Capability, tuple[list[Message], type[BaseModel]]]:
         TopicAssignment,
         load_prompt,
     )
-    from rsc_brain.recall.reranker import _ScoresOut
+    from rsc_brain.recall.reranker import ScoresOut
 
     sample = "Acme Corp is a software company founded in 2015, headquartered in Barcelona."
 
@@ -74,7 +74,7 @@ def _real_probes() -> dict[Capability, tuple[list[Message], type[BaseModel]]]:
                 load_prompt("relevance_reranker"),
                 "QUESTION: where is Acme?\n\nPASSAGES:\n[0] " + sample,
             ),
-            _ScoresOut,
+            ScoresOut,
         ),
     }
 
