@@ -209,7 +209,9 @@ async def test_embed_wrong_dimension_fails_loudly() -> None:
 
 
 async def test_healthcheck_all_capabilities_ok() -> None:
-    comp = FakeCompletion(always='{"ok": true}')
+    # AUDIT-099: the probe asks for a list of objects, not `{"ok": true}`. A flat boolean succeeded
+    # 83% on a live route whose extraction schemas succeeded 0%, so a passing probe certified nothing.
+    comp = FakeCompletion(always='{"items": [{"name": "Acme Corp", "kind": "company"}]}')
     gw = ModelGateway(_caps(), completion_fn=comp, embedding_fn=FakeEmbedding(dim=1024))
     statuses = await gw.healthcheck()
     assert set(statuses) == {"extractor", "judge", "topicalizer", "embedder", "reranker"}

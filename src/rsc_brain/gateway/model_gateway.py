@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from rsc_brain.config.models import CapabilitiesConfig, Capability, CapabilityConfig
 from rsc_brain.gateway.errors import (
@@ -47,10 +47,33 @@ CompletionFn = Callable[..., Awaitable[Any]]
 EmbeddingFn = Callable[..., Awaitable[Any]]
 
 
-class _HealthProbe(BaseModel):
-    """Minimal schema the structured healthcheck probe must return."""
+class _ProbeItem(BaseModel):
+    """One object inside the probe's list. Required string fields on purpose."""
 
-    ok: bool
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    kind: str
+
+
+class _HealthProbe(BaseModel):
+    """The schema the structured probe must return (FR-9.3).
+
+    AUDIT-099: this used to be `{ok: bool}`. Measured against a live OpenAI-compatible route, that
+    flat shape succeeded 83% of the time while the extractor's real schemas — a list of objects with
+    required string fields — succeeded 0%, 0% and 25% across its three cascade steps. The probe
+    therefore reported "all capabilities healthy" for a configuration that discarded every chunk of a
+    27-document corpus, and the operator found out one document at a time.
+
+    So the probe asks for the shape that actually discriminates: a list of objects with required
+    string fields, which is what every extraction schema in this product is. It is deliberately NOT a
+    copy of any one capability's schema — the gateway must not depend on the ingest prompts — and a
+    pass therefore still does not guarantee that every prompt's exact schema will validate. It
+    guarantees the route can do structured output of the kind this product asks for, which is the
+    difference between this and a boolean.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    items: list[_ProbeItem]
 
 
 @dataclass(frozen=True, slots=True)
@@ -364,7 +387,14 @@ class ModelGateway:
         """Run a real structured/embed probe per configured capability (FR-9.3)."""
         statuses: dict[str, HealthStatus] = {}
         probe_messages: list[Message] = [
-            {"role": "user", "content": 'Reply with exactly this JSON: {"ok": true}'}
+            {
+                "role": "user",
+                "content": (
+                    "Extract the named things from this sentence: "
+                    '"Acme Corp, a company, is in Barcelona, a city." '
+                    'Reply as JSON: {"items": [{"name": "...", "kind": "..."}]}'
+                ),
+            }
         ]
         for capability in Capability:
             try:

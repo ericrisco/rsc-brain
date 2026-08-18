@@ -323,8 +323,22 @@ def wait_for_schema(
         time.sleep(2)
 
 
-def verify(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
-    """Smoke-test the running system: gateway probe + database (extensions + schema at head)."""
+def verify(
+    ctx: typer.Context,
+    json_output: bool = JSON_OPTION,
+    probe_models: bool = typer.Option(
+        False,
+        "--probe-models",
+        help="Also call every configured capability once. Costs provider tokens; not for healthchecks.",
+    ),
+) -> None:
+    """Smoke-test the running system: capability configuration + database (extensions + schema).
+
+    AUDIT-099: `run_verify` has taken `probe_models` since AUDIT-044 moved provider probing off the
+    healthcheck timer, and its docstring named "an explicit `--probe-models`" as the way to ask for
+    it. The option did not exist. The only caller that ever passed True was an integration test, so
+    `ModelGateway.healthcheck` — the whole of FR-9.3 — was unreachable in an installed product.
+    """
 
     async def _run() -> tuple[bool, list[dict[str, object]]]:
         from rsc_brain.config import load_settings
@@ -337,6 +351,7 @@ def verify(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
             report = await run_verify(
                 gateway=ModelGateway(settings.capabilities),
                 sessionmaker=make_sessionmaker(engine),
+                probe_models=probe_models,
             )
         finally:
             await engine.dispose()
