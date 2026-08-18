@@ -53,7 +53,13 @@ class Reranker(Protocol):
     async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float]: ...
 
 
-class _ScoresOut(BaseModel):
+class ScoresOut(BaseModel):
+    """The reranker's structured output.
+
+    Public because `installer.verify` probes this capability with its real schema (AUDIT-099), and
+    reaching into another module's private name to do that is coupling that gets quietly copied.
+    """
+
     model_config = ConfigDict(extra="forbid")
     scores: list[float]
 
@@ -88,7 +94,7 @@ class LlmReranker:
             {"role": "user", "content": f"QUESTION: {query}\n\nPASSAGES:\n{numbered}"},
         ]
         try:
-            out = await self._gateway.complete_structured(Capability.RERANKER, messages, _ScoresOut)
+            out = await self._gateway.complete_structured(Capability.RERANKER, messages, ScoresOut)
         except (GatewayError, Exception) as exc:
             if isinstance(exc, RerankerUnavailable):
                 raise

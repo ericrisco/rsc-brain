@@ -75,6 +75,10 @@ def canned_completion(
         "ClaimExtraction": {"claims": claims or []},
         "TopicAssignment": {"tags": tags if tags is not None else []},
         "_HealthProbe": {"ok": True},
+        # AUDIT-099: readiness probes each capability with its REAL schema, so the fake has to know
+        # them all. It did not know the reranker's, returned `{}`, and the probe failed — a fake that
+        # answers "I don't know that schema" with an empty object is a fake that reports a defect.
+        "ScoresOut": {"scores": [0.9]},
     }
 
     async def _fn(**kwargs: Any) -> Any:

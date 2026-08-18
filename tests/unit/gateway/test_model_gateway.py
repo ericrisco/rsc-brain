@@ -209,6 +209,8 @@ async def test_embed_wrong_dimension_fails_loudly() -> None:
 
 
 async def test_healthcheck_all_capabilities_ok() -> None:
+    # AUDIT-099: with no probes supplied, healthcheck falls back to the generic `{ok: bool}` shape —
+    # which certifies almost nothing on a real route. `installer.verify` supplies the real ones.
     comp = FakeCompletion(always='{"ok": true}')
     gw = ModelGateway(_caps(), completion_fn=comp, embedding_fn=FakeEmbedding(dim=1024))
     statuses = await gw.healthcheck()
