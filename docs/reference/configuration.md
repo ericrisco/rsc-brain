@@ -84,11 +84,36 @@ The four values under `recall.weights` must total `1.0` within a tolerance of `0
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `reranker` | object | configured defaults | Reranker feature settings. |
-| `reranker.enabled` | boolean | `false` | Declared reranker switch. Model routing remains under `capabilities.reranker`. The current runtime does not consume this switch. |
+| `reranker.enabled` | boolean | `false` | Reranker switch (FR-3.6). When true, recall decides abstention on the reranker's relevance score against `recall.tau_rerank` instead of the blended `recall.tau`; when false the blended path is unchanged. Model routing is under `capabilities.reranker`. **A `cpu_only` hardware profile cannot serve it — see below.** |
 | `vision` | object | configured defaults | Reserved vision settings. |
 | `vision.enabled` | boolean | `false` | Reserved vision switch. The current runtime does not consume it. |
 | `telemetry` | object | configured defaults | Anonymous telemetry settings. |
 | `telemetry.enabled` | boolean | `false` | Anonymous-telemetry opt-in field. The current runtime has no telemetry sender and does not consume this switch. |
+
+### The reranker needs more than a CPU
+
+Measured on the documented default route — `qwen2.5:3b-instruct` served by a local ollama — one
+relevance call over a page of 10 candidates took **141.8 s**, and **256.1 s** with the indexed score
+contract. The default `capabilities.reranker.timeout_s` is **60**.
+
+So on a `cpu_only` profile every reranker call times out. Recall does not fail — it falls back to the
+blended `recall.tau`, which is the behaviour of an install with the reranker switched off, measured
+unable to reach the abstention gate. The switch reads as on and the capability never runs.
+
+Three ways out, in the order they are usually right:
+
+1. **Route the capability to a remote model.** It is a route like the other four; nothing requires it
+   to be local. This is the cheapest fix and needs no hardware.
+2. **Use a GPU profile.** `hardware_profile: workstation` with a GPU behind the route.
+3. **Leave it disabled** and accept threshold-only abstention, knowing what that costs: the product
+   answers questions whose answer is absent, and the hunting loop does not fire.
+
+Raising `timeout_s` is not on that list on purpose. A 250-second recall is not a recall anyone waits
+for, and a public surface holding a request that long is its own problem.
+
+`brain verify --probe-models` reports this combination explicitly. It is **not** reported by plain
+`brain verify`, because that is the container healthcheck and failing it would restart containers that
+are otherwise serving traffic.
 
 ## Ingestion
 

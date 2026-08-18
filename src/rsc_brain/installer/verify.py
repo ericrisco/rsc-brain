@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from rsc_brain.config.models import Capability
+from rsc_brain.config.models import Capability, HardwareProfile
 from rsc_brain.gateway.errors import GatewayError
 from rsc_brain.gateway.model_gateway import Message, ModelGateway
 from rsc_brain.stores.relational.migrations import schema_state
@@ -122,12 +122,41 @@ async def _check_database(sessionmaker: async_sessionmaker[AsyncSession]) -> Che
     return CheckResult("database", True, f"extensions present, {state.explain()}")
 
 
+def _check_reranker_fits_the_hardware(
+    profile: HardwareProfile | None, reranker_enabled: bool
+) -> CheckResult | None:
+    """AUDIT-100: a `cpu_only` profile cannot carry the reranker capability. Measured, not assumed.
+
+    On the documented default route — `qwen2.5:3b-instruct` on a local ollama — one 10-passage
+    relevance call took **141.8 s** positional and **256.1 s** with the indexed contract, against a
+    60 s default `timeout_s`. Every call times out, surfaces as `provider_unavailable`, and abstention
+    falls back to the blended threshold that measurably cannot meet G4. The install answers every
+    question it is asked and never asks a human anything — which is the promise the capability exists
+    to keep.
+
+    Reported only in the deep diagnostic, never in readiness. `run_verify` IS the container
+    healthcheck, so failing it here would restart working containers over a configuration choice
+    (AUDIT-044). The operator asked a deep question with `--probe-models`; this is part of the answer.
+    """
+    if profile is not HardwareProfile.CPU_ONLY or not reranker_enabled:
+        return None
+    return CheckResult(
+        "reranker_profile",
+        False,
+        "reranker is enabled on a cpu_only profile: measured 142-256 s per 10-passage call against a "
+        "60 s timeout, so every call times out and abstention silently falls back. Use a GPU profile, "
+        "route the capability to a remote model, or disable it and accept threshold-only abstention.",
+    )
+
+
 async def run_verify(
     *,
     gateway: ModelGateway,
     sessionmaker: async_sessionmaker[AsyncSession],
     smoke: SmokeCheck | None = None,
     probe_models: bool = False,
+    hardware_profile: HardwareProfile | None = None,
+    reranker_enabled: bool = False,
 ) -> VerifyReport:
     """Readiness: configuration and the local stores, with NO model invocation (R50).
 
@@ -146,6 +175,9 @@ async def run_verify(
     ]
     if probe_models:
         checks.append(await _check_gateway(gateway))
+        mismatch = _check_reranker_fits_the_hardware(hardware_profile, reranker_enabled)
+        if mismatch is not None:
+            checks.append(mismatch)
     if smoke is not None:
         try:
             ok, detail = await smoke()
