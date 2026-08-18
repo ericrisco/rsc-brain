@@ -47,33 +47,33 @@ CompletionFn = Callable[..., Awaitable[Any]]
 EmbeddingFn = Callable[..., Awaitable[Any]]
 
 
-class _ProbeItem(BaseModel):
-    """One object inside the probe's list. Required string fields on purpose."""
-
-    model_config = ConfigDict(extra="forbid")
-    name: str
-    kind: str
-
-
 class _HealthProbe(BaseModel):
-    """The schema the structured probe must return (FR-9.3).
+    """Fallback schema for a caller that supplies no probe. Certifies almost nothing — see below.
 
-    AUDIT-099: this used to be `{ok: bool}`. Measured against a live OpenAI-compatible route, that
-    flat shape succeeded 83% of the time while the extractor's real schemas — a list of objects with
-    required string fields — succeeded 0%, 0% and 25% across its three cascade steps. The probe
-    therefore reported "all capabilities healthy" for a configuration that discarded every chunk of a
-    27-document corpus, and the operator found out one document at a time.
+    AUDIT-099 measured what a generic probe is worth. On a live OpenAI-compatible route with
+    `gpt-oss:20b`, crossing the probe's prompt and schema against the extractor's real ones:
 
-    So the probe asks for the shape that actually discriminates: a list of objects with required
-    string fields, which is what every extraction schema in this product is. It is deliberately NOT a
-    copy of any one capability's schema — the gateway must not depend on the ingest prompts — and a
-    pass therefore still does not guarantee that every prompt's exact schema will validate. It
-    guarantees the route can do structured output of the kind this product asks for, which is the
-    difference between this and a boolean.
+        probe prompt + probe schema   3/3
+        probe prompt + REAL schema    0/3
+        REAL prompt  + probe schema   0/3
+        REAL prompt  + REAL schema    0/3
+
+    Only the self-consistent cell passes, and it passes *because* a probe prompt spells out the exact
+    JSON it wants, so the model copies it. Either real half is enough to fail. A generic probe
+    therefore cannot predict whether a capability will work — it measures the route's ability to obey
+    an instruction that hands it the answer.
+
+    The first attempt at this fix made the generic schema richer, on the theory that shape was the
+    discriminator. The richer probe passed on the very route that discarded every chunk of a
+    27-document corpus. That theory was wrong, and the 2x2 above is what replaced it.
+
+    So `healthcheck` takes its probes from the caller, and `installer.verify` supplies each
+    capability's own prompt and schema. This class remains for callers with nothing better, and its
+    result must not be read as "this capability works".
     """
 
     model_config = ConfigDict(extra="forbid")
-    items: list[_ProbeItem]
+    ok: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -383,18 +383,19 @@ class ModelGateway:
                 missing.append(capability.value)
         return missing
 
-    async def healthcheck(self) -> dict[str, HealthStatus]:
-        """Run a real structured/embed probe per configured capability (FR-9.3)."""
+    async def healthcheck(
+        self, probes: Mapping[Capability, tuple[list[Message], type[BaseModel]]] | None = None
+    ) -> dict[str, HealthStatus]:
+        """Run a real structured/embed probe per configured capability (FR-9.3).
+
+        ``probes`` maps a capability to the messages and schema it should be asked for. Supply the
+        capability's OWN prompt and schema: a generic probe passes on routes that fail every real
+        call, measured — see :class:`_HealthProbe`. A capability with no entry falls back to that
+        generic probe, and its `ok` means only "the route answered something".
+        """
         statuses: dict[str, HealthStatus] = {}
-        probe_messages: list[Message] = [
-            {
-                "role": "user",
-                "content": (
-                    "Extract the named things from this sentence: "
-                    '"Acme Corp, a company, is in Barcelona, a city." '
-                    'Reply as JSON: {"items": [{"name": "...", "kind": "..."}]}'
-                ),
-            }
+        fallback: list[Message] = [
+            {"role": "user", "content": 'Reply with exactly this JSON: {"ok": true}'}
         ]
         for capability in Capability:
             try:
@@ -403,7 +404,8 @@ class ModelGateway:
                     ok = len(vector) == self._cap(capability).effective_dimension
                     statuses[capability.value] = HealthStatus(ok=ok)
                 else:
-                    await self.complete_structured(capability, probe_messages, _HealthProbe)
+                    messages, schema = (probes or {}).get(capability, (fallback, _HealthProbe))
+                    await self.complete_structured(capability, messages, schema)
                     statuses[capability.value] = HealthStatus(ok=True)
             except GatewayError as exc:
                 statuses[capability.value] = HealthStatus(

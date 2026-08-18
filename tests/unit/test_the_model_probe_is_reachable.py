@@ -20,19 +20,27 @@ This is AUDIT-096's shape a second time on the same day — a component whose te
 nothing proves it is reachable. There the recorder was `degradation_of`; here it is an entire
 requirement.
 
-**The second layer.** Reachability alone would not have helped. The probe asked for `{"ok": true}`.
-Measured on a live OpenAI-compatible route with `gpt-oss:20b`:
+**The second layer.** Reachability alone would not have helped. The probe asked for `{"ok": true}`,
+and on a live route with `gpt-oss:20b` that flat shape succeeded 83% while the extractor's three real
+steps succeeded 0%, 0% and 25% — and any one failure discards the chunk, so chunk survival was 0%.
 
-    the flat probe schema                  83%
-    extractor step 1 (entities)             0%
-    extractor step 2 (relations)            0%
-    extractor step 3 (claims)              25%
-    chunk survival (all three must pass)    0%
+**The first fix for that was wrong, and this test records it.** I made the generic schema richer — a
+list of objects with required string fields — on the theory that shape was the discriminator. The
+richer probe passed on the very route that discarded every chunk. Crossing the halves:
 
-A green probe over a route that discards 100% of a corpus is worse than no probe: the operator ingests
-27 documents, gets 27 `processed` and 0 claims, and only the per-document error says why. So the probe
-now asks for the shape that discriminates — a list of objects with required string fields, which is
-what every extraction schema in this product is.
+    probe prompt + probe schema   3/3
+    probe prompt + REAL schema    0/3
+    REAL prompt  + probe schema   0/3
+    REAL prompt  + REAL schema    0/3
+
+Only the self-consistent cell passes, and it passes *because* a probe prompt spells out the exact JSON
+it wants, so the model copies it. **A generic probe cannot predict whether a capability works** — it
+measures the route's ability to obey an instruction that hands it the answer.
+
+So `healthcheck` takes its probes from the caller and `installer.verify` supplies each capability's own
+prompt and schema. On the failing route that now reports extractor FAILED, judge FAILED, topicalizer /
+embedder / reranker ok — which matches every independent measurement, including that the reranker
+genuinely does work there.
 """
 
 from __future__ import annotations
@@ -90,31 +98,33 @@ def test_no_capability_probe_is_reachable_only_from_tests() -> None:
     )
 
 
-def test_the_probe_asks_for_a_shape_that_can_actually_fail() -> None:
-    """A boolean probe passes on routes where every real schema fails, so it certifies nothing.
+def test_each_capability_is_probed_with_its_own_prompt_and_schema() -> None:
+    """The replacement for a wrong assumption.
 
-    Asserted on the parsed schema rather than the source text: a comment mentioning `ok: bool` would
-    satisfy a grep, and this project has been fooled by its own prose four times.
+    A generic probe passes on routes where every real call fails, measured. The only probe that
+    discriminates is the capability's own prompt and schema, so the readiness layer must supply them.
     """
-    from rsc_brain.gateway.model_gateway import _HealthProbe
+    from rsc_brain.config.models import Capability
+    from rsc_brain.installer.verify import _real_probes
 
-    schema = _HealthProbe.model_json_schema()
-    top = schema.get("properties", {})
-    assert top, "the probe schema has no properties"
-    arrays = [
-        name
-        for name, spec in top.items()
-        if spec.get("type") == "array" or "$ref" in str(spec.get("items", ""))
-    ]
-    assert arrays, (
-        f"the probe schema is flat ({sorted(top)}); a flat schema succeeded 83% on a route where the "
-        "extractor's list-of-objects schemas succeeded 0%, so a pass would certify nothing"
-    )
-    nested = schema.get("$defs") or schema.get("definitions")
-    assert nested, (
-        "the probe's array holds scalars; what fails on real routes is a list of OBJECTS with "
-        "required string fields, which is what every extraction schema in this product is"
-    )
+    probes = _real_probes()
+    for capability in (Capability.EXTRACTOR, Capability.JUDGE, Capability.TOPICALIZER):
+        assert capability in probes, f"{capability.value} is probed with a generic schema"
+    # The reranker especially: when its route cannot serve structured output, abstention silently
+    # reverts to the blended threshold (AUDIT-085, AUDIT-096) and nothing else surfaces it.
+    assert Capability.RERANKER in probes, "the reranker's route is the least observable of the five"
+
+    for capability, (messages, schema) in probes.items():
+        assert messages and messages[0].get("content"), f"{capability.value} probe has no prompt"
+        # A probe prompt that spells out the exact JSON it wants is answered by copying, which is why
+        # the generic one certified nothing. The real prompts do not do that.
+        assert "Reply as JSON" not in str(messages), (
+            f"{capability.value} is probed with a self-answering prompt, which passes on routes that "
+            "fail every real call"
+        )
+        assert schema.model_json_schema().get("properties"), (
+            f"{capability.value} probe schema has no fields"
+        )
 
 
 def test_probe_models_stays_off_by_default() -> None:
