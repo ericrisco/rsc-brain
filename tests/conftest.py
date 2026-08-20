@@ -78,7 +78,9 @@ def canned_completion(
         # AUDIT-099: readiness probes each capability with its REAL schema, so the fake has to know
         # them all. It did not know the reranker's, returned `{}`, and the probe failed — a fake that
         # answers "I don't know that schema" with an empty object is a fake that reports a defect.
-        "ScoresOut": {"scores": [0.9]},
+        # AUDIT-100: the reranker's scores are keyed by passage index, not positional. The readiness
+        # probe sends one passage, so one entry for index 0.
+        "ScoresOut": {"scores": [{"index": 0, "score": 0.9}]},
     }
 
     async def _fn(**kwargs: Any) -> Any:

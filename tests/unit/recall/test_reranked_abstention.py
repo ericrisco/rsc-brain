@@ -23,6 +23,7 @@ from rsc_brain.recall.reranker import (
     Reranker,
     RerankerUnavailable,
     abstains,
+    decide,
 )
 from tests.conftest import completion_response
 
@@ -79,17 +80,53 @@ async def test_no_passages_is_not_an_opinion() -> None:
 
 
 async def test_a_score_list_of_the_wrong_length_is_refused() -> None:
-    """Silently zipping a short list to the passages mis-attributes every score after the gap — the
-    same defect class as AUDIT-082's positional `languages`."""
+    """Silently zipping a short list to the passages mis-attributes every entry after the gap — the
+    same defect class as AUDIT-082's positional `languages`.
+
+    AUDIT-100 changed WHERE a missing score is absorbed, not whether mis-attribution is allowed. A
+    `Reranker` still owes one entry per passage in order; what is new is that an entry may be `None`,
+    so the model omitting a passage no longer shortens the list."""
 
     class _Short:
         version = "short"
 
-        async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float]:
+        async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
             return [0.9]
 
-    with pytest.raises(ValueError, match="one score per passage"):
+    with pytest.raises(ValueError, match="one entry per passage"):
         await abstains(_Short(), "q", ["a", "b", "c"], 0.5)
+
+
+async def test_an_unscored_passage_is_not_a_zero() -> None:
+    """AUDIT-100: `None` means "not judged", which must not drag the maximum down.
+
+    Treating it as 0.0 would manufacture a refusal out of a model's miscounting — moving the defect
+    instead of removing it."""
+
+    class _Partial:
+        version = "partial"
+
+        async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+            return [None, 0.9, None]
+
+    decision = await decide(_Partial(), "q", ["a", "b", "c"], 0.5)
+    assert decision.abstains is False, "a 0.9 among unscored passages must still answer"
+    assert decision.degradation is not None, "the operator must learn 2 of 3 were unjudged"
+    assert "1 of 3" in decision.degradation
+
+
+async def test_scoring_nothing_is_still_a_fallback() -> None:
+    """All-unscored is indistinguishable from an unavailable reranker: no opinion, and say so."""
+
+    class _Silent:
+        version = "silent"
+
+        async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+            return [None, None]
+
+    decision = await decide(_Silent(), "q", ["a", "b"], 0.5)
+    assert decision.abstains is None
+    assert decision.degradation and "none of the 2" in decision.degradation
 
 
 async def test_the_llm_reranker_scores_through_the_capability(
@@ -101,7 +138,9 @@ async def test_the_llm_reranker_scores_through_the_capability(
 
     async def _completion(**kwargs: object) -> object:
         seen["capability"] = kwargs.get("model")
-        return completion_response(json.dumps({"scores": [0.8, 0.2]}))
+        return completion_response(
+            json.dumps({"scores": [{"index": 0, "score": 0.8}, {"index": 1, "score": 0.2}]})
+        )
 
     reranker: Reranker = LlmReranker(gateway_factory(completion=_completion))  # type: ignore[arg-type]
     scores = await reranker.relevance("q", ["passage one", "passage two"])
@@ -126,7 +165,9 @@ async def test_scores_outside_the_unit_interval_are_clamped(
     """A model that returns 1.7 or -0.2 must not move the gate; the contract is [0,1]."""
 
     async def _wild(**kwargs: object) -> object:
-        return completion_response(json.dumps({"scores": [1.7, -0.2]}))
+        return completion_response(
+            json.dumps({"scores": [{"index": 0, "score": 1.7}, {"index": 1, "score": -0.2}]})
+        )
 
     reranker: Reranker = LlmReranker(gateway_factory(completion=_wild))  # type: ignore[arg-type]
     assert list(await reranker.relevance("q", ["a", "b"])) == [1.0, 0.0]

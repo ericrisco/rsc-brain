@@ -352,6 +352,8 @@ def verify(
                 gateway=ModelGateway(settings.capabilities),
                 sessionmaker=make_sessionmaker(engine),
                 probe_models=probe_models,
+                hardware_profile=settings.hardware_profile,
+                reranker_enabled=settings.reranker.enabled,
             )
         finally:
             await engine.dispose()

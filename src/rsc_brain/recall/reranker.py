@@ -50,18 +50,36 @@ class Reranker(Protocol):
     @property
     def version(self) -> str: ...
 
-    async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float]: ...
+    async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]: ...
+
+
+class PassageScore(BaseModel):
+    """One passage's relevance, carrying the index it was labelled with."""
+
+    model_config = ConfigDict(extra="forbid")
+    index: int
+    score: float
 
 
 class ScoresOut(BaseModel):
-    """The reranker's structured output.
+    """The reranker's structured output, keyed by passage index (AUDIT-100).
+
+    This was a bare `list[float]`, positional. Measured end to end on the documented default route,
+    the model returned **9 scores for 10 passages on every query** — and a positional list with a hole
+    mis-attributes every score after the gap, so the only safe response was to discard the entire
+    judgement. Abstention then fell back to the blended threshold in 26 of 26 cases, which means the
+    feature this capability exists for never ran.
+
+    Carrying the index makes a missing score cost one passage instead of all of them, without giving up
+    the property the refusal protected: a score can still only ever be attributed to the passage the
+    model named.
 
     Public because `installer.verify` probes this capability with its real schema (AUDIT-099), and
     reaching into another module's private name to do that is coupling that gets quietly copied.
     """
 
     model_config = ConfigDict(extra="forbid")
-    scores: list[float]
+    scores: list[PassageScore]
 
 
 def _clamp01(value: float) -> float:
@@ -76,16 +94,22 @@ class LlmReranker:
     no second serving stack. A dedicated reranker model can be routed to the same capability.
     """
 
-    def __init__(self, gateway: ModelGateway, *, version: str = "llm-reranker-v1") -> None:
+    def __init__(self, gateway: ModelGateway, *, version: str = "llm-reranker-v2") -> None:
         self._gateway = gateway
         self._version = version
-        self._prompt = load_prompt("relevance_reranker")
+        self._prompt = load_prompt("relevance_reranker", version="v2")
 
     @property
     def version(self) -> str:
         return self._version
 
-    async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float]:
+    async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+        """One entry per passage, in order; ``None`` where the model returned no score for it.
+
+        ``None`` is not zero. "The model did not judge this passage" and "this passage is irrelevant"
+        are different facts, and collapsing them would manufacture refusals out of miscounting —
+        which is the defect AUDIT-100 exists to remove, not to relocate.
+        """
         if not passages:
             return []
         numbered = "\n\n".join(f"[{i}] {p}" for i, p in enumerate(passages))
@@ -99,11 +123,19 @@ class LlmReranker:
             if isinstance(exc, RerankerUnavailable):
                 raise
             raise RerankerUnavailable(str(exc)) from exc
-        if len(out.scores) != len(passages):
-            raise RerankerUnavailable(
-                f"the model returned {len(out.scores)} scores for {len(passages)} passages"
-            )
-        return [_clamp01(s) for s in out.scores]
+        by_index: dict[int, float] = {}
+        for entry in out.scores:
+            if not 0 <= entry.index < len(passages):
+                # An index nobody offered is mis-attribution arriving by another route.
+                raise RerankerUnavailable(
+                    f"the model scored index {entry.index}, outside the {len(passages)} passages sent"
+                )
+            if entry.index in by_index:
+                raise RerankerUnavailable(f"the model scored index {entry.index} twice")
+            by_index[entry.index] = _clamp01(entry.score)
+        if not by_index:
+            raise RerankerUnavailable(f"the model scored none of the {len(passages)} passages")
+        return [by_index.get(i) for i in range(len(passages))]
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +151,13 @@ class Decision:
 
     #: ``True``/``False`` from the reranker, or ``None`` when the seam had no opinion.
     abstains: bool | None
-    #: Why there was no opinion. ``None`` whenever ``abstains`` is not ``None``.
+    #: What an operator should know about how this decision was reached, or ``None`` when there is
+    #: nothing to say.
+    #:
+    #: AUDIT-100 made this independent of ``abstains`` rather than its complement. A partial
+    #: judgement — some candidates scored, some not — now yields a real verdict AND a note, because
+    #: both are true and the earlier either/or forced the caller to discard one of them. When
+    #: ``abstains`` is ``None`` this always explains why.
     degradation: str | None
 
 
@@ -145,10 +183,32 @@ async def decide(
         )
     if len(scores) != len(passages):
         raise ValueError(
-            f"reranker returned {len(scores)} scores for {len(passages)} passages: the contract is "
-            "one score per passage, in order — a short list mis-attributes every score after the gap"
+            f"reranker returned {len(scores)} entries for {len(passages)} passages: the contract is "
+            "one entry per passage, in order, `None` where unscored — a shorter list mis-attributes "
+            "every entry after the gap"
         )
-    return Decision(abstains=max(scores) < threshold, degradation=None)
+    judged = [s for s in scores if s is not None]
+    if not judged:
+        return Decision(
+            abstains=None,
+            degradation=(
+                f"reranker scored none of the {len(passages)} candidates, abstention fell back to "
+                "the blended threshold"
+            ),
+        )
+    # AUDIT-100: decided over the passages the model actually judged. An unscored passage is not a
+    # zero, so it cannot drag the maximum down and manufacture a refusal; and when SOME were judged
+    # the judgement is used rather than thrown away, which is what made this feature never run.
+    decision = Decision(abstains=max(judged) < threshold, degradation=None)
+    if len(judged) < len(passages):
+        unscored = len(passages) - len(judged)
+        return Decision(
+            abstains=decision.abstains,
+            degradation=(
+                f"reranker judged {len(judged)} of {len(passages)} candidates; {unscored} unscored"
+            ),
+        )
+    return decision
 
 
 async def abstains(
@@ -161,18 +221,8 @@ async def abstains(
     than treat silence as either verdict. Collapsing that into a boolean is how a degraded provider
     would start silently answering — or silently refusing — every question on the install.
     """
-    if not passages:
-        return None
-    try:
-        scores = await reranker.relevance(query, passages)
-    except RerankerUnavailable:
-        return None
-    if len(scores) != len(passages):
-        raise ValueError(
-            f"reranker returned {len(scores)} scores for {len(passages)} passages: the contract is "
-            "one score per passage, in order — a short list mis-attributes every score after the gap"
-        )
-    return max(scores) < threshold
+    # Delegates so the two cannot drift into deciding differently — the reason `decide` exists.
+    return (await decide(reranker, query, passages, threshold)).abstains
 
 
 async def degradation_of(reranker: Reranker, query: str, passages: Sequence[str]) -> str | None:

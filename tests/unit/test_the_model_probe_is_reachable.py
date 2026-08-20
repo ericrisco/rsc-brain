@@ -135,3 +135,45 @@ def test_probe_models_stays_off_by_default() -> None:
         "probing must stay opt-in; on by default it returns to restarting healthy containers "
         "whenever a provider has an outage, and paying tokens on every healthcheck tick"
     )
+
+
+def test_a_cpu_only_profile_with_the_reranker_on_is_reported() -> None:
+    """AUDIT-100: measured, `cpu_only` cannot carry this capability — 142-256 s per call against a
+    60 s timeout, so abstention falls back on every query while the switch reads as on."""
+    from rsc_brain.config.models import HardwareProfile
+    from rsc_brain.installer.verify import _check_reranker_fits_the_hardware
+
+    flagged = _check_reranker_fits_the_hardware(HardwareProfile.CPU_ONLY, True)
+    assert flagged is not None and not flagged.ok
+    assert "cpu_only" in flagged.detail
+    # The detail must name what to DO. A diagnostic that reports a wall without a door gets ignored.
+    assert "disable it" in flagged.detail or "GPU" in flagged.detail
+
+
+def test_the_combination_is_only_flagged_when_it_is_the_combination() -> None:
+    from rsc_brain.config.models import HardwareProfile
+    from rsc_brain.installer.verify import _check_reranker_fits_the_hardware
+
+    assert _check_reranker_fits_the_hardware(HardwareProfile.CPU_ONLY, False) is None
+    assert _check_reranker_fits_the_hardware(HardwareProfile.WORKSTATION, True) is None
+    assert _check_reranker_fits_the_hardware(None, True) is None
+
+
+async def test_readiness_never_fails_on_the_profile_mismatch() -> None:
+    """`run_verify` IS the container healthcheck. Failing it over a configuration choice restarts
+    working containers, which is exactly what AUDIT-044 removed — so this belongs to the deep
+    diagnostic and must stay out of the default path."""
+    import inspect
+
+    from rsc_brain.installer import verify as verify_module
+
+    source = inspect.getsource(verify_module.run_verify)
+    body = source.split("checks = [", 1)[1]
+    default_block, probing_block = body.split("if probe_models:", 1)
+    assert "_check_reranker_fits_the_hardware" not in default_block, (
+        "the profile check runs in readiness, so a cpu_only install with the reranker on would fail "
+        "its healthcheck and restart containers that are otherwise serving"
+    )
+    assert "_check_reranker_fits_the_hardware" in probing_block, (
+        "the check is defined and never reached — the AUDIT-096/099 failure, twice over"
+    )
