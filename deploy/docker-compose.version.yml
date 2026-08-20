@@ -107,6 +107,12 @@ services:
   # silently pull gigabytes of weights. Start it with `--profile ollama`, then pull the models the
   # capability defaults name. Point the capabilities at your own provider instead and leave this
   # off entirely — that is the supported path for hosted models.
+  #
+  # On macOS the profile is a trap: Docker Desktop does not pass Metal through to a Linux container,
+  # so every model here runs on CPU no matter what the host has. Measured on an M4 Pro with 16 GPU
+  # cores, one 10-passage reranker call took 256 s in this container and 2.5 s against a native ollama
+  # on the same machine — against a 60 s default timeout. Run ollama natively and point the capability
+  # at `host.docker.internal:11434` instead. See docs/reference/configuration.md.
   ollama:
     profiles: ["ollama"]
     image: ollama/ollama:latest

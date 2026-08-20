@@ -1,2 +1,2 @@
-4ed595341cf6516fbe7979f7ac307dd0bd7c8ee735b02948c1667490750a8e2b  deploy/docker-compose.prod.yml
-20e53b1078439946b6de6bf6ea0c0677a9e5e7083b0e1f2cba505e3d572ec94c  deploy/docker-compose.version.yml
+5a1a5bdc56783cb449a33a1b4712533722625c7317aee00dbf927c795ce5544d  deploy/docker-compose.prod.yml
+abb600da2cc91d8b584d771c61d9ebcf6aae6b7d713ac66cb332716fbf283259  deploy/docker-compose.version.yml
