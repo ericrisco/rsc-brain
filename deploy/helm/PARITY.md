@@ -115,3 +115,16 @@ the string.
 
 Not verified locally: `helm lint` and the chart's rendered-security tests need the `helm` binary,
 which is absent from the authoring machine. CI is the gate for the chart half of this change.
+
+## 2026-08-19 — comment-only reconciliation (AUDIT-101)
+
+Both compose files gained a comment on the packaged `ollama` profile: on macOS, Docker Desktop passes
+no Metal through, so every model in that container runs on CPU regardless of the host. Measured on an
+M4 Pro, one 10-passage reranker call took 256 s in-container and 2.5 s against a native ollama on the
+same machine, against a 60 s default timeout.
+
+**The chart is deliberately unchanged.** It has no in-cluster ollama comment to correct, and the
+limitation is a Docker-Desktop-on-macOS property with no Kubernetes analogue — a cluster either has a
+device plugin and drivers or it does not (D8). The hashes were re-recorded because the guard hashes
+whole files, not semantics; nothing about the deployed topology moved.
+

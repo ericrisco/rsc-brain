@@ -92,20 +92,57 @@ The four values under `recall.weights` must total `1.0` within a tolerance of `0
 
 ### The reranker needs more than a CPU
 
-Measured on the documented default route — `qwen2.5:3b-instruct` served by a local ollama — one
-relevance call over a page of 10 candidates took **141.8 s**, and **256.1 s** with the indexed score
-contract. The default `capabilities.reranker.timeout_s` is **60**.
+Measured with `qwen2.5:3b-instruct`, one relevance call over a page of 10 candidates, identical
+prompt and passages — only the serving route changed:
+
+| route | latency | scores returned |
+| --- | --- | --- |
+| ollama in the Compose `ollama` profile, on macOS | **256.1 s** | 10/10 |
+| ollama running natively on the same machine | **5.2 s** cold, **2.5 s** warm | 10/10 |
+
+The default `capabilities.reranker.timeout_s` is **60**, so the first route times out on every call and
+the second is not close to it. Same host, same silicon, same model: a factor of roughly 50-100.
 
 So on a `cpu_only` profile every reranker call times out. Recall does not fail — it falls back to the
 blended `recall.tau`, which is the behaviour of an install with the reranker switched off, measured
 unable to reach the abstention gate. The switch reads as on and the capability never runs.
 
-Three ways out, in the order they are usually right:
+### On macOS, the Compose `ollama` profile has no GPU
 
-1. **Route the capability to a remote model.** It is a route like the other four; nothing requires it
-   to be local. This is the cheapest fix and needs no hardware.
-2. **Use a GPU profile.** `hardware_profile: workstation` with a GPU behind the route.
-3. **Leave it disabled** and accept threshold-only abstention, knowing what that costs: the product
+This is the trap the numbers above came from, and it is worth stating on its own.
+
+Docker Desktop on macOS does not pass Metal through to a Linux container. So an operator on an Apple
+Silicon machine who starts the packaged `--profile ollama` service is running every model on CPU — no
+matter how capable the host's GPU is. The measurement above was taken on an Apple M4 Pro with 16 GPU
+cores: **256 s inside the container, 2.5 s on the same machine outside it.**
+
+Nothing lies about this, and that is the difficulty. `brain doctor` reports `gpu=False`, truthfully,
+because from inside the container there is none. The host's GPU is real and unreachable, and no
+surface connects those two facts.
+
+If you are on macOS and want the reranker, run ollama **natively** (`brew install ollama` or the app)
+and point the capability at the host:
+
+```yaml
+RSC_BRAIN_CAPABILITIES__RERANKER__PROVIDER: ollama
+RSC_BRAIN_CAPABILITIES__RERANKER__MODEL: qwen2.5:3b-instruct
+RSC_BRAIN_CAPABILITIES__RERANKER__API_BASE: http://host.docker.internal:11434
+```
+
+On Linux with an NVIDIA GPU the in-container path does work, with the device plugin and drivers on the
+host (D8) — the packaged profile does not provision them.
+
+### Ways out
+
+Four, in the order they are usually right:
+
+1. **Route the capability to a model that is not CPU-bound.** It is a route like the other four;
+   nothing requires it to be in the container. On macOS that means a native ollama on the host (above);
+   elsewhere it can be any remote provider. Cheapest fix, no new hardware.
+2. **Use a GPU profile.** `hardware_profile: workstation` with a GPU actually reachable by the route.
+3. **Shrink the page.** `recall.rerank_candidates` below 10 reduces the work per call — and also
+   shrinks the evidence the judge sees, so measure the abstention you get rather than assuming.
+4. **Leave it disabled** and accept threshold-only abstention, knowing what that costs: the product
    answers questions whose answer is absent, and the hunting loop does not fire.
 
 Raising `timeout_s` is not on that list on purpose. A 250-second recall is not a recall anyone waits
