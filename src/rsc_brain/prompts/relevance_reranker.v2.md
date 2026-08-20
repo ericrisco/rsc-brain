@@ -13,7 +13,7 @@ You are given a QUESTION and a numbered list of PASSAGES. For each passage, scor
 **answers that specific question**, from 0.0 to 1.0.
 
 **Return each score with the passage's own index**, exactly as it is labelled — `[3]` is `index: 3`.
-Do not renumber, and do not rely on order.
+Do not renumber, and do not rely on order. Labels start at `[1]`; there is no passage `0`.
 
 AUDIT-100: this used to ask for a bare list, one score per passage in order. Measured end to end on
 the documented default route, the model returned 9 scores for 10 passages on every single query, and

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
+from typing import cast
 
 import pytest
 
@@ -139,7 +140,7 @@ async def test_the_llm_reranker_scores_through_the_capability(
     async def _completion(**kwargs: object) -> object:
         seen["capability"] = kwargs.get("model")
         return completion_response(
-            json.dumps({"scores": [{"index": 0, "score": 0.8}, {"index": 1, "score": 0.2}]})
+            json.dumps({"scores": [{"index": 1, "score": 0.8}, {"index": 2, "score": 0.2}]})
         )
 
     reranker: Reranker = LlmReranker(gateway_factory(completion=_completion))  # type: ignore[arg-type]
@@ -166,7 +167,7 @@ async def test_scores_outside_the_unit_interval_are_clamped(
 
     async def _wild(**kwargs: object) -> object:
         return completion_response(
-            json.dumps({"scores": [{"index": 0, "score": 1.7}, {"index": 1, "score": -0.2}]})
+            json.dumps({"scores": [{"index": 1, "score": 1.7}, {"index": 2, "score": -0.2}]})
         )
 
     reranker: Reranker = LlmReranker(gateway_factory(completion=_wild))  # type: ignore[arg-type]
@@ -195,3 +196,42 @@ def test_the_runtime_decides_it_once_for_every_role() -> None:
     assert "reranker_enabled=settings.reranker.enabled" in source, (
         "the flag is not resolved in the shared factory, so the two roles can diverge"
     )
+
+
+async def test_passages_are_labelled_from_one(
+    gateway_factory: Callable[..., object],
+) -> None:
+    """AUDIT-103: zero-based labels invited a one-based answer.
+
+    Measured over 26 golden cases, a 12B model returned `index 10` for a page of 10 twice — answering
+    one-based while being asked zero-based. The out-of-range guard refused both judgements, correctly,
+    because an index nobody sent is indistinguishable from a hallucination. Removing the `0` removes
+    the ambiguity at the source instead of guessing at it on arrival.
+    """
+    seen: dict[str, str] = {}
+
+    async def _completion(**kwargs: object) -> object:
+        messages = cast("list[dict[str, str]]", kwargs.get("messages") or [])
+        seen["user"] = " ".join(m.get("content", "") for m in messages if m.get("role") == "user")
+        return completion_response(json.dumps({"scores": [{"index": 1, "score": 0.9}]}))
+
+    reranker: Reranker = LlmReranker(gateway_factory(completion=_completion))  # type: ignore[arg-type]
+    scores = await reranker.relevance("q", ["only passage"])
+    assert "[1]" in seen["user"], f"passages are not labelled from 1: {seen['user'][:120]!r}"
+    assert "[0]" not in seen["user"], "a passage 0 is still offered, which is what invited index 10"
+    # And the one-based label maps back to position 0.
+    assert list(scores) == [0.9]
+
+
+async def test_a_zero_index_is_refused(
+    gateway_factory: Callable[..., object],
+) -> None:
+    """Nothing is labelled 0 any more, so a 0 is an index nobody sent — the same mis-attribution the
+    out-of-range guard exists to refuse."""
+
+    async def _zero(**kwargs: object) -> object:
+        return completion_response(json.dumps({"scores": [{"index": 0, "score": 0.9}]}))
+
+    reranker: Reranker = LlmReranker(gateway_factory(completion=_zero))  # type: ignore[arg-type]
+    with pytest.raises(RerankerUnavailable, match="outside"):
+        await reranker.relevance("q", ["only passage"])
