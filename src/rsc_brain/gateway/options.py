@@ -30,3 +30,23 @@ class GenerationOptions(BaseModel):
             "top_p": self.top_p,
         }
         return {k: v for k, v in raw.items() if v is not None}
+
+
+#: AUDIT-102: every capability in this product extracts, judges or scores. None of them writes prose
+#: — the retriever returns fragments and never synthesized text — so sampling buys nothing and costs
+#: reproducibility. Measured: the reranker returned 0, then 9, then 0 scores for byte-identical input,
+#: and `gemma4:12b` declares `temperature 1`. So ingesting a document twice could extract different
+#: claims, and the abstention decision was a coin flip nobody could reproduce.
+#:
+#: Applied by the gateway, not by each caller, for the reason the codebase already gives elsewhere:
+#: one place decides it, so a new call site cannot forget. `GenerationOptions` overrides it, which is
+#: what it was always for — and nothing in the product had ever constructed one.
+DETERMINISTIC = 0.0
+
+
+def call_kwargs_for(options: GenerationOptions | None) -> dict[str, float | int]:
+    """The provider kwargs for a call, with deterministic sampling unless explicitly overridden."""
+    resolved = {"temperature": DETERMINISTIC}
+    if options is not None:
+        resolved.update(options.to_call_kwargs())
+    return resolved

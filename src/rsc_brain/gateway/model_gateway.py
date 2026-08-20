@@ -37,7 +37,7 @@ from rsc_brain.gateway.errors import (
     GatewayValidationError,
     UnknownCapabilityError,
 )
-from rsc_brain.gateway.options import GenerationOptions
+from rsc_brain.gateway.options import GenerationOptions, call_kwargs_for
 from rsc_brain.gateway.usage import Attempt, EmbeddingCache, UsageRecorder, text_hash
 
 T = TypeVar("T", bound=BaseModel)
@@ -220,7 +220,7 @@ class ModelGateway:
                 response = await self._completion(
                     messages=list(messages),
                     **self._routing(cap, cap.litellm_model),
-                    **(options.to_call_kwargs() if options else {}),
+                    **call_kwargs_for(options),
                 )
             except Exception:
                 raise GatewayUnavailableError("provider_unavailable", _new_ref()) from None
@@ -284,7 +284,7 @@ class ModelGateway:
                     messages=convo,
                     response_format=schema,
                     **self._routing(cap, model),
-                    **(options.to_call_kwargs() if options else {}),
+                    **call_kwargs_for(options),
                 )
             except Exception:
                 return _Attempt(
