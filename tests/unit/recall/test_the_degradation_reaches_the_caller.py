@@ -56,15 +56,33 @@ class _Counting:
         return list(self._scores)
 
 
-async def test_the_verdict_and_the_reason_come_from_one_scoring_call() -> None:
-    """The whole reason the reason went unused: getting both cost two model calls per recall."""
-    reranker = _Counting([0.9])
-    decision = await decide(reranker, "q", ["a"], 0.5)
+async def test_the_reason_never_costs_an_extra_call() -> None:
+    """The property AUDIT-096 protected, restated precisely after AUDIT-104 changed the cost.
+
+    The original defect was that obtaining the REASON required a second scoring call, so nobody paid
+    for it and the reason went unread. That must stay true.
+
+    AUDIT-104 does add a second call — but for a different purpose (confirming the top candidate
+    alone, because a batch score turned out not to be a property of the passage) and only on the path
+    that ANSWERS. Abstention still costs one call, and the reason is free on both paths. The two are
+    separated here so a future change cannot quietly reintroduce a per-reason cost under cover of the
+    confirmation.
+    """
+    abstaining = _Counting([0.1])
+    decision = await decide(abstaining, "q", ["a"], 0.5)
+    assert decision.abstains is True
+    assert abstaining.calls == 1, (
+        f"an abstention scored {abstaining.calls} times; refusing is the conservative direction and "
+        "needs no second opinion"
+    )
+
+    answering = _Counting([0.9])
+    decision = await decide(answering, "q", ["a"], 0.5)
     assert decision.abstains is False
-    assert decision.degradation is None
-    assert reranker.calls == 1, (
-        f"one recall scored {reranker.calls} times; an observability path that doubles the cost of "
-        "the query it observes is one nobody switches on"
+    assert decision.degradation is None, "a confirmed answer has nothing to report"
+    assert answering.calls == 2, (
+        f"answering scored {answering.calls} times; expected the batch plus one confirmation of the "
+        "top candidate (AUDIT-104)"
     )
 
 

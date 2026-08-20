@@ -205,16 +205,48 @@ async def decide(
     # AUDIT-100: decided over the passages the model actually judged. An unscored passage is not a
     # zero, so it cannot drag the maximum down and manufacture a refusal; and when SOME were judged
     # the judgement is used rather than thrown away, which is what made this feature never run.
-    decision = Decision(abstains=max(judged) < threshold, degradation=None)
+    best = max(judged)
+    note: str | None = None
     if len(judged) < len(passages):
         unscored = len(passages) - len(judged)
+        note = f"reranker judged {len(judged)} of {len(passages)} candidates; {unscored} unscored"
+
+    if best < threshold:
+        return Decision(abstains=True, degradation=note)
+
+    # AUDIT-104: answering rests on ONE passage — the top score. Confirm that one alone.
+    #
+    # Measured: for "What is Acme's marketing budget?" the judge scored a passage about the
+    # deployment pipeline 1.0 inside the page of 10, reproducibly, and 0.0 when handed the same text
+    # by itself. The indexed contract (AUDIT-100) stops a score sliding between positions; it cannot
+    # detect a model attaching a score to the wrong index. A batch score is therefore not a property
+    # of the (question, passage) pair, and the whole abstention decision was resting on one.
+    #
+    # So the decision to ANSWER requires agreement: the batch nominates, the solo call confirms. The
+    # decision to abstain needs no second opinion — it is the conservative direction, and a product
+    # whose promise is "ask a human rather than guess" should not need convincing to keep it.
+    #
+    # Costs exactly one extra call, and only when the answer would be yes.
+    winner = scores.index(best)
+    try:
+        alone = await reranker.relevance(query, [passages[winner]])
+    except RerankerUnavailable as exc:
         return Decision(
-            abstains=decision.abstains,
+            abstains=False,
             degradation=(
-                f"reranker judged {len(judged)} of {len(passages)} candidates; {unscored} unscored"
+                f"top candidate could not be confirmed alone ({exc}); answered on the batch score"
             ),
         )
-    return decision
+    solo = alone[0] if alone else None
+    if solo is None or solo < threshold:
+        return Decision(
+            abstains=True,
+            degradation=(
+                f"top candidate scored {best} in the page and {solo} alone: the batch score was not a "
+                "property of the passage, so it did not carry the answer"
+            ),
+        )
+    return Decision(abstains=False, degradation=note)
 
 
 async def abstains(
