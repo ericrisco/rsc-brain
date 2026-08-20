@@ -112,7 +112,12 @@ class LlmReranker:
         """
         if not passages:
             return []
-        numbered = "\n\n".join(f"[{i}] {p}" for i, p in enumerate(passages))
+        # AUDIT-103: labelled from 1, not 0. With zero-based labels the model returned `index 10` for a
+        # page of 10 twice in one measured run — it was answering one-based while being asked
+        # zero-based, and the out-of-range guard correctly refused the whole judgement both times.
+        # There is no way to tell that apart from a genuine hallucination, so the ambiguity is removed
+        # at the source rather than guessed at on arrival.
+        numbered = "\n\n".join(f"[{i + 1}] {p}" for i, p in enumerate(passages))
         messages = [
             {"role": "system", "content": self._prompt},
             {"role": "user", "content": f"QUESTION: {query}\n\nPASSAGES:\n{numbered}"},
@@ -125,14 +130,15 @@ class LlmReranker:
             raise RerankerUnavailable(str(exc)) from exc
         by_index: dict[int, float] = {}
         for entry in out.scores:
-            if not 0 <= entry.index < len(passages):
+            if not 1 <= entry.index <= len(passages):
                 # An index nobody offered is mis-attribution arriving by another route.
                 raise RerankerUnavailable(
                     f"the model scored index {entry.index}, outside the {len(passages)} passages sent"
                 )
-            if entry.index in by_index:
+            position = entry.index - 1
+            if position in by_index:
                 raise RerankerUnavailable(f"the model scored index {entry.index} twice")
-            by_index[entry.index] = _clamp01(entry.score)
+            by_index[position] = _clamp01(entry.score)
         if not by_index:
             raise RerankerUnavailable(f"the model scored none of the {len(passages)} passages")
         return [by_index.get(i) for i in range(len(passages))]
