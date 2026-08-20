@@ -30,15 +30,25 @@ from tests.conftest import completion_response
 
 
 class _Canned:
-    """A reranker with a fixed opinion. Deterministic, no network — the judge's own test pattern."""
+    """A reranker with a fixed opinion, CONSISTENT per passage.
+
+    AUDIT-104 made answering require the top passage to score the same alone, so a double that keys
+    its answers to position rather than to the passage would report a different score for the same
+    text and fail for the wrong reason. Keying on the passage is also what a judge is supposed to do:
+    a score is a property of the (question, passage) pair. The real 12B model is not consistent this
+    way, which is precisely the defect AUDIT-104 exists to absorb.
+    """
 
     version = "canned"
 
     def __init__(self, *scores: float) -> None:
         self._scores = scores
+        self._by_passage: dict[str, float] = {}
 
-    async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float]:
-        return self._scores[: len(passages)]
+    async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+        for passage, score in zip(passages, self._scores, strict=False):
+            self._by_passage.setdefault(passage, score)
+        return [self._by_passage.get(p, 0.0) for p in passages]
 
 
 class _Broken:
@@ -105,10 +115,12 @@ async def test_an_unscored_passage_is_not_a_zero() -> None:
     instead of removing it."""
 
     class _Partial:
+        """Scores only "b", whatever list it arrives in — consistent per passage (see `_Canned`)."""
+
         version = "partial"
 
         async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
-            return [None, 0.9, None]
+            return [0.9 if p == "b" else None for p in passages]
 
     decision = await decide(_Partial(), "q", ["a", "b", "c"], 0.5)
     assert decision.abstains is False, "a 0.9 among unscored passages must still answer"
@@ -235,3 +247,86 @@ async def test_a_zero_index_is_refused(
     reranker: Reranker = LlmReranker(gateway_factory(completion=_zero))  # type: ignore[arg-type]
     with pytest.raises(RerankerUnavailable, match="outside"):
         await reranker.relevance("q", ["only passage"])
+
+
+class _ContextDependent:
+    """A judge whose batch score is not a property of the passage — measured behaviour, not fiction.
+
+    For "What is Acme's marketing budget?" the real 12B judge scored a deployment-pipeline passage
+    1.0 inside a page of 10, reproducibly at temperature 0, and 0.0 when handed the same text alone.
+    """
+
+    version = "context-dependent"
+
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+
+    async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+        self.calls.append(len(passages))
+        if len(passages) == 1:
+            return [0.0]
+        return [0.0, 0.0, 0.9, 0.0]
+
+
+async def test_answering_requires_the_winner_to_survive_alone() -> None:
+    """AUDIT-104: the gate rests on one passage, so that passage is confirmed by itself.
+
+    Without this, a score the model attached to the wrong index carries an answer — and the indexed
+    contract cannot catch that, because the attribution looks perfectly well-formed.
+    """
+    judge = _ContextDependent()
+    decision = await decide(judge, "q", ["a", "b", "c", "d"], 0.5)
+    assert decision.abstains is True, "a batch score that does not survive alone must not answer"
+    assert decision.degradation and "alone" in decision.degradation
+    assert judge.calls == [4, 1], f"expected one batch call then one solo call, got {judge.calls}"
+
+
+async def test_abstaining_costs_no_second_call() -> None:
+    """The conservative direction needs no convincing. A product whose promise is "ask a human
+    rather than guess" must not spend a call to talk itself out of refusing."""
+
+    class _AllLow:
+        version = "low"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+            self.calls += 1
+            return [0.1] * len(passages)
+
+    judge = _AllLow()
+    decision = await decide(judge, "q", ["a", "b"], 0.5)
+    assert decision.abstains is True
+    assert judge.calls == 1, "abstention triggered a confirmation call it does not need"
+
+
+async def test_a_confirmed_winner_still_answers() -> None:
+    """The fix must not become a blanket refusal: agreement between batch and solo answers."""
+
+    class _Consistent:
+        version = "consistent"
+
+        async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+            return [0.9] * len(passages)
+
+    decision = await decide(_Consistent(), "q", ["a", "b"], 0.5)
+    assert decision.abstains is False
+    assert decision.degradation is None
+
+
+async def test_an_unconfirmable_winner_answers_and_says_so() -> None:
+    """If the confirmation call itself fails, the batch verdict stands — refusing on a provider
+    outage would turn a degraded model into a product that answers nothing."""
+
+    class _FailsAlone:
+        version = "fails-alone"
+
+        async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+            if len(passages) == 1:
+                raise RerankerUnavailable("provider down")
+            return [0.9, 0.1]
+
+    decision = await decide(_FailsAlone(), "q", ["a", "b"], 0.5)
+    assert decision.abstains is False
+    assert decision.degradation and "could not be confirmed" in decision.degradation
