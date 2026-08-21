@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-21T02:04:53.079572Z",
+  "runs": [
+    {
+      "schema_version": 1,
+      "decision_run": true,
+      "seed": 20260724,
+      "requested_counts": {
+        "nodes": 200000,
+        "edges": 1000000
+      },
+      "persisted_counts": {
+        "nodes": 200000,
+        "edges": 1000000
+      },
+      "relation_labels": [
+        "ASSERTS",
+        "ABOUT",
+        "SUPPORTS",
+        "CONTRADICTS",
+        "RELATED"
+      ],
+      "workload_sha256": "4f940758d1d456a923c71e63eafa72bbccc20f03715302144dc626902ffa7b98",
+      "k": 2,
+      "start_ids": [
+        "e0",
+        "e40000",
+        "e80000",
+        "e120000",
+        "e160000"
+      ],
+      "warmups": 5,
+      "iterations": 30,
+      "raw_timings_ms": [
+        475.23199999704957,
+        467.8098750009667,
+        506.89987497753464,
+        485.07879200042225,
+        475.4954999953043,
+        473.8826669927221,
+        477.73241699906066,
+        493.2407919841353,
+        485.58745899936184,
+        469.338416995015,
+        470.7376669975929,
+        469.40933298901655,
+        475.1359590154607,
+        469.5642089936882,
+        477.8482090041507,
+        472.51875000074506,
+        473.68812502827495,
+        474.2600000172388,
+        469.5430420106277,
+        470.2783749962691,
+        474.57658298662864,
+        512.377708015265,
+        469.40400000312366,
+        499.22595801763237,
+        467.5824999867473,
+        460.5820419965312,
+        471.0272079973947,
+        471.6082499944605,
+        471.03424998931587,
+        468.54954201262444
+      ],
+      "p50_ms": 472.51875000074506,
+      "p95_ms": 506.89987497753464,
+      "threshold_ms": 1500.0,
+      "threshold_passed": true,
+      "load_seconds": 3.2127417500014417,
+      "environment": {
+        "profile": "workstation",
+        "backend": "apache-age",
+        "backend_version": "1.6.0",
+        "postgres_version": "16.15 (Debian 16.15-1.pgdg13+2)",
+        "image_identity": "sha256:98d65a9fd04dd75b9e4a1a7e63479a2d3113e90549abbad77f86f1012c73ec47",
+        "host_os": "macOS-15.1-arm64-arm-64bit",
+        "host_arch": "arm64",
+        "host_cpu": "Apple M4 Pro",
+        "host_cpu_count": 12,
+        "host_memory_bytes": 25769803776,
+        "container_cpu_limit": 8.0,
+        "container_memory_bytes": 8000000000,
+        "accelerator": "Apple M4 Pro GPU present; PostgreSQL/AGE executes on CPU"
+      }
+    },
+    {
+      "schema_version": 1,
+      "decision_run": true,
+      "seed": 20260724,
+      "requested_counts": {
+        "nodes": 200000,
+        "edges": 1000000
+      },
+      "persisted_counts": {
+        "nodes": 200000,
+        "edges": 1000000
+      },
+      "relation_labels": [
+        "ASSERTS",
+        "ABOUT",
+        "SUPPORTS",
+        "CONTRADICTS",
+        "RELATED"
+      ],
+      "workload_sha256": "4f940758d1d456a923c71e63eafa72bbccc20f03715302144dc626902ffa7b98",
+      "k": 2,
+      "start_ids": [
+        "e0",
+        "e40000",
+        "e80000",
+        "e120000",
+        "e160000"
+      ],
+      "warmups": 5,
+      "iterations": 30,
+      "raw_timings_ms": [
+        474.0707500022836,
+        462.10229201824404,
+        475.9723339811899,
+        459.62254199548624,
+        474.6964579971973,
+        476.06787498807535,
+        467.7166669862345,
+        470.22724998532794,
+        460.8017090067733,
+        460.7537090196274,
+        461.8089159775991,
+        470.1336660073139,
+        466.08954199473374,
+        464.8682499828283,
+        465.16354198683985,
+        456.03295901673846,
+        460.49145801225677,
+        485.48858298454434,
+        461.16570898448117,
+        463.25900001102127,
+        461.07499999925494,
+        471.42670801258646,
+        467.9723749868572,
+        466.4467500115279,
+        462.00458297971636,
+        458.0627499963157,
+        459.4491659954656,
+        464.4698750053067,
+        463.3417500008363,
+        470.622209017165
+      ],
+      "p50_ms": 464.4698750053067,
+      "p95_ms": 476.06787498807535,
+      "threshold_ms": 4000.0,
+      "threshold_passed": true,
+      "load_seconds": 1.8845573329890613,
+      "environment": {
+        "profile": "cpu_only",
+        "backend": "apache-age",
+        "backend_version": "1.6.0",
+        "postgres_version": "16.15 (Debian 16.15-1.pgdg13+2)",
+        "image_identity": "sha256:98d65a9fd04dd75b9e4a1a7e63479a2d3113e90549abbad77f86f1012c73ec47",
+        "host_os": "macOS-15.1-arm64-arm-64bit",
+        "host_arch": "arm64",
+        "host_cpu": "Apple M4 Pro",
+        "host_cpu_count": 12,
+        "host_memory_bytes": 25769803776,
+        "container_cpu_limit": 4.0,
+        "container_memory_bytes": 6442450944,
+        "accelerator": "Apple M4 Pro GPU present; PostgreSQL/AGE executes on CPU"
+      }
+    }
+  ],
+  "verdict": "keep_age"
+}

@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "counts": {
+    "nodes": 200000,
+    "edges": 1000000
+  },
+  "seed": 20260724,
+  "relation_labels": [
+    "ASSERTS",
+    "ABOUT",
+    "SUPPORTS",
+    "CONTRADICTS",
+    "RELATED"
+  ],
+  "files": [
+    {
+      "filename": "nodes_entity.csv",
+      "kind": "node",
+      "label": "Entity",
+      "rows": 100000,
+      "size_bytes": 1277791,
+      "sha256": "07bab1c0f2a5fe023360ccd3b345df292b4fc20c4a1ab5fdf703f172e386d6db"
+    },
+    {
+      "filename": "nodes_claim.csv",
+      "kind": "node",
+      "label": "Claim",
+      "rows": 100000,
+      "size_bytes": 1500006,
+      "sha256": "5ab60fe95ed86fac82423d2416ada1658bf1e79a9d5d48d0a5f42fe04f8f761b"
+    },
+    {
+      "filename": "edges_asserts.csv",
+      "kind": "edge",
+      "label": "ASSERTS",
+      "rows": 200000,
+      "size_bytes": 5177840,
+      "sha256": "235eadca9b513b64728ddcf58b2873822ae5566a4613e365f1526336d8da6367"
+    },
+    {
+      "filename": "edges_about.csv",
+      "kind": "edge",
+      "label": "ABOUT",
+      "rows": 200000,
+      "size_bytes": 5177840,
+      "sha256": "76ea93aa13b7bb4a9709c8e073b5f173ca298e4b2f4206939940c774d2d1e40d"
+    },
+    {
+      "filename": "edges_supports.csv",
+      "kind": "edge",
+      "label": "SUPPORTS",
+      "rows": 200000,
+      "size_bytes": 5177840,
+      "sha256": "1f0354a343e1c1e0186ee26c31fdbf05c0f44ba848e18efb99a5a8bceac560ba"
+    },
+    {
+      "filename": "edges_contradicts.csv",
+      "kind": "edge",
+      "label": "CONTRADICTS",
+      "rows": 200000,
+      "size_bytes": 5177840,
+      "sha256": "3fd5d3ca78d6d012cd1d038f492ab0fc9991c224fd418fe92c5e492704d7d464"
+    },
+    {
+      "filename": "edges_related.csv",
+      "kind": "edge",
+      "label": "RELATED",
+      "rows": 200000,
+      "size_bytes": 5177840,
+      "sha256": "99eb60b314309d6ba9a9dd5012feac376f7adf4a18581c2c8985f0a30fc9adca"
+    }
+  ],
+  "workload_sha256": "4f940758d1d456a923c71e63eafa72bbccc20f03715302144dc626902ffa7b98"
+}
