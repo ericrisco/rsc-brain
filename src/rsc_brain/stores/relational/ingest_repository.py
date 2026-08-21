@@ -16,9 +16,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy import CursorResult, delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.ingest.entity_resolution import normalize_name
@@ -80,6 +79,7 @@ class ChunkRow:
     tags: tuple[str, ...]
     needs_review: bool
     extraction_confidence: float | None
+    ordinal: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +100,19 @@ class ClaimSpec:
     # written without one can never be paired — detection was unreachable for every ingested claim
     # even once a resolver was wired in. The pipeline embeds claim texts at publish and fills this.
     embedding: tuple[float, ...] | None = None
+    # Allocated before the final publish transaction when a durable draft is used. None keeps the
+    # legacy call sites source-compatible and lets PostgreSQL provide the UUID.
+    id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimIdentityRow:
+    id: str
+    chunk_id: str
+    text: str
+    subject: str | None
+    predicate: str | None
+    object: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,10 +137,6 @@ class IngestErrorSpec:
     stage: str
     error: str
 
-
-#: How many times admission retries a version conflict before giving up. A conflict means another
-#: caller took the number, so a bounded retry always converges; the bound is a runaway guard.
-_ADMISSION_ATTEMPTS = 5
 
 #: Decisions nothing in the pipeline may undo. `rejected` is the only one today: `processed` is the
 #: pipeline's own end state and a redo must be able to reach it again (publish is idempotent).
@@ -251,27 +260,37 @@ class IngestRepository:
     ) -> tuple[str, bool, int]:
         """Admit a document atomically. Returns ``(document_id, is_duplicate, version)``.
 
-        R30: admission used to be a read (``find_document_by_checksum``), a decision, and then an
-        insert — three steps a second uploader interleaves with. Both callers saw "not present", both
-        inserted, and the loser got a raw ``IntegrityError`` out of the ingest API: a 500 whose correct
-        answer is "you already have this document", with a blob left on disk that no row references.
-
-        The version has the same shape and a worse consequence: it was ``max(version) + 1`` read outside
-        the insert, so two revisions of one logical document both claimed the same number and the
-        version stopped ordering which prior version the next ingest supersedes. Here the maximum is
-        computed by a sub-select INSIDE the insert, and a unique constraint on
-        ``(project_id, logical_id, version)`` makes a collision a conflict rather than a silent
-        duplicate — the caller retries and reads the new maximum.
+        A transaction advisory lock serializes both identities admission must protect: project +
+        checksum (one canonical upload even under different filenames) and project + logical id
+        (strictly monotonic revisions). Locks are acquired in sorted key order to avoid deadlocks.
         """
         pid = _pid(scope)
-        next_version = (
-            select(func.coalesce(func.max(models.Document.version), 0) + 1)
-            .where(models.Document.project_id == pid, models.Document.logical_id == logical_id)
-            .scalar_subquery()
+        lock_names = sorted(
+            (
+                f"claim-version:checksum:{pid}:{checksum}",
+                f"claim-version:logical:{pid}:{logical_id}",
+            )
         )
-        insert = (
-            pg_insert(models.Document)
-            .values(
+        async with session_scope(self._sm) as session:
+            for lock_name in lock_names:
+                await session.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                    {"key": lock_name},
+                )
+            existing = await session.scalar(
+                select(models.Document).where(
+                    models.Document.project_id == pid, models.Document.checksum == checksum
+                )
+            )
+            if existing is not None:
+                return str(existing.id), True, existing.version
+            latest = await session.scalar(
+                select(func.max(models.Document.version)).where(
+                    models.Document.project_id == pid,
+                    models.Document.logical_id == logical_id,
+                )
+            )
+            document = models.Document(
                 project_id=pid,
                 source_id=uuid.UUID(source_id) if source_id else None,
                 logical_id=logical_id,
@@ -282,31 +301,11 @@ class IngestRepository:
                 pages=pages,
                 status=status,
                 doc_tags=list(doc_tags),
-                version=next_version,
+                version=int(latest or 0) + 1,
             )
-            # The checksum conflict is the DUPLICATE case and has one right answer: the document is
-            # already here. Nothing is updated — a duplicate upload must not touch the existing row.
-            .on_conflict_do_nothing(
-                constraint="uq_documents_project_id_checksum",
-            )
-            .returning(models.Document.id, models.Document.version)
-        )
-        for _attempt in range(_ADMISSION_ATTEMPTS):
-            try:
-                async with session_scope(self._sm) as session:
-                    row = (await session.execute(insert)).first()
-            except IntegrityError:
-                # The version conflict: another caller took the number this statement computed. Read
-                # the new maximum by retrying — the checksum is still ours, so this terminates.
-                continue
-            if row is not None:
-                return str(row[0]), False, int(row[1])
-            existing = await self.find_document_by_checksum(scope, checksum)
-            if existing is not None:
-                return existing.id, True, existing.version
-        raise RuntimeError(
-            f"could not admit document {logical_id!r} after repeated version conflicts"
-        )
+            session.add(document)
+            await session.flush()
+            return str(document.id), False, document.version
 
     async def create_document(
         self,
@@ -374,6 +373,23 @@ class IngestRepository:
                 .limit(1)
             )
             return _doc_row(doc) if doc else None
+
+    async def immediate_prior_document(
+        self, scope: ProjectScope, logical_id: str, version: int
+    ) -> DocRow | None:
+        """The exact preceding revision, irrespective of lifecycle status."""
+
+        if version <= 1:
+            return None
+        async with self._sm() as session:
+            document = await session.scalar(
+                select(models.Document).where(
+                    models.Document.project_id == _pid(scope),
+                    models.Document.logical_id == logical_id,
+                    models.Document.version == version - 1,
+                )
+            )
+            return _doc_row(document) if document else None
 
     async def supersede_prior_version(
         self, scope: ProjectScope, prior_document_id: str, current_texts: set[str]
@@ -602,6 +618,77 @@ class IngestRepository:
             run = await self._get_run(session, scope, document_id)
             return _run_status(run) if run else None
 
+    async def get_publish_draft(
+        self, scope: ProjectScope, document_id: str
+    ) -> dict[str, object] | None:
+        """Return the durable publish material left by a prior attempt, if any."""
+
+        async with self._sm() as session:
+            run = await self._get_run(session, scope, document_id)
+            return dict(run.publish_draft) if run and run.publish_draft is not None else None
+
+    async def save_publish_draft(
+        self, scope: ProjectScope, document_id: str, draft: Mapping[str, object]
+    ) -> dict[str, object]:
+        """Durably freeze and return the one canonical draft under concurrent workers."""
+
+        async with session_scope(self._sm) as session:
+            run = await self._get_run(session, scope, document_id)
+            if run is None:
+                run = models.IngestRun(
+                    project_id=_pid(scope),
+                    document_id=uuid.UUID(document_id),
+                    phase=DocStatus.APPROVED.value,
+                )
+                session.add(run)
+                await session.flush()
+            canonical = await session.scalar(
+                update(models.IngestRun)
+                .where(
+                    models.IngestRun.id == run.id,
+                    models.IngestRun.project_id == _pid(scope),
+                    models.IngestRun.publish_draft.is_(None),
+                )
+                .values(publish_draft=dict(draft), updated_at=_now())
+                .returning(models.IngestRun.publish_draft)
+            )
+            if canonical is None:
+                await session.refresh(run)
+                canonical = run.publish_draft
+            if canonical is None:  # pragma: no cover - guarded insert/update invariant
+                raise RuntimeError("publish draft was not persisted")
+            return dict(canonical)
+
+    async def finalize_publish(
+        self,
+        session: AsyncSession,
+        scope: ProjectScope,
+        document_id: str,
+    ) -> None:
+        """Checkpoint PERSIST, mark processed and consume the draft in the caller's transaction."""
+
+        await self._mark_stages(
+            session,
+            scope,
+            document_id,
+            [PipelineStage.PERSIST],
+            phase=DocStatus.PROCESSED.value,
+            counters=None,
+        )
+        await session.execute(
+            update(models.Document)
+            .where(
+                models.Document.id == uuid.UUID(document_id),
+                models.Document.project_id == _pid(scope),
+            )
+            .values(status=DocStatus.PROCESSED.value)
+        )
+        run = await self._get_run(session, scope, document_id)
+        if run is not None:
+            run.publish_draft = None
+            run.error = None
+            run.updated_at = _now()
+
     async def list_run_statuses(self, scope: ProjectScope) -> list[RunStatus]:
         async with self._sm() as session:
             rows = await session.scalars(
@@ -733,11 +820,12 @@ class IngestRepository:
                 )
             )
             rows: list[ChunkRow] = []
-            for spec in specs:
+            for ordinal, spec in enumerate(specs):
                 tags = (NEEDS_REVIEW_TAG,) if spec.needs_review else spec.tags
                 chunk = models.Chunk(
                     project_id=_pid(scope),
                     document_id=uuid.UUID(document_id),
+                    ordinal=ordinal,
                     page=spec.page,
                     bbox=spec.bbox,
                     kind=spec.kind.value,
@@ -757,6 +845,7 @@ class IngestRepository:
                         tags=tuple(tags),
                         needs_review=spec.needs_review,
                         extraction_confidence=spec.extraction_confidence,
+                        ordinal=ordinal,
                     )
                 )
             await self._mark_stages(
@@ -777,7 +866,7 @@ class IngestRepository:
                     models.Chunk.document_id == uuid.UUID(document_id),
                     models.Chunk.project_id == _pid(scope),
                 )
-                .order_by(models.Chunk.id)
+                .order_by(models.Chunk.ordinal, models.Chunk.id)
             )
             return [
                 ChunkRow(
@@ -791,9 +880,80 @@ class IngestRepository:
                         if c.extraction_confidence is not None
                         else None
                     ),
+                    ordinal=c.ordinal,
                 )
                 for c in rows
             ]
+
+    async def claim_ids_by_chunk(
+        self, scope: ProjectScope, document_id: str
+    ) -> dict[str, tuple[str, ...]]:
+        """Active claim identities asserted by each concrete chunk occurrence in one version."""
+
+        async with self._sm() as session:
+            rows = (
+                await session.execute(
+                    select(models.ClaimOccurrence.chunk_id, models.ClaimOccurrence.claim_id)
+                    .join(
+                        models.Claim,
+                        (models.Claim.project_id == models.ClaimOccurrence.project_id)
+                        & (models.Claim.id == models.ClaimOccurrence.claim_id),
+                    )
+                    .where(
+                        models.ClaimOccurrence.project_id == _pid(scope),
+                        models.ClaimOccurrence.document_id == uuid.UUID(document_id),
+                        models.Claim.valid_to.is_(None),
+                    )
+                    .order_by(models.ClaimOccurrence.chunk_id, models.ClaimOccurrence.claim_id)
+                )
+            ).all()
+        grouped: dict[str, list[str]] = {}
+        for chunk_id, claim_id in rows:
+            grouped.setdefault(str(chunk_id), []).append(str(claim_id))
+        return {chunk_id: tuple(claim_ids) for chunk_id, claim_ids in grouped.items()}
+
+    async def active_claims_by_chunk(
+        self, scope: ProjectScope, document_id: str
+    ) -> dict[str, tuple[ClaimIdentityRow, ...]]:
+        """Full active claim identity material for each occurrence in a document version."""
+
+        async with self._sm() as session:
+            rows = (
+                await session.execute(
+                    select(
+                        models.ClaimOccurrence.chunk_id,
+                        models.Claim.id,
+                        models.Claim.text,
+                        models.Claim.subject,
+                        models.Claim.predicate,
+                        models.Claim.object,
+                    )
+                    .join(
+                        models.Claim,
+                        (models.Claim.project_id == models.ClaimOccurrence.project_id)
+                        & (models.Claim.id == models.ClaimOccurrence.claim_id),
+                    )
+                    .where(
+                        models.ClaimOccurrence.project_id == _pid(scope),
+                        models.ClaimOccurrence.document_id == uuid.UUID(document_id),
+                        models.Claim.valid_to.is_(None),
+                    )
+                    .order_by(models.ClaimOccurrence.chunk_id, models.Claim.id)
+                )
+            ).all()
+        grouped: dict[str, list[ClaimIdentityRow]] = {}
+        for chunk_id, claim_id, claim_text, subject, predicate, object_ in rows:
+            grouped.setdefault(str(chunk_id), []).append(
+                ClaimIdentityRow(
+                    id=str(claim_id),
+                    chunk_id=str(chunk_id),
+                    text=str(claim_text),
+                    subject=subject,
+                    predicate=predicate,
+                    object=object_,
+                )
+            )
+        return {chunk_id: tuple(claims) for chunk_id, claims in grouped.items()}
 
     async def apply_topics(
         self,
@@ -881,6 +1041,11 @@ class IngestRepository:
         entities: Sequence[EntitySpec],
         errors: Sequence[IngestErrorSpec],
         counters: Counters,
+        reused_occurrences: Mapping[str, Sequence[str]] | None = None,
+        superseded_claim_ids: Sequence[str] = (),
+        superseded_chunk_ids: Sequence[str] = (),
+        supersessions: Sequence[tuple[str, str]] = (),
+        publish_at: dt.datetime | None = None,
         session: AsyncSession | None = None,
     ) -> dict[str, str]:
         """Persist the publish phase relationally: chunk embeddings, claims (replacing any prior),
@@ -893,6 +1058,7 @@ class IngestRepository:
         which half happened.
         """
         async with maybe_session_scope(self._sm, session) as session:
+            closed_at = publish_at or _now()
             # Replace this document's claims so a redo cannot duplicate them.
             chunk_ids = (
                 await session.scalars(
@@ -918,29 +1084,88 @@ class IngestRepository:
                     )
                     .values(embedding=list(vector))
                 )
-            for claim in claims:
-                session.add(
-                    models.Claim(
-                        project_id=_pid(scope),
-                        chunk_id=uuid.UUID(claim.chunk_id),
-                        text=claim.text,
-                        subject=claim.subject,
-                        predicate=claim.predicate,
-                        object=claim.object,
-                        subject_entity_key=(
-                            uuid.UUID(claim.subject_entity_key)
-                            if claim.subject_entity_key
-                            else None
-                        ),
-                        object_entity_key=(
-                            uuid.UUID(claim.object_entity_key) if claim.object_entity_key else None
-                        ),
-                        tags=list(claim.tags),
-                        extraction_confidence=claim.extraction_confidence,
-                        source_document_id=uuid.UUID(document_id),
-                        embedding=(None if claim.embedding is None else list(claim.embedding)),
-                        **({} if claim.credibility is None else {"credibility": claim.credibility}),
+            if superseded_chunk_ids:
+                await session.execute(
+                    update(models.Chunk)
+                    .where(
+                        models.Chunk.project_id == _pid(scope),
+                        models.Chunk.id.in_([uuid.UUID(value) for value in superseded_chunk_ids]),
                     )
+                    .values(embedding=None)
+                )
+            if superseded_claim_ids:
+                await session.execute(
+                    update(models.Claim)
+                    .where(
+                        models.Claim.project_id == _pid(scope),
+                        models.Claim.id.in_([uuid.UUID(value) for value in superseded_claim_ids]),
+                        models.Claim.valid_to.is_(None),
+                    )
+                    .values(valid_to=closed_at)
+                )
+            for claim in claims:
+                row = models.Claim(
+                    **({} if claim.id is None else {"id": uuid.UUID(claim.id)}),
+                    project_id=_pid(scope),
+                    chunk_id=uuid.UUID(claim.chunk_id),
+                    text=claim.text,
+                    subject=claim.subject,
+                    predicate=claim.predicate,
+                    object=claim.object,
+                    subject_entity_key=(
+                        uuid.UUID(claim.subject_entity_key) if claim.subject_entity_key else None
+                    ),
+                    object_entity_key=(
+                        uuid.UUID(claim.object_entity_key) if claim.object_entity_key else None
+                    ),
+                    tags=list(claim.tags),
+                    extraction_confidence=claim.extraction_confidence,
+                    source_document_id=uuid.UUID(document_id),
+                    embedding=(None if claim.embedding is None else list(claim.embedding)),
+                    **({} if claim.credibility is None else {"credibility": claim.credibility}),
+                )
+                session.add(row)
+                await session.flush()
+                session.add(
+                    models.ClaimOccurrence(
+                        project_id=_pid(scope),
+                        claim_id=row.id,
+                        document_id=uuid.UUID(document_id),
+                        chunk_id=uuid.UUID(claim.chunk_id),
+                    )
+                )
+            for chunk_id, claim_ids in (reused_occurrences or {}).items():
+                if not claim_ids:
+                    continue
+                await session.execute(
+                    pg_insert(models.ClaimOccurrence)
+                    .values(
+                        [
+                            {
+                                "project_id": _pid(scope),
+                                "claim_id": uuid.UUID(claim_id),
+                                "document_id": uuid.UUID(document_id),
+                                "chunk_id": uuid.UUID(chunk_id),
+                            }
+                            for claim_id in claim_ids
+                        ]
+                    )
+                    .on_conflict_do_nothing(constraint="uq_claim_occurrence_claim_doc_chunk")
+                )
+            if supersessions:
+                await session.execute(
+                    pg_insert(models.ClaimSupersession)
+                    .values(
+                        [
+                            {
+                                "project_id": _pid(scope),
+                                "previous_claim_id": uuid.UUID(previous),
+                                "replacement_claim_id": uuid.UUID(replacement),
+                            }
+                            for previous, replacement in supersessions
+                        ]
+                    )
+                    .on_conflict_do_nothing(constraint="uq_claim_supersession_previous")
                 )
             entity_ids = await self._upsert_entities(session, scope, entities)
             for err in errors:

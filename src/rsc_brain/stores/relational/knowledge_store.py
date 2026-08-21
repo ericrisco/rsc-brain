@@ -17,7 +17,7 @@ from sqlalchemy.orm import aliased
 
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
-from rsc_brain.stores.relational.database import session_scope
+from rsc_brain.stores.relational.database import maybe_session_scope, session_scope
 from rsc_brain.visibility import forbidden_topics, topic_clause
 
 
@@ -225,7 +225,11 @@ class KnowledgeStore:
             )
 
     async def claim_relation_keys(
-        self, scope: ProjectScope, claim_ids: Sequence[str]
+        self,
+        scope: ProjectScope,
+        claim_ids: Sequence[str],
+        *,
+        session: AsyncSession | None = None,
     ) -> list[tuple[str, str, str]]:
         """The ``(subject_key, predicate, object_key)`` triple each claim asserts in the graph.
 
@@ -234,9 +238,9 @@ class KnowledgeStore:
         """
         if not claim_ids:
             return []
-        async with self._sm() as session:
+        async with maybe_session_scope(self._sm, session) as work:
             rows = (
-                await session.execute(
+                await work.execute(
                     select(
                         models.Claim.subject_entity_key,
                         models.Claim.predicate,
@@ -253,7 +257,11 @@ class KnowledgeStore:
         return [(str(r[0]), str(r[1]), str(r[2])) for r in rows]
 
     async def live_relation_keys(
-        self, scope: ProjectScope, keys: Sequence[tuple[str, str, str]]
+        self,
+        scope: ProjectScope,
+        keys: Sequence[tuple[str, str, str]],
+        *,
+        session: AsyncSession | None = None,
     ) -> set[tuple[str, str, str]]:
         """Which of ``keys`` some LIVE claim still asserts.
 
@@ -264,9 +272,9 @@ class KnowledgeStore:
             return set()
         subjects = {uuid.UUID(k[0]) for k in keys}
         objects = {uuid.UUID(k[2]) for k in keys}
-        async with self._sm() as session:
+        async with maybe_session_scope(self._sm, session) as work:
             rows = (
-                await session.execute(
+                await work.execute(
                     select(
                         models.Claim.subject_entity_key,
                         models.Claim.predicate,

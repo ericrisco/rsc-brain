@@ -246,7 +246,12 @@ class AgeGraphStore:
                 )
 
     async def set_relations_retired(
-        self, scope: ProjectScope, relations: Sequence[GraphEdge], *, retired: bool
+        self,
+        scope: ProjectScope,
+        relations: Sequence[GraphEdge],
+        *,
+        retired: bool,
+        session: AsyncSession | None = None,
     ) -> None:
         """Mark (or unmark) relations as superseded, so graph reads stop serving retired facts (R27).
 
@@ -258,21 +263,23 @@ class AgeGraphStore:
         if not relations:
             return
         graph = graph_name(scope.project_id)
-        if not await self._graph_exists_by_name(graph):
-            return
-        async with self._sm() as session:
-            await self._prepare(session)
+        async with maybe_session_scope(self._sm, session) as work:
+            await self._prepare(work)
+            exists = await work.scalar(
+                text("SELECT count(*) FROM ag_catalog.ag_graph WHERE name = :n"), {"n": graph}
+            )
+            if not exists:
+                return
             for rel in relations:
                 etype = safe_identifier(rel.type)
                 action = "SET r.superseded = true" if retired else "REMOVE r.superseded"
                 await self._cypher(
-                    session,
+                    work,
                     graph,
                     f"MATCH (a {{id: $src}})-[r:{etype}]->(b {{id: $dst}}) {action}",
                     {"src": rel.source_id, "dst": rel.target_id},
                     "v agtype",
                 )
-            await session.commit()
 
     async def k_hop(
         self, scope: ProjectScope, start_ids: Sequence[str], *, k: int

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore, edge_type
 from rsc_brain.stores.graph_store import GraphEdge
@@ -26,18 +28,26 @@ class GraphSync:
         self._store = store
         self._graph = graph
 
-    async def retire_claims(self, scope: ProjectScope, claim_ids: Sequence[str]) -> int:
+    async def retire_claims(
+        self,
+        scope: ProjectScope,
+        claim_ids: Sequence[str],
+        *,
+        session: AsyncSession | None = None,
+    ) -> int:
         """Retire the relations asserted ONLY by these (now superseded) claims.
 
         A relation still asserted by a live claim stays live: two documents can say the same thing,
         and superseding one of them does not retract the fact.
         """
-        keys = await self._store.claim_relation_keys(scope, claim_ids)
+        keys = await self._store.claim_relation_keys(scope, claim_ids, session=session)
         if not keys:
             return 0
-        still_live = await self._store.live_relation_keys(scope, keys)
+        still_live = await self._store.live_relation_keys(scope, keys, session=session)
         orphaned = [k for k in dict.fromkeys(keys) if k not in still_live]
-        await self._graph.set_relations_retired(scope, _edges(orphaned), retired=True)
+        await self._graph.set_relations_retired(
+            scope, _edges(orphaned), retired=True, session=session
+        )
         return len(orphaned)
 
     async def reactivate_claims(self, scope: ProjectScope, claim_ids: Sequence[str]) -> int:
