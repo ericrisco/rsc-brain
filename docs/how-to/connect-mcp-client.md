@@ -46,7 +46,7 @@ for adding a remote streamable HTTP server.
 
 ## Confirm the connection
 
-Refresh the client's tool list. A release 0.13.0 server exposes these eight tools:
+Refresh the client's tool list. The server exposes these eight base tools:
 
 - `recall`
 - `timeline`
@@ -56,6 +56,10 @@ Refresh the client's tool list. A release 0.13.0 server exposes these eight tool
 - `report_feedback`
 - `submit_knowledge`
 - `correct_knowledge`
+
+It also exposes one `skill_<slug>` tool for every active skill visible to the bearer. This part of
+the list is authorization-aware and read-through, so two credentials can see different tools and a
+skill or permission change appears on the next refresh.
 
 Call `list_skills` with no arguments or call `recall` with a known question. An empty result is a
 valid permission-filtered response; it does not prove that the connection failed.

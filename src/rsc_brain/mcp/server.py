@@ -9,12 +9,16 @@ the same ASGI app as the FastAPI REST API (one process/port).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 from urllib.parse import urlsplit
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import ContentBlock
+from mcp.types import Tool as MCPTool
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -41,8 +45,10 @@ from rsc_brain.mcp.tools import (
     do_submit_knowledge,
     do_timeline,
 )
+from rsc_brain.recall.permissions import sensitive_tags
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import ProjectScope
+from rsc_brain.skills.store import SkillStore
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 
 ANTI_INJECTION_GUIDE = """\
@@ -65,6 +71,42 @@ never see project B. If a query matches nothing you are allowed to see, the answ
 
 _LOOPBACK_HOSTS = ("127.0.0.1:*", "localhost:*", "[::1]:*")
 _LOOPBACK_ORIGINS = ("http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*")
+
+_DynamicList = Callable[[Context[Any, Any, Any]], Awaitable[list[MCPTool]]]
+_DynamicCall = Callable[[Context[Any, Any, Any], str, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+class _DynamicSkillArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    args: dict[str, Any] | None = None
+    on_behalf_of: str | None = None
+
+
+class AuthorizedSkillMCP(FastMCP):
+    """FastMCP whose skill catalogue and dispatch are resolved for every request."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._dynamic_list: _DynamicList | None = None
+        self._dynamic_call: _DynamicCall | None = None
+        super().__init__(*args, **kwargs)
+
+    def configure_dynamic_skills(self, list_tools: _DynamicList, call_tool: _DynamicCall) -> None:
+        self._dynamic_list = list_tools
+        self._dynamic_call = call_tool
+
+    async def list_tools(self) -> list[MCPTool]:
+        tools = await super().list_tools()
+        if self._dynamic_list is None:
+            return tools
+        return [*tools, *await self._dynamic_list(self.get_context())]
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any]
+    ) -> Sequence[ContentBlock] | dict[str, Any]:
+        if name.startswith("skill_") and self._dynamic_call is not None:
+            return await self._dynamic_call(self.get_context(), name, arguments)
+        return await super().call_tool(name, arguments)
 
 
 class _NormalizeMcpSecurityHeaders:
@@ -142,7 +184,7 @@ def build_mcp_server(
     """Build the FastMCP server wired to the retriever + stores."""
     graph = AgeGraphStore(sessionmaker)
     quotas = QuotaService(sessionmaker, quota_config)
-    server = FastMCP(
+    server = AuthorizedSkillMCP(
         name="rsc-brain",
         instructions=ANTI_INJECTION_GUIDE,
         stateless_http=stateless,
@@ -150,21 +192,34 @@ def build_mcp_server(
     )
 
     async def _scope(
-        ctx: Context[Any, Any, Any], on_behalf_of: str | None = None, *, kind: Kind = "recall"
+        ctx: Context[Any, Any, Any],
+        on_behalf_of: str | None = None,
+        *,
+        kind: Kind = "recall",
+        consume_quota: bool = True,
     ) -> ProjectScope:
         request = ctx.request_context.request
         authorization = request.headers.get("authorization") if request is not None else None
+        header_delegate = request.headers.get("x-rsc-on-behalf-of") if request is not None else None
         try:
+            if (
+                header_delegate is not None
+                and on_behalf_of is not None
+                and header_delegate != on_behalf_of
+            ):
+                raise AuthInvalidError("conflicting delegation")
+            delegate = on_behalf_of or header_delegate
             scope = await authenticate(sessionmaker, authorization)
-            if on_behalf_of is not None:
+            if delegate is not None:
                 # Agent delegation (FR-14.2): effective topics = agent ∩ delegated user, same
                 # project. Invalid delegation is AUTH_INVALID (indistinguishable from a bad token).
-                delegated = await resolve_delegated_scope(sessionmaker, scope, on_behalf_of)
+                delegated = await resolve_delegated_scope(sessionmaker, scope, delegate)
                 if delegated is None:
                     raise AuthInvalidError("invalid delegation")
                 scope = delegated
             # Per-principal quota (FR-14.7): counts this call; over the limit → RATE_LIMITED.
-            await quotas.consume(scope, kind)
+            if consume_quota:
+                await quotas.consume(scope, kind)
             return scope
         except RateLimitedError as exc:
             raise ToolError(f"{exc.code}: {exc} (retry_after={exc.retry_after})") from exc
@@ -229,6 +284,41 @@ def build_mcp_server(
     ) -> RunSkillOutput:
         scope = await _scope(ctx, on_behalf_of)
         return await do_run_skill(retriever, sessionmaker, scope, slug=slug, args=args)
+
+    async def _dynamic_skill_tools(ctx: Context[Any, Any, Any]) -> list[MCPTool]:
+        scope = await _scope(ctx, consume_quota=False)
+        forbidden = await sensitive_tags(sessionmaker, scope.project_id)
+        skills = await SkillStore(sessionmaker).list_visible(scope, forbidden)
+        output_schema = RunSkillOutput.model_json_schema()
+        input_schema = _DynamicSkillArguments.model_json_schema()
+        return [
+            MCPTool(
+                name=f"skill_{skill.slug}",
+                title=skill.title,
+                description=skill.description or skill.when_to_use or f"Run {skill.title}.",
+                inputSchema=input_schema,
+                outputSchema=output_schema,
+            )
+            for skill in skills
+        ]
+
+    async def _call_dynamic_skill(
+        ctx: Context[Any, Any, Any], name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            parsed = _DynamicSkillArguments.model_validate(arguments)
+        except ValidationError as exc:
+            raise ToolError(f"INTERNAL: invalid dynamic skill arguments: {exc}") from exc
+        scope = await _scope(ctx, parsed.on_behalf_of)
+        output = await do_run_skill(
+            retriever,
+            sessionmaker,
+            scope,
+            slug=name.removeprefix("skill_"),
+            args=parsed.args,
+            tool_name=name,
+        )
+        return output.model_dump(mode="json")
 
     @server.tool(description="Fetch a document's visible page text and metadata (traceability).")
     async def get_document(
@@ -304,4 +394,5 @@ def build_mcp_server(
             dry_run=dry_run,
         )
 
+    server.configure_dynamic_skills(_dynamic_skill_tools, _call_dynamic_skill)
     return server

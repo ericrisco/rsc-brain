@@ -112,8 +112,17 @@ async def test_guardrail_drops_mislabeled_fragment(build_harness: Callable[..., 
     project_id = await harness.setup_project(unique_slug("acme"), TOPICS)
     scope = harness.scope(project_id, allowed_topics=["hr"])
     chunk_id = await _seed_chunk_claim(harness, project_id, "leaked salary data", ["hr"])
+    async with harness.sm() as session:
+        topic_id = await session.scalar(
+            select(models.Topic.id).where(
+                models.Topic.project_id == uuid.UUID(project_id), models.Topic.slug == "hr"
+            )
+        )
+    assert topic_id is not None
     await SkillStore(harness.sm).create(
-        scope, SkillFrontmatter(slug="pay", title="Payroll", tags=["hr"]), "body"
+        scope,
+        SkillFrontmatter(slug="pay", title="Payroll", tags=["hr"], depends_on=[str(topic_id)]),
+        "body",
     )
     # The classifier says the (hr-tagged) fragment is really 'general' — a topic this caller lacks.
     ran = await do_run_skill(

@@ -14,6 +14,8 @@ The client cannot supply a project identifier as tool input. Project scope comes
 
 Most tools accept `on_behalf_of`. Delegation is valid only when the authenticated caller is an agent and the named human is active and belongs to the same project. The effective topic set is the intersection of the agent's topics and the human membership's topics. The acting principal remains the agent, and audit records retain the delegated human identifier.
 
+Dynamic tool discovery has no tool arguments, so delegated `tools/list` uses the `X-RSC-On-Behalf-Of` request header. Dynamic and generic skill invocation accept `on_behalf_of`; if the header and argument are both present, they must be identical. Discovery and invocation resolve the credential, represented user, and current authority again on every request.
+
 Invalid delegation has the same `AUTH_INVALID` error class as an invalid credential. Delegation never changes projects or grants a console role.
 
 ## Authorization
@@ -22,7 +24,7 @@ All reads apply project and topic predicates before rows, counts, or fragments b
 
 | Tool class | Authorization behavior |
 |---|---|
-| Recall, timeline, documents, and skills | Return only data visible to the token scope. Hidden and absent data use the same result shape. |
+| Recall, timeline, documents, and skills | Return only data visible to the token scope. A skill is visible only when the caller holds its complete topic-tag set. Hidden and absent data use the same result shape. |
 | Feedback | Applies feedback through the authenticated scope; claim identifiers do not rebind the request to another project. |
 | Submission | Requires at least one nonempty tag, and every submitted tag must be in the effective topic set. The project `agent_writes` policy controls activation. |
 | Correction | Resolves the target through visible claims. Human topic owners may apply corrections; agents and nonowners route suggestions to an owner. Sensitive corrections require a second owner. |
@@ -82,6 +84,14 @@ Returns one visible skill's Markdown instructions plus supporting recall fragmen
 | `on_behalf_of` | string or null | null | Human user identifier for validated agent delegation. |
 
 The output contains `found`, `instructions`, and `context_fragments`. A hidden or absent slug returns `found: false`, empty instructions, and no fragments. Supporting fragments use the same provenance and untrusted-data fields as recall.
+
+Context is restricted to the skill's declared `depends_on` UUIDs. A same-project Entity UUID maps to the canonical entity's deterministic typed endpoint key; a same-project Topic UUID maps to its slug. Eligible chunks must also overlap the skill tags, be fully authorized, published, review-safe, and current under the shared retriever. Missing, invalid, or foreign dependencies contribute no context and never trigger a broad descriptive fallback. The returned fragments are a deterministic highest-ranked prefix capped at 2,000 approximate tokens, even when the global recall budget is larger.
+
+### `skill_<slug>` dynamic tools
+
+Every active skill visible to the effective scope appears in authenticated `tools/list` as `skill_<slug>`. Proposed, archived, partially authorized, sensitive, and foreign-project skills are omitted. Discovery is read-through: creating, archiving, retagging, or changing authority affects the next list without a process-level authorization cache.
+
+Each dynamic tool accepts only `args` and `on_behalf_of`; its output schema and execution semantics are the same as `run_skill` for that slug. Invocation reauthenticates and rereads skill state independently of discovery, so a stale client-side tool definition cannot authorize an archived or newly hidden skill. Unauthorized, foreign, and nonexistent dynamic names all return the same `found: false` shape. Generic and dynamic invocations produce separate `run_skill` audit rows whose `tool` field identifies the surface used.
 
 ### `get_document`
 
@@ -175,7 +185,7 @@ These are server-construction defaults in `QuotaConfig`; they are not fields in 
 
 Retrieved company content is data, not executable instruction. Recall fragments, timeline entries, and document reads carry `content_type: "untrusted_data"`. Clients must not follow imperative text embedded in those fields.
 
-Recall provenance includes source document, page, claim identifiers, credibility, tags, temporal bounds, and current-state status. Timeline entries preserve claim-level source and validity data. `run_skill` keeps skill instructions separate from untrusted supporting fragments.
+Recall provenance includes source document, page, claim identifiers, credibility, tags, temporal bounds, and current-state status. Timeline entries preserve claim-level source and validity data. Generic and dynamic skill tools keep skill instructions separate from untrusted supporting fragments; dependency-grounded fragments retain the complete recall provenance fields.
 
 Default recall selects knowledge valid now. `as_of` selects knowledge valid at a date, `include_historical` opens the historical view, and every returned temporal record labels `valid_from`, `valid_to`, and `is_current`. Superseded claims remain stored rather than being erased.
 

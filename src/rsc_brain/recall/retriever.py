@@ -151,6 +151,7 @@ class PgRetriever:
         as_of: dt.date | None = None,
         include_historical: bool = False,
         include_superseded: bool = False,
+        eligible_chunk_ids: Sequence[str] | None = None,
     ) -> RecallResult:
         # Temporal intent (FR-16.1): default `current` (only knowledge valid now); a query or the
         # explicit params can widen to historical/as_of/range. `include_superseded` surfaces
@@ -165,6 +166,15 @@ class PgRetriever:
             await register_gap(self._sm, scope, query, topics=topics_hint or ())
             return RecallResult(found=False, gap_registered=True)
 
+        eligible_ids: frozenset[uuid.UUID] | None = None
+        if eligible_chunk_ids is not None:
+            try:
+                eligible_ids = frozenset(uuid.UUID(chunk_id) for chunk_id in eligible_chunk_ids)
+            except ValueError:
+                eligible_ids = frozenset()
+            if not eligible_ids:
+                return RecallResult(found=False, gap_registered=False)
+
         # Accounting follows the caller's project (R12), never the process.
         vector = (await self._gateway.for_project(scope.project_id).embed([query]))[0]
         forbidden = await sensitive_tags(self._sm, scope.project_id)
@@ -175,20 +185,32 @@ class PgRetriever:
         # lets stale-but-similar chunks occupy the page and starve the eligible answer out of it. The
         # surplus is what the temporal filter then removes; the page is cut after scoring, below.
         retrieval_width = min(top_k * self._config.temporal_refill_factor, MAX_RETRIEVAL_WIDTH)
-        vector_ids = await self._vector_candidates(scope, vector, forbidden, retrieval_width)
+        vector_ids = await self._vector_candidates(
+            scope, vector, forbidden, retrieval_width, eligible_ids
+        )
         if self._config.hybrid_enabled:
             # Hybrid (FR-3.7): fuse the vector list with a lexical (tsvector) list by RRF, so exact
             # identifiers embeddings miss still surface. Both vias carry the SAME in-query filter.
             lexical_ids = await self._lexical_candidates(
-                scope, query, forbidden, max(self._config.lexical_candidates, retrieval_width)
+                scope,
+                query,
+                forbidden,
+                max(self._config.lexical_candidates, retrieval_width),
+                eligible_ids,
             )
             candidate_ids = _rrf_fuse(
                 [vector_ids, lexical_ids], k=self._config.rrf_k, limit=retrieval_width
             )
         else:
             candidate_ids = vector_ids
-        candidate_ids = await self._ontology_expand(scope, query, forbidden, candidate_ids)
-        candidate_ids = await self._expand_k_hop(scope, forbidden, candidate_ids)
+        candidate_ids = await self._ontology_expand(
+            scope, query, forbidden, candidate_ids, eligible_ids
+        )
+        candidate_ids = await self._expand_k_hop(scope, forbidden, candidate_ids, eligible_ids)
+        if eligible_ids is not None:
+            candidate_ids = [
+                chunk_id for chunk_id in candidate_ids if uuid.UUID(chunk_id) in eligible_ids
+            ]
         candidates = await self._load_candidates(
             scope,
             vector,
@@ -247,10 +269,15 @@ class PgRetriever:
     # --- steps ---------------------------------------------------------------
 
     def _visible_search(
-        self, scope: ProjectScope, vector: Sequence[float], forbidden: frozenset[str], limit: int
+        self,
+        scope: ProjectScope,
+        vector: Sequence[float],
+        forbidden: frozenset[str],
+        limit: int,
+        eligible_chunk_ids: frozenset[uuid.UUID] | None = None,
     ) -> Select[tuple[uuid.UUID, float]]:
         distance = models.Chunk.embedding.cosine_distance(list(vector))
-        return (
+        query = (
             select(models.Chunk.id, (1 - distance).label("sim"))
             .where(
                 chunk_visibility_clause(scope, forbidden),
@@ -260,22 +287,37 @@ class PgRetriever:
             .order_by(distance)
             .limit(limit)
         )
+        if eligible_chunk_ids is not None:
+            query = query.where(models.Chunk.id.in_(eligible_chunk_ids))
+        return query
 
     async def _vector_candidates(
-        self, scope: ProjectScope, vector: Sequence[float], forbidden: frozenset[str], top_k: int
+        self,
+        scope: ProjectScope,
+        vector: Sequence[float],
+        forbidden: frozenset[str],
+        top_k: int,
+        eligible_chunk_ids: frozenset[uuid.UUID] | None = None,
     ) -> list[str]:
         async with self._sm() as session:
-            rows = await session.execute(self._visible_search(scope, vector, forbidden, top_k))
+            rows = await session.execute(
+                self._visible_search(scope, vector, forbidden, top_k, eligible_chunk_ids)
+            )
             return [str(cid) for cid, _ in rows.all()]
 
     def _lexical_search(
-        self, scope: ProjectScope, query: str, forbidden: frozenset[str], limit: int
+        self,
+        scope: ProjectScope,
+        query: str,
+        forbidden: frozenset[str],
+        limit: int,
+        eligible_chunk_ids: frozenset[uuid.UUID] | None = None,
     ) -> Select[tuple[uuid.UUID, float]]:
         # `simple` config: no stemming/stopwords, so exact identifiers survive tokenisation. The
         # SAME visibility filter as the vector via (project + topics + FR-4.14) is IN the query.
         tsv = func.to_tsvector("simple", models.Chunk.text)
         tsq = func.plainto_tsquery("simple", query)
-        return (
+        statement = (
             select(models.Chunk.id, func.ts_rank(tsv, tsq).label("rank"))
             .where(
                 chunk_visibility_clause(scope, forbidden),
@@ -288,18 +330,33 @@ class PgRetriever:
             .order_by(func.ts_rank(tsv, tsq).desc())
             .limit(limit)
         )
+        if eligible_chunk_ids is not None:
+            statement = statement.where(models.Chunk.id.in_(eligible_chunk_ids))
+        return statement
 
     async def _lexical_candidates(
-        self, scope: ProjectScope, query: str, forbidden: frozenset[str], limit: int
+        self,
+        scope: ProjectScope,
+        query: str,
+        forbidden: frozenset[str],
+        limit: int,
+        eligible_chunk_ids: frozenset[uuid.UUID] | None = None,
     ) -> list[str]:
         if not query.strip():
             return []
         async with self._sm() as session:
-            rows = await session.execute(self._lexical_search(scope, query, forbidden, limit))
+            rows = await session.execute(
+                self._lexical_search(scope, query, forbidden, limit, eligible_chunk_ids)
+            )
             return [str(cid) for cid, _ in rows.all()]
 
     async def _ontology_expand(
-        self, scope: ProjectScope, query: str, forbidden: frozenset[str], seed_ids: list[str]
+        self,
+        scope: ProjectScope,
+        query: str,
+        forbidden: frozenset[str],
+        seed_ids: list[str],
+        eligible_chunk_ids: frozenset[uuid.UUID] | None = None,
     ) -> list[str]:
         """FR-17.5: fold in chunks matching the query's ontology descendants (e.g. "contracts" →
         "leases"/"sales"). No-op unless the layer is enabled. Each descendant label is resolved
@@ -314,13 +371,21 @@ class PgRetriever:
         for label in extra_labels:
             expanded.extend(
                 await self._lexical_candidates(
-                    scope, label, forbidden, self._config.lexical_candidates
+                    scope,
+                    label,
+                    forbidden,
+                    self._config.lexical_candidates,
+                    eligible_chunk_ids,
                 )
             )
         return list(dict.fromkeys(expanded))
 
     async def _expand_k_hop(
-        self, scope: ProjectScope, forbidden: frozenset[str], seed_ids: list[str]
+        self,
+        scope: ProjectScope,
+        forbidden: frozenset[str],
+        seed_ids: list[str],
+        eligible_chunk_ids: frozenset[uuid.UUID] | None = None,
     ) -> list[str]:
         """Add chunks from documents connected in the graph to the seeds' documents (k-hop,
         FR-3.1). No-op when k_hop==0 or the project graph has no such connections."""
@@ -331,7 +396,9 @@ class PgRetriever:
         extra_docs = neighbor_docs - seed_docs
         if not extra_docs:
             return seed_ids
-        extra_chunks = await self._visible_chunks_of_documents(scope, forbidden, extra_docs)
+        extra_chunks = await self._visible_chunks_of_documents(
+            scope, forbidden, extra_docs, eligible_chunk_ids
+        )
         return list(dict.fromkeys([*seed_ids, *extra_chunks]))
 
     async def _documents_of(self, scope: ProjectScope, chunk_ids: list[str]) -> set[str]:
@@ -361,17 +428,22 @@ class PgRetriever:
         return {str(row["result"]) for row in rows if row.get("result")}
 
     async def _visible_chunks_of_documents(
-        self, scope: ProjectScope, forbidden: frozenset[str], docs: set[str]
+        self,
+        scope: ProjectScope,
+        forbidden: frozenset[str],
+        docs: set[str],
+        eligible_chunk_ids: frozenset[uuid.UUID] | None = None,
     ) -> list[str]:
         async with self._sm() as session:
-            rows = await session.scalars(
-                select(models.Chunk.id).where(
-                    chunk_visibility_clause(scope, forbidden),
-                    models.Chunk.document_id.in_([uuid.UUID(d) for d in docs]),
-                    models.Chunk.embedding.is_not(None),
-                    models.Chunk.needs_review.is_(False),
-                )
+            query = select(models.Chunk.id).where(
+                chunk_visibility_clause(scope, forbidden),
+                models.Chunk.document_id.in_([uuid.UUID(d) for d in docs]),
+                models.Chunk.embedding.is_not(None),
+                models.Chunk.needs_review.is_(False),
             )
+            if eligible_chunk_ids is not None:
+                query = query.where(models.Chunk.id.in_(eligible_chunk_ids))
+            rows = await session.scalars(query)
             return [str(c) for c in rows]
 
     async def _hard_window_map(self, scope: ProjectScope) -> dict[str, int]:

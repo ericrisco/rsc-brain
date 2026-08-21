@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import audit
+from rsc_brain.ingest.chunker import approx_tokens
 from rsc_brain.recall.gaps import query_hash
 from rsc_brain.recall.interfaces import Fragment, RecallResult
 from rsc_brain.recall.permissions import chunk_visibility_clause, sensitive_tags
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
 FeedbackSignal = Literal["helpful", "wrong", "outdated"]
 
 UNTRUSTED = "untrusted_data"
+SKILL_CONTEXT_TOKEN_BUDGET = 2_000
 
 
 class RecallFragment(BaseModel):
@@ -312,6 +314,7 @@ async def do_run_skill(
     slug: str,
     args: dict[str, object] | None = None,
     classifier: TopicClassifier | None = None,
+    tool_name: str = "run_skill",
 ) -> RunSkillOutput:
     """Return a skill's instructions + its supporting fragments (built with the SPEC-06 retriever
     over the skill's tags — 'like recall', same in-query permission filter). A skill the caller
@@ -320,30 +323,52 @@ async def do_run_skill(
     del args  # v0.4 skills are not yet parameterized (FR-7.3); accepted for forward-compat
     started = time.monotonic()
     forbidden = await sensitive_tags(sessionmaker, scope.project_id)
-    visible = {s.slug: s for s in await SkillStore(sessionmaker).list_visible(scope, forbidden)}
+    store = SkillStore(sessionmaker)
+    visible = {s.slug: s for s in await store.list_visible(scope, forbidden)}
     skill = visible.get(slug)
     if skill is None:
         await audit.record_audit(
-            sessionmaker, scope, action="run_skill", tool="run_skill", denied=True, result_count=0
+            sessionmaker, scope, action="run_skill", tool=tool_name, denied=True, result_count=0
         )
         return RunSkillOutput(found=False)
     query = " ".join(filter(None, [skill.title, skill.when_to_use])) or skill.slug
-    result = await retriever.recall(scope, query, top_k=8, topics_hint=list(skill.tags))
+    eligible_chunk_ids = await store.eligible_context_chunk_ids(scope, skill)
+    result = await retriever.recall(
+        scope,
+        query,
+        top_k=8,
+        topics_hint=list(skill.tags),
+        eligible_chunk_ids=eligible_chunk_ids,
+    )
     fragments = to_recall_output(result).fragments
     if classifier is not None:
         fragments = await _apply_guardrail(sessionmaker, scope, fragments, classifier)
+    fragments = _bounded_skill_context(fragments)
     duration_ms = int((time.monotonic() - started) * 1000)
     await audit.record_audit(
         sessionmaker,
         scope,
         action="run_skill",
-        tool="run_skill",
+        tool=tool_name,
         query_hash=query_hash(f"skill:{slug}"),
         duration_ms=duration_ms,
         topics_used=sorted(scope.allowed_topics),
         result_count=len(fragments),
     )
     return RunSkillOutput(found=True, instructions=skill.body or "", context_fragments=fragments)
+
+
+def _bounded_skill_context(fragments: list[RecallFragment]) -> list[RecallFragment]:
+    """Deterministic highest-ranked prefix under the ratified hard skill budget."""
+    bounded: list[RecallFragment] = []
+    used = 0
+    for fragment in fragments:
+        cost = approx_tokens(fragment.text)
+        if used + cost > SKILL_CONTEXT_TOKEN_BUDGET:
+            break
+        bounded.append(fragment)
+        used += cost
+    return bounded
 
 
 async def _apply_guardrail(
