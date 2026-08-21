@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from rsc_brain.config.models import Capability
 from rsc_brain.gateway.errors import GatewayError
+from rsc_brain.gateway.messages import untrusted_data_message
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.gateway.options import GenerationOptions
 from rsc_brain.ingest.prompts import (
@@ -62,7 +63,7 @@ class CascadeExtractor:
         try:
             result = await self._gateway.complete_structured(
                 Capability.EXTRACTOR,
-                _messages(self._entities_prompt, text),
+                _messages(self._entities_prompt, "extract_entities", content=text),
                 EntityExtraction,
                 options,
             )
@@ -76,11 +77,15 @@ class CascadeExtractor:
     async def _relations(
         self, text: str, entity_names: list[str], options: GenerationOptions | None
     ) -> list[ExtractedRelation]:
-        user = f"{text}\n\nEntities (from step 1): {entity_names}"
         try:
             result = await self._gateway.complete_structured(
                 Capability.EXTRACTOR,
-                _messages(self._relations_prompt, user),
+                _messages(
+                    self._relations_prompt,
+                    "extract_relations",
+                    content=text,
+                    entities=entity_names,
+                ),
                 RelationExtraction,
                 options,
             )
@@ -95,7 +100,7 @@ class CascadeExtractor:
         try:
             result = await self._gateway.complete_structured(
                 Capability.EXTRACTOR,
-                _messages(self._claims_prompt, text),
+                _messages(self._claims_prompt, "extract_claims", content=text),
                 ClaimExtraction,
                 options,
             )
@@ -107,8 +112,8 @@ class CascadeExtractor:
         ]
 
 
-def _messages(prompt: str, content: str) -> list[dict[str, str]]:
+def _messages(prompt: str, kind: str, **payload: object) -> list[dict[str, str]]:
     return [
         {"role": "system", "content": prompt},
-        {"role": "user", "content": content},
+        untrusted_data_message(kind, **payload),
     ]

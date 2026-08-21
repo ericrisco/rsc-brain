@@ -74,6 +74,10 @@ def canned_completion(
         "RelationExtraction": {"relations": relations or []},
         "ClaimExtraction": {"claims": claims or []},
         "TopicAssignment": {"tags": tags if tags is not None else []},
+        # A malformed judge response used to be converted to and cached as `unrelated`, masking
+        # both the fake's missing contract and a production fail-open. The default pair used by
+        # integration wiring tests is a 24h/48h contradiction, so model that valid shape directly.
+        "_VerdictOut": {"verdict": "contradict", "confidence": 0.9},
         "_HealthProbe": {"ok": True},
         # AUDIT-099: readiness probes each capability with its REAL schema, so the fake has to know
         # them all. It did not know the reranker's, returned `{}`, and the probe failed — a fake that

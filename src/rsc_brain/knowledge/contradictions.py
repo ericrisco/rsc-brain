@@ -18,7 +18,7 @@ from rsc_brain.config.models import KnowledgeConfig
 from rsc_brain.ingest.entity_resolution import normalize_name
 from rsc_brain.knowledge.credibility import clamp
 from rsc_brain.knowledge.graph_sync import GraphSync
-from rsc_brain.knowledge.judge import Judge, Verdict
+from rsc_brain.knowledge.judge import Judge, JudgeUnavailable, Verdict
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.graph_store import GraphEdge, GraphNode
@@ -109,8 +109,13 @@ class ContradictionResolver:
         for a, b in pairs:
             verdict = await self._store.get_verdict(scope, a.id, b.id, self._judge.version)
             if verdict is None:
-                result = await self._judge.judge(a.text, b.text)
                 judge_calls += 1
+                try:
+                    result = await self._judge.judge(a.text, b.text)
+                except JudgeUnavailable:
+                    # Absence of a trustworthy judgment is not an `unrelated` verdict. In
+                    # particular, never make a provider outage durable in the pair cache.
+                    continue
                 verdict = result.verdict.value
                 await self._store.put_verdict(
                     scope, a.id, b.id, self._judge.version, verdict, result.confidence

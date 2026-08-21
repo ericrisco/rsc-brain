@@ -1,22 +1,25 @@
-"""Chunk/claim topicalization (FR-1.7). Admin regex rules run first and **win over the LLM**;
-the LLM topicalizer is consulted only for text no rule covers. Every chunk ends with ≥1 tag.
-
-A topicalizer failure never blocks ingestion (unlike extraction, FR-1.8): if the model is
-unavailable or returns nothing usable, the chunk falls back to the project's default tag. Tags
-are always constrained to the project taxonomy — the model can never invent a tag, and it can
-never *remove* a rule-assigned (e.g. sensitive) tag, which is the permission-leak guard.
-"""
+"""Rule-first topicalization with immutable deterministic floors and fail-closed review."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from rsc_brain.config.models import Capability
 from rsc_brain.gateway.errors import GatewayError
+from rsc_brain.gateway.messages import untrusted_data_message
 from rsc_brain.gateway.model_gateway import ModelGateway
+from rsc_brain.ingest.prompt_injection import detect_prompt_injection
 from rsc_brain.ingest.prompts import TopicAssignment, load_prompt
 from rsc_brain.ingest.types import TopicRule
+
+
+@dataclass(frozen=True, slots=True)
+class TopicDecision:
+    tags: tuple[str, ...]
+    requires_review: bool = False
+    reason: str | None = None
 
 
 class Topicalizer:
@@ -34,16 +37,38 @@ class Topicalizer:
         rules: Sequence[TopicRule],
         default_tag: str,
     ) -> tuple[str, ...]:
-        """Return ≥1 taxonomy tag for ``text``. Rules win; the LLM handles the uncovered rest."""
+        """Compatibility helper returning only tags; production policy consumes ``classify``."""
+
+        decision = await self.classify(
+            text,
+            taxonomy=taxonomy,
+            rules=rules,
+            default_tag=default_tag,
+            floor_tags=(),
+        )
+        return decision.tags
+
+    async def classify(
+        self,
+        text: str,
+        *,
+        taxonomy: Sequence[str],
+        rules: Sequence[TopicRule],
+        default_tag: str,
+        floor_tags: Sequence[str],
+    ) -> TopicDecision:
+        """Return tags plus whether this chunk must remain outside publication pending review."""
+
         rule_tags = tuple(
             dict.fromkeys(
                 rule.tag for rule in rules if re.search(rule.pattern, text, re.IGNORECASE)
             )
         )
+        floor = tuple(dict.fromkeys([*floor_tags, *rule_tags]))
+        if detect_prompt_injection(text) is not None:
+            return TopicDecision(floor or (default_tag,), True, "prompt_injection")
         if rule_tags:
-            # Rules are authoritative and short-circuit the model (§4.6.1): the LLM is never
-            # consulted for text a rule already classifies, so a rule always beats the model.
-            return rule_tags
+            return TopicDecision(floor)
 
         allowed = set(taxonomy)
         try:
@@ -51,13 +76,18 @@ class Topicalizer:
                 Capability.TOPICALIZER, self._messages(text, taxonomy), TopicAssignment
             )
         except GatewayError:
-            return (default_tag,)
+            return TopicDecision(
+                tuple(dict.fromkeys([*floor, default_tag])), True, "provider_failure"
+            )
         tags = tuple(dict.fromkeys(tag for tag in assignment.tags if tag in allowed))
-        return tags or (default_tag,)
+        if not tags:
+            return TopicDecision(
+                tuple(dict.fromkeys([*floor, default_tag])), True, "empty_or_invalid"
+            )
+        return TopicDecision(tuple(dict.fromkeys([*floor, *tags])))
 
     def _messages(self, text: str, taxonomy: Sequence[str]) -> list[dict[str, str]]:
-        system = f"{self._prompt}\n\nProject taxonomy (choose only these slugs): {list(taxonomy)}"
         return [
-            {"role": "system", "content": system},
-            {"role": "user", "content": text},
+            {"role": "system", "content": self._prompt},
+            untrusted_data_message("topicalize_chunk", content=text, taxonomy=list(taxonomy)),
         ]

@@ -8,8 +8,9 @@ from collections.abc import Callable
 import pytest
 from sqlalchemy import select
 
+from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.knowledge.contradictions import ContradictionResolver
-from rsc_brain.knowledge.judge import HeuristicJudge, JudgeResult
+from rsc_brain.knowledge.judge import HeuristicJudge, JudgeResult, LlmJudge
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
@@ -130,3 +131,45 @@ async def test_verdict_is_cached(build_harness: Callable[..., Harness]) -> None:
     judge.calls = 0
     await resolver.resolve_claims(scope, await store.claims_by_ids(scope, [a, b]))
     assert judge.calls == 0
+
+
+async def test_failed_llm_judgment_is_not_cached_or_resolved(
+    build_harness: Callable[..., Harness],
+    gateway_factory: Callable[..., ModelGateway],
+) -> None:
+    async def _boom(**_: object) -> object:
+        raise RuntimeError("provider down")
+
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("judge-fail"), [("general", 0)])
+    scope = harness.scope(project, allowed_topics=["general"])
+    a = await _insert_claim(
+        harness, project, text="Acme SLA is 24 hours", subject="Acme SLA", credibility=0.55
+    )
+    b = await _insert_claim(
+        harness, project, text="Acme SLA is 48 hours", subject="Acme SLA", credibility=0.5
+    )
+    store = KnowledgeStore(harness.sm)
+    resolver = ContradictionResolver(
+        store=store,
+        graph=AgeGraphStore(harness.sm),
+        judge=LlmJudge(gateway_factory(completion=_boom)),
+    )
+
+    summary = await resolver.resolve_claims(scope, await store.claims_by_ids(scope, [a, b]))
+
+    assert summary.judge_calls == 1
+    assert summary.contradictions == 0
+    async with harness.sm() as session:
+        cached = await session.scalar(
+            select(models.ClaimPairVerdict).where(
+                models.ClaimPairVerdict.project_id == uuid.UUID(project)
+            )
+        )
+        claims = list(
+            await session.scalars(
+                select(models.Claim).where(models.Claim.id.in_([uuid.UUID(a), uuid.UUID(b)]))
+            )
+        )
+    assert cached is None
+    assert all(claim.valid_to is None and not claim.disputed for claim in claims)

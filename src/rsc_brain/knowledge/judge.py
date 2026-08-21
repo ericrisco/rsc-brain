@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict
 
 from rsc_brain.config.models import Capability
 from rsc_brain.gateway.errors import GatewayError
+from rsc_brain.gateway.messages import untrusted_data_message
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.prompts import load_prompt
 
@@ -38,6 +39,10 @@ class Verdict(StrEnum):
 class JudgeResult:
     verdict: Verdict
     confidence: float
+
+
+class JudgeUnavailable(Exception):
+    """The model produced no trustworthy verdict; callers must not cache a fallback verdict."""
 
 
 class Judge(Protocol):
@@ -56,7 +61,7 @@ class _VerdictOut(BaseModel):
 class LlmJudge:
     """LLM adapter using the SPEC-02 contradiction_judge prompt via the gateway."""
 
-    def __init__(self, gateway: ModelGateway, *, version: str = "llm-judge-v1") -> None:
+    def __init__(self, gateway: ModelGateway, *, version: str = "llm-judge-v2") -> None:
         self._gateway = gateway
         self._version = version
         self._prompt = load_prompt("contradiction_judge")
@@ -68,13 +73,12 @@ class LlmJudge:
     async def judge(self, a: str, b: str) -> JudgeResult:
         messages = [
             {"role": "system", "content": self._prompt},
-            {"role": "user", "content": f"A: {a}\nB: {b}"},
+            untrusted_data_message("judge_claim_pair", claim_a=a, claim_b=b),
         ]
         try:
             out = await self._gateway.complete_structured(Capability.JUDGE, messages, _VerdictOut)
-        except GatewayError:
-            # A judge failure is not a contradiction — leave the pair unresolved (unrelated).
-            return JudgeResult(Verdict.UNRELATED, 0.0)
+        except GatewayError as exc:
+            raise JudgeUnavailable("contradiction judgment unavailable") from exc
         return JudgeResult(out.verdict, clamp01(out.confidence))
 
 

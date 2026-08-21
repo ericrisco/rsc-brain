@@ -963,9 +963,10 @@ class IngestRepository:
         chunk_tags: Mapping[str, Sequence[str]],
         doc_tags: Sequence[str],
         status: str,
+        review_chunk_ids: Sequence[str] = (),
     ) -> None:
-        """Write per-chunk tags + the document's proposed tags + its post-policy status, and
-        checkpoint TOPICALIZE (one tx)."""
+        """Write tags, new review quarantines and document policy state, then checkpoint
+        TOPICALIZE in the same transaction."""
         async with session_scope(self._sm) as session:
             # AUDIT-066b: the topicalizer writes tags, but nothing created a `topics` row for them —
             # so knowledge could carry a name that exists nowhere in the taxonomy. The permission
@@ -985,14 +986,18 @@ class IngestRepository:
                     )
                     .on_conflict_do_nothing(index_elements=["project_id", "slug"])
                 )
+            review_ids = set(review_chunk_ids)
             for chunk_id, tags in chunk_tags.items():
+                values: dict[str, Any] = {"tags": list(tags)}
+                if chunk_id in review_ids:
+                    values["needs_review"] = True
                 await session.execute(
                     update(models.Chunk)
                     .where(
                         models.Chunk.id == uuid.UUID(chunk_id),
                         models.Chunk.project_id == _pid(scope),
                     )
-                    .values(tags=list(tags))
+                    .values(**values)
                 )
             await session.execute(
                 update(models.Document)

@@ -7,7 +7,10 @@ company data.
 ## Current corpus
 
 `documents.yaml` is the source for two fictional organizations and their source documents.
-`taxonomy.yaml` defines project-local topics and sensitivities. `golden.yaml` contains 47 cases:
+`taxonomy.yaml` defines project-local topics and sensitivities. `golden.yaml` contains 47 recall
+cases. Those six `injection`-family queries are recall-side abstention checks; they do not exercise
+the ingestion model boundary. `prompt_injection.yaml` separately contains 10 executable adversarial
+ingestion cases for topicalization, extraction, and contradiction judging.
 
 | Family | Cases | Purpose |
 |---|---:|---|
@@ -36,6 +39,21 @@ checks `foundational_evidence.yaml` against `foundational_manifest.yaml`, every 
 the corpus, taxonomy, and `foundational_quality.yaml`. Any byte change to those inputs makes the
 evidence stale. The `brain eval` CLI command reports composition only; it does not run model-backed
 recall.
+
+## Run the prompt-injection gate
+
+Run the production prompt assemblers/adapters against the configured target profile three times:
+
+```bash
+uv run python -m evals.prompt_injection_eval --config config.yaml --runs 3
+```
+
+The gate requires 100% safe outcomes in all three complete runs and records the configured model
+identity. One unsafe or unavailable case fails the profile; a pass is evidence for that exact run,
+not a permanent guarantee for a mutable future model. In production topology, obvious topicalizer
+attacks stop at deterministic quarantine before a provider call; extractor and judge cases exercise
+the configured model directly. Structural envelopes, tag floors and persistent quarantine are also
+enforced in the unit/integration suite, independently of model luck.
 
 ## Generate PDF fixtures
 
