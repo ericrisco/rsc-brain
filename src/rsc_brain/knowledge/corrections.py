@@ -24,7 +24,11 @@ from rsc_brain.knowledge.graph_sync import GraphSync
 from rsc_brain.scope import PrincipalType, ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.graph_store import GraphEdge, GraphNode
-from rsc_brain.stores.relational.knowledge_store import ClaimData, KnowledgeStore
+from rsc_brain.stores.relational.knowledge_store import (
+    ClaimData,
+    CorrectionApplyError,
+    KnowledgeStore,
+)
 
 SENSITIVITY_THRESHOLD = 3
 _SUPERSEDED_BY = "SUPERSEDED_BY"
@@ -149,29 +153,62 @@ class CorrectionService:
                 explanation=f"[dry-run] {preview}",
             )
 
-        new_claim_id = await self._store.apply_owner_correction(
-            scope,
-            old_claim_id=target.id,
-            new_text=correction,
-            new_tags=list(target.tags),
-            cred_old=self._config.superseded_credibility,
-            cred_new=self._config.correction_credibility,
-            pending=sensitive,
-        )
         status = "pending_confirmation" if sensitive else "applied"
         role = "second_owner" if sensitive else "owner_direct"
+        # Persist the audit identity before mutating the claim. A crash before the atomic apply
+        # leaves an observable `applying` row and the source claim unchanged, never an untracked
+        # mutation whose original validity cannot be recovered (AUDIT-107).
         correction_id = await self._store.record_correction(
             scope,
             target_claim=target.id,
-            new_claim=new_claim_id,
+            new_claim=None,
             author_id=scope.principal_id,
             on_behalf_of=scope.on_behalf_of,
             role_applied=role,
-            status=status,
+            status="applying",
             before_text=json.dumps({"text": target.text, "credibility": target.credibility}),
             after_text=correction,
             reason=reason,
         )
+        try:
+            new_claim_id = await self._store.apply_owner_correction(
+                scope,
+                correction_id=correction_id,
+                old_claim_id=target.id,
+                new_text=correction,
+                new_tags=list(target.tags),
+                cred_old=self._config.superseded_credibility,
+                cred_new=self._config.correction_credibility,
+                pending=sensitive,
+                final_status=status,
+            )
+        except CorrectionApplyError as exc:
+            if (
+                exc.same_request
+                and exc.existing_correction_id is not None
+                and exc.existing_new_claim_id is not None
+                and exc.existing_status is not None
+            ):
+                # PostgreSQL may have committed while AGE failed. Repeating the same request
+                # converges graph state through the original correction instead of creating a
+                # second live replacement.
+                if exc.existing_status == "applied":
+                    actor = exc.existing_author_id or scope.principal_id
+                    await self._write_correction_edges(
+                        scope, exc.existing_new_claim_id, target.id, actor
+                    )
+                    await self._graph_sync.retire_claims(scope, [target.id])
+                return CorrectionOutcome(
+                    status=exc.existing_status,
+                    explanation=preview,
+                    correction_id=exc.existing_correction_id,
+                    new_claim_id=exc.existing_new_claim_id,
+                )
+            return CorrectionOutcome(
+                status="rejected",
+                explanation="Claim cannot be corrected in its current lifecycle state.",
+                correction_id=correction_id,
+            )
         if not sensitive:
             await self._write_correction_edges(scope, new_claim_id, target.id, scope.principal_id)
             # R27: the corrected claim is closed in Postgres, so its graph relation stops being
@@ -188,39 +225,43 @@ class CorrectionService:
         correction = await self._store.get_correction(scope, correction_id)
         if correction is None:
             return CorrectionOutcome(status="rejected", explanation="Correction not found.")
-        if correction.status not in {"applied", "pending_confirmation"}:
-            return CorrectionOutcome(
-                status="rejected", explanation=f"Cannot revert a {correction.status} correction."
+        # A repeated request still runs graph convergence below: the first request may have
+        # committed PostgreSQL and then lost its AGE connection. The relational transition itself
+        # stays idempotent.
+        already_reverted = correction.status == "reverted"
+        if correction.status not in {"applied", "pending_confirmation"} and not already_reverted:
+            explanation = (
+                "Correction cannot be safely reverted."
+                if correction.status == "revert_failed"
+                else f"Cannot revert a {correction.status} correction."
             )
+            return CorrectionOutcome(status="rejected", explanation=explanation)
         cred_restore = 0.5
         if correction.before_text:
             try:
                 cred_restore = float(json.loads(correction.before_text)["credibility"])
             except (ValueError, KeyError, TypeError):
                 cred_restore = 0.5
-        await self._store.revert_correction(
-            scope,
-            old_claim_id=str(correction.target_claim),
-            new_claim_id=str(correction.new_claim) if correction.new_claim else None,
-            cred_restore=cred_restore,
-        )
+        if not already_reverted:
+            result = await self._store.revert_correction(
+                scope,
+                correction_id=correction_id,
+                cred_restore=cred_restore,
+                reverted_by=scope.principal_id,
+            )
+            if result.status == "failed":
+                return CorrectionOutcome(
+                    status="rejected", explanation="Correction cannot be safely reverted."
+                )
+            if result.status not in {"reverted", "already_reverted"}:
+                return CorrectionOutcome(
+                    status="rejected", explanation="Correction cannot be reverted."
+                )
         # A revert closes the correction's claim and reopens the original, so the graph swaps back
         # in the same order (R27).
         if correction.new_claim:
             await self._graph_sync.retire_claims(scope, [str(correction.new_claim)])
         await self._graph_sync.reactivate_claims(scope, [str(correction.target_claim)])
-        await self._store.record_correction(
-            scope,
-            target_claim=str(correction.target_claim),
-            new_claim=str(correction.new_claim) if correction.new_claim else None,
-            author_id=scope.principal_id,
-            on_behalf_of=None,
-            role_applied="reverted",
-            status="reverted",
-            before_text=correction.after_text,
-            after_text=correction.before_text,
-            reason=f"revert of {correction_id}",
-        )
         return CorrectionOutcome(status="reverted", explanation="Correction reverted.")
 
     async def _resolve_target(
@@ -265,25 +306,17 @@ class CorrectionService:
     async def _write_correction_edges(
         self, scope: ProjectScope, new_claim_id: str, old_claim_id: str, person_id: str
     ) -> None:
-        await self._graph.create_graph(scope)
-        await self._graph.upsert_nodes(
+        nodes = [
+            GraphNode(id=new_claim_id, labels=frozenset({"Claim"}), properties={"kind": "claim"}),
+            GraphNode(id=old_claim_id, labels=frozenset({"Claim"}), properties={"kind": "claim"}),
+            GraphNode(id=person_id, labels=frozenset({"Person"}), properties={"kind": "person"}),
+        ]
+        edges = [
+            GraphEdge(source_id=old_claim_id, target_id=new_claim_id, type=_SUPERSEDED_BY),
+            GraphEdge(source_id=new_claim_id, target_id=person_id, type=_CORRECTED_BY),
+        ]
+        await self._graph.upsert_subgraph(
             scope,
-            [
-                GraphNode(
-                    id=new_claim_id, labels=frozenset({"Claim"}), properties={"kind": "claim"}
-                ),
-                GraphNode(
-                    id=old_claim_id, labels=frozenset({"Claim"}), properties={"kind": "claim"}
-                ),
-                GraphNode(
-                    id=person_id, labels=frozenset({"Person"}), properties={"kind": "person"}
-                ),
-            ],
-        )
-        await self._graph.upsert_edges(
-            scope,
-            [
-                GraphEdge(source_id=old_claim_id, target_id=new_claim_id, type=_SUPERSEDED_BY),
-                GraphEdge(source_id=new_claim_id, target_id=person_id, type=_CORRECTED_BY),
-            ],
+            nodes,
+            edges,
         )

@@ -7,6 +7,7 @@ leaves it disputed. No owner ⇒ NO_OWNER, claim disputed.
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from collections.abc import Callable
 
@@ -21,6 +22,7 @@ from rsc_brain.hunting.state_machine import HuntState
 from rsc_brain.mcp.tools import do_correct_knowledge
 from rsc_brain.scope import Principal, PrincipalType, ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
+from rsc_brain.stores.graph_store import GraphEdge, GraphNode
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
 
@@ -39,10 +41,29 @@ def _scope(project_id: str) -> ProjectScope:
     ).scope_for(project_id)
 
 
-async def _seed_claim(harness: Harness, project_id: str, text: str, tags: list[str]) -> str:
+async def _seed_claim(
+    harness: Harness,
+    project_id: str,
+    text: str,
+    tags: list[str],
+    *,
+    valid_from: dt.datetime | None = None,
+    valid_to: dt.datetime | None = None,
+    subject_entity_key: str | None = None,
+    predicate: str | None = None,
+    object_entity_key: str | None = None,
+) -> str:
     async with harness.sm() as session:
         claim = models.Claim(
-            project_id=uuid.UUID(project_id), text=text, tags=tags, credibility=0.6
+            project_id=uuid.UUID(project_id),
+            text=text,
+            tags=tags,
+            credibility=0.6,
+            valid_from=valid_from,
+            valid_to=valid_to,
+            subject_entity_key=uuid.UUID(subject_entity_key) if subject_entity_key else None,
+            predicate=predicate,
+            object_entity_key=uuid.UUID(object_entity_key) if object_entity_key else None,
         )
         session.add(claim)
         await session.flush()
@@ -81,7 +102,32 @@ async def test_confirm_applies_the_correction(build_harness: Callable[..., Harne
     harness = build_harness()
     project_id = await harness.setup_project(unique_slug("acme"), [("hr", 0)])
     scope = _scope(project_id)
-    claim_id = await _seed_claim(harness, project_id, "Old fact", ["hr"])
+    source_start = dt.datetime(2023, 1, 1, tzinfo=dt.UTC)
+    source_end = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    subject_key, object_key = str(uuid.uuid4()), str(uuid.uuid4())
+    claim_id = await _seed_claim(
+        harness,
+        project_id,
+        "Old fact",
+        ["hr"],
+        valid_from=source_start,
+        valid_to=source_end,
+        subject_entity_key=subject_key,
+        predicate="is",
+        object_entity_key=object_key,
+    )
+    graph = AgeGraphStore(harness.sm)
+    await graph.create_graph(scope)
+    await graph.upsert_nodes(
+        scope,
+        [
+            GraphNode(id=subject_key, labels=frozenset({"Entity"})),
+            GraphNode(id=object_key, labels=frozenset({"Entity"})),
+        ],
+    )
+    await graph.upsert_edges(
+        scope, [GraphEdge(source_id=subject_key, target_id=object_key, type="is")]
+    )
     correction_id = await _routed_correction(harness, scope, claim_id, "Corrected fact")
     review = await _review_service(harness, project_id)
 
@@ -103,6 +149,11 @@ async def test_confirm_applies_the_correction(build_harness: Callable[..., Harne
         assert "hr" in corrected.tags  # tags inherited (topic permissions preserved, FR-15.4)
         correction = await session.get(models.Correction, uuid.UUID(correction_id))
         assert correction is not None and correction.status == "applied"
+        assert correction.target_valid_from_before == source_start
+        assert correction.target_valid_to_before == source_end
+        assert correction.validity_snapshot_captured_at is not None
+        assert corrected.valid_from == correction.validity_snapshot_captured_at
+    assert object_key not in [node.id for node in await graph.k_hop(scope, [subject_key], k=1)]
 
 
 async def test_reject_restores_the_claim(build_harness: Callable[..., Harness]) -> None:

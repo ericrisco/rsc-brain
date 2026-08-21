@@ -186,6 +186,14 @@ class AgeGraphStore:
         graph = graph_name(scope.project_id)
         async with maybe_session_scope(self._sm, session) as work:
             await self._prepare(work)
+            # The existence check and AGE create call are otherwise a TOCTOU race: two retries of
+            # the same committed correction can both observe absence and one fails with "graph
+            # already exists". Serialize graph creation per deterministic project name inside the
+            # surrounding transaction; unrelated projects remain independent (AUDIT-107).
+            await work.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:graph, 0))"),
+                {"graph": graph},
+            )
             exists = await work.scalar(
                 text("SELECT count(*) FROM ag_catalog.ag_graph WHERE name = :n"), {"n": graph}
             )
@@ -202,6 +210,22 @@ class AgeGraphStore:
             if exists:
                 await session.execute(text(f"SELECT ag_catalog.drop_graph('{graph}', true)"))
             await session.commit()
+
+    async def upsert_subgraph(
+        self,
+        scope: ProjectScope,
+        nodes: Sequence[GraphNode],
+        edges: Sequence[GraphEdge],
+    ) -> None:
+        """Create and upsert one small subgraph under one project-serialized transaction.
+
+        AGE lazily creates label/edge tables. Keeping the advisory graph lock from creation through
+        both MERGE phases prevents concurrent idempotent retries racing on those catalogue tables.
+        """
+        async with maybe_session_scope(self._sm, None) as work:
+            await self.create_graph(scope, session=work)
+            await self.upsert_nodes(scope, nodes, session=work)
+            await self.upsert_edges(scope, edges, session=work)
 
     async def upsert_nodes(
         self,
