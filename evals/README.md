@@ -22,14 +22,20 @@ company data.
 Of the 47 cases, 24 must find knowledge and 23 must abstain. `contradictions.yaml` supplies
 contradiction cases for the living-graph evaluator.
 
-Validate the static corpus and report its composition:
+Validate structure alone, or validate the complete fingerprint-bound foundational contract:
 
 ```bash
-uv run python -m evals.validate
+uv run python -m evals.validate --structural-only
+uv run python -m evals.validate --json
 uv run brain --json eval
 ```
 
-The CLI command reports composition only. It does not run model-backed recall.
+Structural-only success deliberately reports `live_evidence_passed=false` and
+`overall_complete=false`; it cannot be quoted as SPEC-02 completion. The default validator also
+checks `foundational_evidence.yaml` against `foundational_manifest.yaml`, every listed artifact,
+the corpus, taxonomy, and `foundational_quality.yaml`. Any byte change to those inputs makes the
+evidence stale. The `brain eval` CLI command reports composition only; it does not run model-backed
+recall.
 
 ## Generate PDF fixtures
 
@@ -98,6 +104,32 @@ creates the node-id indexes, and refuses to time a graph whose persisted counts 
 accepts only the exact 5-warm-up/30-iteration, k=2 policy in both profiles. A scaled smoke remains
 `decision_run=false` and cannot produce a verdict. Accelerator presence is inventory only:
 PostgreSQL/AGE executes this traversal on CPU.
+
+## Foundational prompt quality gate
+
+`foundational_manifest.yaml` is the exhaustive inventory for all current prompts and hunting
+templates, including later non-foundational additions and their owning spec. Validation is
+bidirectional: a missing, misplaced, duplicated, or unmanifested Markdown artifact fails, as does
+frontmatter that disagrees with the manifest identity, version, role, or language.
+
+`foundational_quality.yaml` fixes a ten-document ES/EN sample across both projects, prose, a scanned
+fixture, the production deterministic table path, and sensitive content. Run the production
+extractor/topicalizer adapters against a reachable target model with its exact local digest:
+
+```bash
+uv run python -m evals.foundational_eval \
+  --provider ollama \
+  --model gemma4:12b \
+  --model-digest 4eb23ef187e2c5462566d6a1d3bbbc2f1346d0b4327cbb66d58fffbcc9b2b05c \
+  --api-base http://localhost:11434
+```
+
+The runner writes `foundational_evidence.candidate.yaml`, records every tag/graph term and semantic
+delta, and exits non-zero unless extraction discards are strictly below 10% and every expectation
+passes. Generated evidence always has `semantic_reviewed: false`: inspect all case results, record
+whether review was `human` or `assisted`, and only then promote it to
+`foundational_evidence.yaml`. The validator recomputes semantic deltas from the recorded outputs; it
+does not trust self-reported `passed` or `missing_*` fields.
 
 ## Change rule
 

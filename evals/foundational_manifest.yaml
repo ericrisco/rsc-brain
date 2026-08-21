@@ -1,0 +1,122 @@
+schema_version: 1
+artifacts:
+  - path: src/rsc_brain/prompts/extractor_entities.v1.md
+    id: extractor_entities
+    version: v1
+    kind: prompt
+    role: extractor
+    language: null
+    foundational: true
+    owner: SPEC-02
+  - path: src/rsc_brain/prompts/extractor_relations.v1.md
+    id: extractor_relations
+    version: v1
+    kind: prompt
+    role: extractor
+    language: null
+    foundational: true
+    owner: SPEC-02
+  - path: src/rsc_brain/prompts/extractor_claims.v1.md
+    id: extractor_claims
+    version: v1
+    kind: prompt
+    role: extractor
+    language: null
+    foundational: true
+    owner: SPEC-02
+  - path: src/rsc_brain/prompts/topicalizer.v1.md
+    id: topicalizer
+    version: v1
+    kind: prompt
+    role: topicalizer
+    language: null
+    foundational: true
+    owner: SPEC-02
+  - path: src/rsc_brain/prompts/contradiction_judge.v1.md
+    id: contradiction_judge
+    version: v1
+    kind: prompt
+    role: judge
+    language: null
+    foundational: true
+    owner: SPEC-02
+  - path: src/rsc_brain/prompts/relevance_reranker.v1.md
+    id: relevance_reranker
+    version: v1
+    kind: prompt
+    role: reranker
+    language: null
+    foundational: false
+    owner: SPEC-22
+  - path: src/rsc_brain/prompts/relevance_reranker.v2.md
+    id: relevance_reranker
+    version: v2
+    kind: prompt
+    role: reranker
+    language: null
+    foundational: false
+    owner: AUDIT-100
+  - path: src/rsc_brain/hunting/templates/consent.en.md
+    id: consent
+    version: v1
+    kind: template
+    role: hunting
+    language: en
+    foundational: true
+    owner: SPEC-02
+  - path: src/rsc_brain/hunting/templates/consent.es.md
+    id: consent
+    version: v1
+    kind: template
+    role: hunting
+    language: es
+    foundational: true
+    owner: SPEC-02
+  - path: src/rsc_brain/hunting/templates/question.en.md
+    id: question
+    version: v1
+    kind: template
+    role: hunting
+    language: en
+    foundational: true
+    owner: SPEC-02
+  - path: src/rsc_brain/hunting/templates/question.es.md
+    id: question
+    version: v1
+    kind: template
+    role: hunting
+    language: es
+    foundational: true
+    owner: SPEC-02
+  - path: src/rsc_brain/hunting/templates/reminder.en.md
+    id: reminder
+    version: v1
+    kind: template
+    role: hunting
+    language: en
+    foundational: true
+    owner: SPEC-02
+  - path: src/rsc_brain/hunting/templates/reminder.es.md
+    id: reminder
+    version: v1
+    kind: template
+    role: hunting
+    language: es
+    foundational: true
+    owner: SPEC-02
+  - path: src/rsc_brain/hunting/templates/thanks.en.md
+    id: thanks
+    version: v1
+    kind: template
+    role: hunting
+    language: en
+    foundational: true
+    owner: SPEC-02
+  - path: src/rsc_brain/hunting/templates/thanks.es.md
+    id: thanks
+    version: v1
+    kind: template
+    role: hunting
+    language: es
+    foundational: true
+    owner: SPEC-02

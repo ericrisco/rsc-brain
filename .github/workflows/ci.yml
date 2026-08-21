@@ -27,8 +27,11 @@ jobs:
           enable-cache: true
       - run: uv sync --frozen --all-groups
       - run: uv run ruff check .
-      - run: uv run ruff format --check src tests
+      - run: uv run ruff format --check src tests evals
       - run: uv run mypy
+      # SPEC-02 / AUDIT-009: static structure alone is not completion. This also verifies that the
+      # reviewed live evidence still matches every prompt/template, corpus and quality expectation.
+      - run: uv run python -m evals.validate --json
       # Fast unit pass/fail here; the ≥70% coverage gate runs over the FULL suite (unit +
       # integration) in the `integration` job below, where the DB-backed code is exercised.
       - run: uv run pytest

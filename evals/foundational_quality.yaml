@@ -1,0 +1,45 @@
+schema_version: 1
+cases:
+  - id: quality-acme-overview-en
+    document_id: acme-overview-en
+    required_tags: [general]
+    required_graph_terms: [Acme Corp, Barcelona]
+  - id: quality-acme-deploy-en
+    document_id: acme-eng-deploy-en
+    required_tags: [engineering]
+    required_graph_terms: [PostgreSQL 16, GitHub Actions]
+  - id: quality-acme-architecture-es
+    document_id: acme-eng-arch-es
+    required_tags: [engineering]
+    required_graph_terms: [Fénix, María López]
+    forbidden_graph_terms: ["null"]
+  - id: quality-acme-invoice-es
+    document_id: acme-invoice-nif-es
+    required_tags: [sales]
+    required_graph_terms: [F-2024-118, B-12345678]
+  - id: quality-acme-payroll-es
+    document_id: acme-payroll-bands-es
+    required_tags: [payroll]
+    required_graph_terms: ["90.000", "45.000"]
+    forbidden_graph_terms: ["ingeniería 90.000–120.000"]
+  - id: quality-acme-scanned-vacation-es
+    document_id: acme-scanned-es
+    required_tags: [general]
+    required_graph_terms: ["25 días"]
+  - id: quality-globex-overview-en
+    document_id: globex-overview-en
+    required_tags: [corp]
+    required_graph_terms: [Globex Consulting, Andorra]
+  - id: quality-globex-contract-en
+    document_id: globex-contract-en
+    required_tags: [legal]
+    required_graph_terms: ["30-day", confidentiality]
+  - id: quality-globex-sla-table-en
+    document_id: globex-sla-table-en
+    required_tags: [legal]
+    required_graph_terms: [Priority, "4 hours", "5%"]
+    forbidden_graph_terms: ["100%", "type</div>", "Pending request"]
+  - id: quality-globex-personnel-es
+    document_id: globex-personnel-es
+    required_tags: [personnel]
+    required_graph_terms: [contactos de emergencia, evaluaciones]
