@@ -831,6 +831,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/skills/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Skill Admin
+         * @description Inspect the canonical owner-preserving markdown for one authorized skill.
+         */
+        get: operations["get_skill_admin_api_v1_admin_skills__slug__get"];
+        /**
+         * Update Skill Admin
+         * @description Replace editable frontmatter/body under the supplied frontmatter version.
+         */
+        put: operations["update_skill_admin_api_v1_admin_skills__slug__put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/skills/{slug}/archive": {
         parameters: {
             query?: never;
@@ -1498,6 +1522,10 @@ export interface components {
             query_hash: string | null;
             /** Query Text */
             query_text: string | null;
+            /** Resource Id */
+            resource_id: string | null;
+            /** Resource Type */
+            resource_type: string | null;
             /** Result Count */
             result_count: number | null;
             /** Tool */
@@ -1607,12 +1635,16 @@ export interface components {
             hunt_id: string | null;
             /** Id */
             id: string;
+            /** Lifecycle Error */
+            lifecycle_error?: string | null;
             /** New Claim */
             new_claim: string | null;
             /** On Behalf Of */
             on_behalf_of: string | null;
             /** Resolved At */
             resolved_at: string | null;
+            /** Reverted By */
+            reverted_by?: string | null;
             /** Role Applied */
             role_applied: string | null;
             /** Status */
@@ -2531,6 +2563,13 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /** SkillDetailView */
+        SkillDetailView: {
+            /** Markdown */
+            markdown: string;
+            /** Slug */
+            slug: string;
+        };
         /** SkillEnvelope */
         SkillEnvelope: {
             /** Skills */
@@ -2545,16 +2584,26 @@ export interface components {
         SkillView: {
             /** Depends On */
             depends_on: string[];
+            /** Description */
+            description: string | null;
+            /** Owner Person Id */
+            owner_person_id: string | null;
             /** Slug */
             slug: string;
             /** Stale */
             stale: boolean;
             /** Status */
             status: string;
+            /** Tags */
+            tags: string[];
             /** Title */
             title: string;
             /** Version */
             version: number;
+            /** When Not */
+            when_not: string | null;
+            /** When To Use */
+            when_to_use: string | null;
         };
         /** SourceCreate */
         SourceCreate: {
@@ -5032,6 +5081,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillCreateResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_skill_admin_api_v1_admin_skills__slug__get: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDetailView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_skill_admin_api_v1_admin_skills__slug__put: {
+        parameters: {
+            query?: {
+                project?: string | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillView"];
                 };
             };
             /** @description Validation Error */
