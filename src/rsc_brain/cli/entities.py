@@ -1,7 +1,7 @@
 """`brain entities` CLI (SPEC-09, FR-1.9 P1): propose alias-merges and manage the review queue.
 
 ``merge`` runs the deterministic proposer (auto-applies high-confidence, queues the rest);
-``merges list|confirm|reject`` drives the human confirmation queue. Live LLM proposing is
+``merges list|confirm|reject|reverse`` drives the human confirmation and recovery lifecycle. Live LLM proposing is
 blocked-by-resource — the deterministic proposer is the CLI/CI path.
 """
 
@@ -104,11 +104,12 @@ def _resolve_and_act(project: str, proposal_id: str, action: str) -> tuple[str, 
             project_id = await _resolve_project_id(sessionmaker, project)
             service = _build_service(sessionmaker)
             scope = _cli_scope(project_id)
-            outcome = await (
-                service.confirm(scope, proposal_id)
-                if action == "confirm"
-                else service.reject(scope, proposal_id)
-            )
+            if action == "confirm":
+                outcome = await service.confirm(scope, proposal_id)
+            elif action == "reverse":
+                outcome = await service.reverse(scope, proposal_id)
+            else:
+                outcome = await service.reject(scope, proposal_id)
             return outcome.status, outcome.explanation
         finally:
             await engine.dispose()
@@ -148,5 +149,24 @@ def merges_reject(
     )
     # A refusal is not a rejection: the proposal was already resolved, so the operator's request did not
     # take effect and must not exit 0.
+    if status == "refused":
+        raise typer.Exit(code=1)
+
+
+@merges_app.command("reverse")
+def merges_reverse(
+    ctx: typer.Context,
+    proposal_id: str = typer.Argument(..., help="Applied merge proposal id."),
+    project: str = typer.Option(..., "--project", help="Project slug."),
+    json_output: bool = JSON_OPTION,
+) -> None:
+    """Reverse an applied merge from its drift-checked snapshot (audited)."""
+    status, explanation = _resolve_and_act(project, proposal_id, "reverse")
+    emit_result(
+        ctx,
+        json_output,
+        {"status": status, "explanation": explanation},
+        f"{status}: {explanation}",
+    )
     if status == "refused":
         raise typer.Exit(code=1)

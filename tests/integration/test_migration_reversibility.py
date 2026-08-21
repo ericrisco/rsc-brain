@@ -58,6 +58,21 @@ async def _column_exists(dsn: str, table: str, column: str) -> bool:
         await conn.close()
 
 
+async def _clear_entity_merge_snapshot_history(dsn: str) -> None:
+    """This schema-only round trip deliberately owns no AUDIT-012 history.
+
+    The full suite shares one database and earlier lifecycle tests correctly leave immutable merge
+    snapshots behind. AUDIT-012's dedicated migration test proves that such history blocks a
+    downgrade. This older P0-A test needs an explicitly empty history set to exercise its own deeper
+    rollback contract rather than defeating the new loss-prevention guard.
+    """
+    conn = await _connect(dsn)
+    try:
+        await conn.execute("TRUNCATE TABLE entity_merge_snapshots")
+    finally:
+        await conn.close()
+
+
 async def test_the_p0a_batch_round_trips(migrated_dsn: str) -> None:
     """head → before P0-A → head, with the schema asserted at each stop.
 
@@ -67,6 +82,7 @@ async def test_the_p0a_batch_round_trips(migrated_dsn: str) -> None:
     assert await _constraint_exists(migrated_dsn, QUALIFIED_FK)
     assert await _column_exists(migrated_dsn, "token_usage", "project_id")
     assert await _column_exists(migrated_dsn, "claims", "subject_entity_key")
+    await _clear_entity_merge_snapshot_history(migrated_dsn)
 
     try:
         await asyncio.to_thread(command.downgrade, alembic_config(), BEFORE_P0A)

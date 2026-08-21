@@ -15,15 +15,18 @@ merge two genuinely distinct entities, so ambiguous cases wait for a human.
 
 from __future__ import annotations
 
+import datetime as dt
+import uuid
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from rsc_brain.audit import record_audit
+from rsc_brain.audit import record_audit_in_session
 from rsc_brain.config.models import Capability, KnowledgeConfig
 from rsc_brain.gateway.errors import GatewayError
 from rsc_brain.gateway.model_gateway import ModelGateway
@@ -35,9 +38,21 @@ from rsc_brain.review.states import (
     PROPOSAL_REJECTED,
 )
 from rsc_brain.scope import ProjectScope
-from rsc_brain.stores.age_graph_store import AgeGraphStore
+from rsc_brain.stores.age_graph_store import (
+    AgeGraphStore,
+    GraphEdgeState,
+    GraphMergeConflictError,
+    GraphNodeMergeState,
+)
+from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
-from rsc_brain.stores.relational.entity_store import EntityRow, EntityStore
+from rsc_brain.stores.relational.entity_store import (
+    AliasState,
+    EntityRow,
+    EntityStore,
+    MergeInvariantError,
+    MergeReversalConflictError,
+)
 
 MERGE_PROMPT_VERSION = "entity-merge-v1"
 
@@ -103,11 +118,26 @@ def entity_similarity(a: EntityRow, b: EntityRow) -> float:
     return best
 
 
+def choose_canonical(entities: Sequence[EntityRow]) -> EntityRow:
+    """Choose by semantic richness; UUID is only the final stable tie-breaker."""
+    if not entities:
+        raise MergeInvariantError("canonical selection needs at least one entity")
+    if len({entity.type for entity in entities}) != 1:
+        raise MergeInvariantError("merge entities must have the same type")
+    return sorted(
+        entities,
+        key=lambda entity: (
+            -len(entity.aliases),
+            -len(entity.name),
+            entity.normalized_name,
+            entity.id,
+        ),
+    )[0]
+
+
 def _orient(a: EntityRow, b: EntityRow) -> tuple[EntityRow, EntityRow]:
-    """Pick the canonical (fuller record): more aliases, then longer name, then stable by id."""
-    key_a = (len(a.aliases), len(a.name), b.id)
-    key_b = (len(b.aliases), len(b.name), a.id)
-    return (a, b) if key_a >= key_b else (b, a)
+    canonical = choose_canonical((a, b))
+    return (canonical, b if canonical.id == a.id else a)
 
 
 class EntityMergeProposer(Protocol):
@@ -237,8 +267,13 @@ class EntityMergeService:
         queued: list[str] = []
         for candidate in candidates:
             if candidate.confidence >= self._config.merge_auto_apply_confidence:
-                await self._apply(scope, candidate, status=PROPOSAL_AUTO_APPLIED)
-                auto_applied.append(candidate.duplicate_id)
+                outcome = await self.apply_candidate(
+                    scope,
+                    candidate,
+                    status=PROPOSAL_AUTO_APPLIED,
+                )
+                if outcome.status == "applied":
+                    auto_applied.append(candidate.duplicate_id)
             else:
                 proposal_id, _ = await self._store.create_proposal(
                     scope,
@@ -249,34 +284,307 @@ class EntityMergeService:
                     status=PROPOSAL_OPEN,
                     reason=candidate.reason,
                 )
-                queued.append(proposal_id)
+                proposal = await self._store.get_proposal(scope, proposal_id)
+                if proposal is not None and proposal.status == PROPOSAL_OPEN:
+                    queued.append(proposal_id)
         return ProposeSummary(auto_applied=auto_applied, queued=queued)
+
+    async def apply_candidate(
+        self,
+        scope: ProjectScope,
+        candidate: MergeCandidate,
+        *,
+        status: str = PROPOSAL_AUTO_APPLIED,
+        resolved_by: str | None = None,
+    ) -> MergeOutcome:
+        """Create an observable open proposal, then apply it through the ordinary lifecycle.
+
+        Auto and ontology candidates use this entry point. Proposal creation is deliberately its
+        own durable step: a process interruption can leave an open proposal, but never a merge with
+        no proposal. Retrying the same pair reuses that proposal and either completes it once or
+        observes its already-resolved state.
+        """
+        if status not in {PROPOSAL_APPLIED, PROPOSAL_AUTO_APPLIED}:
+            raise ValueError("an applied candidate needs an applied proposal status")
+        proposal_id, _ = await self._store.create_proposal(
+            scope,
+            canonical_id=candidate.canonical_id,
+            duplicate_id=candidate.duplicate_id,
+            confidence=candidate.confidence,
+            method=self._method,
+            status=PROPOSAL_OPEN,
+            reason=candidate.reason,
+        )
+        return await self._apply_proposal(
+            scope,
+            proposal_id,
+            status=status,
+            resolved_by=resolved_by,
+        )
 
     async def confirm(
         self, scope: ProjectScope, proposal_id: str, *, resolved_by: str | None = None
     ) -> MergeOutcome:
-        proposal = await self._store.get_proposal(scope, proposal_id)
-        if proposal is None:
-            return MergeOutcome(status="refused", explanation="Proposal not found.")
-        if proposal.status != PROPOSAL_OPEN:
-            return MergeOutcome(
-                status="refused",
-                explanation=f"Cannot confirm a {proposal.status} proposal.",
-                proposal_id=proposal_id,
-            )
-        candidate = MergeCandidate(
-            canonical_id=proposal.canonical_entity_id,
-            duplicate_id=proposal.duplicate_entity_id,
-            confidence=proposal.confidence,
-            reason=proposal.reason or "",
-        )
-        edges = await self._apply(
+        return await self._apply_proposal(
             scope,
-            candidate,
+            proposal_id,
             status=PROPOSAL_APPLIED,
-            proposal_id=proposal_id,
             resolved_by=resolved_by,
         )
+
+    async def reject(
+        self, scope: ProjectScope, proposal_id: str, *, resolved_by: str | None = None
+    ) -> MergeOutcome:
+        async with session_scope(self._sm) as unit:
+            proposal = await self._locked_proposal(unit, scope, proposal_id)
+            if proposal is None:
+                return MergeOutcome(status="refused", explanation="Proposal not found.")
+            if proposal.status != PROPOSAL_OPEN:
+                return MergeOutcome(
+                    status="refused",
+                    explanation=f"Cannot reject a {proposal.status} proposal.",
+                    proposal_id=proposal_id,
+                )
+            proposal.status = PROPOSAL_REJECTED
+            proposal.resolved_by = resolved_by or scope.principal_id
+            proposal.resolved_at = _now()
+            await record_audit_in_session(
+                unit,
+                scope,
+                action="entity_merge_reject",
+                tool="entities",
+                result_count=0,
+                trace_id=proposal_id,
+            )
+        return MergeOutcome(
+            status="rejected", explanation="Proposal rejected.", proposal_id=proposal_id
+        )
+
+    async def reverse(
+        self,
+        scope: ProjectScope,
+        proposal_id: str,
+        *,
+        resolved_by: str | None = None,
+    ) -> MergeOutcome:
+        """Restore one applied cycle exactly, refusing to overwrite later writes."""
+        async with session_scope(self._sm) as unit:
+            proposal = await self._locked_proposal(unit, scope, proposal_id)
+            if proposal is None:
+                return MergeOutcome(status="refused", explanation="Proposal not found.")
+            if proposal.status not in {PROPOSAL_APPLIED, PROPOSAL_AUTO_APPLIED}:
+                return MergeOutcome(
+                    status="refused",
+                    explanation=f"Cannot reverse a {proposal.status} proposal.",
+                    proposal_id=proposal_id,
+                )
+            snapshot = await unit.scalar(
+                select(models.EntityMergeSnapshot)
+                .where(
+                    models.EntityMergeSnapshot.project_id == _pid(scope),
+                    models.EntityMergeSnapshot.proposal_id == uuid.UUID(proposal_id),
+                    models.EntityMergeSnapshot.reversed_at.is_(None),
+                )
+                .with_for_update()
+            )
+            if snapshot is None:
+                raise MergeReversalConflictError("active merge snapshot is missing")
+
+            aliases_before = tuple(AliasState.from_json(value) for value in snapshot.aliases_before)
+            aliases_after = tuple(AliasState.from_json(value) for value in snapshot.aliases_after)
+            graph_before = tuple(GraphEdgeState.from_json(value) for value in snapshot.graph_before)
+            graph_after = tuple(GraphEdgeState.from_json(value) for value in snapshot.graph_after)
+            node_before = GraphNodeMergeState.from_json(snapshot.duplicate_node_before)
+            node_after = GraphNodeMergeState.from_json(snapshot.duplicate_node_after)
+            canonical_id = str(snapshot.canonical_entity_id)
+            duplicate_id = str(snapshot.duplicate_entity_id)
+            if (
+                proposal.canonical_entity_id != snapshot.canonical_entity_id
+                or proposal.duplicate_entity_id != snapshot.duplicate_entity_id
+            ):
+                raise MergeReversalConflictError("proposal changed after merge")
+            current_node_ids = await self._graph_node_ids(
+                unit,
+                scope,
+                canonical_id=canonical_id,
+                duplicate_id=duplicate_id,
+                applied=True,
+            )
+            canonical_node = snapshot.canonical_graph_node_id
+            duplicate_node = snapshot.duplicate_graph_node_id
+            if current_node_ids != (canonical_node, duplicate_node):
+                raise MergeReversalConflictError("entity identity changed after merge")
+
+            current_graph = await self._graph.active_incident_edges(
+                scope,
+                (canonical_node, duplicate_node),
+                session=unit,
+            )
+            if current_graph != graph_after:
+                raise MergeReversalConflictError("graph changed after merge")
+            current_node = await self._graph.merge_marker_state(
+                scope,
+                duplicate_node,
+                session=unit,
+            )
+            if current_node != node_after:
+                raise MergeReversalConflictError("graph node changed after merge")
+            await self._store.restore_alias_states(
+                scope,
+                canonical_id=canonical_id,
+                duplicate_id=duplicate_id,
+                before=aliases_before,
+                expected_after=aliases_after,
+                session=unit,
+            )
+            try:
+                await self._graph.restore_merged_nodes(
+                    scope,
+                    canonical_node,
+                    duplicate_node,
+                    before=graph_before,
+                    expected_after=graph_after,
+                    node_before=node_before,
+                    expected_node_after=node_after,
+                    merge_id=proposal_id,
+                    reversal_id=str(snapshot.id),
+                    session=unit,
+                )
+            except GraphMergeConflictError as exc:
+                raise MergeReversalConflictError("graph changed after merge") from exc
+
+            reversed_by = resolved_by or scope.principal_id
+            proposal.status = snapshot.previous_proposal_status
+            proposal.resolved_by = None
+            proposal.resolved_at = None
+            snapshot.reversed_at = _now()
+            snapshot.reversed_by = reversed_by
+            await record_audit_in_session(
+                unit,
+                scope,
+                action="entity_unmerge",
+                tool="entities",
+                result_count=len(graph_before),
+                trace_id=str(snapshot.id),
+            )
+        return MergeOutcome(
+            status="reversed",
+            explanation="Restored the exact pre-merge entity and graph state.",
+            proposal_id=proposal_id,
+            repointed_edges=len(graph_before),
+        )
+
+    async def _apply_proposal(
+        self,
+        scope: ProjectScope,
+        proposal_id: str,
+        *,
+        status: str,
+        resolved_by: str | None,
+    ) -> MergeOutcome:
+        """Apply all relational, graph, lifecycle, snapshot and audit effects in one transaction."""
+        async with session_scope(self._sm) as unit:
+            proposal = await self._locked_proposal(unit, scope, proposal_id)
+            if proposal is None:
+                return MergeOutcome(status="refused", explanation="Proposal not found.")
+            if proposal.status != PROPOSAL_OPEN:
+                return MergeOutcome(
+                    status="refused",
+                    explanation=f"Cannot confirm a {proposal.status} proposal.",
+                    proposal_id=proposal_id,
+                )
+            candidate = MergeCandidate(
+                canonical_id=str(proposal.canonical_entity_id),
+                duplicate_id=str(proposal.duplicate_entity_id),
+                confidence=float(proposal.confidence),
+                reason=proposal.reason or "",
+            )
+            await self._store.validate_pair(
+                scope,
+                canonical_id=candidate.canonical_id,
+                duplicate_id=candidate.duplicate_id,
+                session=unit,
+                lock=True,
+            )
+            aliases_before = await self._store.alias_states(
+                scope,
+                (candidate.canonical_id, candidate.duplicate_id),
+                session=unit,
+            )
+            canonical_node, duplicate_node = await self._graph_node_ids(
+                unit,
+                scope,
+                canonical_id=candidate.canonical_id,
+                duplicate_id=candidate.duplicate_id,
+                applied=False,
+            )
+            graph_before = await self._graph.active_incident_edges(
+                scope,
+                (canonical_node, duplicate_node),
+                session=unit,
+            )
+            node_before = await self._graph.merge_marker_state(
+                scope,
+                duplicate_node,
+                session=unit,
+            )
+            await self._store.apply_merge(
+                scope,
+                canonical_id=candidate.canonical_id,
+                duplicate_id=candidate.duplicate_id,
+                confidence=candidate.confidence,
+                session=unit,
+            )
+            edges = await self._graph.merge_nodes(
+                scope,
+                canonical_node,
+                duplicate_node,
+                merge_id=proposal_id,
+                session=unit,
+            )
+            aliases_after = await self._store.alias_states(
+                scope,
+                (candidate.canonical_id, candidate.duplicate_id),
+                session=unit,
+            )
+            graph_after = await self._graph.active_incident_edges(
+                scope,
+                (canonical_node, duplicate_node),
+                session=unit,
+            )
+            node_after = await self._graph.merge_marker_state(
+                scope,
+                duplicate_node,
+                session=unit,
+            )
+            snapshot = models.EntityMergeSnapshot(
+                project_id=_pid(scope),
+                proposal_id=proposal.id,
+                canonical_entity_id=proposal.canonical_entity_id,
+                duplicate_entity_id=proposal.duplicate_entity_id,
+                canonical_graph_node_id=canonical_node,
+                duplicate_graph_node_id=duplicate_node,
+                previous_proposal_status=proposal.status,
+                aliases_before=[state.as_json() for state in aliases_before],
+                aliases_after=[state.as_json() for state in aliases_after],
+                graph_before=[state.as_json() for state in graph_before],
+                graph_after=[state.as_json() for state in graph_after],
+                duplicate_node_before=node_before.as_json(),
+                duplicate_node_after=node_after.as_json(),
+            )
+            unit.add(snapshot)
+            proposal.status = status
+            proposal.resolved_by = resolved_by or scope.principal_id
+            proposal.resolved_at = _now()
+            await unit.flush()
+            await record_audit_in_session(
+                unit,
+                scope,
+                action="entity_merge",
+                tool="entities",
+                result_count=edges,
+                trace_id=str(snapshot.id),
+            )
         return MergeOutcome(
             status="applied",
             explanation="Merged the duplicate entity into the canonical one.",
@@ -284,78 +592,54 @@ class EntityMergeService:
             repointed_edges=edges,
         )
 
-    async def reject(
-        self, scope: ProjectScope, proposal_id: str, *, resolved_by: str | None = None
-    ) -> MergeOutcome:
-        proposal = await self._store.get_proposal(scope, proposal_id)
-        if proposal is None:
-            return MergeOutcome(status="refused", explanation="Proposal not found.")
-        if proposal.status != PROPOSAL_OPEN:
-            return MergeOutcome(
-                status="refused",
-                explanation=f"Cannot reject a {proposal.status} proposal.",
-                proposal_id=proposal_id,
+    async def _locked_proposal(
+        self,
+        session: AsyncSession,
+        scope: ProjectScope,
+        proposal_id: str,
+    ) -> models.EntityMergeProposal | None:
+        proposal: models.EntityMergeProposal | None = await session.scalar(
+            select(models.EntityMergeProposal)
+            .where(
+                models.EntityMergeProposal.id == uuid.UUID(proposal_id),
+                models.EntityMergeProposal.project_id == _pid(scope),
             )
-        await self._store.set_proposal_status(
-            scope,
-            proposal_id,
-            status=PROPOSAL_REJECTED,
-            resolved_by=resolved_by or scope.principal_id,
+            .with_for_update()
         )
-        await record_audit(
-            self._sm, scope, action="entity_merge_reject", tool="entities", result_count=0
-        )
-        return MergeOutcome(
-            status="rejected", explanation="Proposal rejected.", proposal_id=proposal_id
+        return proposal
+
+    async def _graph_node_ids(
+        self,
+        session: AsyncSession,
+        scope: ProjectScope,
+        *,
+        canonical_id: str,
+        duplicate_id: str,
+        applied: bool,
+    ) -> tuple[str, str]:
+        if applied:
+            canonical, duplicate = await self._store.locked_applied_pair(
+                scope,
+                canonical_id=canonical_id,
+                duplicate_id=duplicate_id,
+                session=session,
+            )
+        else:
+            canonical, duplicate = await self._store.validate_pair(
+                scope,
+                canonical_id=canonical_id,
+                duplicate_id=duplicate_id,
+                session=session,
+            )
+        return (
+            str(entity_id(canonical.type, canonical.name)),
+            str(entity_id(duplicate.type, duplicate.name)),
         )
 
-    async def _apply(
-        self,
-        scope: ProjectScope,
-        candidate: MergeCandidate,
-        *,
-        status: str,
-        proposal_id: str | None = None,
-        resolved_by: str | None = None,
-    ) -> int:
-        # R35: the relational merge, the graph merge and the proposal's resolution are ONE transaction.
-        # They used to be three, so a failure in the middle left an entity tombstoned as merged in
-        # Postgres, its edges still on the duplicate node in AGE, and the proposal still open for a
-        # curator to decide a merge that had already half happened.
-        async with session_scope(self._sm) as unit:
-            result = await self._store.apply_merge(
-                scope,
-                canonical_id=candidate.canonical_id,
-                duplicate_id=candidate.duplicate_id,
-                confidence=candidate.confidence,
-                session=unit,
-            )
-            # Graph node ids are deterministic uuid5(type, name) (SPEC-05); re-point the duplicate's
-            # edges onto the canonical node and tombstone the duplicate node.
-            canonical_node = str(entity_id(result.canonical_type, result.canonical_name))
-            duplicate_node = str(entity_id(result.canonical_type, result.duplicate_name))
-            edges = await self._graph.merge_nodes(
-                scope, canonical_node, duplicate_node, session=unit
-            )
-            if proposal_id is not None:
-                await self._store.set_proposal_status(
-                    scope,
-                    proposal_id,
-                    status=status,
-                    resolved_by=resolved_by or scope.principal_id,
-                    session=unit,
-                )
-        if proposal_id is None and status == PROPOSAL_AUTO_APPLIED:
-            await self._store.create_proposal(
-                scope,
-                canonical_id=candidate.canonical_id,
-                duplicate_id=candidate.duplicate_id,
-                confidence=candidate.confidence,
-                method=self._method,
-                status=PROPOSAL_AUTO_APPLIED,
-                reason=candidate.reason,
-            )
-        await record_audit(
-            self._sm, scope, action="entity_merge", tool="entities", result_count=edges
-        )
-        return edges
+
+def _now() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
+def _pid(scope: ProjectScope) -> uuid.UUID:
+    return uuid.UUID(scope.project_id)

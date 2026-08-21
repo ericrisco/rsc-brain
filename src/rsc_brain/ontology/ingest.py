@@ -16,13 +16,19 @@ from typing import Literal
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from rsc_brain.knowledge.entity_merge import EntityMergeService, MergeCandidate, choose_canonical
 from rsc_brain.ontology.index import OntologyIndex
 from rsc_brain.ontology.settings import OntologySettings, load_ontology_settings
 from rsc_brain.review.states import PROPOSAL_AUTO_APPLIED
 from rsc_brain.scope import ProjectScope
+from rsc_brain.stores.age_graph_store import AgeGraphStore, GraphMergeConflictError
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
-from rsc_brain.stores.relational.entity_store import EntityStore
+from rsc_brain.stores.relational.entity_store import (
+    EntityRow,
+    EntityStore,
+    MergeInvariantError,
+)
 
 RelationVerdict = Literal["keep", "flag", "drop"]
 
@@ -33,6 +39,12 @@ class OntologyIngest:
     def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
         self._sm = sessionmaker
         self._entities = EntityStore(sessionmaker)
+        self._merge_service = EntityMergeService(
+            store=self._entities,
+            graph=AgeGraphStore(sessionmaker),
+            sessionmaker=sessionmaker,
+            method="ontology_sameas",
+        )
         self._cache: dict[str, tuple[tuple[tuple[str, int], ...], OntologyIndex]] = {}
 
     async def settings_for(self, scope: ProjectScope) -> OntologySettings:
@@ -110,32 +122,66 @@ class OntologyIngest:
             async with session_scope(self._sm) as session:
                 await session.execute(
                     update(models.Entity)
-                    .where(models.Entity.id.in_([uuid.UUID(i) for i in ids]))
+                    .where(
+                        models.Entity.project_id == _pid(scope),
+                        models.Entity.id.in_([uuid.UUID(i) for i in ids]),
+                    )
                     .values(ontology_uri=iri, ontology_valid=True)
                 )
-        return by_iri
+        async with self._sm() as session:
+            anchored = await session.execute(
+                select(models.Entity.ontology_uri, models.Entity.id).where(
+                    models.Entity.project_id == _pid(scope),
+                    models.Entity.merged_into.is_(None),
+                    models.Entity.ontology_valid.is_(True),
+                    models.Entity.ontology_uri.is_not(None),
+                )
+            )
+            complete: dict[str, list[str]] = {}
+            for iri, entity_id in anchored:
+                if iri is not None:
+                    complete.setdefault(iri, []).append(str(entity_id))
+        return complete
 
     async def _propose_merges(self, scope: ProjectScope, by_iri: dict[str, list[str]]) -> None:
         """FR-17.3: entities that anchored to the same IRI are the same thing — propose a merge
-        (auto-applied, high confidence: an exact shared IRI is strong evidence, cf. FR-1.9)."""
-        for ids in by_iri.values():
-            if len(ids) < 2:
-                continue
-            canonical, *duplicates = sorted(ids)
-            for duplicate in duplicates:
-                _proposal_id, created = await self._entities.create_proposal(
-                    scope,
-                    canonical_id=canonical,
-                    duplicate_id=duplicate,
-                    confidence=0.99,
-                    method="ontology_sameas",
-                    status=PROPOSAL_AUTO_APPLIED,
-                    reason="shared ontology IRI (owl:sameAs / same anchor)",
+        through the same service, invariants, snapshot and audit path as every ordinary merge."""
+        all_ids = [entity_id for ids in by_iri.values() for entity_id in ids]
+        entities = {
+            entity.id: entity
+            for entity in await self._entities.active_entities_by_ids(scope, all_ids)
+        }
+        for iri, ids in sorted(by_iri.items()):
+            by_type: dict[str, list[EntityRow]] = {}
+            for entity_id in ids:
+                entity = entities.get(entity_id)
+                if entity is not None:
+                    by_type.setdefault(entity.type, []).append(entity)
+            for group in by_type.values():
+                if len(group) < 2:
+                    continue
+                canonical = choose_canonical(group)
+                duplicates = sorted(
+                    (entity for entity in group if entity.id != canonical.id),
+                    key=lambda entity: entity.id,
                 )
-                if created:
-                    await self._entities.apply_merge(
-                        scope, canonical_id=canonical, duplicate_id=duplicate, confidence=0.99
-                    )
+                for duplicate in duplicates:
+                    try:
+                        await self._merge_service.apply_candidate(
+                            scope,
+                            MergeCandidate(
+                                canonical_id=canonical.id,
+                                duplicate_id=duplicate.id,
+                                confidence=0.99,
+                                reason=f"shared ontology IRI: {iri}",
+                            ),
+                            status=PROPOSAL_AUTO_APPLIED,
+                        )
+                    except (GraphMergeConflictError, MergeInvariantError):
+                        # Anchoring is already durable and the proposal remains open when the graph
+                        # cannot be collapsed losslessly. The ingest job must not claim the entire
+                        # document failed after publication; a curator can resolve the named merge.
+                        continue
 
 
 def build_relation_decider(

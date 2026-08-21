@@ -17,6 +17,7 @@ import json
 import re
 import uuid
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -34,6 +35,57 @@ _NEIGHBORHOOD_SCAN_CAP = 5000
 
 class UnsafeIdentifierError(ValueError):
     """Raised when a label/edge-type is not a safe identifier (would need interpolation)."""
+
+
+class GraphMergeConflictError(RuntimeError):
+    """Two live edges share an identity but carry different properties; merging would lose one."""
+
+
+@dataclass(frozen=True, slots=True)
+class GraphEdgeState:
+    source_id: str
+    target_id: str
+    type: str
+    properties: Mapping[str, object]
+
+    @property
+    def identity(self) -> tuple[str, str, str]:
+        return (self.source_id, self.type, self.target_id)
+
+    def as_json(self) -> dict[str, object]:
+        return {
+            "source_id": self.source_id,
+            "target_id": self.target_id,
+            "type": self.type,
+            "properties": dict(self.properties),
+        }
+
+    @classmethod
+    def from_json(cls, value: dict[str, object]) -> GraphEdgeState:
+        properties = value.get("properties")
+        return cls(
+            source_id=str(value["source_id"]),
+            target_id=str(value["target_id"]),
+            type=str(value["type"]),
+            properties=dict(properties) if isinstance(properties, dict) else {},
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class GraphNodeMergeState:
+    exists: bool
+    markers: Mapping[str, object]
+
+    def as_json(self) -> dict[str, object]:
+        return {"exists": self.exists, "markers": dict(self.markers)}
+
+    @classmethod
+    def from_json(cls, value: dict[str, object]) -> GraphNodeMergeState:
+        markers = value.get("markers")
+        return cls(
+            exists=bool(value.get("exists", False)),
+            markers=dict(markers) if isinstance(markers, dict) else {},
+        )
 
 
 def graph_name(project_id: str) -> str:
@@ -399,10 +451,12 @@ class AgeGraphStore:
         canonical_id: str,
         duplicate_id: str,
         *,
+        merge_id: str | None = None,
         session: AsyncSession | None = None,
     ) -> int:
         """Re-point every edge of the duplicate node onto the canonical node, then tombstone the
-        duplicate (``suppressed = true`` + ``merged_into``). Returns the re-pointed edge count.
+        duplicate (``suppressed = true`` + ``merged_into``). Original edges become non-traversable
+        history; canonical copies preserve direction and every property. Returns affected edges.
 
         Self-loops and edges already between the two nodes are dropped (never a canonical→canonical
         edge). The duplicate is kept (tombstoned, not deleted) so a merge stays reversible and
@@ -415,45 +469,38 @@ class AgeGraphStore:
             await self._prepare(work)
             if not await self._graph_exists(work, graph):
                 return 0
-            out_rows = await self._cypher(
-                work,
-                graph,
-                "MATCH ({id: $dup})-[r]->(b) WHERE r.superseded IS NULL "
-                "RETURN type(r) AS t, b.id AS other",
-                {"dup": duplicate_id},
-                "t agtype, other agtype",
+            node_before = await self.merge_marker_state(scope, duplicate_id, session=work)
+            if node_before.exists and node_before.markers:
+                raise GraphMergeConflictError("duplicate node already carries merge state")
+            before = await self.active_incident_edges(
+                scope, (canonical_id, duplicate_id), session=work
             )
-            in_rows = await self._cypher(
-                work,
-                graph,
-                "MATCH (a)-[r]->({id: $dup}) WHERE r.superseded IS NULL "
-                "RETURN type(r) AS t, a.id AS other",
-                {"dup": duplicate_id},
-                "t agtype, other agtype",
-            )
-            edges: list[GraphEdge] = []
-            for etype, other in out_rows:
-                neighbour = str(_parse_agtype(other))
-                if neighbour not in (canonical_id, duplicate_id):
-                    edges.append(
-                        GraphEdge(
-                            source_id=canonical_id,
-                            target_id=neighbour,
-                            type=str(_parse_agtype(etype)),
+            by_identity = {edge.identity: edge for edge in before}
+            duplicate_edges = [
+                edge for edge in before if duplicate_id in (edge.source_id, edge.target_id)
+            ]
+            copies: list[GraphEdgeState] = []
+            for edge in duplicate_edges:
+                source = canonical_id if edge.source_id == duplicate_id else edge.source_id
+                target = canonical_id if edge.target_id == duplicate_id else edge.target_id
+                if source in (target, duplicate_id) or target == duplicate_id:
+                    continue
+                copy = GraphEdgeState(source, target, edge.type, dict(edge.properties))
+                existing = by_identity.get(copy.identity)
+                if existing is not None:
+                    if dict(existing.properties) != dict(copy.properties):
+                        raise GraphMergeConflictError(
+                            "edge identity collision has conflicting properties"
                         )
-                    )
-            for etype, other in in_rows:
-                neighbour = str(_parse_agtype(other))
-                if neighbour not in (canonical_id, duplicate_id):
-                    edges.append(
-                        GraphEdge(
-                            source_id=neighbour,
-                            target_id=canonical_id,
-                            type=str(_parse_agtype(etype)),
-                        )
-                    )
-            if edges:
-                await self.upsert_edges(scope, edges, session=work)
+                    continue
+                by_identity[copy.identity] = copy
+                copies.append(copy)
+
+            for edge in copies:
+                await self._activate_edge(work, graph, edge)
+            correlation = merge_id or "legacy-merge"
+            for edge in duplicate_edges:
+                await self._retire_edge(work, graph, edge, correlation)
             await self._cypher(
                 work,
                 graph,
@@ -461,7 +508,211 @@ class AgeGraphStore:
                 {"dup": duplicate_id, "canon": canonical_id},
                 "v agtype",
             )
-        return len(edges)
+        return len(duplicate_edges)
+
+    async def active_incident_edges(
+        self,
+        scope: ProjectScope,
+        node_ids: Sequence[str],
+        *,
+        session: AsyncSession | None = None,
+    ) -> tuple[GraphEdgeState, ...]:
+        ids = list(dict.fromkeys(node_ids))
+        if not ids:
+            return ()
+        graph = graph_name(scope.project_id)
+        async with maybe_session_scope(self._sm, session) as work:
+            await self._prepare(work)
+            if not await self._graph_exists(work, graph):
+                return ()
+            rows = await self._cypher(
+                work,
+                graph,
+                "MATCH (a)-[r]->(b) WHERE r.superseded IS NULL "
+                "AND (a.id IN $ids OR b.id IN $ids) "
+                "RETURN a.id AS s, type(r) AS t, b.id AS o, properties(r) AS p",
+                {"ids": ids},
+                "s agtype, t agtype, o agtype, p agtype",
+            )
+        edges: list[GraphEdgeState] = []
+        for source, etype, target, properties in rows:
+            parsed = _parse_agtype(properties)
+            edges.append(
+                GraphEdgeState(
+                    source_id=str(_parse_agtype(source)),
+                    target_id=str(_parse_agtype(target)),
+                    type=str(_parse_agtype(etype)),
+                    properties=parsed if isinstance(parsed, dict) else {},
+                )
+            )
+        return tuple(
+            sorted(
+                edges,
+                key=lambda edge: (
+                    edge.source_id,
+                    edge.type,
+                    edge.target_id,
+                    json.dumps(dict(edge.properties), sort_keys=True),
+                ),
+            )
+        )
+
+    async def merge_marker_state(
+        self,
+        scope: ProjectScope,
+        node_id: str,
+        *,
+        session: AsyncSession | None = None,
+    ) -> GraphNodeMergeState:
+        graph = graph_name(scope.project_id)
+        async with maybe_session_scope(self._sm, session) as work:
+            await self._prepare(work)
+            if not await self._graph_exists(work, graph):
+                return GraphNodeMergeState(False, {})
+            rows = await self._cypher(
+                work,
+                graph,
+                "MATCH (n {id: $id}) RETURN properties(n) AS p",
+                {"id": node_id},
+                "p agtype",
+            )
+        if not rows:
+            return GraphNodeMergeState(False, {})
+        properties = _parse_agtype(rows[0][0])
+        if not isinstance(properties, dict):
+            return GraphNodeMergeState(True, {})
+        markers = {
+            key: properties[key] for key in ("suppressed", "merged_into") if key in properties
+        }
+        return GraphNodeMergeState(True, markers)
+
+    async def restore_merged_nodes(
+        self,
+        scope: ProjectScope,
+        canonical_id: str,
+        duplicate_id: str,
+        *,
+        before: Sequence[GraphEdgeState],
+        expected_after: Sequence[GraphEdgeState],
+        node_before: GraphNodeMergeState,
+        expected_node_after: GraphNodeMergeState,
+        merge_id: str,
+        reversal_id: str,
+        session: AsyncSession,
+    ) -> None:
+        current = await self.active_incident_edges(
+            scope, (canonical_id, duplicate_id), session=session
+        )
+        if current != tuple(expected_after):
+            raise GraphMergeConflictError("active graph changed after merge")
+        current_node = await self.merge_marker_state(scope, duplicate_id, session=session)
+        if current_node != expected_node_after:
+            raise GraphMergeConflictError("merge node markers changed after merge")
+        graph = graph_name(scope.project_id)
+        await self._prepare(session)
+        if not await self._graph_exists(session, graph):
+            if before or expected_after:
+                raise GraphMergeConflictError("graph disappeared after merge")
+            return
+        before_by_id = {edge.identity: edge for edge in before}
+        after_by_id = {edge.identity: edge for edge in expected_after}
+        for identity in sorted(set(after_by_id) - set(before_by_id)):
+            await self._retire_created_edge(
+                session,
+                graph,
+                after_by_id[identity],
+                reversal_id,
+            )
+        for edge in before:
+            if duplicate_id in (edge.source_id, edge.target_id):
+                await self._reactivate_edge(session, graph, edge, merge_id)
+        await self._cypher(
+            session,
+            graph,
+            "MATCH (n {id: $dup}) REMOVE n.suppressed, n.merged_into",
+            {"dup": duplicate_id},
+            "v agtype",
+        )
+        restored = await self.active_incident_edges(
+            scope, (canonical_id, duplicate_id), session=session
+        )
+        if restored != tuple(before):
+            raise GraphMergeConflictError("graph could not be restored to its merge snapshot")
+        restored_node = await self.merge_marker_state(scope, duplicate_id, session=session)
+        if restored_node != node_before:
+            raise GraphMergeConflictError("merge node markers could not be restored")
+
+    async def _activate_edge(self, session: AsyncSession, graph: str, edge: GraphEdgeState) -> None:
+        etype = safe_identifier(edge.type)
+        set_frag, set_params = _assignments("r", edge.properties, "p")
+        cypher = (
+            f"MATCH (a {{id: $src}}), (b {{id: $dst}}) CREATE (a)-[r:{etype}]->(b) "
+            "REMOVE r.superseded, r.merge_superseded_by, r.merge_reversed_by"
+        )
+        if set_frag:
+            cypher += f" SET {set_frag}"
+        await self._cypher(
+            session,
+            graph,
+            cypher,
+            {"src": edge.source_id, "dst": edge.target_id, **set_params},
+            "v agtype",
+        )
+
+    async def _retire_edge(
+        self, session: AsyncSession, graph: str, edge: GraphEdgeState, correlation: str
+    ) -> None:
+        etype = safe_identifier(edge.type)
+        await self._cypher(
+            session,
+            graph,
+            f"MATCH (a {{id: $src}})-[r:{etype}]->(b {{id: $dst}}) "
+            "WHERE r.superseded IS NULL "
+            "SET r.superseded = true, r.merge_superseded_by = $merge",
+            {"src": edge.source_id, "dst": edge.target_id, "merge": correlation},
+            "v agtype",
+        )
+
+    async def _reactivate_edge(
+        self,
+        session: AsyncSession,
+        graph: str,
+        edge: GraphEdgeState,
+        merge_id: str,
+    ) -> None:
+        etype = safe_identifier(edge.type)
+        await self._cypher(
+            session,
+            graph,
+            f"MATCH (a {{id: $src}})-[r:{etype}]->(b {{id: $dst}}) "
+            "WHERE r.merge_superseded_by = $merge "
+            "REMOVE r.superseded, r.merge_superseded_by, r.merge_reversed_by",
+            {"src": edge.source_id, "dst": edge.target_id, "merge": merge_id},
+            "v agtype",
+        )
+
+    async def _retire_created_edge(
+        self,
+        session: AsyncSession,
+        graph: str,
+        edge: GraphEdgeState,
+        reversal_id: str,
+    ) -> None:
+        etype = safe_identifier(edge.type)
+        await self._cypher(
+            session,
+            graph,
+            f"MATCH (a {{id: $src}})-[r:{etype}]->(b {{id: $dst}}) "
+            "WHERE r.superseded IS NULL "
+            "SET r.superseded = true, r.merge_reversed_by = $reversal "
+            "REMOVE r.merge_superseded_by",
+            {
+                "src": edge.source_id,
+                "dst": edge.target_id,
+                "reversal": reversal_id,
+            },
+            "v agtype",
+        )
 
     async def relation_triples(
         self, scope: ProjectScope, *, limit: int = 1000
