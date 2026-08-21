@@ -354,9 +354,24 @@ async def test_real_mcp_recall_and_skill_have_no_guardrail_opt_out(
     context = _context(token)
 
     await _seed_claim(harness, project, "payroll production skill")
+    # AUDIT-017: a skill's context comes only from its declared dependencies, so the skill has to
+    # depend on the hr topic for the seeded fragment to be eligible at all. Without it there is no
+    # context to screen and this test would pass while proving nothing about the guardrail.
+    async with harness.sm() as session:
+        hr_topic_id = await session.scalar(
+            select(models.Topic.id).where(
+                models.Topic.project_id == uuid.UUID(project), models.Topic.slug == "hr"
+            )
+        )
+    assert hr_topic_id is not None
     await SkillStore(harness.sm).create(
         scope,
-        SkillFrontmatter(slug="payroll", title="payroll production skill", tags=["hr"]),
+        SkillFrontmatter(
+            slug="payroll",
+            title="payroll production skill",
+            tags=["hr"],
+            depends_on=[str(hr_topic_id)],
+        ),
         "authorized instructions",
     )
     skill_output = await server._tool_manager.get_tool("run_skill").fn(  # type: ignore[union-attr]
