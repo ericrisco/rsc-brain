@@ -98,19 +98,23 @@ jobs:
         run: npm audit --audit-level=high
 
   # Primary multi-ecosystem SCA. Explicit lock paths make absent/unscanned coverage an error, and
-  # the reusable scanner's default error handling remains fail-closed. SARIF upload is deliberately
-  # disabled so this read-only workflow does not need security-events write permission.
+  # the scanner's own non-zero exit keeps it fail-closed.
+  #
+  # This calls the scanner ACTION, not the project's reusable workflow. The reusable workflow's job
+  # declares `security-events: write` unconditionally — even with `upload-sarif: false` — and a
+  # called workflow may not request more than its caller is granted, so this whole file failed to
+  # start (`startup_failure`) while every local gate stayed green. The action needs nothing beyond
+  # the workflow-wide `contents: read`, which is the posture AUDIT-006 and AUDIT-013 asked for.
   osv:
     name: dependency audit (OSV · Python + npm)
-    permissions:
-      contents: read
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8deb546fdb875b9996d27d4950be7312dac076a1 # v2.5.0
-    with:
-      scan-args: |-
-        --lockfile=./uv.lock
-        --lockfile=./apps/admin/package-lock.json
-      fail-on-vuln: true
-      upload-sarif: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: google/osv-scanner-action/osv-scanner-action@8deb546fdb875b9996d27d4950be7312dac076a1 # v2.5.0
+        with:
+          scan-args: |-
+            --lockfile=./uv.lock
+            --lockfile=./apps/admin/package-lock.json
 
   integration:
     name: data service (real Postgres+AGE+pgvector)

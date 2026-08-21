@@ -179,3 +179,27 @@ def test_dependabot_reviews_action_identity_updates() -> None:
     assert len(github_actions) == 1
     assert github_actions[0].get("directory") == "/"
     assert (github_actions[0].get("schedule") or {}).get("interval") in {"daily", "weekly"}
+
+
+def test_no_job_calls_a_third_party_reusable_workflow() -> None:
+    """A called workflow's own permission demands are invisible to this file.
+
+    `osv-scanner-reusable.yml` declares `security-events: write` on its job even when SARIF upload
+    is switched off, and a called workflow may not request more than its caller was granted — so
+    GitHub refused to start the entire workflow (`startup_failure`) while every local gate here
+    stayed green. Nothing in this repository could see that, because the demand lived in another
+    repository's file. Calling the action instead keeps the permission surface reviewable here.
+
+    A local call (`./.github/workflows/ci.yml`, the release rehearsal) is fine: its permissions are
+    asserted a few tests above this one.
+    """
+    for path in (CI, RELEASE):
+        for name, job in _jobs(path).items():
+            called = job.get("uses")
+            if called is None:
+                continue
+            assert str(called).startswith("./"), (
+                f"{path.name}:{name} calls the third-party reusable workflow {called!r}; its "
+                "permission demands cannot be reviewed here and cap-fail at workflow startup. "
+                "Call the action inside a job instead."
+            )
