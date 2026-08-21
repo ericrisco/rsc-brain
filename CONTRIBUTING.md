@@ -57,8 +57,12 @@ npm run gen:api
 npm run lint
 npm run typecheck
 npm run build
-npm audit --omit=dev --audit-level=high
+npm audit --audit-level=high
 ```
+
+CI additionally runs pinned OSV-Scanner over both `uv.lock` and
+`apps/admin/package-lock.json`. A missing lockfile, scanner error, or reported vulnerability fails
+that job; a production-only npm audit is not a substitute because build tools execute in CI.
 
 Do not report a skipped or unavailable environment check as a pass. The CI workflow is the source of
 truth for merge gates; [Security Policy](SECURITY.md) maps the current jobs.

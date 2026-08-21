@@ -54,7 +54,7 @@ npm run typecheck
 | Public documentation | `uv run python scripts/check_docs.py` and `uv run pytest tests/unit/test_documentation.py` |
 | REST contract | `uv run python scripts/export_openapi.py`, then inspect `apps/admin/openapi.json` |
 | Console | `npm run gen:api`, `npm run lint`, `npm run typecheck`, `npm run build` in `apps/admin` |
-| Dependencies | `uv run pip-audit`, `uv run python scripts/check_licenses.py`, and production `npm audit` |
+| Dependencies | `uv run pip-audit`, `uv run python scripts/check_licenses.py`, full-lock `npm audit --audit-level=high`, and CI OSV coverage of both lockfiles |
 | Full data layer | Real PostgreSQL 16 + AGE + pgvector integration suite |
 | Deployment | Caddy edge traversal, Compose/Helm parity, Helm lint, and rendered-schema validation |
 

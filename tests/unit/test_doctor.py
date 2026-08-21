@@ -20,17 +20,19 @@ def test_detect_tls_warns_without_a_public_domain() -> None:
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+API_KEY_FIXTURE = "sk-ABCDEFGH1234567890abcdef"  # gitleaks:allow -- detector fixture
+PASSWORD_FIXTURE = "hunter2-real-value"  # gitleaks:allow -- detector fixture
 
 
 def test_flags_populated_api_key_and_key_shaped_token() -> None:
-    findings = scan_text("config.yaml", "api_key: sk-ABCDEFGH1234567890abcdef\n")
+    findings = scan_text("config.yaml", f"api_key: {API_KEY_FIXTURE}\n")
     assert findings
     reasons = {f.reason for f in findings}
     assert any("api_key" in r or "key-shaped" in r for r in reasons)
 
 
 def test_flags_populated_password() -> None:
-    assert scan_text("config.yaml", "password: hunter2-real-value")
+    assert scan_text("config.yaml", f"password: {PASSWORD_FIXTURE}")
 
 
 def test_ignores_placeholders_and_env_refs() -> None:
@@ -40,7 +42,7 @@ def test_ignores_placeholders_and_env_refs() -> None:
 
 
 def test_ignores_comments() -> None:
-    assert scan_text("config.yaml", "# api_key: sk-ABCDEFGH1234567890abcdef") == []
+    assert scan_text("config.yaml", f"# api_key: {API_KEY_FIXTURE}") == []
 
 
 def test_example_config_is_clean() -> None:

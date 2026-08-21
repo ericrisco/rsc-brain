@@ -466,7 +466,7 @@ async def test_manual_hunt_persists_topics_and_replays_idempotently(
             },
         )
         owner_id = _string_field(_object(owner), "person_id") or str(uuid.uuid4())
-        request_headers = {**headers, "Idempotency-Key": "hunt-topics-001"}
+        request_headers = {**headers, "Idempotency-Key": "test-value"}
         first = await client.post(
             f"/api/v1/admin/hunts/ask?project={slug}",
             headers=request_headers,

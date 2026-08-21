@@ -23,6 +23,14 @@ All notable changes to this project are documented here. The format follows
 - Released chart schema `0.14.0`: top-level Helm `extraEnv` now reaches only API and worker;
   console-only values move to `console.extraEnv`. Application images remain at `0.13.0`.
 
+### Security
+
+- Remediated the admin lockfile's current high `js-yaml`, `brace-expansion`, and Redocly findings;
+  full-lock npm audit and pinned OSV now fail CI across the Python and npm dependency graphs.
+- Replaced global secret-literal suppression with reasoned line-local fixtures and four exact
+  historical fingerprints, and added explicit three-day Dependabot cooldowns for every configured
+  ecosystem including the admin console.
+
 ### Fixed
 
 - Served streamable HTTP MCP at the documented `/mcp` path and retained DNS-rebinding protection

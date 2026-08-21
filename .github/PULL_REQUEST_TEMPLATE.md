@@ -9,7 +9,7 @@
 - [ ] `uv run ruff check .` and `uv run ruff format --check src tests` clean
 - [ ] `uv run mypy` clean (strict)
 - [ ] `uv run pytest` green with **≥70%** coverage; new behaviour has tests
-- [ ] `uv run pip-audit` and `uv run python scripts/check_licenses.py` pass
+- [ ] `uv run pip-audit`, full-lock `npm audit --audit-level=high`, and the license audit pass
 - [ ] Docs / CHANGELOG claim only what is observable in this change (no premature "done")
 - [ ] No bare `project_id` reaches a store/recall/ingest call (`ProjectScope` only, AUDIT-003)
 - [ ] Model routing is not driven by call data (AUDIT-005)
