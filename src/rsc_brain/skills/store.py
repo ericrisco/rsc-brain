@@ -13,9 +13,12 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import select, text, update
+from sqlalchemy import or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
+from rsc_brain.ingest.entity_resolution import entity_id
+from rsc_brain.recall.permissions import chunk_visibility_clause, sensitive_tags
 from rsc_brain.scope import ProjectScope
 from rsc_brain.skills.frontmatter import SkillFrontmatter
 from rsc_brain.stores.relational import models
@@ -198,23 +201,112 @@ class SkillStore:
             return [_row(skill) for skill in await session.scalars(query)]
 
     async def list_visible(self, scope: ProjectScope, forbidden: frozenset[str]) -> list[SkillRow]:
-        """Active skills whose tag-set the caller may see (FR-4.14): overlaps ``allowed_topics`` and
-        carries no forbidden sensitive tag the caller doesn't own."""
-        allowed = sorted(scope.allowed_topics)
-        forbidden_here = sorted(forbidden - scope.allowed_topics)
+        """Active skills only when the caller owns their complete, indivisible tag set."""
+        del forbidden  # Full-set authority subsumes the former sensitive-tag overlap check.
         query = (
             select(models.Skill)
             .where(
                 models.Skill.project_id == _pid(scope),
                 models.Skill.state == "active",
-                models.Skill.tags.op("&&")(allowed),
+                fully_authorized_topic_clause(models.Skill.tags, scope),
             )
             .order_by(models.Skill.slug)
         )
-        if forbidden_here:
-            query = query.where(~models.Skill.tags.op("&&")(forbidden_here))
         async with self._sm() as session:
             return [_row(s) for s in await session.scalars(query)]
+
+    async def eligible_context_chunk_ids(self, scope: ProjectScope, skill: SkillRow) -> list[str]:
+        """Resolve same-project dependencies to authorized recall candidate chunks.
+
+        Entity dependencies map through their canonical row to the deterministic typed endpoint
+        key carried by claims. Topic dependencies map to the topic slug carried by chunks. An
+        invalid, foreign, or absent dependency contributes nothing; there is never a descriptive
+        broad-search fallback.
+        """
+        dependency_ids: list[uuid.UUID] = []
+        for dependency in skill.depends_on:
+            try:
+                dependency_ids.append(uuid.UUID(dependency))
+            except ValueError:
+                continue
+        if not dependency_ids or not skill.tags:
+            return []
+
+        project_id = _pid(scope)
+        forbidden = await sensitive_tags(self._sm, scope.project_id)
+        async with self._sm() as session:
+            entities = {
+                entity.id: entity
+                for entity in await session.scalars(
+                    select(models.Entity).where(
+                        models.Entity.project_id == project_id,
+                        models.Entity.id.in_(dependency_ids),
+                    )
+                )
+            }
+            topic_slugs = list(
+                await session.scalars(
+                    select(models.Topic.slug).where(
+                        models.Topic.project_id == project_id,
+                        models.Topic.id.in_(dependency_ids),
+                    )
+                )
+            )
+
+            entity_keys: set[uuid.UUID] = set()
+            for dependency_entity in entities.values():
+                seen: set[uuid.UUID] = set()
+                entity: models.Entity | None = dependency_entity
+                while (
+                    entity is not None and entity.merged_into is not None and entity.id not in seen
+                ):
+                    seen.add(entity.id)
+                    canonical = await session.scalar(
+                        select(models.Entity).where(
+                            models.Entity.project_id == project_id,
+                            models.Entity.id == entity.merged_into,
+                        )
+                    )
+                    if canonical is None:
+                        entity = None
+                        break
+                    entity = canonical
+                if entity is not None and entity.id not in seen:
+                    entity_keys.add(entity_id(entity.type, entity.name))
+
+            dependency_clauses: list[ColumnElement[bool]] = []
+            if topic_slugs:
+                dependency_clauses.append(models.Chunk.tags.op("&&")(sorted(topic_slugs)))
+            if entity_keys:
+                now = dt.datetime.now(dt.UTC)
+                entity_claim_chunks = select(models.Claim.chunk_id).where(
+                    models.Claim.project_id == project_id,
+                    models.Claim.chunk_id.is_not(None),
+                    models.Claim.pending_confirmation.is_(False),
+                    or_(models.Claim.valid_from.is_(None), models.Claim.valid_from <= now),
+                    or_(models.Claim.valid_to.is_(None), models.Claim.valid_to > now),
+                    or_(
+                        models.Claim.subject_entity_key.in_(entity_keys),
+                        models.Claim.object_entity_key.in_(entity_keys),
+                    ),
+                )
+                dependency_clauses.append(models.Chunk.id.in_(entity_claim_chunks))
+            if not dependency_clauses:
+                return []
+
+            rows = await session.scalars(
+                select(models.Chunk.id)
+                .where(
+                    chunk_visibility_clause(scope, forbidden),
+                    fully_authorized_topic_clause(models.Chunk.tags, scope),
+                    models.Chunk.tags.op("&&")(list(skill.tags)),
+                    models.Chunk.embedding.is_not(None),
+                    models.Chunk.needs_review.is_(False),
+                    or_(*dependency_clauses),
+                )
+                .order_by(models.Chunk.id)
+            )
+            return [str(chunk_id) for chunk_id in rows]
 
     async def update(
         self, scope: ProjectScope, slug: str, frontmatter: SkillFrontmatter, body: str
