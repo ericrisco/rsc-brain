@@ -64,6 +64,7 @@ def canned_completion(
     relations: list[dict[str, Any]] | None = None,
     claims: list[dict[str, Any]] | None = None,
     tags: list[str] | None = None,
+    guardrail_topic: str | None = None,
     invalid_for: str | None = None,
 ) -> CompletionFn:
     """A completion fn that answers by the requested structured schema. If ``invalid_for`` text
@@ -96,6 +97,14 @@ def canned_completion(
         conversation = " ".join(str(m.get("content", "")) for m in messages)
         if invalid_for and invalid_for in conversation and name.endswith("Extraction"):
             return completion_response("this is not valid json for the schema")
+        if name == "GuardrailClassification":
+            try:
+                request = json.loads(str(messages[-1].get("content", "{}")))
+                count = len(request) if isinstance(request, list) else 0
+            except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+                count = 0
+            topic = guardrail_topic if guardrail_topic is not None else (tags[0] if tags else None)
+            return completion_response(json.dumps({"topics": [topic] * count}))
         return completion_response(json.dumps(payloads.get(name, {})))
 
     return _fn

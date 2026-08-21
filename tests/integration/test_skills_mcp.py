@@ -45,8 +45,10 @@ class FakeClassifier:
     def __init__(self, verdict: str | None) -> None:
         self._verdict = verdict
 
-    async def classify(self, text: str, candidate_topics: Sequence[str]) -> str | None:
-        return self._verdict
+    async def classify_many(
+        self, texts: Sequence[str], candidate_topics: Sequence[str]
+    ) -> Sequence[str | None]:
+        return [self._verdict] * len(texts)
 
 
 async def _seed_chunk_claim(harness: Harness, project_id: str, text: str, tags: list[str]) -> str:

@@ -307,6 +307,7 @@ class ProductKnowledgeMetrics(BaseModel):
 class ProductHealthMetrics(BaseModel):
     extraction_errors: int
     recall_p95_ms: float | None
+    guardrail_p95_ms: float | None
     tokens_by_capability: dict[str, int]
 
 

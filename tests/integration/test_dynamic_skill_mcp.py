@@ -24,6 +24,7 @@ from rsc_brain.skills.frontmatter import SkillFrontmatter
 from rsc_brain.skills.store import SkillStore
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.store import PgRelationalStore
+from tests.conftest import canned_completion
 
 from .conftest import Harness, unique_slug
 
@@ -350,7 +351,9 @@ async def test_tools_list_discovers_only_the_visible_active_dynamic_skill(
 async def test_generic_and_dynamic_invocation_share_dependency_context_and_audit(
     build_harness: Callable[..., Harness],
 ) -> None:
-    harness = build_harness()
+    # AUDIT-016 screens every skill context, so the classifier double has to agree with the
+    # fragment's real topic; otherwise the guardrail correctly drops evidence this test needs.
+    harness = build_harness(completion=canned_completion(guardrail_topic="general"))
     project_id = await harness.setup_project(unique_slug("equivalent"), TOPICS)
     admin = harness.scope(project_id, allowed_topics=["general", "engineering", "hr"])
     async with harness.sm() as session:

@@ -154,11 +154,29 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     engine: AsyncEngine | None = None
     if deps is None:
         deps, engine = _deps_from_config()
+    from rsc_brain.hunting.factory import build_hunt_service, build_hunt_service_from_config
+    from rsc_brain.recall.guardrail_alerts import GuardrailAlertService
+
+    hunting = deps.hunting
+    if hunting is None:
+        hunt_service = build_hunt_service(deps.sessionmaker, gateway=deps.gateway)
+    else:
+        hunt_service = build_hunt_service_from_config(
+            deps.sessionmaker,
+            hunting=hunting,
+            public_origin=deps.ingress.public_origin if deps.ingress else None,
+            gateway=deps.gateway,
+        )
     mcp_server = build_mcp_server(
         sessionmaker=deps.sessionmaker,
         retriever=deps.retriever(),
         gateway=deps.gateway,
         public_origin=deps.ingress.public_origin if deps.ingress else None,
+        guardrail_alerts=GuardrailAlertService(
+            deps.sessionmaker,
+            channel=hunt_service.channel,
+            can_deliver=hunt_service.can_deliver,
+        ),
     )
 
     @asynccontextmanager
@@ -221,17 +239,8 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     from rsc_brain.api.hunt import router as hunt_router
     from rsc_brain.api.management import auth_router as management_auth_router
     from rsc_brain.api.management import router as management_router
-    from rsc_brain.hunting.factory import build_hunt_service
 
-    hunting = deps.hunting
-    app.state.hunts = build_hunt_service(
-        deps.sessionmaker,
-        channel=hunting.channel if hunting else None,
-        smtp=hunting.smtp.model_dump() if hunting and hunting.smtp else None,
-        slack=hunting.slack.model_dump() if hunting and hunting.slack else None,
-        public_origin=deps.ingress.public_origin if deps.ingress else None,
-        gateway=deps.gateway,
-    )
+    app.state.hunts = hunt_service
     app.include_router(hunt_router)
     # The versioned governance surface intentionally precedes the legacy admin router: matching
     # lifecycle paths are owned by the stricter optimistic/idempotent contract, while every other

@@ -163,7 +163,7 @@ Platform operations ignore it; it cannot switch or widen their identity-only sco
 | `GET /api/v1/admin/audit` | `project.manage.read` | Optional `action`, `tool`, `principal_type`, `principal_id`, `denied`, `since`, `until`, and `project`; `limit` 1–200, default 100. | `200`; topic-filtered audit rows, newest first. Dates accept ISO date or timestamp strings. |
 | `GET /api/v1/admin/audit/export` | `project.manage.read` | Same filters; `limit` 1–10,000, default 10,000; optional `project`. | `200` CSV attachment. Export uses the same topic filter as list and records an export audit entry. |
 | `GET /api/v1/admin/usage` | `usage.read` | `days` 1–365, default 7; optional `project`. | `200`; per-capability and day usage for the scoped project. |
-| `GET /api/v1/admin/metrics/product` | `knowledge.read` | `window_days` 1–365, default 30; optional `project`. | `200`; adoption, quality, knowledge, and health metric families. |
+| `GET /api/v1/admin/metrics/product` | `knowledge.read` | `window_days` 1–365, default 30; optional `project`. | `200`; adoption, quality, knowledge, and health metric families. Health reports recall and final-context guardrail p95 separately. |
 | `GET /api/v1/admin/observability/activity` | `knowledge.read` | Optional `project`. | `200`; authorized recall totals, denied count, active principals, p95 duration, and daily counts. |
 | `GET /api/v1/admin/observability/recalls` | `knowledge.read` | Optional `principal_type`, `denied`, and `project`; `limit` 1–200, default 100. | `200`; authorized recall audit stream. |
 | `GET /api/v1/admin/observability/health` | `knowledge.read` | Optional `project`. | `200`; database state, pending-approval count, and ingest-error count for the project. |

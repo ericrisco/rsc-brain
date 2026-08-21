@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from rsc_brain.gateway.model_gateway import ModelGateway
     from rsc_brain.hunting.service import HuntService
     from rsc_brain.recall.guardrail import TopicClassifier
+    from rsc_brain.recall.guardrail_alerts import GuardrailAlertService
     from rsc_brain.stores.age_graph_store import AgeGraphStore
 
 FeedbackSignal = Literal["helpful", "wrong", "outdated"]
@@ -50,6 +51,8 @@ class RecallFragment(BaseModel):
     text: str
     claim_ids: list[str] = Field(default_factory=list)
     document: str
+    document_id: str = ""
+    chunk_id: str = ""
     page: int | None = None
     credibility: float
     tags: list[str] = Field(default_factory=list)
@@ -177,6 +180,8 @@ def _fragment_from_provenance(fragment: Fragment, credibility_fallback: float) -
         text=fragment.text,
         claim_ids=[str(c) for c in cast("list[object]", prov.get("claim_ids", []))],
         document=str(prov.get("document", "")),
+        document_id=fragment.document_id,
+        chunk_id=str(prov.get("chunk_id", "")),
         page=cast("int | None", prov.get("page")),
         credibility=float(cast("float", prov.get("credibility", credibility_fallback))),
         tags=[str(t) for t in cast("list[object]", prov.get("tags", []))],
@@ -204,6 +209,8 @@ async def do_recall(
     as_of: str | None = None,
     include_historical: bool = False,
     include_superseded: bool = False,
+    classifier: TopicClassifier | None = None,
+    guardrail_alerts: GuardrailAlertService | None = None,
 ) -> RecallOutput:
     # Temporal params (SPEC-13, FR-16.7): as_of is an ISO date; include_superseded is honoured only
     # for an admin (the retriever gates it on scope.can_curate, scope-from-token).
@@ -218,8 +225,17 @@ async def do_recall(
         include_historical=include_historical,
         include_superseded=include_superseded,
     )
-    duration_ms = int((time.monotonic() - started) * 1000)
     output = to_recall_output(result)
+    if classifier is not None:
+        fragments = await _apply_guardrail(
+            sessionmaker,
+            scope,
+            output.fragments,
+            classifier,
+            guardrail_alerts=guardrail_alerts,
+        )
+        output = output.model_copy(update={"found": bool(fragments), "fragments": fragments})
+    duration_ms = int((time.monotonic() - started) * 1000)
     # Store the raw text only when the project opts in (FR-13.9); otherwise just the hash.
     log_text = await audit.query_text_logging_enabled(sessionmaker, scope.project_id)
     await audit.record_audit(
@@ -315,6 +331,7 @@ async def do_run_skill(
     args: dict[str, object] | None = None,
     classifier: TopicClassifier | None = None,
     tool_name: str = "run_skill",
+    guardrail_alerts: GuardrailAlertService | None = None,
 ) -> RunSkillOutput:
     """Return a skill's instructions + its supporting fragments (built with the SPEC-06 retriever
     over the skill's tags — 'like recall', same in-query permission filter). A skill the caller
@@ -342,7 +359,13 @@ async def do_run_skill(
     )
     fragments = to_recall_output(result).fragments
     if classifier is not None:
-        fragments = await _apply_guardrail(sessionmaker, scope, fragments, classifier)
+        fragments = await _apply_guardrail(
+            sessionmaker,
+            scope,
+            fragments,
+            classifier,
+            guardrail_alerts=guardrail_alerts,
+        )
     fragments = _bounded_skill_context(fragments)
     duration_ms = int((time.monotonic() - started) * 1000)
     await audit.record_audit(
@@ -376,27 +399,48 @@ async def _apply_guardrail(
     scope: ProjectScope,
     fragments: list[RecallFragment],
     classifier: TopicClassifier,
+    *,
+    guardrail_alerts: GuardrailAlertService | None = None,
 ) -> list[RecallFragment]:
     """FR-4.4: drop mislabeled fragments, mark their chunks needs_review, alert the admin."""
     from rsc_brain.recall.guardrail import screen_fragments
     from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
 
+    if not fragments:
+        return []
     async with sessionmaker() as session:
         topics = list(
             await session.scalars(
-                select(models.Topic.slug).where(
-                    models.Topic.project_id == uuid.UUID(scope.project_id)
-                )
+                select(models.Topic.slug)
+                .where(models.Topic.project_id == uuid.UUID(scope.project_id))
+                .order_by(models.Topic.slug)
             )
         )
+    started = time.monotonic()
     result = await screen_fragments(
         fragments,
         allowed_topics=scope.allowed_topics,
         project_topics=topics,
         classifier=classifier,
     )
+    guardrail_duration_ms = int((time.monotonic() - started) * 1000)
+    await audit.record_audit(
+        sessionmaker,
+        scope,
+        action="guardrail:screened",
+        tool="guardrail",
+        duration_ms=guardrail_duration_ms,
+        result_count=len(result.dropped),
+        denied=bool(result.dropped),
+    )
     if result.dropped:
-        await KnowledgeStore(sessionmaker).flag_claims_needs_review(scope, result.flagged_claim_ids)
+        local_claim_ids, local_chunk_ids = await KnowledgeStore(
+            sessionmaker
+        ).flag_claims_needs_review(
+            scope,
+            result.flagged_claim_ids,
+            chunk_ids=result.flagged_chunk_ids,
+        )
         await audit.record_audit(
             sessionmaker,
             scope,
@@ -405,6 +449,13 @@ async def _apply_guardrail(
             result_count=len(result.dropped),
             denied=True,
         )
+        if guardrail_alerts is not None and (local_claim_ids or local_chunk_ids):
+            await guardrail_alerts.notify(
+                scope,
+                local_claim_ids,
+                chunk_ids=local_chunk_ids,
+                reason=result.reason,
+            )
     return result.kept
 
 

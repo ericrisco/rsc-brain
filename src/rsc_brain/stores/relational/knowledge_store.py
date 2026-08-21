@@ -320,27 +320,69 @@ class KnowledgeStore:
                 reason="contradiction disputed",
             )
 
-    async def flag_claims_needs_review(self, scope: ProjectScope, claim_ids: Sequence[str]) -> None:
+    async def flag_claims_needs_review(
+        self,
+        scope: ProjectScope,
+        claim_ids: Sequence[str],
+        *,
+        chunk_ids: Sequence[str] = (),
+    ) -> tuple[list[str], list[str]]:
         """Mark the chunks behind the given claims ``needs_review`` (SPEC-20 FR-4.4 guardrail: a
         mislabeled fragment the secondary classifier dropped). Excludes them from recall until
         re-approved; surfaced in the SPEC-21 review queue."""
-        if not claim_ids:
-            return
+        parsed_claims: list[uuid.UUID] = []
+        for claim_id in claim_ids:
+            try:
+                parsed_claims.append(uuid.UUID(claim_id))
+            except (TypeError, ValueError):
+                continue
+        parsed_chunks: list[uuid.UUID] = []
+        for chunk_id in chunk_ids:
+            try:
+                parsed_chunks.append(uuid.UUID(chunk_id))
+            except (TypeError, ValueError):
+                continue
+        if not parsed_claims and not parsed_chunks:
+            return [], []
         async with session_scope(self._sm) as session:
-            chunk_ids = await session.scalars(
-                select(models.Claim.chunk_id).where(
-                    models.Claim.id.in_([uuid.UUID(i) for i in claim_ids]),
-                    models.Claim.project_id == _pid(scope),
-                    models.Claim.chunk_id.is_not(None),
+            claim_rows: list[tuple[uuid.UUID, uuid.UUID | None]] = []
+            if parsed_claims:
+                claim_result = await session.execute(
+                    select(models.Claim.id, models.Claim.chunk_id).where(
+                        models.Claim.id.in_(list(dict.fromkeys(parsed_claims))),
+                        models.Claim.project_id == _pid(scope),
+                        models.Claim.chunk_id.is_not(None),
+                    )
+                )
+                claim_rows = list(claim_result.tuples())
+            direct_chunks: list[uuid.UUID] = []
+            if parsed_chunks:
+                direct_chunks = list(
+                    await session.scalars(
+                        select(models.Chunk.id).where(
+                            models.Chunk.id.in_(list(dict.fromkeys(parsed_chunks))),
+                            models.Chunk.project_id == _pid(scope),
+                        )
+                    )
+                )
+            local_chunks = list(
+                dict.fromkeys(
+                    [chunk_id for _, chunk_id in claim_rows if chunk_id is not None] + direct_chunks
                 )
             )
-            ids = [c for c in chunk_ids if c is not None]
-            if ids:
+            if local_chunks:
                 await session.execute(
                     update(models.Chunk)
-                    .where(models.Chunk.id.in_(ids), models.Chunk.project_id == _pid(scope))
+                    .where(
+                        models.Chunk.id.in_(local_chunks),
+                        models.Chunk.project_id == _pid(scope),
+                    )
                     .values(needs_review=True)
                 )
+            return (
+                [str(claim_id) for claim_id, _ in claim_rows],
+                [str(chunk_id) for chunk_id in local_chunks],
+            )
 
     async def set_disputed(
         self, scope: ProjectScope, claim_ids: Sequence[str], *, disputed: bool

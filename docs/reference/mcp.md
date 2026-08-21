@@ -47,7 +47,9 @@ Retrieves scored fragments for a query and abstains below the configured relevan
 | `include_historical` | boolean | `false` | Selects the historical temporal mode. |
 | `include_superseded` | boolean | `false` | Requests superseded claims; effective only for a curator scope. |
 
-The result contains `found`, `fragments`, and `gap_registered`. Each fragment contains `text`, `claim_ids`, `document`, nullable `page`, `credibility`, `tags`, `content_type`, nullable `valid_from`, nullable `valid_to`, and `is_current`. When nothing visible clears the threshold, `found` is false; a gap can be registered without disclosing whether matching hidden knowledge exists.
+The result contains `found`, `fragments`, and `gap_registered`. Each fragment contains `text`, `claim_ids`, the display label `document`, stable `document_id` and `chunk_id`, nullable `page`, `credibility`, `tags`, `content_type`, nullable `valid_from`, nullable `valid_to`, and `is_current`. When nothing visible clears the threshold, `found` is false; a gap can be registered without disclosing whether matching hidden knowledge exists.
+
+Before either recall or skill context crosses the MCP boundary, one project-accounted topicalizer batch checks every final fragment against the full project taxonomy and the resolved effective topic set. Only an exact allowed verdict survives. Missing, partial, unknown, timed-out, failed, or unauthorized verdicts are omitted; an all-omitted recall returns the ordinary `found: false` shape. Blocked chunks enter review and an alert is attempted through the configured hunting channel. Equivalent alerts are suppressed for 60 minutes, and alert failure never restores blocked data.
 
 ### `timeline`
 
