@@ -12,6 +12,7 @@ from collections.abc import Callable
 
 import pytest
 
+from rsc_brain.gateway.model_gateway import CompletionFn
 from rsc_brain.ingest.parser import MarkdownParser
 from rsc_brain.ingest.types import DocStatus
 from rsc_brain.stores.relational.ingest_repository import DocRow
@@ -250,7 +251,7 @@ async def test_detected_injection_is_persisted_as_review_and_never_published(
 
 async def test_topicalizer_provider_failure_is_held_without_knowledge_writes(
     build_harness: Callable[..., Harness],
-    make_completion: Callable[..., object],
+    make_completion: Callable[..., CompletionFn],
 ) -> None:
     canned = make_completion(tags=["general"])
 

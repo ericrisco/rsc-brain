@@ -1,9 +1,9 @@
 schema_version: 1
-run_at: '2026-08-21T01:30:36.357751Z'
+run_at: '2026-08-21T12:53:51.355451Z'
 provider: ollama
 model: gemma4:12b
 model_digest: 4eb23ef187e2c5462566d6a1d3bbbc2f1346d0b4327cbb66d58fffbcc9b2b05c
-content_fingerprint: ad8bfb1010507b46ca0144f81bf0b71e5c34789d570628cf0ddeea60ba73f72e
+content_fingerprint: 48f6933f70d127b44ac347fea2f91a3f941e37ad39b92507fd48f9bebc8b1e12
 prompt_versions:
   extractor_entities: v1
   extractor_relations: v1
@@ -24,11 +24,12 @@ results:
   extraction_attempted: true
   discarded: false
   discard_stage: null
-  tags: [general]
+  tags:
+  - general
   graph_terms:
   - Acme Corp
   - org
-  - Acme
+  - company
   - Barcelona
   - location
   - company handbook
@@ -45,6 +46,9 @@ results:
   - Acme Corp builds developer tooling
   - builds
   - developer tooling
+  - Acme Corp's handbook is public to all employees
+  - is_public_to
+  - all employees
   missing_tags: []
   missing_graph_terms: []
   forbidden_graph_terms_present: []
@@ -54,16 +58,16 @@ results:
   extraction_attempted: true
   discarded: false
   discard_stage: null
-  tags: [engineering]
+  tags:
+  - engineering
   graph_terms:
+  - Acme
+  - org
   - Acme deployment pipeline
+  - PostgreSQL 16
   - system
   - GitHub Actions
-  - PostgreSQL 16
-  - two approvals
-  - concept
   - runs_on
-  - is_used_by
   - The Acme deployment pipeline builds containers
   - builds
   - containers
@@ -73,6 +77,7 @@ results:
   - Deployments require two approvals
   - Deployments
   - require
+  - two approvals
   missing_tags: []
   missing_graph_terms: []
   forbidden_graph_terms_present: []
@@ -82,7 +87,8 @@ results:
   extraction_attempted: true
   discarded: false
   discard_stage: null
-  tags: [engineering]
+  tags:
+  - engineering
   graph_terms:
   - Acme
   - org
@@ -94,6 +100,7 @@ results:
   - María López
   - person
   - uses
+  - leads
   - La arquitectura de Acme usa PostgreSQL como único servicio de datos
   - arquitectura de Acme
   - PostgreSQL como único servicio de datos
@@ -110,18 +117,17 @@ results:
   extraction_attempted: true
   discarded: false
   discard_stage: null
-  tags: [sales]
+  tags:
+  - sales
   graph_terms:
-  - Factura F-2024-118
+  - Factura F-20118
   - document
-  - F-2024-118
-  - Globex
-  - org
-  - belongs_to
+  - F-20118
+  - has_amount
+  - 3.400 €
   - La factura F-2024-118 asciende a 3.400 €
   - factura F-2024-118
   - amounts_to
-  - 3.400 €
   - El NIF del cliente Globex es B-12345678
   - cliente Globex
   - has_nif
@@ -135,24 +141,25 @@ results:
   extraction_attempted: true
   discarded: false
   discard_stage: null
-  tags: [hr, payroll]
+  tags:
+  - hr
+  - payroll
   graph_terms:
   - Bandas salariales 2024
   - document
-  - dirección
-  - concept
-  - ingeniería
-  - contains
-  - 'Bandas salariales 2024: dirección 90.000–120.000 €'
-  - bandas salariales 2024
-  - includes
-  - dirección 90.000–120.000 €
-  - 'Bandas salariales 2024: ingeniería 45.000–70.000 €'
-  - ingeniería 45.000–70.000 €
+  - Bandas salariales
+  - is_document_type
   - Documento sensible de nóminas
+  - 'Bandas salariales 2024: dirección 90.000–120.000 €'
+  - bandas salariales 2024 dirección
+  - is
+  - 90.000–120.000 €
+  - 'Bandas salariales 2024: ingeniería 45.000–70.000 €'
+  - bandas salariales 2024 ingeniería
+  - 45.000–70.000 €
   - documento
   - is_sensitive
-  - sensible de nóminas
+  - de nóminas
   missing_tags: []
   missing_graph_terms: []
   forbidden_graph_terms_present: []
@@ -162,12 +169,12 @@ results:
   extraction_attempted: true
   discarded: false
   discard_stage: null
-  tags: [general]
+  tags:
+  - general
   graph_terms:
   - política de vacaciones
-  - document
-  - política
-  - has_value
+  - concept
+  - has_duration
   - 25 días laborables
   - la política de vacaciones es de 25 días laborables al año
   - is
@@ -181,7 +188,8 @@ results:
   extraction_attempted: true
   discarded: false
   discard_stage: null
-  tags: [corp]
+  tags:
+  - corp
   graph_terms:
   - Globex Consulting
   - org
@@ -202,12 +210,13 @@ results:
   extraction_attempted: true
   discarded: false
   discard_stage: null
-  tags: [legal]
+  tags:
+  - legal
   graph_terms:
   - Globex
   - org
   - includes_clause
-  - 30-day termination notice
+  - confidentiality clause
   - Globex standard contracts include a 30-day termination notice
   - Globex standard contracts
   - include
@@ -223,7 +232,8 @@ results:
   extraction_attempted: false
   discarded: false
   discard_stage: null
-  tags: [legal]
+  tags:
+  - legal
   graph_terms:
   - 'Tier=Standard; Response: 2 business days; Penalty: none'
   - 'Standard — Response: 2 business days'
@@ -248,19 +258,16 @@ results:
   extraction_attempted: true
   discarded: false
   discard_stage: null
-  tags: [personnel]
+  tags:
+  - personnel
   graph_terms:
   - Datos de personal
   - document
-  - Documento sensible de personal
-  - contactos de emergencia
-  - concept
-  - reporte de evaluaciones
-  - contains
-  - 'Datos de personal: contactos de emergencia y evaluaciones'
-  - datos de personal
-  - includes
   - contactos de emergencia y evaluaciones
+  - Documento sensible de personal
+  - is_sensitive_document
+  - 'Datos de personal: contactos de emergencia y evaluaciones'
+  - includes
   missing_tags: []
   missing_graph_terms: []
   forbidden_graph_terms_present: []
