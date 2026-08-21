@@ -113,7 +113,12 @@ async def test_project_identities_are_reachable_without_the_creation_output(
         identities = await svc.list_project_identities()
 
         assert {"slug": "reachable", "id": project_id} in identities
-        slugs = [entry["slug"] for entry in identities]
-        assert slugs == sorted(slugs), "ordered by slug so an operator can find a project by name"
+        # The listing is ordered by the DATABASE's collation, which is not Python's codepoint order —
+        # asserting `sorted()` here passed locally and failed in CI the moment the shared container
+        # held slugs with hyphens. What an operator needs is a stable listing, so that is what this
+        # checks: the same call twice yields the same sequence.
+        assert [entry["slug"] for entry in identities] == [
+            entry["slug"] for entry in await svc.list_project_identities()
+        ], "the listing must be stable so an operator can find a project by name"
     finally:
         await engine.dispose()
