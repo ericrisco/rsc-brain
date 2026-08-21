@@ -7,12 +7,22 @@ import asyncio
 import asyncpg
 import pytest
 from alembic import command
+from alembic.script import ScriptDirectory
 
 from rsc_brain.stores.relational.migrations import alembic_config, upgrade_to_head
 
 pytestmark = pytest.mark.integration
 
-PRE_MAINTENANCE_REVISION = "6c4a8f2d9b10"
+#: The revision this migration expands from, read from the script directory rather than pinned:
+#: the history gets re-chained whenever another migration lands first, and a hardcoded parent
+#: silently turns this into a downgrade through unrelated migrations.
+REVISION = "a7e4c2d91b63"
+
+
+def _previous_revision() -> str:
+    parent = ScriptDirectory.from_config(alembic_config()).get_revision(REVISION).down_revision
+    assert isinstance(parent, str)
+    return parent
 
 
 async def _columns_exist(dsn: str) -> set[str]:
@@ -33,7 +43,7 @@ async def test_idle_prompt_marker_downgrades_and_upgrades(migrated_dsn: str) -> 
     expected = {"idle_prompted_at", "proposal_notified_at"}
     assert await _columns_exist(migrated_dsn) == expected
     try:
-        await asyncio.to_thread(command.downgrade, alembic_config(), PRE_MAINTENANCE_REVISION)
+        await asyncio.to_thread(command.downgrade, alembic_config(), _previous_revision())
         assert await _columns_exist(migrated_dsn) == set()
     finally:
         await asyncio.to_thread(upgrade_to_head)

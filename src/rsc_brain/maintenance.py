@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.config.models import MaintenanceConfig
 from rsc_brain.hunting.channels import Channel
-from rsc_brain.ingest.queue import MAINTENANCE_QUEUE
 from rsc_brain.hunting.service import HuntService
+from rsc_brain.ingest.queue import MAINTENANCE_QUEUE
 from rsc_brain.knowledge.gdpr import purge_audit
 from rsc_brain.scope import PROJECT_ROLE_AGENT, PrincipalType, ProjectScope
 from rsc_brain.skills.autocreate import prompt_idle_skills, propose_skills_from_gaps
