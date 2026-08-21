@@ -361,7 +361,10 @@ async def test_a_failed_nomination_does_not_suppress_a_confirmable_answer() -> N
     """AUDIT-120: the batch nominates, the solo call confirms — and a refused nomination used to end
     the query. One over-scored passage could therefore bury an answer that scored 0.95 in the same
     batch and confirms alone."""
-    impostor, answer = "the deployment pipeline runs on GitHub Actions", "Production runs on PostgreSQL 16"
+    impostor, answer = (
+        "the deployment pipeline runs on GitHub Actions",
+        "Production runs on PostgreSQL 16",
+    )
 
     decision = await decide(
         _StolenNomination(impostor=impostor, answer=answer),
