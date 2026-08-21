@@ -493,6 +493,20 @@ class HuntingConfig(BaseModel):
     slack: SlackConfig | None = None
 
 
+class MaintenanceConfig(BaseModel):
+    """Durable periodic lifecycle policy (AUDIT-108).
+
+    Cron expressions are code-owned so malformed operator input cannot stop worker boot. These
+    bounded values are product policy and remain configurable.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    audit_retention_days: int = Field(default=365, ge=1, le=3650)
+    skill_cluster_threshold: int = Field(default=3, ge=1, le=1000)
+    skill_idle_days: int = Field(default=60, ge=1, le=3650)
+
+
 class DatabaseConfig(BaseModel):
     """Data-service connection. The DSN carries a secret and is env-only (12-factor)."""
 
@@ -527,6 +541,7 @@ class AppConfig(BaseModel):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     ingress: IngressConfig = Field(default_factory=IngressConfig)
     hunting: HuntingConfig = Field(default_factory=HuntingConfig)
+    maintenance: MaintenanceConfig = Field(default_factory=MaintenanceConfig)
     limits: PublicLimits = Field(default_factory=PublicLimits)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 

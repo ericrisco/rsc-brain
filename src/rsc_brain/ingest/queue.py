@@ -13,11 +13,15 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from procrastinate import App
 from procrastinate.connector import BaseConnector
 
 from rsc_brain.stores.relational.database import resolve_dsn
+
+if TYPE_CHECKING:
+    from rsc_brain.maintenance import MaintenanceRunner
 
 INGEST_QUEUE = "ingest"
 INGEST_TASK = "ingest_document"
@@ -53,6 +57,7 @@ def build_queue(
     dsn: str | None = None,
     runner: Runner | None = None,
     notification_runner: NotificationRunner | None = None,
+    maintenance_runner: MaintenanceRunner | None = None,
 ) -> IngestQueue:
     """Build the ingest queue. Pass a connector (e.g. in-memory) + runner for tests; omit both to
     use the real Postgres connector + the config-backed runner."""
@@ -63,6 +68,10 @@ def build_queue(
     app = App(connector=connector)
     active_runner = runner or _default_runner
     active_notification_runner = notification_runner or _default_notification_runner
+
+    from rsc_brain.maintenance import default_maintenance_runner, register_periodic_tasks
+
+    register_periodic_tasks(app, maintenance_runner or default_maintenance_runner)
 
     @app.task(name=INGEST_TASK, queue=INGEST_QUEUE)
     async def ingest_document(document_id: str, project_id: str, principal_id: str) -> None:

@@ -229,6 +229,19 @@ When no public origin is configured, OAuth metadata accepts a request-derived or
 
 Selecting `smtp` or `slack` requires the corresponding object and credential at runtime; an incomplete selected channel fails service construction.
 
+## Periodic maintenance
+
+The production worker registers these policies on its PostgreSQL-backed maintenance queue. Hunting
+maintenance runs every minute; retention and skill maintenance run daily at 03:00 UTC. The schedules
+are code-owned so malformed cron text cannot prevent worker boot.
+
+| Field | Type | Default | Meaning and validation |
+|---|---|---|---|
+| `maintenance` | object | configured defaults | Audit-retention and periodic skill-maintenance policy. |
+| `maintenance.audit_retention_days` | integer | `365` | Delete older audit rows during the daily job; from `1` through `3650`. |
+| `maintenance.skill_cluster_threshold` | integer | `3` | Recurrent-gap count required before proposing a skill; from `1` through `1000`. |
+| `maintenance.skill_idle_days` | integer | `60` | No-use interval before prompting an active skill's owner; from `1` through `3650`. The job never archives automatically. |
+
 ## Public limits
 
 | Field | Type | Default | Validation floor and role |
@@ -271,7 +284,7 @@ version, because an unknown build claiming to be a release is worse than one say
 
 ## Runtime consumption
 
-The production composition root currently passes loaded capability routes, ingestion profile/tag settings, recall settings, public limits, ingress, hunting delivery, and data directory into runtime dependencies. Database setup resolves `database.dsn` independently, with the environment variable taking priority.
+The production composition root currently passes loaded capability routes, ingestion profile/tag settings, recall settings, public limits, ingress, hunting delivery, maintenance policy, and data directory into runtime dependencies. Database setup resolves `database.dsn` independently, with the environment variable taking priority.
 
 Some validated fields are not yet connected to the long-running API or worker behavior:
 

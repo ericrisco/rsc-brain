@@ -21,7 +21,7 @@ from sqlalchemy import case, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain import security
-from rsc_brain.audit import record_audit
+from rsc_brain.audit import record_audit, record_audit_in_session
 from rsc_brain.hunting.channels import Channel, NullChannel, OutboundMessage
 from rsc_brain.hunting.directory import PersonDirectory, PersonRow
 from rsc_brain.hunting.quiet_hours import in_quiet_hours
@@ -376,7 +376,7 @@ class HuntService:
                     gap_id=uuid.UUID(gap_id) if gap_id else None,
                     person_id=uuid.UUID(person.id),
                     correction_id=uuid.UUID(correction_id) if correction_id else None,
-                    channel=_preferred_channel(person),
+                    channel=_delivery_route(person, self._channel.name)[0],
                     state=_open_state(
                         throttled=throttled, quiet=quiet, can_deliver=self._can_deliver
                     ).value,
@@ -401,6 +401,11 @@ class HuntService:
                 session.add(hunt)
                 await session.flush()
                 hunt_id = str(hunt.id)
+                if _is_sent(throttled, quiet, self._can_deliver):
+                    # Delivery is part of the open transition. A rejected/failed send rolls this
+                    # transaction back, so no row can claim AWAITING_ANSWER without an accepted
+                    # invitation. The per-person advisory lock also serializes command retries.
+                    await self._send_question(person, question, token)
 
         if person is None:
             await self._alert_admin(
@@ -457,8 +462,6 @@ class HuntService:
                 audit_correlation=correlation,
             )
         # A message is NEVER sent during quiet_hours — it waits for the next window (FR-6.5/3.4).
-        if not quiet:
-            await self._send_question(person, question, token)
         await self._audit(
             scope,
             "hunt_opened",
@@ -470,7 +473,7 @@ class HuntService:
             hunt_id=hunt_id,
             state=HuntState.SCHEDULED if quiet else HuntState.AWAITING_ANSWER,
             person_id=person.id,
-            magic_token=token,
+            magic_token=token if not quiet else None,
             delivered=not quiet,
             topics=topic_snapshot,
             audit_correlation=correlation,
@@ -623,30 +626,58 @@ class HuntService:
             ).all()
             ids = [str(h.id) for h in due]
         for hunt_id in ids:
-            await self._expire_one(scope, hunt_id, now)
-            changed.append(hunt_id)
+            if await self._expire_one(scope, hunt_id, now):
+                changed.append(hunt_id)
         return changed
 
-    async def _expire_one(self, scope: ProjectScope, hunt_id: str, now: dt.datetime) -> None:
+    async def _expire_one(self, scope: ProjectScope, hunt_id: str, now: dt.datetime) -> bool:
+        action: str
+        person_id: str | None = None
         async with session_scope(self._sm) as session:
-            hunt = await session.get(models.Hunt, uuid.UUID(hunt_id))
-            if hunt is None or hunt.state != HuntState.AWAITING_ANSWER.value:
-                return
+            hunt = await session.scalar(
+                select(models.Hunt).where(models.Hunt.id == uuid.UUID(hunt_id)).with_for_update()
+            )
+            if (
+                hunt is None
+                or hunt.project_id != _pid(scope)
+                or hunt.state != HuntState.AWAITING_ANSWER.value
+                or hunt.expires_at is None
+                or hunt.expires_at >= now
+            ):
+                return False
             check_transition(HuntState.AWAITING_ANSWER, HuntState.EXPIRED)
             if hunt.retries < 1:
-                # One retry: bounce EXPIRED→AWAITING_ANSWER with a fresh deadline (FR-6.3).
+                # One real retry: deliver a fresh single-use link before moving the deadline. The
+                # row lock prevents concurrent workers from sending two retries. A send failure
+                # rolls back and escapes to Procrastinate, so the due hunt remains retryable.
+                if not self._can_deliver or hunt.person_id is None:
+                    raise RuntimeError("due hunt cannot be retried without a delivery channel")
+                person_id = str(hunt.person_id)
+                person = await self._directory.get(scope, person_id)
+                if person is None:
+                    raise RuntimeError("due hunt owner is unavailable")
+                token = security.mint_token("hunt_")
+                await self._send_question(person, hunt.question or "", token)
                 hunt.retries += 1
                 hunt.expires_at = now + _EXPIRY
-                escalate = False
+                hunt.magic_token_hash = security.token_hash(token)
+                action = "hunt_retried"
             else:
+                # Alert while the row is locked. A channel failure rolls the transition back, so
+                # Procrastinate can retry instead of leaving an expired-but-never-escalated hunt.
+                await self._alert_admin(scope, f"hunt {hunt_id} expired after retry — escalated")
                 hunt.state = HuntState.EXPIRED.value  # terminal after the retry
                 hunt.resolved_at = now
-                escalate = True
-        if escalate:
-            await self._alert_admin(scope, f"hunt {hunt_id} expired after retry — escalated")
-            await self._audit(scope, "hunt_escalated", None)
-        else:
-            await self._audit(scope, "hunt_retried", None)
+                hunt.magic_token_hash = None
+                action = "hunt_escalated"
+            await record_audit_in_session(
+                session,
+                scope,
+                action=action,
+                tool="hunting",
+                result_count=0,
+            )
+        return True
 
     # --- persistence helpers -------------------------------------------------
 
@@ -776,10 +807,10 @@ class HuntService:
 
     async def _send_question(self, person: PersonRow, question: str, token: str) -> None:
         link = self.answer_url(token)
-        to = str(person.channels.get("email") or person.channels.get("slack") or person.name)
+        route, to = _delivery_route(person, self._channel.name)
         await self._channel.send(
             OutboundMessage(
-                channel=_preferred_channel(person),
+                channel=route,
                 to=to,
                 subject="rsc-brain needs your knowledge",
                 body=f"{question}\n\nAnswer here (one-time link): {link}",
@@ -821,6 +852,22 @@ def _preferred_channel(person: PersonRow) -> str:
     if person.channels.get("slack"):
         return "slack"
     return "magic_link"
+
+
+def _delivery_route(person: PersonRow, configured_channel: str) -> tuple[str, str]:
+    """Select a destination compatible with the channel the installation actually configured."""
+    if configured_channel == "smtp":
+        email = person.channels.get("email")
+        if not email:
+            raise RuntimeError("hunt owner has no email address for the configured SMTP channel")
+        return "email", str(email)
+    if configured_channel == "slack":
+        # Empty lets SlackChannel use its configured default channel.
+        return "slack", str(person.channels.get("slack") or "")
+    preferred = _preferred_channel(person)
+    return preferred, str(
+        person.channels.get("email") or person.channels.get("slack") or person.name
+    )
 
 
 def _scope_from_hunt(hunt: models.Hunt) -> ProjectScope:

@@ -82,6 +82,13 @@ hunting:
   #   bot_token: supply via env only -> RSC_BRAIN_HUNTING__SLACK__BOT_TOKEN=xoxb-...
   #   default_channel: "#knowledge"
 
+# PostgreSQL-backed periodic worker policy (AUDIT-108). Schedules are safe code defaults:
+# hunting every minute; retention and skill maintenance daily.
+maintenance:
+  audit_retention_days: 365
+  skill_cluster_threshold: 3
+  skill_idle_days: 60
+
 logging:
   level: INFO
   json: true

@@ -19,7 +19,13 @@ from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from rsc_brain.config.models import HuntingConfig, IngressConfig, PublicLimits, RecallConfig
+from rsc_brain.config.models import (
+    HuntingConfig,
+    IngressConfig,
+    MaintenanceConfig,
+    PublicLimits,
+    RecallConfig,
+)
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.pipeline import PipelineConfig
 
@@ -39,6 +45,7 @@ class RuntimeDependencies:
     limits: PublicLimits
     ingress: IngressConfig
     hunting: HuntingConfig
+    maintenance: MaintenanceConfig
     reranker_enabled: bool
     data_dir: str
 
@@ -118,5 +125,6 @@ def build(role: Role) -> RuntimeDependencies:
         limits=settings.limits,
         ingress=settings.ingress,
         hunting=settings.hunting,
+        maintenance=settings.maintenance,
         data_dir=settings.ingest.data_dir,
     )
