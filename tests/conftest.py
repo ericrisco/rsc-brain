@@ -103,7 +103,7 @@ def canned_completion(
                 count = len(request) if isinstance(request, list) else 0
             except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError):
                 count = 0
-            topic = guardrail_topic if guardrail_topic is not None else (tags or [None])[0]
+            topic = guardrail_topic if guardrail_topic is not None else (tags[0] if tags else None)
             return completion_response(json.dumps({"topics": [topic] * count}))
         return completion_response(json.dumps(payloads.get(name, {})))
 

@@ -326,7 +326,7 @@ async def test_guardrail_latency_p95_is_separate_and_exact(
 
     assert metrics["health"]["guardrail_p95_ms"] == pytest.approx(38.5)  # type: ignore[index]
     assert metrics["health"]["recall_p95_ms"] is None  # type: ignore[index]
-    assert metrics["health"]["guardrail_p95_ms"] < 4_000  # type: ignore[index,operator]
+    assert metrics["health"]["guardrail_p95_ms"] < 4_000  # type: ignore[index]
 
 
 async def test_real_mcp_recall_and_skill_have_no_guardrail_opt_out(
