@@ -139,8 +139,13 @@ uv run python -m evals.foundational_eval \
   --provider ollama \
   --model gemma4:12b \
   --model-digest 4eb23ef187e2c5462566d6a1d3bbbc2f1346d0b4327cbb66d58fffbcc9b2b05c \
-  --api-base http://localhost:11434
+  --api-base http://localhost:11434 \
+  --allow-http --allow-private-network
 ```
+
+The two grants are required, not optional decoration: AUDIT-005 denies a plain-HTTP or
+loopback model endpoint unless the operator says otherwise, exactly as the configuration file
+does. Drop them and the run refuses to start rather than reaching out.
 
 The runner writes `foundational_evidence.candidate.yaml`, records every tag/graph term and semantic
 delta, and exits non-zero unless extraction discards are strictly below 10% and every expectation
