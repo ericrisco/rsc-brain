@@ -31,7 +31,7 @@ from rsc_brain.recall.reranker import Reranker, decide
 from rsc_brain.recall.scoring import score_fragment
 from rsc_brain.recall.temporal_intent import TemporalKind, TemporalMode, classify
 from rsc_brain.scope import ProjectScope
-from rsc_brain.stores.age_graph_store import AgeGraphStore, graph_name
+from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational import models
 from rsc_brain.temporal import active_at_clause, is_active_at
 
@@ -400,7 +400,7 @@ class PgRetriever:
         extra_chunks = await self._visible_chunks_of_documents(
             scope, forbidden, extra_docs, eligible_chunk_ids
         )
-        return list(dict.fromkeys([*seed_ids, *extra_chunks]))
+        return list(dict.fromkeys([*seed_ids, *extra_chunks]))[:MAX_RETRIEVAL_WIDTH]
 
     async def _documents_of(self, scope: ProjectScope, chunk_ids: list[str]) -> set[str]:
         async with self._sm() as session:
@@ -413,20 +413,38 @@ class PgRetriever:
             return {str(d) for d in rows}
 
     async def _neighbor_documents(self, scope: ProjectScope, docs: set[str]) -> set[str]:
-        if not docs:
-            return set()
-        graph = graph_name(scope.project_id)
         depth = int(self._config.k_hop)
+        if not docs or depth < 1:
+            return set()
+        # AGE cannot assert that every relation in a variable-length path is live: it has neither
+        # path variables nor ALL/NONE over an edge list. Advance one bounded hop at a time so the
+        # traversed relation is named and a retired edge can never widen current recall (AUDIT-106).
         cypher = (
-            f"MATCH (a)-[*1..{depth}]-(b) WHERE a.source_document_id IN $docs "
-            "AND b.suppressed IS NULL RETURN DISTINCT b.source_document_id AS result"
+            "MATCH (a)-[r]-(b) WHERE a.source_document_id IN $docs "
+            "AND r.superseded IS NULL AND b.suppressed IS NULL "
+            "AND b.source_document_id IS NOT NULL "
+            "RETURN DISTINCT b.source_document_id AS result "
+            f"LIMIT {MAX_RETRIEVAL_WIDTH}"
         )
-        del graph  # graph name is resolved inside run_cypher from the scope
+        seen = set(docs)
+        neighbors: set[str] = set()
+        frontier = set(docs)
         try:
-            rows = await self._graph.run_cypher(scope, cypher, {"docs": sorted(docs)})
+            for _ in range(depth):
+                if not frontier:
+                    break
+                rows = await self._graph.run_cypher(
+                    scope,
+                    cypher,
+                    {"docs": sorted(frontier)},
+                )
+                hop = {str(row["result"]) for row in rows if row.get("result")}
+                frontier = hop - seen
+                seen.update(frontier)
+                neighbors.update(frontier)
         except Exception:  # pragma: no cover - a missing graph degrades to no expansion
             return set()
-        return {str(row["result"]) for row in rows if row.get("result")}
+        return neighbors
 
     async def _visible_chunks_of_documents(
         self,
@@ -444,7 +462,9 @@ class PgRetriever:
             )
             if eligible_chunk_ids is not None:
                 query = query.where(models.Chunk.id.in_(eligible_chunk_ids))
-            rows = await session.scalars(query)
+            # The width cap is applied last, after every narrowing filter, so a bounded expansion
+            # keeps the chunks it is allowed to see rather than a prefix of the unfiltered set.
+            rows = await session.scalars(query.order_by(models.Chunk.id).limit(MAX_RETRIEVAL_WIDTH))
             return [str(c) for c in rows]
 
     async def _hard_window_map(self, scope: ProjectScope) -> dict[str, int]:

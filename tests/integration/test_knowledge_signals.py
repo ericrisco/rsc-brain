@@ -542,6 +542,157 @@ async def test_recall_carries_the_disputed_state(build_harness: Callable[..., Ha
 # --------------------------------------------------------------------------- #
 
 
+async def test_recall_expansion_retired_relation_cannot_surface_its_neighbour(
+    build_harness: Callable[..., Harness],
+) -> None:
+    """The product recall path must not cross the retired relation that k_hop already rejects.
+
+    Vector retrieval can see only the expired seed. The current answer can enter the candidate set
+    only through graph expansion, so returning it proves ``PgRetriever._neighbor_documents`` crossed
+    the retired edge.
+    """
+    from rsc_brain.stores.graph_store import GraphEdge, GraphNode
+
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("age-retired"), TOPICS)
+    scope = harness.scope(project, allowed_topics=["general"])
+    graph = AgeGraphStore(harness.sm)
+
+    query = "graph expansion seed"
+    seed_doc, seed_chunk = await _document_with_chunk(harness, project, text=query)
+    await _claim(
+        harness,
+        project,
+        text="This seed is expired.",
+        chunk_id=seed_chunk,
+        document_id=seed_doc,
+        valid_to=dt.datetime.now(dt.UTC) - dt.timedelta(days=1),
+    )
+    answer_doc, answer_chunk = await _document_with_chunk(
+        harness, project, text="The expansion-only answer is cobalt."
+    )
+    await _claim(
+        harness,
+        project,
+        text="The expansion-only answer is cobalt.",
+        chunk_id=answer_chunk,
+        document_id=answer_doc,
+    )
+
+    source, target = str(uuid.uuid4()), str(uuid.uuid4())
+    edge = GraphEdge(source_id=source, target_id=target, type="RELATED_TO")
+    await graph.create_graph(scope)
+    await graph.upsert_nodes(
+        scope,
+        [
+            GraphNode(id=source, properties={"source_document_id": str(seed_doc)}),
+            GraphNode(id=target, properties={"source_document_id": str(answer_doc)}),
+        ],
+    )
+    await graph.upsert_edges(scope, [edge])
+    await graph.set_relations_retired(scope, [edge], retired=True)
+
+    result = await _retriever(
+        harness,
+        k_hop=1,
+        temporal_refill_factor=1,
+        hybrid_enabled=False,
+    ).recall(scope, query, top_k=1)
+
+    assert result.found is False
+    assert result.fragments == ()
+
+    await graph.set_relations_retired(scope, [edge], retired=False)
+    live = await _retriever(
+        harness,
+        k_hop=1,
+        temporal_refill_factor=1,
+        hybrid_enabled=False,
+    ).recall(scope, query, top_k=1)
+
+    assert live.found is True
+    assert [fragment.text for fragment in live.fragments] == [
+        "The expansion-only answer is cobalt."
+    ]
+
+
+async def test_recall_expansion_retired_second_hop_blocks_the_whole_path(
+    build_harness: Callable[..., Harness],
+) -> None:
+    """A live first hop cannot carry recall across a retired second hop."""
+    from rsc_brain.stores.graph_store import GraphEdge, GraphNode
+
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("age-two-hop"), TOPICS)
+    scope = harness.scope(project, allowed_topics=["general"])
+    graph = AgeGraphStore(harness.sm)
+
+    query = "two hop graph seed"
+    seed_doc, seed_chunk = await _document_with_chunk(harness, project, text=query)
+    middle_doc, middle_chunk = await _document_with_chunk(
+        harness, project, text="Expired middle document."
+    )
+    answer_doc, answer_chunk = await _document_with_chunk(
+        harness, project, text="The two-hop expansion answer is amber."
+    )
+    expired = dt.datetime.now(dt.UTC) - dt.timedelta(days=1)
+    await _claim(
+        harness,
+        project,
+        text="This seed is expired.",
+        chunk_id=seed_chunk,
+        document_id=seed_doc,
+        valid_to=expired,
+    )
+    await _claim(
+        harness,
+        project,
+        text="This middle claim is expired.",
+        chunk_id=middle_chunk,
+        document_id=middle_doc,
+        valid_to=expired,
+    )
+    await _claim(
+        harness,
+        project,
+        text="The two-hop expansion answer is amber.",
+        chunk_id=answer_chunk,
+        document_id=answer_doc,
+    )
+
+    source, middle, target = (str(uuid.uuid4()) for _ in range(3))
+    first = GraphEdge(source_id=source, target_id=middle, type="RELATED_TO")
+    second = GraphEdge(source_id=middle, target_id=target, type="RELATED_TO")
+    await graph.create_graph(scope)
+    await graph.upsert_nodes(
+        scope,
+        [
+            GraphNode(id=source, properties={"source_document_id": str(seed_doc)}),
+            GraphNode(id=middle, properties={"source_document_id": str(middle_doc)}),
+            GraphNode(id=target, properties={"source_document_id": str(answer_doc)}),
+        ],
+    )
+    await graph.upsert_edges(scope, [first, second])
+    await graph.set_relations_retired(scope, [second], retired=True)
+
+    retriever = _retriever(
+        harness,
+        k_hop=2,
+        temporal_refill_factor=1,
+        hybrid_enabled=False,
+    )
+    blocked = await retriever.recall(scope, query, top_k=1)
+    assert blocked.found is False
+    assert blocked.fragments == ()
+
+    await graph.set_relations_retired(scope, [second], retired=False)
+    live = await retriever.recall(scope, query, top_k=1)
+    assert live.found is True
+    assert [fragment.text for fragment in live.fragments] == [
+        "The two-hop expansion answer is amber."
+    ]
+
+
 async def test_superseding_a_claim_retires_its_graph_relation(
     build_harness: Callable[..., Harness],
 ) -> None:
