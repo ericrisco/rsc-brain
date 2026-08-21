@@ -61,6 +61,44 @@ The deterministic gateway and metric functions run in automated tests. A live-pr
 requires a prepared corpus and provider environment; record that evidence separately rather than
 treating `brain eval` as a live quality pass.
 
+## Graph backend decision benchmark
+
+AUDIT-011's D1 benchmark is separate from the per-PR smoke test. The decision population is fixed at
+200,000 vertices and 1,000,000 unique directed edges. Generate it once, mount the generated directory
+read-only at `/benchmark` in the product database image, and run both resource profiles against the
+same manifest and immutable image identity:
+
+```bash
+uv run python -m evals.run_graph_decision prepare --output-dir /tmp/rsc-graph-decision/workload
+
+export RSC_BRAIN_DATABASE__DSN='postgresql+asyncpg://USER:PASSWORD@127.0.0.1:PORT/rsc_brain'
+uv run python -m evals.run_graph_decision run-age \
+  --manifest /tmp/rsc-graph-decision/workload/workload-manifest.json \
+  --profile workstation --server-csv-root /benchmark \
+  --output /tmp/rsc-graph-decision/workstation.json \
+  --image-identity sha256:IMAGE_ID --container-cpu-limit 8 \
+  --container-memory-bytes 8000000000 --accelerator 'ACCELERATOR; AGE executes on CPU'
+
+# Restart the disposable database with 4 vCPU / 6 GiB, then point the DSN at it.
+uv run python -m evals.run_graph_decision run-age \
+  --manifest /tmp/rsc-graph-decision/workload/workload-manifest.json \
+  --profile cpu_only --server-csv-root /benchmark \
+  --output /tmp/rsc-graph-decision/cpu_only.json \
+  --image-identity sha256:IMAGE_ID --container-cpu-limit 4 \
+  --container-memory-bytes 6442450944 --accelerator 'ACCELERATOR; AGE executes on CPU'
+
+uv run python -m evals.run_graph_decision combine \
+  --workstation /tmp/rsc-graph-decision/workstation.json \
+  --cpu-only /tmp/rsc-graph-decision/cpu_only.json \
+  --output evals/results/graph-decision-YYYY-MM-DD.json
+```
+
+`run-age` verifies every CSV digest, resets and loads through AGE's documented CSV functions,
+creates the node-id indexes, and refuses to time a graph whose persisted counts differ. `combine`
+accepts only the exact 5-warm-up/30-iteration, k=2 policy in both profiles. A scaled smoke remains
+`decision_run=false` and cannot produce a verdict. Accelerator presence is inventory only:
+PostgreSQL/AGE executes this traversal on CPU.
+
 ## Change rule
 
 Run the corpus evaluation before changing a model, provider, embedding, judge, reranker, or
