@@ -74,7 +74,7 @@ jobs:
       - run: uv run python scripts/check_licenses.py
 
   sca:
-    name: dependency audit (pip-audit)
+    name: dependency audit (native Python + npm)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -83,6 +83,31 @@ jobs:
           enable-cache: true
       - run: uv sync --frozen --all-groups
       - run: uv run pip-audit
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/admin/package-lock.json
+      # The complete lock includes code generators and build tools that execute in CI. Omitting dev
+      # dependencies previously hid three high findings while this job reported green (AUDIT-013).
+      - name: Audit the complete committed admin graph
+        working-directory: apps/admin
+        run: npm audit --audit-level=high
+
+  # Primary multi-ecosystem SCA. Explicit lock paths make absent/unscanned coverage an error, and
+  # the reusable scanner's default error handling remains fail-closed. SARIF upload is deliberately
+  # disabled so this read-only workflow does not need security-events write permission.
+  osv:
+    name: dependency audit (OSV · Python + npm)
+    permissions:
+      contents: read
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8deb546fdb875b9996d27d4950be7312dac076a1 # v2.5.0
+    with:
+      scan-args: |-
+        --lockfile=./uv.lock
+        --lockfile=./apps/admin/package-lock.json
+      fail-on-vuln: true
+      upload-sarif: false
 
   integration:
     name: data service (real Postgres+AGE+pgvector)
@@ -138,13 +163,6 @@ jobs:
           npm run lint
           npm run typecheck
           npm run build
-      # AUDIT-013 / R14: a release-blocking advisory in the console's PRODUCTION graph fails the
-      # workflow. The Python graph already has its own gate (pip-audit); this closes the other half,
-      # which was reviewed locally and never enforced here.
-      - name: Dependency audit (npm, production only)
-        working-directory: apps/admin
-        run: npm audit --omit=dev --audit-level=high
-
   # AUDIT-046 / R56: the ratified route map, traversed through a REAL Caddy with the repository's own
   # Caddyfile. The parse-based checks (R45-R48) cannot see the proxy's own matching rules; this can, and
   # it is the only check in the suite that a configuration cannot pass by merely looking correct.

@@ -44,8 +44,8 @@ The repository's workflows currently require:
 | Lint, formatting, and Python SAST | Ruff, including the `S` security rules |
 | Strict types | mypy over source, tests, and eval code |
 | Unit and real-data-service tests | pytest; the integration job builds Postgres 16 + AGE + pgvector and enforces at least 70% coverage over the full suite |
-| Secret scanning | gitleaks over the working tree and Git history with exact fixture exceptions |
-| Dependency scanning | `pip-audit` and production-only `npm audit --omit=dev --audit-level=high` |
+| Secret scanning | gitleaks over the working tree and Git history; current fixtures are line-local and historical exceptions are exact fingerprints |
+| Dependency scanning | native `pip-audit`, full-lock `npm audit --audit-level=high`, and fail-closed OSV over `uv.lock` plus `apps/admin/package-lock.json` |
 | License policy | AGPL compatibility audit |
 | Console contract | OpenAPI export and generated TypeScript drift checks, lint, types, and production build |
 | Edge routing | live Caddy traversal of the supported route matrix |

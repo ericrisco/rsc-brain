@@ -1,0 +1,10 @@
+# Exact historical findings only. A fingerprint binds commit + path + rule + line; it cannot hide
+# the same value in a later commit or another file.
+# Reason: two old commits introduced the non-secret Hunt idempotency replay marker; the current
+# fixture now uses an obvious low-entropy value that the generic API-key rule does not classify.
+4fd836add73645c85131b14704242ee4fad52f92:tests/integration/test_console_hunting_skills.py:generic-api-key:124
+c7ae55a849855f9037f359f9cedd8d713cb0b970:tests/integration/test_console_hunting_skills.py:generic-api-key:124
+# Reason: these are the two original API-key detector assertions from test_doctor.py, before their
+# current lines gained a reasoned line-local gitleaks marker.
+9cc99438b0211551ce27005822cccacd2c081560:tests/unit/test_doctor.py:generic-api-key:13
+9cc99438b0211551ce27005822cccacd2c081560:tests/unit/test_doctor.py:generic-api-key:30

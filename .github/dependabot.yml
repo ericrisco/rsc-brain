@@ -5,6 +5,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
     commit-message:
       prefix: "ci"
 
@@ -12,6 +14,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
     commit-message:
       prefix: "deps"
 
@@ -19,5 +23,18 @@ updates:
     directory: /docker
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
     commit-message:
       prefix: "docker"
+
+  - package-ecosystem: npm
+    directory: /apps/admin
+    schedule:
+      interval: weekly
+    # Version proposals wait 72 hours; security updates remain immediate and traverse CI's complete
+    # native plus OSV dependency gates before review/merge.
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "deps"
