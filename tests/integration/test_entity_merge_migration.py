@@ -10,6 +10,7 @@ from collections.abc import Iterator
 import asyncpg
 import pytest
 from alembic import command
+from alembic.script import ScriptDirectory
 from testcontainers.community.postgres import PostgresContainer
 
 from rsc_brain.stores.relational.database import DSN_ENV_VAR
@@ -17,7 +18,18 @@ from rsc_brain.stores.relational.migrations import alembic_config
 
 pytestmark = pytest.mark.integration
 
-PRE_MERGE_SNAPSHOT = "6c4a8f2d9b10"
+#: The revision this migration expands from, read from the script directory rather than
+#: pinned: the history gets re-chained whenever another migration lands first, and a
+#: hardcoded parent silently turns this into a downgrade through unrelated migrations.
+REVISION = "7d5b9e3a1c42"
+
+
+def _previous_revision() -> str:
+    parent = ScriptDirectory.from_config(alembic_config()).get_revision(REVISION).down_revision
+    assert isinstance(parent, str)
+    return parent
+
+
 HEAD = "7d5b9e3a1c42"
 IMAGE = "rsc-brain/db:pg16-age-pgvector"
 PASSWORD = "entity-merge-migration-pw-abc123"
@@ -67,7 +79,7 @@ async def test_entity_merge_migration_preflight_and_round_trip(
     duplicate_id = uuid.uuid4()
     proposal_id = uuid.uuid4()
     try:
-        await asyncio.to_thread(command.upgrade, alembic_config(), PRE_MERGE_SNAPSHOT)
+        await asyncio.to_thread(command.upgrade, alembic_config(), _previous_revision())
         connection = await _connect(entity_merge_migration_dsn)
         try:
             await connection.execute(
@@ -141,7 +153,7 @@ async def test_entity_merge_migration_preflight_and_round_trip(
             await connection.close()
 
         with pytest.raises(RuntimeError, match="snapshot history"):
-            await asyncio.to_thread(command.downgrade, alembic_config(), PRE_MERGE_SNAPSHOT)
+            await asyncio.to_thread(command.downgrade, alembic_config(), _previous_revision())
 
         connection = await _connect(entity_merge_migration_dsn)
         try:
@@ -150,7 +162,7 @@ async def test_entity_merge_migration_preflight_and_round_trip(
         finally:
             await connection.close()
 
-        await asyncio.to_thread(command.downgrade, alembic_config(), PRE_MERGE_SNAPSHOT)
+        await asyncio.to_thread(command.downgrade, alembic_config(), _previous_revision())
         connection = await _connect(entity_merge_migration_dsn)
         try:
             assert not await _table_exists(connection, "entity_merge_snapshots")

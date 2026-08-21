@@ -11,7 +11,7 @@ and both the API and the CLI go through it.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -25,6 +25,9 @@ from rsc_brain.hunting.channels import (
     SmtpSettings,
 )
 from rsc_brain.hunting.service import HuntService
+
+if TYPE_CHECKING:
+    from rsc_brain.config.models import HuntingConfig
 
 #: Where the reply form lives, relative to the install's own origin. One definition: the link the
 #: message carries and the route that serves it have to agree, and they used not to.

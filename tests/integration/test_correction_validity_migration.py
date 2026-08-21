@@ -8,12 +8,24 @@ import uuid
 import asyncpg
 import pytest
 from alembic import command
+from alembic.script import ScriptDirectory
 
 from rsc_brain.stores.relational.migrations import alembic_config, upgrade_to_head
 
 pytestmark = pytest.mark.integration
 
-PRE_SNAPSHOT_REVISION = "6c4a8f2d9b10"
+#: The revision this migration expands from, read from the script directory rather than
+#: pinned: the history gets re-chained whenever another migration lands first, and a
+#: hardcoded parent silently turns this into a downgrade through unrelated migrations.
+REVISION = "7d5e9a3c1b42"
+
+
+def _previous_revision() -> str:
+    parent = ScriptDirectory.from_config(alembic_config()).get_revision(REVISION).down_revision
+    assert isinstance(parent, str)
+    return parent
+
+
 SNAPSHOT_COLUMNS = (
     "target_valid_from_before",
     "target_valid_to_before",
@@ -70,7 +82,7 @@ async def test_correction_snapshot_schema_round_trips_and_legacy_rows_stay_uncap
         await connection.close()
 
     try:
-        await asyncio.to_thread(command.downgrade, alembic_config(), PRE_SNAPSHOT_REVISION)
+        await asyncio.to_thread(command.downgrade, alembic_config(), _previous_revision())
         assert set(SNAPSHOT_COLUMNS).isdisjoint(await _columns(migrated_dsn))
     finally:
         await asyncio.to_thread(upgrade_to_head)

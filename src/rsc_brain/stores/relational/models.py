@@ -605,6 +605,10 @@ class Skill(Base):
     # editable skill version: one reviewed skill can become stale repeatedly without an outbox row
     # from an older transition ever becoming eligible again (AUDIT-018).
     stale_generation: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    proposal_notified_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    # Durable FR-7.3 lifecycle state. Audit retention cannot erase whether the owner was already
+    # prompted in the current idle episode; a later run_skill timestamp re-arms it.
+    idle_prompted_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         UniqueConstraint("project_id", "slug"),
         UniqueConstraint("project_id", "id"),

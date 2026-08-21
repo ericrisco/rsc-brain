@@ -423,9 +423,10 @@ async def purge_audit(
     sessionmaker: async_sessionmaker[AsyncSession],
     *,
     retention_days: int = DEFAULT_AUDIT_RETENTION_DAYS,
+    now: dt.datetime | None = None,
 ) -> int:
     """Delete audit rows older than the retention window (FR-4.6). Returns the count deleted."""
-    cutoff = dt.datetime.now(dt.UTC) - dt.timedelta(days=retention_days)
+    cutoff = (now or dt.datetime.now(dt.UTC)) - dt.timedelta(days=retention_days)
     async with session_scope(sessionmaker) as session:
         result = await session.execute(delete(models.AuditLog).where(models.AuditLog.ts < cutoff))
         return int(getattr(result, "rowcount", 0) or 0)

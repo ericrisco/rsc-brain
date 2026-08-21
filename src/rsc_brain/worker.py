@@ -11,11 +11,13 @@ import asyncio
 
 from rsc_brain.ingest.queue import INGEST_QUEUE, MAINTENANCE_QUEUE, build_queue
 
+WORKER_QUEUES = (INGEST_QUEUE, MAINTENANCE_QUEUE)
+
 
 async def _run() -> None:  # pragma: no cover - long-running worker loop (needs a live queue)
     queue = build_queue()
     async with queue.app.open_async():
-        await queue.app.run_worker_async(queues=[INGEST_QUEUE, MAINTENANCE_QUEUE])
+        await queue.app.run_worker_async(queues=list(WORKER_QUEUES))
 
 
 def main() -> None:  # pragma: no cover - process entrypoint

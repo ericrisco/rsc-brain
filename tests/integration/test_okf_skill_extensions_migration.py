@@ -8,12 +8,22 @@ import uuid
 import asyncpg
 import pytest
 from alembic import command
+from alembic.script import ScriptDirectory
 
 from rsc_brain.stores.relational.migrations import alembic_config, upgrade_to_head
 
 pytestmark = pytest.mark.integration
 
-PRE_OKF_EXTENSIONS = "6c4a8f2d9b10"
+#: The revision this migration expands from, read from the script directory rather than
+#: pinned: the history gets re-chained whenever another migration lands first, and a
+#: hardcoded parent silently turns this into a downgrade through unrelated migrations.
+REVISION = "a7e1c9d4f260"
+
+
+def _previous_revision() -> str:
+    parent = ScriptDirectory.from_config(alembic_config()).get_revision(REVISION).down_revision
+    assert isinstance(parent, str)
+    return parent
 
 
 async def _connect(dsn: str) -> asyncpg.Connection:
@@ -43,7 +53,7 @@ async def test_okf_extension_storage_is_reversible_and_backfills_legacy_rows(
     project_id = uuid.uuid4()
     skill_id = uuid.uuid4()
     try:
-        await asyncio.to_thread(command.downgrade, alembic_config(), PRE_OKF_EXTENSIONS)
+        await asyncio.to_thread(command.downgrade, alembic_config(), _previous_revision())
         assert not await _column_exists(migrated_dsn, "okf_type")
         assert not await _column_exists(migrated_dsn, "okf_extensions")
 
