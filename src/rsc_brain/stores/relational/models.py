@@ -295,6 +295,9 @@ class Chunk(Base):
     id: Mapped[uuid.UUID] = _pk()
     project_id: Mapped[uuid.UUID] = _project_fk()
     document_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    # Stable position inside one document version. UUID order cannot align repeated chunk text
+    # across revisions; the ordinal preserves order and multiplicity (AUDIT-014).
+    ordinal: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     page: Mapped[int | None] = mapped_column(Integer)
     bbox: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     kind: Mapped[str] = mapped_column(Text, nullable=False)  # prose|table_row
@@ -310,6 +313,9 @@ class Chunk(Base):
     needs_review: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
     __table_args__ = (
         UniqueConstraint("project_id", "id"),
+        UniqueConstraint(
+            "project_id", "document_id", "ordinal", name="uq_chunks_project_document_ordinal"
+        ),
         Index("ix_chunks_project_id_document_id", "project_id", "document_id"),
         _tenant_fk("document_id", "documents"),
     )
@@ -352,6 +358,62 @@ class Claim(Base):
         Index("ix_claims_project_id_subject_entity_key", "project_id", "subject_entity_key"),
         Index("ix_claims_project_id_object_entity_key", "project_id", "object_entity_key"),
         _tenant_fk("chunk_id", "chunks"),
+    )
+
+
+class ClaimOccurrence(Base):
+    """A claim's concrete provenance in a document-version chunk (AUDIT-014).
+
+    Claim identity is canonical and can survive a revision. Occurrences are version-specific and
+    preserve every place that identity was asserted, including repeated chunk text.
+    """
+
+    __tablename__ = "claim_occurrences"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    claim_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    document_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    chunk_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[dt.datetime] = _created_at()
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "claim_id",
+            "document_id",
+            "chunk_id",
+            name="uq_claim_occurrence_claim_doc_chunk",
+        ),
+        Index("ix_claim_occurrences_project_document", "project_id", "document_id"),
+        Index("ix_claim_occurrences_project_claim", "project_id", "claim_id"),
+        _tenant_fk("claim_id", "claims"),
+        _tenant_fk("document_id", "documents"),
+        _tenant_fk("chunk_id", "chunks"),
+    )
+
+
+class ClaimSupersession(Base):
+    """Unambiguous version lineage, always directed previous claim → replacement."""
+
+    __tablename__ = "claim_supersessions"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    previous_claim_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    replacement_claim_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    created_at: Mapped[dt.datetime] = _created_at()
+    __table_args__ = (
+        CheckConstraint("previous_claim_id <> replacement_claim_id", name="distinct_claims"),
+        UniqueConstraint("project_id", "previous_claim_id", name="uq_claim_supersession_previous"),
+        Index("ix_claim_supersessions_project_replacement", "project_id", "replacement_claim_id"),
+        _tenant_fk(
+            "previous_claim_id",
+            "claims",
+            name="fk_claim_supersessions_project_previous_claim",
+        ),
+        _tenant_fk(
+            "replacement_claim_id",
+            "claims",
+            name="fk_claim_supersessions_project_replacement_claim",
+        ),
     )
 
 
@@ -659,6 +721,9 @@ class IngestRun(Base):
     tables_converted: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     tables_needs_review: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     discarded_chunks: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    # Durable, retry-stable publication material. Cleared only by the transaction that checkpoints
+    # PERSIST, so a crash never requires another model call or another UUID allocation.
+    publish_draft: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[dt.datetime] = _created_at()
     updated_at: Mapped[dt.datetime] = _created_at()

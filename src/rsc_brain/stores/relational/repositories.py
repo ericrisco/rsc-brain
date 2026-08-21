@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, delete, func, select
+from sqlalchemy import text as sql_text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.scope import ProjectScope
@@ -101,9 +102,25 @@ class KnowledgeRepository:
         embedding: Sequence[float] | None = None,
     ) -> str:
         async with session_scope(self._sm) as session:
+            pid = _pid(scope)
+            document_uuid = uuid.UUID(document_id)
+            # This lower-level repository is also a chunk writer (tests, imports and maintenance
+            # tools use it). Serialize per document so its ordinal contract matches the ingest path
+            # even when two callers append concurrently.
+            await session.execute(
+                sql_text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                {"key": f"chunk-ordinal:{pid}:{document_uuid}"},
+            )
+            latest = await session.scalar(
+                select(func.max(models.Chunk.ordinal)).where(
+                    models.Chunk.project_id == pid,
+                    models.Chunk.document_id == document_uuid,
+                )
+            )
             chunk = models.Chunk(
-                project_id=_pid(scope),
-                document_id=uuid.UUID(document_id),
+                project_id=pid,
+                document_id=document_uuid,
+                ordinal=int(latest if latest is not None else -1) + 1,
                 kind=kind,
                 text=text,
                 tags=list(tags),

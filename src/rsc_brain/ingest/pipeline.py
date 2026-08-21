@@ -18,9 +18,12 @@ entities, MERGE graph), so a redo is safe.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import datetime as dt
+import uuid
+from collections.abc import Callable, Sequence, Set
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any, cast
 
 from rsc_brain.config.models import HardwareProfile, KnowledgeConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
@@ -41,6 +44,12 @@ from rsc_brain.ingest.types import (
     RunStatus,
     SourcePolicy,
 )
+from rsc_brain.ingest.version_identity import (
+    align_occurrences,
+    canonical_claim_key,
+    normalize_identity,
+    sentence_delta,
+)
 from rsc_brain.knowledge.contradictions import ContradictionResolver
 from rsc_brain.knowledge.credibility import (
     authority_for,
@@ -56,6 +65,7 @@ from rsc_brain.stores.graph_store import GraphEdge, GraphNode
 from rsc_brain.stores.relational.database import session_scope
 from rsc_brain.stores.relational.ingest_repository import (
     ChunkRow,
+    ClaimIdentityRow,
     ClaimSpec,
     Counters,
     DocRow,
@@ -76,6 +86,17 @@ class PipelineConfig:
     default_tag: str = DEFAULT_TOPIC_SLUG
 
 
+@dataclass(frozen=True, slots=True)
+class VersionBaseline:
+    prior: DocRow | None = None
+    reuse_chunk_ids: frozenset[str] = frozenset()
+    reused_occurrences: dict[str, tuple[str, ...]] | None = None
+    extraction_text_by_chunk: dict[str, str] | None = None
+    superseded_claim_ids: tuple[str, ...] = ()
+    superseded_chunk_ids: tuple[str, ...] = ()
+    replacement_candidates: tuple[ClaimIdentityRow, ...] = ()
+
+
 def default_parser_factory(doc: DocRow) -> DocumentParser:
     """Pick a parser by file type: PDFs → Docling (operator extra), markdown/text → Markdown."""
     suffix = Path(doc.path or doc.logical_id).suffix.lower()
@@ -86,6 +107,10 @@ def default_parser_factory(doc: DocRow) -> DocumentParser:
 
 class DocumentNotFoundError(LookupError):
     """The document does not exist within the caller's project (denied ≡ absent, FR-4.3)."""
+
+
+class PriorVersionNotProcessedError(RuntimeError):
+    """A revision cannot publish before its immediate predecessor establishes the baseline."""
 
 
 def _entity_key(type_by_name: dict[str, str], name: str | None) -> str | None:
@@ -325,12 +350,17 @@ class IngestionPipeline:
         if await self._repo.is_stage_complete(scope, document_id, PipelineStage.PERSIST):
             await self._repo.set_status(scope, document_id, DocStatus.PROCESSED.value)
             return
+        existing_draft = await self._repo.get_publish_draft(scope, document_id)
+        if existing_draft is not None:
+            await self._apply_publish_draft(scope, document_id, existing_draft)
+            await self._after_publish(scope, document_id)
+            return
         chunk_rows = await self._repo.load_chunks(scope, document_id)
         # A new version only re-materialises what changed: unchanged chunks (text seen in the prior
         # version) are neither re-embedded nor re-extracted, so their prior claims keep serving with
         # their id + credibility intact (D6, AC#2). The prior version is superseded afterwards.
-        prior_doc, reuse_texts = await self._version_baseline(scope, document_id)
-        current_texts = {c.text for c in chunk_rows}
+        baseline = await self._version_baseline(scope, document_id, chunk_rows)
+        reuse_chunk_ids = baseline.reuse_chunk_ids
         embeddable = [
             c
             for c in chunk_rows
@@ -338,7 +368,7 @@ class IngestionPipeline:
             and REJECTED_TAG
             not in c.tags  # R26: a refused chunk stays out of the index on redo too
             and c.text.strip()
-            and c.text not in reuse_texts
+            and c.id not in reuse_chunk_ids
         ]
         embeddings = await self._embed(scope, embeddable)
 
@@ -353,7 +383,7 @@ class IngestionPipeline:
             self._table_claims(
                 parsed,
                 chunk_rows,
-                reuse_texts,
+                reuse_chunk_ids,
                 source=source,
                 n_independent_sources=corroboration,
             )
@@ -381,10 +411,13 @@ class IngestionPipeline:
                 continue
             if REJECTED_TAG in row.tags:
                 continue  # R26: refused content is not extracted from, however often publish reruns
-            if row.text in reuse_texts:
+            if row.id in reuse_chunk_ids:
                 continue  # unchanged prose: skip extraction (0 LLM calls); prior claim stays live
+            extraction_text = (baseline.extraction_text_by_chunk or {}).get(row.id, row.text)
+            if not extraction_text.strip():
+                continue
             try:
-                graph = await extractor.extract(row.text)
+                graph = await extractor.extract(extraction_text)
             except ExtractionDiscarded as exc:
                 errors.append(
                     IngestErrorSpec(
@@ -409,14 +442,207 @@ class IngestionPipeline:
                 n_independent_sources=corroboration,
             )
 
+        claims, duplicate_occurrences = self._canonicalize_new_claims(
+            claims, {chunk.id: chunk.text for chunk in chunk_rows}
+        )
+        reused_occurrences = {
+            key: list(value) for key, value in (baseline.reused_occurrences or {}).items()
+        }
+        for chunk_id, claim_ids in duplicate_occurrences.items():
+            reused_occurrences.setdefault(chunk_id, []).extend(claim_ids)
+        baseline = replace(
+            baseline,
+            reused_occurrences={
+                key: tuple(dict.fromkeys(value)) for key, value in reused_occurrences.items()
+            },
+        )
+        supersessions = self._replacement_lineage(baseline.replacement_candidates, claims)
+        for previous, replacement in supersessions:
+            nodes.extend(
+                [
+                    GraphNode(
+                        id=previous,
+                        labels=frozenset({"Claim"}),
+                        properties={"kind": "claim"},
+                    ),
+                    GraphNode(
+                        id=replacement,
+                        labels=frozenset({"Claim"}),
+                        properties={"kind": "claim"},
+                    ),
+                ]
+            )
+            edges.append(GraphEdge(source_id=previous, target_id=replacement, type="SUPERSEDED_BY"))
         claims = await self._embed_claims(scope, claims)
         counters = Counters(claims_generated=len(claims), discarded_chunks=discarded)
-        # R35: the relational half and the GRAPH half are one transaction. They used to be separate
-        # commits, so an interruption between them left claims live in Postgres with no relations in
-        # AGE: two readable stores disagreeing about the same document, with nothing recording which
-        # half happened. The graph is in the same database, so atomicity was always available — it
-        # just was not taken. Graph writes stay idempotent (MERGE), so a retry after a rollback is
-        # still safe.
+        publish_at = dt.datetime.now(dt.UTC)
+        draft = self._encode_publish_draft(
+            embeddings=embeddings,
+            claims=claims,
+            entities=entities,
+            errors=errors,
+            counters=counters,
+            nodes=nodes,
+            edges=edges,
+            baseline=baseline,
+            supersessions=supersessions,
+            publish_at=publish_at,
+        )
+        # The draft commits BEFORE any publication mutation. A rollback therefore keeps the exact
+        # model output, UUIDs, vectors, timestamp and counters needed for a byte-for-byte retry.
+        draft = await self._repo.save_publish_draft(scope, document_id, draft)
+        await self._apply_publish_draft(scope, document_id, draft)
+        await self._after_publish(scope, document_id)
+
+    async def _after_publish(self, scope: ProjectScope, document_id: str) -> None:
+        await self._detect_contradictions_on_ingest(scope, document_id)
+        # SPEC-24 FR-17.2/17.3: anchor the newly-written entities to the ontology and propose merges
+        # for those sharing an IRI. No-op when the layer is off (index is None), so recall never
+        # pays for it — the anchoring latency lives entirely inside this ingest job (FR-17.8).
+        if self._ontology is not None:
+            ontology_index = await self._ontology.index_for(scope)
+            await self._ontology.anchor_and_merge(scope, ontology_index)
+
+    @staticmethod
+    def _encode_publish_draft(
+        *,
+        embeddings: dict[str, list[float]],
+        claims: Sequence[ClaimSpec],
+        entities: Sequence[EntitySpec],
+        errors: Sequence[IngestErrorSpec],
+        counters: Counters,
+        nodes: Sequence[GraphNode],
+        edges: Sequence[GraphEdge],
+        baseline: VersionBaseline,
+        supersessions: Sequence[tuple[str, str]],
+        publish_at: dt.datetime,
+    ) -> dict[str, object]:
+        """JSON-safe, versioned publication envelope; the database is its durability boundary."""
+
+        return {
+            "version": 1,
+            "publish_at": publish_at.isoformat(),
+            "embeddings": embeddings,
+            "claims": [
+                {
+                    "id": claim.id,
+                    "chunk_id": claim.chunk_id,
+                    "text": claim.text,
+                    "subject": claim.subject,
+                    "predicate": claim.predicate,
+                    "object": claim.object,
+                    "subject_entity_key": claim.subject_entity_key,
+                    "object_entity_key": claim.object_entity_key,
+                    "tags": list(claim.tags),
+                    "extraction_confidence": claim.extraction_confidence,
+                    "credibility": claim.credibility,
+                    "embedding": list(claim.embedding) if claim.embedding is not None else None,
+                }
+                for claim in claims
+            ],
+            "entities": [
+                {"name": entity.name, "type": entity.type, "aliases": list(entity.aliases)}
+                for entity in entities
+            ],
+            "errors": [
+                {"chunk_ref": error.chunk_ref, "stage": error.stage, "error": error.error}
+                for error in errors
+            ],
+            "counters": {
+                "chunks_created": counters.chunks_created,
+                "claims_generated": counters.claims_generated,
+                "tables_converted": counters.tables_converted,
+                "tables_needs_review": counters.tables_needs_review,
+                "discarded_chunks": counters.discarded_chunks,
+            },
+            "nodes": [
+                {
+                    "id": node.id,
+                    "labels": sorted(node.labels),
+                    "properties": dict(node.properties),
+                }
+                for node in nodes
+            ],
+            "edges": [
+                {
+                    "source_id": edge.source_id,
+                    "target_id": edge.target_id,
+                    "type": edge.type,
+                    "properties": dict(edge.properties),
+                }
+                for edge in edges
+            ],
+            "reused_occurrences": {
+                key: list(value) for key, value in (baseline.reused_occurrences or {}).items()
+            },
+            "superseded_claim_ids": list(baseline.superseded_claim_ids),
+            "superseded_chunk_ids": list(baseline.superseded_chunk_ids),
+            "supersessions": [list(pair) for pair in supersessions],
+        }
+
+    async def _apply_publish_draft(
+        self, scope: ProjectScope, document_id: str, draft: dict[str, object]
+    ) -> None:
+        """Apply every relational, AGE and lifecycle effect in one transaction."""
+
+        payload = cast(dict[str, Any], draft)
+        claims = [
+            ClaimSpec(
+                **{
+                    **item,
+                    "tags": tuple(item.get("tags") or ()),
+                    "embedding": (
+                        tuple(item["embedding"]) if item.get("embedding") is not None else None
+                    ),
+                }
+            )
+            for item in cast(list[dict[str, Any]], payload["claims"])
+        ]
+        entities = [
+            EntitySpec(
+                name=item["name"], type=item["type"], aliases=tuple(item.get("aliases") or ())
+            )
+            for item in cast(list[dict[str, Any]], payload["entities"])
+        ]
+        errors = [
+            IngestErrorSpec(
+                chunk_ref=item.get("chunk_ref"), stage=item["stage"], error=item["error"]
+            )
+            for item in cast(list[dict[str, Any]], payload["errors"])
+        ]
+        counters = Counters(**cast(dict[str, int], payload["counters"]))
+        nodes = [
+            GraphNode(
+                id=item["id"],
+                labels=frozenset(item.get("labels") or ()),
+                properties=dict(item.get("properties") or {}),
+            )
+            for item in cast(list[dict[str, Any]], payload["nodes"])
+        ]
+        edges = [
+            GraphEdge(
+                source_id=item["source_id"],
+                target_id=item["target_id"],
+                type=item["type"],
+                properties=dict(item.get("properties") or {}),
+            )
+            for item in cast(list[dict[str, Any]], payload["edges"])
+        ]
+        superseded_claim_ids = tuple(cast(list[str], payload["superseded_claim_ids"]))
+        superseded_chunk_ids = tuple(cast(list[str], payload["superseded_chunk_ids"]))
+        supersessions = [
+            (str(pair[0]), str(pair[1])) for pair in cast(list[list[str]], payload["supersessions"])
+        ]
+        embeddings = {
+            str(key): [float(value) for value in values]
+            for key, values in cast(dict[str, list[float]], payload["embeddings"]).items()
+        }
+        reused = {
+            str(key): tuple(str(value) for value in values)
+            for key, values in cast(dict[str, list[str]], payload["reused_occurrences"]).items()
+        }
+        publish_at = dt.datetime.fromisoformat(str(payload["publish_at"]))
+
         async with session_scope(self._repo.sessionmaker) as unit:
             await self._repo.record_publish(
                 scope,
@@ -426,6 +652,11 @@ class IngestionPipeline:
                 entities=entities,
                 errors=errors,
                 counters=counters,
+                reused_occurrences=reused,
+                superseded_claim_ids=superseded_claim_ids,
+                superseded_chunk_ids=superseded_chunk_ids,
+                supersessions=supersessions,
+                publish_at=publish_at,
                 session=unit,
             )
             await self._graph.create_graph(scope, session=unit)
@@ -433,40 +664,149 @@ class IngestionPipeline:
                 await self._graph.upsert_nodes(scope, nodes, session=unit)
             if edges:
                 await self._graph.upsert_edges(scope, edges, session=unit)
-        # Supersede the prior version: changed/removed chunks lose their embedding + have their
-        # claims closed (valid_to=now); unchanged chunks are left intact so their claims persist
-        # with the same id/credibility (D6, AC#3). Never deletes; idempotent.
-        if prior_doc is not None:
-            closed = await self._repo.supersede_prior_version(scope, prior_doc.id, current_texts)
-            # R27: a re-ingested document closes the claims its changed chunks used to assert, so
-            # their relations stop being current in the graph as well — unless the new version (or
-            # another document) still asserts the same relation, which `retire_claims` checks.
-            if closed:
-                await self._graph_sync.retire_claims(scope, closed)
-        await self._repo.mark_stage(
-            scope, document_id, PipelineStage.PERSIST, phase=DocStatus.PROCESSED.value
-        )
-        await self._repo.set_status(scope, document_id, DocStatus.PROCESSED.value)
-        await self._detect_contradictions_on_ingest(scope, document_id)
-        # SPEC-24 FR-17.2/17.3: anchor the newly-written entities to the ontology and propose merges
-        # for those sharing an IRI. No-op when the layer is off (index is None), so recall never
-        # pays for it — the anchoring latency lives entirely inside this ingest job (FR-17.8).
-        if self._ontology is not None:
-            await self._ontology.anchor_and_merge(scope, ontology_index)
+            if superseded_claim_ids:
+                await self._graph_sync.retire_claims(scope, superseded_claim_ids, session=unit)
+            await self._repo.finalize_publish(unit, scope, document_id)
 
     async def _version_baseline(
-        self, scope: ProjectScope, document_id: str
-    ) -> tuple[DocRow | None, set[str]]:
-        """For a version > 1 document, return the prior published version + the set of its chunk
-        texts (the "unchanged" set). Version-1 documents get ``(None, set())`` — unchanged path."""
+        self, scope: ProjectScope, document_id: str, current_chunks: Sequence[ChunkRow]
+    ) -> VersionBaseline:
+        """Build the ordered claim-level delta against the immediate published predecessor."""
         doc = await self._require_document(scope, document_id)
         if doc.version <= 1:
-            return None, set()
-        prior = await self._repo.latest_prior_published_document(scope, doc.logical_id, doc.version)
-        if prior is None:
-            return None, set()
+            return VersionBaseline()
+        prior = await self._repo.immediate_prior_document(scope, doc.logical_id, doc.version)
+        if prior is None or prior.status != DocStatus.PROCESSED.value:
+            status = "missing" if prior is None else prior.status
+            raise PriorVersionNotProcessedError(
+                f"document {document_id} version {doc.version} cannot publish before "
+                f"version {doc.version - 1} is processed (status={status})"
+            )
         prior_chunks = await self._repo.load_chunks(scope, prior.id)
-        return prior, {c.text for c in prior_chunks}
+        claims_by_prior_chunk = await self._repo.active_claims_by_chunk(scope, prior.id)
+        reused: dict[str, tuple[str, ...]] = {}
+        exact_chunk_ids: set[str] = set()
+        extraction_texts: dict[str, str] = {}
+        closed: list[str] = []
+        superseded_chunks: list[str] = []
+        replacement_candidates: list[ClaimIdentityRow] = []
+        for match in align_occurrences(
+            [chunk.text for chunk in prior_chunks], [chunk.text for chunk in current_chunks]
+        ):
+            if match.prior_index is None:
+                continue
+            prior_chunk = prior_chunks[match.prior_index]
+            prior_claims = claims_by_prior_chunk.get(prior_chunk.id, ())
+            if match.current_index is None:
+                superseded_chunks.append(prior_chunk.id)
+                closed.extend(claim.id for claim in prior_claims)
+                replacement_candidates.extend(prior_claims)
+                continue
+            current_chunk = current_chunks[match.current_index]
+            if match.exact:
+                exact_chunk_ids.add(current_chunk.id)
+                if prior_claims:
+                    reused[current_chunk.id] = tuple(claim.id for claim in prior_claims)
+                continue
+
+            superseded_chunks.append(prior_chunk.id)
+            delta = sentence_delta(prior_chunk.text, current_chunk.text)
+            extraction_texts[current_chunk.id] = delta.extraction_text
+            unchanged = tuple(normalize_identity(sentence) for sentence in delta.unchanged)
+            kept = tuple(
+                claim
+                for claim in prior_claims
+                if any(
+                    normalize_identity(claim.text) in sentence
+                    or sentence in normalize_identity(claim.text)
+                    for sentence in unchanged
+                )
+            )
+            if kept:
+                reused[current_chunk.id] = tuple(claim.id for claim in kept)
+            removed = [claim for claim in prior_claims if claim not in kept]
+            closed.extend(claim.id for claim in removed)
+            replacement_candidates.extend(removed)
+        reused_claim_ids = {claim_id for claim_ids in reused.values() for claim_id in claim_ids}
+        closed_ids = tuple(
+            claim_id for claim_id in dict.fromkeys(closed) if claim_id not in reused_claim_ids
+        )
+        replacement_candidates = [
+            claim for claim in replacement_candidates if claim.id in closed_ids
+        ]
+        return VersionBaseline(
+            prior=prior,
+            reuse_chunk_ids=frozenset(exact_chunk_ids),
+            reused_occurrences=reused,
+            extraction_text_by_chunk=extraction_texts,
+            superseded_claim_ids=closed_ids,
+            superseded_chunk_ids=tuple(dict.fromkeys(superseded_chunks)),
+            replacement_candidates=tuple(replacement_candidates),
+        )
+
+    @staticmethod
+    def _canonicalize_new_claims(
+        claims: Sequence[ClaimSpec], chunk_texts: dict[str, str]
+    ) -> tuple[list[ClaimSpec], dict[str, list[str]]]:
+        """Collapse repeated content, retaining every concrete chunk as an occurrence.
+
+        The source text participates only in this within-publish collapse: a weak extractor can emit
+        the same generic triple for unrelated chunks, which is not evidence that those assertions are
+        one identity. Identical chunk content plus an identical claim key is unambiguous.
+        """
+
+        canonical: dict[tuple[str, ...], ClaimSpec] = {}
+        extra_occurrences: dict[str, list[str]] = {}
+        for candidate in claims:
+            key = (
+                *canonical_claim_key(
+                    candidate.text, candidate.subject, candidate.predicate, candidate.object
+                ),
+                "source",
+                normalize_identity(chunk_texts.get(candidate.chunk_id, "")),
+            )
+            existing = canonical.get(key)
+            if existing is None:
+                canonical[key] = replace(candidate, id=candidate.id or str(uuid.uuid4()))
+                continue
+            if candidate.chunk_id != existing.chunk_id and existing.id is not None:
+                extra_occurrences.setdefault(candidate.chunk_id, []).append(existing.id)
+        return list(canonical.values()), extra_occurrences
+
+    @staticmethod
+    def _replacement_lineage(
+        previous: Sequence[ClaimIdentityRow], replacements: Sequence[ClaimSpec]
+    ) -> list[tuple[str, str]]:
+        """Infer only unambiguous same-subject+predicate replacements, previous → replacement."""
+
+        old_by_slot: dict[tuple[str, str], list[ClaimIdentityRow]] = {}
+        new_by_slot: dict[tuple[str, str], list[ClaimSpec]] = {}
+        for old_claim in previous:
+            if old_claim.subject and old_claim.predicate:
+                old_by_slot.setdefault(
+                    (
+                        normalize_identity(old_claim.subject),
+                        normalize_identity(old_claim.predicate),
+                    ),
+                    [],
+                ).append(old_claim)
+        for new_claim in replacements:
+            if new_claim.subject and new_claim.predicate and new_claim.id:
+                new_by_slot.setdefault(
+                    (
+                        normalize_identity(new_claim.subject),
+                        normalize_identity(new_claim.predicate),
+                    ),
+                    [],
+                ).append(new_claim)
+        lineage: list[tuple[str, str]] = []
+        for slot, old_claims in old_by_slot.items():
+            new_claims = new_by_slot.get(slot, [])
+            if len(old_claims) == len(new_claims) == 1:
+                replacement_id = new_claims[0].id
+                if replacement_id is not None:
+                    lineage.append((old_claims[0].id, replacement_id))
+        return lineage
 
     async def _detect_contradictions_on_ingest(self, scope: ProjectScope, document_id: str) -> None:
         """On-ingest contradiction detection over the document's new claims (SPEC-08 FR-5.2).
@@ -539,15 +879,15 @@ class IngestionPipeline:
         self,
         parsed: ParsedDocument,
         chunk_rows: Sequence[ChunkRow],
-        reuse_texts: set[str] | None = None,
+        reuse_chunk_ids: Set[str] | None = None,
         *,
         source: SourceRow | None = None,
         n_independent_sources: int = 1,
     ) -> list[ClaimSpec]:
         """Recover the deterministic table-row claims and bind them to their persisted chunk by
-        text (table_row text is unique per row, so the mapping is unambiguous). Rows whose text is
-        unchanged from the prior version are skipped — their prior claims persist (D6, AC#2)."""
-        unchanged = reuse_texts or set()
+        text (table_row text is unique per row, so the mapping is unambiguous). Exactly aligned rows
+        are skipped by chunk id — not by a text set, which loses duplicate occurrences."""
+        unchanged = reuse_chunk_ids or set()
         by_text: dict[str, ChunkRow] = {
             c.text: c for c in chunk_rows if c.kind == ChunkKind.TABLE_ROW.value
         }
@@ -556,10 +896,10 @@ class IngestionPipeline:
         for spec in specs:
             if spec.kind is not ChunkKind.TABLE_ROW or spec.needs_review or not spec.claims:
                 continue
-            if spec.text in unchanged:
-                continue
             row = by_text.get(spec.text)
             if row is None:
+                continue
+            if row.id in unchanged:
                 continue
             credibility = self._claim_credibility(
                 row, source=source, n_independent_sources=n_independent_sources
