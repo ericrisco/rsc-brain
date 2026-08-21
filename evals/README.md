@@ -160,3 +160,33 @@ Run the corpus evaluation before changing a model, provider, embedding, judge, r
 versioned prompt under `src/rsc_brain/prompts/`. Review golden expectations whenever a source
 document or taxonomy changes. Security cases must remain strict: any result for a denied or
 cross-project case is a permission leak.
+
+## Running the success gates
+
+G2, G3 and G4 are measurable from a running instance, and until AUDIT-114 nothing in this repository
+ran them: every figure ever recorded came from a script written on a rented host and thrown away with
+it, so no gate number could be reproduced after a change.
+
+```bash
+export RSC_BRAIN_CONFIG=/path/to/config.yaml          # real capability routes; models must be up
+export RSC_BRAIN_DATABASE__DSN=postgresql+asyncpg://…  # a migrated database
+
+uv run python -m evals.gate_run setup     # both projects, taxonomy, sources, 4 principals + PATs
+uv run python -m evals.gate_run ingest    # the 27-document corpus through real models
+uv run python -m evals.gate_run measure   # the 47 golden cases -> G2/G3/G4
+```
+
+`setup` and `ingest` are resumable: an already-present document is reported as a duplicate and costs
+no model call, which matters because a live-model corpus takes tens of minutes.
+
+What it deliberately does **not** do is assemble its own graph. The pipeline comes from
+`runtime.build_pipeline`, the retriever is built as `ApiDeps.retriever()` builds it (reranker
+included when configuration enables it), and each case's scope is resolved from that principal's own
+personal access token through the real authentication path — a fabricated scope would make every
+`denied` and `cross_project` case prove nothing. AUDIT-112 is what a measurement through a
+hand-assembled graph costs.
+
+Read the per-family breakdown, not only the aggregate: `correct_abstention_rate` spans `abstain`,
+`denied`, `cross_project` and `injection`. **G4 is the `abstain` family alone**, and the runner prints
+it separately for that reason. Abstention also depends on `reranker.enabled` — with the reranker off,
+the blended-threshold path answers cases it should refuse.

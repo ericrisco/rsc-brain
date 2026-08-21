@@ -1,0 +1,12 @@
+{
+  "tokens": {
+    "alice": "ck_EawihQTTJnzy9eBUIB6PCTqhsuiAst9L05dzW345bnQ",
+    "bob": "ck_bxQKYWIcPY2wPxJkFmqk0YneaHgRFbcfT8YKvzInPgg",
+    "dave": "ck_qMrbNP2ynzuRNAtqsXCF8Jf5PZi9o3NlW9ZoxQHvGFs",
+    "erin": "ck_Xt_JcqrPagf9rxBiDl5VLst4AoJ0QlxvR0Uc7Hv5XNo"
+  },
+  "projects": {
+    "acme": "ac499c93-8762-4e02-b324-7de5a794f895",
+    "globex": "18af297c-2a63-4638-b3fd-7837653f5d3f"
+  }
+}
