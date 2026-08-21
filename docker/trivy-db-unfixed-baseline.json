@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "reviewed_on": "2026-08-21",
+  "scanner_image": "aquasec/trivy:0.66.0@sha256:086971aaf400beebd94e8300fd8ea623774419597169156cec56eec5b00dfb1e",
+  "image": "rsc-brain/db:pg16-age-pgvector",
+  "policy": "Only high/critical findings with no upstream fixed version may be listed. Any new, changed, stale, or fixable package finding fails the gate and requires re-triage.",
+  "common_mitigations": "Development-only loopback exposure; uid/gid 999 from PID 1; no Linux capabilities; no-new-privileges; read-only root filesystem; only bounded tmpfs and database volume writable.",
+  "allowed_unfixed": [
+    {
+      "id": "CVE-2025-69720",
+      "severity": "HIGH",
+      "status": "affected",
+      "packages": ["libncursesw6", "libtinfo6", "ncurses-base", "ncurses-bin"],
+      "installed_version": "6.5+20250216-2",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian publishes no fixed version. The vulnerable terminal parser is not used by the PostgreSQL server request path; psql is retained for local health/administration only."
+    },
+    {
+      "id": "CVE-2026-13221",
+      "severity": "CRITICAL",
+      "status": "affected",
+      "packages": ["libperl5.40", "perl", "perl-base", "perl-modules-5.40"],
+      "installed_version": "5.40.1-6",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian publishes no fixed version. Perl is a PostgreSQL package dependency, but PL/Perl is not installed and the service does not compile attacker-supplied Perl regular expressions."
+    },
+    {
+      "id": "CVE-2026-14456",
+      "severity": "HIGH",
+      "status": "fix_deferred",
+      "packages": ["libssl3t64", "openssl", "openssl-provider-legacy"],
+      "installed_version": "3.5.6-1~deb13u2",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian explicitly defers a fix. The issue is in an OpenSSL QUIC server; PostgreSQL in this development topology does not expose a QUIC server."
+    },
+    {
+      "id": "CVE-2026-41992",
+      "severity": "HIGH",
+      "status": "affected",
+      "packages": ["gzip"],
+      "installed_version": "1.13-1",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian publishes no fixed version. gzip is only reachable for operator-supplied init files on a fresh local volume, not through database network input."
+    },
+    {
+      "id": "CVE-2026-42496",
+      "severity": "CRITICAL",
+      "status": "fix_deferred",
+      "packages": ["libperl5.40", "perl", "perl-base", "perl-modules-5.40"],
+      "installed_version": "5.40.1-6",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian defers a fix. The vulnerable Perl Archive::Tar extraction path is not invoked by the database service or its fixed init scripts."
+    },
+    {
+      "id": "CVE-2026-42497",
+      "severity": "HIGH",
+      "status": "fix_deferred",
+      "packages": ["libperl5.40", "perl", "perl-base", "perl-modules-5.40"],
+      "installed_version": "5.40.1-6",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian defers a fix. The vulnerable Perl Archive::Tar extraction path is not invoked by the database service or its fixed init scripts."
+    },
+    {
+      "id": "CVE-2026-48962",
+      "severity": "HIGH",
+      "status": "affected",
+      "packages": ["libperl5.40", "perl", "perl-base", "perl-modules-5.40"],
+      "installed_version": "5.40.1-6",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian publishes no fixed version. The service does not execute Perl IO::Compress with attacker-controlled output globs; PL/Perl is not installed."
+    },
+    {
+      "id": "CVE-2026-54369",
+      "severity": "HIGH",
+      "status": "affected",
+      "packages": ["libacl1"],
+      "installed_version": "2.3.2-2+b1",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian publishes no fixed version. The container never runs as root, has zero capabilities and does not offer an attacker-controlled ACL-management path."
+    },
+    {
+      "id": "CVE-2026-57432",
+      "severity": "HIGH",
+      "status": "affected",
+      "packages": ["libperl5.40", "perl", "perl-base", "perl-modules-5.40"],
+      "installed_version": "5.40.1-6",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian publishes no fixed version. The database service does not run attacker-controlled Perl pack/unpack operations; PL/Perl is not installed."
+    },
+    {
+      "id": "CVE-2026-57433",
+      "severity": "CRITICAL",
+      "status": "affected",
+      "packages": ["libperl5.40", "perl", "perl-base", "perl-modules-5.40"],
+      "installed_version": "5.40.1-6",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian publishes no fixed version. Perl Storable is not invoked by the database service and PL/Perl is not installed."
+    },
+    {
+      "id": "CVE-2026-6653",
+      "severity": "CRITICAL",
+      "status": "affected",
+      "packages": ["libxml2"],
+      "installed_version": "2.12.7+dfsg+really2.9.14-2.1+deb13u3",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian publishes no fixed version. The default application schema does not expose PostgreSQL XML parsing; network exposure is loopback-only and the process is capability-free."
+    },
+    {
+      "id": "CVE-2026-8376",
+      "severity": "CRITICAL",
+      "status": "affected",
+      "packages": ["libperl5.40", "perl", "perl-base", "perl-modules-5.40"],
+      "installed_version": "5.40.1-6",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian publishes no fixed version. The reported overflow targets 32-bit builds; the reviewed image targets amd64/arm64 and PL/Perl is not installed."
+    },
+    {
+      "id": "CVE-2026-9538",
+      "severity": "HIGH",
+      "status": "fix_deferred",
+      "packages": ["libperl5.40", "perl", "perl-base", "perl-modules-5.40"],
+      "installed_version": "5.40.1-6",
+      "owner": "rsc-brain maintainer",
+      "review_due": "2026-08-28",
+      "rationale": "Debian defers a fix. The vulnerable Perl Archive::Tar input path is not invoked by the database service or its fixed init scripts."
+    }
+  ]
+}
