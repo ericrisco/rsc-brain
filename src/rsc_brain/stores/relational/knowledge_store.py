@@ -6,6 +6,7 @@ filters by ``scope.project_id`` in-query (FR-12.4).
 from __future__ import annotations
 
 import datetime as dt
+import json
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -79,6 +80,36 @@ class ClaimData:
     tags: tuple[str, ...]
     embedding: tuple[float, ...]
     valid_to: dt.datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class CorrectionRevert:
+    status: str
+    error: str | None = None
+
+
+class CorrectionApplyError(RuntimeError):
+    """A safe, committed refusal of an applying correction."""
+
+    def __init__(
+        self,
+        code: str,
+        *,
+        correction_id: str,
+        existing_correction_id: str | None = None,
+        existing_new_claim_id: str | None = None,
+        existing_status: str | None = None,
+        existing_author_id: str | None = None,
+        same_request: bool = False,
+    ) -> None:
+        super().__init__(code)
+        self.code = code
+        self.correction_id = correction_id
+        self.existing_correction_id = existing_correction_id
+        self.existing_new_claim_id = existing_new_claim_id
+        self.existing_status = existing_status
+        self.existing_author_id = existing_author_id
+        self.same_request = same_request
 
 
 class KnowledgeStore:
@@ -517,46 +548,144 @@ class KnowledgeStore:
         self,
         scope: ProjectScope,
         *,
+        correction_id: str,
         old_claim_id: str,
         new_text: str,
         new_tags: Sequence[str],
         cred_old: float,
         cred_new: float,
         pending: bool,
+        final_status: str,
     ) -> str:
-        """One transaction: degrade + supersede the old claim (unless pending), create the new
-        claim. Returns the new claim id. The close is an operational lifecycle mutation, not a
-        source-valid-time decision."""
-        async with session_scope(self._sm) as session:
-            old = await session.get(models.Claim, uuid.UUID(old_claim_id))
-            if old is None or old.project_id != _pid(scope):
-                raise LookupError(old_claim_id)
-            new_claim = models.Claim(
-                project_id=_pid(scope),
-                chunk_id=old.chunk_id,
-                text=new_text,
-                subject=old.subject,
-                predicate=old.predicate,
-                object=old.object,
-                credibility=cred_new,
-                tags=list(new_tags),
-                source_document_id=old.source_document_id,
-                pending_confirmation=pending,
-            )
-            session.add(new_claim)
-            await session.flush()
-            if not pending:
-                old.credibility = cred_old
-                old.valid_to = _now()
-            from rsc_brain.skills.staleness import mark_claims_stale_in_session
+        """Atomically snapshot, apply and finalize one correction.
 
-            await mark_claims_stale_in_session(
-                session,
-                scope,
-                [old.id, new_claim.id],
-                reason="owner correction applied",
+        The correction row exists before this transaction, while the target is still unchanged.
+        Locking both rows makes the captured interval the exact state this mutation replaces. A
+        retry returns the already-created replacement instead of manufacturing another live claim.
+        """
+        pid = _pid(scope)
+        failure: CorrectionApplyError | None = None
+        new_claim_id: str | None = None
+        async with session_scope(self._sm) as session:
+            correction = await session.scalar(
+                select(models.Correction)
+                .where(
+                    models.Correction.id == uuid.UUID(correction_id),
+                    models.Correction.project_id == pid,
+                    models.Correction.target_claim == uuid.UUID(old_claim_id),
+                )
+                .with_for_update()
             )
-            return str(new_claim.id)
+            if correction is None:
+                raise LookupError(correction_id)
+            if (
+                correction.new_claim is not None
+                and correction.validity_snapshot_captured_at is not None
+                and correction.status == final_status
+            ):
+                return str(correction.new_claim)
+            if (
+                correction.new_claim is not None
+                or correction.validity_snapshot_captured_at is not None
+            ):
+                raise RuntimeError(f"correction {correction_id} is only partially applied")
+
+            old = await session.scalar(
+                select(models.Claim)
+                .where(
+                    models.Claim.id == uuid.UUID(old_claim_id),
+                    models.Claim.project_id == pid,
+                )
+                .with_for_update()
+            )
+            if old is None:
+                raise LookupError(old_claim_id)
+            # The target row is the serialization point across DIFFERENT correction rows. Without
+            # this committed-state check, two concurrent requests each create a live replacement
+            # after taking the same lock in succession (AUDIT-107 review finding).
+            existing = await session.scalar(
+                select(models.Correction)
+                .where(
+                    models.Correction.project_id == pid,
+                    models.Correction.target_claim == old.id,
+                    models.Correction.id != correction.id,
+                    models.Correction.status.in_({"applied", "pending_confirmation"}),
+                )
+                .order_by(models.Correction.created_at, models.Correction.id)
+                .limit(1)
+            )
+            failed_at = _now()
+            if existing is not None:
+                same_request = existing.after_text == new_text and existing.new_claim is not None
+                existing_id = str(existing.id)
+                correction.status = "duplicate" if same_request else "apply_failed"
+                correction.lifecycle_error = f"active_correction:{existing_id}"
+                correction.resolved_at = failed_at
+                failure = CorrectionApplyError(
+                    correction.lifecycle_error,
+                    correction_id=str(correction.id),
+                    existing_correction_id=existing_id,
+                    existing_new_claim_id=str(existing.new_claim) if existing.new_claim else None,
+                    existing_status=existing.status,
+                    existing_author_id=str(existing.author_id) if existing.author_id else None,
+                    same_request=same_request,
+                )
+            elif old.valid_from is not None and old.valid_from > failed_at:
+                correction.status = "apply_failed"
+                correction.lifecycle_error = "target_validity:not_yet_effective"
+                correction.resolved_at = failed_at
+                failure = CorrectionApplyError(
+                    correction.lifecycle_error,
+                    correction_id=str(correction.id),
+                )
+            else:
+                applied_at = failed_at
+                correction.target_valid_from_before = old.valid_from
+                correction.target_valid_to_before = old.valid_to
+                correction.validity_snapshot_captured_at = applied_at
+                correction.lifecycle_error = None
+                # Routed review records historically stored only the old text here. Normalize every
+                # applied path while the locked target still has its exact pre-mutation credibility
+                # so revert does not need another guess.
+                correction.before_text = json.dumps(
+                    {"text": old.text, "credibility": float(old.credibility)}
+                )
+                new_claim = models.Claim(
+                    project_id=pid,
+                    chunk_id=old.chunk_id,
+                    text=new_text,
+                    subject=old.subject,
+                    predicate=old.predicate,
+                    object=old.object,
+                    credibility=cred_new,
+                    tags=list(new_tags),
+                    source_document_id=old.source_document_id,
+                    valid_from=applied_at,
+                    pending_confirmation=pending,
+                )
+                session.add(new_claim)
+                await session.flush()
+                correction.new_claim = new_claim.id
+                correction.status = final_status
+                correction.resolved_at = applied_at if final_status == "applied" else None
+                if not pending:
+                    old.credibility = cred_old
+                    # Closing a claim may shorten its interval, never extend an earlier source end.
+                    old.valid_to = min(old.valid_to, applied_at) if old.valid_to else applied_at
+                from rsc_brain.skills.staleness import mark_claims_stale_in_session
+
+                await mark_claims_stale_in_session(
+                    session,
+                    scope,
+                    [old.id, new_claim.id],
+                    reason="owner correction applied",
+                )
+                new_claim_id = str(new_claim.id)
+        if failure is not None:
+            raise failure
+        if new_claim_id is None:  # pragma: no cover - every non-failure branch assigns it
+            raise RuntimeError(f"correction {correction_id} produced no replacement")
+        return new_claim_id
 
     async def record_correction(
         self,
@@ -647,6 +776,8 @@ class KnowledgeStore:
                     "after_text": c.after_text,
                     "created_at": c.created_at.isoformat() if c.created_at else None,
                     "resolved_at": c.resolved_at.isoformat() if c.resolved_at else None,
+                    "lifecycle_error": c.lifecycle_error,
+                    "reverted_by": str(c.reverted_by) if c.reverted_by else None,
                 }
                 for c in rows
             ]
@@ -773,42 +904,88 @@ class KnowledgeStore:
         self,
         scope: ProjectScope,
         *,
-        old_claim_id: str,
-        new_claim_id: str | None,
+        correction_id: str,
         cred_restore: float,
-    ) -> None:
-        """Reactivate the old claim (clear valid_to, restore credibility) and supersede the new
-        claim — the reverse of an applied correction (FR-15.8). These are operational lifecycle
-        mutations, not active-at readers; source-validity restoration remains a separate follow-up."""
+        reverted_by: str,
+    ) -> CorrectionRevert:
+        """Restore one captured interval exactly, or fail closed without touching either claim."""
+        pid = _pid(scope)
         async with session_scope(self._sm) as session:
-            await session.execute(
-                update(models.Claim)
+            correction = await session.scalar(
+                select(models.Correction)
                 .where(
-                    models.Claim.id == uuid.UUID(old_claim_id),
-                    models.Claim.project_id == _pid(scope),
+                    models.Correction.id == uuid.UUID(correction_id),
+                    models.Correction.project_id == pid,
                 )
-                .values(valid_to=None, credibility=cred_restore, disputed=False)
+                .with_for_update()
             )
-            if new_claim_id is not None:
-                await session.execute(
-                    update(models.Claim)
-                    .where(
-                        models.Claim.id == uuid.UUID(new_claim_id),
-                        models.Claim.project_id == _pid(scope),
-                    )
-                    .values(valid_to=_now())
+            if correction is None:
+                return CorrectionRevert(status="not_found")
+            if correction.status == "reverted":
+                return CorrectionRevert(status="already_reverted")
+            if correction.status not in {"applied", "pending_confirmation"}:
+                return CorrectionRevert(status="invalid_status")
+
+            snapshot_error: str | None = None
+            if correction.validity_snapshot_captured_at is None:
+                snapshot_error = "invalid_validity_snapshot:missing"
+            elif (
+                correction.target_valid_from_before is not None
+                and correction.target_valid_to_before is not None
+                and correction.target_valid_to_before <= correction.target_valid_from_before
+            ):
+                snapshot_error = "invalid_validity_snapshot:inverted"
+            if snapshot_error is not None:
+                correction.status = "revert_failed"
+                correction.lifecycle_error = snapshot_error
+                correction.resolved_at = _now()
+                return CorrectionRevert(status="failed", error=snapshot_error)
+
+            old = await session.scalar(
+                select(models.Claim)
+                .where(
+                    models.Claim.id == correction.target_claim,
+                    models.Claim.project_id == pid,
                 )
+                .with_for_update()
+            )
+            new = None
+            if correction.new_claim is not None:
+                new = await session.scalar(
+                    select(models.Claim)
+                    .where(
+                        models.Claim.id == correction.new_claim,
+                        models.Claim.project_id == pid,
+                    )
+                    .with_for_update()
+                )
+            if old is None or (correction.new_claim is not None and new is None):
+                state_error = "invalid_correction_state:claim_missing"
+                correction.status = "revert_failed"
+                correction.lifecycle_error = state_error
+                correction.resolved_at = _now()
+                return CorrectionRevert(status="failed", error=state_error)
+
+            reverted_at = _now()
+            old.valid_from = correction.target_valid_from_before
+            old.valid_to = correction.target_valid_to_before
+            old.credibility = cred_restore
+            old.disputed = False
+            if new is not None:
+                new.valid_to = reverted_at
+            correction.status = "reverted"
+            correction.lifecycle_error = None
+            correction.reverted_by = _maybe_uuid(reverted_by)
+            correction.resolved_at = reverted_at
             from rsc_brain.skills.staleness import mark_claims_stale_in_session
 
             await mark_claims_stale_in_session(
                 session,
                 scope,
-                [
-                    uuid.UUID(old_claim_id),
-                    *([uuid.UUID(new_claim_id)] if new_claim_id is not None else []),
-                ],
+                [old.id, *([new.id] if new is not None else [])],
                 reason="owner correction reverted",
             )
+            return CorrectionRevert(status="reverted")
 
     async def corrections_by_author_since(
         self, scope: ProjectScope, author_id: str, since: dt.datetime

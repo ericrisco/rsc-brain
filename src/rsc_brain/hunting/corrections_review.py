@@ -27,10 +27,12 @@ from rsc_brain.hunting.state_machine import (
     IllegalTransitionError,
     path_to,
 )
+from rsc_brain.knowledge.graph_sync import GraphSync
 from rsc_brain.scope import ProjectScope
+from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import session_scope
-from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+from rsc_brain.stores.relational.knowledge_store import CorrectionApplyError, KnowledgeStore
 
 
 def _pid(scope: ProjectScope) -> uuid.UUID:
@@ -48,6 +50,7 @@ class CorrectionReviewService:
         self._sm = sessionmaker
         self._hunts = hunts
         self._store = KnowledgeStore(sessionmaker)
+        self._graph_sync = GraphSync(store=self._store, graph=AgeGraphStore(sessionmaker))
         self._directory = PersonDirectory(sessionmaker)
         self._config = config or KnowledgeConfig()
 
@@ -88,18 +91,27 @@ class CorrectionReviewService:
         # The corrected claim inherits the target's tags (FR-15.4) so topic permissions are
         # preserved — never strip them to an untagged claim.
         target = await self._store.get_claim(scope, str(correction.target_claim))
-        new_claim_id = await self._store.apply_owner_correction(
-            scope,
-            old_claim_id=str(correction.target_claim),
-            new_text=correction.after_text or "",
-            new_tags=list(target.tags) if target is not None else [],
-            cred_old=self._config.superseded_credibility,
-            cred_new=self._config.correction_credibility,
-            pending=False,
-        )
-        await self._store.set_correction_status(
-            scope, str(hunt.correction_id), status="applied", new_claim=new_claim_id
-        )
+        try:
+            await self._store.apply_owner_correction(
+                scope,
+                correction_id=str(hunt.correction_id),
+                old_claim_id=str(correction.target_claim),
+                new_text=correction.after_text or "",
+                new_tags=list(target.tags) if target is not None else [],
+                cred_old=self._config.superseded_credibility,
+                cred_new=self._config.correction_credibility,
+                pending=False,
+                final_status="applied",
+            )
+        except CorrectionApplyError:
+            # Another authoritative correction won the serialized target, or the target is not yet
+            # effective. The store has durably recorded why; close this stale review without a
+            # second replacement or a generic 500.
+            await self._close(scope, hunt_id, HuntState.EXPIRED)
+            return HuntOutcome(hunt_id=hunt_id, state=HuntState.EXPIRED)
+        # If AGE fails, leave the hunt awaiting: retrying confirm reuses the same correction/new
+        # claim and retries graph convergence before closing the hunt (AUDIT-107).
+        await self._graph_sync.retire_claims(scope, [str(correction.target_claim)])
         await self._close(scope, hunt_id, HuntState.RESOLVED)
         return HuntOutcome(hunt_id=hunt_id, state=HuntState.RESOLVED)
 

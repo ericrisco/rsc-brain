@@ -70,15 +70,20 @@ async def _make_user(harness: Harness) -> str:
 async def _seed_applied_correction(harness: Harness, project: str, tag: str) -> str:
     """An old (superseded) + new (active) claim and an applied correction between them."""
     async with harness.sm() as session:
+        applied_at = dt.datetime.now(dt.UTC)
         old = models.Claim(
             project_id=uuid.UUID(project),
             text="Old price 100",
             tags=[tag],
             credibility=0.1,
-            valid_to=dt.datetime.now(dt.UTC),
+            valid_to=applied_at,
         )
         new = models.Claim(
-            project_id=uuid.UUID(project), text="New price 120", tags=[tag], credibility=0.9
+            project_id=uuid.UUID(project),
+            text="New price 120",
+            tags=[tag],
+            credibility=0.9,
+            valid_from=applied_at,
         )
         session.add_all([old, new])
         await session.flush()
@@ -90,6 +95,10 @@ async def _seed_applied_correction(harness: Harness, project: str, tag: str) -> 
             status="applied",
             before_text="Old price 100",
             after_text="New price 120",
+            target_valid_from_before=None,
+            target_valid_to_before=None,
+            validity_snapshot_captured_at=applied_at,
+            resolved_at=applied_at,
         )
         session.add(correction)
         await session.flush()

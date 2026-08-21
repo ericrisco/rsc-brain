@@ -768,6 +768,86 @@ async def test_superseding_a_claim_retires_its_graph_relation(
         "relational store has retired and neither store can tell you which is right"
     )
 
+    reverted = await service.revert(scope, outcome.correction_id or "")
+    assert reverted.status == "reverted"
+    reachable = [node.id for node in await graph.k_hop(scope, [sla], k=1)]
+    assert hours72 in reachable, "an open-ended restored claim did not reactivate its relation"
+
+
+async def test_reverting_an_expired_source_claim_does_not_reactivate_its_relation(
+    build_harness: Callable[..., Harness],
+) -> None:
+    from rsc_brain.knowledge.corrections import CorrectionService
+    from rsc_brain.stores.graph_store import GraphEdge, GraphNode
+    from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("bounded"), TOPICS)
+    scope = harness.scope(project, allowed_topics=["general"])
+    graph = AgeGraphStore(harness.sm)
+    source_start = dt.datetime(2023, 1, 1, tzinfo=dt.UTC)
+    source_end = dt.datetime(2024, 1, 1, tzinfo=dt.UTC)
+    sla, hours72 = str(uuid.uuid4()), str(uuid.uuid4())
+    old_claim = await _claim(
+        harness,
+        project,
+        text="The 2023 SLA was 72 hours.",
+        valid_from=source_start,
+        valid_to=source_end,
+        subject_entity_key=sla,
+        predicate="is",
+        object_entity_key=hours72,
+    )
+    await graph.create_graph(scope)
+    await graph.upsert_nodes(
+        scope,
+        [
+            GraphNode(id=sla, labels=frozenset({"Entity"})),
+            GraphNode(id=hours72, labels=frozenset({"Entity"})),
+        ],
+    )
+    await graph.upsert_edges(scope, [GraphEdge(source_id=sla, target_id=hours72, type="is")])
+    async with harness.sm() as session:
+        principal_id = uuid.UUID(scope.principal_id)
+        if await session.get(models.User, principal_id) is None:
+            session.add(
+                models.User(
+                    id=principal_id,
+                    email=f"{unique_slug('o')}@example.test",
+                    status="active",
+                    role="member",
+                )
+            )
+        await session.flush()
+        session.add(
+            models.Person(
+                project_id=uuid.UUID(project),
+                user_id=uuid.UUID(scope.principal_id),
+                name="owner",
+                topics=["general"],
+            )
+        )
+        await session.commit()
+    service = CorrectionService(
+        store=KnowledgeStore(harness.sm), graph=graph, gateway=harness.gateway
+    )
+
+    outcome = await service.correct(
+        scope, claim_id=old_claim, correction="The corrected 2023 SLA was 48 hours."
+    )
+    assert outcome.status == "applied"
+    assert hours72 not in [node.id for node in await graph.k_hop(scope, [sla], k=1)]
+
+    reverted = await service.revert(scope, outcome.correction_id or "")
+
+    assert reverted.status == "reverted"
+    assert hours72 not in [node.id for node in await graph.k_hop(scope, [sla], k=1)]
+    async with harness.sm() as session:
+        restored = await session.get(models.Claim, uuid.UUID(old_claim))
+        assert restored is not None
+        assert restored.valid_from == source_start
+        assert restored.valid_to == source_end
+
 
 async def test_a_relation_two_documents_assert_survives_one_being_superseded(
     build_harness: Callable[..., Harness],

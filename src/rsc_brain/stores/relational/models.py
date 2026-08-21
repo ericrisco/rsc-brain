@@ -826,6 +826,16 @@ class Correction(Base):
     status: Mapped[str] = mapped_column(Text, nullable=False)  # applied|pending_confirmation|...
     before_text: Mapped[str | None] = mapped_column(Text)
     after_text: Mapped[str | None] = mapped_column(Text)
+    # AUDIT-107: the marker is deliberately separate from the nullable boundaries. A captured
+    # source interval may truthfully be [NULL, NULL); a legacy row with no snapshot must never be
+    # mistaken for that open interval and reopened by inference.
+    target_valid_from_before: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    target_valid_to_before: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    validity_snapshot_captured_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    lifecycle_error: Mapped[str | None] = mapped_column(Text)
+    reverted_by: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     hunt_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = _created_at()

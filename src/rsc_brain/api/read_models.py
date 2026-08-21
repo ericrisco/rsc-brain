@@ -230,6 +230,8 @@ class CorrectionView(BaseModel):
     after_text: str | None
     created_at: dt.datetime | None
     resolved_at: dt.datetime | None
+    lifecycle_error: str | None = None
+    reverted_by: str | None = None
 
 
 class CorrectionEnvelope(BaseModel):
