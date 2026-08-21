@@ -7,7 +7,13 @@ from __future__ import annotations
 
 from procrastinate.testing import InMemoryConnector
 
-from rsc_brain.ingest.queue import INGEST_QUEUE, INGEST_TASK, build_queue
+from rsc_brain.ingest.queue import (
+    INGEST_QUEUE,
+    INGEST_TASK,
+    MAINTENANCE_QUEUE,
+    STALE_NOTIFICATION_TASK,
+    build_queue,
+)
 
 
 async def test_enqueue_defers_ingest_job() -> None:
@@ -31,4 +37,20 @@ async def test_enqueue_defers_ingest_job() -> None:
         "principal_id": "cli",
     }
     # Runner is wired but only invoked by a worker, not by defer.
+    assert calls == []
+
+
+async def test_stale_notification_delivery_is_a_periodic_maintenance_task() -> None:
+    calls: list[int] = []
+
+    async def notification_runner() -> None:
+        calls.append(1)
+
+    connector = InMemoryConnector()
+    queue = build_queue(connector=connector, notification_runner=notification_runner)
+
+    periodic = queue.app.periodic_registry.periodic_tasks[(STALE_NOTIFICATION_TASK, "")]
+    assert periodic.cron == "*/1 * * * *"
+    assert periodic.task.queue == MAINTENANCE_QUEUE
+    # Registration does not perform an external delivery in the API/producer process.
     assert calls == []

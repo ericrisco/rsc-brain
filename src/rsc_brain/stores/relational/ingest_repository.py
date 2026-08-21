@@ -432,6 +432,14 @@ class IngestRepository:
                     .where(models.Claim.id.in_(claim_ids))
                     .values(valid_to=_now())
                 )
+                from rsc_brain.skills.staleness import mark_claims_stale_in_session
+
+                await mark_claims_stale_in_session(
+                    session,
+                    scope,
+                    claim_ids,
+                    reason="document version superseded knowledge",
+                )
             return [str(cid) for cid in claim_ids]
 
     async def get_document(self, scope: ProjectScope, document_id: str) -> DocRow | None:
@@ -1173,6 +1181,15 @@ class IngestRepository:
                     .on_conflict_do_nothing(constraint="uq_claim_supersession_previous")
                 )
             entity_ids = await self._upsert_entities(session, scope, entities)
+            from rsc_brain.skills.staleness import mark_tags_and_entities_stale_in_session
+
+            await mark_tags_and_entities_stale_in_session(
+                session,
+                scope,
+                tags=[tag for claim in claims for tag in claim.tags],
+                entity_ids=[uuid.UUID(value) for value in entity_ids.values()],
+                reason="ingestion published knowledge",
+            )
             for err in errors:
                 session.add(
                     models.IngestError(

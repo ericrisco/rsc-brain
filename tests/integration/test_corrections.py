@@ -6,9 +6,12 @@ import uuid
 from collections.abc import Callable
 
 import pytest
+from sqlalchemy import select
 
 from rsc_brain.knowledge.corrections import CorrectionService
 from rsc_brain.scope import Principal, PrincipalType, ProjectScope
+from rsc_brain.skills.frontmatter import SkillFrontmatter
+from rsc_brain.skills.store import SkillStore
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
@@ -96,6 +99,24 @@ async def test_owner_correction_supersedes_and_can_revert(
     )
     store = KnowledgeStore(harness.sm)
     scope = _scope(project, owner)
+    async with harness.sm() as session:
+        topic_id = await session.scalar(
+            select(models.Topic.id).where(
+                models.Topic.project_id == uuid.UUID(project), models.Topic.slug == "pricing"
+            )
+        )
+    assert topic_id is not None
+    await SkillStore(harness.sm).create(
+        scope,
+        SkillFrontmatter(
+            slug="correction-hook",
+            title="Correction hook",
+            tags=["pricing"],
+            depends_on=[str(topic_id)],
+            state="active",
+        ),
+        "body",
+    )
 
     outcome = await _service(harness).correct(
         scope, claim_id=claim, correction="The price is 120 EUR"
@@ -105,6 +126,7 @@ async def test_owner_correction_supersedes_and_can_revert(
     new = await store.get_claim(scope, outcome.new_claim_id or "")
     assert old is not None and old.valid_to is not None and old.credibility == pytest.approx(0.1)
     assert new is not None and new.credibility == pytest.approx(0.9) and "pricing" in new.tags
+    assert (await SkillStore(harness.sm).get(scope, "correction-hook")).stale is True  # type: ignore[union-attr]
 
     # Revert restores the old claim (active again, credibility back to 0.6).
     revert = await _service(harness).revert(scope, outcome.correction_id or "")

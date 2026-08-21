@@ -108,11 +108,11 @@ Running `brain` with no command prints help. Completion commands are not registe
 | `brain entities merges reject` | Close a merge proposal without merging entities. | Required `PROPOSAL_ID` and `--project TEXT`. |
 | `brain entities merges reverse` | Restore an applied merge from its drift-checked snapshot and append a reversal audit record. | Required `PROPOSAL_ID` and `--project TEXT`; refuses when aliases, entity identity, or graph relationships changed after the merge. |
 | `brain skills` | Parent group for reusable skill records. | A child command is required for an operation. |
-| `brain skills list` | List a project's skills. | Required `--project TEXT`; optional `--state TEXT`. |
-| `brain skills show` | Print a skill's complete Markdown. | Required `SLUG` and `--project TEXT`. |
-| `brain skills create` | Create a skill from a Markdown file containing frontmatter and a body. | Required `FILE` and `--project TEXT`. |
-| `brain skills edit` | Replace a skill from a Markdown file, clear its stale flag, and increment its version. | Required `FILE` and `--project TEXT`. |
-| `brain skills archive` | Archive a skill so it is no longer exposed through MCP. | Required `SLUG` and `--project TEXT`. |
+| `brain skills list` | List owner-aware frontmatter summaries and versions for a project. | Required `--project TEXT`; optional `--state TEXT`. |
+| `brain skills show` | Print canonical Markdown, including the persisted owner UUID. | Required `SLUG` and `--project TEXT`. |
+| `brain skills create` | Create a proposed skill from Markdown. Owner accepts an exact same-project UUID or unique exact name. | Required `FILE` and `--project TEXT`; frontmatter state must be `proposed` and version positive. |
+| `brain skills edit` | Replace owner/body/frontmatter, clear stale state, cancel pending stale delivery, and increment the version. | Required `FILE` and `--project TEXT`; frontmatter must preserve state and carry the current version. |
+| `brain skills archive` | Version and audit an archive transition so the skill is no longer exposed through MCP. | Required `SLUG` and `--project TEXT`. |
 | `brain ontology` | Parent group for optional ontology anchoring. | A child command is required for an operation. |
 | `brain ontology list` | List a project's stored ontologies. | Required `--project TEXT`. |
 | `brain ontology validate` | Parse a local ontology file without storing it. | Required `FILE`; optional `--format TEXT`. Supported format labels are `owl`, `rdf`, `skos`, and `turtle`; the format is inferred when omitted. |
@@ -123,7 +123,7 @@ Running `brain` with no command prints help. Completion commands are not registe
 
 | Command | Purpose | Arguments and options |
 |---|---|---|
-| `brain audit` | Query a project's audit log or write the filtered result as CSV. | Required `--project-id TEXT`; optional `--action TEXT`, `--tool TEXT`, `--principal-type TEXT`, `--principal-id TEXT`, `--denied`/`--not-denied`, `--since TEXT`, `--until TEXT`, `--limit INTEGER` with default `100`, and `--export PATH`. Dates accept a date or ISO timestamp. |
+| `brain audit` | Query a project's audit log or write the filtered result as CSV. Skill lifecycle rows carry `resource_type=skill` and the target UUID without body/contact content. | Required `--project-id TEXT`; optional `--action TEXT`, `--tool TEXT`, `--principal-type TEXT`, `--principal-id TEXT`, `--denied`/`--not-denied`, `--since TEXT`, `--until TEXT`, `--limit INTEGER` with default `100`, and `--export PATH`. Dates accept a date or ISO timestamp. |
 | `brain export` | Export project claims and skills as an Open Knowledge Foundation bundle, with optional RDF/Turtle graph data. | Required `--project TEXT`; `--okf`/`--no-okf`, default enabled; `--rdf`; optional `--output PATH`. |
 | `brain forget` | Hard-delete project data and tombstone associated graph nodes. | Required `--project TEXT`; select `--document TEXT`, `--entity TEXT`, or `--whole-project`. A whole-project erasure also requires `--yes` and `--confirm-slug TEXT`. |
 | `brain demo` | Seed a fictional project, taxonomy, person, processed document, chunk, and claim. | `--reset` removes the seeded company. The seeded chunk has no embedding, so this command alone does not create a recallable vector result. |

@@ -8,13 +8,18 @@ rules > LLM, checkpoint/resume, and queryable status.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 
 import pytest
+from sqlalchemy import select
 
 from rsc_brain.gateway.model_gateway import CompletionFn
 from rsc_brain.ingest.parser import MarkdownParser
 from rsc_brain.ingest.types import DocStatus
+from rsc_brain.skills.frontmatter import SkillFrontmatter
+from rsc_brain.skills.store import SkillStore
+from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.ingest_repository import DocRow
 from tests.integration.conftest import Harness, unique_slug
 
@@ -92,6 +97,45 @@ async def test_manual_policy_not_recallable_until_approved(
     await harness.repo.create_source(
         scope, name="hr-inbox", type_="folder", policy="manual", default_tags=["engineering"]
     )
+    async with harness.sm() as session:
+        topic_id = await session.scalar(
+            select(models.Topic.id).where(
+                models.Topic.project_id == uuid.UUID(project),
+                models.Topic.slug == "engineering",
+            )
+        )
+        entity = models.Entity(
+            project_id=uuid.UUID(project),
+            name="Acme",
+            normalized_name="acme",
+            type="org",
+        )
+        session.add(entity)
+        await session.commit()
+        entity_id = entity.id
+    assert topic_id is not None
+    await SkillStore(harness.sm).create(
+        scope,
+        SkillFrontmatter(
+            slug="ingest-hook",
+            title="Ingest hook",
+            tags=["engineering"],
+            depends_on=[str(topic_id)],
+            state="active",
+        ),
+        "body",
+    )
+    await SkillStore(harness.sm).create(
+        scope,
+        SkillFrontmatter(
+            slug="ingest-entity-hook",
+            title="Ingest entity hook",
+            tags=["engineering"],
+            depends_on=[str(entity_id)],
+            state="active",
+        ),
+        "body",
+    )
 
     outcome = await harness.service.ingest_bytes(
         scope, PROSE_DOC, filename="hb.md", source="hr-inbox"
@@ -101,6 +145,8 @@ async def test_manual_policy_not_recallable_until_approved(
     assert await harness.embedded_chunk_count(project) == 0
     assert await harness.claim_count(project) == 0
     assert await harness.graph_node_count(scope) == 0
+    assert (await SkillStore(harness.sm).get(scope, "ingest-hook")).stale is False  # type: ignore[union-attr]
+    assert (await SkillStore(harness.sm).get(scope, "ingest-entity-hook")).stale is False  # type: ignore[union-attr]
 
     # Approve → publish. Now recallable + claims + graph exist.
     run = await harness.service.approve(scope, outcome.document_id, approver="cli")
@@ -108,6 +154,8 @@ async def test_manual_policy_not_recallable_until_approved(
     assert await harness.embedded_chunk_count(project) > 0
     assert await harness.claim_count(project) > 0
     assert await harness.graph_node_count(scope) > 0
+    assert (await SkillStore(harness.sm).get(scope, "ingest-hook")).stale is True  # type: ignore[union-attr]
+    assert (await SkillStore(harness.sm).get(scope, "ingest-entity-hook")).stale is True  # type: ignore[union-attr]
 
 
 async def test_tag_inheritance_on_approval(

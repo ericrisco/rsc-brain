@@ -30,6 +30,9 @@ class OutboundMessage:
     subject: str
     body: str
     magic_link: str | None = None
+    # Stable across delivery retries. Slack consumes it natively; SMTP emits it as Message-ID so
+    # downstream systems can collapse a crash-window replay (AUDIT-018).
+    idempotency_key: str | None = None
 
 
 class Channel(Protocol):
@@ -84,6 +87,8 @@ class SmtpChannel:
         email["From"] = settings.sender
         email["To"] = message.to
         email["Subject"] = message.subject
+        if message.idempotency_key:
+            email["Message-ID"] = f"<{message.idempotency_key}@rsc-brain>"
         email.set_content(message.body)
         with smtplib.SMTP(settings.host, settings.port, timeout=_SEND_TIMEOUT) as client:
             if settings.starttls:
@@ -123,7 +128,15 @@ class SlackChannel:
             response = await client.post(
                 "https://slack.com/api/chat.postMessage",
                 headers={"Authorization": f"Bearer {self._settings.bot_token}"},
-                json={"channel": target, "text": f"*{message.subject}*\n{message.body}"},
+                json={
+                    "channel": target,
+                    "text": f"*{message.subject}*\n{message.body}",
+                    **(
+                        {"client_msg_id": message.idempotency_key}
+                        if message.idempotency_key
+                        else {}
+                    ),
+                },
             )
         response.raise_for_status()
         body = response.json()

@@ -79,6 +79,8 @@ async def record_audit(
     result_count: int | None = None,
     denied: bool = False,
     trace_id: str | None = None,
+    resource_type: str | None = None,
+    resource_id: str | uuid.UUID | None = None,
 ) -> int:
     # `query_text` is persisted verbatim only when the caller passes it (do_recall passes it solely
     # when the project's query_text_logging is ON, FR-13.9) — record_audit itself never fetches it.
@@ -95,6 +97,8 @@ async def record_audit(
             result_count=result_count,
             denied=denied,
             trace_id=trace_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
         )
 
 
@@ -111,6 +115,8 @@ async def record_audit_in_session(
     result_count: int | None = None,
     denied: bool = False,
     trace_id: str | None = None,
+    resource_type: str | None = None,
+    resource_id: str | uuid.UUID | None = None,
 ) -> int:
     """Append an audit outcome to the caller's existing transaction.
 
@@ -134,6 +140,8 @@ async def record_audit_in_session(
         topics_used=list(topics_used),
         result_count=result_count,
         denied=denied,
+        resource_type=resource_type,
+        resource_id=uuid.UUID(str(resource_id)) if resource_id is not None else None,
     )
     session.add(row)
     await session.flush()
@@ -171,6 +179,8 @@ def _row_to_dict(row: models.AuditLog) -> dict[str, object]:
         "topics_used": list(row.topics_used),
         "result_count": row.result_count,
         "denied": row.denied,
+        "resource_type": row.resource_type,
+        "resource_id": str(row.resource_id) if row.resource_id else None,
     }
 
 

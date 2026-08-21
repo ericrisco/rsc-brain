@@ -11,6 +11,8 @@ from sqlalchemy import select
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.knowledge.contradictions import ContradictionResolver
 from rsc_brain.knowledge.judge import HeuristicJudge, JudgeResult, LlmJudge
+from rsc_brain.skills.frontmatter import SkillFrontmatter
+from rsc_brain.skills.store import SkillStore
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
@@ -71,6 +73,24 @@ async def test_contradiction_supersedes_lower_credibility(
         harness, project, text="The Acme SLA is not 24 hours", subject="Acme SLA", credibility=0.5
     )
     store = KnowledgeStore(harness.sm)
+    async with harness.sm() as session:
+        topic_id = await session.scalar(
+            select(models.Topic.id).where(
+                models.Topic.project_id == uuid.UUID(project), models.Topic.slug == "general"
+            )
+        )
+    assert topic_id is not None
+    await SkillStore(harness.sm).create(
+        scope,
+        SkillFrontmatter(
+            slug="contradiction-hook",
+            title="Contradiction hook",
+            tags=["general"],
+            depends_on=[str(topic_id)],
+            state="active",
+        ),
+        "body",
+    )
 
     summary = await _resolver(harness, HeuristicJudge()).resolve_claims(
         scope, await store.claims_by_ids(scope, [a, b])
@@ -83,6 +103,7 @@ async def test_contradiction_supersedes_lower_credibility(
     assert winner is not None and winner.credibility == pytest.approx(0.9)  # 0.8 + 0.1
     assert loser is not None and loser.credibility == pytest.approx(0.25)  # 0.5 * 0.5
     assert loser.valid_to is not None  # superseded, not deleted (FR-5.5)
+    assert (await SkillStore(harness.sm).get(scope, "contradiction-hook")).stale is True  # type: ignore[union-attr]
 
 
 async def test_tie_marks_both_disputed(build_harness: Callable[..., Harness]) -> None:

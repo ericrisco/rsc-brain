@@ -150,6 +150,11 @@ class HuntCommandView(BaseModel):
 class SkillView(BaseModel):
     slug: str
     title: str
+    description: str | None
+    when_to_use: str | None
+    when_not: str | None
+    tags: list[str]
+    owner_person_id: str | None
     status: str
     stale: bool
     depends_on: list[str]
@@ -163,6 +168,11 @@ class SkillEnvelope(BaseModel):
 class SkillCreateResult(BaseModel):
     skill_id: str
     slug: str
+
+
+class SkillDetailView(BaseModel):
+    slug: str
+    markdown: str
 
 
 class SkillCommandView(BaseModel):
@@ -354,6 +364,8 @@ class AuditView(BaseModel):
     topics_used: list[str]
     result_count: int | None
     denied: bool
+    resource_type: str | None
+    resource_id: str | None
 
 
 class AuditEnvelope(BaseModel):
