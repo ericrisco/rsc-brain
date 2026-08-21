@@ -20,11 +20,9 @@ from rsc_brain.ingest.extractor import CascadeExtractor
 from rsc_brain.ingest.pipeline import PriorVersionNotProcessedError
 from rsc_brain.ingest.types import DocStatus
 from rsc_brain.scope import ProjectScope
-from rsc_brain.stores.age_graph_store import AgeGraphStore
-
-
 from rsc_brain.skills.frontmatter import SkillFrontmatter
 from rsc_brain.skills.store import SkillStore
+from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational import models
 from tests.conftest import completion_response
 

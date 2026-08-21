@@ -240,7 +240,8 @@ class SkillStore:
             skill.depends_on = [uuid.UUID(d) for d in frontmatter.depends_on]
             skill.body = body
             skill.okf_type = frontmatter.concept_type
-            skill.okf_extensions = frontmatter.extensions
+            extensions: dict[str, object] = dict(frontmatter.extensions)
+            skill.okf_extensions = extensions
             skill.stale = False  # editing is the owner's review/resolution
             skill.stale_reason = None
             skill.stale_at = None
