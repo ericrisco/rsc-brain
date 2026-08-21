@@ -282,11 +282,16 @@ class IngestionPipeline:
 
         if not await self._repo.is_stage_complete(scope, doc.id, PipelineStage.TOPICALIZE):
             source = await self._resolve_source(scope, doc)
-            chunk_tags, doc_tags, status = await self._topicalize_and_policy(
+            chunk_tags, doc_tags, status, review_chunk_ids = await self._topicalize_and_policy(
                 scope, source, chunk_rows
             )
             await self._repo.apply_topics(
-                scope, doc.id, chunk_tags=chunk_tags, doc_tags=doc_tags, status=status
+                scope,
+                doc.id,
+                chunk_tags=chunk_tags,
+                doc_tags=doc_tags,
+                status=status,
+                review_chunk_ids=review_chunk_ids,
             )
         return chunk_rows
 
@@ -311,7 +316,7 @@ class IngestionPipeline:
 
     async def _topicalize_and_policy(
         self, scope: ProjectScope, source: SourceRow, chunk_rows: Sequence[ChunkRow]
-    ) -> tuple[dict[str, tuple[str, ...]], tuple[str, ...], str]:
+    ) -> tuple[dict[str, tuple[str, ...]], tuple[str, ...], str, tuple[str, ...]]:
         topics = await self._repo.list_topics(scope)
         taxonomy = [slug for slug, _ in topics]
         sensitive = {slug for slug, sens in topics if sens >= self._config.sensitivity_threshold}
@@ -321,20 +326,31 @@ class IngestionPipeline:
         topicalizer = Topicalizer(self._for(scope))
 
         chunk_tags: dict[str, tuple[str, ...]] = {}
+        review_chunk_ids: list[str] = []
         proposed: set[str] = set(source.default_tags)
         for row in chunk_rows:
             if row.needs_review:
                 chunk_tags[row.id] = row.tags  # reserved needs_review tag, kept as-is
                 continue
-            model_tags = await topicalizer.tag(
-                row.text, taxonomy=taxonomy, rules=rules, default_tag=default_tag
+            decision = await topicalizer.classify(
+                row.text,
+                taxonomy=taxonomy,
+                rules=rules,
+                default_tag=default_tag,
+                floor_tags=source.default_tags,
             )
-            if policy in {SourcePolicy.MANUAL, SourcePolicy.SOURCE_TAGS}:
-                # Document tags rule; the topicalizer only adds per-chunk granularity (§4.6.3).
-                tags = tuple(dict.fromkeys([*source.default_tags, *model_tags]))
-            else:
-                tags = model_tags
-                proposed.update(model_tags)
+            tags = decision.tags
+            if policy not in {SourcePolicy.MANUAL, SourcePolicy.SOURCE_TAGS}:
+                proposed.update(tags)
+            # A prompt-like chunk is quarantined under every source policy. By contrast, an
+            # unavailable/empty topicalizer only creates uncertainty when policy delegates
+            # classification to the model. MANUAL/SOURCE_TAGS already have a complete,
+            # deterministic source floor, so model absence cannot weaken their permissions.
+            model_owned_policy = policy in {SourcePolicy.LLM, SourcePolicy.LLM_REVIEW}
+            if decision.requires_review and (
+                decision.reason == "prompt_injection" or model_owned_policy
+            ):
+                review_chunk_ids.append(row.id)
             chunk_tags[row.id] = tags or (default_tag,)
 
         if policy in {SourcePolicy.MANUAL, SourcePolicy.SOURCE_TAGS}:
@@ -342,7 +358,9 @@ class IngestionPipeline:
         else:
             doc_tags = tuple(sorted(proposed))
         status = _resolve_status(policy, doc_tags, sensitive, source.review_if_sensitive)
-        return chunk_tags, doc_tags, status.value
+        if review_chunk_ids:
+            status = DocStatus.PENDING_APPROVAL
+        return chunk_tags, doc_tags, status.value, tuple(review_chunk_ids)
 
     # --- publish phase -------------------------------------------------------
 

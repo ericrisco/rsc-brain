@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -175,3 +175,57 @@ class FoundationalStatus(BaseModel):
     structure_errors: tuple[str, ...]
     live_evidence_errors: tuple[str, ...]
     summary: str
+
+
+InjectionLang = Literal["en", "es", "mixed"]
+InjectionDelivery = Literal["prose", "table", "ocr", "metadata", "encoded", "indirect"]
+
+
+class InjectionRule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    pattern: str
+    tag: str
+
+
+class _InjectionCase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    lang: InjectionLang
+    delivery: InjectionDelivery
+
+
+class TopicalizerInjectionCase(_InjectionCase):
+    stage: Literal["topicalizer"]
+    content: str
+    taxonomy: list[str] = Field(min_length=1)
+    floor_tags: list[str] = Field(min_length=1)
+    rules: list[InjectionRule] = Field(default_factory=list)
+    default_tag: str = "general"
+    expected_tags_include: list[str] = Field(min_length=1)
+    forbidden_tags: list[str] = Field(default_factory=list)
+    expected_review: Literal[True]
+
+
+class ExtractionInjectionCase(_InjectionCase):
+    stage: Literal["extractor"]
+    content: str
+    expected_terms_include: list[str] = Field(min_length=1)
+    forbidden_terms: list[str] = Field(min_length=1)
+
+
+class JudgeInjectionCase(_InjectionCase):
+    stage: Literal["judge"]
+    claim_a: str
+    claim_b: str
+    expected_verdict: Verdict
+
+
+PromptInjectionCase = Annotated[
+    TopicalizerInjectionCase | ExtractionInjectionCase | JudgeInjectionCase,
+    Field(discriminator="stage"),
+]
+
+
+class PromptInjectionSuite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    cases: list[PromptInjectionCase] = Field(min_length=1)

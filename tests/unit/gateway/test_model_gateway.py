@@ -6,6 +6,7 @@ LiteLLM is mocked: completion/embedding functions are injected. No network is us
 from __future__ import annotations
 
 import inspect
+import json
 from typing import Any
 
 import pytest
@@ -123,8 +124,13 @@ async def test_structured_repairs_after_invalid_output() -> None:
     )
     assert result.value == 9
     assert len(comp.calls) == 2  # first failed, repair succeeded
-    # the repair turn carried the schema name as feedback
-    assert any("Extracted" in str(m) for m in comp.calls[1]["messages"])
+    messages = comp.calls[1]["messages"]
+    assert messages[-2]["role"] == "system"
+    repair = json.loads(messages[-1]["content"])
+    assert repair["boundary"] == "untrusted_data_v1"
+    assert repair["kind"] == "structured_validation_failure"
+    assert repair["payload"]["schema"] == "Extracted"
+    assert repair["payload"]["errors"]
 
 
 async def test_structured_falls_back_then_succeeds() -> None:

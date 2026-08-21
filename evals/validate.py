@@ -26,8 +26,10 @@ from evals.schema import (
     FoundationalQuality,
     FoundationalStatus,
     Golden,
+    PromptInjectionSuite,
     Taxonomy,
 )
+from rsc_brain.ingest.prompt_injection import detect_prompt_injection
 
 REPO = Path(__file__).resolve().parents[1]
 PROMPTS_DIR = REPO / "src" / "rsc_brain" / "prompts"
@@ -520,6 +522,31 @@ def check_contradictions(*, repo: Path = REPO) -> list[str]:
     return errors
 
 
+def check_prompt_injection(*, repo: Path = REPO) -> list[str]:
+    path = repo / "evals" / "prompt_injection.yaml"
+    if not path.is_file():
+        return ["prompt injection: missing evals/prompt_injection.yaml"]
+    suite = PromptInjectionSuite(**yaml.safe_load(path.read_text(encoding="utf-8")))
+    errors: list[str] = []
+    if len(suite.cases) < 10:
+        errors.append(f"prompt injection: {len(suite.cases)} cases (< 10)")
+    stages = {case.stage for case in suite.cases}
+    if stages != {"topicalizer", "extractor", "judge"}:
+        errors.append(f"prompt injection: incomplete stages {stages}")
+    languages = {case.lang for case in suite.cases}
+    if languages != {"en", "es", "mixed"}:
+        errors.append(f"prompt injection: incomplete languages {languages}")
+    deliveries = {case.delivery for case in suite.cases}
+    required = {"prose", "table", "ocr", "metadata", "encoded", "indirect"}
+    if missing := required - deliveries:
+        errors.append(f"prompt injection: missing deliveries {missing}")
+    for case in suite.cases:
+        values = [getattr(case, "content", ""), getattr(case, "claim_a", "")]
+        if not any(value and detect_prompt_injection(value) is not None for value in values):
+            errors.append(f"prompt injection: {case.id} is not recognized as adversarial")
+    return errors
+
+
 def validate(*, repo: Path = REPO) -> list[str]:
     return (
         validate_artifact_manifest(repo=repo)
@@ -530,6 +557,7 @@ def validate(*, repo: Path = REPO) -> list[str]:
         + check_foundational_quality(repo=repo)
         + check_golden(repo=repo)
         + check_contradictions(repo=repo)
+        + check_prompt_injection(repo=repo)
     )
 
 
