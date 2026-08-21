@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Callable
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import select, text, update
@@ -215,11 +216,8 @@ async def test_changed_chunk_reuses_unchanged_claims_and_extracts_only_sentence_
     async def completion(**kwargs: object) -> object:
         schema = kwargs.get("response_format")
         name = getattr(schema, "__name__", "")
-        messages = kwargs.get("messages", [])
-        conversation = " ".join(
-            str(message.get("content", ""))
-            for message in messages  # type: ignore[union-attr]
-        )
+        messages = cast(list[dict[str, object]], kwargs.get("messages", []))
+        conversation = " ".join(str(message.get("content", "")) for message in messages)
         if name == "TopicAssignment":
             return completion_response(json.dumps({"tags": ["general"]}))
         if name == "EntityExtraction":
@@ -429,10 +427,8 @@ async def test_failed_publish_replays_durable_draft_without_model_calls_or_new_i
             )
         )
         assert run is not None and run.publish_draft is not None
-        drafted_ids = {
-            claim["id"]
-            for claim in run.publish_draft["claims"]  # type: ignore[index]
-        }
+        drafted_claims = cast(list[dict[str, Any]], run.publish_draft["claims"])
+        drafted_ids = {claim["id"] for claim in drafted_claims}
     assert claim_count_after_rollback is None
     calls_after_failure = model_claim_calls
 
