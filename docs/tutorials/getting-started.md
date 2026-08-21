@@ -51,8 +51,13 @@ uv run brain --version
 The final command prints:
 
 ```text
-0.13.0
+0.13.0+unknown
 ```
+
+The `+unknown` suffix is correct and deliberate. A build's identity comes from a stamp written when
+the image is built, never from the environment it runs in — an operator who could set it could
+declare a version the code is not. A source checkout carries no stamp, so it says so rather than
+claiming to be the published release.
 
 The example configuration defines all five required model capabilities. No model request occurs in
 this step. Keep this terminal open so the configuration path remains available to later commands.
@@ -95,7 +100,7 @@ On this clean database, `brain init` reports `"migrated": true` and
 `"admin": {"email": "admin@example.test", "created": true}`. The verification result is:
 
 ```json
-{"status": "ok", "checks": [{"name": "capabilities", "ok": true, "detail": "every capability is configured"}, {"name": "database", "ok": true, "detail": "extensions present, schema at head (f3c8e2a91d47)"}]}
+{"status": "ok", "checks": [{"name": "capabilities", "ok": true, "detail": "every capability is configured"}, {"name": "database", "ok": true, "detail": "extensions present, schema at head (a7e4c2d91b63)"}]}
 ```
 
 This result checks configuration completeness, database extensions, and schema readiness. It does
