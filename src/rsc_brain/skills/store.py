@@ -8,6 +8,7 @@ that skill ``stale`` (a flag, not an archive — it stays servable).
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import uuid
 from collections.abc import Sequence
