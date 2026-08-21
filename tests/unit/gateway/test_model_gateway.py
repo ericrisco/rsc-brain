@@ -12,7 +12,12 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from rsc_brain.config.models import CapabilitiesConfig, Capability, CapabilityConfig
+from rsc_brain.config.models import (
+    CapabilitiesConfig,
+    Capability,
+    CapabilityConfig,
+    ModelEgressConfig,
+)
 from rsc_brain.gateway import (
     GatewayDimensionError,
     GatewayUnavailableError,
@@ -91,6 +96,7 @@ def _cap(**over: Any) -> CapabilityConfig:
         "provider": "ollama",
         "model": "m",
         "api_base": "http://localhost:11434",
+        "egress": ModelEgressConfig(allow_http=True, allow_private_network=True),
     }
     base.update(over)
     return CapabilityConfig(**base)

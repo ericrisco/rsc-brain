@@ -18,5 +18,7 @@ data:
   RSC_BRAIN_CAPABILITIES__{{ upper $layer }}__PROVIDER: {{ $cfg.provider | quote }}
   RSC_BRAIN_CAPABILITIES__{{ upper $layer }}__MODEL: {{ $cfg.model | quote }}
   RSC_BRAIN_CAPABILITIES__{{ upper $layer }}__API_BASE: {{ $cfg.apiBase | quote }}
+  RSC_BRAIN_CAPABILITIES__{{ upper $layer }}__EGRESS__ALLOW_HTTP: {{ $cfg.allowHttp | quote }}
+  RSC_BRAIN_CAPABILITIES__{{ upper $layer }}__EGRESS__ALLOW_PRIVATE_NETWORK: {{ $cfg.allowPrivateNetwork | quote }}
   {{- end }}
   {{- end }}

@@ -85,27 +85,39 @@ services:
       RSC_BRAIN_CAPABILITIES__EXTRACTOR__PROVIDER: ollama
       RSC_BRAIN_CAPABILITIES__EXTRACTOR__MODEL: qwen2.5:14b-instruct
       RSC_BRAIN_CAPABILITIES__EXTRACTOR__API_BASE: http://model-host:11434
+      RSC_BRAIN_CAPABILITIES__EXTRACTOR__EGRESS__ALLOW_HTTP: "true"
+      RSC_BRAIN_CAPABILITIES__EXTRACTOR__EGRESS__ALLOW_PRIVATE_NETWORK: "true"
       RSC_BRAIN_CAPABILITIES__JUDGE__PROVIDER: ollama
       RSC_BRAIN_CAPABILITIES__JUDGE__MODEL: qwen2.5:14b-instruct
       RSC_BRAIN_CAPABILITIES__JUDGE__API_BASE: http://model-host:11434
+      RSC_BRAIN_CAPABILITIES__JUDGE__EGRESS__ALLOW_HTTP: "true"
+      RSC_BRAIN_CAPABILITIES__JUDGE__EGRESS__ALLOW_PRIVATE_NETWORK: "true"
       RSC_BRAIN_CAPABILITIES__TOPICALIZER__PROVIDER: ollama
       RSC_BRAIN_CAPABILITIES__TOPICALIZER__MODEL: llama3.1:8b-instruct
       RSC_BRAIN_CAPABILITIES__TOPICALIZER__API_BASE: http://model-host:11434
+      RSC_BRAIN_CAPABILITIES__TOPICALIZER__EGRESS__ALLOW_HTTP: "true"
+      RSC_BRAIN_CAPABILITIES__TOPICALIZER__EGRESS__ALLOW_PRIVATE_NETWORK: "true"
       RSC_BRAIN_CAPABILITIES__EMBEDDER__PROVIDER: ollama
       RSC_BRAIN_CAPABILITIES__EMBEDDER__MODEL: bge-m3
       RSC_BRAIN_CAPABILITIES__EMBEDDER__API_BASE: http://model-host:11434
+      RSC_BRAIN_CAPABILITIES__EMBEDDER__EGRESS__ALLOW_HTTP: "true"
+      RSC_BRAIN_CAPABILITIES__EMBEDDER__EGRESS__ALLOW_PRIVATE_NETWORK: "true"
       RSC_BRAIN_CAPABILITIES__RERANKER__PROVIDER: ollama
       # A CHAT model, not a cross-encoder. The reranker implementation calls `complete_structured`,
       # so a rerank-API model such as `bge-reranker-v2-m3` fails every call and abstention silently
       # reverts to the blended threshold (AUDIT-085, AUDIT-097).
       RSC_BRAIN_CAPABILITIES__RERANKER__MODEL: qwen2.5:3b-instruct
       RSC_BRAIN_CAPABILITIES__RERANKER__API_BASE: http://model-host:11434
+      RSC_BRAIN_CAPABILITIES__RERANKER__EGRESS__ALLOW_HTTP: "true"
+      RSC_BRAIN_CAPABILITIES__RERANKER__EGRESS__ALLOW_PRIVATE_NETWORK: "true"
       RSC_BRAIN_INGRESS__PUBLIC_ORIGIN: ${RSC_BRAIN_INGRESS__PUBLIC_ORIGIN:?public HTTPS origin required}
   worker: *model-routes
 ```
 
-Adjust provider and model names to the service you operate. If it needs credentials, map each API
-key from a protected environment or secret source rather than writing the value into this overlay.
+Adjust provider and model names to the service you operate. The two egress grants above are required
+for this plain-HTTP private-network example. For a public HTTPS provider, remove them or set them to
+`false`. If the provider needs credentials, map each API key from a protected environment or secret
+source rather than writing the value into this overlay.
 
 ### Provision application-volume ownership
 

@@ -30,6 +30,10 @@ class GatewayUnavailableError(GatewayError):
     """The provider call failed. No upstream exception text is propagated."""
 
 
+class GatewayEgressError(GatewayError):
+    """The configured provider destination failed the outbound policy."""
+
+
 class GatewayValidationError(GatewayError):
     """Structured output could not be validated/repaired within the allowed attempts."""
 

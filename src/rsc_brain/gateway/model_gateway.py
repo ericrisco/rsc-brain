@@ -30,8 +30,15 @@ from typing import Any, TypeVar
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from rsc_brain.config.models import CapabilitiesConfig, Capability, CapabilityConfig
+from rsc_brain.gateway.egress import (
+    EndpointResolver,
+    enforce_endpoint,
+    harden_litellm_redirects,
+    secure_litellm_http_handler,
+)
 from rsc_brain.gateway.errors import (
     GatewayDimensionError,
+    GatewayEgressError,
     GatewayError,
     GatewayUnavailableError,
     GatewayValidationError,
@@ -167,14 +174,18 @@ class ModelGateway:
         max_repair_attempts: int = 2,
         usage_recorder: UsageRecorder | None = None,
         embedding_cache: EmbeddingCache | None = None,
+        endpoint_resolver: EndpointResolver | None = None,
     ) -> None:
         self._caps = capabilities
         self._completion = completion_fn or _default_completion
         self._embedding = embedding_fn or _default_embedding
+        self._completion_uses_default_transport = self._completion is _default_completion
+        self._embedding_uses_default_transport = self._embedding is _default_embedding
         self._max_repair = max_repair_attempts
         # SPEC-22 (FR-9.5/9.6): optional, injected — the gateway works without them.
         self._usage = usage_recorder
         self._cache = embedding_cache
+        self._endpoint_resolver = endpoint_resolver
 
     def for_project(self, project_id: str) -> ModelGateway:
         """This gateway with its accounting bound to ``project_id`` (AUDIT-021 / R12).
@@ -196,6 +207,7 @@ class ModelGateway:
             max_repair_attempts=self._max_repair,
             usage_recorder=bound,
             embedding_cache=self._cache,
+            endpoint_resolver=self._endpoint_resolver,
         )
         return clone
 
@@ -214,6 +226,12 @@ class ModelGateway:
             "timeout": cap.timeout_s,
         }
 
+    async def _enforce_egress(self, cap: CapabilityConfig, *, require_explicit: bool) -> None:
+        if self._endpoint_resolver is None:
+            await enforce_endpoint(cap, require_explicit=require_explicit)
+        else:
+            await enforce_endpoint(cap, self._endpoint_resolver, require_explicit=require_explicit)
+
     async def complete(
         self,
         capability: Capability,
@@ -224,6 +242,9 @@ class ModelGateway:
         cap = self._cap(capability)
         # R29: the attempt HOLDS budget across the call and settles on the way out, whatever happened.
         async with self._attempt(capability) as attempt:
+            await self._enforce_egress(
+                cap, require_explicit=self._completion_uses_default_transport
+            )
             try:
                 response = await self._completion(
                     messages=list(messages),
@@ -252,6 +273,8 @@ class ModelGateway:
             budgeted.spent = attempt.tokens
         if attempt.value is not None:
             return attempt.value
+        if isinstance(attempt.error, GatewayEgressError):
+            raise attempt.error
         if cap.fallback_model is not None:
             async with self._attempt(capability) as budgeted_fallback:
                 fb = await self._attempt_structured(
@@ -260,6 +283,8 @@ class ModelGateway:
                 budgeted_fallback.spent = fb.tokens
             if fb.value is not None:
                 return fb.value
+            if isinstance(fb.error, GatewayEgressError):
+                raise fb.error
             attempt = fb
         raise attempt.error or GatewayValidationError("structured_failed", _new_ref())
 
@@ -287,6 +312,12 @@ class ModelGateway:
         convo: list[Message] = list(messages)
         spent = 0  # accumulated across repair rounds: each one is a real provider call (R29)
         for _ in range(self._max_repair + 1):
+            try:
+                await self._enforce_egress(
+                    cap, require_explicit=self._completion_uses_default_transport
+                )
+            except GatewayEgressError as exc:
+                return _Attempt(error=exc, tokens=spent)
             try:
                 response = await self._completion(
                     messages=convo,
@@ -356,6 +387,7 @@ class ModelGateway:
         # R29: reserved for the duration of the call and settled on the way out, so a batch that fails
         # halfway still accounts for what it cost and cannot leave a hold behind.
         async with self._attempt(Capability.EMBEDDER) as attempt:
+            await self._enforce_egress(cap, require_explicit=self._embedding_uses_default_transport)
             try:
                 response = await self._embedding(
                     model=cap.litellm_model,
@@ -375,7 +407,7 @@ class ModelGateway:
             return vectors
 
     def unresolved_capabilities(self) -> list[str]:
-        """Capabilities missing a provider or a model — a local check, no provider contact (R50).
+        """Capabilities missing a provider, model or explicit endpoint — local only (R50/AUDIT-005).
 
         Readiness needs this; it must not need `healthcheck`, which spends a token per capability per
         probe and fails when someone else's service is down.
@@ -387,7 +419,16 @@ class ModelGateway:
             except AttributeError:
                 missing.append(capability.value)
                 continue
-            if not config.provider or not config.model:
+            uses_default_transport = (
+                self._embedding_uses_default_transport
+                if capability is Capability.EMBEDDER
+                else self._completion_uses_default_transport
+            )
+            if (
+                not config.provider
+                or not config.model
+                or (uses_default_transport and config.api_base is None)
+            ):
                 missing.append(capability.value)
         return missing
 
@@ -425,10 +466,24 @@ class ModelGateway:
 async def _default_completion(**kwargs: Any) -> Any:
     import litellm
 
-    return await litellm.acompletion(**kwargs)
+    harden_litellm_redirects(litellm)
+    # Native providers (including Ollama/vLLM) obtain a cached AsyncHTTPHandler whose upstream
+    # default follows redirects. Supplying our own handler makes the refusal local to this call.
+    # OpenAI-compatible providers instead expect an OpenAI SDK client; their SDK receives the
+    # hardened ``litellm.aclient_session`` above.
+    provider = str(kwargs.get("model", "")).partition("/")[0]
+    openai_sdk_providers = {"openai", "azure", "azure_ai", "text-completion-openai"}
+    if provider in openai_sdk_providers:
+        return await litellm.acompletion(**kwargs)
+    handler = secure_litellm_http_handler()
+    try:
+        return await litellm.acompletion(**kwargs, client=handler)
+    finally:
+        await handler.close()
 
 
 async def _default_embedding(**kwargs: Any) -> Any:
     import litellm
 
+    harden_litellm_redirects(litellm)
     return await litellm.aembedding(**kwargs)

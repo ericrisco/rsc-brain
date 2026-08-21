@@ -48,12 +48,20 @@ Every capability object has the same fields:
 |---|---|---|---|
 | `capabilities.extractor.provider`<br>`capabilities.judge.provider`<br>`capabilities.topicalizer.provider`<br>`capabilities.embedder.provider`<br>`capabilities.reranker.provider` | string | required | LiteLLM provider prefix, such as `ollama` or `openai`. |
 | `capabilities.extractor.model`<br>`capabilities.judge.model`<br>`capabilities.topicalizer.model`<br>`capabilities.embedder.model`<br>`capabilities.reranker.model` | string | required | Provider-specific model name. The gateway route is `provider/model`. |
-| `capabilities.extractor.api_base`<br>`capabilities.judge.api_base`<br>`capabilities.topicalizer.api_base`<br>`capabilities.embedder.api_base`<br>`capabilities.reranker.api_base` | string or null | null | Provider endpoint override. Null selects the provider default. |
+| `capabilities.extractor.api_base`<br>`capabilities.judge.api_base`<br>`capabilities.topicalizer.api_base`<br>`capabilities.embedder.api_base`<br>`capabilities.reranker.api_base` | string or null | null | Configuration-owned provider endpoint. A production model call requires an explicit URL; null is retained only for injected offline/test adapters and readiness reports it unresolved. URLs must be canonical HTTP(S), carry no credentials/query/fragment, and pass DNS egress checks before every attempt. HTTPS to globally routable addresses is the safe default. |
+| `capabilities.extractor.egress`<br>`capabilities.judge.egress`<br>`capabilities.topicalizer.egress`<br>`capabilities.embedder.egress`<br>`capabilities.reranker.egress` | object | safe defaults | Configuration-owned egress exceptions for this one capability. |
+| `capabilities.extractor.egress.allow_http`<br>`capabilities.judge.egress.allow_http`<br>`capabilities.topicalizer.egress.allow_http`<br>`capabilities.embedder.egress.allow_http`<br>`capabilities.reranker.egress.allow_http` | boolean | `false` | Explicitly permits plain HTTP for this capability's configured endpoint. This does not permit private addresses by itself. |
+| `capabilities.extractor.egress.allow_private_network`<br>`capabilities.judge.egress.allow_private_network`<br>`capabilities.topicalizer.egress.allow_private_network`<br>`capabilities.embedder.egress.allow_private_network`<br>`capabilities.reranker.egress.allow_private_network` | boolean | `false` | Explicitly permits RFC1918, ULA and loopback addresses for this capability (for example local Ollama). Link-local, unspecified, multicast, reserved and otherwise non-global destinations remain forbidden. |
 | `capabilities.extractor.api_key`<br>`capabilities.judge.api_key`<br>`capabilities.topicalizer.api_key`<br>`capabilities.embedder.api_key`<br>`capabilities.reranker.api_key` | secret string or null | null | Provider credential. Supply it through the environment. |
 | `capabilities.extractor.timeout_s`<br>`capabilities.judge.timeout_s`<br>`capabilities.topicalizer.timeout_s`<br>`capabilities.embedder.timeout_s`<br>`capabilities.reranker.timeout_s` | number | `60.0` | Request timeout in seconds; greater than `0` and at most `600`. |
 | `capabilities.extractor.fallback_model`<br>`capabilities.judge.fallback_model`<br>`capabilities.topicalizer.fallback_model`<br>`capabilities.embedder.fallback_model`<br>`capabilities.reranker.fallback_model` | string or null | null | Same-provider fallback used after a definitive model failure. |
 | `capabilities.extractor.dimension`<br>`capabilities.judge.dimension`<br>`capabilities.topicalizer.dimension`<br>`capabilities.embedder.dimension`<br>`capabilities.reranker.dimension` | integer or null | null | Embedding-dimension field. The embedder's effective default is `1024`; an explicit embedder value must equal `1024`. |
 | `capabilities.extractor.daily_token_budget`<br>`capabilities.judge.daily_token_budget`<br>`capabilities.topicalizer.daily_token_budget`<br>`capabilities.embedder.daily_token_budget`<br>`capabilities.reranker.daily_token_budget` | integer or null | null | Per-capability daily token ceiling. Values are nonnegative; null has no daily ceiling. |
+
+The two egress exceptions are independent. A local Ollama route such as
+`http://localhost:11434` needs both `allow_http: true` and
+`allow_private_network: true`. Production model requests never follow HTTP redirects; a 3xx is
+reported as a redacted provider failure rather than changing the configured destination.
 
 ## Recall and ranking
 
@@ -127,6 +135,8 @@ and point the capability at the host:
 RSC_BRAIN_CAPABILITIES__RERANKER__PROVIDER: ollama
 RSC_BRAIN_CAPABILITIES__RERANKER__MODEL: qwen2.5:3b-instruct
 RSC_BRAIN_CAPABILITIES__RERANKER__API_BASE: http://host.docker.internal:11434
+RSC_BRAIN_CAPABILITIES__RERANKER__EGRESS__ALLOW_HTTP: "true"
+RSC_BRAIN_CAPABILITIES__RERANKER__EGRESS__ALLOW_PRIVATE_NETWORK: "true"
 ```
 
 On Linux with an NVIDIA GPU the in-container path does work, with the device plugin and drivers on the

@@ -33,7 +33,8 @@ admin:
   password: "" # blank ⇒ generated once and preserved in the Secret; never printed in Job logs
 
 # --- Model gateway (D8: GPU is a HOST precondition; the chart never installs drivers) -----------
-# The default URL is a placeholder. Point it at a real external service or the opt-in Deployment.
+# Default URLs target the local Ollama service name. Point them at a real external service or enable
+# the opt-in Deployment; public HTTPS routes should set both per-capability egress grants false.
 gateway:
   # AUDIT-059 parity: all five capability layers carry defaults, matching the canonical compose.
   # The chart used to declare the embedder only and route the other four through extraEnv, so the
@@ -43,22 +44,32 @@ gateway:
     provider: ollama
     model: bge-m3
     apiBase: http://ollama:11434
+    allowHttp: true
+    allowPrivateNetwork: true
   extractor:
     provider: ollama
     model: qwen2.5:14b-instruct
     apiBase: http://ollama:11434
+    allowHttp: true
+    allowPrivateNetwork: true
   judge:
     provider: ollama
     model: qwen2.5:14b-instruct
     apiBase: http://ollama:11434
+    allowHttp: true
+    allowPrivateNetwork: true
   topicalizer:
     provider: ollama
     model: llama3.1:8b-instruct
     apiBase: http://ollama:11434
+    allowHttp: true
+    allowPrivateNetwork: true
   reranker:
     provider: ollama
     model: qwen2.5:3b-instruct  # AUDIT-085: chat model — the implementation is LLM-based
     apiBase: http://ollama:11434
+    allowHttp: true
+    allowPrivateNetwork: true
 
 # Opt-in in-cluster Ollama — only if the cluster ALREADY has an operative GPU (device plugin +
 # drivers are the host's responsibility, D8). Off by default.
