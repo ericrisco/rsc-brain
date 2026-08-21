@@ -428,7 +428,18 @@ def main(argv: list[str] | None = None) -> int:
                     held = await _approve_pending(dependencies, principals.projects)
                     print(f"approved {held} documents held at the D13 gate")
                 if args.phase in {"measure", "all"}:
-                    report, outcomes = await _measure(principals, state.get("documents", {}))
+                    # AUDIT-119: without this map every expectation carrying a `document_id` compares
+                    # a corpus id against a runtime UUID and fails — silently, and reported as a
+                    # product failure. The state file lives in the checkout that ran `ingest`, so
+                    # measuring from a different worktree is exactly how this happens. Refuse.
+                    documents = state.get("documents") or {}
+                    if not documents:
+                        raise SystemExit(
+                            "no document map in "
+                            f"{STATE}: run the `ingest` phase in THIS checkout first. Measuring "
+                            "without it turns every provenance expectation into a false failure."
+                        )
+                    report, outcomes = await _measure(principals, documents)
                     families = _families(outcomes)
                     print(json.dumps({"report": report.as_dict(), "families": families}, indent=2))
                     abstain = families.get("abstain", {"passed": 0, "total": 0})
