@@ -36,6 +36,7 @@ from evals.runner import eval_case_from_golden, observe
 from evals.schema import Corpus, Golden, Taxonomy
 from rsc_brain import runtime
 from rsc_brain.identity.service import IdentityService
+from rsc_brain.identity.sessions import membership_for
 from rsc_brain.mcp.auth import authenticate
 from rsc_brain.mcp.tools import do_recall
 from rsc_brain.recall.retriever import PgRetriever
@@ -131,6 +132,71 @@ async def _sources(dependencies: Any, corpus: Corpus, projects: dict[str, str]) 
             )
 
 
+async def _approve_pending(dependencies: Any, projects: dict[str, str]) -> int:
+    """Work the D13 approval gate as an authorized admin, the way the console does.
+
+    Five of the 27 corpus documents are held for human approval — the sensitive ones, which is the
+    point of the gate. `brain docs` cannot approve them and should not be able to: the CLI principal
+    holds no topic authority on purpose (R01/AUDIT-089), so shell access never implies authority.
+    Approval belongs to a principal that holds the topics, so the run creates one per project.
+    """
+    from rsc_brain.api.authz import decide_document
+    from rsc_brain.identity.service import IdentityService as _Identity
+    from rsc_brain.ingest.service import IngestService
+    from rsc_brain.scope import PROJECT_ROLE_ADMIN, Principal, PrincipalType
+    from rsc_brain.stores.relational.ingest_repository import IngestRepository
+
+    identity = _Identity(dependencies.sessionmaker)
+    repository = IngestRepository(dependencies.sessionmaker)
+    service = IngestService(
+        repository, runtime.build_pipeline(dependencies), data_dir=dependencies.data_dir
+    )
+    approved = 0
+    for slug, project_id in projects.items():
+        topics = tuple(await identity.list_topic_slugs(project_id))
+        # A HUMAN principal, holding the project's topics: the gate refuses an agent ("not a human
+        # principal"), which is the rule working — an automated caller does not get to clear the
+        # human review a sensitive document was held for. So the run has a curator, and it is a
+        # user with a membership, exactly like the operator who would do this in the console.
+        curator = await _curator(identity, slug, project_id, topics)
+        scope = Principal(
+            id=curator,
+            type=PrincipalType.HUMAN,
+            can_curate=True,
+            role=PROJECT_ROLE_ADMIN,
+            allowed_topics=frozenset(topics),
+        ).scope_for(project_id)
+        pending = await repository.list_documents_by_status(scope, "pending_approval")
+        for row in pending:
+            await decide_document(dependencies.sessionmaker, scope, str(row.id))
+            run = await service.approve(scope, str(row.id), approver=scope.principal_id)
+            approved += 1
+            print(
+                f"approved {slug}/{row.logical_id}: {run.phase}, {run.claims_generated} claims",
+                flush=True,
+            )
+    return approved
+
+
+async def _curator(
+    identity: IdentityService, slug: str, project_id: str, topics: tuple[str, ...]
+) -> str:
+    """The eval curator for one project: a real user with a membership holding every topic."""
+    email = f"curator-{slug}@gate-run.test"
+    try:
+        invitation = await identity.invite_user(email, role="admin")
+        user_id = await identity.accept_invitation(invitation.token, _PRINCIPAL_SECRET)
+    except Exception:
+        user_id = await _user_id(identity, email)
+    if await membership_for(identity._sm, user_id, slug) is None:
+        from rsc_brain.scope import PROJECT_ROLE_ADMIN
+
+        await identity.add_membership(
+            user_id, project_id, role=PROJECT_ROLE_ADMIN, allowed_topics=topics, can_curate=True
+        )
+    return user_id
+
+
 async def _mint(
     identity: IdentityService, projects: dict[str, str]
 ) -> tuple[dict[str, str], dict[str, str]]:
@@ -145,12 +211,17 @@ async def _mint(
             user_id = await identity.accept_invitation(invitation.token, _PRINCIPAL_SECRET)
         except Exception:  # the principal already exists from an earlier run
             user_id = await _user_id(identity, email)
-        membership = await identity.add_membership(
-            user_id,
-            project_id,
-            allowed_topics=tuple(spec["allowed_topics"]),
-            can_curate=bool(spec.get("can_curate", False)),
-        )
+        # A membership is unique per (user, project), so a second run must reuse the one it made
+        # rather than colliding. `sessions.membership_for` is the seam the console's own PAT route
+        # uses for exactly this, and it is the only thing that returns the id `issue_pat` needs.
+        membership = await membership_for(identity._sm, user_id, str(spec["project"]))
+        if membership is None:
+            membership = await identity.add_membership(
+                user_id,
+                project_id,
+                allowed_topics=tuple(spec["allowed_topics"]),
+                can_curate=bool(spec.get("can_curate", False)),
+            )
         issued = await identity.issue_pat(membership, name=f"gate-{name}")
         tokens[name] = issued.token
         token_ids[name] = issued.id
@@ -259,11 +330,40 @@ async def _measure(
 
 
 def _as_recall_result(output: Any) -> Any:
-    from rsc_brain.recall.interfaces import RecallResult
+    """Adapt the MCP tool's DTO to the domain result `observe` reads.
+
+    Measuring through `do_recall` rather than the retriever keeps the guardrail and the audit in the
+    path, which is where AUDIT-016 lives — but MCP deliberately does not expose similarity scores, so
+    `score` is 0.0 here. That is safe for the verdict: `max_score` feeds the report and the tau
+    calibration helper, never the pass/fail decision (`evals.metrics._passed`). Validity and
+    provenance ARE carried, because the temporal expectations check them.
+    """
+    from datetime import date
+
+    from rsc_brain.recall.interfaces import Fragment, RecallResult
+
+    def _day(value: str | None) -> date | None:
+        return date.fromisoformat(value[:10]) if value else None
 
     return RecallResult(
         found=output.found,
-        fragments=output.fragments,
+        fragments=tuple(
+            Fragment(
+                text=fragment.text,
+                document_id=fragment.document_id,
+                score=0.0,
+                provenance={
+                    "document": fragment.document,
+                    "chunk_id": fragment.chunk_id,
+                    "claim_ids": list(fragment.claim_ids),
+                    "credibility": fragment.credibility,
+                    "tags": list(fragment.tags),
+                },
+                valid_from=_day(fragment.valid_from),
+                valid_to=_day(fragment.valid_to),
+            )
+            for fragment in output.fragments
+        ),
         degraded=getattr(output, "degraded", None),
     )
 
@@ -300,6 +400,8 @@ def main(argv: list[str] | None = None) -> int:
                 if args.phase in {"ingest", "all"}:
                     state["documents"] = await _ingest(principals)
                     STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+                    held = await _approve_pending(dependencies, principals.projects)
+                    print(f"approved {held} documents held at the D13 gate")
                 if args.phase in {"measure", "all"}:
                     report, outcomes = await _measure(principals, state.get("documents", {}))
                     families = _families(outcomes)
