@@ -63,6 +63,23 @@ npm audit --omit=dev --audit-level=high
 Do not report a skipped or unavailable environment check as a pass. The CI workflow is the source of
 truth for merge gates; [Security Policy](SECURITY.md) maps the current jobs.
 
+## Rehearse a release without publishing
+
+Before creating a tag, run the `Release` workflow manually from the intended commit:
+
+```bash
+gh workflow run release.yml --ref <branch-or-commit>
+gh run watch --exit-status
+```
+
+Manual invocation is dry-run-only. It calls the same reusable CI workflow used for push and pull
+request gates, generates the SBOM, performs the vulnerability scan, and builds the application,
+console, and data images with publication disabled. Its reachable jobs have read-only repository
+permission: they do not log in to GHCR, push packages, mint provenance, or create/edit a release.
+
+Record the hosted run URL in the release evidence. Local YAML tests prove the workflow graph's
+shape, but cannot prove GitHub's resolved token scopes or hosted runner behavior.
+
 ## Load-bearing rules
 
 1. Knowledge code receives `ProjectScope`, never an independently supplied project identifier.
