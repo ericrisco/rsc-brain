@@ -113,6 +113,17 @@ class PriorVersionNotProcessedError(RuntimeError):
     """A revision cannot publish before its immediate predecessor establishes the baseline."""
 
 
+def _decode_instant(value: object) -> dt.datetime | None:
+    """A publish draft carries instants as ISO strings; a missing key means the source said nothing.
+
+    Drafts written before validity was carried have no key at all, so absence and null are the same
+    answer: unknown validity, never a fabricated one.
+    """
+    if value is None:
+        return None
+    return dt.datetime.fromisoformat(str(value))
+
+
 def _entity_key(type_by_name: dict[str, str], name: str | None) -> str | None:
     """The deterministic identity of a claim endpoint, or None when its type is unknown (R16).
 
@@ -549,6 +560,12 @@ class IngestionPipeline:
                     "subject": claim.subject,
                     "predicate": claim.predicate,
                     "object": claim.object,
+                    # The source-stated validity has to survive the durability boundary too: a
+                    # draft that drops it publishes an undated claim on the retry path only.
+                    "valid_from": (
+                        claim.valid_from.isoformat() if claim.valid_from is not None else None
+                    ),
+                    "valid_to": claim.valid_to.isoformat() if claim.valid_to is not None else None,
                     "subject_entity_key": claim.subject_entity_key,
                     "object_entity_key": claim.object_entity_key,
                     "tags": list(claim.tags),
@@ -609,6 +626,8 @@ class IngestionPipeline:
                 **{
                     **item,
                     "tags": tuple(item.get("tags") or ()),
+                    "valid_from": _decode_instant(item.get("valid_from")),
+                    "valid_to": _decode_instant(item.get("valid_to")),
                     "embedding": (
                         tuple(item["embedding"]) if item.get("embedding") is not None else None
                     ),
