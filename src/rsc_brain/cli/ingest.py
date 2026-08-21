@@ -19,15 +19,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from rsc_brain.cli._common import JSON_OPTION, emit_result
-from rsc_brain.config import load_settings
-from rsc_brain.gateway.model_gateway import ModelGateway
-from rsc_brain.ingest.pipeline import IngestionPipeline, PipelineConfig
 from rsc_brain.ingest.service import IngestService
 from rsc_brain.ingest.sources import SourceService
 from rsc_brain.ingest.types import DocStatus
-from rsc_brain.ontology.ingest import OntologyIngest
 from rsc_brain.scope import Principal, PrincipalType, ProjectScope
-from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
 from rsc_brain.stores.relational.ingest_repository import IngestRepository
@@ -100,27 +95,23 @@ def _run_with_repo[T](slug: str, fn: Callable[[IngestRepository, ProjectScope], 
 
 def _run_with_service[T](slug: str, fn: Callable[[IngestService, ProjectScope], Awaitable[T]]) -> T:
     async def _inner() -> T:
-        settings = load_settings()
-        engine = make_engine()
+        from rsc_brain import runtime
+
+        # AUDIT-112 / R53: this used to assemble its own graph — a bare `ModelGateway` with no usage
+        # recorder and no embedding cache, and a pipeline with no contradiction resolver. So a
+        # document put in with `brain ingest` spent tokens nobody recorded, re-embedded text the API
+        # would have reused, and was never checked against the corpus for contradictions. The CLI is
+        # a third role, and it gets the same graph as the other two.
+        dependencies = runtime.build("cli")
         try:
-            sessionmaker = make_sessionmaker(engine)
+            sessionmaker = dependencies.sessionmaker
             project_id = await _resolve_project_id(sessionmaker, slug)
             repo = IngestRepository(sessionmaker)
-            pipeline = IngestionPipeline(
-                repository=repo,
-                graph_store=AgeGraphStore(sessionmaker),
-                gateway=ModelGateway(settings.capabilities),
-                config=PipelineConfig(
-                    hardware_profile=settings.hardware_profile,
-                    sensitivity_threshold=settings.ingest.sensitivity_threshold,
-                    default_tag=settings.ingest.default_tag,
-                ),
-                ontology=OntologyIngest(sessionmaker),
-            )
-            service = IngestService(repo, pipeline, data_dir=settings.ingest.data_dir)
+            pipeline = runtime.build_pipeline(dependencies)
+            service = IngestService(repo, pipeline, data_dir=dependencies.data_dir)
             return await fn(service, _cli_scope(project_id))
         finally:
-            await engine.dispose()
+            await dependencies.dispose()
 
     return _dispatch(_inner())
 

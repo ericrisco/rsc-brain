@@ -15,7 +15,7 @@ different, it has to say so here rather than by omission somewhere else.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -29,7 +29,12 @@ from rsc_brain.config.models import (
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.pipeline import PipelineConfig
 
-Role = Literal["api", "worker"]
+#: AUDIT-112 added "cli": `brain ingest` is a third process doing product work, and it was
+#: assembling its own graph — no accounting, no embedding cache, no contradiction detection.
+if TYPE_CHECKING:
+    from rsc_brain.ingest.pipeline import IngestionPipeline
+
+Role = Literal["api", "worker", "cli"]
 
 
 @dataclass(slots=True)
@@ -54,13 +59,18 @@ class RuntimeDependencies:
         await self.engine.dispose()
 
 
-def build_pipeline(dependencies: RuntimeDependencies) -> object:
+def build_pipeline(dependencies: RuntimeDependencies) -> IngestionPipeline:
     """The ingestion pipeline as production must run it, contradiction detection included (R18).
 
     ``_detect_contradictions_on_ingest`` is a no-op when no resolver was injected, and no composition
     root injected one — so detection ran in tests that passed a resolver and nowhere else. Building the
     pipeline here means neither entry point can forget it, for the same reason the gateway's
     collaborators live in one place.
+
+    AUDIT-112: for a while this function had **no caller**. The worker and the CLI each built their
+    own pipeline and both omitted the resolver, so in the shipped topology — where accepting a
+    document enqueues it — contradiction detection never ran, and gate G3's mechanism was
+    unreachable. A composition root only composes what calls it.
     """
     from rsc_brain.ingest.pipeline import IngestionPipeline
     from rsc_brain.knowledge.contradictions import ContradictionResolver

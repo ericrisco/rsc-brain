@@ -93,3 +93,27 @@ async def test_default_project_is_not_deletable(migrated_dsn: str) -> None:
             await svc.delete_project("default")
     finally:
         await engine.dispose()
+
+
+async def test_project_identities_are_reachable_without_the_creation_output(
+    migrated_dsn: str,
+) -> None:
+    """AUDIT-113: every taxonomy and membership command takes `--project-id`.
+
+    Before this, only `projects create` ever printed one — so an operator who lost that line, or
+    whose project was created by `brain init` (which prints no id), could not administer the project
+    from the CLI again. The listing has to carry the identity the other commands require.
+    """
+    engine = make_engine(migrated_dsn)
+    sessionmaker = make_sessionmaker(engine)
+    svc = IdentityService(sessionmaker)
+    try:
+        project_id = await svc.create_project("reachable", "Reachable")
+
+        identities = await svc.list_project_identities()
+
+        assert {"slug": "reachable", "id": project_id} in identities
+        slugs = [entry["slug"] for entry in identities]
+        assert slugs == sorted(slugs), "ordered by slug so an operator can find a project by name"
+    finally:
+        await engine.dispose()
