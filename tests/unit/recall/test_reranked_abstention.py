@@ -330,3 +330,79 @@ async def test_an_unconfirmable_winner_answers_and_says_so() -> None:
     decision = await decide(_FailsAlone(), "q", ["a", "b"], 0.5)
     assert decision.abstains is False
     assert decision.degradation and "could not be confirmed" in decision.degradation
+
+
+class _StolenNomination:
+    """The measured 12B behaviour: one passage is over-scored in the page and collapses alone.
+
+    Measured on the corpus for "What database does Acme run in production?" — with ten candidates the
+    page's top score was 1.00 on a passage that answers nothing, while the passage holding
+    "Production runs on PostgreSQL 16" scored 0.95. With eight or fewer candidates nothing outscored
+    the answer and recall answered correctly. So the size of the page decided whether the product
+    could answer at all.
+    """
+
+    version = "stolen-nomination"
+
+    def __init__(self, *, impostor: str, answer: str) -> None:
+        self._impostor = impostor
+        self._answer = answer
+
+    async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+        if len(passages) == 1:
+            # Alone, the impostor cannot hold its score; the answer keeps its.
+            return [0.95 if passages[0] == self._answer else 0.0]
+        return [
+            1.0 if p == self._impostor else (0.95 if p == self._answer else 0.1) for p in passages
+        ]
+
+
+async def test_a_failed_nomination_does_not_suppress_a_confirmable_answer() -> None:
+    """AUDIT-120: the batch nominates, the solo call confirms — and a refused nomination used to end
+    the query. One over-scored passage could therefore bury an answer that scored 0.95 in the same
+    batch and confirms alone."""
+    impostor, answer = "the deployment pipeline runs on GitHub Actions", "Production runs on PostgreSQL 16"
+
+    decision = await decide(
+        _StolenNomination(impostor=impostor, answer=answer),
+        "What database does Acme run in production?",
+        [impostor, answer, "Acme was founded in 2015"],
+        0.5,
+    )
+
+    assert decision.abstains is False
+    assert decision.degradation is not None
+    assert "confirm" in decision.degradation.lower()
+
+
+async def test_every_candidate_failing_confirmation_still_abstains() -> None:
+    """The conservative direction is untouched: if nothing survives its own solo score, abstain."""
+
+    class _NoneConfirm:
+        version = "none-confirm"
+
+        async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+            return [0.0] if len(passages) == 1 else [0.9 for _ in passages]
+
+    decision = await decide(_NoneConfirm(), "q", ["a", "b", "c"], 0.5)
+
+    assert decision.abstains is True
+
+
+async def test_confirmation_only_considers_candidates_above_the_threshold() -> None:
+    """A passage the batch already judged below τ is not a fallback nominee: it was refused on its
+    own merits, and re-asking would spend a call to be told the same thing."""
+    calls: list[int] = []
+
+    class _CountingRefuser:
+        version = "counting"
+
+        async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+            calls.append(len(passages))
+            return [0.0] if len(passages) == 1 else [0.9, 0.8, 0.1, 0.05]
+
+    decision = await decide(_CountingRefuser(), "q", ["a", "b", "c", "d"], 0.5)
+
+    assert decision.abstains is True
+    # one batch call plus one confirmation for each of the TWO candidates above 0.5, and no more.
+    assert calls == [4, 1, 1]

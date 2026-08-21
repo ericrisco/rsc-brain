@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -227,26 +227,58 @@ async def decide(
     # whose promise is "ask a human rather than guess" should not need convincing to keep it.
     #
     # Costs exactly one extra call, and only when the answer would be yes.
-    winner = scores.index(best)
-    try:
-        alone = await reranker.relevance(query, [passages[winner]])
-    except RerankerUnavailable as exc:
-        return Decision(
-            abstains=False,
-            degradation=(
-                f"top candidate could not be confirmed alone ({exc}); answered on the batch score"
-            ),
-        )
-    solo = alone[0] if alone else None
-    if solo is None or solo < threshold:
-        return Decision(
-            abstains=True,
-            degradation=(
-                f"top candidate scored {best} in the page and {solo} alone: the batch score was not a "
-                "property of the passage, so it did not carry the answer"
-            ),
-        )
-    return Decision(abstains=False, degradation=note)
+    # AUDIT-120: confirm candidates in descending batch order, not just the top one.
+    #
+    # Measured on the corpus: for "What database does Acme run in production?" a passage answering
+    # nothing scored 1.00 in a page of ten while the passage holding "Production runs on PostgreSQL
+    # 16" scored 0.95 — so the impostor took the nomination, failed its solo call, and the query
+    # abstained. With eight candidates nothing outscored the answer and the same question was
+    # answered. The size of the page decided whether the product could answer at all.
+    #
+    # Confirming only the top nominee treats a bad nomination as a verdict about the QUESTION when it
+    # is a verdict about one passage. Every candidate the batch put above the threshold gets its own
+    # chance to confirm; abstention still requires that none of them holds its score alone, which is
+    # the conservative property AUDIT-104 was protecting.
+    #
+    # A candidate the batch already scored below the threshold is never re-asked: it was refused on
+    # its own merits and the call would buy nothing.
+    ranked = sorted(
+        (index for index, score in enumerate(scores) if score is not None and score >= threshold),
+        key=lambda index: cast("float", scores[index]),
+        reverse=True,
+    )
+    rejected: list[str] = []
+    for rank, winner in enumerate(ranked):
+        try:
+            alone = await reranker.relevance(query, [passages[winner]])
+        except RerankerUnavailable as exc:
+            return Decision(
+                abstains=False,
+                degradation=(
+                    f"top candidate could not be confirmed alone ({exc}); answered on the batch score"
+                ),
+            )
+        solo = alone[0] if alone else None
+        if solo is not None and solo >= threshold:
+            if rank == 0:
+                return Decision(abstains=False, degradation=note)
+            confirmed = (
+                f"the batch's top {rank} candidate(s) did not hold their score alone "
+                f"({', '.join(rejected)}); confirmed the next one instead"
+            )
+            return Decision(
+                abstains=False,
+                degradation=f"{note}; {confirmed}" if note else confirmed,
+            )
+        rejected.append(f"{scores[winner]} in the page and {solo} alone")
+
+    return Decision(
+        abstains=True,
+        degradation=(
+            f"no candidate held its score alone ({', '.join(rejected)}): a batch score was not a "
+            "property of the passage, so none of them carried the answer"
+        ),
+    )
 
 
 async def abstains(
