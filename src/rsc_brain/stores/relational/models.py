@@ -35,6 +35,7 @@ from sqlalchemy import (
     Uuid,
     func,
 )
+from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -364,16 +365,30 @@ class Entity(Base):
     description: Mapped[str | None] = mapped_column(Text)
     # Alias-merge (SPEC-09): a merged duplicate points at its canonical entity instead of being
     # deleted (reversible, FR-5.5 spirit). NULL = a live/canonical entity.
-    merged_into: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("entities.id", ondelete="SET NULL")
-    )
+    merged_into: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     # Optional ontology anchor (SPEC-24, off by default; open-world — NULL = local/unanchored).
     ontology_uri: Mapped[str | None] = mapped_column(Text)
     ontology_valid: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
     __table_args__ = (
         UniqueConstraint("project_id", "normalized_name", "type"),
         UniqueConstraint("project_id", "id"),
+        UniqueConstraint(
+            "project_id",
+            "type",
+            "id",
+            name="uq_entities_project_type_id",
+        ),
+        CheckConstraint(
+            "merged_into IS NULL OR merged_into <> id",
+            name="merged_into_not_self",
+        ),
         Index("ix_entities_project_id_id", "project_id", "id"),
+        ForeignKeyConstraint(
+            ["project_id", "type", "merged_into"],
+            ["entities.project_id", "entities.type", "entities.id"],
+            name="fk_entities_project_type_merged_into_entities",
+            ondelete="SET NULL (merged_into)",
+        ),
     )
 
 
@@ -772,6 +787,11 @@ class EntityMergeProposal(Base):
             "status IN ('needs_review', 'applied', 'auto_applied', 'rejected')",
             name="ck_entity_merge_proposals_status",
         ),
+        CheckConstraint(
+            "canonical_entity_id <> duplicate_entity_id",
+            name="distinct_entities",
+        ),
+        UniqueConstraint("project_id", "id"),
         UniqueConstraint(
             "project_id",
             "canonical_entity_id",
@@ -791,6 +811,77 @@ class EntityMergeProposal(Base):
             "duplicate_entity_id",
             "entities",
             name="fk_entity_merge_proposals_project_duplicate_entities",
+        ),
+    )
+
+
+class EntityMergeSnapshot(Base):
+    """Exact reversible state for one applied merge cycle (AUDIT-012).
+
+    A proposal may be applied again after reversal, so history is append-only and only the active
+    (not-yet-reversed) cycle is unique. JSONB captures data-shaped AGE properties without coupling
+    the relational schema to every graph predicate/property added by later specs.
+    """
+
+    __tablename__ = "entity_merge_snapshots"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    proposal_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    canonical_entity_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    duplicate_entity_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    canonical_graph_node_id: Mapped[str] = mapped_column(Text, nullable=False)
+    duplicate_graph_node_id: Mapped[str] = mapped_column(Text, nullable=False)
+    previous_proposal_status: Mapped[str] = mapped_column(Text, nullable=False)
+    aliases_before: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    aliases_after: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    graph_before: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    graph_after: Mapped[list[dict[str, object]]] = mapped_column(JSONB, nullable=False)
+    duplicate_node_before: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    duplicate_node_after: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    snapshot_version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
+    applied_at: Mapped[dt.datetime] = _created_at()
+    reversed_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    reversed_by: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (
+        CheckConstraint(
+            "canonical_entity_id <> duplicate_entity_id",
+            name="distinct_entities",
+        ),
+        CheckConstraint(
+            "previous_proposal_status = 'needs_review'",
+            name="previous_status",
+        ),
+        CheckConstraint(
+            "snapshot_version = 1",
+            name="version",
+        ),
+        CheckConstraint(
+            "(reversed_at IS NULL AND reversed_by IS NULL) OR "
+            "(reversed_at IS NOT NULL AND reversed_by IS NOT NULL)",
+            name="reversal_pair",
+        ),
+        Index("ix_entity_merge_snapshots_project_id_id", "project_id", "id"),
+        Index(
+            "uq_entity_merge_snapshots_active_proposal",
+            "project_id",
+            "proposal_id",
+            unique=True,
+            postgresql_where=sql_text("reversed_at IS NULL"),
+        ),
+        _tenant_fk(
+            "proposal_id",
+            "entity_merge_proposals",
+            name="fk_merge_snapshots_project_proposal",
+        ),
+        _tenant_fk(
+            "canonical_entity_id",
+            "entities",
+            name="fk_merge_snapshots_project_canonical",
+        ),
+        _tenant_fk(
+            "duplicate_entity_id",
+            "entities",
+            name="fk_merge_snapshots_project_duplicate",
         ),
     )
 

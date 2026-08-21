@@ -9,13 +9,17 @@ from collections.abc import Callable
 import pytest
 from sqlalchemy import func, select
 
+from rsc_brain.audit import query_audit_raw
 from rsc_brain.config.models import RecallConfig
+from rsc_brain.ingest.entity_resolution import entity_id
+from rsc_brain.ontology.ingest import OntologyIngest
 from rsc_brain.ontology.recall import OntologyRecall
 from rsc_brain.ontology.store import OntologyStore
 from rsc_brain.recall.permissions import sensitive_tags
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
+from rsc_brain.stores.graph_store import GraphEdge, GraphNode
 from rsc_brain.stores.relational import models
 from tests.integration.conftest import Harness, unique_slug
 
@@ -145,6 +149,108 @@ async def test_sameas_entities_are_merged(
     # The two synonyms share an IRI (owl:sameAs) ⇒ one folds into the other (U24).
     assert live == 1
     assert merged == 1
+
+
+async def test_sameas_uses_semantic_canonical_rank_type_partition_and_ordinary_service(
+    build_harness: Callable[..., Harness],
+) -> None:
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("semantic-merge"), [("legal", 0)])
+    await _enable_ontology(harness, project)
+    scope = harness.scope(project, allowed_topics=["legal"])
+    lower_half = uuid.uuid4().int & ((1 << 127) - 1)
+    poor_id = uuid.UUID(int=lower_half)
+    rich_id = uuid.UUID(int=lower_half | (1 << 127))
+    procedure_id = uuid.uuid4()
+    async with harness.sm() as session:
+        session.add_all(
+            [
+                models.Entity(
+                    id=poor_id,
+                    project_id=uuid.UUID(project),
+                    name="myocardial infarction",
+                    normalized_name="myocardial infarction",
+                    type="condition",
+                ),
+                models.Entity(
+                    id=rich_id,
+                    project_id=uuid.UUID(project),
+                    name="acute myocardial infarction",
+                    normalized_name="acute myocardial infarction",
+                    type="condition",
+                ),
+                models.Entity(
+                    id=procedure_id,
+                    project_id=uuid.UUID(project),
+                    name="myocardial infarction",
+                    normalized_name="myocardial infarction",
+                    type="procedure",
+                ),
+                models.EntityAlias(
+                    project_id=uuid.UUID(project),
+                    entity_id=rich_id,
+                    alias="AMI",
+                    approved=True,
+                ),
+            ]
+        )
+        await session.commit()
+
+    graph = AgeGraphStore(harness.sm)
+    poor_node = str(entity_id("condition", "myocardial infarction"))
+    rich_node = str(entity_id("condition", "acute myocardial infarction"))
+    procedure_node = str(entity_id("procedure", "myocardial infarction"))
+    hospital_node = str(entity_id("org", "hospital"))
+    await graph.create_graph(scope)
+    await graph.upsert_nodes(
+        scope,
+        [
+            GraphNode(poor_node, frozenset({"Entity"}), {"name": "myocardial infarction"}),
+            GraphNode(rich_node, frozenset({"Entity"}), {"name": "acute myocardial infarction"}),
+            GraphNode(procedure_node, frozenset({"Entity"}), {"name": "myocardial infarction"}),
+            GraphNode(hospital_node, frozenset({"Entity"}), {"name": "hospital"}),
+        ],
+    )
+    await graph.upsert_edges(
+        scope,
+        [GraphEdge(poor_node, hospital_node, "TREATED_AT", {"source_document_id": "doc-onto"})],
+    )
+
+    ontology = OntologyIngest(harness.sm)
+    index = await ontology.index_for(scope)
+    assert index is not None
+    await ontology.anchor_and_merge(scope, index)
+
+    async with harness.sm() as session:
+        poor = await session.get(models.Entity, poor_id)
+        rich = await session.get(models.Entity, rich_id)
+        procedure = await session.get(models.Entity, procedure_id)
+        proposal = await session.scalar(
+            select(models.EntityMergeProposal).where(
+                models.EntityMergeProposal.project_id == uuid.UUID(project)
+            )
+        )
+        snapshot_count = await session.scalar(
+            select(func.count())
+            .select_from(models.EntityMergeSnapshot)
+            .where(models.EntityMergeSnapshot.project_id == uuid.UUID(project))
+        )
+    assert poor is not None and poor.merged_into == rich_id
+    assert rich is not None and rich.merged_into is None
+    assert procedure is not None and procedure.merged_into is None
+    assert proposal is not None
+    assert proposal.canonical_entity_id == rich_id
+    assert proposal.duplicate_entity_id == poor_id
+    assert proposal.status == "auto_applied"
+    assert snapshot_count == 1
+    copied = await graph.run_cypher(
+        scope,
+        "MATCH ({id: $s})-[r:TREATED_AT]->({id: $o}) "
+        "WHERE r.superseded IS NULL RETURN properties(r) AS result",
+        {"s": rich_node, "o": hospital_node},
+    )
+    assert copied == [{"result": {"source_document_id": "doc-onto"}}]
+    assert len(await query_audit_raw(harness.sm, project, action="entity_merge")) == 1
 
 
 # --- FR-17.5 bounded recall expansion ---------------------------------------

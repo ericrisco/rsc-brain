@@ -106,6 +106,7 @@ Running `brain` with no command prints help. Completion commands are not registe
 | `brain entities merges list` | List merge proposals, newest first. | Required `--project TEXT`; optional `--status TEXT`. |
 | `brain entities merges confirm` | Merge a duplicate entity into its canonical entity. | Required `PROPOSAL_ID` and `--project TEXT`. |
 | `brain entities merges reject` | Close a merge proposal without merging entities. | Required `PROPOSAL_ID` and `--project TEXT`. |
+| `brain entities merges reverse` | Restore an applied merge from its drift-checked snapshot and append a reversal audit record. | Required `PROPOSAL_ID` and `--project TEXT`; refuses when aliases, entity identity, or graph relationships changed after the merge. |
 | `brain skills` | Parent group for reusable skill records. | A child command is required for an operation. |
 | `brain skills list` | List a project's skills. | Required `--project TEXT`; optional `--state TEXT`. |
 | `brain skills show` | Print a skill's complete Markdown. | Required `SLUG` and `--project TEXT`. |
