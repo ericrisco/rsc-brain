@@ -46,6 +46,8 @@ gateway:
     provider: ollama
     model: bge-m3
     apiBase: http://model-gateway.models.svc.cluster.local:11434
+    allowHttp: true
+    allowPrivateNetwork: true
 
 extraEnv:
   - name: RSC_BRAIN_INGRESS__PUBLIC_ORIGIN
@@ -79,8 +81,11 @@ extraEnv:
     value: http://model-gateway.models.svc.cluster.local:11434
 ```
 
-Use a 1024-dimensional embedder. If a capability needs an API key, add a Kubernetes Secret and use
-an `extraEnv` entry with `valueFrom.secretKeyRef`; do not put the credential in a values file.
+Use a 1024-dimensional embedder. The chart defaults explicitly grant HTTP and private-network access
+because all five shipped routes target Ollama on the cluster network. Set `allowHttp` and
+`allowPrivateNetwork` to `false` for a public HTTPS provider. If a capability needs an API key, add a
+Kubernetes Secret and use an `extraEnv` entry with `valueFrom.secretKeyRef`; do not put the credential
+in a values file.
 
 `extraEnv` is rendered only into the API and worker containers. Capability variables and
 `valueFrom.secretKeyRef` credentials therefore do not reach the console. For an explicit
@@ -188,6 +193,8 @@ gateway:
     provider: ollama
     model: bge-m3
     apiBase: http://rsc-brain-ollama:11434
+    allowHttp: true
+    allowPrivateNetwork: true
 ```
 
 Adjust the service name when Helm fullname overrides or a different release name changes it. The

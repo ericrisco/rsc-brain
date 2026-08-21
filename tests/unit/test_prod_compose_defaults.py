@@ -53,6 +53,18 @@ def test_every_capability_layer_has_a_default_so_no_overlay_is_hand_written() ->
             assert key in text, f"{key} has no default in the production compose"
 
 
+def test_local_model_defaults_carry_explicit_egress_grants_in_both_release_composes() -> None:
+    """AUDIT-005: every shipped route is plain HTTP on the private Compose network. The secure
+    code defaults reject both properties, so a release compose that omits either grant cannot even
+    construct AppConfig — or tempts somebody to weaken the code default globally."""
+    for filename in ("docker-compose.prod.yml", "docker-compose.version.yml"):
+        text = (REPO / "deploy" / filename).read_text(encoding="utf-8")
+        for layer in LAYERS:
+            for field in ("ALLOW_HTTP", "ALLOW_PRIVATE_NETWORK"):
+                key = f"RSC_BRAIN_CAPABILITIES__{layer}__EGRESS__{field}"
+                assert key in text, f"{filename} lacks the explicit local-route grant {key}"
+
+
 def test_the_public_origin_is_derived_from_the_domain_the_operator_sets() -> None:
     """AUDIT-060: `init-secrets.sh` wrote a placeholder domain but never the public origin, which
     governs OAuth metadata, the request-to-a-human links, and the transport's Host/Origin

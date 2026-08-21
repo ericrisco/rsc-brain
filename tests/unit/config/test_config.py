@@ -13,6 +13,7 @@ from rsc_brain.config import (
     CapabilitiesConfig,
     Capability,
     CapabilityConfig,
+    ModelEgressConfig,
     ScoreWeights,
     load_settings,
 )
@@ -112,6 +113,60 @@ def test_score_weights_must_sum_to_one() -> None:
 def test_unknown_capability_key_is_forbidden() -> None:
     with pytest.raises(ValidationError):
         _capabilities(unexpected=_capability())
+
+
+# --- AUDIT-005: explicit model endpoints are configuration-owned allowlist entries ---
+
+
+def test_https_public_api_base_is_canonicalized() -> None:
+    cap = _capability(api_base="HTTPS://Models.Example.COM:443/v1/")
+
+    assert cap.api_base == "https://models.example.com/v1"
+
+
+def test_plain_http_api_base_requires_an_explicit_grant() -> None:
+    with pytest.raises(ValidationError, match="allow_http"):
+        _capability(api_base="http://models.example.com/v1")
+
+    cap = _capability(
+        api_base="http://models.example.com/v1",
+        egress=ModelEgressConfig(allow_http=True),
+    )
+    assert cap.api_base == "http://models.example.com/v1"
+
+
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "ftp://models.example.com",
+        "https://user:password@models.example.com",
+        "https://models.example.com/v1?key=secret",
+        "https://models.example.com/v1?",
+        "https://models.example.com/v1#fragment",
+        "https://models.example.com/v1#",
+        "https://models.example.com:",
+        "https://models.example.com:0",
+        "https://models.example.com\\@127.0.0.1",
+        "https://models..example.com",
+        "https://-models.example.com",
+        "https://models_.example.com",
+        "https://mödels.example.com",
+        "https://models.example.com/\ninternal",
+        "models.example.com",
+    ],
+)
+def test_api_base_rejects_ambiguous_or_secret_bearing_urls(api_base: str) -> None:
+    with pytest.raises(ValidationError, match="model endpoint"):
+        _capability(api_base=api_base)
+
+
+def test_example_explicitly_grants_local_ollama_egress() -> None:
+    settings = load_settings(EXAMPLE_CONFIG)
+
+    for capability in Capability:
+        cap = settings.capabilities.get(capability)
+        assert cap.egress.allow_http is True
+        assert cap.egress.allow_private_network is True
 
 
 def test_public_origin_is_canonicalized_for_every_security_consumer() -> None:

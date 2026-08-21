@@ -2,6 +2,7 @@
 
 from rsc_brain.gateway.errors import (
     GatewayDimensionError,
+    GatewayEgressError,
     GatewayError,
     GatewayRoutingError,
     GatewayUnavailableError,
@@ -13,6 +14,7 @@ from rsc_brain.gateway.options import GenerationOptions
 
 __all__ = [
     "GatewayDimensionError",
+    "GatewayEgressError",
     "GatewayError",
     "GatewayRoutingError",
     "GatewayUnavailableError",

@@ -17,28 +17,33 @@ capabilities:
     provider: ollama
     model: qwen2.5:14b-instruct
     api_base: http://localhost:11434
+    egress: {allow_http: true, allow_private_network: true}  # explicit local Ollama grants
     timeout_s: 120
     fallback_model: llama3.1:8b-instruct
   judge:
     provider: ollama
     model: qwen2.5:14b-instruct
     api_base: http://localhost:11434
+    egress: {allow_http: true, allow_private_network: true}
     timeout_s: 60
   topicalizer:
     provider: ollama
     model: llama3.1:8b-instruct
     api_base: http://localhost:11434
+    egress: {allow_http: true, allow_private_network: true}
     timeout_s: 60
   embedder:
     provider: ollama
     model: bge-m3
     api_base: http://localhost:11434
+    egress: {allow_http: true, allow_private_network: true}
     timeout_s: 60
     dimension: 1024              # anchored to BGE-M3 (must equal 1024)
   reranker:
     provider: ollama
     model: bge-reranker-v2-m3
     api_base: http://localhost:11434
+    egress: {allow_http: true, allow_private_network: true}
     timeout_s: 30
 
 # --- Recall tuning (FR-3.2 / §5.8) ---

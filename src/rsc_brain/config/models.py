@@ -9,9 +9,11 @@ never from the committed ``config.yaml`` (FR-4.7).
 
 from __future__ import annotations
 
+import ipaddress
+import re
 from enum import StrEnum
 from typing import Annotated, Literal
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
@@ -19,6 +21,16 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, m
 # ``chunks.embedding vector(1024)`` (PRD §5.2). The gateway fails loudly if a
 # configured embedder returns a different dimension (FR-9.4).
 ANCHORED_EMBEDDING_DIM = 1024
+_DNS_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+
+
+def _is_unambiguous_model_host(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        labels = host.split(".")
+        return len(host) <= 253 and all(_DNS_LABEL.fullmatch(label) for label in labels)
 
 
 class Capability(StrEnum):
@@ -38,6 +50,19 @@ class HardwareProfile(StrEnum):
     CPU_ONLY = "cpu_only"
 
 
+class ModelEgressConfig(BaseModel):
+    """Configuration-owned endpoint exceptions for one model capability."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    allow_http: bool = Field(
+        default=False, description="Permit an explicit plain-HTTP model endpoint."
+    )
+    allow_private_network: bool = Field(
+        default=False, description="Permit RFC1918/ULA and loopback model endpoints."
+    )
+
+
 class CapabilityConfig(BaseModel):
     """Per-capability model routing. Owned by configuration, never by callers.
 
@@ -51,8 +76,13 @@ class CapabilityConfig(BaseModel):
     provider: str = Field(description="LiteLLM provider prefix, e.g. 'ollama', 'openai'.")
     model: str = Field(description="Provider-specific model name.")
     api_base: str | None = Field(
-        default=None, description="Endpoint override; None uses the provider default."
+        default=None,
+        description=(
+            "Explicit provider endpoint; required by the production transport, optional for "
+            "injected offline/test adapters."
+        ),
     )
+    egress: ModelEgressConfig = Field(default_factory=ModelEgressConfig)
     api_key: SecretStr | None = Field(default=None, description="Credential — supply via env only.")
     timeout_s: float = Field(default=60.0, gt=0, le=600)
     fallback_model: str | None = Field(
@@ -66,6 +96,46 @@ class CapabilityConfig(BaseModel):
         ge=0,
         description="Max tokens/day for this capability (FR-9.5); None = unlimited.",
     )
+
+    @model_validator(mode="after")
+    def _validate_model_endpoint(self) -> CapabilityConfig:
+        if self.api_base is None:
+            return self
+        value = self.api_base
+        if not value or any(ord(char) <= 32 or ord(char) == 127 for char in value) or "\\" in value:
+            raise ValueError("model endpoint contains ambiguous characters")
+        parsed = urlsplit(value)
+        if parsed.scheme.lower() not in {"http", "https"}:
+            raise ValueError("model endpoint must use http or https")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("model endpoint must not contain credentials")
+        if "?" in value or "#" in value:
+            raise ValueError("model endpoint must not contain a query or fragment")
+        host = parsed.hostname
+        if host is None:
+            raise ValueError("model endpoint must contain a host")
+        try:
+            host.encode("ascii")
+            port = parsed.port
+        except (UnicodeEncodeError, ValueError):
+            raise ValueError("model endpoint host and port must be unambiguous ASCII") from None
+        if parsed.netloc.endswith(":"):
+            raise ValueError("model endpoint port must not be empty")
+        if port == 0:
+            raise ValueError("model endpoint port must be between 1 and 65535")
+        if host.endswith(".") or "%" in host or not _is_unambiguous_model_host(host):
+            raise ValueError("model endpoint host must be canonical")
+        if parsed.scheme.lower() == "http" and not self.egress.allow_http:
+            raise ValueError("model endpoint using HTTP requires egress.allow_http=true")
+
+        scheme = parsed.scheme.lower()
+        host = host.lower()
+        rendered_host = f"[{host}]" if ":" in host else host
+        default_port = 443 if scheme == "https" else 80
+        netloc = rendered_host if port in {None, default_port} else f"{rendered_host}:{port}"
+        path = parsed.path.rstrip("/")
+        object.__setattr__(self, "api_base", urlunsplit((scheme, netloc, path, "", "")))
+        return self
 
     @property
     def litellm_model(self) -> str:

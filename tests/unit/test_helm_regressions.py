@@ -111,6 +111,16 @@ def test_application_extra_env_does_not_leak_into_the_console() -> None:
     assert console_env["CONSOLE_SENTINEL"]["value"] == "console-only"
 
 
+def test_local_gateway_values_render_explicit_egress_grants() -> None:
+    """The chart's five defaults are HTTP/private Ollama routes and must opt in explicitly."""
+    documents = _render_with_sentinel_env()
+    config = next(doc for doc in documents if doc.get("kind") == "ConfigMap")
+    data = config["data"]
+    for layer in ("EXTRACTOR", "JUDGE", "TOPICALIZER", "EMBEDDER", "RERANKER"):
+        assert data[f"RSC_BRAIN_CAPABILITIES__{layer}__EGRESS__ALLOW_HTTP"] == "true"
+        assert data[f"RSC_BRAIN_CAPABILITIES__{layer}__EGRESS__ALLOW_PRIVATE_NETWORK"] == "true"
+
+
 def test_render_example_keeps_generated_secrets_out_of_a_public_tmp_file() -> None:
     """The render lives in a private subshell and is deleted as soon as review ends."""
     readme = _read("deploy", "helm", "rsc-brain", "README.md")

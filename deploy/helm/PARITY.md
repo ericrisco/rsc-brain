@@ -38,8 +38,8 @@ the recorded hash in the same pull request.
 | `POSTGRES_PASSWORD` | `secrets.yaml` (k8s Secret) | Database credential; auto-generated when blank and preserved across upgrades (`lookup` helper, FR-4.7). A rendered Secret exposes `stringData`, so full `helm template` output must remain private and short-lived. |
 | `RSC_BRAIN_DATABASE__DSN` (derived) | Secret (built from the same password) | External DB override via `database.dsn`. |
 | `RSC_BRAIN_ADMIN_EMAIL` / `_PASSWORD` | Secret | First-admin bootstrap. A blank chart value is generated and preserved in the Secret; it is not printed by the migration Job. Compose operators must supply it explicitly because that migration container has no persistent credential-file mount. |
-| `RSC_BRAIN_DOMAIN`, `RSC_BRAIN_CAPABILITIES__EMBEDDER__*` | `configmap.yaml` (ConfigMap) | Non-secret app config injected through `envFrom`. These fields do not satisfy the four other required capabilities. |
-| Additional `RSC_BRAIN_CAPABILITIES__*` values | Compose environment override / chart `extraEnv` | Required for extractor, judge, topicalizer, and reranker. Helm injects `extraEnv` only into API + worker; it may carry `valueFrom.secretKeyRef` credentials and never reaches the console. Neither packaging target supplies a complete model configuration by default. |
+| `RSC_BRAIN_DOMAIN`, all five `RSC_BRAIN_CAPABILITIES__*` routes and their `EGRESS` grants | `configmap.yaml` (ConfigMap) | Non-secret app config injected through `envFrom`. Both targets ship complete local Ollama routes; HTTP and private-network access are explicit per capability rather than weakened in the application default. |
+| Additional `RSC_BRAIN_CAPABILITIES__*` values | Compose environment override / chart `extraEnv` | Optional provider/model/credential overrides. Helm injects `extraEnv` only into API + worker; it may carry `valueFrom.secretKeyRef` credentials and never reaches the console. A public HTTPS override must also set both egress grants false. |
 | Console-only environment | Console environment / chart `console.extraEnv` | Explicit non-secret console settings only. This separates the Next.js process from application capability routes and credential refs. |
 
 **Chart 0.14.0 migration:** chart 0.13.x also injected top-level `extraEnv` into the console. Move
@@ -128,3 +128,10 @@ limitation is a Docker-Desktop-on-macOS property with no Kubernetes analogue —
 device plugin and drivers or it does not (D8). The hashes were re-recorded because the guard hashes
 whole files, not semantics; nothing about the deployed topology moved.
 
+## 2026-08-21 — model egress policy (AUDIT-005)
+
+All five local Ollama routes in Compose and Helm now carry the same two explicit grants:
+plain HTTP and RFC1918/ULA/loopback resolution. The application defaults for both remain false.
+This preserves an installable local topology without silently authorizing an HTTPS cloud route to
+rebind into the cluster network. Operators moving a capability to a public HTTPS provider set both
+grants false. The canonical and versioned Compose hashes were re-recorded with this chart change.
