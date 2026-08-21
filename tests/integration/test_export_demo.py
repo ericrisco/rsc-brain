@@ -37,7 +37,12 @@ async def test_okf_export_respects_permissions(build_harness: Callable[..., Harn
     await _claim(harness, project_id, "HR secret", ["hr"])
     await SkillStore(harness.sm).create(
         harness.scope(project_id, allowed_topics=["general"]),
-        SkillFrontmatter(slug="onboard", title="Onboard", tags=["general"]),
+        SkillFrontmatter(
+            slug="onboard",
+            title="Onboard",
+            tags=["general"],
+            extensions={"acme_extension": {"nested": [1, True, None]}},
+        ),
         "body",
     )
 
@@ -48,7 +53,10 @@ async def test_okf_export_respects_permissions(build_harness: Callable[..., Harn
     claims = cast("list[dict[str, object]]", full["rsc_brain_claims"])
     texts = {c["title"] for c in claims}
     assert {"General fact", "HR secret"} <= texts
-    assert len(cast("list[object]", full["rsc_brain_skills"])) == 1
+    skills = cast("list[dict[str, object]]", full["rsc_brain_skills"])
+    assert len(skills) == 1
+    assert skills[0]["type"] == "Skill"
+    assert skills[0]["acme_extension"] == {"nested": [1, True, None]}
 
     # A general-only exporter never sees the hr claim (FR-10.6 respects permissions).
     limited = await export_okf_bundle(

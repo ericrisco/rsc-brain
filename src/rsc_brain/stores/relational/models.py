@@ -587,6 +587,13 @@ class Skill(Base):
     state: Mapped[str] = mapped_column(Text, nullable=False)  # proposed|active|archived
     owner_person_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     version: Mapped[int] = mapped_column(Integer, server_default="1", nullable=False)
+    # Boundary-only OKF fields that the relational skill model does not interpret. Keeping them on
+    # the tenant-owned row makes import -> edit -> export lossless without coupling core behavior
+    # to another producer's extension vocabulary (AUDIT-015).
+    okf_type: Mapped[str] = mapped_column(Text, server_default="Skill", nullable=False)
+    okf_extensions: Mapped[dict[str, object]] = mapped_column(
+        JSONB, server_default="{}", nullable=False
+    )
     # SPEC-20: the markdown instructions, the entity/topic ids the skill's context is built from
     # (graph-sync key), and the stale marker set when that subgraph changes (FR-7.1/7.2).
     body: Mapped[str | None] = mapped_column(Text)

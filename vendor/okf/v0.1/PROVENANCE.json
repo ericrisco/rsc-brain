@@ -1,0 +1,14 @@
+{
+  "format": "Open Knowledge Format",
+  "version": "0.1-draft",
+  "upstream_repository": "https://github.com/GoogleCloudPlatform/knowledge-catalog",
+  "upstream_commit": "d44368c15e38e7c92481c5992e4f9b5b421a801d",
+  "upstream_spec_path": "okf/SPEC.md",
+  "upstream_license_path": "okf/LICENSE.md",
+  "retrieved_at": "2026-08-21",
+  "spec_sha256": "b9655e607346dbbdc6de21190e9a953313eda6a7eba68d4d272a65975940ad6e",
+  "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+  "upstream_license_sha256": "8c6db340475136df3c1201d458fa5755698eace76e510471ecc9d857d6083dac",
+  "license": "Apache-2.0",
+  "note": "SPEC.md is byte-exact. LICENSE.md omits one final empty line; upstream_license_sha256 records the upstream bytes. The pinned commit is the immediate predecessor of upstream commit 780fe9d30b5bbca8931256edf1d0290d6bda5462, which migrated OKF to v0.2."
+}

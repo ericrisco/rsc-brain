@@ -39,6 +39,36 @@ async def test_crud_and_state(build_harness: Callable[..., Harness]) -> None:
     assert [s.slug for s in await store.list_all(scope, state="active")] == []
 
 
+async def test_unknown_okf_extensions_survive_create_read_and_update(
+    build_harness: Callable[..., Harness],
+) -> None:
+    harness = build_harness()
+    project_id = await harness.setup_project(unique_slug("extensions"), TOPICS)
+    scope = harness.scope(project_id, allowed_topics=["hr"])
+    store = SkillStore(harness.sm)
+    original = {
+        "acme_policy": {"level": 2, "flags": [True, None, "kept"]},
+        "foreign_timestamp": "2026-08-21T06:30:00Z",
+    }
+    frontmatter = _fm("portable", ["hr"]).model_copy(update={"extensions": original})
+
+    await store.create(scope, frontmatter, "body")
+    created = await store.get(scope, "portable")
+    assert created is not None
+    assert created.frontmatter().extensions == original
+
+    updated_extensions = {**original, "another_producer": [1, {"nested": "value"}]}
+    await store.update(
+        scope,
+        "portable",
+        created.frontmatter().model_copy(update={"extensions": updated_extensions}),
+        "updated",
+    )
+    updated = await store.get(scope, "portable")
+    assert updated is not None
+    assert updated.frontmatter().extensions == updated_extensions
+
+
 async def test_visibility_by_tag(build_harness: Callable[..., Harness]) -> None:
     harness = build_harness()
     project_id = await harness.setup_project(unique_slug("acme"), TOPICS)
