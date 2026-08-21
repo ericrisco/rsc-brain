@@ -24,6 +24,7 @@ from rsc_brain import security
 from rsc_brain.audit import record_audit
 from rsc_brain.hunting.channels import Channel, NullChannel, OutboundMessage
 from rsc_brain.hunting.directory import PersonDirectory, PersonRow
+from rsc_brain.hunting.quiet_hours import in_quiet_hours
 from rsc_brain.hunting.state_machine import HuntState, HuntType, check_transition, is_open
 from rsc_brain.scope import PROJECT_ROLE_ADMIN, ProjectScope
 from rsc_brain.stores.relational import models
@@ -318,7 +319,7 @@ class HuntService:
         person = await self._directory.route(scope, topics, authorize_topics=authorize_directory)
         now = self._clock()
         token = security.mint_token("hunt_")
-        quiet = _in_quiet_hours(person, now) if person is not None else False
+        quiet = in_quiet_hours(person, now) if person is not None else False
         throttled = False
         async with session_scope(self._sm) as session:
             if command_hunt_id is not None:
@@ -588,7 +589,7 @@ class HuntService:
             ]
         for hunt_id, person_id, question in pending:
             person = await self._directory.get(scope, person_id)
-            if person is None or _in_quiet_hours(person, now):
+            if person is None or in_quiet_hours(person, now):
                 continue
             token = security.mint_token("hunt_")
             await self._send_question(person, question, token)
@@ -743,6 +744,14 @@ class HuntService:
             )
             session.add(claim)
             await session.flush()
+            from rsc_brain.skills.staleness import mark_tags_and_entities_stale_in_session
+
+            await mark_tags_and_entities_stale_in_session(
+                session,
+                scope,
+                tags=tags,
+                reason="accepted hunting knowledge",
+            )
             return str(claim.id)
 
     async def _hunt_document(self, session: AsyncSession, scope: ProjectScope) -> uuid.UUID:
@@ -812,31 +821,6 @@ def _preferred_channel(person: PersonRow) -> str:
     if person.channels.get("slack"):
         return "slack"
     return "magic_link"
-
-
-def _in_quiet_hours(person: PersonRow, now: dt.datetime) -> bool:
-    """True if ``now`` (UTC) falls inside the person's quiet window ``{start,end}`` (HH:MM, UTC for
-    v0.3; the reference tz is a documented open decision). Supports windows that wrap midnight."""
-    qh = person.quiet_hours or {}
-    start, end = qh.get("start"), qh.get("end")
-    if not isinstance(start, str) or not isinstance(end, str):
-        return False
-    minute = now.hour * 60 + now.minute
-    s = _hhmm(start)
-    e = _hhmm(end)
-    if s is None or e is None:
-        return False
-    if s <= e:
-        return s <= minute < e
-    return minute >= s or minute < e  # wraps midnight (e.g. 22:00-08:00)
-
-
-def _hhmm(value: str) -> int | None:
-    try:
-        hh, mm = value.split(":")
-        return int(hh) * 60 + int(mm)
-    except (ValueError, AttributeError):
-        return None
 
 
 def _scope_from_hunt(hunt: models.Hunt) -> ProjectScope:

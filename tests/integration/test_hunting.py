@@ -21,6 +21,8 @@ from rsc_brain.hunting.state_machine import HuntState
 from rsc_brain.mcp.tools import do_recall
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import Principal, PrincipalType, ProjectScope
+from rsc_brain.skills.frontmatter import SkillFrontmatter
+from rsc_brain.skills.store import SkillStore
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational import models
 
@@ -84,6 +86,24 @@ async def test_gap_recurrence_triggers_hunt_and_answer_becomes_claim(
     await PersonDirectory(harness.sm).add(
         scope, name="Alice", channels={"email": "alice@example.com"}, topics=["hr"]
     )
+    async with harness.sm() as session:
+        topic_id = await session.scalar(
+            select(models.Topic.id).where(
+                models.Topic.project_id == uuid.UUID(project_id), models.Topic.slug == "hr"
+            )
+        )
+    assert topic_id is not None
+    await SkillStore(harness.sm).create(
+        scope,
+        SkillFrontmatter(
+            slug="hunting-answer-hook",
+            title="Hunting answer hook",
+            tags=["hr"],
+            depends_on=[str(topic_id)],
+            state="active",
+        ),
+        "body",
+    )
     retriever = _retriever(harness)
     query = "who owns payroll approvals"
     for _ in range(3):  # 3 human denied recalls in the window
@@ -110,6 +130,7 @@ async def test_gap_recurrence_triggers_hunt_and_answer_becomes_claim(
         assert claim is not None and float(claim.credibility) == 0.95
         gap = await session.get(models.Gap, uuid.UUID(gap_id))
         assert gap is not None and gap.status == "resolved"
+    assert (await SkillStore(harness.sm).get(scope, "hunting-answer-hook")).stale is True  # type: ignore[union-attr]
 
     # The magic link is single-use.
     assert await svc.answer_via_magic_link(outcome.magic_token, "again") is None

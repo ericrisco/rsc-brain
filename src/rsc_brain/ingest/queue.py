@@ -21,8 +21,11 @@ from rsc_brain.stores.relational.database import resolve_dsn
 
 INGEST_QUEUE = "ingest"
 INGEST_TASK = "ingest_document"
+MAINTENANCE_QUEUE = "maintenance"
+STALE_NOTIFICATION_TASK = "deliver_stale_skill_notifications"
 
 Runner = Callable[[str, str, str], Awaitable[None]]
+NotificationRunner = Callable[[], Awaitable[None]]
 
 
 def _psycopg_conninfo(dsn: str) -> str:
@@ -49,6 +52,7 @@ def build_queue(
     connector: BaseConnector | None = None,
     dsn: str | None = None,
     runner: Runner | None = None,
+    notification_runner: NotificationRunner | None = None,
 ) -> IngestQueue:
     """Build the ingest queue. Pass a connector (e.g. in-memory) + runner for tests; omit both to
     use the real Postgres connector + the config-backed runner."""
@@ -58,10 +62,17 @@ def build_queue(
         connector = PsycopgConnector(conninfo=_psycopg_conninfo(resolve_dsn(dsn)))
     app = App(connector=connector)
     active_runner = runner or _default_runner
+    active_notification_runner = notification_runner or _default_notification_runner
 
     @app.task(name=INGEST_TASK, queue=INGEST_QUEUE)
     async def ingest_document(document_id: str, project_id: str, principal_id: str) -> None:
         await active_runner(document_id, project_id, principal_id)
+
+    @app.periodic(cron="*/1 * * * *")
+    @app.task(name=STALE_NOTIFICATION_TASK, queue=MAINTENANCE_QUEUE)
+    async def deliver_stale_skill_notifications(timestamp: int) -> None:
+        del timestamp  # Procrastinate's scheduled instant; the dispatcher owns its aware clock.
+        await active_notification_runner()
 
     return IngestQueue(app=app, _defer=ingest_document.defer_async)
 
@@ -113,3 +124,21 @@ async def _default_runner(
             raise
     finally:
         await dependencies.dispose()
+
+
+async def _default_notification_runner() -> None:  # pragma: no cover - real DB/channel wiring
+    """Drain durable stale notifications without constructing the model gateway."""
+    from rsc_brain.config import load_settings
+    from rsc_brain.hunting.factory import build_channel_from_config
+    from rsc_brain.skills.staleness import SkillStaleNotificationDispatcher
+    from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
+
+    settings = load_settings()
+    channel, can_deliver = build_channel_from_config(settings.hunting)
+    engine = make_engine()
+    try:
+        await SkillStaleNotificationDispatcher(
+            make_sessionmaker(engine), channel=channel, can_deliver=can_deliver
+        ).deliver_due()
+    finally:
+        await engine.dispose()

@@ -65,6 +65,7 @@ from rsc_brain.api.read_models import (
     ReviewQueueEnvelope,
     SkillCommandView,
     SkillCreateResult,
+    SkillDetailView,
     SkillEnvelope,
     SkillView,
     UsageDayTotal,
@@ -823,10 +824,15 @@ def _skill_store(request: Request) -> object:
 
 
 def _skill_view(skill: object) -> dict[str, object]:
-    """Closed lifecycle summary; instructions, owners and topic labels stay off collection reads."""
+    """Lifecycle/frontmatter summary. The instruction body remains detail-only."""
     return {
         "slug": skill.slug,  # type: ignore[attr-defined]
         "title": skill.title,  # type: ignore[attr-defined]
+        "description": skill.description,  # type: ignore[attr-defined]
+        "when_to_use": skill.when_to_use,  # type: ignore[attr-defined]
+        "when_not": skill.when_not,  # type: ignore[attr-defined]
+        "tags": list(skill.tags),  # type: ignore[attr-defined]
+        "owner_person_id": skill.owner_person_id,  # type: ignore[attr-defined]
         "status": skill.state,  # type: ignore[attr-defined]
         "stale": skill.stale,  # type: ignore[attr-defined]
         "depends_on": list(skill.depends_on),  # type: ignore[attr-defined]
@@ -856,6 +862,7 @@ async def create_skill_admin(
 ) -> SkillCreateResult:
     """Create a skill from its markdown (OKF frontmatter + body)."""
     from rsc_brain.skills.frontmatter import SkillFrontmatterError, parse_skill
+    from rsc_brain.skills.store import SkillOwnerNotFound
 
     try:
         frontmatter, skill_body = parse_skill(body.markdown)
@@ -877,8 +884,95 @@ async def create_skill_admin(
             detail="skill dependencies must be identifiers",
         ) from exc
     decide_object(scope, Capability.PROJECT_CONFIG_WRITE, frontmatter.tags)
-    skill_id = await _skill_store(request).create(scope, frontmatter, skill_body)  # type: ignore[attr-defined]
+    try:
+        skill_id = await _skill_store(request).create(scope, frontmatter, skill_body)  # type: ignore[attr-defined]
+    except SkillOwnerNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="owner not found"
+        ) from exc
     return SkillCreateResult(skill_id=skill_id, slug=frontmatter.slug)
+
+
+@router.get("/skills/{slug}", response_model=SkillDetailView)
+async def get_skill_admin(
+    slug: str, request: Request, scope: ProjectScope = Depends(_needs_knowledge_read)
+) -> SkillDetailView:
+    """Inspect the canonical owner-preserving markdown for one authorized skill."""
+    from rsc_brain.skills.frontmatter import serialize_skill
+
+    row = await _skill_store(request).get(scope, slug)  # type: ignore[attr-defined]
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    enforce(
+        decide(
+            scope,
+            Capability.KNOWLEDGE_READ,
+            object_topics=row.tags,
+            sensitive_existence=True,
+        )
+    )
+    return SkillDetailView(
+        slug=row.slug, markdown=serialize_skill(row.frontmatter(), row.body or "")
+    )
+
+
+@router.put("/skills/{slug}", response_model=SkillView)
+async def update_skill_admin(
+    slug: str,
+    body: SkillUpsert,
+    request: Request,
+    scope: ProjectScope = Depends(_needs_config_write),
+) -> SkillView:
+    """Replace editable frontmatter/body under the supplied frontmatter version."""
+    from rsc_brain.skills.frontmatter import SkillFrontmatterError, parse_skill
+    from rsc_brain.skills.store import (
+        SkillNotFound,
+        SkillOwnerNotFound,
+        SkillVersionConflict,
+    )
+
+    current = await _skill_store(request).get(scope, slug)  # type: ignore[attr-defined]
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+    enforce(
+        decide(
+            scope,
+            Capability.PROJECT_CONFIG_WRITE,
+            object_topics=current.tags,
+            sensitive_existence=True,
+        )
+    )
+    try:
+        frontmatter, skill_body = parse_skill(body.markdown)
+    except SkillFrontmatterError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
+    if frontmatter.slug != slug or frontmatter.state != current.state:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="skill edit must preserve slug and lifecycle state",
+        )
+    try:
+        for dependency in frontmatter.depends_on:
+            uuid.UUID(dependency)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="skill dependencies must be identifiers",
+        ) from exc
+    decide_object(scope, Capability.PROJECT_CONFIG_WRITE, frontmatter.tags)
+    try:
+        updated = await _skill_store(request).update(  # type: ignore[attr-defined]
+            scope, slug, frontmatter, skill_body
+        )
+    except (SkillNotFound, SkillOwnerNotFound) as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found") from exc
+    except SkillVersionConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="version conflict"
+        ) from exc
+    return SkillView.model_validate(_skill_view(updated))
 
 
 @router.post("/skills/{slug}/validate", response_model=SkillCommandView)

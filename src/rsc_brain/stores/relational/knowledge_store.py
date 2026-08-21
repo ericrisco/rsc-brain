@@ -223,6 +223,14 @@ class KnowledgeStore:
                 )
                 .values(credibility=loser_cred, valid_to=_now())
             )
+            from rsc_brain.skills.staleness import mark_claims_stale_in_session
+
+            await mark_claims_stale_in_session(
+                session,
+                scope,
+                [uuid.UUID(winner_id), uuid.UUID(loser_id)],
+                reason="contradiction resolved",
+            )
 
     async def claim_relation_keys(
         self,
@@ -302,6 +310,14 @@ class KnowledgeStore:
                     models.Claim.project_id == _pid(scope),
                 )
                 .values(disputed=True, hunting_candidate=hunting_candidate)
+            )
+            from rsc_brain.skills.staleness import mark_claims_stale_in_session
+
+            await mark_claims_stale_in_session(
+                session,
+                scope,
+                [uuid.UUID(i) for i in claim_ids],
+                reason="contradiction disputed",
             )
 
     async def flag_claims_needs_review(self, scope: ProjectScope, claim_ids: Sequence[str]) -> None:
@@ -477,6 +493,14 @@ class KnowledgeStore:
             if not pending:
                 old.credibility = cred_old
                 old.valid_to = _now()
+            from rsc_brain.skills.staleness import mark_claims_stale_in_session
+
+            await mark_claims_stale_in_session(
+                session,
+                scope,
+                [old.id, new_claim.id],
+                reason="owner correction applied",
+            )
             return str(new_claim.id)
 
     async def record_correction(
@@ -718,6 +742,17 @@ class KnowledgeStore:
                     )
                     .values(valid_to=_now())
                 )
+            from rsc_brain.skills.staleness import mark_claims_stale_in_session
+
+            await mark_claims_stale_in_session(
+                session,
+                scope,
+                [
+                    uuid.UUID(old_claim_id),
+                    *([uuid.UUID(new_claim_id)] if new_claim_id is not None else []),
+                ],
+                reason="owner correction reverted",
+            )
 
     async def corrections_by_author_since(
         self, scope: ProjectScope, author_id: str, since: dt.datetime

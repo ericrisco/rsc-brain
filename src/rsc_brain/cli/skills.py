@@ -7,6 +7,7 @@ to an explicit ``--project`` (resolved server-side, never trusted as a knowledge
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
@@ -14,10 +15,14 @@ import typer
 
 from rsc_brain.cli._common import JSON_OPTION, emit_result
 from rsc_brain.cli.ingest import _cli_scope, _dispatch, _resolve_project_id
-from rsc_brain.hunting.directory import PersonDirectory
 from rsc_brain.scope import ProjectScope
 from rsc_brain.skills.frontmatter import SkillFrontmatterError, parse_skill, serialize_skill
-from rsc_brain.skills.store import SkillStore
+from rsc_brain.skills.store import (
+    SkillNotFound,
+    SkillOwnerNotFound,
+    SkillStore,
+    SkillVersionConflict,
+)
 from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
 
 skills_app = typer.Typer(help="Manage skills (reusable procedures, FR-7.1).", no_args_is_help=True)
@@ -38,16 +43,6 @@ def _with[T](slug: str, fn: Callable[[object, ProjectScope], Awaitable[T]]) -> T
     return _dispatch(_inner())
 
 
-async def _owner_person_id(sm: object, scope: ProjectScope, owner: str | None) -> str | None:
-    """Resolve the frontmatter ``owner`` to a person id, validating it exists (FR-7.1)."""
-    if not owner:
-        return None
-    for person in await PersonDirectory(sm).list(scope):  # type: ignore[arg-type]
-        if owner in {person.id, person.name}:
-            return person.id
-    raise typer.BadParameter(f"owner {owner!r} is not in the person directory")
-
-
 @skills_app.command("create")
 def skills_create(
     ctx: typer.Context,
@@ -61,10 +56,14 @@ def skills_create(
     except (SkillFrontmatterError, OSError) as exc:
         typer.echo(f"invalid skill file: {exc}", err=True)
         raise typer.Exit(code=2) from exc
+    if frontmatter.state != "proposed" or frontmatter.version < 1:
+        raise typer.BadParameter("skills must begin proposed with a positive version")
 
     async def _run(sm: object, scope: ProjectScope) -> str:
-        owner_id = await _owner_person_id(sm, scope, frontmatter.owner)
-        return await SkillStore(sm).create(scope, frontmatter, body, owner_person_id=owner_id)  # type: ignore[arg-type]
+        try:
+            return await SkillStore(sm).create(scope, frontmatter, body)  # type: ignore[arg-type]
+        except SkillOwnerNotFound as exc:
+            raise typer.BadParameter("owner not found") from exc
 
     skill_id = _with(project, _run)
     emit_result(
@@ -93,6 +92,12 @@ def skills_list(
                 "state": s.state,
                 "stale": s.stale,
                 "tags": list(s.tags),
+                "description": s.description,
+                "when_to_use": s.when_to_use,
+                "when_not": s.when_not,
+                "owner_person_id": s.owner_person_id,
+                "depends_on": list(s.depends_on),
+                "version": s.version,
             }
             for s in rows
         ]
@@ -136,13 +141,29 @@ def skills_edit(
         typer.echo(f"invalid skill file: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
-    async def _run(sm: object, scope: ProjectScope) -> None:
-        await SkillStore(sm).update(scope, frontmatter.slug, frontmatter, body)  # type: ignore[arg-type]
+    async def _run(sm: object, scope: ProjectScope) -> dict[str, object]:
+        store = SkillStore(sm)  # type: ignore[arg-type]
+        current = await store.get(scope, frontmatter.slug)
+        if current is None:
+            raise typer.BadParameter("skill not found")
+        if frontmatter.state != current.state:
+            raise typer.BadParameter("skill edit must preserve lifecycle state")
+        try:
+            updated = await store.update(scope, frontmatter.slug, frontmatter, body)
+        except SkillOwnerNotFound as exc:
+            raise typer.BadParameter("owner not found") from exc
+        except SkillVersionConflict as exc:
+            raise typer.BadParameter("version conflict") from exc
+        return {
+            "slug": updated.slug,
+            "updated": True,
+            "owner_person_id": updated.owner_person_id,
+            "status": updated.state,
+            "version": updated.version,
+        }
 
-    _with(project, _run)
-    emit_result(
-        ctx, json_output, {"slug": frontmatter.slug, "updated": True}, f"updated {frontmatter.slug}"
-    )
+    result = _with(project, _run)
+    emit_result(ctx, json_output, result, f"updated {frontmatter.slug}")
 
 
 @skills_app.command("archive")
@@ -154,8 +175,28 @@ def skills_archive(
 ) -> None:
     """Archive a skill (removed from MCP; not deleted)."""
 
-    async def _run(sm: object, scope: ProjectScope) -> None:
-        await SkillStore(sm).set_state(scope, slug, "archived")  # type: ignore[arg-type]
+    async def _run(sm: object, scope: ProjectScope) -> dict[str, object]:
+        store = SkillStore(sm)  # type: ignore[arg-type]
+        current = await store.get(scope, slug)
+        if current is None:
+            raise typer.BadParameter("skill not found")
+        try:
+            transition = await store.archive(
+                scope,
+                slug,
+                expected_version=current.version,
+                idempotency_key=str(uuid.uuid4()),
+                authorize_topics=False,
+            )
+        except (SkillNotFound, SkillVersionConflict) as exc:
+            raise typer.BadParameter("version conflict") from exc
+        return {
+            "slug": transition.skill.slug,
+            "archived": True,
+            "status": transition.skill.state,
+            "version": transition.skill.version,
+            "audit_correlation": transition.audit_correlation,
+        }
 
-    _with(project, _run)
-    emit_result(ctx, json_output, {"slug": slug, "archived": True}, f"archived {slug}")
+    result = _with(project, _run)
+    emit_result(ctx, json_output, result, f"archived {slug}")

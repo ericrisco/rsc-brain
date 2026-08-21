@@ -8,7 +8,6 @@ that skill ``stale`` (a flag, not an archive — it stays servable).
 
 from __future__ import annotations
 
-import datetime as dt
 import hashlib
 import uuid
 from collections.abc import Sequence
@@ -82,6 +81,17 @@ class SkillValidationConflict(Exception):
     """A proposed skill cannot become active because its dependencies are invalid."""
 
 
+class SkillOwnerNotFound(Exception):
+    """The owner identifier is absent, ambiguous or belongs to another project.
+
+    Those cases deliberately share one exception and message: a caller in project A must not learn
+    that a supplied UUID or name is a real Person in project B.
+    """
+
+    def __init__(self) -> None:
+        super().__init__("owner not found")
+
+
 def _row(skill: models.Skill) -> SkillRow:
     return SkillRow(
         id=str(skill.id),
@@ -115,6 +125,8 @@ class SkillStore:
         owner_person_id: str | None = None,
     ) -> str:
         async with session_scope(self._sm) as session:
+            owner_identifier = owner_person_id or frontmatter.owner
+            owner_id = await self._resolve_owner(session, scope, owner_identifier)
             skill = models.Skill(
                 project_id=_pid(scope),
                 slug=frontmatter.slug,
@@ -124,7 +136,7 @@ class SkillStore:
                 when_not=frontmatter.when_not,
                 tags=list(frontmatter.tags),
                 state=frontmatter.state,
-                owner_person_id=uuid.UUID(owner_person_id) if owner_person_id else None,
+                owner_person_id=owner_id,
                 depends_on=[uuid.UUID(d) for d in frontmatter.depends_on],
                 body=body,
                 version=frontmatter.version,
@@ -133,6 +145,14 @@ class SkillStore:
             )
             session.add(skill)
             await session.flush()
+            session.add(
+                self._audit_row(
+                    scope,
+                    "skill_create",
+                    str(uuid.uuid4()),
+                    skill,
+                )
+            )
             return str(skill.id)
 
     async def get(self, scope: ProjectScope, slug: str) -> SkillRow | None:
@@ -198,35 +218,57 @@ class SkillStore:
 
     async def update(
         self, scope: ProjectScope, slug: str, frontmatter: SkillFrontmatter, body: str
-    ) -> None:
+    ) -> SkillRow:
         async with session_scope(self._sm) as session:
-            await session.execute(
-                update(models.Skill)
+            skill = await session.scalar(
+                select(models.Skill)
                 .where(models.Skill.project_id == _pid(scope), models.Skill.slug == slug)
-                .values(
-                    title=frontmatter.title,
-                    description=frontmatter.description,
-                    when_to_use=frontmatter.when_to_use,
-                    when_not=frontmatter.when_not,
-                    tags=list(frontmatter.tags),
-                    depends_on=[uuid.UUID(d) for d in frontmatter.depends_on],
-                    body=body,
-                    okf_type=frontmatter.concept_type,
-                    okf_extensions=frontmatter.extensions,
-                    stale=False,  # editing resolves staleness (the owner reviewed it)
-                    stale_reason=None,
-                    stale_at=None,
-                    version=models.Skill.version + 1,
-                )
+                .with_for_update()
             )
+            if skill is None:
+                raise SkillNotFound
+            if frontmatter.slug != slug or skill.version != frontmatter.version:
+                raise SkillVersionConflict
+            owner_id = await self._resolve_owner(session, scope, frontmatter.owner)
+            was_stale = skill.stale
+            skill.title = frontmatter.title
+            skill.description = frontmatter.description
+            skill.when_to_use = frontmatter.when_to_use
+            skill.when_not = frontmatter.when_not
+            skill.tags = list(frontmatter.tags)
+            skill.owner_person_id = owner_id
+            skill.depends_on = [uuid.UUID(d) for d in frontmatter.depends_on]
+            skill.body = body
+            skill.okf_type = frontmatter.concept_type
+            skill.okf_extensions = frontmatter.extensions
+            skill.stale = False  # editing is the owner's review/resolution
+            skill.stale_reason = None
+            skill.stale_at = None
+            skill.version += 1
+            await self._cancel_pending(session, skill)
+            correlation = str(uuid.uuid4())
+            session.add(self._audit_row(scope, "skill_update", correlation, skill))
+            if was_stale:
+                session.add(self._audit_row(scope, "skill_stale_resolved", correlation, skill))
+            await session.flush()
+            return _row(skill)
 
     async def set_state(self, scope: ProjectScope, slug: str, state: str) -> None:
         async with session_scope(self._sm) as session:
-            await session.execute(
-                update(models.Skill)
+            skill = await session.scalar(
+                select(models.Skill)
                 .where(models.Skill.project_id == _pid(scope), models.Skill.slug == slug)
-                .values(state=state)
+                .with_for_update()
             )
+            if skill is None:
+                raise SkillNotFound
+            if skill.state == state:
+                return
+            skill.state = state
+            skill.version += 1
+            if state == "archived":
+                await self._cancel_pending(session, skill)
+            session.add(self._audit_row(scope, f"skill_{state}", str(uuid.uuid4()), skill))
 
     async def validate(
         self,
@@ -271,11 +313,15 @@ class SkillStore:
             if not await self._dependencies_exist(session, scope, skill.depends_on):
                 raise SkillValidationConflict
             skill.state = "active"
+            was_stale = skill.stale
             skill.stale = False
             skill.stale_reason = None
             skill.stale_at = None
             skill.version += 1
             session.add(self._audit_row(scope, "skill_validate", correlation, skill))
+            if was_stale:
+                await self._cancel_pending(session, skill)
+                session.add(self._audit_row(scope, "skill_stale_resolved", correlation, skill))
             await session.flush()
             return SkillTransition(skill=_row(skill), audit_correlation=correlation)
 
@@ -286,6 +332,7 @@ class SkillStore:
         *,
         expected_version: int,
         idempotency_key: str,
+        authorize_topics: bool = True,
     ) -> SkillTransition:
         """Archive once; same-key retries return the persisted outcome across app restarts."""
         correlation = self._command_correlation(
@@ -302,15 +349,13 @@ class SkillStore:
                     models.AuditLog.trace_id == correlation,
                 )
             )
-            skill = await session.scalar(
-                select(models.Skill)
-                .where(
-                    models.Skill.project_id == _pid(scope),
-                    models.Skill.slug == slug,
-                    fully_authorized_topic_clause(models.Skill.tags, scope),
-                )
-                .with_for_update()
-            )
+            conditions = [
+                models.Skill.project_id == _pid(scope),
+                models.Skill.slug == slug,
+            ]
+            if authorize_topics:
+                conditions.append(fully_authorized_topic_clause(models.Skill.tags, scope))
+            skill = await session.scalar(select(models.Skill).where(*conditions).with_for_update())
             if skill is None:
                 raise SkillNotFound
             if prior is not None:
@@ -321,6 +366,7 @@ class SkillStore:
                 raise SkillVersionConflict
             skill.state = "archived"
             skill.version += 1
+            await self._cancel_pending(session, skill)
             session.add(self._audit_row(scope, "skill_archive", correlation, skill))
             await session.flush()
             return SkillTransition(skill=_row(skill), audit_correlation=correlation)
@@ -384,6 +430,8 @@ class SkillStore:
             topics_used=list(skill.tags),
             result_count=skill.version,
             denied=False,
+            resource_type="skill",
+            resource_id=skill.id,
         )
 
     async def mark_stale_for(
@@ -394,20 +442,40 @@ class SkillStore:
         touched = [uuid.UUID(i) for i in touched_ids if i]
         if not touched:
             return []
+        from rsc_brain.skills.staleness import mark_dependencies_stale_in_session
+
         async with session_scope(self._sm) as session:
-            candidates = await session.scalars(
-                select(models.Skill).where(
-                    models.Skill.project_id == _pid(scope),
-                    models.Skill.state == "active",
-                    models.Skill.stale.is_(False),
-                    models.Skill.depends_on.op("&&")(touched),
-                )
+            return await mark_dependencies_stale_in_session(session, scope, touched, reason=reason)
+
+    @staticmethod
+    async def _resolve_owner(
+        session: AsyncSession, scope: ProjectScope, identifier: str | None
+    ) -> uuid.UUID | None:
+        if identifier is None or not identifier.strip():
+            return None
+        try:
+            parsed = uuid.UUID(identifier)
+        except ValueError:
+            parsed = None
+        query = select(models.Person.id).where(models.Person.project_id == _pid(scope))
+        if parsed is not None:
+            matches = list(await session.scalars(query.where(models.Person.id == parsed).limit(2)))
+        else:
+            matches = list(
+                await session.scalars(query.where(models.Person.name == identifier).limit(2))
             )
-            newly: list[str] = []
-            now = dt.datetime.now(dt.UTC)
-            for skill in candidates:
-                skill.stale = True
-                skill.stale_reason = reason
-                skill.stale_at = now
-                newly.append(skill.slug)
-            return newly
+        if len(matches) != 1:
+            raise SkillOwnerNotFound
+        return matches[0]
+
+    @staticmethod
+    async def _cancel_pending(session: AsyncSession, skill: models.Skill) -> None:
+        await session.execute(
+            update(models.SkillStaleNotification)
+            .where(
+                models.SkillStaleNotification.project_id == skill.project_id,
+                models.SkillStaleNotification.skill_id == skill.id,
+                models.SkillStaleNotification.state == "pending",
+            )
+            .values(state="cancelled")
+        )

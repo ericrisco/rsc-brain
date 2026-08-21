@@ -35,7 +35,7 @@ same-origin server proxy, which carries the session credential to the API withou
 credential to browser JavaScript. Caddy owns the public route map and TLS in the canonical Compose
 topology.
 
-## A worker boundary for ingestion
+## A worker boundary for ingestion and lifecycle delivery
 
 Document upload creates the document record, ingestion checkpoint, and durable queue entry before it
 returns. A separate worker parses, tags, embeds, extracts, and publishes the accepted document. This
@@ -47,6 +47,13 @@ already recallable. Status and review surfaces expose that intermediate state.
 
 The queue is PostgreSQL-backed, so the deployment does not need Redis. That reduces the service
 count, while queue traffic shares the database's capacity and availability with product data.
+
+The same worker drains a separate maintenance queue. A knowledge writer that makes a skill stale
+persists the stale flag and a unique owner-notification outbox row in the writer's own transaction.
+The periodic maintenance task delivers due rows through the configured outreach channel, defers them
+through the owner's timezone-aware quiet hours, and retries transient failure with a stable
+idempotency key. Consequently an API or ingest process does not need to remain alive after the
+knowledge commit for the notification intent to survive.
 
 Both API and worker dependencies come from one runtime factory. They therefore share model routing,
 embedding cache, usage accounting, limits, ontology configuration, and storage setup. A shared

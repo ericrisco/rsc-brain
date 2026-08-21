@@ -21,6 +21,10 @@ from rsc_brain.ingest.pipeline import PriorVersionNotProcessedError
 from rsc_brain.ingest.types import DocStatus
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
+
+
+from rsc_brain.skills.frontmatter import SkillFrontmatter
+from rsc_brain.skills.store import SkillStore
 from rsc_brain.stores.relational import models
 from tests.conftest import completion_response
 
@@ -501,3 +505,61 @@ async def test_duplicate_chunk_claim_has_one_identity_and_two_occurrences(
     assert len(claim_ids) == 1
     assert len(occurrences) == 2
     assert len(set(occurrences)) == 2
+
+
+async def test_version_supersession_marks_a_dependent_skill_without_direct_helper(
+    build_harness: Callable[..., Harness],
+) -> None:
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("version-stale"), TOPICS)
+    scope = harness.scope(project, allowed_topics=["general"])
+    async with harness.sm() as session:
+        topic_id = await session.scalar(
+            select(models.Topic.id).where(
+                models.Topic.project_id == uuid.UUID(project), models.Topic.slug == "general"
+            )
+        )
+        document = models.Document(
+            project_id=uuid.UUID(project),
+            logical_id="version-stale.md",
+            checksum=uuid.uuid4().hex,
+            status="processed",
+        )
+        session.add(document)
+        await session.flush()
+        chunk = models.Chunk(
+            project_id=uuid.UUID(project),
+            document_id=document.id,
+            kind="prose",
+            text="obsolete policy",
+            tags=["general"],
+        )
+        session.add(chunk)
+        await session.flush()
+        claim = models.Claim(
+            project_id=uuid.UUID(project),
+            chunk_id=chunk.id,
+            source_document_id=document.id,
+            text="obsolete policy",
+            tags=["general"],
+        )
+        session.add(claim)
+        await session.commit()
+        document_id = str(document.id)
+        claim_id = str(claim.id)
+    assert topic_id is not None
+    await SkillStore(harness.sm).create(
+        scope,
+        SkillFrontmatter(
+            slug="version-hook",
+            title="Version hook",
+            tags=["general"],
+            depends_on=[str(topic_id)],
+            state="active",
+        ),
+        "body",
+    )
+
+    closed = await harness.repo.supersede_prior_version(scope, document_id, set())
+    assert closed == [claim_id]
+    assert (await SkillStore(harness.sm).get(scope, "version-hook")).stale is True  # type: ignore[union-attr]

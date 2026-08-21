@@ -601,10 +601,51 @@ class Skill(Base):
     stale: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
     stale_reason: Mapped[str | None] = mapped_column(Text)
     stale_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    # Monotonic identity of a fresh→stale transition. It is deliberately independent from the
+    # editable skill version: one reviewed skill can become stale repeatedly without an outbox row
+    # from an older transition ever becoming eligible again (AUDIT-018).
+    stale_generation: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
     __table_args__ = (
         UniqueConstraint("project_id", "slug"),
+        UniqueConstraint("project_id", "id"),
         Index("ix_skills_project_id_id", "project_id", "id"),
         _tenant_fk("owner_person_id", "persons", ondelete="SET NULL"),
+    )
+
+
+class SkillStaleNotification(Base):
+    """Transactional outbox for one owner notification per fresh→stale transition."""
+
+    __tablename__ = "skill_stale_notifications"
+    id: Mapped[uuid.UUID] = _pk()
+    project_id: Mapped[uuid.UUID] = _project_fk()
+    skill_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_person_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, server_default="pending", nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
+    next_attempt_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[dt.datetime] = _created_at()
+    delivered_at: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("project_id", "skill_id", "generation"),
+        Index(
+            "ix_skill_stale_notifications_project_due",
+            "project_id",
+            "state",
+            "next_attempt_at",
+        ),
+        _tenant_fk("skill_id", "skills", name="fk_stale_notice_project_skill"),
+        _tenant_fk(
+            "owner_person_id",
+            "persons",
+            ondelete="SET NULL",
+            name="fk_stale_notice_project_owner",
+        ),
     )
 
 
@@ -689,6 +730,10 @@ class AuditLog(Base):
     topics_used: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     result_count: Mapped[int | None] = mapped_column(Integer)
     denied: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
+    # A typed target makes lifecycle evidence queryable without overloading trace ids or storing
+    # mutable/secret content. Additive and nullable for historical audit compatibility.
+    resource_type: Mapped[str | None] = mapped_column(Text)
+    resource_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     __table_args__ = (Index("ix_audit_log_project_id_ts", "project_id", "ts"),)
 
 

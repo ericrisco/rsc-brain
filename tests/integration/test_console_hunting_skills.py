@@ -13,6 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from rsc_brain.api.app import ApiDeps, create_app
 from rsc_brain.hunting.channels import NullChannel
+from rsc_brain.hunting.directory import PersonDirectory
 from rsc_brain.hunting.service import HuntService
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.skills.frontmatter import SkillFrontmatter, serialize_skill
@@ -67,7 +68,21 @@ _PERSON_COLLECTION_FIELDS = frozenset(
     }
 )
 _SKILL_CREATE_FIELDS = frozenset({"skill_id", "slug"})
-_SKILL_VIEW_FIELDS = frozenset({"slug", "title", "status", "stale", "depends_on", "version"})
+_SKILL_VIEW_FIELDS = frozenset(
+    {
+        "slug",
+        "title",
+        "description",
+        "when_to_use",
+        "when_not",
+        "tags",
+        "owner_person_id",
+        "status",
+        "stale",
+        "depends_on",
+        "version",
+    }
+)
 _SKILL_VALIDATE_FIELDS = frozenset(
     {
         "slug",
@@ -659,6 +674,118 @@ async def test_manual_hunt_persists_topics_and_replays_idempotently(
         delivery_secrets,
     )
     assert not failures, "\n".join(failures)
+
+
+async def test_skill_http_crud_preserves_owner_frontmatter_and_version_semantics(
+    build_harness: Callable[..., Harness], tmp_path: Path
+) -> None:
+    harness = build_harness()
+    project_slug = unique_slug("skill-owner-http")
+    foreign_slug = unique_slug("skill-owner-foreign")
+    project_id = await harness.setup_project(project_slug, [("general", 0)])
+    foreign_id = await harness.setup_project(foreign_slug, [("general", 0)])
+    scope = harness.scope(project_id, allowed_topics=["general"])
+    foreign_scope = harness.scope(foreign_id, allowed_topics=["general"])
+    owner_id = await PersonDirectory(harness.sm).add(
+        scope, name="Runbook Owner", channels={"email": "owner@example.test"}, topics=["general"]
+    )
+    await PersonDirectory(harness.sm).add(
+        foreign_scope,
+        name="Foreign Owner",
+        channels={"email": "foreign-secret@example.test"},
+        topics=["general"],
+    )
+    skill_slug = unique_slug("owner-parity")
+    initial = serialize_skill(
+        SkillFrontmatter(
+            slug=skill_slug,
+            title="Initial",
+            description="Description",
+            when_to_use="Now",
+            when_not="Never",
+            tags=["general"],
+            owner="Runbook Owner",
+            state="proposed",
+            version=1,
+        ),
+        "## Initial body\n",
+    )
+    edited = serialize_skill(
+        SkillFrontmatter(
+            slug=skill_slug,
+            title="Edited",
+            description="New description",
+            when_to_use="Soon",
+            when_not="Late",
+            tags=["general"],
+            owner=owner_id,
+            state="proposed",
+            version=1,
+        ),
+        "## Edited body\n",
+    )
+    foreign_edit = serialize_skill(
+        SkillFrontmatter(
+            slug=skill_slug,
+            title="Leak attempt",
+            tags=["general"],
+            owner="Foreign Owner",
+            state="proposed",
+            version=2,
+        ),
+        "must not persist",
+    )
+
+    client_instance, _ = _client(harness, tmp_path)
+    async with client_instance as client:
+        headers, _ = await _session(
+            harness,
+            client,
+            project_id=project_id,
+            project_role="project-admin",
+        )
+        created = await client.post(
+            f"/api/v1/admin/skills?project={project_slug}",
+            headers=headers,
+            json={"markdown": initial},
+        )
+        listing = await client.get(f"/api/v1/admin/skills?project={project_slug}", headers=headers)
+        detail = await client.get(
+            f"/api/v1/admin/skills/{skill_slug}?project={project_slug}", headers=headers
+        )
+        changed = await client.put(
+            f"/api/v1/admin/skills/{skill_slug}?project={project_slug}",
+            headers=headers,
+            json={"markdown": edited},
+        )
+        rejected = await client.put(
+            f"/api/v1/admin/skills/{skill_slug}?project={project_slug}",
+            headers=headers,
+            json={"markdown": foreign_edit},
+        )
+        after = await client.get(
+            f"/api/v1/admin/skills/{skill_slug}?project={project_slug}", headers=headers
+        )
+
+    assert created.status_code == 201
+    assert listing.status_code == 200
+    listed = _list_field(_object(listing), "skills")
+    assert len(listed) == 1 and isinstance(listed[0], dict)
+    assert listed[0]["owner_person_id"] == owner_id
+    assert set(listed[0]) == _SKILL_VIEW_FIELDS
+    assert detail.status_code == 200
+    detail_payload = _object(detail)
+    assert set(detail_payload) == {"slug", "markdown"}
+    assert f"owner: {owner_id}" in str(detail_payload["markdown"])
+    assert changed.status_code == 200
+    assert _object(changed)["version"] == 2
+    assert _object(changed)["owner_person_id"] == owner_id
+    assert rejected.status_code == 404
+    assert "Foreign Owner" not in rejected.text
+    assert "foreign-secret@example.test" not in rejected.text
+    assert after.status_code == 200
+    assert "Edited" in str(_object(after)["markdown"])
+    assert "Leak attempt" not in str(_object(after)["markdown"])
 
 
 async def test_person_collection_minimizes_contact_and_delete_reports_dependencies(

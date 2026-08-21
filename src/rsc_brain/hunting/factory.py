@@ -55,6 +55,15 @@ def build_channel(
     raise ValueError(f"unknown hunting channel {channel!r}")
 
 
+def build_channel_from_config(config: object) -> tuple[Channel, bool]:
+    """Resolve the one configured outreach channel for any production consumer."""
+    return build_channel(
+        config.channel,  # type: ignore[attr-defined]
+        smtp=_secrets(config.smtp),  # type: ignore[attr-defined]
+        slack=_secrets(config.slack),  # type: ignore[attr-defined]
+    )
+
+
 def build_hunt_service(
     sessionmaker: async_sessionmaker[AsyncSession],
     *,
@@ -95,13 +104,13 @@ def build_hunt_service_from_settings(
     except Exception:
         return build_hunt_service(sessionmaker, channel=None, gateway=gateway)
     hunting = settings.hunting
-    return build_hunt_service(
+    delivery, can_deliver = build_channel_from_config(hunting)
+    return HuntService(
         sessionmaker,
-        channel=hunting.channel,
-        smtp=_secrets(hunting.smtp),
-        slack=_secrets(hunting.slack),
-        public_origin=settings.ingress.public_origin,
+        channel=delivery,
         gateway=gateway,
+        base_url=settings.ingress.public_origin or HuntService.UNCONFIGURED_BASE_URL,
+        can_deliver=can_deliver,
     )
 
 
