@@ -53,7 +53,9 @@ The repository's workflows currently require:
 | Release artifacts | SPDX SBOM from Syft and a Grype CVE scan |
 
 Workflow actions and downloaded scanner binaries are pinned or checksum-verified, and workflow
-tokens default to read-only permissions. A green structural/render check is not proof that a live
+tokens default to read-only permissions. The manually dispatched release workflow is a
+non-publishing rehearsal: it reuses all CI gates and builds every first-party image without registry
+login, package/signing scopes, or a release mutation. A green structural/render check is not proof that a live
 TLS, OAuth, model-provider, restore, or Kubernetes environment worked; those checks require the
 corresponding infrastructure.
 

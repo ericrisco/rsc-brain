@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Release rehearsals call this exact graph instead of copying a weaker subset.
+  workflow_call:
 
 # Least privilege by default: the whole workflow can only read the repo (AUDIT-006).
 # Untrusted fork PRs therefore get no secrets and no write-capable token.
