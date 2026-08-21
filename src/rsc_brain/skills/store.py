@@ -43,9 +43,12 @@ class SkillRow:
     body: str | None
     stale: bool
     version: int
+    okf_type: str
+    okf_extensions: dict[str, object]
 
     def frontmatter(self) -> SkillFrontmatter:
         return SkillFrontmatter(
+            concept_type=self.okf_type,
             slug=self.slug,
             title=self.title,
             description=self.description,
@@ -56,6 +59,7 @@ class SkillRow:
             depends_on=list(self.depends_on),
             state=self.state,
             version=self.version,
+            extensions=self.okf_extensions,
         )
 
 
@@ -93,6 +97,8 @@ def _row(skill: models.Skill) -> SkillRow:
         body=skill.body,
         stale=skill.stale,
         version=skill.version,
+        okf_type=skill.okf_type,
+        okf_extensions=dict(skill.okf_extensions),
     )
 
 
@@ -122,6 +128,8 @@ class SkillStore:
                 depends_on=[uuid.UUID(d) for d in frontmatter.depends_on],
                 body=body,
                 version=frontmatter.version,
+                okf_type=frontmatter.concept_type,
+                okf_extensions=frontmatter.extensions,
             )
             session.add(skill)
             await session.flush()
@@ -203,6 +211,8 @@ class SkillStore:
                     tags=list(frontmatter.tags),
                     depends_on=[uuid.UUID(d) for d in frontmatter.depends_on],
                     body=body,
+                    okf_type=frontmatter.concept_type,
+                    okf_extensions=frontmatter.extensions,
                     stale=False,  # editing resolves staleness (the owner reviewed it)
                     stale_reason=None,
                     stale_at=None,

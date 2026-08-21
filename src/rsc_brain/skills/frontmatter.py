@@ -1,26 +1,50 @@
-"""Skill frontmatter — OKF-compatible (SPEC-20, FR-7.4 / D14).
+"""Skill frontmatter — Open Knowledge Format v0.1 boundary (SPEC-20 / AUDIT-015).
 
 A skill is markdown: a YAML frontmatter block + a body (the instructions). The frontmatter is
-**OKF-compatible** (Open Knowledge Format v0.1) — OKF-native fields (``okf_version``, ``kind``,
-``title``, ``description``) sit at the top level, and every rsc-brain-specific field lives under the
-``rsc_brain_`` namespace (FR-7.4 literal), so an exported skill is a valid OKF entry any agent can
-read. The core never depends on OKF: this is a boundary format only.
-
-The exact OKF v0.1 field set is captured here as the repo's versioned reference; validating a live
-document against the published OKF JSON-Schema is a network-bound step (blocked-by-resource in CI),
-so :func:`validate_okf` enforces the structural contract (envelope + namespacing) deterministically.
+``type`` is the sole property required by the pinned upstream specification. Producer-defined
+properties are valid and are preserved for round-tripping. Rsc-brain's own properties remain under
+the ``rsc_brain_`` namespace; the historical ``okf_version``/``kind`` envelope is emitted for
+backward compatibility but is not mistaken for a normative requirement.
 """
 
 from __future__ import annotations
 
+import math
+
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 OKF_VERSION = "0.1"
 OKF_KIND = "skill"
 _NS = "rsc_brain_"
-# OKF-native top-level keys a skill document may carry unprefixed.
-_OKF_NATIVE = frozenset({"okf_version", "kind", "title", "description"})
+_OWNED_KEYS = frozenset(
+    {
+        "type",
+        "okf_version",
+        "kind",
+        "title",
+        "description",
+        "tags",
+        f"{_NS}slug",
+        f"{_NS}when_to_use",
+        f"{_NS}when_not",
+        f"{_NS}tags",
+        f"{_NS}owner",
+        f"{_NS}depends_on",
+        f"{_NS}state",
+        f"{_NS}version",
+    }
+)
+
+
+class _StringTimestampSafeLoader(yaml.SafeLoader):
+    """YAML safe loader that leaves timestamp-looking scalars as authored strings."""
+
+
+_StringTimestampSafeLoader.yaml_implicit_resolvers = {
+    first: [(tag, pattern) for tag, pattern in resolvers if tag != "tag:yaml.org,2002:timestamp"]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
 
 
 class SkillFrontmatterError(ValueError):
@@ -30,24 +54,46 @@ class SkillFrontmatterError(ValueError):
 class SkillFrontmatter(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    concept_type: str = "Skill"
     slug: str
     title: str
     description: str | None = None
     when_to_use: str | None = None
     when_not: str | None = None
-    tags: list[str] = []
+    tags: list[str] = Field(default_factory=list)
     owner: str | None = None  # owner person (name/id) — validated against the directory on write
-    depends_on: list[str] = []  # entity/topic ids the context is built from (graph-sync key)
+    depends_on: list[str] = Field(default_factory=list)
     state: str = "active"  # proposed | active | archived
     version: int = 1
+    extensions: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator("concept_type")
+    @classmethod
+    def _concept_type_is_non_empty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("concept_type must be a non-empty string")
+        return value
+
+    @field_validator("extensions")
+    @classmethod
+    def _extensions_do_not_shadow_owned_fields(
+        cls, value: dict[str, JsonValue]
+    ) -> dict[str, JsonValue]:
+        collisions = sorted(_OWNED_KEYS.intersection(value))
+        if collisions:
+            raise ValueError(f"extensions cannot shadow owned properties: {collisions!r}")
+        _validate_json_value(value, path="extensions")
+        return value
 
     def to_okf(self) -> dict[str, object]:
         """The OKF-compatible frontmatter mapping (own fields under ``rsc_brain_``)."""
-        return {
+        document: dict[str, object] = {
+            **self.extensions,
+            "type": self.concept_type,
             "okf_version": OKF_VERSION,
             "kind": OKF_KIND,
             "title": self.title,
-            "description": self.description,
+            "tags": list(self.tags),
             f"{_NS}slug": self.slug,
             f"{_NS}when_to_use": self.when_to_use,
             f"{_NS}when_not": self.when_not,
@@ -57,21 +103,27 @@ class SkillFrontmatter(BaseModel):
             f"{_NS}state": self.state,
             f"{_NS}version": self.version,
         }
+        if self.description is not None:
+            document["description"] = self.description
+        return document
 
     @classmethod
     def from_okf(cls, data: dict[str, object]) -> SkillFrontmatter:
+        validate_okf(data)
         try:
             return cls(
+                concept_type=str(data["type"]),
                 slug=str(data[f"{_NS}slug"]),
                 title=str(data["title"]),
                 description=_opt_str(data.get("description")),
                 when_to_use=_opt_str(data.get(f"{_NS}when_to_use")),
                 when_not=_opt_str(data.get(f"{_NS}when_not")),
-                tags=[str(t) for t in _seq(data.get(f"{_NS}tags"))],
+                tags=[str(t) for t in _seq(data.get(f"{_NS}tags", data.get("tags")))],
                 owner=_opt_str(data.get(f"{_NS}owner")),
                 depends_on=[str(d) for d in _seq(data.get(f"{_NS}depends_on"))],
                 state=str(data.get(f"{_NS}state", "active")),
                 version=_as_int(data.get(f"{_NS}version", 1)),
+                extensions={key: value for key, value in data.items() if key not in _OWNED_KEYS},
             )
         except (KeyError, ValueError, TypeError) as exc:
             raise SkillFrontmatterError(f"invalid skill frontmatter: {exc}") from exc
@@ -90,19 +142,38 @@ def _as_int(value: object) -> int:
 
 
 def validate_okf(doc: dict[str, object]) -> None:
-    """Enforce OKF v0.1 structural compatibility: the envelope is present and correct, and every
-    non-native key is namespaced under ``rsc_brain_`` (FR-7.4). Raises on any violation."""
-    if doc.get("okf_version") != OKF_VERSION:
-        raise SkillFrontmatterError(f"okf_version must be {OKF_VERSION!r}")
-    if doc.get("kind") != OKF_KIND:
-        raise SkillFrontmatterError(f"kind must be {OKF_KIND!r}")
-    if not isinstance(doc.get("title"), str) or not doc["title"]:
-        raise SkillFrontmatterError("title is required")
-    for key in doc:
-        if key not in _OKF_NATIVE and not key.startswith(_NS):
-            raise SkillFrontmatterError(
-                f"non-OKF field {key!r} must be under the {_NS!r} namespace"
-            )
+    """Validate the pinned OKF v0.1 concept contract, without rejecting extensions."""
+    concept_type = doc.get("type")
+    if not isinstance(concept_type, str) or not concept_type.strip():
+        raise SkillFrontmatterError("type must be a non-empty string (OKF v0.1 §4.1)")
+    for key in ("title", "description", "resource", "timestamp"):
+        if key in doc and not isinstance(doc[key], str):
+            raise SkillFrontmatterError(f"{key} must be a string when present (OKF v0.1 §4.1)")
+    if "tags" in doc and (
+        not isinstance(doc["tags"], list) or any(not isinstance(tag, str) for tag in doc["tags"])
+    ):
+        raise SkillFrontmatterError("tags must be a list of strings (OKF v0.1 §4.1)")
+    _validate_json_value(doc, path="frontmatter")
+
+
+def _validate_json_value(value: object, *, path: str) -> None:
+    if value is None or isinstance(value, str | int | bool):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise SkillFrontmatterError(f"{path} contains a non-JSON-compatible number")
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_json_value(item, path=f"{path}[{index}]")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise SkillFrontmatterError(f"{path} keys must be strings")
+            _validate_json_value(item, path=f"{path}.{key}")
+        return
+    raise SkillFrontmatterError(f"{path} contains a non-JSON-compatible value")
 
 
 def parse_skill(text: str) -> tuple[SkillFrontmatter, str]:
@@ -113,7 +184,7 @@ def parse_skill(text: str) -> tuple[SkillFrontmatter, str]:
     parts = stripped.split("---", 2)
     if len(parts) < 3:
         raise SkillFrontmatterError("unterminated frontmatter block")
-    data = yaml.safe_load(parts[1]) or {}
+    data = yaml.load(parts[1], Loader=_StringTimestampSafeLoader) or {}  # noqa: S506
     if not isinstance(data, dict):
         raise SkillFrontmatterError("frontmatter must be a mapping")
     validate_okf(data)
