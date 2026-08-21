@@ -62,3 +62,7 @@ out/
 # --- OS / editor cruft ---
 .DS_Store
 *.swp
+
+# AUDIT-116: the gate run writes project and document ids here. Never a credential — but the file
+# is generated state either way, and generated state does not belong in the repository.
+evals/.gate_run_state.json

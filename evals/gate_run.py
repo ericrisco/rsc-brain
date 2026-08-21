@@ -51,9 +51,16 @@ _PRINCIPAL_SECRET = secrets.token_urlsafe(24)
 
 @dataclass(frozen=True, slots=True)
 class Principals:
-    """The PAT per eval user, and the project id per slug."""
+    """The PAT per eval user, and the project id per slug.
+
+    AUDIT-116: the tokens live here and **only** here — in memory, for the length of one run. An
+    earlier version persisted them into the state file next to the project ids, and that file was
+    committed. A credential that is written down is a credential that leaks; the run mints its own
+    and revokes them when it is done.
+    """
 
     tokens: dict[str, str]
+    token_ids: dict[str, str]
     projects: dict[str, str]
 
 
@@ -95,8 +102,8 @@ async def _setup() -> Principals:
                         sensitivity=topic.sensitivity,
                     )
         await _sources(dependencies, corpus, projects)
-        tokens = await _principals(identity, projects)
-        return Principals(tokens=tokens, projects=projects)
+        tokens, token_ids = await _mint(identity, projects)
+        return Principals(tokens=tokens, token_ids=token_ids, projects=projects)
     finally:
         await dependencies.dispose()
 
@@ -124,8 +131,12 @@ async def _sources(dependencies: Any, corpus: Corpus, projects: dict[str, str]) 
             )
 
 
-async def _principals(identity: IdentityService, projects: dict[str, str]) -> dict[str, str]:
+async def _mint(
+    identity: IdentityService, projects: dict[str, str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Create the principals if absent and issue one short-lived PAT each, returned never stored."""
     tokens: dict[str, str] = {}
+    token_ids: dict[str, str] = {}
     for name, spec in _users().items():
         project_id = projects[str(spec["project"])]
         email = f"{name}@gate-run.test"
@@ -140,8 +151,16 @@ async def _principals(identity: IdentityService, projects: dict[str, str]) -> di
             allowed_topics=tuple(spec["allowed_topics"]),
             can_curate=bool(spec.get("can_curate", False)),
         )
-        tokens[name] = (await identity.issue_pat(membership, name=f"gate-{name}")).token
-    return tokens
+        issued = await identity.issue_pat(membership, name=f"gate-{name}")
+        tokens[name] = issued.token
+        token_ids[name] = issued.id
+    return tokens, token_ids
+
+
+async def _revoke(identity: IdentityService, principals: Principals) -> None:
+    """Leave no live credential behind, whether the run passed or failed."""
+    for token_id in principals.token_ids.values():
+        await identity.revoke_pat(token_id)
 
 
 async def _user_id(identity: IdentityService, email: str) -> str:
@@ -264,30 +283,37 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     async def _run() -> int:
+        # The state file carries project and document IDENTIFIERS only. Never a token: see AUDIT-116.
         state: dict[str, Any] = json.loads(STATE.read_text()) if STATE.is_file() else {}
-        if args.phase in {"setup", "all"}:
+        dependencies = runtime.build("cli")
+        try:
+            identity = IdentityService(dependencies.sessionmaker)
             principals = await _setup()
-            state["tokens"] = principals.tokens
             state["projects"] = principals.projects
             STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-            print(
-                f"setup: {len(principals.projects)} projects, {len(principals.tokens)} principals"
-            )
-        if args.phase in {"ingest", "all"}:
-            principals = Principals(tokens=state["tokens"], projects=state["projects"])
-            state["documents"] = await _ingest(principals)
-            STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        if args.phase in {"measure", "all"}:
-            principals = Principals(tokens=state["tokens"], projects=state["projects"])
-            report, outcomes = await _measure(principals, state.get("documents", {}))
-            families = _families(outcomes)
-            print(json.dumps({"report": report.as_dict(), "families": families}, indent=2))
-            abstain = families.get("abstain", {"passed": 0, "total": 0})
-            print(
-                f"\nG4 (abstain family) = {abstain['passed']}/{abstain['total']}"
-                f"   G2 (permission leaks) = {report.permission_leaks}"
-            )
-        return 0
+            if args.phase == "setup":
+                print(
+                    f"setup: {len(principals.projects)} projects, "
+                    f"{len(principals.tokens)} principals (tokens are per-run and not stored)"
+                )
+            try:
+                if args.phase in {"ingest", "all"}:
+                    state["documents"] = await _ingest(principals)
+                    STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+                if args.phase in {"measure", "all"}:
+                    report, outcomes = await _measure(principals, state.get("documents", {}))
+                    families = _families(outcomes)
+                    print(json.dumps({"report": report.as_dict(), "families": families}, indent=2))
+                    abstain = families.get("abstain", {"passed": 0, "total": 0})
+                    print(
+                        f"\nG4 (abstain family) = {abstain['passed']}/{abstain['total']}"
+                        f"   G2 (permission leaks) = {report.permission_leaks}"
+                    )
+            finally:
+                await _revoke(identity, principals)
+            return 0
+        finally:
+            await dependencies.dispose()
 
     return asyncio.run(_run())
 
