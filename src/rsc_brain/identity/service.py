@@ -69,6 +69,21 @@ class IdentityService:
             rows = await session.scalars(select(models.Project.slug).order_by(models.Project.slug))
             return list(rows)
 
+    async def list_project_identities(self) -> list[dict[str, str]]:
+        """Slug **and** id for every project (AUDIT-113).
+
+        Every taxonomy and membership command takes ``--project-id``, and only ``projects create``
+        ever printed one. A project whose creation output was lost — or that `brain init` created,
+        which prints no id at all — could not be administered from the CLI again.
+        """
+        async with self._sm() as session:
+            rows = (
+                await session.execute(
+                    select(models.Project.slug, models.Project.id).order_by(models.Project.slug)
+                )
+            ).all()
+            return [{"slug": str(slug), "id": str(identifier)} for slug, identifier in rows]
+
     async def list_projects_for_user(self, user_id: str) -> list[str]:
         """The slugs of the projects ``user_id`` is a member of (AUDIT-020/R01).
 

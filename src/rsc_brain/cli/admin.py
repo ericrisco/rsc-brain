@@ -61,8 +61,15 @@ def projects_create(
 
 @projects_app.command("list")
 def projects_list(ctx: typer.Context, json_output: bool = JSON_OPTION) -> None:
-    slugs = _run(lambda s: s.list_projects())
-    emit_result(ctx, json_output, {"projects": slugs}, "\n".join(slugs))
+    # AUDIT-113: the id is the part an operator needs, because every `topics` and `users` command
+    # takes `--project-id` and this is the only place other than creation that can supply one.
+    projects = _run(lambda s: s.list_project_identities())
+    emit_result(
+        ctx,
+        json_output,
+        {"projects": projects},
+        "\n".join(f"{project['slug']}\t{project['id']}" for project in projects),
+    )
 
 
 @projects_app.command("delete")

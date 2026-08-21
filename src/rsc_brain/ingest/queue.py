@@ -98,23 +98,17 @@ async def _default_runner(
     """
     from rsc_brain import runtime
     from rsc_brain.ingest.failures import record_ingestion_failure
-    from rsc_brain.ingest.pipeline import IngestionPipeline
-    from rsc_brain.ontology.ingest import OntologyIngest
     from rsc_brain.scope import Principal, PrincipalType
-    from rsc_brain.stores.age_graph_store import AgeGraphStore
     from rsc_brain.stores.relational.ingest_repository import IngestRepository
 
     dependencies = runtime.build("worker")
     try:
         sessionmaker = dependencies.sessionmaker
         repository = IngestRepository(sessionmaker)
-        pipeline = IngestionPipeline(
-            repository=repository,
-            graph_store=AgeGraphStore(sessionmaker),
-            gateway=dependencies.gateway,
-            config=dependencies.pipeline_config,
-            ontology=OntologyIngest(sessionmaker),
-        )
+        # AUDIT-112: this used to construct the pipeline here and omit the contradiction resolver, so
+        # every queued document — which in the shipped topology is every document — was processed with
+        # detection disabled. The composition root is the only place that knows the full set.
+        pipeline = runtime.build_pipeline(dependencies)
         scope = Principal(id=principal_id, type=PrincipalType.HUMAN, can_curate=True).scope_for(
             project_id
         )
