@@ -45,6 +45,8 @@ from rsc_brain.mcp.tools import (
     do_submit_knowledge,
     do_timeline,
 )
+from rsc_brain.recall.guardrail import GatewayTopicClassifier
+from rsc_brain.recall.guardrail_alerts import GuardrailAlertService
 from rsc_brain.recall.permissions import sensitive_tags
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import ProjectScope
@@ -180,10 +182,12 @@ def build_mcp_server(
     stateless: bool = True,
     quota_config: QuotaConfig | None = None,
     public_origin: str | None = None,
+    guardrail_alerts: GuardrailAlertService | None = None,
 ) -> FastMCP:
     """Build the FastMCP server wired to the retriever + stores."""
     graph = AgeGraphStore(sessionmaker)
     quotas = QuotaService(sessionmaker, quota_config)
+    alerts = guardrail_alerts or GuardrailAlertService(sessionmaker)
     server = AuthorizedSkillMCP(
         name="rsc-brain",
         instructions=ANTI_INJECTION_GUIDE,
@@ -248,6 +252,8 @@ def build_mcp_server(
             as_of=as_of,
             include_historical=include_historical,
             include_superseded=include_superseded,
+            classifier=GatewayTopicClassifier(gateway.for_project(scope.project_id)),
+            guardrail_alerts=alerts,
         )
 
     @server.tool(
@@ -283,7 +289,15 @@ def build_mcp_server(
         on_behalf_of: str | None = None,
     ) -> RunSkillOutput:
         scope = await _scope(ctx, on_behalf_of)
-        return await do_run_skill(retriever, sessionmaker, scope, slug=slug, args=args)
+        return await do_run_skill(
+            retriever,
+            sessionmaker,
+            scope,
+            slug=slug,
+            args=args,
+            classifier=GatewayTopicClassifier(gateway.for_project(scope.project_id)),
+            guardrail_alerts=alerts,
+        )
 
     async def _dynamic_skill_tools(ctx: Context[Any, Any, Any]) -> list[MCPTool]:
         scope = await _scope(ctx, consume_quota=False)

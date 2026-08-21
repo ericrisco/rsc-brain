@@ -70,6 +70,14 @@ async def product_metrics(
                 .group_by(models.TokenUsage.capability)
             )
         }
+        guardrail_p95 = await session.scalar(
+            select(func.percentile_cont(0.95).within_group(models.AuditLog.duration_ms)).where(
+                models.AuditLog.project_id == pid,
+                models.AuditLog.action == "guardrail:screened",
+                models.AuditLog.duration_ms.is_not(None),
+                models.AuditLog.ts >= since,
+            )
+        )
     recalls = _num(activity.get("recalls"))
     denied = _num(activity.get("denied"))
     return {
@@ -86,6 +94,7 @@ async def product_metrics(
         "health": {
             "extraction_errors": extraction_errors,
             "recall_p95_ms": activity.get("p95_duration_ms"),
+            "guardrail_p95_ms": float(guardrail_p95) if guardrail_p95 is not None else None,
             "tokens_by_capability": tokens,
         },
     }

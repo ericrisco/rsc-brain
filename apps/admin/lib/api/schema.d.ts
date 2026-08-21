@@ -2172,6 +2172,8 @@ export interface components {
         ProductHealthMetrics: {
             /** Extraction Errors */
             extraction_errors: number;
+            /** Guardrail P95 Ms */
+            guardrail_p95_ms: number | null;
             /** Recall P95 Ms */
             recall_p95_ms: number | null;
             /** Tokens By Capability */

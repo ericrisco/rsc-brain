@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from rsc_brain.config.models import HuntingConfig
 from rsc_brain.hunting.channels import (
     Channel,
     NullChannel,
@@ -103,14 +104,29 @@ def build_hunt_service_from_settings(
         settings = load_settings()
     except Exception:
         return build_hunt_service(sessionmaker, channel=None, gateway=gateway)
-    hunting = settings.hunting
-    delivery, can_deliver = build_channel_from_config(hunting)
-    return HuntService(
+    return build_hunt_service_from_config(
         sessionmaker,
-        channel=delivery,
+        hunting=settings.hunting,
+        public_origin=settings.ingress.public_origin,
         gateway=gateway,
-        base_url=settings.ingress.public_origin or HuntService.UNCONFIGURED_BASE_URL,
-        can_deliver=can_deliver,
+    )
+
+
+def build_hunt_service_from_config(
+    sessionmaker: async_sessionmaker[AsyncSession],
+    *,
+    hunting: HuntingConfig,
+    public_origin: str | None,
+    gateway: object | None = None,
+) -> HuntService:
+    """Build from an already-loaded runtime graph and unwrap secrets at the channel boundary."""
+    return build_hunt_service(
+        sessionmaker,
+        channel=hunting.channel,
+        smtp=_secrets(hunting.smtp),
+        slack=_secrets(hunting.slack),
+        public_origin=public_origin,
+        gateway=gateway,
     )
 
 

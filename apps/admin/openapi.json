@@ -2413,6 +2413,17 @@
             "title": "Extraction Errors",
             "type": "integer"
           },
+          "guardrail_p95_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Guardrail P95 Ms"
+          },
           "recall_p95_ms": {
             "anyOf": [
               {
@@ -2435,6 +2446,7 @@
         "required": [
           "extraction_errors",
           "recall_p95_ms",
+          "guardrail_p95_ms",
           "tokens_by_capability"
         ],
         "title": "ProductHealthMetrics",

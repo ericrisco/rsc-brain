@@ -675,6 +675,7 @@ class PgRetriever:
                     score=round(score, 6),
                     provenance={
                         "document": candidate.document_title,
+                        "chunk_id": candidate.chunk_id,
                         "page": candidate.page,
                         "claim_ids": list(candidate.claim_ids),
                         "credibility": round(candidate.credibility or 0.5, 4),
