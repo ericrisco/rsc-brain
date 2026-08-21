@@ -82,7 +82,7 @@ def test_an_iso_date_is_not_read_twice_as_a_year() -> None:
 
 
 def test_an_in_year_range_beats_a_bare_history_keyword() -> None:
-    """"previously, in 2022" asks about 2022, not about the whole timeline."""
+    """ "previously, in 2022" asks about 2022, not about the whole timeline."""
     mode = classify("What did we previously charge in 2022?")
 
     assert mode.kind is TemporalKind.RANGE
