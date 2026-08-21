@@ -8,12 +8,22 @@ import uuid
 import asyncpg
 import pytest
 from alembic import command
+from alembic.script import ScriptDirectory
 
 from rsc_brain.stores.relational.migrations import alembic_config, upgrade_to_head
 
 pytestmark = pytest.mark.integration
 
-PRE_OUTBOX_REVISION = "6c4a8f2d9b10"
+#: The revision this migration expands from, read from the script directory rather than
+#: pinned: the history gets re-chained whenever another migration lands first, and a
+#: hardcoded parent silently turns this into a downgrade through unrelated migrations.
+REVISION = "7d2f9a4c1b83"
+
+
+def _previous_revision() -> str:
+    parent = ScriptDirectory.from_config(alembic_config()).get_revision(REVISION).down_revision
+    assert isinstance(parent, str)
+    return parent
 
 
 async def _connect(dsn: str) -> asyncpg.Connection:
@@ -53,7 +63,7 @@ async def test_stale_outbox_migration_is_reversible_and_accepts_the_previous_wri
     skill_id = uuid.uuid4()
 
     try:
-        await asyncio.to_thread(command.downgrade, alembic_config(), PRE_OUTBOX_REVISION)
+        await asyncio.to_thread(command.downgrade, alembic_config(), _previous_revision())
         assert not await _column_exists(migrated_dsn, "skills", "stale_generation")
         assert not await _table_exists(migrated_dsn, "skill_stale_notifications")
         connection = await _connect(migrated_dsn)

@@ -8,12 +8,22 @@ import uuid
 import asyncpg
 import pytest
 from alembic import command
+from alembic.script import ScriptDirectory
 
 from rsc_brain.stores.relational.migrations import alembic_config, upgrade_to_head
 
 pytestmark = pytest.mark.integration
 
-PREVIOUS_REVISION = "6c4a8f2d9b10"
+#: The revision this migration expands from, read from the script directory rather than
+#: pinned: the history gets re-chained whenever another migration lands first, and a
+#: hardcoded parent silently turns this into a downgrade through unrelated migrations.
+REVISION = "7d4e9a2c1b63"
+
+
+def _previous_revision() -> str:
+    parent = ScriptDirectory.from_config(alembic_config()).get_revision(REVISION).down_revision
+    assert isinstance(parent, str)
+    return parent
 
 
 async def _connect(dsn: str) -> asyncpg.Connection:
@@ -28,7 +38,7 @@ async def test_legacy_claim_identity_round_trips_without_rewrite(migrated_dsn: s
     slug = f"migration-{project_id.hex[:10]}"
 
     try:
-        await asyncio.to_thread(command.downgrade, alembic_config(), PREVIOUS_REVISION)
+        await asyncio.to_thread(command.downgrade, alembic_config(), _previous_revision())
         connection = await _connect(migrated_dsn)
         try:
             await connection.execute(
@@ -79,7 +89,7 @@ async def test_legacy_claim_identity_round_trips_without_rewrite(migrated_dsn: s
         finally:
             await connection.close()
 
-        await asyncio.to_thread(command.downgrade, alembic_config(), PREVIOUS_REVISION)
+        await asyncio.to_thread(command.downgrade, alembic_config(), _previous_revision())
         connection = await _connect(migrated_dsn)
         try:
             assert not await connection.fetchval("SELECT to_regclass('claim_occurrences')")
