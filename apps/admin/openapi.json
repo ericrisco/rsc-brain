@@ -202,6 +202,28 @@
             ],
             "title": "Query Text"
           },
+          "resource_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "resource_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Type"
+          },
           "result_count": {
             "anyOf": [
               {
@@ -282,7 +304,9 @@
           "duration_ms",
           "topics_used",
           "result_count",
-          "denied"
+          "denied",
+          "resource_type",
+          "resource_id"
         ],
         "title": "AuditView",
         "type": "object"
@@ -589,6 +613,17 @@
             "title": "Id",
             "type": "string"
           },
+          "lifecycle_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lifecycle Error"
+          },
           "new_claim": {
             "anyOf": [
               {
@@ -622,6 +657,17 @@
               }
             ],
             "title": "Resolved At"
+          },
+          "reverted_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reverted By"
           },
           "role_applied": {
             "anyOf": [
@@ -3482,6 +3528,24 @@
         "title": "SkillCreateResult",
         "type": "object"
       },
+      "SkillDetailView": {
+        "properties": {
+          "markdown": {
+            "title": "Markdown",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "markdown"
+        ],
+        "title": "SkillDetailView",
+        "type": "object"
+      },
       "SkillEnvelope": {
         "properties": {
           "skills": {
@@ -3521,6 +3585,28 @@
             "title": "Depends On",
             "type": "array"
           },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "owner_person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Person Id"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
@@ -3533,6 +3619,13 @@
             "title": "Status",
             "type": "string"
           },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -3540,11 +3633,38 @@
           "version": {
             "title": "Version",
             "type": "integer"
+          },
+          "when_not": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "When Not"
+          },
+          "when_to_use": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "When To Use"
           }
         },
         "required": [
           "slug",
           "title",
+          "description",
+          "when_to_use",
+          "when_not",
+          "tags",
+          "owner_person_id",
           "status",
           "stale",
           "depends_on",
@@ -8332,6 +8452,142 @@
           }
         ],
         "summary": "Create Skill Admin",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/api/v1/admin/skills/{slug}": {
+      "get": {
+        "description": "Inspect the canonical owner-preserving markdown for one authorized skill.",
+        "operationId": "get_skill_admin_api_v1_admin_skills__slug__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillDetailView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Skill Admin",
+        "tags": [
+          "admin"
+        ]
+      },
+      "put": {
+        "description": "Replace editable frontmatter/body under the supplied frontmatter version.",
+        "operationId": "update_skill_admin_api_v1_admin_skills__slug__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillUpsert"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Skill Admin",
         "tags": [
           "admin"
         ]

@@ -20,10 +20,10 @@ ADMIN_LOCK = REPO_ROOT / "apps" / "admin" / "package-lock.json"
 DOCTOR_TEST = REPO_ROOT / "tests" / "unit" / "test_doctor.py"
 HUNTING_TEST = REPO_ROOT / "tests" / "integration" / "test_console_hunting_skills.py"
 
-OSV_ACTION = (
-    "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml"
-    "@8deb546fdb875b9996d27d4950be7312dac076a1"  # v2.5.0
-)
+# The scanner ACTION, not the project's reusable workflow: that workflow's job demands
+# `security-events: write` even with SARIF upload off, and a called workflow may not exceed its
+# caller's grant, so calling it made GitHub refuse to start this file at all (AUDIT-109).
+OSV_ACTION = "google/osv-scanner-action/osv-scanner-action@8deb546fdb875b9996d27d4950be7312dac076a1"  # v2.5.0
 EXPECTED_HISTORICAL_FIXTURES = {
     "4fd836add73645c85131b14704242ee4fad52f92:"
     "tests/integration/test_console_hunting_skills.py:generic-api-key:124",
@@ -56,13 +56,20 @@ def test_ci_runs_pinned_fail_closed_osv_over_both_lockfiles() -> None:
     assert isinstance(jobs, dict)
     osv = jobs.get("osv")
     assert isinstance(osv, dict), "CI has no primary multi-ecosystem OSV gate"
-    assert osv.get("uses") == OSV_ACTION
     assert osv.get("continue-on-error") is not True
+    steps = osv.get("steps")
+    assert isinstance(steps, list)
+    scans = [step for step in steps if isinstance(step, dict) and step.get("uses") == OSV_ACTION]
+    assert scans, f"the OSV gate does not run {OSV_ACTION}"
+    scan = scans[0]
+    assert scan.get("continue-on-error") is not True, (
+        "the scanner's non-zero exit must fail the job"
+    )
+    # No SARIF upload, so the job needs nothing beyond the workflow-wide `contents: read`.
+    assert osv.get("permissions") is None
 
-    inputs = osv.get("with", {})
+    inputs = scan.get("with", {})
     assert isinstance(inputs, dict)
-    assert inputs.get("fail-on-vuln") is True
-    assert inputs.get("upload-sarif") is False
     args = inputs.get("scan-args", "")
     assert isinstance(args, str)
     assert "--lockfile=./uv.lock" in args
