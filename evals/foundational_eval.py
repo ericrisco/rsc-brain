@@ -26,7 +26,7 @@ from evals.validate import (
     load_artifact_manifest,
     load_quality_manifest,
 )
-from rsc_brain.config.models import CapabilitiesConfig, CapabilityConfig
+from rsc_brain.config.models import CapabilitiesConfig, CapabilityConfig, ModelEgressConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.extractor import CascadeExtractor, ExtractionDiscarded
 from rsc_brain.ingest.tables import table_to_chunks
@@ -214,11 +214,18 @@ async def run_foundational_eval(
 
 
 def _gateway_from_args(args: argparse.Namespace) -> ModelGateway:
+    # AUDIT-005 refuses a plain-HTTP or private-network model endpoint unless the operator grants it.
+    # This eval's whole point is a local model, so the grant is expressed here the same way the
+    # configuration file expresses it — explicitly, per run, never inferred from the URL.
     route = CapabilityConfig(
         provider=args.provider,
         model=args.model,
         api_base=args.api_base,
         timeout_s=args.timeout_s,
+        egress=ModelEgressConfig(
+            allow_http=args.allow_http,
+            allow_private_network=args.allow_private_network,
+        ),
     )
     capabilities = CapabilitiesConfig(
         extractor=route,
@@ -248,7 +255,8 @@ async def _main_async(args: argparse.Namespace) -> int:
     return 0 if evidence.discard_rate < 0.10 and all(r.passed for r in evidence.results) else 1
 
 
-def main(argv: list[str] | None = None) -> int:
+def _parser() -> argparse.ArgumentParser:
+    """The command line, extracted so a test can exercise it without running the eval."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider", default="ollama")
     parser.add_argument("--model", required=True)
@@ -256,11 +264,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api-base", default="http://localhost:11434")
     parser.add_argument("--timeout-s", type=float, default=300.0)
     parser.add_argument(
+        "--allow-http",
+        action="store_true",
+        help="Permit a plain-HTTP model endpoint (AUDIT-005 denies one by default).",
+    )
+    parser.add_argument(
+        "--allow-private-network",
+        action="store_true",
+        help="Permit a loopback or RFC1918 model endpoint (AUDIT-005 denies one by default).",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=REPO / "evals" / "foundational_evidence.candidate.yaml",
     )
-    return asyncio.run(_main_async(parser.parse_args(argv)))
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    return asyncio.run(_main_async(_parser().parse_args(argv)))
 
 
 if __name__ == "__main__":

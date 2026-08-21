@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from evals.foundational_eval import run_foundational_eval
+from evals.foundational_eval import _gateway_from_args, _parser, run_foundational_eval
 from evals.validate import REPO, validate_live_evidence
+from pydantic import ValidationError
 
 from rsc_brain.config.models import CapabilitiesConfig, CapabilityConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
@@ -113,3 +115,58 @@ async def test_table_case_uses_the_production_deterministic_path_not_llm_extract
     assert result.extraction_attempted is False
     assert result.discarded is False
     assert result.missing_graph_terms == ()
+
+
+def test_local_endpoint_needs_an_explicit_egress_grant() -> None:
+    """AUDIT-005 denies a plain-HTTP loopback endpoint; the eval must ask, not assume.
+
+    The documented command points at `http://localhost:11434`. Without the grant this run has to
+    refuse rather than reach out, and with it the gateway must actually build — otherwise the
+    instruction in `evals/README.md` teaches a command that cannot work (AUDIT-111).
+    """
+    argv = [
+        "--model",
+        "gemma4:12b",
+        "--model-digest",
+        "4eb23ef187e2c5462566d6a1d3bbbc2f1346d0b4327cbb66d58fffbcc9b2b05c",
+        "--api-base",
+        "http://localhost:11434",
+    ]
+    parser = _parser()
+
+    with pytest.raises(ValidationError, match="allow_http"):
+        _gateway_from_args(parser.parse_args(argv))
+
+    granted = _gateway_from_args(
+        parser.parse_args([*argv, "--allow-http", "--allow-private-network"])
+    )
+
+    assert granted is not None
+
+
+def test_no_in_code_route_omits_the_egress_grant() -> None:
+    """Every `CapabilityConfig` built in code must state its egress posture (AUDIT-111).
+
+    Routes that come from a configuration file carry their grants in the file. A route constructed
+    in code carries whatever the author remembered, and the default is deny — so an omission is not
+    a security hole, it is a tool that cannot start. Both are worth failing here rather than in
+    somebody's terminal an hour before they need the eval.
+    """
+    roots = (REPO / "src", REPO / "evals")
+    offenders: list[str] = []
+    for root in roots:
+        for path in root.rglob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            for match in re.finditer(r"CapabilityConfig\(", source):
+                # The class definition itself is not a construction.
+                if source[: match.start()].rstrip().endswith("class"):
+                    continue
+                call = source[match.start() : match.start() + 800]
+                if "egress=" not in call.split(")")[0] + ")":
+                    offenders.append(
+                        f"{path.relative_to(REPO)}:{source[: match.start()].count(chr(10)) + 1}"
+                    )
+    assert not offenders, (
+        "these in-code model routes do not state an egress posture, so they inherit deny and "
+        f"cannot start: {offenders}"
+    )
