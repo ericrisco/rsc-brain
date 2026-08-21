@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from collections.abc import Callable
 from typing import cast
@@ -22,10 +23,25 @@ pytestmark = pytest.mark.integration
 TOPICS = [("hr", 0), ("general", 0)]
 
 
-async def _claim(harness: Harness, project_id: str, text: str, tags: list[str]) -> None:
+async def _claim(
+    harness: Harness,
+    project_id: str,
+    text: str,
+    tags: list[str],
+    *,
+    valid_from: dt.datetime | None = None,
+    valid_to: dt.datetime | None = None,
+) -> None:
     async with harness.sm() as session:
         session.add(
-            models.Claim(project_id=uuid.UUID(project_id), text=text, tags=tags, credibility=0.7)
+            models.Claim(
+                project_id=uuid.UUID(project_id),
+                text=text,
+                tags=tags,
+                credibility=0.7,
+                valid_from=valid_from,
+                valid_to=valid_to,
+            )
         )
         await session.commit()
 
@@ -66,6 +82,46 @@ async def test_okf_export_respects_permissions(build_harness: Callable[..., Harn
         c["title"] for c in cast("list[dict[str, object]]", limited["rsc_brain_claims"])
     }
     assert "General fact" in limited_texts and "HR secret" not in limited_texts
+
+
+async def test_okf_export_uses_the_temporal_active_interval(
+    build_harness: Callable[..., Harness],
+) -> None:
+    harness = build_harness()
+    project_id = await harness.setup_project(unique_slug("acme"), TOPICS)
+    now = dt.datetime.now(dt.UTC)
+    await _claim(
+        harness,
+        project_id,
+        "Bounded fact remains active",
+        ["general"],
+        valid_from=now - dt.timedelta(days=1),
+        valid_to=now + dt.timedelta(days=1),
+    )
+    await _claim(
+        harness,
+        project_id,
+        "Future fact is not active yet",
+        ["general"],
+        valid_from=now + dt.timedelta(days=1),
+    )
+    await _claim(
+        harness,
+        project_id,
+        "Expired fact is no longer active",
+        ["general"],
+        valid_from=now - dt.timedelta(days=2),
+        valid_to=now - dt.timedelta(days=1),
+    )
+
+    bundle = await export_okf_bundle(
+        harness.sm, harness.scope(project_id, allowed_topics=["general"])
+    )
+    texts = {
+        claim["title"] for claim in cast("list[dict[str, object]]", bundle["rsc_brain_claims"])
+    }
+
+    assert texts == {"Bounded fact remains active"}
 
 
 async def test_demo_seed_then_reset(build_harness: Callable[..., Harness]) -> None:

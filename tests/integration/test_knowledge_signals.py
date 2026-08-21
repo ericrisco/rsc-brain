@@ -62,6 +62,7 @@ async def _claim(
     tags: tuple[str, ...] = ("general",),
     credibility: float = 0.5,
     disputed: bool = False,
+    valid_from: dt.datetime | None = None,
     valid_to: dt.datetime | None = None,
     chunk_id: uuid.UUID | None = None,
     document_id: uuid.UUID | None = None,
@@ -88,6 +89,7 @@ async def _claim(
             tags=list(tags),
             credibility=credibility,
             disputed=disputed,
+            valid_from=valid_from,
             valid_to=valid_to,
             source_document_id=document_id,
             embedding=embedding,
@@ -265,6 +267,68 @@ async def test_contradiction_candidates_span_documents(
         "the new document was only ever compared against its own claims, so a fact contradicting an "
         f"earlier document is never noticed: {compared}"
     )
+
+
+async def test_temporal_active_candidate_contradiction_and_relation_readers(
+    build_harness: Callable[..., Harness],
+) -> None:
+    """Every active-claim reader shares the half-open contract, not ``valid_to IS NULL``."""
+    from rsc_brain.stores.relational.knowledge_store import KnowledgeStore
+
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    scope = harness.scope(project, allowed_topics=["general"])
+    bounded_doc, _ = await _document_with_chunk(harness, project, text="bounded")
+    future_doc, _ = await _document_with_chunk(harness, project, text="future")
+    expired_doc, _ = await _document_with_chunk(harness, project, text="expired")
+    subject, obj = str(uuid.uuid4()), str(uuid.uuid4())
+    now = dt.datetime.now(dt.UTC)
+    bounded = await _claim(
+        harness,
+        project,
+        text="Bounded fact remains active",
+        document_id=bounded_doc,
+        valid_from=now - dt.timedelta(days=1),
+        valid_to=now + dt.timedelta(days=1),
+        subject_entity_key=subject,
+        predicate="is",
+        object_entity_key=obj,
+    )
+    future = await _claim(
+        harness,
+        project,
+        text="Future fact is not active yet",
+        document_id=future_doc,
+        valid_from=now + dt.timedelta(days=1),
+        subject_entity_key=subject,
+        predicate="is",
+        object_entity_key=obj,
+    )
+    expired = await _claim(
+        harness,
+        project,
+        text="Expired fact is no longer active",
+        document_id=expired_doc,
+        valid_from=now - dt.timedelta(days=2),
+        valid_to=now - dt.timedelta(days=1),
+        subject_entity_key=subject,
+        predicate="is",
+        object_entity_key=obj,
+    )
+    store = KnowledgeStore(harness.sm)
+
+    by_id = await store.claims_by_ids(scope, [bounded, future, expired])
+    assert [claim.id for claim in by_id] == [bounded]
+    own = await store.claims_for_document(scope, str(bounded_doc))
+    assert [claim.id for claim in own] == [bounded]
+    candidates = await store.contradiction_candidates(scope, str(bounded_doc))
+    assert [claim.id for claim in candidates] == [bounded]
+    nearest = await store.find_candidate_claims(
+        scope, (await harness.gateway.embed(["Bounded fact remains active"]))[0]
+    )
+    assert [claim.id for claim in nearest] == [bounded]
+    key = (subject, "is", obj)
+    assert await store.live_relation_keys(scope, [key]) == {key}
 
 
 # --------------------------------------------------------------------------- #

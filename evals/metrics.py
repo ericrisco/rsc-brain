@@ -25,6 +25,10 @@ class CaseOutcome:
     found: bool
     max_score: float
     latency_ms: float
+    # ``None`` preserves the historic found/not-found interpretation for legacy callers that
+    # construct outcomes directly. The runner always supplies the structured verdict.
+    passed: bool | None = None
+    failures: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,10 +53,12 @@ def compute_eval_metrics(outcomes: Sequence[CaseOutcome]) -> EvalReport:
     """Aggregate per-case outcomes into the §12 report."""
     must_find = [o for o in outcomes if o.must_find]
     must_abstain = [o for o in outcomes if not o.must_find]
-    precision = sum(o.found for o in must_find) / len(must_find) if must_find else 1.0
-    abstention = sum(not o.found for o in must_abstain) / len(must_abstain) if must_abstain else 1.0
+    precision = sum(_passed(o) for o in must_find) / len(must_find) if must_find else 1.0
+    abstention = sum(_passed(o) for o in must_abstain) / len(must_abstain) if must_abstain else 1.0
     leaks = sum(
-        1 for o in outcomes if o.family in SECURITY_ABSTAIN_FAMILIES and not o.must_find and o.found
+        1
+        for o in outcomes
+        if o.family in SECURITY_ABSTAIN_FAMILIES and not o.must_find and not _passed(o)
     )
     latency = sum(o.latency_ms for o in outcomes) / len(outcomes) if outcomes else 0.0
     return EvalReport(
@@ -62,6 +68,13 @@ def compute_eval_metrics(outcomes: Sequence[CaseOutcome]) -> EvalReport:
         permission_leaks=leaks,
         avg_latency_ms=latency,
     )
+
+
+def _passed(outcome: CaseOutcome) -> bool:
+    """Use structured observations when present, retaining the historical metric otherwise."""
+    if outcome.passed is not None:
+        return outcome.passed
+    return outcome.found if outcome.must_find else not outcome.found
 
 
 def _abstention_f1(samples: Sequence[tuple[bool, float]], tau: float) -> float:

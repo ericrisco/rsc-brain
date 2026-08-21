@@ -74,6 +74,9 @@ class ClaimOut(BaseModel):
     subject: str | None = None
     predicate: str | None = None
     object: str | None = None
+    # Keep untrusted model values raw: one bad date must not reject its claim.
+    valid_from: str | None = None
+    valid_to: str | None = None
 
 
 class ClaimExtraction(BaseModel):

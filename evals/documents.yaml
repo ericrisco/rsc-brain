@@ -43,8 +43,8 @@ documents:
     lang: en
     valid_from: "2023-01-01"
     body: >
-      As of January 2023, the standard support SLA is 24 hours. This policy is effective from
-      2023-01-01.
+      The standard support SLA is 24 hours from 2023-01-01 until 2024-01-01 exclusive. The
+      replacement policy takes effect at that 2024-01-01 boundary.
   - id: acme-sla-2024-en
     project: acme
     source: wiki
@@ -54,8 +54,8 @@ documents:
     lang: en
     valid_from: "2024-01-01"
     body: >
-      Effective 2024-01-01, the standard support SLA is reduced to 12 hours, superseding the
-      previous 24-hour policy.
+      From 2024-01-01 onward, the standard support SLA is 12 hours. This revision replaces the
+      immediately preceding policy at that boundary.
   - id: acme-pricing-en
     project: acme
     source: sales-drive
@@ -224,7 +224,8 @@ documents:
     lang: en
     valid_from: "2022-01-01"
     body: >
-      As of 2022, the consulting day rate is 100 EUR per hour.
+      The consulting day rate is 100 EUR per hour from 2022-01-01 until 2024-01-01 exclusive. The
+      replacement rate takes effect at that 2024-01-01 boundary.
   - id: globex-rate-2024-en
     project: globex
     source: legal-drive
@@ -234,8 +235,8 @@ documents:
     lang: en
     valid_from: "2024-01-01"
     body: >
-      Effective 2024, the consulting day rate increases to 120 EUR per hour, superseding the 2022
-      rate.
+      From 2024-01-01 onward, the consulting day rate is 120 EUR per hour. This revision replaces
+      the immediately preceding rate at that boundary.
   - id: globex-personnel-es
     project: globex
     source: hr-drive

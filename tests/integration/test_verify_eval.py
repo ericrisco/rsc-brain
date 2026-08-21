@@ -7,22 +7,134 @@ broken DB fails cleanly. Eval: run a couple of golden-shaped cases through recal
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
+from datetime import date
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
-from evals.runner import EvalCase, run_eval
+import yaml
+from evals.runner import EvalCase, eval_case_from_golden, run_eval
+from evals.schema import Corpus, Golden
 
+from rsc_brain.config.models import ANCHORED_EMBEDDING_DIM
 from rsc_brain.installer.verify import run_verify
 from rsc_brain.recall.interfaces import RecallResult
 from rsc_brain.recall.retriever import PgRetriever
+from rsc_brain.recall.timeline import TimelineEntry, build_timeline
 from rsc_brain.stores.age_graph_store import AgeGraphStore
 from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
+from tests.conftest import completion_response
 from tests.integration.conftest import Harness, unique_slug
 
 pytestmark = pytest.mark.integration
 
 TOPICS = [("general", 0), ("engineering", 0), ("hr", 3)]
 DOC = b"# Engineering handbook\n\nThe deployment pipeline uses Docker containers and runs in CI.\n"
+EVALS_DIR = Path(__file__).resolve().parents[2] / "evals"
+
+
+def _temporal_vector_bucket(text: str) -> int:
+    lowered = text.casefold()
+    if "support sla" in lowered or "24-hour sla" in lowered:
+        if "24 hours" in lowered or "24-hour" in lowered or "2023" in lowered:
+            return 11
+        return 12
+    if "day rate" in lowered or "eur/h" in lowered:
+        if "100 eur" in lowered or "2022" in lowered:
+            return 21
+        return 22
+    return 1
+
+
+def _temporal_embedding(**kwargs: Any) -> Any:
+    texts = kwargs["input"]
+
+    async def _call() -> SimpleNamespace:
+        vectors: list[dict[str, list[float]]] = []
+        for text in texts:
+            vector = [0.0] * ANCHORED_EMBEDDING_DIM
+            vector[_temporal_vector_bucket(str(text))] = 1.0
+            vectors.append({"embedding": vector})
+        return SimpleNamespace(data=vectors)
+
+    return _call()
+
+
+def _temporal_completion(**kwargs: Any) -> Any:
+    schema = kwargs.get("response_format")
+    name = getattr(schema, "__name__", "")
+    messages = kwargs.get("messages", [])
+    source = str(messages[-1].get("content", "")) if messages else ""
+
+    async def _call() -> SimpleNamespace:
+        if name == "EntityExtraction":
+            payload: dict[str, object] = {
+                "entities": [{"name": "Acme", "type": "org", "aliases": []}]
+            }
+        elif name == "RelationExtraction":
+            payload = {"relations": []}
+        elif name == "TopicAssignment":
+            payload = {"tags": ["general"]}
+        elif name == "ClaimExtraction":
+            claim: dict[str, object]
+            if "standard support SLA is 24 hours" in source:
+                claim = {
+                    "text": "Acme's standard support SLA is 24 hours.",
+                    "subject": "Acme standard support SLA",
+                    "predicate": "is",
+                    "object": "24 hours",
+                    "valid_from": "2023-01-01",
+                    "valid_to": "2024-01-01",
+                }
+            elif "standard support SLA is 12 hours" in source:
+                claim = {
+                    "text": "Acme's standard support SLA is 12 hours.",
+                    "subject": "Acme standard support SLA",
+                    "predicate": "is",
+                    "object": "12 hours",
+                    "valid_from": "2024-01-01",
+                    "valid_to": None,
+                }
+            elif "day rate is 100 EUR per hour" in source:
+                claim = {
+                    "text": "Globex's consulting day rate is 100 EUR per hour.",
+                    "subject": "Globex consulting day rate",
+                    "predicate": "is",
+                    "object": "100 EUR per hour",
+                    "valid_from": "2022-01-01",
+                    "valid_to": "2024-01-01",
+                }
+            elif "day rate is 120 EUR per hour" in source:
+                claim = {
+                    "text": "Globex's consulting day rate is 120 EUR per hour.",
+                    "subject": "Globex consulting day rate",
+                    "predicate": "is",
+                    "object": "120 EUR per hour",
+                    "valid_from": "2024-01-01",
+                    "valid_to": None,
+                }
+            elif "software company founded in 2015" in source:
+                claim = {
+                    "text": "Acme is a software company founded in 2015.",
+                    "subject": "Acme",
+                    "predicate": "is",
+                    "object": "a software company founded in 2015",
+                    "valid_from": None,
+                    "valid_to": None,
+                }
+            else:
+                raise AssertionError(f"unexpected temporal source: {source}")
+            payload = {"claims": [claim]}
+        elif name == "ScoresOut":
+            payload = {"scores": [{"index": 0, "score": 0.9}]}
+        else:
+            payload = {"ok": True}
+        return completion_response(json.dumps(payload))
+
+    return _call()
 
 
 async def test_verify_all_green(build_harness: Callable[..., Harness]) -> None:
@@ -106,3 +218,122 @@ async def test_run_eval_reports_metrics(
     assert report.correct_abstention_rate == 1.0  # the denied case abstained
     assert report.permission_leaks == 0
     assert report.avg_latency_ms >= 0.0
+
+
+async def test_temporal_t9_uses_timeline_not_recall() -> None:
+    """The timeline oracle is a separate surface; a recall hit cannot make t9 green."""
+    recalled = False
+
+    async def recall(_: EvalCase) -> RecallResult:
+        nonlocal recalled
+        recalled = True
+        return RecallResult(found=True)
+
+    async def timeline(_: EvalCase) -> tuple[TimelineEntry, ...]:
+        return (
+            TimelineEntry(
+                claim_id="claim-2023",
+                text="The Acme support SLA was 24 hours in 2023.",
+                subject="Acme",
+                predicate="support_sla",
+                object="24 hours",
+                credibility=1.0,
+                tags=("general",),
+                valid_from=date(2023, 1, 1),
+                valid_to=date(2024, 1, 1),
+                is_current=False,
+                document_id="doc-2023",
+            ),
+        )
+
+    case = EvalCase(
+        case_id="t9",
+        family="temporal",
+        question="How has the Acme support SLA evolved over time?",
+        user="alice",
+        project="acme",
+        must_find=True,
+        must_include=("24 hours",),
+        surface="timeline",
+    )
+    report = await run_eval([case], recall, timeline)
+
+    assert recalled is False
+    assert report.retrieval_precision == 1.0
+
+
+async def test_temporal_golden_acceptance_runs_from_source_ingest_through_recall_and_timeline(
+    build_harness: Callable[..., Harness],
+) -> None:
+    """AC1-AC8: the oracle observes dates produced by ingestion, never directly seeded claims."""
+    corpus = Corpus.model_validate(yaml.safe_load((EVALS_DIR / "documents.yaml").read_text()))
+    golden = Golden.model_validate(yaml.safe_load((EVALS_DIR / "golden.yaml").read_text()))
+    wanted_documents = {
+        "acme-overview-en",
+        "acme-sla-2023-en",
+        "acme-sla-2024-en",
+        "globex-rate-2022-en",
+        "globex-rate-2024-en",
+    }
+    documents = [document for document in corpus.documents if document.id in wanted_documents]
+    assert {document.id for document in documents} == wanted_documents
+
+    harness = build_harness(completion=_temporal_completion, embedding=_temporal_embedding)
+    project_ids = {
+        slug: await harness.setup_project(unique_slug(slug), TOPICS) for slug in ("acme", "globex")
+    }
+    scopes = {
+        slug: harness.scope(project_id, allowed_topics=["general"])
+        for slug, project_id in project_ids.items()
+    }
+    for scope in scopes.values():
+        await harness.repo.create_source(
+            scope,
+            name="temporal-source",
+            type_="folder",
+            policy="source_tags",
+            default_tags=["general"],
+        )
+
+    runtime_document_ids: dict[str, str] = {}
+    for document in documents:
+        outcome = await harness.service.ingest_bytes(
+            scopes[document.project],
+            document.body.encode("utf-8"),
+            filename=f"{document.id}.md",
+            source="temporal-source",
+        )
+        runtime_document_ids[document.id] = outcome.document_id
+
+    wanted_cases = {"t1", "t5", "t6", "t7", "t9"}
+    cases = [
+        eval_case_from_golden(case, document_ids=runtime_document_ids)
+        for case in golden.cases
+        if case.id in wanted_cases
+    ]
+    assert {case.case_id for case in cases} == wanted_cases
+
+    retriever = PgRetriever(
+        sessionmaker=harness.sm,
+        gateway=harness.gateway,
+        graph_store=AgeGraphStore(harness.sm),
+    )
+
+    async def recall(case: EvalCase) -> RecallResult:
+        return await retriever.recall(scopes[case.project], case.question, top_k=8)
+
+    async def timeline(case: EvalCase) -> tuple[TimelineEntry, ...]:
+        entries = await build_timeline(harness.sm, scopes[case.project], topic="general")
+        return tuple(entries)
+
+    report = await run_eval(cases, recall, timeline)
+
+    assert report.total == 5
+    assert report.retrieval_precision == 1.0
+    assert report.correct_abstention_rate == 1.0
+    assert report.permission_leaks == 0
+
+    undated_timeline = await build_timeline(harness.sm, scopes["acme"], topic="general")
+    undated = next(entry for entry in undated_timeline if "founded in 2015" in entry.text)
+    assert undated.valid_from is None
+    assert undated.valid_to is None

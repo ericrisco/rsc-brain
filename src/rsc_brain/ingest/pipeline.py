@@ -1006,6 +1006,14 @@ class IngestionPipeline:
             row, source=source, n_independent_sources=n_independent_sources
         )
         for triple in graph.claims:
+            for diagnostic in triple.temporal_diagnostics:
+                errors.append(
+                    IngestErrorSpec(
+                        chunk_ref=row.id,
+                        stage="temporal_validity",
+                        error=f"{diagnostic.field}:{diagnostic.message}",
+                    )
+                )
             claims.append(
                 ClaimSpec(
                     chunk_id=row.id,
@@ -1013,6 +1021,8 @@ class IngestionPipeline:
                     subject=triple.subject,
                     predicate=triple.predicate,
                     object=triple.object,
+                    valid_from=triple.valid_from,
+                    valid_to=triple.valid_to,
                     # The extractor knew each endpoint's TYPE, so the claim can carry the same
                     # deterministic identity as the graph node instead of only a name (R16).
                     subject_entity_key=_entity_key(type_by_name, triple.subject),

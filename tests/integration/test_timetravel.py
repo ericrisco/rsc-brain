@@ -204,6 +204,29 @@ async def test_timeline_as_of_narrows_to_the_snapshot(
     assert [e.text for e in out.entries] == ["Vacation was 23 days in 2023"]
 
 
+async def test_timeline_keeps_future_history_but_never_labels_it_current(
+    build_harness: Callable[..., Harness],
+) -> None:
+    harness = build_harness()
+    project_id = await harness.setup_project(unique_slug("acme"), TOPICS)
+    scope = harness.scope(project_id, allowed_topics=["hr"])
+    await _seed_version(
+        harness,
+        project_id,
+        "Vacation will be 30 days next year",
+        subject="vacation policy",
+        tags=["hr"],
+        valid_from=dt.datetime.now(dt.UTC) + dt.timedelta(days=1),
+        valid_to=None,
+        with_chunk=False,
+    )
+
+    out = await do_timeline(harness.sm, scope, topic="hr")
+
+    assert len(out.entries) == 1
+    assert out.entries[0].is_current is False
+
+
 async def test_as_of_latency_benchmark_runs(build_harness: Callable[..., Harness]) -> None:
     # AC#4: as_of reconstruction latency is measurable on the same footing as the D1 benchmark.
     # Scaled-down + reproducible here; the 1M-edge run is the documented manual job (SPEC-09 D1).

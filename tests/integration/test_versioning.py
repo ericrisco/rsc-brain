@@ -9,6 +9,9 @@ byte-identical re-upload is a no-op. Reused claims keep the prior credibility (c
 from __future__ import annotations
 
 import json
+
+
+import datetime as dt
 import uuid
 from collections.abc import Callable
 from typing import Any, cast
@@ -561,3 +564,113 @@ async def test_version_supersession_marks_a_dependent_skill_without_direct_helpe
     closed = await harness.repo.supersede_prior_version(scope, document_id, set())
     assert closed == [claim_id]
     assert (await SkillStore(harness.sm).get(scope, "version-hook")).stale is True  # type: ignore[union-attr]
+
+
+async def test_temporal_active_supersession_and_independent_source_readers(
+    build_harness: Callable[..., Harness],
+) -> None:
+    """A bounded interval is active now; future and expired intervals are not."""
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("ver"), TOPICS)
+    scope = harness.scope(project, allowed_topics=["general"])
+    now = dt.datetime.now(dt.UTC)
+    source_end = now + dt.timedelta(days=1)
+    expired_end = now - dt.timedelta(days=1)
+    async with harness.sm() as session:
+        prior = models.Document(
+            project_id=uuid.UUID(project),
+            logical_id=unique_slug("prior"),
+            checksum=unique_slug("sum"),
+            status="processed",
+        )
+        bounded_other = models.Document(
+            project_id=uuid.UUID(project),
+            logical_id=unique_slug("bounded"),
+            checksum=unique_slug("sum"),
+            status="processed",
+        )
+        future_other = models.Document(
+            project_id=uuid.UUID(project),
+            logical_id=unique_slug("future"),
+            checksum=unique_slug("sum"),
+            status="processed",
+        )
+        expired_other = models.Document(
+            project_id=uuid.UUID(project),
+            logical_id=unique_slug("expired"),
+            checksum=unique_slug("sum"),
+            status="processed",
+        )
+        current = models.Document(
+            project_id=uuid.UUID(project),
+            logical_id=unique_slug("current"),
+            checksum=unique_slug("sum"),
+            status="processed",
+        )
+        session.add_all([prior, bounded_other, future_other, expired_other, current])
+        await session.flush()
+        prior_chunk = models.Chunk(
+            project_id=uuid.UUID(project),
+            document_id=prior.id,
+            kind="prose",
+            text="prior changed text",
+            tags=["general"],
+        )
+        session.add(prior_chunk)
+        await session.flush()
+        bounded = models.Claim(
+            project_id=uuid.UUID(project),
+            chunk_id=prior_chunk.id,
+            source_document_id=prior.id,
+            text="bounded prior",
+            tags=["general"],
+            credibility=0.5,
+            valid_from=now - dt.timedelta(days=1),
+            valid_to=source_end,
+        )
+        future = models.Claim(
+            project_id=uuid.UUID(project),
+            chunk_id=prior_chunk.id,
+            source_document_id=future_other.id,
+            text="future prior",
+            tags=["general"],
+            credibility=0.5,
+            valid_from=now + dt.timedelta(days=1),
+        )
+        expired = models.Claim(
+            project_id=uuid.UUID(project),
+            chunk_id=prior_chunk.id,
+            source_document_id=expired_other.id,
+            text="expired prior",
+            tags=["general"],
+            credibility=0.5,
+            valid_from=now - dt.timedelta(days=2),
+            valid_to=expired_end,
+        )
+        second_bounded = models.Claim(
+            project_id=uuid.UUID(project),
+            source_document_id=bounded_other.id,
+            text="another bounded source",
+            tags=["general"],
+            credibility=0.5,
+            valid_from=now - dt.timedelta(days=1),
+            valid_to=source_end,
+        )
+        session.add_all([bounded, future, expired, second_bounded])
+        await session.flush()
+        ids = str(bounded.id), str(future.id), str(expired.id)
+        await session.commit()
+
+    assert await harness.repo.count_independent_sources(scope, str(current.id)) == 3
+    closed = await harness.repo.supersede_prior_version(scope, str(prior.id), set())
+    assert closed == [ids[0]]
+    async with harness.sm() as session:
+        rows = {
+            str(claim.id): claim.valid_to
+            for claim in (
+                await session.scalars(select(models.Claim).where(models.Claim.id.in_(ids)))
+            ).all()
+        }
+    bounded_end = rows[ids[0]]
+    assert bounded_end is not None and bounded_end < source_end
+    assert rows[ids[1]] is None and rows[ids[2]] == expired_end

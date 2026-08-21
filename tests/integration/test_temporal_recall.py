@@ -182,3 +182,59 @@ async def test_as_of_returns_knowledge_valid_at_that_date(
         retriever, harness.sm, scope, query="pricing 40 EUR", as_of="2024-06-01"
     )
     assert after.found is False
+
+
+async def test_current_excludes_future_start_but_keeps_a_bounded_future_end(
+    build_harness: Callable[..., Harness],
+) -> None:
+    harness = build_harness()
+    project_id = await harness.setup_project(unique_slug("acme"), TOPICS)
+    scope = harness.scope(project_id, allowed_topics=["pricing"])
+    await _seed(
+        harness,
+        project_id,
+        "The future pricing tier starts tomorrow",
+        valid_from=NOW + dt.timedelta(days=1),
+        valid_to=None,
+    )
+    await _seed(
+        harness,
+        project_id,
+        "The bounded pricing tier remains active",
+        valid_from=NOW - dt.timedelta(days=1),
+        valid_to=NOW + dt.timedelta(days=1),
+    )
+
+    current = await do_recall(_retriever(harness), harness.sm, scope, query="pricing tier")
+
+    assert current.found is True
+    assert any("bounded" in fragment.text for fragment in current.fragments)
+    assert not any("future pricing" in fragment.text for fragment in current.fragments)
+
+
+async def test_admin_include_superseded_never_exposes_a_future_start(
+    build_harness: Callable[..., Harness],
+) -> None:
+    harness = build_harness()
+    project_id = await harness.setup_project(unique_slug("acme"), TOPICS)
+    scope = harness.scope(project_id, allowed_topics=["pricing"])
+    await _seed(
+        harness,
+        project_id,
+        "The expired pricing tier is available to an administrator",
+        valid_from=NOW - dt.timedelta(days=10),
+        valid_to=NOW - dt.timedelta(days=1),
+    )
+    await _seed(
+        harness,
+        project_id,
+        "The future pricing tier is not available yet",
+        valid_from=NOW + dt.timedelta(days=1),
+        valid_to=None,
+    )
+
+    result = await _retriever(harness).recall(scope, "pricing tier", include_superseded=True)
+
+    assert result.found is True
+    assert any("expired" in fragment.text for fragment in result.fragments)
+    assert not any("future pricing" in fragment.text for fragment in result.fragments)

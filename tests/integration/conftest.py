@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from rsc_brain.gateway.model_gateway import ModelGateway
+from rsc_brain.gateway.model_gateway import EmbeddingFn, ModelGateway
 from rsc_brain.ingest.pipeline import IngestionPipeline, PipelineConfig, default_parser_factory
 from rsc_brain.ingest.service import IngestService
 from rsc_brain.ontology.ingest import OntologyIngest
@@ -139,6 +139,7 @@ async def build_harness(
     def _build(
         *,
         completion: object | None = None,
+        embedding: EmbeddingFn | None = None,
         parser_factory: object | None = None,
         config: PipelineConfig | None = None,
         with_ontology: bool = False,
@@ -146,7 +147,7 @@ async def build_harness(
         engine = make_engine(migrated_dsn)
         engines.append(engine)
         sm = make_sessionmaker(engine)
-        gateway = gateway_factory(completion=completion or make_completion())
+        gateway = gateway_factory(completion=completion or make_completion(), embedding=embedding)
         repo = IngestRepository(sm)
         # SPEC-24: opt-in the ontology seam for tests that exercise anchoring; default off so every
         # other integration test runs the base pipeline unchanged.

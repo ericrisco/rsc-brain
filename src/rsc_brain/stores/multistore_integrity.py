@@ -11,6 +11,7 @@ do about a divergence is an operator's call.
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from dataclasses import dataclass
 
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore, edge_type
 from rsc_brain.stores.relational import models
+from rsc_brain.temporal import active_at_clause
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +60,7 @@ async def divergence_report(
 ) -> DivergenceReport:
     """Compare the claims that assert a relation against the relations the graph actually holds."""
     pid = uuid.UUID(scope.project_id)
+    now = dt.datetime.now(dt.UTC)
     async with sessionmaker() as session:
         rows = (
             await session.execute(
@@ -69,7 +72,7 @@ async def divergence_report(
                 )
                 .where(
                     models.Claim.project_id == pid,
-                    models.Claim.valid_to.is_(None),
+                    active_at_clause(models.Claim.valid_from, models.Claim.valid_to, now),
                     models.Claim.pending_confirmation.is_(False),
                     models.Claim.subject_entity_key.is_not(None),
                     models.Claim.object_entity_key.is_not(None),

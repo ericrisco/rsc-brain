@@ -31,6 +31,7 @@ from rsc_brain.ingest.types import (
 from rsc_brain.scope import NON_TOPIC_TAGS, ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import maybe_session_scope, session_scope
+from rsc_brain.temporal import active_at_clause
 from rsc_brain.visibility import forbidden_topics, topic_clause
 
 NEEDS_REVIEW_TAG = next(iter(NON_TOPIC_TAGS))
@@ -89,6 +90,8 @@ class ClaimSpec:
     subject: str | None = None
     predicate: str | None = None
     object: str | None = None
+    valid_from: dt.datetime | None = None
+    valid_to: dt.datetime | None = None
     # Deterministic entity identity of each endpoint (AUDIT-035 / R16); None when the endpoint was
     # not resolved to a typed entity.
     subject_entity_key: str | None = None
@@ -401,8 +404,13 @@ class IngestRepository:
         (``valid_to=now``). A prior chunk whose text is **unchanged** (present in the new version)
         is left completely untouched, so its claims keep their id + credibility across versions
         (AC#2). Nothing is deleted (FR-5.5). Idempotent (only touches still-live rows). Returns the
-        ids of the claims closed, so the caller can retire their graph relations too (R27)."""
+        ids of the claims closed, so the caller can retire their graph relations too (R27).
+
+        The active-at predicate chooses which facts to retire; assigning ``valid_to=now`` is the
+        existing operational lifecycle mutation, not a source-validity redesign.
+        """
         async with session_scope(self._sm) as session:
+            now = _now()
             prior_chunks = (
                 await session.scalars(
                     select(models.Chunk).where(
@@ -422,15 +430,13 @@ class IngestRepository:
                     select(models.Claim.id).where(
                         models.Claim.project_id == _pid(scope),
                         models.Claim.chunk_id.in_(superseded),
-                        models.Claim.valid_to.is_(None),
+                        active_at_clause(models.Claim.valid_from, models.Claim.valid_to, now),
                     )
                 )
             ).all()
             if claim_ids:
                 await session.execute(
-                    update(models.Claim)
-                    .where(models.Claim.id.in_(claim_ids))
-                    .values(valid_to=_now())
+                    update(models.Claim).where(models.Claim.id.in_(claim_ids)).values(valid_to=now)
                 )
                 from rsc_brain.skills.staleness import mark_claims_stale_in_session
 
@@ -459,13 +465,14 @@ class IngestRepository:
         Credibility was previously written with ``n_independent_sources=1`` for every claim, so
         agreement between independent documents never raised it.
         """
+        now = _now()
         async with self._sm() as session:
             others = await session.scalar(
                 select(func.count(func.distinct(models.Claim.source_document_id))).where(
                     models.Claim.project_id == _pid(scope),
                     models.Claim.source_document_id.is_not(None),
                     models.Claim.source_document_id != uuid.UUID(document_id),
-                    models.Claim.valid_to.is_(None),
+                    active_at_clause(models.Claim.valid_from, models.Claim.valid_to, now),
                 )
             )
         return 1 + int(others or 0)
@@ -1125,6 +1132,8 @@ class IngestRepository:
                     subject=claim.subject,
                     predicate=claim.predicate,
                     object=claim.object,
+                    valid_from=claim.valid_from,
+                    valid_to=claim.valid_to,
                     subject_entity_key=(
                         uuid.UUID(claim.subject_entity_key) if claim.subject_entity_key else None
                     ),
