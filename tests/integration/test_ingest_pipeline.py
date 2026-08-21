@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -232,6 +233,72 @@ async def test_failed_extraction_is_discarded_and_logged(
     assert errors and errors[0].stage == "entities"
     # Nothing from the discarded chunk reached the graph.
     assert await harness.graph_node_count(scope) == 0
+
+
+async def test_temporal_claim_validity_reaches_postgres_without_discarding_bad_metadata(
+    build_harness: Callable[..., Harness],
+    make_completion: Callable[..., object],
+) -> None:
+    completion = make_completion(
+        entities=[{"name": "Acme", "type": "org", "aliases": []}],
+        claims=[
+            {
+                "text": "dated",
+                "subject": "Acme",
+                "predicate": "rate",
+                "object": "100 EUR",
+                "valid_from": "2024-01-01T01:00:00+01:00",
+                "valid_to": "2024-02-01",
+            },
+            {"text": "undated", "subject": "Acme", "predicate": "rate", "object": "90 EUR"},
+            {
+                "text": "malformed",
+                "subject": "Acme",
+                "predicate": "rate",
+                "object": "80 EUR",
+                "valid_from": "not-a-date",
+            },
+            {
+                "text": "inverted",
+                "subject": "Acme",
+                "predicate": "rate",
+                "object": "70 EUR",
+                "valid_from": "2024-03-01",
+                "valid_to": "2024-02-01",
+            },
+        ],
+        tags=["general"],
+    )
+    harness = build_harness(completion=completion)
+    project = await harness.setup_project(unique_slug("temporal"), TOPICS)
+    scope = harness.scope(project)
+    await harness.repo.create_source(
+        scope, name="auto", type_="folder", policy="source_tags", default_tags=["general"]
+    )
+
+    outcome = await harness.service.ingest_bytes(
+        scope, b"# Temporal\n\nRates stated by the source.\n", filename="temporal.md", source="auto"
+    )
+
+    async with harness.sm() as session:
+        rows = (
+            await session.scalars(
+                select(models.Claim)
+                .where(models.Claim.project_id == uuid.UUID(project))
+                .order_by(models.Claim.text)
+            )
+        ).all()
+    claims = {claim.text: claim for claim in rows}
+    assert claims["dated"].valid_from == datetime(2024, 1, 1, tzinfo=UTC)
+    assert claims["dated"].valid_to == datetime(2024, 2, 1, tzinfo=UTC)
+    assert claims["undated"].valid_from is None and claims["undated"].valid_to is None
+    assert claims["malformed"].valid_from is None and claims["malformed"].valid_to is None
+    assert claims["inverted"].valid_from is None and claims["inverted"].valid_to is None
+    errors = await harness.repo.list_ingest_errors(scope, outcome.document_id)
+    assert {error.stage for error in errors} == {"temporal_validity"}
+    assert len(errors) == 2
+    run = await harness.repo.get_run_status(scope, outcome.document_id)
+    assert run is not None and run.discarded_chunks == 0
 
 
 async def test_admin_rule_beats_llm_topicalizer(

@@ -33,6 +33,7 @@ from rsc_brain.recall.temporal_intent import TemporalKind, TemporalMode, classif
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore, graph_name
 from rsc_brain.stores.relational import models
+from rsc_brain.temporal import active_at_clause, is_active_at
 
 
 @dataclass(frozen=True, slots=True)
@@ -586,6 +587,7 @@ class PgRetriever:
         valid_from: dt.date | None = None
         valid_to: dt.date | None = None
         any_open = False
+        any_current = False
         any_disputed = False
         for cid, credibility, importance, cvf, cvt, claim_text, claim_disputed in rows:
             claim_ids.append(str(cid))
@@ -604,8 +606,10 @@ class PgRetriever:
             else:
                 cvt_d = cvt.date()
                 valid_to = cvt_d if valid_to is None else max(valid_to, cvt_d)
-        # is_current: at least one surviving claim is still open (or ends in the future).
-        is_current = any_open or (valid_to is not None and _midnight(valid_to) > now_ts)
+            any_current = any_current or is_active_at(cvf, cvt, now_ts)
+        # Historical reads can include past or future claims, but only an interval containing now is
+        # labelled current. A null end is therefore insufficient for a future-start claim.
+        is_current = any_current
         return _ClaimAggregate(
             claim_ids=tuple(claim_ids),
             credibility=_mean(credibilities),
@@ -625,7 +629,7 @@ class PgRetriever:
         vf, vt = models.Claim.valid_from, models.Claim.valid_to
         if mode.kind is TemporalKind.AS_OF and mode.as_of is not None:
             anchor = _midnight(mode.as_of)
-            return [or_(vf.is_(None), vf <= anchor), or_(vt.is_(None), vt > anchor)]
+            return [active_at_clause(vf, vt, anchor)]
         if mode.kind is TemporalKind.RANGE and mode.start and mode.end:
             return [
                 or_(vf.is_(None), vf <= _midnight(mode.end)),
@@ -635,9 +639,11 @@ class PgRetriever:
             return []  # the whole timeline (expired claims included, labelled by valid_to)
         # CURRENT (default): exclude expired/superseded unless an admin asked to see them, and
         # apply the per-topic hard horizon (FR-16.3).
-        conds: list[Any] = []
+        # An administrator may widen the end side to inspect superseded knowledge, but a future
+        # start is never current knowledge and may not enter this candidate set.
+        conds: list[Any] = [or_(vf.is_(None), vf <= now_ts)]
         if not show_superseded:
-            conds.append(or_(vt.is_(None), vt > now_ts))
+            conds.append(active_at_clause(vf, vt, now_ts))
         if hard_window_days is not None:
             cutoff = now_ts - dt.timedelta(days=hard_window_days)
             conds.append(or_(vf.is_(None), vf >= cutoff))

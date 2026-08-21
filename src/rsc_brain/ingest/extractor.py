@@ -21,6 +21,7 @@ from rsc_brain.ingest.prompts import (
     RelationExtraction,
     load_prompt,
 )
+from rsc_brain.ingest.temporal_validity import normalize_validity
 from rsc_brain.ingest.types import (
     ClaimTriple,
     ExtractedEntity,
@@ -106,10 +107,21 @@ class CascadeExtractor:
             )
         except GatewayError as exc:
             raise ExtractionDiscarded("claims", exc.correlation_id) from exc
-        return [
-            ClaimTriple(text=c.text, subject=c.subject, predicate=c.predicate, object=c.object)
-            for c in result.claims
-        ]
+        claims: list[ClaimTriple] = []
+        for claim in result.claims:
+            validity = normalize_validity(claim.valid_from, claim.valid_to)
+            claims.append(
+                ClaimTriple(
+                    text=claim.text,
+                    subject=claim.subject,
+                    predicate=claim.predicate,
+                    object=claim.object,
+                    valid_from=validity.valid_from,
+                    valid_to=validity.valid_to,
+                    temporal_diagnostics=validity.diagnostics,
+                )
+            )
+        return claims
 
 
 def _messages(prompt: str, kind: str, **payload: object) -> list[dict[str, str]]:

@@ -12,6 +12,8 @@ import datetime as dt
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from rsc_brain.ingest.temporal_validity import TemporalDiagnostic
+
 
 class DocStatus(StrEnum):
     """Document lifecycle (FR-1.14). Nothing publishes to graph/vector before ``APPROVED``."""
@@ -145,6 +147,9 @@ class ClaimTriple:
     subject: str | None = None
     predicate: str | None = None
     object: str | None = None
+    valid_from: dt.datetime | None = None
+    valid_to: dt.datetime | None = None
+    temporal_diagnostics: tuple[TemporalDiagnostic, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

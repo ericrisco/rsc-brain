@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -28,6 +29,37 @@ async def test_cascade_returns_entities_relations_claims(
     assert graph.entities[0].aliases == ("ACME",)
     assert graph.relations[0].predicate == "uses"
     assert graph.claims[0].object == "24h"
+
+
+async def test_cascade_normalizes_claim_validity_and_retains_temporal_degradation(
+    gateway_factory: Callable[..., ModelGateway],
+    make_completion: Callable[..., Any],
+) -> None:
+    completion = make_completion(
+        entities=[],
+        relations=[],
+        claims=[
+            {
+                "text": "The rate applies from April",
+                "valid_from": "2024-04-01T02:00:00+02:00",
+                "valid_to": "2024-05-01",
+            },
+            {
+                "text": "The unsupported date does not discard this claim",
+                "valid_from": "not-a-date",
+            },
+        ],
+    )
+
+    graph = await CascadeExtractor(gateway_factory(completion=completion)).extract("some prose")
+
+    dated, malformed = graph.claims
+    assert dated.valid_from == datetime(2024, 4, 1, tzinfo=UTC)
+    assert dated.valid_to == datetime(2024, 5, 1, tzinfo=UTC)
+    assert dated.temporal_diagnostics == ()
+    assert malformed.valid_from is None
+    assert malformed.valid_to is None
+    assert malformed.temporal_diagnostics[0].field == "valid_from"
 
 
 async def test_invalid_structured_output_is_discarded_with_stage(

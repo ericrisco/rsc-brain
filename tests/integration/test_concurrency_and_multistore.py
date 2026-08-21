@@ -635,3 +635,49 @@ async def test_the_operator_can_ask_whether_the_two_stores_agree(
     diverged = await divergence_report(harness.sm, scope)
     assert diverged.claims_without_relations >= 1, diverged.explain()
     assert diverged.examples, "the report says the stores disagree without saying where"
+
+
+async def test_temporal_active_divergence_ignores_future_and_expired_claims(
+    build_harness: Callable[..., Harness],
+) -> None:
+    """The integrity reader compares graph facts only to claims active at this instant."""
+    from rsc_brain.stores.age_graph_store import AgeGraphStore
+    from rsc_brain.stores.multistore_integrity import divergence_report
+
+    harness = build_harness()
+    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    scope = harness.scope(project, allowed_topics=["hr"])
+    now = dt.datetime.now(dt.UTC)
+    relation_keys = [(uuid.uuid4(), uuid.uuid4()) for _ in range(3)]
+    claim_ids: dict[str, str] = {}
+    async with harness.sm() as session:
+        for (text_, valid_from, valid_to), (subject, obj) in zip(
+            (
+                ("bounded", now - dt.timedelta(days=1), now + dt.timedelta(days=1)),
+                ("future", now + dt.timedelta(days=1), None),
+                ("expired", now - dt.timedelta(days=2), now - dt.timedelta(days=1)),
+            ),
+            relation_keys,
+            strict=True,
+        ):
+            claim = models.Claim(
+                project_id=uuid.UUID(project),
+                text=text_,
+                tags=["hr"],
+                credibility=0.5,
+                subject_entity_key=subject,
+                predicate="owns",
+                object_entity_key=obj,
+                valid_from=valid_from,
+                valid_to=valid_to,
+            )
+            session.add(claim)
+            await session.flush()
+            claim_ids[text_] = str(claim.id)
+        await session.commit()
+    await AgeGraphStore(harness.sm).create_graph(scope)
+
+    report = await divergence_report(harness.sm, scope)
+
+    assert report.claims_without_relations == 1, report.explain()
+    assert report.examples == (claim_ids["bounded"],), report.explain()

@@ -22,6 +22,7 @@ from rsc_brain.ingest.entity_resolution import normalize_name
 from rsc_brain.recall.permissions import claim_visibility_clause, sensitive_tags
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
+from rsc_brain.temporal import active_at_clause, is_active_at
 
 DEFAULT_TIMELINE_LIMIT = 50
 
@@ -109,9 +110,8 @@ async def build_timeline(
         if as_of is not None:
             anchor = _midnight(as_of)
             conditions.append(
-                or_(models.Claim.valid_from.is_(None), models.Claim.valid_from <= anchor)
+                active_at_clause(models.Claim.valid_from, models.Claim.valid_to, anchor)
             )
-            conditions.append(or_(models.Claim.valid_to.is_(None), models.Claim.valid_to > anchor))
 
         rows = (
             await session.execute(
@@ -138,7 +138,7 @@ async def build_timeline(
 
 def _to_entry(row: Row[Any], now_ts: dt.datetime) -> TimelineEntry:
     cid, text, subject, predicate, obj, cred, tags, vf, vt, doc_id = row
-    is_current = vt is None or vt > now_ts
+    is_current = is_active_at(vf, vt, now_ts)
     return TimelineEntry(
         claim_id=str(cid),
         text=text,

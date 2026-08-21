@@ -1,9 +1,9 @@
 schema_version: 1
-run_at: '2026-08-21T12:53:51.355451Z'
+run_at: '2026-08-21T13:14:06.578767Z'
 provider: ollama
 model: gemma4:12b
 model_digest: 4eb23ef187e2c5462566d6a1d3bbbc2f1346d0b4327cbb66d58fffbcc9b2b05c
-content_fingerprint: 48f6933f70d127b44ac347fea2f91a3f941e37ad39b92507fd48f9bebc8b1e12
+content_fingerprint: 230f0b84f8aeda69f7cb7ab34aad61fe5e26a83b58d1acd393c82b20801e82b6
 prompt_versions:
   extractor_entities: v1
   extractor_relations: v1
@@ -36,7 +36,7 @@ results:
   - document
   - located_in
   - Acme Corp is a software company
-  - is_a
+  - is
   - software company
   - Acme Corp was founded in 2015
   - founded_in
@@ -46,7 +46,7 @@ results:
   - Acme Corp builds developer tooling
   - builds
   - developer tooling
-  - Acme Corp's handbook is public to all employees
+  - The company handbook is public to all employees
   - is_public_to
   - all employees
   missing_tags: []
@@ -154,12 +154,9 @@ results:
   - bandas salariales 2024 dirección
   - is
   - 90.000–120.000 €
-  - 'Bandas salariales 2024: ingeniería 45.000–70.000 €'
+  - 'Bandas salariales 2024: ingeniería 45.000–100.000 €'
   - bandas salariales 2024 ingeniería
-  - 45.000–70.000 €
-  - documento
-  - is_sensitive
-  - de nóminas
+  - 45.000–100.000 €
   missing_tags: []
   missing_graph_terms: []
   forbidden_graph_terms_present: []
@@ -196,9 +193,9 @@ results:
   - Andorra
   - location
   - located_in
-  - Globex Consulting is headquartered in Andorra
+  - Globex Consulting is headquartered in Andorra.
   - is_headquartered_in
-  - Globex Consulting advises on digital transformation
+  - Globex Consulting advises on digital transformation.
   - advises_on
   - digital transformation
   missing_tags: []
@@ -221,8 +218,6 @@ results:
   - Globex standard contracts
   - include
   - a 30-day termination notice
-  - Globex standard contracts include a confidentiality clause
-  - a confidentiality clause
   missing_tags: []
   missing_graph_terms: []
   forbidden_graph_terms_present: []
@@ -266,7 +261,8 @@ results:
   - contactos de emergencia y evaluaciones
   - Documento sensible de personal
   - is_sensitive_document
-  - 'Datos de personal: contactos de emergencia y evaluaciones'
+  - 'Datos de personal: contactos de emergencia y evaluaciones.'
+  - datos de personal
   - includes
   missing_tags: []
   missing_graph_terms: []

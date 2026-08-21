@@ -8,6 +8,8 @@ principal may see are exported (the same FR-4.14 predicate as recall), filtered 
 
 from __future__ import annotations
 
+import datetime as dt
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -15,6 +17,7 @@ from rsc_brain.recall.permissions import claim_visibility_clause, sensitive_tags
 from rsc_brain.scope import ProjectScope
 from rsc_brain.skills.store import SkillStore
 from rsc_brain.stores.relational import models
+from rsc_brain.temporal import active_at_clause
 
 OKF_VERSION = "0.1"
 
@@ -24,13 +27,14 @@ async def export_okf_bundle(
 ) -> dict[str, object]:
     """An OKF bundle of the active claims + skills the principal may see (FR-10.6)."""
     forbidden = await sensitive_tags(sessionmaker, scope.project_id)
+    now = dt.datetime.now(dt.UTC)
     async with sessionmaker() as session:
         claims = list(
             await session.scalars(
                 select(models.Claim)
                 .where(
                     claim_visibility_clause(scope, forbidden),
-                    models.Claim.valid_to.is_(None),  # active only
+                    active_at_clause(models.Claim.valid_from, models.Claim.valid_to, now),
                     models.Claim.pending_confirmation.is_(False),
                 )
                 .order_by(models.Claim.id)

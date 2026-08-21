@@ -18,6 +18,7 @@ from sqlalchemy.orm import aliased
 from rsc_brain.scope import ProjectScope
 from rsc_brain.stores.relational import models
 from rsc_brain.stores.relational.database import maybe_session_scope, session_scope
+from rsc_brain.temporal import active_at_clause
 from rsc_brain.visibility import forbidden_topics, topic_clause
 
 
@@ -43,7 +44,11 @@ def _resolution_row(
     verdict: models.ClaimPairVerdict, a: models.Claim, b: models.Claim
 ) -> dict[str, object]:
     """Present a contradiction verdict as a resolution: the winner is the still-open claim, the
-    loser the superseded one (valid_to set) — with the credibilities that decided it (FR-5.3)."""
+    loser the superseded one (valid_to set) — with the credibilities that decided it (FR-5.3).
+
+    This reports an operational resolution written by the correction workflow; it is not a
+    valid-time reader and therefore must not reinterpret source-supported interval boundaries.
+    """
     winner, loser = (a, b) if a.valid_to is None else (b, a)
 
     def _side(claim: models.Claim) -> dict[str, object]:
@@ -93,12 +98,13 @@ class KnowledgeStore:
         )
 
     async def _fetch(self, scope: ProjectScope, condition: object) -> list[ClaimData]:
+        now = _now()
         async with self._sm() as session:
             rows = await session.scalars(
                 select(models.Claim).where(
                     models.Claim.project_id == _pid(scope),
                     models.Claim.embedding.is_not(None),
-                    models.Claim.valid_to.is_(None),  # only active claims are candidates
+                    active_at_clause(models.Claim.valid_from, models.Claim.valid_to, now),
                     condition,  # type: ignore[arg-type]
                 )
             )
@@ -122,13 +128,14 @@ class KnowledgeStore:
         comparison against the knowledge most likely to still be believed.
         """
         own = await self.claims_for_document(scope, document_id)
+        now = _now()
         async with self._sm() as session:
             rows = await session.scalars(
                 select(models.Claim)
                 .where(
                     models.Claim.project_id == _pid(scope),
                     models.Claim.embedding.is_not(None),
-                    models.Claim.valid_to.is_(None),
+                    active_at_clause(models.Claim.valid_from, models.Claim.valid_to, now),
                     models.Claim.pending_confirmation.is_(False),
                     # NULL-safe on purpose: `col != value` evaluates to NULL for a row whose
                     # `source_document_id` is NULL, so a plain inequality silently drops every claim
@@ -205,7 +212,10 @@ class KnowledgeStore:
         loser_cred: float,
     ) -> None:
         """Winner keeps its (boosted) credibility; loser is degraded + `valid_to=now` (superseded,
-        never deleted — FR-5.5). One transaction."""
+        never deleted — FR-5.5). One transaction.
+
+        This is an operational lifecycle mutation, not an active-at reader.
+        """
         async with session_scope(self._sm) as session:
             await session.execute(
                 update(models.Claim)
@@ -280,6 +290,7 @@ class KnowledgeStore:
             return set()
         subjects = {uuid.UUID(k[0]) for k in keys}
         objects = {uuid.UUID(k[2]) for k in keys}
+        now = _now()
         async with maybe_session_scope(self._sm, session) as work:
             rows = (
                 await work.execute(
@@ -291,7 +302,7 @@ class KnowledgeStore:
                         models.Claim.project_id == _pid(scope),
                         models.Claim.subject_entity_key.in_(subjects),
                         models.Claim.object_entity_key.in_(objects),
-                        models.Claim.valid_to.is_(None),
+                        active_at_clause(models.Claim.valid_from, models.Claim.valid_to, now),
                         models.Claim.pending_confirmation.is_(False),
                     )
                 )
@@ -488,13 +499,14 @@ class KnowledgeStore:
     ) -> list[ClaimData]:
         """Active claims most similar to ``embedding`` (for topic+statement target resolution)."""
         distance = models.Claim.embedding.cosine_distance(list(embedding))
+        now = _now()
         async with self._sm() as session:
             rows = await session.scalars(
                 select(models.Claim)
                 .where(
                     models.Claim.project_id == _pid(scope),
                     models.Claim.embedding.is_not(None),
-                    models.Claim.valid_to.is_(None),
+                    active_at_clause(models.Claim.valid_from, models.Claim.valid_to, now),
                 )
                 .order_by(distance)
                 .limit(limit)
@@ -513,7 +525,8 @@ class KnowledgeStore:
         pending: bool,
     ) -> str:
         """One transaction: degrade + supersede the old claim (unless pending), create the new
-        claim. Returns the new claim id."""
+        claim. Returns the new claim id. The close is an operational lifecycle mutation, not a
+        source-valid-time decision."""
         async with session_scope(self._sm) as session:
             old = await session.get(models.Claim, uuid.UUID(old_claim_id))
             if old is None or old.project_id != _pid(scope):
@@ -765,7 +778,8 @@ class KnowledgeStore:
         cred_restore: float,
     ) -> None:
         """Reactivate the old claim (clear valid_to, restore credibility) and supersede the new
-        claim — the reverse of an applied correction (FR-15.8)."""
+        claim — the reverse of an applied correction (FR-15.8). These are operational lifecycle
+        mutations, not active-at readers; source-validity restoration remains a separate follow-up."""
         async with session_scope(self._sm) as session:
             await session.execute(
                 update(models.Claim)

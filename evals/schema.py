@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,6 +16,7 @@ DocKind = Literal["prose", "table", "scanned"]
 D13Policy = Literal["manual", "source_tags", "llm", "llm_review"]
 ArtifactKind = Literal["prompt", "template"]
 SemanticReviewKind = Literal["human", "assisted"]
+EvalSurface = Literal["recall", "timeline"]
 
 
 class Topic(BaseModel):
@@ -56,6 +57,25 @@ class Corpus(BaseModel):
     documents: list[Document]
 
 
+class ExpectedValidity(BaseModel):
+    """A validity assertion whose explicit null boundaries mean source validity is unknown."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    valid_from: date | None
+    valid_to: date | None
+
+
+class EvidenceExpectation(BaseModel):
+    """Assertions that must be satisfied together by one recall fragment or timeline entry."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    must_include: tuple[str, ...] = ()
+    document_id: str | None = None
+    # ``None`` means no validity assertion; ExpectedValidity(None, None) asserts unknown validity.
+    validity: ExpectedValidity | None = None
+    expected_is_current: bool | None = None
+
+
 class GoldenCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -65,6 +85,13 @@ class GoldenCase(BaseModel):
     project: str
     must_find: bool
     expected: str | None = None
+    must_include: list[str] = Field(default_factory=list)
+    must_exclude: list[str] = Field(default_factory=list)
+    expected_valid_from: date | None = None
+    expected_valid_to: date | None = None
+    expected_is_current: bool | None = None
+    surface: EvalSurface = "recall"
+    expected_evidence: tuple[EvidenceExpectation, ...] = ()
 
 
 class Golden(BaseModel):
