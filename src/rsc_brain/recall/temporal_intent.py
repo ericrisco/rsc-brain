@@ -17,6 +17,15 @@ from enum import StrEnum
 
 _ISO_DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 
+# AUDIT-117: a bare year after an `in`-style cue. Measured on the corpus: "What was the Globex day
+# rate in 2022?" classified as CURRENT, so the superseded 2022 rate was filtered out and the query
+# found nothing — the most natural phrasing of a historical question was the one form neither the
+# ISO pattern nor the keyword list recognised.
+#
+# The cue is required. A bare year with no cue ("the 2022 pricing model we use") stays current,
+# because D16's safe default protects the dangerous direction: presenting an expired fact as today's.
+_IN_YEAR = re.compile(r"\b(?:in|en|during|durante)\s+((?:19|20)\d{2})\b(?!-\d{2})")
+
 # History intent — the query asks for the past / evolution, not the current truth.
 _HISTORICAL_KW = (
     "historical",
@@ -65,6 +74,17 @@ def _dates(query: str) -> list[dt.date]:
     return found
 
 
+def _cued_year(query: str) -> int | None:
+    """The year in an `in <year>` cue, or None. Ignores a year that is part of an ISO date."""
+    iso_spans = [match.span(1) for match in _ISO_DATE.finditer(query)]
+    for match in _IN_YEAR.finditer(query):
+        start, end = match.span(1)
+        if any(low <= start and end <= high for low, high in iso_spans):
+            continue
+        return int(match.group(1))
+    return None
+
+
 def classify(
     query: str, *, as_of: dt.date | None = None, include_historical: bool = False
 ) -> TemporalMode:
@@ -76,6 +96,15 @@ def classify(
 
     lowered = query.lower()
     dates = _dates(query)
+
+    # A cued bare year → that calendar year, half-open like every other valid-time interval here.
+    # Checked before the history keywords: "previously, in 2022" asks about 2022, not about the whole
+    # timeline. An ISO date cannot reach this branch — the pattern refuses a `-NN` suffix, so
+    # "as of 2023-06-01" stays a point in time.
+    if (year := _cued_year(query)) is not None:
+        return TemporalMode(
+            TemporalKind.RANGE, start=dt.date(year, 1, 1), end=dt.date(year + 1, 1, 1)
+        )
 
     # Two dates + a range cue → an explicit window.
     if len(dates) >= 2 and any(kw in lowered for kw in _RANGE_KW):

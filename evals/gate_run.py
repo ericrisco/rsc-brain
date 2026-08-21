@@ -271,7 +271,7 @@ async def _ingest(principals: Principals) -> dict[str, str]:
             ).scope_for(project_id)
             outcome = await service.ingest_bytes(
                 scope,
-                f"# {document.id}\n\n{document.body.strip()}\n".encode(),
+                _as_markdown(document).encode(),
                 filename=f"{document.id}.md",
                 source=document.source,
             )
@@ -284,6 +284,31 @@ async def _ingest(principals: Principals) -> dict[str, str]:
         return document_ids
     finally:
         await dependencies.dispose()
+
+
+def _as_markdown(document: Any) -> str:
+    """Render one corpus document as the markdown this instrument ingests.
+
+    The corpus is authored for `evals/generate_pdfs.py`, which renders each document — so a
+    `kind: table` body is pipe-delimited rows with no GFM separator, because a *rendered* table needs
+    none. Ingested as markdown, those rows are not a table at all: the parser flattens them into one
+    prose line, the deterministic table path never runs, and the extractor is handed a smear of
+    columns. Measured: `acme-invoice-table-en` became a single prose chunk and `e4` ("which invoice is
+    for Initech?") could not be answered, because the customer column was gone.
+
+    So a table document gets the separator row that makes it a table. This is a property of the
+    harness, not of the product: to exercise the real table path, ingest the generated PDFs.
+    """
+    body = document.body.strip()
+    if getattr(document, "kind", None) == "table":
+        rows = [line.strip() for line in body.splitlines() if line.strip()]
+        # Only a pipe-delimited header gets one. `acme-broken-table-en` has no pipes and is *meant*
+        # to be unparseable — handing it a separator would repair the fixture the corpus needs broken.
+        if rows and "|" in rows[0] and not any(set(row) <= set("|- :") for row in rows):
+            columns = rows[0].count("|") + 1
+            rows.insert(1, " | ".join(["---"] * columns))
+        body = "\n".join(rows)
+    return f"# {document.id}\n\n{body}\n"
 
 
 async def _measure(
