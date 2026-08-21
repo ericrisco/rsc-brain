@@ -1,6 +1,7 @@
 ---
 id: consent
 version: v1
+role: hunting
 lang: en
 state: CONSENT_REQUESTED
 placeholders: [person_name, project_name, topic, requester]

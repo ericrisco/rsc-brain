@@ -1,6 +1,7 @@
 ---
 id: thanks
 version: v1
+role: hunting
 lang: en
 state: ANSWERED
 placeholders: [person_name, topic]

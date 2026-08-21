@@ -1,6 +1,7 @@
 ---
 id: reminder
 version: v1
+role: hunting
 lang: es
 state: EXPIRED_RETRY
 placeholders: [person_name, question, magic_link]

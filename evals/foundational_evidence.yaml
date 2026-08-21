@@ -1,0 +1,267 @@
+schema_version: 1
+run_at: '2026-08-21T01:30:36.357751Z'
+provider: ollama
+model: gemma4:12b
+model_digest: 4eb23ef187e2c5462566d6a1d3bbbc2f1346d0b4327cbb66d58fffbcc9b2b05c
+content_fingerprint: ad8bfb1010507b46ca0144f81bf0b71e5c34789d570628cf0ddeea60ba73f72e
+prompt_versions:
+  extractor_entities: v1
+  extractor_relations: v1
+  extractor_claims: v1
+  topicalizer: v1
+  contradiction_judge: v1
+sample_size: 10
+extraction_attempts: 9
+extraction_discards: 0
+discard_rate: 0.0
+quality_cases_passed: 10
+quality_cases_total: 10
+semantic_review: assisted
+semantic_reviewed: true
+results:
+- case_id: quality-acme-overview-en
+  document_id: acme-overview-en
+  extraction_attempted: true
+  discarded: false
+  discard_stage: null
+  tags: [general]
+  graph_terms:
+  - Acme Corp
+  - org
+  - Acme
+  - Barcelona
+  - location
+  - company handbook
+  - document
+  - located_in
+  - Acme Corp is a software company
+  - is_a
+  - software company
+  - Acme Corp was founded in 2015
+  - founded_in
+  - '2015'
+  - Acme Corp is headquartered in Barcelona
+  - headquartered_in
+  - Acme Corp builds developer tooling
+  - builds
+  - developer tooling
+  missing_tags: []
+  missing_graph_terms: []
+  forbidden_graph_terms_present: []
+  passed: true
+- case_id: quality-acme-deploy-en
+  document_id: acme-eng-deploy-en
+  extraction_attempted: true
+  discarded: false
+  discard_stage: null
+  tags: [engineering]
+  graph_terms:
+  - Acme deployment pipeline
+  - system
+  - GitHub Actions
+  - PostgreSQL 16
+  - two approvals
+  - concept
+  - runs_on
+  - is_used_by
+  - The Acme deployment pipeline builds containers
+  - builds
+  - containers
+  - The Acme deployment pipeline runs on GitHub Actions
+  - Production runs on PostgreSQL 16
+  - Production
+  - Deployments require two approvals
+  - Deployments
+  - require
+  missing_tags: []
+  missing_graph_terms: []
+  forbidden_graph_terms_present: []
+  passed: true
+- case_id: quality-acme-architecture-es
+  document_id: acme-eng-arch-es
+  extraction_attempted: true
+  discarded: false
+  discard_stage: null
+  tags: [engineering]
+  graph_terms:
+  - Acme
+  - org
+  - PostgreSQL
+  - system
+  - proyecto Fénix
+  - product
+  - Fénix
+  - María López
+  - person
+  - uses
+  - La arquitectura de Acme usa PostgreSQL como único servicio de datos
+  - arquitectura de Acme
+  - PostgreSQL como único servicio de datos
+  - El proyecto Fénix, liderado por María López, centraliza la ingesta
+  - is_led_by
+  - centralizes
+  - la ingesta
+  missing_tags: []
+  missing_graph_terms: []
+  forbidden_graph_terms_present: []
+  passed: true
+- case_id: quality-acme-invoice-es
+  document_id: acme-invoice-nif-es
+  extraction_attempted: true
+  discarded: false
+  discard_stage: null
+  tags: [sales]
+  graph_terms:
+  - Factura F-2024-118
+  - document
+  - F-2024-118
+  - Globex
+  - org
+  - belongs_to
+  - La factura F-2024-118 asciende a 3.400 €
+  - factura F-2024-118
+  - amounts_to
+  - 3.400 €
+  - El NIF del cliente Globex es B-12345678
+  - cliente Globex
+  - has_nif
+  - B-12345678
+  missing_tags: []
+  missing_graph_terms: []
+  forbidden_graph_terms_present: []
+  passed: true
+- case_id: quality-acme-payroll-es
+  document_id: acme-payroll-bands-es
+  extraction_attempted: true
+  discarded: false
+  discard_stage: null
+  tags: [hr, payroll]
+  graph_terms:
+  - Bandas salariales 2024
+  - document
+  - dirección
+  - concept
+  - ingeniería
+  - contains
+  - 'Bandas salariales 2024: dirección 90.000–120.000 €'
+  - bandas salariales 2024
+  - includes
+  - dirección 90.000–120.000 €
+  - 'Bandas salariales 2024: ingeniería 45.000–70.000 €'
+  - ingeniería 45.000–70.000 €
+  - Documento sensible de nóminas
+  - documento
+  - is_sensitive
+  - sensible de nóminas
+  missing_tags: []
+  missing_graph_terms: []
+  forbidden_graph_terms_present: []
+  passed: true
+- case_id: quality-acme-scanned-vacation-es
+  document_id: acme-scanned-es
+  extraction_attempted: true
+  discarded: false
+  discard_stage: null
+  tags: [general]
+  graph_terms:
+  - política de vacaciones
+  - document
+  - política
+  - has_value
+  - 25 días laborables
+  - la política de vacaciones es de 25 días laborables al año
+  - is
+  - 25 días laborables al año
+  missing_tags: []
+  missing_graph_terms: []
+  forbidden_graph_terms_present: []
+  passed: true
+- case_id: quality-globex-overview-en
+  document_id: globex-overview-en
+  extraction_attempted: true
+  discarded: false
+  discard_stage: null
+  tags: [corp]
+  graph_terms:
+  - Globex Consulting
+  - org
+  - Andorra
+  - location
+  - located_in
+  - Globex Consulting is headquartered in Andorra
+  - is_headquartered_in
+  - Globex Consulting advises on digital transformation
+  - advises_on
+  - digital transformation
+  missing_tags: []
+  missing_graph_terms: []
+  forbidden_graph_terms_present: []
+  passed: true
+- case_id: quality-globex-contract-en
+  document_id: globex-contract-en
+  extraction_attempted: true
+  discarded: false
+  discard_stage: null
+  tags: [legal]
+  graph_terms:
+  - Globex
+  - org
+  - includes_clause
+  - 30-day termination notice
+  - Globex standard contracts include a 30-day termination notice
+  - Globex standard contracts
+  - include
+  - a 30-day termination notice
+  - Globex standard contracts include a confidentiality clause
+  - a confidentiality clause
+  missing_tags: []
+  missing_graph_terms: []
+  forbidden_graph_terms_present: []
+  passed: true
+- case_id: quality-globex-sla-table-en
+  document_id: globex-sla-table-en
+  extraction_attempted: false
+  discarded: false
+  discard_stage: null
+  tags: [legal]
+  graph_terms:
+  - 'Tier=Standard; Response: 2 business days; Penalty: none'
+  - 'Standard — Response: 2 business days'
+  - Standard
+  - Response
+  - 2 business days
+  - 'Standard — Penalty: none'
+  - Penalty
+  - none
+  - 'Tier=Priority; Response: 4 hours; Penalty: 5% credit'
+  - 'Priority — Response: 4 hours'
+  - Priority
+  - 4 hours
+  - 'Priority — Penalty: 5% credit'
+  - 5% credit
+  missing_tags: []
+  missing_graph_terms: []
+  forbidden_graph_terms_present: []
+  passed: true
+- case_id: quality-globex-personnel-es
+  document_id: globex-personnel-es
+  extraction_attempted: true
+  discarded: false
+  discard_stage: null
+  tags: [personnel]
+  graph_terms:
+  - Datos de personal
+  - document
+  - Documento sensible de personal
+  - contactos de emergencia
+  - concept
+  - reporte de evaluaciones
+  - contains
+  - 'Datos de personal: contactos de emergencia y evaluaciones'
+  - datos de personal
+  - includes
+  - contactos de emergencia y evaluaciones
+  missing_tags: []
+  missing_graph_terms: []
+  forbidden_graph_terms_present: []
+  passed: true

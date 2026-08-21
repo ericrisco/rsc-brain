@@ -1,6 +1,7 @@
 ---
 id: question
 version: v1
+role: hunting
 lang: es
 state: AWAITING_ANSWER
 placeholders: [person_name, question, magic_link]
