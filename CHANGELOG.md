@@ -11,6 +11,22 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- A generated first-admin password was tracked in this public repository. `brain init` writes
+  `<data_dir>/first-admin-credential` (mode 0600) when it generates one, the ingest data directory was
+  not ignored, and a `git add -A` committed the file on 2026-07-25; 39 generated document blobs
+  followed it in. Neither the gitleaks job — which scans the full history on every push — nor this
+  repository's own tracked-credential test recognised it: the test was written after AUDIT-116 to know
+  this product's *token* prefixes, and never learned the other credential format the same repository
+  defines. The file and the blobs are untracked, `data/` is ignored, gitleaks has a rule for the
+  format with the one already-published occurrence recorded by fingerprint, and the guard now checks
+  the credential by name (from the product's own constant), by content, by directory, and that the
+  directory is *ignored* rather than merely untracked — because untracking without ignoring is half a
+  fix that the next `git add -A` undoes. The value belongs to a local development database that no
+  longer exists and is not in use by any deployment; purging it from history needs a force-push and is
+  the repository owner's decision (AUDIT-142).
+
+### Security
+
 - Under `policy: source_tags` and `policy: manual` — the two ingestion policies that exist so that no
   model decides a document's classification — each **chunk's** tags were the topicalizer's decision
   floored by the source's declared tags, while only the document's tags came from the source. The
