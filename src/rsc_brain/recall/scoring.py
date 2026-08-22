@@ -1,10 +1,19 @@
 """Recall scoring (FR-3.2) — pure functions, no I/O.
 
 ``score = 0.55·similarity + 0.25·credibility + 0.10·freshness + 0.10·importance`` (weights from
-``ScoreWeights``), with ``freshness = exp(-Δdays / half_life)``. A claim with no date is treated
-as maximally fresh (1.0). ``half_life`` defaults to 365 days and may be overridden per topic: a
-fragment carrying a topic with an override uses the smallest matching half-life (fastest decay),
-so the most time-sensitive topic wins.
+``ScoreWeights``), with ``freshness = exp(-Δdays / half_life)``. ``half_life`` defaults to 365 days
+and may be overridden per topic: a fragment carrying a topic with an override uses the smallest
+matching half-life (fastest decay), so the most time-sensitive topic wins.
+
+**Freshness measures whether a fact still holds, not how long it has held (AUDIT-125).** A claim that
+is valid at ``as_of`` — no end date, or an end still in the future — is fully fresh however old it is;
+decay starts when the claim stops holding and measures how long ago that was. A claim with no dates at
+all is fully fresh too: an unknown boundary is not evidence of staleness.
+
+This used to decay from ``valid_from``, which was inert while no claim had dates (AUDIT-105) and
+became a penalty the moment they did: measured on the corpus, the currently-valid answer to a question
+ranked ninth of ten, below four undated documents, because it was the only candidate that knew when it
+started.
 """
 
 from __future__ import annotations
@@ -37,17 +46,20 @@ def resolve_half_life(
 
 def freshness_for(
     valid_from: date | None,
+    valid_to: date | None,
     as_of: date,
     tags: Sequence[str],
     *,
     default_days: int,
     by_topic: Mapping[str, int],
 ) -> float:
-    """Freshness of a fragment given its effective date and topics (no date ⇒ 1.0)."""
-    if valid_from is None:
+    """Freshness of a fragment: 1.0 while it holds, decaying from when it stopped (AUDIT-125)."""
+    if valid_to is None or valid_to > as_of:
+        # Still in force at `as_of` — or never bounded, or not yet begun, both of which the temporal
+        # filter decides on its own. Age is not staleness.
         return 1.0
     half_life = resolve_half_life(tags, default_days=default_days, by_topic=by_topic)
-    return freshness(float((as_of - valid_from).days), float(half_life))
+    return freshness(float((as_of - valid_to).days), float(half_life))
 
 
 def combined_score(
@@ -73,6 +85,7 @@ def score_fragment(
     credibility: float | None,
     importance: float | None,
     valid_from: date | None,
+    valid_to: date | None,
     as_of: date,
     tags: Sequence[str],
     weights: ScoreWeights,
@@ -82,7 +95,12 @@ def score_fragment(
     """Score one candidate fragment, applying neutral defaults for missing credibility/importance
     and per-topic freshness half-life."""
     fresh = freshness_for(
-        valid_from, as_of, tags, default_days=default_half_life_days, by_topic=half_life_by_topic
+        valid_from,
+        valid_to,
+        as_of,
+        tags,
+        default_days=default_half_life_days,
+        by_topic=half_life_by_topic,
     )
     return combined_score(
         similarity=similarity,
