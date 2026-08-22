@@ -1,7 +1,11 @@
-# Secret scanning (AUDIT-013 / R14). This config deliberately contains no rule, path, regex, literal
-# or commit allowlist. Current detector fixtures use a reasoned line-local `gitleaks:allow`; four
-# already-published occurrences use exact commit/path/rule/line fingerprints in `.gitleaksignore`.
-# The same value copied anywhere new therefore has no inherited exception.
+# Secret scanning (AUDIT-013 / R14). This config deliberately contains no ALLOWLIST — no path, regex,
+# literal or commit exception. Current detector fixtures use a reasoned line-local `gitleaks:allow`;
+# six already-published occurrences use exact commit/path/rule/line fingerprints in `.gitleaksignore`,
+# and `tests/unit/test_dependency_gates.py` pins that set, so a seventh cannot appear unremarked. The
+# same value copied anywhere new therefore has no inherited exception.
+#
+# It DOES contain detection rules, below: the default ruleset does not recognise this product's own
+# credential formats, which is how AUDIT-116 and AUDIT-142 both happened.
 
 title = "rsc-brain"
 

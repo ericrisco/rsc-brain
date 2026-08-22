@@ -244,7 +244,13 @@ Two things to read off this, and one not to:
 
   So: give the chat route a GPU where the qualified and as-of-a-date cases have to be right. Measured
   on one model over one 27-document corpus; the shape of the failure is what generalizes, not the
-  numbers.
+  numbers — and that now has a second data point rather than only an argument. Run against an
+  independent 11-document corpus in a different domain (marine manufacturing and a municipal office,
+  sharing no vocabulary with these two companies), the same route reports `retrieval_precision` 0.556
+  against 0.6 here, `correct_abstention_rate` 1.0, zero disclosures, and it loses the same kinds of
+  case: a dated fact, a table cell under a qualifier, a scanned date. Its swept threshold is **0.575**
+  where this corpus's is 0.335, which is the same lesson from the other side — the number does not
+  travel, and `python -m evals.gate_run calibrate --corpus DIR` is why it does not have to.
 - **Do not read the latency as hardware-independent.** The quality numbers are: the identical run with
   the model on Apple's `mps` device produced the same six failing cases and the same metrics to four
   decimals. The latency is not.
