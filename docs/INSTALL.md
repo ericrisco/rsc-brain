@@ -134,12 +134,46 @@ leaving an effective similarity floor of `0.230`, while pure gibberish scored `0
 against the ingested corpus. Un-calibrated, the gate separates sense from nonsense by hundredths on a
 quantity whose noise is tenths.
 
-τ is therefore **per-install**, not a constant:
+τ is therefore **per-install**, not a constant.
+
+**Two of the three commands below inspect; one measures.** Being clear about which is which matters,
+because an operator can run the first two to completion and be exactly as uncalibrated as before:
 
 ```bash
-brain eval --golden /path/to/your-golden.yaml        # what your set contains
-brain calibrate --golden /path/to/your-golden.yaml   # the set + the current default
+brain eval --golden /path/to/your-golden.yaml        # INSPECTS: what your set contains
+brain calibrate --golden /path/to/your-golden.yaml   # INSPECTS: your set + WHICH threshold governs
 ```
+
+`brain eval` reports the composition of your set — how many cases, in which families, how many must
+find and how many must abstain. `brain calibrate` reports that plus **which** threshold your
+configuration actually uses: with the reranker enabled since AUDIT-085 that is `recall.tau_rerank`
+over the reranker's own scale, not the blended `recall.tau`, and the two are different quantities.
+Neither command runs a query, and neither computes a threshold. They tell you what you have and which
+number governs; they do not produce the number.
+
+What produces it is a sweep against your ingested knowledge, which needs a source checkout of this
+repository and a corpus directory of your own:
+
+```bash
+uv run python -m evals.gate_run setup     --corpus /path/to/your-corpus
+uv run python -m evals.gate_run ingest    --corpus /path/to/your-corpus
+uv run python -m evals.gate_run calibrate --corpus /path/to/your-corpus   # MEASURES: sweeps τ
+uv run python -m evals.gate_run measure   --corpus /path/to/your-corpus   # MEASURES: G2 and G4
+```
+
+A corpus directory holds `documents.yaml`, `golden.yaml`, `users.yaml`, `taxonomy.yaml`,
+`contradictions.yaml` and `rerank_calibration.yaml`; `evals/` in this repository is the reference set
+to copy and replace. A directory missing any of them is refused up front, naming the file. **This is
+also how you check the published gate numbers against your own knowledge** rather than taking the
+shape of the maintainer's failures on trust — every number in
+[configuration.md](reference/configuration.md) was measured over 27 fictional documents, and the same
+code path will measure yours.
+
+Keep the set you *calibrate* on separate from the set you *score* on. A threshold fitted on the cases
+you then quote inflates them; measured on this product's own corpus, a fitted sweep suggested 0.085
+where an honest one suggested 0.325, and reported 0.833 retrieval precision where the honest threshold
+reports 0.667. `rerank_calibration.yaml` is the calibration set for exactly this reason, and the sweep
+prints `held_out: false` when the two overlap.
 
 The calibration set is a YAML file with a `cases` list, each case a mapping carrying at least
 `family` and `must_find`. A set the product cannot use is refused with the reason, naming the file —
@@ -158,8 +192,9 @@ Resolution order, because it used to be the other way round and the difference w
 
 Every run reports the `path` it read, so you can always tell which of the three you got.
 
-Until you have done this, treat every `found: true` as unverified: the system will answer questions
-whose subject it has never seen, from knowledge that is credible but irrelevant.
+Until you have run the **sweep** — not only the two inspection commands — treat every `found: true` as
+unverified: the system will answer questions whose subject it has never seen, from knowledge that is
+credible but irrelevant.
 
 ## Safer automation use
 

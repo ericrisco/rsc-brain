@@ -9,6 +9,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `evals/gate_run.py` takes `--corpus DIR`, so the success gates can be measured over knowledge the
+  maintainer has never seen, through the same code path that produced every published number. The run
+  state follows the corpus rather than the checkout, and an incomplete corpus directory is refused up
+  front naming the missing file. Until now the corpus path was the module's own directory: the only
+  people who could run the gates were the people who had written the corpus (AUDIT-138).
+
+### Changed
+
+- `docs/INSTALL.md` no longer presents `brain eval` and `brain calibrate` as the calibration
+  procedure. Both inspect — they report what a set contains and which threshold governs — and neither
+  runs a query or computes a value, which the runbook did not say while telling operators that until
+  they had "done this" every answer was unverified. It now labels the two inspection commands as such
+  and names the sweep that produces a number, with the corpus flag that makes it runnable on the
+  operator's own knowledge (AUDIT-137).
+
 ### Changed
 
 - The `recall.tau_rerank` sweep now calibrates on `evals/rerank_calibration.yaml`, a 24-case set held

@@ -18,6 +18,12 @@ service the API uses, so extraction is whatever the configured models actually p
 
 `setup` and `ingest` are idempotent: a document already present is reported as a duplicate and
 costs nothing, so an interrupted run resumes.
+
+Every phase takes `--corpus DIR` (AUDIT-138). Without it the instrument reads this repository's own
+corpus, which is what every published number refers to; with it, the same code path measures the same
+gates over knowledge the maintainer has never seen. That is the difference between "the shape of these
+failures generalizes" as a claim and as something an operator can check on their own documents. The
+run state is written inside the corpus directory, so two corpora never share a document map.
 """
 
 from __future__ import annotations
@@ -50,8 +56,19 @@ from rsc_brain.stores.age_graph_store import AgeGraphStore
 if TYPE_CHECKING:
     from rsc_brain.recall.reranker import Reranker
 
+#: This repository's own corpus — the one every published gate number refers to.
 EVALS = Path(__file__).resolve().parent
-STATE = EVALS / ".gate_run_state.json"
+#: Every file a corpus directory must hold before any phase can run. Checked up front, because the
+#: alternative is a traceback from the middle of ingestion after the principals already exist.
+REQUIRED_CORPUS_FILES = (
+    "documents.yaml",
+    "golden.yaml",
+    "users.yaml",
+    "taxonomy.yaml",
+    "contradictions.yaml",
+    "rerank_calibration.yaml",
+)
+_corpus_root = EVALS
 #: Each run generates the eval principals' password. It is never persisted and never reused: these
 #: principals exist to hold topic grants, and a literal here would be a credential in source (§3.10).
 _PRINCIPAL_SECRET = secrets.token_urlsafe(24)
@@ -72,18 +89,65 @@ class Principals:
     projects: dict[str, str]
 
 
+def corpus_root() -> Path:
+    """The directory every corpus file is read from — this repository's, unless `--corpus` moved it."""
+    return _corpus_root
+
+
+def use_corpus(directory: Path) -> Path:
+    """Aim the instrument at another corpus (AUDIT-138), or refuse with what is missing.
+
+    Every gate number this product publishes was measured over 27 fictional documents written by the
+    author, and the honest defence was that the SHAPE of the failures generalizes, not the numbers.
+    That defence was load-bearing because nobody else could run the instrument: the corpus path was
+    this module's own directory. A company installing this could not ask "does it abstain on OUR
+    documents?" with the measurement the maintainer quotes — which is the question that matters before
+    trusting it with a knowledge base.
+
+    Refuses before anything runs. A phase that discovers a missing file mid-ingestion has already
+    created principals and half a corpus, and the operator has to clean up after a tool that could
+    have told them in advance.
+    """
+    global _corpus_root
+    resolved = directory.expanduser().resolve()
+    if not resolved.is_dir():
+        raise SystemExit(f"--corpus {directory}: not a directory (resolved to {resolved})")
+    missing = [name for name in REQUIRED_CORPUS_FILES if not (resolved / name).is_file()]
+    if missing:
+        raise SystemExit(
+            f"--corpus {resolved}: missing {', '.join(missing)}. A corpus directory holds all of "
+            f"{', '.join(REQUIRED_CORPUS_FILES)} — see {EVALS} for the reference set. The gates are "
+            "measured over documents, principals, topics and cases together; a partial corpus would "
+            "produce a number that looks like the others and means something else."
+        )
+    _corpus_root = resolved
+    return resolved
+
+
+def state_path() -> Path:
+    """The corpus-id -> UUID map, kept INSIDE the corpus directory.
+
+    AUDIT-119 made this file load-bearing: measuring without it turns every provenance expectation
+    into a false failure. Once the instrument can be aimed elsewhere (AUDIT-138) the map also has to
+    follow the corpus, or measuring a second corpus would silently compare its case expectations
+    against the first one's UUIDs — the AUDIT-119 defect with an extra step.
+    """
+    return corpus_root() / ".gate_run_state.json"
+
+
 def _load[T](model: type[T], name: str) -> T:
     loaded = model.model_validate(  # type: ignore[attr-defined]
-        yaml.safe_load((EVALS / name).read_text(encoding="utf-8"))
+        yaml.safe_load((corpus_root() / name).read_text(encoding="utf-8"))
     )
     return cast("T", loaded)
 
 
 def _users() -> dict[str, dict[str, Any]]:
-    raw = yaml.safe_load((EVALS / "users.yaml").read_text(encoding="utf-8"))
+    path = corpus_root() / "users.yaml"
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     users = raw["users"]
     if not isinstance(users, dict):
-        raise TypeError("evals/users.yaml must define a users mapping")
+        raise TypeError(f"{path} must define a users mapping")
     return {str(name): dict(spec) for name, spec in users.items()}
 
 
@@ -757,7 +821,24 @@ def _families(outcomes: Sequence[Any]) -> dict[str, dict[str, int]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=("setup", "ingest", "measure", "g3", "calibrate", "all"))
+    parser.add_argument(
+        "--corpus",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help=(
+            "measure the gates over the corpus in DIR instead of this repository's own "
+            f"({', '.join(REQUIRED_CORPUS_FILES)}). The run state is written inside DIR, so two "
+            "corpora never share a document map. Omit it and nothing changes: the published numbers "
+            "all refer to the corpus shipped here."
+        ),
+    )
     args = parser.parse_args(argv)
+    if args.corpus is not None:
+        root = use_corpus(args.corpus)
+        # Printed, not inferred: AUDIT-081's rule. Which corpus produced a number is the first thing
+        # a reader of that number needs, and the second-cheapest way to lose it is silence.
+        print(f"corpus: {root}", flush=True)
 
     async def _run() -> int:
         # The state file carries project and document IDENTIFIERS only. Never a token: see AUDIT-116.
@@ -774,13 +855,14 @@ def main(argv: list[str] | None = None) -> int:
         if args.phase == "g3":
             # Scores the judge, so it needs neither the corpus nor the principals.
             return await _g3()
-        state: dict[str, Any] = json.loads(STATE.read_text()) if STATE.is_file() else {}
+        state_file = state_path()
+        state: dict[str, Any] = json.loads(state_file.read_text()) if state_file.is_file() else {}
         dependencies = runtime.build("cli")
         try:
             identity = IdentityService(dependencies.sessionmaker)
             principals = await _setup()
             state["projects"] = principals.projects
-            STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+            state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
             if args.phase == "setup":
                 print(
                     f"setup: {len(principals.projects)} projects, "
@@ -789,7 +871,7 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 if args.phase in {"ingest", "all"}:
                     state["documents"] = await _ingest(principals)
-                    STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+                    state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
                     held = await _approve_pending(dependencies, principals.projects)
                     print(f"approved {held} documents held at the D13 gate")
                 if args.phase in {"measure", "all"}:
@@ -801,7 +883,8 @@ def main(argv: list[str] | None = None) -> int:
                     if not documents:
                         raise SystemExit(
                             "no document map in "
-                            f"{STATE}: run the `ingest` phase in THIS checkout first. Measuring "
+                            f"{state_file}: run the `ingest` phase against THIS corpus first. "
+                            "Measuring "
                             "without it turns every provenance expectation into a false failure."
                         )
                     report, outcomes = await _measure(principals, documents)
