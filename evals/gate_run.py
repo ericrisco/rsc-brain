@@ -13,6 +13,7 @@ service the API uses, so extraction is whatever the configured models actually p
     uv run python -m evals.gate_run ingest    # the 27-document corpus, real models
     uv run python -m evals.gate_run measure   # the 47 golden cases -> G2/G4
     uv run python -m evals.gate_run g3        # the 32 contradiction pairs -> G3
+    uv run python -m evals.gate_run calibrate # sweep tau_rerank on the CONFIGURED reranker
 
 `setup` and `ingest` are idempotent: a document already present is reported as a duplicate and
 costs nothing, so an interrupted run resumes.
@@ -36,6 +37,7 @@ from evals.metrics import CaseOutcome, EvalReport, compute_eval_metrics
 from evals.runner import eval_case_from_golden, observe
 from evals.schema import Corpus, Golden, Taxonomy
 from rsc_brain import runtime
+from rsc_brain.config.models import RerankerKind
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.identity.sessions import membership_for
 from rsc_brain.mcp.auth import authenticate
@@ -341,6 +343,82 @@ def _as_markdown(document: Any) -> str:
     return f"# {document.id}\n\n{body}\n"
 
 
+async def _calibrate(principals: Principals) -> int:
+    """Sweep `recall.tau_rerank` on the configured reranker's own scale (AUDIT-132).
+
+    The advice AUDIT-131 could only give in prose — "set it explicitly for your model" — computed. A
+    cross-encoder puts an answer at 0.34 where a chat model puts it at 0.95, so the number has to come
+    from the model that will actually serve the install.
+    """
+    from evals.runner import calibrate_reranker_tau
+    from rsc_brain.ontology.recall import OntologyRecall
+    from rsc_brain.recall.reranker import LlmReranker, RerankApiReranker
+    from rsc_brain.recall.retriever import PgRetriever
+
+    golden = _load(Golden, "golden.yaml")
+    dependencies = runtime.build("cli")
+    try:
+        if not dependencies.reranker_enabled:
+            raise SystemExit(
+                "reranker.enabled is false: there is no reranker score to calibrate. The blended "
+                "path's threshold is recall.tau, and it was measured unable to meet G4."
+            )
+        reranker = (
+            RerankApiReranker(dependencies.gateway)
+            if dependencies.reranker_kind is RerankerKind.RERANK_API
+            else LlmReranker(dependencies.gateway)
+        )
+        # Candidates come from the real retriever with the reranker OFF, so the sweep sees the page
+        # the product would actually hand it rather than a hand-picked passage.
+        retriever = PgRetriever(
+            sessionmaker=dependencies.sessionmaker,
+            gateway=dependencies.gateway,
+            graph_store=AgeGraphStore(dependencies.sessionmaker),
+            config=dependencies.recall_config,
+            ontology=OntologyRecall(dependencies.sessionmaker),
+            reranker=None,
+        )
+
+        async def candidates(case: Any) -> list[str]:
+            scope = await authenticate(
+                dependencies.sessionmaker, f"Bearer {principals.tokens[case.user]}"
+            )
+            recalled = await do_recall(
+                retriever,
+                dependencies.sessionmaker,
+                scope,
+                query=case.question,
+                top_k=dependencies.recall_config.rerank_candidates,
+            )
+            return [fragment.text for fragment in recalled.fragments]
+
+        cases = [
+            eval_case_from_golden(case)
+            for case in golden.cases
+            if case.family in {"hit", "abstain", "qualifier"} and case.surface == "recall"
+        ]
+        tau = await calibrate_reranker_tau(cases, reranker, candidates)
+        current = dependencies.recall_config.tau_rerank
+        print(
+            json.dumps(
+                {
+                    "reranker_kind": dependencies.reranker_kind.value,
+                    "cases": len(cases),
+                    "suggested_tau_rerank": tau,
+                    "configured_tau_rerank": current,
+                },
+                indent=2,
+            )
+        )
+        print(
+            f"\nset recall.tau_rerank: {tau}   (configured: {current})"
+            + ("" if tau == current else "   <- they differ; the swept value is for THIS model")
+        )
+        return 0
+    finally:
+        await dependencies.dispose()
+
+
 async def _g3() -> int:
     """G3: the 32 ES/EN contradiction pairs through the production judge.
 
@@ -520,11 +598,21 @@ def _families(outcomes: Sequence[Any]) -> dict[str, dict[str, int]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("setup", "ingest", "measure", "g3", "all"))
+    parser.add_argument("phase", choices=("setup", "ingest", "measure", "g3", "calibrate", "all"))
     args = parser.parse_args(argv)
 
     async def _run() -> int:
         # The state file carries project and document IDENTIFIERS only. Never a token: see AUDIT-116.
+        if args.phase == "calibrate":
+            principals = await _setup()
+            try:
+                return await _calibrate(principals)
+            finally:
+                dependencies_for_revoke = runtime.build("cli")
+                try:
+                    await _revoke(IdentityService(dependencies_for_revoke.sessionmaker), principals)
+                finally:
+                    await dependencies_for_revoke.dispose()
         if args.phase == "g3":
             # Scores the judge, so it needs neither the corpus nor the principals.
             return await _g3()

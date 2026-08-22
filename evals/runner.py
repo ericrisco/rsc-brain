@@ -17,6 +17,7 @@ from typing import Literal
 from evals.metrics import CaseOutcome, EvalReport, calibrate_tau, compute_eval_metrics
 from evals.schema import EvidenceExpectation, ExpectedValidity, GoldenCase
 from rsc_brain.recall.interfaces import Fragment, RecallResult
+from rsc_brain.recall.reranker import Reranker
 from rsc_brain.recall.timeline import TimelineEntry
 
 
@@ -331,6 +332,38 @@ def _evidence_text(entry: Fragment | TimelineEntry) -> str:
         for value in (entry.text, entry.subject, entry.predicate, entry.object, entry.document_id)
         if value
     )
+
+
+async def calibrate_reranker_tau(
+    cases: Sequence[EvalCase],
+    reranker: Reranker,
+    candidates: Callable[[EvalCase], Awaitable[Sequence[str]]],
+) -> float:
+    """The τ that best separates answerable from unanswerable **on the reranker's own scale**.
+
+    AUDIT-132. `run_calibration` below sweeps the BLENDED similarity — the quantity measured unable to
+    meet G4, its populations overlapping by -0.032. Since AUDIT-085 abstention is decided by
+    `recall.tau_rerank` over the reranker's relevance score, and nothing could suggest a value for it.
+
+    AUDIT-131 made that a live trap: a cross-encoder puts an answer at 0.34 where a chat model puts it
+    at 0.95, so carrying a threshold between routes abstains from everything. "Set it explicitly for
+    your model" is correct advice and a poor tool; this is the tool.
+
+    A case contributes the best score its candidates achieved. An **unscored** candidate contributes
+    nothing rather than a zero: AUDIT-100's rule, and here a swept zero would drag the suggestion down
+    for every install.
+    """
+    samples: list[tuple[bool, float]] = []
+    for case in cases:
+        passages = list(await candidates(case))
+        if not passages:
+            continue
+        scores = await reranker.relevance(case.question, passages)
+        judged = [score for score in scores if score is not None]
+        if not judged:
+            continue
+        samples.append((case.must_find, max(judged)))
+    return calibrate_tau(samples)
 
 
 async def run_calibration(cases: Sequence[EvalCase], recall_fn: RecallFn) -> float:
