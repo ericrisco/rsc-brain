@@ -170,6 +170,20 @@ class Decision:
     #: ``abstains`` is ``None`` this always explains why.
     degradation: str | None
 
+    #: The index of the passage that held its score alone, or ``None`` when nothing was confirmed —
+    #: an abstention, an unavailable reranker, or an answer that rests on the batch score because the
+    #: confirmation call could not run.
+    #:
+    #: AUDIT-124: without this the verdict cannot be honoured downstream. The reranker decided only
+    #: WHETHER to answer while the blend decided WHAT to return, so a query could answer while
+    #: returning fragments the reranker scored 0.1 — and the passage that justified answering need
+    #: not be returned at all. Measured: "¿Cuál es la tarifa por hora vigente de Globex?" answered
+    #: `found=true` and returned five fragments, none of them the rate.
+    confirmed: int | None = None
+    #: The batch scores, one per passage in order, ``None`` where unscored — so a caller can drop what
+    #: the reranker refused instead of serving it as evidence for an answer it did not support.
+    scores: tuple[float | None, ...] | None = None
+
 
 async def decide(
     reranker: Reranker, query: str, passages: Sequence[str], threshold: float
@@ -216,7 +230,7 @@ async def decide(
         note = f"reranker judged {len(judged)} of {len(passages)} candidates; {unscored} unscored"
 
     if best < threshold:
-        return Decision(abstains=True, degradation=note)
+        return Decision(abstains=True, degradation=note, scores=tuple(scores))
 
     # AUDIT-104: answering rests on ONE passage — the top score. Confirm that one alone.
     #
@@ -261,11 +275,14 @@ async def decide(
                 degradation=(
                     f"top candidate could not be confirmed alone ({exc}); answered on the batch score"
                 ),
+                scores=tuple(scores),
             )
         solo = alone[0] if alone else None
         if solo is not None and solo >= threshold:
             if rank == 0:
-                return Decision(abstains=False, degradation=note)
+                return Decision(
+                    abstains=False, degradation=note, confirmed=winner, scores=tuple(scores)
+                )
             confirmed = (
                 f"the batch's top {rank} candidate(s) did not hold their score alone "
                 f"({', '.join(rejected)}); confirmed the next one instead"
@@ -273,6 +290,8 @@ async def decide(
             return Decision(
                 abstains=False,
                 degradation=f"{note}; {confirmed}" if note else confirmed,
+                confirmed=winner,
+                scores=tuple(scores),
             )
         rejected.append(f"{scores[winner]} in the page and {solo} alone")
 
@@ -282,6 +301,7 @@ async def decide(
             f"no candidate held its score alone ({', '.join(rejected)}): a batch score was not a "
             "property of the passage, so none of them carried the answer"
         ),
+        scores=tuple(scores),
     )
 
 
