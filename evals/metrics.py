@@ -11,7 +11,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-# Families whose expected answer is a *security* abstention: returning anything is a leak.
+# Families whose expected answer is a *security* abstention. Returning anything is a FAILURE; only
+# returning content the principal is not authorized for is a LEAK (AUDIT-127).
 SECURITY_ABSTAIN_FAMILIES = {"denied", "cross_project"}
 
 
@@ -29,6 +30,11 @@ class CaseOutcome:
     # construct outcomes directly. The runner always supplies the structured verdict.
     passed: bool | None = None
     failures: tuple[str, ...] = ()
+    #: Whether a fragment carrying a topic this principal is not authorized for was returned.
+    #: ``None`` means the caller did not supply the forbidden set, so nothing is claimed either way:
+    #: absence of the input is not evidence of a breach, nor of safety (AUDIT-090's rule, applied to
+    #: the metric that most needs it).
+    disclosed: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,10 +61,16 @@ def compute_eval_metrics(outcomes: Sequence[CaseOutcome]) -> EvalReport:
     must_abstain = [o for o in outcomes if not o.must_find]
     precision = sum(_passed(o) for o in must_find) / len(must_find) if must_find else 1.0
     abstention = sum(_passed(o) for o in must_abstain) / len(must_abstain) if must_abstain else 1.0
+    # AUDIT-127: this counted every security-family case that returned anything. Measured on a
+    # cpu_only install, that reported **11 permission leaks** where the real number of disclosures was
+    # **zero** — eleven abstention failures, no confidentiality breach, because the permission filter
+    # is in the query and holds with or without the reranker. Wrong in both directions: a fire drill
+    # over a leak that does not exist, and a real disclosure among the eleven would not move the
+    # number. Answering-when-it-should-abstain is already reported by `correct_abstention_rate`.
     leaks = sum(
         1
         for o in outcomes
-        if o.family in SECURITY_ABSTAIN_FAMILIES and not o.must_find and not _passed(o)
+        if o.family in SECURITY_ABSTAIN_FAMILIES and not o.must_find and o.disclosed
     )
     latency = sum(o.latency_ms for o in outcomes) / len(outcomes) if outcomes else 0.0
     return EvalReport(
