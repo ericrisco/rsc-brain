@@ -27,7 +27,7 @@ from rsc_brain.ontology.recall import OntologyRecall
 from rsc_brain.recall.gaps import register_gap
 from rsc_brain.recall.interfaces import Fragment, RecallResult
 from rsc_brain.recall.permissions import chunk_visibility_clause, sensitive_tags
-from rsc_brain.recall.reranker import Reranker, decide
+from rsc_brain.recall.reranker import Decision, Reranker, decide
 from rsc_brain.recall.scoring import score_fragment
 from rsc_brain.recall.temporal_intent import TemporalKind, TemporalMode, classify
 from rsc_brain.scope import ProjectScope
@@ -245,6 +245,7 @@ class PgRetriever:
         # regression: a G4 measurement cannot tell a judge that scored badly from one that never ran.
         verdict: bool | None = None
         degraded: str | None = None
+        decision: Decision | None = None
         if self._reranker is not None:
             page = scored[: self._config.rerank_candidates]
             decision = await decide(
@@ -259,13 +260,42 @@ class PgRetriever:
             await register_gap(self._sm, scope, query, topics=topics_hint or ())
             return RecallResult(found=False, gap_registered=True, degraded=degraded)
 
+        # AUDIT-124: honour the reranker's per-passage judgement in the PAYLOAD, not only in the
+        # verdict. It used to decide whether to answer while the blend decided what to return, so a
+        # query could answer `found=true` and hand back fragments the reranker had scored 0.1 —
+        # measured, with the passage that justified answering absent from the result entirely. The
+        # confirmed passage now leads, and a candidate the reranker refused is not served as evidence
+        # for an answer it did not support. Unscored candidates keep the blend's order: not judged is
+        # not the same as judged irrelevant (AUDIT-100).
+        answer = self._honour_the_verdict(scored, decision)
         # The page is cut HERE, after the temporal filter has removed what is not eligible (R23).
         return RecallResult(
             found=True,
-            fragments=self._assemble(scored[:top_k]),
+            fragments=self._assemble(answer[:top_k]),
             gap_registered=False,
             degraded=degraded,
         )
+
+    def _honour_the_verdict(
+        self, scored: list[tuple[Any, float]], decision: Decision | None
+    ) -> list[tuple[Any, float]]:
+        """Lead with what was confirmed; drop what the reranker judged below the threshold."""
+        if decision is None or decision.scores is None:
+            return scored
+        page = scored[: len(decision.scores)]
+        rest = scored[len(decision.scores) :]
+        threshold = self._config.tau_rerank
+        kept = [
+            candidate
+            for index, candidate in enumerate(page)
+            if (score := decision.scores[index]) is None or score >= threshold
+        ]
+        if decision.confirmed is not None and decision.confirmed < len(page):
+            winner = page[decision.confirmed]
+            kept = [winner, *(candidate for candidate in kept if candidate is not winner)]
+        # A page where the reranker refused everything cannot happen on an answer path, but if it did,
+        # returning nothing while saying `found` would be the worst of both: keep the blend's order.
+        return [*kept, *rest] if kept else scored
 
     # --- steps ---------------------------------------------------------------
 
