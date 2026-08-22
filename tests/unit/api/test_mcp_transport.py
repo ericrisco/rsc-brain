@@ -16,6 +16,17 @@ from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
 
 
+#: An `Accept` that genuinely excludes `text/event-stream`. Every test below that admits a request
+#: through the edge uses `406 Not Acceptable` as the sentinel for "the host/origin check let this
+#: through" — the request is a bare GET, not a real MCP session. That sentinel has to be requested
+#: explicitly rather than inherited from the HTTP client's default: mcp 1.x treated the client's
+#: default `Accept: */*` as *not* accepting event-streams and answered 406, while 2.0 honours the
+#: wildcard (which is what HTTP actually means) and opens the stream instead — so the same tests
+#: hung for as long as the stream stayed open. Naming the Accept header keeps these tests about
+#: what they are about, which is host and origin matching.
+_NOT_SSE = {"Accept": "application/json"}
+
+
 @pytest.fixture
 def app_no_db(gateway_factory: Callable[..., ModelGateway]) -> FastAPI:
     """Build the combined app without opening a database connection."""
@@ -129,7 +140,7 @@ async def test_mcp_allows_configured_public_host_and_rejects_attacker(
         async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
             allowed = await client.get(
                 "https://brain.example.com/mcp",
-                headers={"Origin": "https://brain.example.com"},
+                headers={"Origin": "https://brain.example.com", **_NOT_SSE},
             )
             blocked = await client.get(
                 "https://attacker.example/mcp",
@@ -180,11 +191,11 @@ async def test_mcp_normalizes_only_the_configured_default_port(
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
             normalized = await client.get(
-                f"{normalized_origin}/mcp", headers={"Origin": normalized_origin}
+                f"{normalized_origin}/mcp", headers={"Origin": normalized_origin, **_NOT_SSE}
             )
             explicit = await client.get(
                 f"{normalized_origin}/mcp",
-                headers={"Host": explicit_host, "Origin": configured_origin},
+                headers={"Host": explicit_host, "Origin": configured_origin, **_NOT_SSE},
             )
             blocked = await client.get(
                 f"{normalized_origin.split('://', 1)[0]}://brain.example.com:{wrong_port}/mcp",
@@ -206,7 +217,7 @@ async def test_mcp_punycode_origin_does_not_alias_a_different_ascii_host(
         async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
             allowed = await client.get(
                 f"{configured_origin}/mcp",
-                headers={"Origin": configured_origin},
+                headers={"Origin": configured_origin, **_NOT_SSE},
             )
             aliased = await client.get(
                 "https://fass.de/mcp",
@@ -228,6 +239,7 @@ async def test_mcp_host_and_origin_are_case_insensitive(
                 headers={
                     "Host": "Brain.Example.COM",
                     "Origin": "HTTPS://Brain.Example.COM",
+                    **_NOT_SSE,
                 },
             )
 
@@ -244,7 +256,7 @@ async def test_mcp_requires_the_exact_configured_nonstandard_port(
         async with httpx.AsyncClient(transport=transport, follow_redirects=False) as client:
             allowed = await client.get(
                 f"{configured_origin}/mcp",
-                headers={"Origin": configured_origin},
+                headers={"Origin": configured_origin, **_NOT_SSE},
             )
             blocked_origin = await client.get(
                 f"{configured_origin}/mcp",
