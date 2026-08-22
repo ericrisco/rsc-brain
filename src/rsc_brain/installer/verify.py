@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from rsc_brain.config.models import Capability, HardwareProfile
+from rsc_brain.config.models import Capability, HardwareProfile, RecallConfig, RerankerKind
 from rsc_brain.gateway.errors import GatewayError
 from rsc_brain.gateway.model_gateway import Message, ModelGateway
 from rsc_brain.stores.relational.migrations import schema_state
@@ -122,6 +122,38 @@ async def _check_database(sessionmaker: async_sessionmaker[AsyncSession]) -> Che
     return CheckResult("database", True, f"extensions present, {state.explain()}")
 
 
+def _check_rerank_threshold_is_calibrated(
+    kind: RerankerKind | None, *, reranker_enabled: bool, recall: RecallConfig | None
+) -> CheckResult | None:
+    """AUDIT-131: `tau_rerank`'s default was calibrated for the CHAT route, not this one.
+
+    Measured — `BAAI/bge-reranker-v2-m3` (568M) on **CPU**, 8 threads, ten passages: 0.19 s warm
+    against the chat reranker's 142-256 s on the same profile. So a `cpu_only` install *can* refuse
+    through this route, which is the answer to AUDIT-128's open question.
+
+    But the scale differs. The chat model puts an answer at 0.9-1.0; the cross-encoder put the same
+    answer at **0.34** and the qualifier sibling at 0.003 — better separation, lower absolute numbers.
+    An operator who switches `reranker.kind` and leaves `tau_rerank` at 0.5 gets an install that
+    abstains from everything: the mirror image of AUDIT-085, where the switch read as on and the
+    capability never ran.
+
+    Reported in the deep diagnostic only, for AUDIT-044's reason: readiness is a healthcheck, and a
+    configuration opinion must not restart working containers.
+    """
+    if kind is not RerankerKind.RERANK_API or not reranker_enabled:
+        return None
+    if recall is None or recall.tau_rerank != RecallConfig().tau_rerank:
+        return None
+    return CheckResult(
+        "rerank_threshold",
+        False,
+        "reranker.kind is rerank_api with the default recall.tau_rerank (0.5), which was calibrated "
+        "for the chat route where an answer scores 0.9-1.0. Measured on this route, the passage that "
+        "answers scored 0.34 and its qualifier sibling 0.003 — so 0.5 abstains from everything. Set "
+        "recall.tau_rerank explicitly for your reranker model.",
+    )
+
+
 def _check_reranker_fits_the_hardware(
     profile: HardwareProfile | None, reranker_enabled: bool
 ) -> CheckResult | None:
@@ -157,6 +189,8 @@ async def run_verify(
     probe_models: bool = False,
     hardware_profile: HardwareProfile | None = None,
     reranker_enabled: bool = False,
+    reranker_kind: RerankerKind | None = None,
+    recall: RecallConfig | None = None,
 ) -> VerifyReport:
     """Readiness: configuration and the local stores, with NO model invocation (R50).
 
@@ -178,6 +212,11 @@ async def run_verify(
         mismatch = _check_reranker_fits_the_hardware(hardware_profile, reranker_enabled)
         if mismatch is not None:
             checks.append(mismatch)
+        uncalibrated = _check_rerank_threshold_is_calibrated(
+            reranker_kind, reranker_enabled=reranker_enabled, recall=recall
+        )
+        if uncalibrated is not None:
+            checks.append(uncalibrated)
     if smoke is not None:
         try:
             ok, detail = await smoke()

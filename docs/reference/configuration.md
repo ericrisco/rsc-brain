@@ -118,6 +118,30 @@ unable to reach the abstention gate. The switch reads as on and the capability n
 `brain verify --probe-models` reports this combination as a failed check rather than leaving you to
 discover it.
 
+#### A cross-encoder can refuse on CPU — measured
+
+`reranker.kind: rerank_api` exists because of this measurement. `BAAI/bge-reranker-v2-m3` (568M
+parameters), on **CPU**, 8 threads, scoring the same ten passages the chat route was measured on:
+
+| route | 10-passage call |
+| --- | --- |
+| chat model on a `cpu_only` profile | **142–256 s** (against a 60 s timeout) |
+| cross-encoder on CPU | **0.84 s** cold, **0.19 s** warm (plus ~50 s one-off load) |
+
+And it discriminates better, not worse. Asked a question the corpus cannot answer, all ten passages
+scored 0.0–0.033. Asked about the standard 2023 SLA, the passage that answers scored **0.34** and the
+premium-SLA sibling **0.003** — the separation the chat route needed prompt v3 to approach.
+
+**The scale is different, and that matters more than the speed.** `recall.tau_rerank` defaults to 0.5,
+calibrated for a chat model that puts an answer at 0.9–1.0. On this route an answer scored 0.34, so
+leaving the default in place makes the install abstain from everything. Set `recall.tau_rerank`
+explicitly for your reranker model; `brain verify --probe-models` fails the `rerank_threshold` check
+until you do.
+
+This product does not yet run that measurement through its own `rerank_api` route end to end — it
+needs a rerank server (TEI, llama.cpp's `/v1/rerank`, or a hosted API). The model's CPU viability is
+established; the integration is not.
+
 #### What a `cpu_only` install actually delivers
 
 Measured on the 27-document evaluation corpus, 53 cases, `gemma4:12b` + `bge-m3`, with the reranker
