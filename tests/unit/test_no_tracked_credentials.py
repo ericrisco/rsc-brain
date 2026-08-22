@@ -151,7 +151,11 @@ def test_the_scanner_knows_the_generated_password_format() -> None:
         "happens when the scanner only knows somebody else's secrets"
     )
     pattern = re.compile(rules["rsc-brain-generated-password"]["regex"])
-    assert pattern.search("password: xj3Kd9_pQm2LrTn8Vb4Zs1Ay"), (
+    # Deliberately the lowest-entropy string that satisfies the rule's shape. A realistic-looking
+    # 24-character token here is itself flagged by the default `generic-api-key` rule — which is what
+    # happened on the first attempt, and would have needed an exception to keep a fixture that proves
+    # nothing this one does not.
+    assert pattern.search("password: aaaaaaaaaaaaaaaaaaaaaa"), (
         "the rule must match what it exists for"
     )
     assert not pattern.search("password: changeme"), "and not a documentation placeholder"
