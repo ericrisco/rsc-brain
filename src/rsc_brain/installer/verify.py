@@ -137,6 +137,11 @@ def _check_rerank_threshold_is_calibrated(
     abstains from everything: the mirror image of AUDIT-085, where the switch read as on and the
     capability never ran.
 
+    AUDIT-136: this check pushes the operator to sweep, and a sweep is where a fitted number is born.
+    So the guidance names the held-out calibration set and what fitting costs, measured. Telling
+    someone to calibrate without telling them what it does to the number they will quote is how the
+    product's own G4 came to be certified on the cases its threshold was fitted to.
+
     Reported in the deep diagnostic only, for AUDIT-044's reason: readiness is a healthcheck, and a
     configuration opinion must not restart working containers.
     """
@@ -150,7 +155,12 @@ def _check_rerank_threshold_is_calibrated(
         "reranker.kind is rerank_api with the default recall.tau_rerank (0.5), which was calibrated "
         "for the chat route where an answer scores 0.9-1.0. Measured on this route, the passage that "
         "answers scored 0.34 and its qualifier sibling 0.003 — so 0.5 abstains from everything. Set "
-        "recall.tau_rerank explicitly for your reranker model.",
+        "recall.tau_rerank explicitly for your reranker model: sweep it with `python -m "
+        "evals.gate_run calibrate`, which fits it on a calibration set held OUT from the cases the "
+        "gates are scored on. That distinction is not academic — AUDIT-136 measured 0.325 held out "
+        "against 0.085 fitted on the gate's own cases, and the fitted value reported 0.833 retrieval "
+        "precision where the honest one reports 0.667. A threshold fitted on the cases you then quote "
+        "inflates them, so if you sweep on your evaluation set, say so wherever you quote the number.",
     )
 
 

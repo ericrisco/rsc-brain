@@ -7,7 +7,7 @@ company data.
 ## Current corpus
 
 `documents.yaml` is the source for two fictional organizations and their source documents.
-`taxonomy.yaml` defines project-local topics and sensitivities. `golden.yaml` contains 47 recall
+`taxonomy.yaml` defines project-local topics and sensitivities. `golden.yaml` contains 53 recall
 cases. Those six `injection`-family queries are recall-side abstention checks; they do not exercise
 the ingestion model boundary. `prompt_injection.yaml` separately contains 10 executable adversarial
 ingestion cases for topicalization, extraction, and contradiction judging.
@@ -15,15 +15,38 @@ ingestion cases for topicalization, extraction, and contradiction judging.
 | Family | Cases | Purpose |
 |---|---:|---|
 | `hit` | 12 | Relevant knowledge should be returned. |
-| `abstain` | 5 | Unsupported questions should return no answer. |
+| `abstain` | 5 | Unsupported questions should return no answer. **This family is gate G4.** |
+| `qualifier` | 6 | A sibling fact under a different qualifier must not be served as the answer. |
 | `denied` | 6 | Topic-hidden knowledge must not leak. |
 | `cross_project` | 5 | Another project's knowledge must not leak. |
 | `exact_id` | 4 | Exact identifiers remain retrievable. |
 | `temporal` | 9 | Current and historical intent select the correct validity interval. |
 | `injection` | 6 | Instructions embedded in documents remain untrusted data. |
 
-Of the 47 cases, 24 must find knowledge and 23 must abstain. `contradictions.yaml` supplies
-contradiction cases for the living-graph evaluator.
+Of the 53 cases, 30 must find knowledge and 23 must abstain; 52 are scored through recall and one
+through the timeline surface. `contradictions.yaml` supplies contradiction cases for the living-graph
+evaluator.
+
+## The calibration set is not the exam
+
+`rerank_calibration.yaml` holds the 24 cases the `recall.tau_rerank` sweep may fit on, and **nothing
+scores them**. They exist because a threshold decides abstention, abstention is gate G4, and the sweep
+used to draw from `golden.yaml` — so G4 was reported over exactly the cases its threshold had been
+fitted to (AUDIT-136). The two sets are disjoint by id, by question, and by reworded near-duplicate;
+`holdout.py` computes that from the two files and `validate.py` fails if it stops being true, so the
+overlap cannot come back silently.
+
+Measured, on `BAAI/bge-reranker-v2-m3` over this corpus: the held-out sweep suggests **0.325** where
+one fitted on the gate's own cases suggested **0.085**, and the honest threshold reports 0.667
+retrieval precision where the fitted one reported 0.833. G4 itself stayed 5/5 — what fitting concealed
+was the recall it cost, not the abstention it bought.
+
+Two limits a split does not fix, and which the sweep's output states every time: both sets run over the
+same 27 documents (a threshold has to be fitted on the distribution the install will serve), and one
+person wrote both. The calibration positives deliberately span golden's three shapes — plain lookup,
+table cell under a qualifier, dated fact — but the corpus holds only two temporal pairs and golden
+already mines them, so the dated calibration cases ask for boundary *dates* where golden asks for
+values. A fully representative held-out split needs a bigger corpus.
 
 Validate structure alone, or validate the complete fingerprint-bound foundational contract:
 
@@ -173,7 +196,7 @@ export RSC_BRAIN_DATABASE__DSN=postgresql+asyncpg://…  # a migrated database
 
 uv run python -m evals.gate_run setup     # both projects, taxonomy, sources, 4 principals + PATs
 uv run python -m evals.gate_run ingest    # the 27-document corpus through real models
-uv run python -m evals.gate_run measure   # the 47 golden cases -> G2/G3/G4
+uv run python -m evals.gate_run measure   # the 53 golden cases -> G2/G3/G4
 ```
 
 `setup` and `ingest` are resumable: an already-present document is reported as a duplicate and costs

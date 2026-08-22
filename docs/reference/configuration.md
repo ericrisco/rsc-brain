@@ -138,6 +138,12 @@ leaving the default in place makes the install abstain from everything. Set `rec
 explicitly for your reranker model; `brain verify --probe-models` fails the `rerank_threshold` check
 until you do.
 
+Get the number from a sweep, not from this page: `uv run python -m evals.gate_run calibrate` scores
+your reranker over `evals/rerank_calibration.yaml` and prints the threshold that best separates
+answerable from unanswerable **on your model's scale**. It also prints whether that calibration set is
+held out from the set your gates are scored on, and refuses to claim so when it is not. Carrying the
+0.325 measured below is better than carrying 0.5, and worse than sweeping your own.
+
 #### The whole route, measured end to end
 
 The integration is now measured, and not only the model. `BAAI/bge-reranker-v2-m3` served over a
@@ -147,37 +153,64 @@ all 53 golden cases, with the model **pinned to CPU**:
 
 | | chat route (`gemma4:12b`) | `rerank_api` (cross-encoder, CPU) | reranker off |
 | --- | --- | --- | --- |
-| per-call latency | 142–256 s on CPU | **0.182 s mean, 0.319 s max** | — |
-| finds what is there (`retrieval_precision`) | 1.0 | **0.833** | 0.967 |
-| abstains when it should (`correct_abstention_rate`) | 1.0 | **0.957** | 0.0 |
+| per-call latency | 142–256 s on CPU | **0.255 s mean** (3.3 s cold first call) | — |
+| finds what is there (`retrieval_precision`) | 1.0 | **0.667** | 0.967 |
+| abstains when it should (`correct_abstention_rate`) | 1.0 | **1.0** | 0.0 |
 | discloses nothing unauthorized (`permission_leaks`) | 0 | **0** | 0 |
-| resists an embedded instruction (`injection`) | 6/6 | **6/6** | 1/6 |
+| resists an embedded instruction (`injection`) | 6/6 | **5/6** | 1/6 |
 | refuses what is absent (`abstain`) | 5/5 | **5/5** | 0/5 |
 | answers present in the corpus (`hit`) | 12/12 | 11/12 | 12/12 |
-| serves a qualified sibling correctly (`qualifier`) | 6/6 | **4/6** | — |
+| serves a qualified sibling correctly (`qualifier`) | 6/6 | **1/6** | — |
 | answers as-of a date (`temporal`) | 9/9 | **6/9** | — |
 
-`recall.tau_rerank` was **swept on this model** rather than carried over: 0.085, against the chat
+`recall.tau_rerank` was **swept on this model** rather than carried over: **0.325**, against the chat
 route's 0.5. Leaving the chat route's threshold in place would have abstained from everything, which
 is the failure the section above warns about.
 
-**That sweep is not held out, and the comparison is not symmetric.** The threshold was fitted on 23 of
-these same 53 cases — including all five of the `abstain` family, which is exactly what the
-`abstain` row reports. The chat route's column used the *unswept* default (0.5). Fitting inflates the
-fitted families, so the cross-encoder's numbers are an optimistic estimate and the gap between the two
-routes is **at least** what the table shows, never smaller. The `calibrate` phase prints this
-disclosure with every threshold it suggests.
+**That threshold is held out, and the first version of it was not.** The sweep reads
+`evals/rerank_calibration.yaml` — 24 cases sharing no id, no question and no reworded near-duplicate
+with any of the 53 the table reports (`evals/holdout.py` computes that and `brain`'s content gate
+fails if it ever stops being true). Until AUDIT-136 the sweep drew from `golden.yaml` itself, so the
+threshold was fitted on the cases it was then scored over — totally so for `abstain`, which *is* gate
+G4. The two numbers are worth seeing side by side, because the difference is not small:
+
+| | fitted on the exam (τ=0.085) | held out (τ=0.325) |
+| --- | --- | --- |
+| `retrieval_precision` | 0.833 | **0.667** |
+| `correct_abstention_rate` | 0.957 | **1.0** |
+| `abstain` (gate G4) | 5/5 | **5/5** |
+| `qualifier` | 4/6 | **1/6** |
+| `temporal` | 6/9 | **6/9** |
+| `injection` | 6/6 | **5/6** |
+
+Read the third row first: **an honest threshold did not weaken G4 on this route.** What it removed was
+the recall the fitted one appeared to keep for free — three `qualifier` answers and `i1`, the
+injection case that has to *find* invoice F-2024-118 while ignoring an embedded instruction. At 0.325
+it abstains instead, which is a safe failure and still a failure. Fitting bought 0.166 of precision by
+having seen the exam; the price it hid was the last 4.3% of abstention.
+
+Two limits survive the split and are not fixed by it, so they travel with the number: both corpora run
+over the **same 27 documents** (a threshold has to be fitted on the score distribution the install
+will actually serve, so swapping the corpus would fit it to the wrong one), and the **same person
+wrote both**. The calibration set's difficulty profile is matched to golden's deliberately — plain
+lookups, table cells under a qualifier, and dated facts — but the corpus holds only two temporal pairs
+and golden already mines them, so the dated calibration cases ask for boundary *dates* where golden
+asks for values. A fully representative held-out split needs a bigger corpus. The `calibrate` phase
+prints all of this with every threshold it suggests, and says `held_out: false` if a corpus edit ever
+makes it untrue.
 
 Two things to read off this, and one not to:
 
 - **The route works, and it is three orders of magnitude cheaper.** 0.182 s against 142–256 s is the
   difference between a reranker a CPU install can run and one it cannot.
-- **It is not a drop-in replacement for the chat route**, and the reason is not tuning. It loses two
-  `qualifier` cases and three `temporal` ones. Scoring every candidate page by hand shows two distinct
-  failures, neither fixable by moving the threshold:
+- **It is not a drop-in replacement for the chat route**, and the reason is not tuning. At an honestly
+  chosen threshold it loses five `qualifier` cases and three `temporal` ones. Scoring every candidate
+  page by hand shows two distinct failures, neither fixable by moving the threshold:
 
   **The score distributions interleave.** A correct answer to a *dated or qualified* question scores
-  0.014–0.058, while the best passage for a question the corpus **cannot** answer scores up to 0.069:
+  0.014–0.058, while the best passage for a question the corpus **cannot** answer scores up to 0.069.
+  This is the measurement that explains the held-out threshold's `qualifier` collapse: at 0.325 every
+  one of these answers is below the line, and no lower value clears the unanswerable passage above it:
 
   ```
   0.0066 unanswerable   0.0081 unanswerable   0.0124 unanswerable   0.0143 ANSWER (missed)
@@ -211,8 +244,8 @@ vendor's server.
 
 Measured on the 27-document evaluation corpus, 53 cases, `gemma4:12b` + `bge-m3`, with the reranker
 off. Read this table with the one above it: **`reranker.kind: rerank_api` lifts the limitation this
-section describes.** A cross-encoder on the same CPU abstains at 0.957 and resists embedded
-instructions 6/6, so a `cpu_only` install can refuse after all. What follows is what `cpu_only`
+section describes.** A cross-encoder on the same CPU abstains at 1.0 and resists embedded
+instructions 5/6, so a `cpu_only` install can refuse after all. What follows is what `cpu_only`
 delivers with **no reranker at all**, which was the only `cpu_only` configuration this product could
 serve until that route was measured:
 
@@ -236,8 +269,9 @@ For a product whose promise is "says *I don't have that* and asks a human", that
 mode; it is the promise switched off.
 
 So on a `cpu_only` profile, do not leave the reranker off — set `reranker.kind: rerank_api` and point
-it at a served cross-encoder. That buys back refusal (0.0 → 0.957) and injection resistance (1/6 →
-6/6) at a cost in precision (0.967 → 0.833) concentrated in the `qualifier` and `temporal` families.
+it at a served cross-encoder. At a held-out threshold that buys back refusal (0.0 → 1.0) and injection
+resistance (1/6 → 5/6) at a cost in precision (0.967 → 0.667) concentrated in the `qualifier` and
+`temporal` families.
 Choose the reranker-off path only where finding is the whole requirement and a confidently wrong
 answer is acceptable; choose the chat route on a GPU where the qualified and as-of-a-date cases have
 to be right.

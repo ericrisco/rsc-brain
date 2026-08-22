@@ -11,9 +11,10 @@ service the API uses, so extraction is whatever the configured models actually p
 
     uv run python -m evals.gate_run setup     # projects, topics, sources, users, PATs
     uv run python -m evals.gate_run ingest    # the 27-document corpus, real models
-    uv run python -m evals.gate_run measure   # the 47 golden cases -> G2/G4
+    uv run python -m evals.gate_run measure   # the 53 golden cases -> G2/G4
     uv run python -m evals.gate_run g3        # the 32 contradiction pairs -> G3
-    uv run python -m evals.gate_run calibrate # sweep tau_rerank on the CONFIGURED reranker
+    uv run python -m evals.gate_run calibrate # sweep tau_rerank on the CONFIGURED reranker,
+                                              # over rerank_calibration.yaml (HELD OUT from golden)
 
 `setup` and `ingest` are idempotent: a document already present is reported as a duplicate and
 costs nothing, so an interrupted run resumes.
@@ -35,7 +36,7 @@ import yaml
 
 from evals.metrics import CaseOutcome, EvalReport, compute_eval_metrics
 from evals.runner import eval_case_from_golden, observe
-from evals.schema import Corpus, Golden, Taxonomy
+from evals.schema import Corpus, Golden, RerankCalibration, Taxonomy
 from rsc_brain import runtime
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.identity.sessions import membership_for
@@ -413,13 +414,22 @@ async def _calibrate(principals: Principals) -> int:
     The advice AUDIT-131 could only give in prose — "set it explicitly for your model" — computed. A
     cross-encoder puts an answer at 0.34 where a chat model puts it at 0.95, so the number has to come
     from the model that will actually serve the install.
+
+    AUDIT-136: the sweep's cases come from `rerank_calibration.yaml`, which is held out from
+    `golden.yaml`. They used to come from `golden.yaml` itself, which meant the threshold was fitted
+    on the cases the gates then reported — totally so for `abstain`, which IS gate G4. Whether the
+    two sets are actually disjoint is COMPUTED here from the two files (`evals.holdout`) and printed,
+    so a corpus edit that reintroduces the overlap says so at the point the number is produced
+    instead of quietly inheriting the old problem.
     """
-    from evals.runner import calibrate_reranker_tau
+    from evals.holdout import holdout_report
+    from evals.runner import EvalCase, calibrate_reranker_tau
     from rsc_brain.ontology.recall import OntologyRecall
     from rsc_brain.recall.reranker import reranker_for
     from rsc_brain.recall.retriever import PgRetriever
 
     golden = _load(Golden, "golden.yaml")
+    calibration = _load(RerankCalibration, "rerank_calibration.yaml")
     dependencies = runtime.build("cli")
     try:
         # The product's own selector, so a sweep can only ever calibrate the reranker the product
@@ -459,20 +469,27 @@ async def _calibrate(principals: Principals) -> int:
             )
             return [fragment.text for fragment in recalled.fragments]
 
-        # AUDIT-135: the sweep's cases come from `golden.yaml` — the SAME file `measure` scores. A
-        # threshold fitted here is therefore fitted on cases the gate then reports, so the sweep has
-        # to say which ones, at the point the number is produced. Silence here is how a fitted number
-        # gets read as a held-out one.
-        swept = [
-            case
-            for case in golden.cases
-            if case.family in {"hit", "abstain", "qualifier"} and case.surface == "recall"
+        # The sweep set, and the proof that it is not the exam. `holdout_report` compares ids,
+        # questions and reworded near-duplicates; `held_out` below is its verdict, never a literal.
+        swept = list(calibration.cases)
+        holdout = holdout_report(swept, golden.cases)
+        cases = [
+            EvalCase(
+                case_id=case.id,
+                family="calibration",
+                must_find=case.must_find,
+                question=case.question,
+                user=case.user,
+                project=case.project,
+            )
+            for case in swept
         ]
-        cases = [eval_case_from_golden(case) for case in swept]
         tau = await calibrate_reranker_tau(cases, reranker, candidates)
         current = dependencies.recall_config.tau_rerank
-        # `abstain` IS gate G4: `measure` prints "G4 (abstain family)" over exactly these cases.
-        g4_cases = sorted(case.id for case in swept if case.family == "abstain")
+        # `abstain` IS gate G4: `measure` prints "G4 (abstain family)" over exactly these cases. The
+        # list below is what a held-out sweep must leave EMPTY, computed rather than promised.
+        g4_ids = {case.id for case in golden.cases if case.family == "abstain"}
+        g4_cases = sorted(case.id for case in swept if case.id in g4_ids)
         print(
             json.dumps(
                 {
@@ -480,9 +497,16 @@ async def _calibrate(principals: Principals) -> int:
                     "cases": len(cases),
                     "suggested_tau_rerank": tau,
                     "configured_tau_rerank": current,
+                    "calibration_set": "evals/rerank_calibration.yaml",
                     "swept_case_ids": sorted(case.id for case in swept),
                     "g4_cases_inside_this_sweep": g4_cases,
-                    "held_out": False,
+                    "shared_case_ids": list(holdout.shared_ids),
+                    "shared_questions": list(holdout.shared_questions),
+                    "near_duplicate_questions": [
+                        [left, right, round(score, 4)]
+                        for left, right, score in holdout.near_duplicates
+                    ],
+                    "held_out": holdout.held_out,
                 },
                 indent=2,
             )
@@ -491,15 +515,11 @@ async def _calibrate(principals: Principals) -> int:
             f"\nset recall.tau_rerank: {tau}   (configured: {current})"
             + ("" if tau == current else "   <- they differ; the swept value is for THIS model")
         )
-        print(
-            f"\nNOT HELD OUT: this sweep fitted the threshold on {len(cases)} of the cases `measure` "
-            f"also scores, INCLUDING all {len(g4_cases)} of the `abstain` family "
-            f"({', '.join(g4_cases)}) that gate G4 is reported over. A G4 result produced with this "
-            "threshold is fitted, not held out — say so wherever the number is quoted. The bias runs "
-            "one way: fitting inflates the fitted families, so a comparison against a route using an "
-            "unswept default understates that route's advantage, never overstates it.",
-            flush=True,
-        )
+        # Not a hard failure. An operator sweeping their own corpus needs the number even when their
+        # two sets overlap, and AUDIT-135's lesson is that the fix for a fitted number is saying so
+        # where it is produced. What must never ship overlapping is THIS repo's pair of corpora, and
+        # a unit test — not a runtime exit — is what holds that line.
+        print("\n" + holdout.explain(), flush=True)
         return 0
     finally:
         await dependencies.dispose()
