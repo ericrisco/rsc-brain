@@ -31,6 +31,14 @@ EXPECTED_HISTORICAL_FIXTURES = {
     "tests/integration/test_console_hunting_skills.py:generic-api-key:124",
     "9cc99438b0211551ce27005822cccacd2c081560:tests/unit/test_doctor.py:generic-api-key:13",
     "9cc99438b0211551ce27005822cccacd2c081560:tests/unit/test_doctor.py:generic-api-key:30",
+    # AUDIT-142, and the only entry here that is a REAL credential rather than a test fixture: a
+    # generated first-admin password committed on 2026-07-25, public since, and invisible to both the
+    # scanner and this repository's own tracked-credential test until the `rsc-brain-generated-password`
+    # rule was added. Fingerprinted rather than allowlisted, so the same format anywhere new fails.
+    # The value belongs to a local development database that no longer exists; removing it from history
+    # needs a force-push and is the owner's decision, not a scanner's.
+    "82b03a93537f87d7acea4d12f5433798b53ac262:"
+    "data/first-admin-credential:rsc-brain-generated-password:2",
 }
 
 

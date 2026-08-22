@@ -66,3 +66,10 @@ out/
 # AUDIT-116: the gate run writes project and document ids here. Never a credential — but the file
 # is generated state either way, and generated state does not belong in the repository.
 evals/.gate_run_state.json
+
+# AUDIT-142: the ingest data directory is where the deployment keeps private state — parsed document
+# blobs and, when `brain init` generates one, the first-admin password. It was not ignored, so a
+# `git add -A` after any local run swept it in. That is how `data/first-admin-credential` came to be
+# tracked in a PUBLIC repository from 2026-07-25, and how 39 generated blobs followed it. Neither
+# gitleaks nor this repository's own tracked-credential test saw it.
+data/

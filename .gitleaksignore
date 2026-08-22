@@ -8,3 +8,10 @@ c7ae55a849855f9037f359f9cedd8d713cb0b970:tests/integration/test_console_hunting_
 # current lines gained a reasoned line-local gitleaks marker.
 9cc99438b0211551ce27005822cccacd2c081560:tests/unit/test_doctor.py:generic-api-key:13
 9cc99438b0211551ce27005822cccacd2c081560:tests/unit/test_doctor.py:generic-api-key:30
+# Reason: AUDIT-142. `data/first-admin-credential` — a generated first-admin password for
+# `admin@rsc-brain.local` — was committed on 2026-07-25 in 82b03a9 and has been public since. The new
+# `rsc-brain-generated-password` rule now recognises that format, and this fingerprint records the one
+# already-published occurrence so the rule fails on any NEW one. The value belongs to a local
+# development database that no longer exists; it is not in use by any deployment. Purging it from
+# history would need a force-push, which is the repository owner's decision and not a scanner's.
+82b03a93537f87d7acea4d12f5433798b53ac262:data/first-admin-credential:rsc-brain-generated-password:2
