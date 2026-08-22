@@ -190,3 +190,15 @@ Read the per-family breakdown, not only the aggregate: `correct_abstention_rate`
 `denied`, `cross_project` and `injection`. **G4 is the `abstain` family alone**, and the runner prints
 it separately for that reason. Abstention also depends on `reranker.enabled` — with the reranker off,
 the blended-threshold path answers cases it should refuse.
+
+G3 is its own phase, because it scores the **judge** rather than recall and therefore needs no corpus
+and no principals:
+
+```bash
+uv run python -m evals.gate_run g3        # the 32 ES/EN contradiction pairs
+```
+
+Read the stratified numbers, not the aggregate. AUDIT-076 exists because a single accuracy figure
+reported 30/32 (93.8%, passing) while hiding 12/14 cross-lingual (85.7%, failing) — and for a product
+scoping `spa+eng` the second number is the one that matters. A population that was never measured
+reports `null`, never `1.0` (AUDIT-082).

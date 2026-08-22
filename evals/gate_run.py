@@ -11,7 +11,8 @@ service the API uses, so extraction is whatever the configured models actually p
 
     uv run python -m evals.gate_run setup     # projects, topics, sources, users, PATs
     uv run python -m evals.gate_run ingest    # the 27-document corpus, real models
-    uv run python -m evals.gate_run measure   # the 47 golden cases -> G2/G3/G4
+    uv run python -m evals.gate_run measure   # the 47 golden cases -> G2/G4
+    uv run python -m evals.gate_run g3        # the 32 contradiction pairs -> G3
 
 `setup` and `ingest` are idempotent: a document already present is reported as a duplicate and
 costs nothing, so an interrupted run resumes.
@@ -316,6 +317,49 @@ def _as_markdown(document: Any) -> str:
     return f"# {document.id}\n\n{body}\n"
 
 
+async def _g3() -> int:
+    """G3: the 32 ES/EN contradiction pairs through the production judge.
+
+    Needs no corpus and no principals — it scores the judge, not recall — so it is its own phase and
+    runs against a configured gateway alone. Stratified by language on purpose: AUDIT-076 measured
+    30/32 aggregate hiding 12/14 cross-lingual, and for a product scoping `spa+eng` the second number
+    is the one that matters.
+    """
+    from evals.contradiction_eval import PairCase, run_contradiction_eval
+    from evals.schema import Contradictions
+    from rsc_brain.knowledge.judge import LlmJudge
+
+    pairs_file = _load(Contradictions, "contradictions.yaml")
+    pairs = [
+        PairCase(
+            id=pair.id,
+            a=pair.a,
+            b=pair.b,
+            expected=pair.verdict,
+            lang_a=pair.lang_a,
+            lang_b=pair.lang_b,
+        )
+        for pair in pairs_file.pairs
+    ]
+    dependencies = runtime.build("cli")
+    try:
+        report = await run_contradiction_eval(LlmJudge(dependencies.gateway), pairs)
+        print(json.dumps(report.as_dict(), indent=2))
+        cross = report.cross_lingual_accuracy
+        print(
+            f"\nG3 aggregate = {report.correct}/{report.total} "
+            f"({report.accuracy:.1%})   cross-lingual = "
+            + (
+                "not measured"
+                if cross is None
+                else f"{report.cross_lingual[0]}/{report.cross_lingual[1]} ({cross:.1%})"
+            )
+        )
+        return 0
+    finally:
+        await dependencies.dispose()
+
+
 async def _measure(
     principals: Principals, document_ids: dict[str, str]
 ) -> tuple[EvalReport, list[CaseOutcome]]:
@@ -421,11 +465,14 @@ def _families(outcomes: Sequence[Any]) -> dict[str, dict[str, int]]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("setup", "ingest", "measure", "all"))
+    parser.add_argument("phase", choices=("setup", "ingest", "measure", "g3", "all"))
     args = parser.parse_args(argv)
 
     async def _run() -> int:
         # The state file carries project and document IDENTIFIERS only. Never a token: see AUDIT-116.
+        if args.phase == "g3":
+            # Scores the judge, so it needs neither the corpus nor the principals.
+            return await _g3()
         state: dict[str, Any] = json.loads(STATE.read_text()) if STATE.is_file() else {}
         dependencies = runtime.build("cli")
         try:
