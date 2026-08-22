@@ -459,13 +459,20 @@ async def _calibrate(principals: Principals) -> int:
             )
             return [fragment.text for fragment in recalled.fragments]
 
-        cases = [
-            eval_case_from_golden(case)
+        # AUDIT-135: the sweep's cases come from `golden.yaml` — the SAME file `measure` scores. A
+        # threshold fitted here is therefore fitted on cases the gate then reports, so the sweep has
+        # to say which ones, at the point the number is produced. Silence here is how a fitted number
+        # gets read as a held-out one.
+        swept = [
+            case
             for case in golden.cases
             if case.family in {"hit", "abstain", "qualifier"} and case.surface == "recall"
         ]
+        cases = [eval_case_from_golden(case) for case in swept]
         tau = await calibrate_reranker_tau(cases, reranker, candidates)
         current = dependencies.recall_config.tau_rerank
+        # `abstain` IS gate G4: `measure` prints "G4 (abstain family)" over exactly these cases.
+        g4_cases = sorted(case.id for case in swept if case.family == "abstain")
         print(
             json.dumps(
                 {
@@ -473,6 +480,9 @@ async def _calibrate(principals: Principals) -> int:
                     "cases": len(cases),
                     "suggested_tau_rerank": tau,
                     "configured_tau_rerank": current,
+                    "swept_case_ids": sorted(case.id for case in swept),
+                    "g4_cases_inside_this_sweep": g4_cases,
+                    "held_out": False,
                 },
                 indent=2,
             )
@@ -480,6 +490,15 @@ async def _calibrate(principals: Principals) -> int:
         print(
             f"\nset recall.tau_rerank: {tau}   (configured: {current})"
             + ("" if tau == current else "   <- they differ; the swept value is for THIS model")
+        )
+        print(
+            f"\nNOT HELD OUT: this sweep fitted the threshold on {len(cases)} of the cases `measure` "
+            f"also scores, INCLUDING all {len(g4_cases)} of the `abstain` family "
+            f"({', '.join(g4_cases)}) that gate G4 is reported over. A G4 result produced with this "
+            "threshold is fitted, not held out — say so wherever the number is quoted. The bias runs "
+            "one way: fitting inflates the fitted families, so a comparison against a route using an "
+            "unswept default understates that route's advantage, never overstates it.",
+            flush=True,
         )
         return 0
     finally:
