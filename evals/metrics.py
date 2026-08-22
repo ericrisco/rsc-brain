@@ -114,11 +114,24 @@ def calibrate_tau(samples: Sequence[tuple[bool, float]], *, step: float = 0.01) 
     ``(must_find, max_score)`` from recall run with τ=0 (so every case yields a raw top score)."""
     if not samples:
         return 0.45
-    best_tau, best_f1 = 0.0, -1.0
     steps = round(1.0 / step)
-    for i in range(steps + 1):
-        tau = i * step
-        f1 = _abstention_f1(samples, tau)
-        if f1 > best_f1:
-            best_f1, best_tau = f1, tau
-    return round(best_tau, 4)
+    scored = [(i * step, _abstention_f1(samples, i * step)) for i in range(steps + 1)]
+    best_f1 = max(f1 for _, f1 in scored)
+    # AUDIT-132: among equally-perfect thresholds, take the middle of the WIDEST run rather than the
+    # first one found. Measured on the corpus: with prompt v3 the unanswerable pages score 0.0-0.1 and
+    # the answers 0.9-1.0, so every tau in (0.1, 0.9) is perfect — and the old rule returned 0.11, one
+    # noisy score away from wrong, while the configured 0.5 sits in the middle of the same gap and
+    # scores 53/53. A threshold hugging a population's edge is right about its sample and fragile
+    # about everything else.
+    best_runs: list[list[float]] = []
+    current: list[float] = []
+    for tau, f1 in scored:
+        if f1 == best_f1:
+            current.append(tau)
+        elif current:
+            best_runs.append(current)
+            current = []
+    if current:
+        best_runs.append(current)
+    widest = max(best_runs, key=len)
+    return round((widest[0] + widest[-1]) / 2.0, 4)

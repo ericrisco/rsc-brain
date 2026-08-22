@@ -468,20 +468,61 @@ def eval_command(
     emit_result(ctx, json_output, payload, human)
 
 
+def _governing_threshold() -> tuple[bool, str, float | None, str | None]:
+    """Which threshold decides abstention on THIS install, and its configured value.
+
+    AUDIT-132: `calibrate` used to print `default_tau: 0.45` unconditionally. That is `recall.tau`, the
+    blended path's threshold — and since AUDIT-085 an install with the reranker enabled decides
+    abstention on `recall.tau_rerank`, over a different quantity. The one surface an operator would
+    consult to pick a threshold named the one their configuration does not use.
+
+    A missing configuration is reported as unknown rather than raised: the command's first duty is to
+    validate the calibration set (AUDIT-080), and that must not depend on a loadable config.
+    """
+    try:
+        from rsc_brain.config import load_settings
+
+        settings = load_settings()
+    except Exception:
+        return False, "unknown (no loadable configuration)", None, None
+    if settings.reranker.enabled:
+        return True, "recall.tau_rerank", settings.recall.tau_rerank, settings.reranker.kind.value
+    return False, "recall.tau", settings.recall.tau, None
+
+
 def calibrate(
     ctx: typer.Context,
     json_output: bool = JSON_OPTION,
     golden: Path | None = GOLDEN_OPTION,
 ) -> None:
-    """Report the calibration set (τ is swept over recall scores by evals.runner.run_calibration;
-    a full run requires an ingested corpus + model)."""
+    """Report the calibration set and WHICH threshold governs this install.
+
+    AUDIT-132: this used to report `default_tau: 0.45` unconditionally. That is `recall.tau`, the
+    blended path's threshold — and since AUDIT-085 an install with the reranker enabled decides
+    abstention on `recall.tau_rerank` instead, over a different quantity. So the one surface an
+    operator would consult to choose a threshold named the threshold their configuration does not use,
+    and said nothing about the one it does.
+    """
+    # The set is validated FIRST: AUDIT-080 made a malformed calibration set a refusal, and that
+    # refusal must not depend on whether a configuration happens to be loadable.
     composition = _load_golden(golden)
+    reranked, governing, value, kind = _governing_threshold()
     payload = {
         "status": "ok",
         "golden": composition,
-        "default_tau": 0.45,
-        "note": "τ suggested by run_calibration over recall scores (needs ingested corpus)",
+        "governing_threshold": governing,
+        "configured_value": value,
+        "reranker_kind": kind,
+        "note": (
+            "run `python -m evals.gate_run calibrate` against an ingested corpus to sweep "
+            f"{governing} on this install's own reranker scale — a cross-encoder scores an answer "
+            "around 0.34 where a chat model scores 0.95, so the number is model-specific (AUDIT-131)."
+        ),
     }
     emit_result(
-        ctx, json_output, payload, f"calibrate: {composition['total']} cases; default τ=0.45"
+        ctx,
+        json_output,
+        payload,
+        f"calibrate: {composition['total']} cases; {governing} = {value}"
+        + (f" (reranker: {kind})" if reranked else " (reranker off)"),
     )

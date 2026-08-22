@@ -66,3 +66,39 @@ def test_calibrate_tau_finds_separating_threshold() -> None:
 
 def test_calibrate_tau_default_on_empty() -> None:
     assert calibrate_tau([]) == 0.45
+
+
+def test_calibrate_tau_picks_the_middle_of_the_gap_not_its_edge() -> None:
+    """AUDIT-132: among equally-perfect thresholds, choose the one furthest from either population.
+
+    Measured on the corpus: with the v3 prompt, unanswerable pages score 0.0-0.1 and answers 0.9-1.0,
+    so every τ in (0.1, 0.9) separates them perfectly. The sweep returned **0.11** — technically
+    optimal on the sample and one noisy score away from wrong, while the configured 0.5 (which scores
+    53/53) sits in the middle of the same gap.
+
+    A threshold hugging the edge of a population is a number that is right about the data it was given
+    and fragile about everything else.
+    """
+    samples = [(True, 0.9), (True, 0.95), (False, 0.05), (False, 0.1)]
+
+    tau = calibrate_tau(samples)
+
+    assert 0.4 < tau < 0.6, f"expected the middle of the 0.1-0.9 gap, got {tau}"
+
+
+def test_calibrate_tau_still_separates_a_narrow_gap() -> None:
+    """The cross-encoder's scale: answers at 0.34, siblings at 0.003 (AUDIT-131)."""
+    samples = [(True, 0.34), (True, 0.30), (False, 0.003), (False, 0.01)]
+
+    tau = calibrate_tau(samples)
+
+    assert 0.01 < tau < 0.30, f"a threshold inside the gap, got {tau}"
+
+
+def test_calibrate_tau_with_no_separating_threshold_still_answers() -> None:
+    """Overlapping populations — the blended path's measured state — must not crash the sweep."""
+    samples = [(True, 0.4), (False, 0.45), (True, 0.5), (False, 0.42)]
+
+    tau = calibrate_tau(samples)
+
+    assert 0.0 <= tau <= 1.0
