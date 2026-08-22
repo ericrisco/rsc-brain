@@ -108,7 +108,7 @@ persistence:
   appData: # Stored source documents — the originals (R39). Losing this loses every ingested file.
     size: 20Gi
     storageClass: ""
-  inbox: # Reserved watcher layout; no packaged 0.13.0 process consumes dropped files
+  inbox: # Reserved watcher layout; no packaged 0.14.0 process consumes dropped files
     size: 5Gi
     storageClass: ""
   modelCache: # Ollama / HF weights

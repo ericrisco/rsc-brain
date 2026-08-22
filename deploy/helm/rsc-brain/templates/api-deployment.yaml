@@ -55,7 +55,7 @@ spec:
           env:
             - name: RSC_BRAIN_INGEST__DATA_DIR
               # R39: active original-document store. The nested inbox mount is reserved layout only;
-              # no packaged 0.13.0 process starts a folder watcher.
+              # no packaged 0.14.0 process starts a folder watcher.
               value: /var/lib/rsc-brain/data
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

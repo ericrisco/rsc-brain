@@ -66,7 +66,7 @@ spec:
                 name: {{ include "rsc-brain.fullname" . }}-api
                 port:
                   number: 8080
-          # No 0.13.0 principal satisfies this API endpoint's operator capability. This ownership also
+          # No 0.14.0 principal satisfies this API endpoint's operator capability. This ownership also
           # intercepts the console product-metrics page at /metrics; both surfaces are unavailable.
           - path: /metrics
             pathType: Prefix

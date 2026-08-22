@@ -12,7 +12,7 @@ on a disclosure timeline before publishing details.
 
 rsc-brain is pre-1.0. Security fixes target `main` and the next release; older `0.x` tags do not
 receive backports. Confirm the running package with `brain --version` before reporting or applying a
-fix. The current documented release is `0.13.0`.
+fix. The current documented release is `0.14.0`.
 
 ## Security boundaries
 
@@ -26,7 +26,7 @@ fix. The current documented release is `0.13.0`.
   secrets, or an equivalent secrets backend; committed examples contain field names and placeholders
   only.
 - Route validators bound documented fields, arrays, pages, exports, ontology input, and time
-  windows. There is no global HTTP body limit in 0.13.0, and document upload does not enforce the
+  windows. There is no global HTTP body limit in 0.14.0, and document upload does not enforce the
   declared `limits.upload_bytes`; place a body ceiling at the trusted edge.
 - Backups include database state and stored source blobs. Restore validates the snapshot before
   database mutation, but blob copy does not remove files absent from the snapshot; restore into a

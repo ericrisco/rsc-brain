@@ -4,7 +4,7 @@ rsc-brain is a self-hosted company-memory service. It turns approved documents i
 permission-filtered knowledge fragments with provenance, credibility, and temporal state, then
 exposes them through MCP, a REST API, a command-line interface, and an administration console.
 
-Release **0.13.0** is **alpha software**. The project is pre-1.0, and interfaces, configuration, and
+Release **0.14.0** is **alpha software**. The project is pre-1.0, and interfaces, configuration, and
 deployment behavior can change between releases.
 
 ## What runs in this release
@@ -29,7 +29,7 @@ The supported source-based local path requires:
 
 ## Start the local API
 
-Run these commands from a clean release 0.13.0 checkout:
+Run these commands from a clean release 0.14.0 checkout:
 
 ```bash
 uv sync --frozen
@@ -51,7 +51,7 @@ curl --fail --silent http://127.0.0.1:8080/openapi.json | \
   .venv/bin/python -c 'import json, sys; d=json.load(sys.stdin); print(d["info"]["title"], d["info"]["version"])'
 ```
 
-Success is `rsc-brain 0.13.0`. The `brain verify` result must also report `"status": "ok"` with
+Success is `rsc-brain 0.14.0`. The `brain verify` result must also report `"status": "ok"` with
 passing `capabilities` and `database` checks. The complete, check-by-check path is in
 [Start a local rsc-brain API](docs/tutorials/getting-started.md).
 
@@ -64,10 +64,10 @@ passing `capabilities` and `database` checks. The complete, check-by-check path 
 - The repository's production Compose topology does not provision a model server and does not
   inject every required capability setting. Supply complete capability configuration and a
   reachable provider before using ingestion or recall in that topology.
-- The packaged reverse proxies do not route the public `/hunt/{token}` reply page in 0.13.0.
+- The packaged reverse proxies do not route the public `/hunt/{token}` reply page in 0.14.0.
   Configured SMTP or Slack hunts can send a link that reaches the console instead of the API; treat
   public hunt replies as unavailable on those targets.
-- Packaged edges route `/metrics` to the protected Prometheus endpoint. No 0.13.0 principal can
+- Packaged edges route `/metrics` to the protected Prometheus endpoint. No 0.14.0 principal can
   satisfy its operator capability, and this route also intercepts the console's product-metrics page
   at the same path. Both public surfaces are unavailable on the packaged targets.
 - REST upload does not currently enforce the declared `limits.upload_bytes` value. Apply a request-
@@ -75,7 +75,7 @@ passing `capabilities` and `database` checks. The complete, check-by-check path 
 - The source-based path above starts the REST and MCP service, not the Next.js console or the
   ingestion worker.
 - REST upload is the operative document transport. The repository contains watcher code and the
-  packaged layouts reserve an inbox volume, but no deployed process starts that watcher in 0.13.0;
+  packaged layouts reserve an inbox volume, but no deployed process starts that watcher in 0.14.0;
   dropping a file into the inbox does not enqueue it. Third-party connector integrations are also
   unavailable.
 - The packaged application volumes have no ownership initializer. Compose runs the application as
