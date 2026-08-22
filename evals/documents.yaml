@@ -1,4 +1,12 @@
 # Synthetic eval corpus (SPEC-02 E12.3) — the SOURCE of truth for the two fictional projects.
+#
+# AUDIT-140: a `source` name carries ONE tag set and ONE policy, because that is what a source row
+# holds. Three names here used to be shared by documents declaring different ones — `wiki`,
+# `hr-drive`, `legal-drive` — and the harness resolved that by taking the union, which gave every
+# document in the source its siblings' topics. Two documents became readable by principals this corpus
+# does not grant their topic to, and the gates reported zero permission leaks throughout because the
+# leak metric read the same widened tags (AUDIT-139). The names are now split by tag set and policy;
+# `evals/gate_run.py` refuses a corpus that shares one again.
 # `body` is the document content; `evals/generate_pdfs.py` renders each to a PDF (native, or a
 # rasterized "scanned" page with no text layer to force OCR). Deliberately includes broken
 # tables, scanned pages, and sensitive HR content so gates predict real data (PRD gap #36).
@@ -36,7 +44,7 @@ documents:
       liderado por María López, centraliza la ingesta.
   - id: acme-sla-2023-en
     project: acme
-    source: wiki
+    source: wiki-policy
     policy: source_tags
     tags: [engineering, general]
     kind: prose
@@ -47,7 +55,7 @@ documents:
       replacement policy takes effect at that 2024-01-01 boundary.
   - id: acme-sla-2024-en
     project: acme
-    source: wiki
+    source: wiki-policy
     policy: source_tags
     tags: [engineering, general]
     kind: prose
@@ -97,7 +105,7 @@ documents:
       confidential to HR.
   - id: acme-payroll-bands-es
     project: acme
-    source: hr-drive
+    source: payroll-drive
     policy: llm_review
     tags: [payroll, hr]
     kind: prose
@@ -206,7 +214,7 @@ documents:
       Globex standard contracts include a 30-day termination notice and a confidentiality clause.
   - id: globex-sla-table-en
     project: globex
-    source: legal-drive
+    source: sla-drive
     policy: source_tags
     tags: [legal, delivery]
     kind: table
@@ -217,7 +225,7 @@ documents:
       Priority | 4 hours | 5% credit
   - id: globex-rate-2022-en
     project: globex
-    source: legal-drive
+    source: rates-drive
     policy: source_tags
     tags: [corp]
     kind: prose
@@ -228,7 +236,7 @@ documents:
       replacement rate takes effect at that 2024-01-01 boundary.
   - id: globex-rate-2024-en
     project: globex
-    source: legal-drive
+    source: rates-drive
     policy: source_tags
     tags: [corp]
     kind: prose

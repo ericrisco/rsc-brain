@@ -9,6 +9,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Gate G2 — "discloses nothing unauthorized" — was measured by a predicate that could not fail. The
+  forbidden set was `sensitive_tags(project) - scope.allowed_topics`, computed from the same effective
+  tags the in-query filter had already consulted, so a document carrying a topic it should not carry was
+  admitted *by* that topic and the check then found nothing forbidden about it. It also ignored every
+  topic below the sensitivity-3 threshold. A disclosure is now judged by re-applying the product's own
+  visibility rule to what `evals/documents.yaml` **declares** each document to be, and `filter_breaches`
+  keeps the older question — did the SQL predicate itself return something it had no basis for —
+  separate, because a disclosure needs only a mis-tagged document and a perfectly correct filter.
+  Measured on the shipped corpus: **2 disclosures, 0 filter breaches**, where every published
+  measurement had reported zero leaks (AUDIT-139).
+- The two disclosures themselves. `evals/gate_run.py` built one source row per `(project, name)` with
+  the **union** of the tags of every document declaring that name, and the first document's policy, so
+  under `policy: source_tags` each document silently acquired its siblings' topics. Three sources were
+  affected, and `globex-contract-en` (declared `[legal]`) was readable by `dave`, who holds
+  `corp, delivery`, while `acme-eng-deploy-en` (declared `[engineering]`) was readable by `bob`, who
+  holds `general`. Source names are now split by tag set and policy, and both the ingest path and the
+  content gate refuse a corpus that shares one again (AUDIT-140).
+- Two golden cases were added, because the corrected metric had nothing to fire on: `d1`–`d6` all deny
+  a topic at sensitivity ≥ 3, so nothing asserted that a *low-sensitivity* grant restricts anything at
+  all. `d7` and `d8` ask `h9`'s and `h2`'s questions as principals the corpus does not grant the
+  answering document's topic to.
+
 ### Added
 
 - `evals/gate_run.py` takes `--corpus DIR`, so the success gates can be measured over knowledge the

@@ -30,11 +30,15 @@ class CaseOutcome:
     # construct outcomes directly. The runner always supplies the structured verdict.
     passed: bool | None = None
     failures: tuple[str, ...] = ()
-    #: Whether a fragment carrying a topic this principal is not authorized for was returned.
-    #: ``None`` means the caller did not supply the forbidden set, so nothing is claimed either way:
-    #: absence of the input is not evidence of a breach, nor of safety (AUDIT-090's rule, applied to
-    #: the metric that most needs it).
+    #: Whether a fragment this principal is not authorized for was returned, judged against what the
+    #: CORPUS declares the document to be (AUDIT-139). ``None`` means the caller did not supply the
+    #: ground truth, so nothing is claimed either way: absence of the input is not evidence of a
+    #: breach, nor of safety (AUDIT-090's rule, applied to the metric that most needs it).
     disclosed: bool | None = None
+    #: Whether the in-query filter itself returned a topic outside the grant — a harder failure than a
+    #: disclosure, and a different one: a disclosure needs only a mis-tagged document and a correct
+    #: filter. Kept apart so neither can be read as the other.
+    filter_breach: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +48,9 @@ class EvalReport:
     correct_abstention_rate: float
     permission_leaks: int
     avg_latency_ms: float
+    #: Cases where the authorization filter returned a topic outside the principal's grant. Distinct
+    #: from `permission_leaks`, which counts documents the corpus says the principal may not see.
+    filter_breaches: int = 0
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -51,6 +58,7 @@ class EvalReport:
             "retrieval_precision": round(self.retrieval_precision, 4),
             "correct_abstention_rate": round(self.correct_abstention_rate, 4),
             "permission_leaks": self.permission_leaks,
+            "filter_breaches": self.filter_breaches,
             "avg_latency_ms": round(self.avg_latency_ms, 2),
         }
 
@@ -67,17 +75,32 @@ def compute_eval_metrics(outcomes: Sequence[CaseOutcome]) -> EvalReport:
     # is in the query and holds with or without the reranker. Wrong in both directions: a fire drill
     # over a leak that does not exist, and a real disclosure among the eleven would not move the
     # number. Answering-when-it-should-abstain is already reported by `correct_abstention_rate`.
+    # AUDIT-139: `disclosed` is now judged against the corpus's DECLARED tags, so this counts
+    # documents the corpus says the principal may not see. It used to be judged against the effective
+    # tags the in-query filter had just consulted, which made it a tautology: a document carrying a
+    # topic it should not carry was admitted BY that topic, and the check then found nothing forbidden
+    # about it. Measured on the shipped corpus, `dave` (corp, delivery) read `globex-contract-en`
+    # declared `[legal]`, and `bob` (general) read two documents declared `[engineering]`, while this
+    # number said zero for all 53 cases.
+    #
+    # The family restriction stays: only a case that must abstain on SECURITY grounds is evidence of a
+    # confidentiality failure, and a hit case retrieving its own answer is not a leak.
     leaks = sum(
         1
         for o in outcomes
         if o.family in SECURITY_ABSTAIN_FAMILIES and not o.must_find and o.disclosed
     )
+    # Counted over EVERY case. A filter that admits an unauthorized topic is broken whatever family
+    # asked, and restricting the count to security families would hide it on the cases most likely to
+    # surface it.
+    breaches = sum(1 for o in outcomes if o.filter_breach)
     latency = sum(o.latency_ms for o in outcomes) / len(outcomes) if outcomes else 0.0
     return EvalReport(
         total=len(outcomes),
         retrieval_precision=precision,
         correct_abstention_rate=abstention,
         permission_leaks=leaks,
+        filter_breaches=breaches,
         avg_latency_ms=latency,
     )
 

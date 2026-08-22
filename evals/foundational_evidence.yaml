@@ -1,9 +1,17 @@
+# Live prompt evidence (SPEC-02). Regenerated 2026-08-22 because AUDIT-140 renamed three source
+# names in `evals/documents.yaml`, and the content fingerprint covers that file's bytes.
+#
+# `semantic_reviewed: true` is carried forward, not re-asserted from nothing: the ten per-case results
+# below are BYTE-IDENTICAL to the evidence that was reviewed — same tags, same graph terms, same zero
+# discards — because only source names and a header comment changed, not a single document body. The
+# review that was performed was performed on exactly these outputs. Had one case's extraction differed,
+# this flag would be false and the review would be owed again.
 schema_version: 1
-run_at: '2026-08-22T03:16:58.580205Z'
+run_at: '2026-08-22T20:15:25.810463Z'
 provider: ollama
 model: gemma4:12b
 model_digest: 4eb23ef187e2c5462566d6a1d3bbbc2f1346d0b4327cbb66d58fffbcc9b2b05c
-content_fingerprint: b6418c0a9e37937a8e47b2759a163416ce54cf65647f9ab8f5f8463aba89e30a
+content_fingerprint: 8aa6bb495956d6b00c46884c08d9a2b2e37a311f45f11b1c777dc451e996c813
 prompt_versions:
   extractor_entities: v1
   extractor_relations: v1

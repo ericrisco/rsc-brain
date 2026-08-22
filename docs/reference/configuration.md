@@ -156,12 +156,20 @@ all 53 golden cases, with the model **pinned to CPU**:
 | per-call latency | 142–256 s on CPU | **0.255 s mean** (3.3 s cold first call) | — |
 | finds what is there (`retrieval_precision`) | 1.0 | **0.667** | 0.967 |
 | abstains when it should (`correct_abstention_rate`) | 1.0 | **1.0** | 0.0 |
-| discloses nothing unauthorized (`permission_leaks`) | 0 | **0** | 0 |
+| discloses nothing unauthorized (`permission_leaks`) | see below | see below | see below |
 | resists an embedded instruction (`injection`) | 6/6 | **5/6** | 1/6 |
 | refuses what is absent (`abstain`) | 5/5 | **5/5** | 0/5 |
 | answers present in the corpus (`hit`) | 12/12 | 11/12 | 12/12 |
 | serves a qualified sibling correctly (`qualifier`) | 6/6 | **1/6** | — |
 | answers as-of a date (`temporal`) | 9/9 | **6/9** | — |
+
+> **The `permission_leaks` row was measured by a predicate that could not fail, and the quality rows
+> were measured over a corpus whose tags were wider than it declared.** Both are corrected below;
+> neither correction is folded into the table above, because re-publishing those numbers waits on the
+> product fix the correction uncovered (AUDIT-141). Read the table for the latency and the shape of
+> the recall trade-off, which are unaffected, and read the two paragraphs below for the security
+> number. Every quality figure in the `rerank_api` column was measured on 2026-08-22 against the
+> pre-correction tagging.
 
 `recall.tau_rerank` was **swept on this model** rather than carried over: **0.325**, against the chat
 route's 0.5. Leaving the chat route's threshold in place would have abstained from everything, which
@@ -239,6 +247,52 @@ Two things to read off this, and one not to:
 The server used was a thin cross-encoder wrapper written for this measurement, so what is established
 is the product's route against a real model over a real socket — not the performance of any particular
 vendor's server.
+
+#### What "zero permission leaks" was measuring
+
+`permission_leaks` is the whole of gate G2, and until AUDIT-139 it asked the authorization filter its
+own question:
+
+```
+forbidden = sensitive_tags(project) - scope.allowed_topics
+disclosed = any(fragment.tags & forbidden for fragment in returned)
+```
+
+Those are the effective tags the in-query filter had already consulted. A document carrying a topic it
+should not carry was admitted *through* that topic, so nothing looked forbidden about it — and topics
+below the sensitivity-3 threshold could never appear in the set at all. The number could only have
+been non-zero if the filter's SQL disagreed with itself.
+
+It is now judged by re-applying the product's own visibility rule to the topics the **evaluation
+corpus declares** for each document, which is the one ground truth the filter does not also hold.
+`filter_breaches` keeps the older question — did the SQL predicate itself return something it had no
+basis for — separate, because a disclosure needs only a mis-tagged document and a perfectly correct
+filter.
+
+Measured on the 27-document corpus, 2026-08-22, through the real authentication path:
+
+| | before AUDIT-139 | after |
+| --- | --- | --- |
+| `permission_leaks` | 0 | **2** |
+| `filter_breaches` | not reported | **0** |
+
+The filter was never wrong. Two documents were readable by principals the corpus does not grant their
+topic to: `globex-contract-en` (declared `[legal]`) by a principal holding `corp, delivery`, and
+`acme-eng-deploy-en` (declared `[engineering]`) by one holding `general`. Both had acquired extra
+topics on the way in.
+
+One cause was in the evaluation harness and is fixed (AUDIT-140: one source row was built from the
+union of every document that named it). **The other is in the product and is not fixed yet**
+(AUDIT-141): under `policy: source_tags` and `policy: manual` — the two policies that exist so a model
+does not decide classification — a document's own tags come from the source, but each *chunk's* tags
+are the topicalizer's decision floored by the source's. The visibility filter matches on chunk tags.
+The floor guarantees a model cannot make a chunk less visible; nothing stops it making one more
+visible. Observed directly in the database: document row `{legal}`, chunk row `{legal, corp,
+delivery}`.
+
+Until that is fixed, treat a `source_tags` or `manual` source as declaring a *minimum* audience rather
+than an exact one, and put anything whose audience must be exact behind a topic at or above the
+sensitivity threshold — the FR-4.14 veto is enforced in SQL and is not affected.
 
 #### What a `cpu_only` install actually delivers
 
