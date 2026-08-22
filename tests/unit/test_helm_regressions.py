@@ -144,7 +144,10 @@ def test_breaking_extra_env_contract_has_a_chart_version_and_migration_note() ->
     parity = (HELM / "PARITY.md").read_text(encoding="utf-8")
 
     assert chart["version"] == "0.14.0"
-    assert chart["appVersion"] == "0.13.0"
+    # The chart's own SemVer line is asserted literally on purpose — this test exists to pin the
+    # chart's breaking `extraEnv` contract at 0.14.0. `appVersion` is a different question and has
+    # its own test below: it must equal the application's version, which a literal here could only
+    # ever re-state.
     assert "## Upgrade from chart 0.13.x" in readme
     assert "top-level `extraEnv` to `console.extraEnv`" in readme
     assert "Chart 0.14.0" in values
@@ -152,3 +155,27 @@ def test_breaking_extra_env_contract_has_a_chart_version_and_migration_note() ->
     upgrade = _bash_block_after(readme, "## Upgrade from chart 0.13.x")
     assert "-f values.production.yaml" in upgrade
     assert "--reuse-values" not in upgrade
+
+
+def test_the_charts_appversion_cannot_drift_from_the_application() -> None:
+    """`appVersion` must equal the application's own version, derived rather than repeated.
+
+    `Chart.yaml` says it itself: "appVersion tracks the rsc-brain release the images ship with." A
+    chart that names a different release than the images it deploys is a chart that lies about what
+    an operator is running — and AUDIT-137/138 measured what that costs, because pairing a chart's
+    capability environment with an image published before that environment existed crash-loops the
+    API on `extra_forbidden`.
+
+    This used to be asserted as a literal (`== "0.13.0"`), which cannot catch that. A literal turns
+    every release into an edit, and the edit's natural form is "make the literal say whatever
+    Chart.yaml says" — which **hides** a drift instead of reporting it. Deriving it from
+    `rsc_brain.__version__` removes the chore and makes the failure mean something: the two really
+    disagree.
+    """
+    from rsc_brain import __version__
+
+    chart = yaml.safe_load((CHART / "Chart.yaml").read_text(encoding="utf-8"))
+    assert chart["appVersion"] == __version__, (
+        f"Chart.yaml appVersion is {chart['appVersion']!r} but the application is {__version__!r}. "
+        "Bump them together: the chart deploys published images and names the release they came from."
+    )
