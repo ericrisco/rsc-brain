@@ -161,6 +161,13 @@ all 53 golden cases, with the model **pinned to CPU**:
 route's 0.5. Leaving the chat route's threshold in place would have abstained from everything, which
 is the failure the section above warns about.
 
+**That sweep is not held out, and the comparison is not symmetric.** The threshold was fitted on 23 of
+these same 53 cases — including all five of the `abstain` family, which is exactly what the
+`abstain` row reports. The chat route's column used the *unswept* default (0.5). Fitting inflates the
+fitted families, so the cross-encoder's numbers are an optimistic estimate and the gap between the two
+routes is **at least** what the table shows, never smaller. The `calibrate` phase prints this
+disclosure with every threshold it suggests.
+
 Two things to read off this, and one not to:
 
 - **The route works, and it is three orders of magnitude cheaper.** 0.182 s against 142–256 s is the
