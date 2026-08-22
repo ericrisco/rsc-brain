@@ -109,6 +109,27 @@ class Golden(BaseModel):
     cases: list[GoldenCase]
 
 
+class RerankCalibrationCase(BaseModel):
+    """One case the `tau_rerank` sweep may fit on — and that nothing scores (AUDIT-136).
+
+    Carries no expectation field on purpose. A sweep needs a question, a principal to ask it as, and
+    whether an answer exists; anything more invites grading these cases, and a graded calibration case
+    is an evaluation case again, which is the overlap this corpus exists to remove.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    question: str
+    user: str
+    project: str
+    must_find: bool
+
+
+class RerankCalibration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    cases: list[RerankCalibrationCase]
+
+
 class ContradictionPair(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str

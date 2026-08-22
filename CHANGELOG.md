@@ -9,6 +9,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The `recall.tau_rerank` sweep now calibrates on `evals/rerank_calibration.yaml`, a 24-case set held
+  out from the 53 cases the gates score, instead of drawing from `golden.yaml` itself. Disjointness is
+  computed from the two corpora — id, question and reworded near-duplicate — and both the content gate
+  and the sweep's own output fail loudly when it stops holding. Measured on `BAAI/bge-reranker-v2-m3`:
+  the honest threshold is **0.325** against the **0.085** a sweep fitted on the gate's own cases
+  produced, and it reports 0.667 retrieval precision where the fitted one reported 0.833. Gate G4
+  stayed 5/5 either way, so what fitting concealed was the recall it cost. `docs/reference/`
+  `configuration.md` publishes both columns, and `brain verify --probe-models` now says what
+  calibrating does to the number the operator will quote (AUDIT-136).
+
 ## [0.14.0] - 2026-08-22
 
 ### Added

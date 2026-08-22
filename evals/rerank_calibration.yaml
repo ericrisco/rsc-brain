@@ -1,0 +1,84 @@
+# Calibration set for `recall.tau_rerank` — HELD OUT from `golden.yaml` (AUDIT-136).
+#
+# Why this file exists. `tau_rerank` decides abstention, abstention is gate G4, and until now the
+# sweep that chose the threshold drew its cases from `golden.yaml` — the same file the gates are
+# scored on. The overlap was total for the family that matters: all five `abstain` cases were inside
+# the sweep, so G4 reported over exactly the cases its threshold had been fitted to. AUDIT-135 made
+# that visible; visibility is not resolution. A fitted number cannot fail the way a held-out one can.
+#
+# What is held out here, precisely. The CASES are disjoint: no id and no question in this file
+# appears in `golden.yaml`, and `evals/holdout.py` proves it from the two files rather than asserting
+# it (a test fails if they ever meet, including on a reworded near-duplicate). The DOCUMENTS are
+# shared on purpose — a threshold has to be fitted on the score distribution the install will
+# actually serve, and swapping the corpus would fit it to a different one. So the guarantee is the
+# standard one a train/test split gives: the threshold never saw these questions' answers being
+# scored. It is not independence of authorship or of document distribution, and the sweep's output
+# says so.
+#
+# The difficulty profile is matched to golden's on purpose, and this is the part that bit first.
+# The first version of this file held only plain, undated, unqualified positives, and the sweep it
+# produced suggested tau=0.395 against the fitted 0.085 — a threshold that abstains from most of
+# golden's `temporal` and `qualifier` answers, because those score an order of magnitude lower than a
+# plain lookup. Held out is necessary and not sufficient: a calibration set that is EASIER than the
+# exam moves the threshold up and buys abstention with recall. So the positives below span the same
+# three shapes golden scores — plain lookup, table cell under a qualifier, and a dated fact — using
+# the cells and boundary dates golden leaves unmined.
+#
+# The corpus limits how far that can go. Twenty-seven documents hold exactly two temporal pairs (the
+# Acme SLA and the Globex day rate) and golden already asks nearly every question about them, so the
+# dated positives here ask for the BOUNDARY DATES rather than the values. That is the same passage at
+# a comparable score, not a comparable question. A corpus large enough for a fully representative
+# split would be a bigger corpus — recorded as the residual limit, not papered over.
+#
+# The negatives are deliberately harder than golden's. `golden.yaml`'s `abstain` family asks about
+# topics the corpus does not touch at all (revenue, competitors, headcount). Half the negatives here
+# have a lexically close distractor sitting in the corpus: an uptime guarantee next to an SLA in
+# hours, a CTO next to a named project lead, a Q4 meeting next to a Q3 one. A threshold fitted on
+# harder negatives errs toward abstaining, never toward answering — so if this set biases G4 at all,
+# it biases it against the product.
+#
+# Every principal below is granted the topic that holds its answer (see `users.yaml`); a positive
+# case whose answer the principal cannot see would be an unanswerable case wearing the wrong label
+# and would drag the suggested threshold down for every install.
+#
+# There is no `expected` field, by design. Nothing scores these cases — they only supply a
+# `must_find` label and a question, which is all a sweep needs. An expectation field here would
+# invite someone to grade them, and a graded calibration case is an evaluation case again.
+cases:
+  # ---- answerable: the answer is in the corpus and the principal may see it ----
+  - {id: cal-01, question: "In what year was Acme Corp founded?", user: alice, project: acme, must_find: true}
+  - {id: cal-02, question: "What CI system does the Acme deployment pipeline run on?", user: alice, project: acme, must_find: true}
+  - {id: cal-03, question: "¿En qué año se fundó Globex Consulting?", user: dave, project: globex, must_find: true}
+  - {id: cal-04, question: "How far in advance must Acme vacation be requested?", user: alice, project: acme, must_find: true}
+  - {id: cal-05, question: "What penalty does the Globex Priority tier carry?", user: erin, project: globex, must_find: true}
+  - {id: cal-06, question: "On what date does the Acme office move to a new building?", user: alice, project: acme, must_find: true}
+  - {id: cal-07, question: "How long does the Globex Delivery phase take?", user: dave, project: globex, must_find: true}
+  - {id: cal-08, question: "In which town is the Globex Q3 partner meeting held?", user: dave, project: globex, must_find: true}
+  - {id: cal-09, question: "Besides the termination notice, what clause do Globex standard contracts include?", user: erin, project: globex, must_find: true}
+  - {id: cal-10, question: "What limit was raised to fix the Acme connection-pool exhaustion?", user: alice, project: acme, must_find: true}
+
+  # ---- answerable, table cell under a qualifier: the shape golden's `qualifier` family scores ----
+  - {id: cal-18, question: "What penalty applies under the Globex Standard tier?", user: erin, project: globex, must_find: true}
+  - {id: cal-19, question: "Which customer is invoice F-2024-119 for?", user: alice, project: acme, must_find: true}
+
+  # ---- answerable, dated: the boundary dates golden's `temporal` family leaves unmined ----
+  - {id: cal-20, question: "From what date did the 12-hour Acme support SLA take effect?", user: alice, project: acme, must_find: true}
+  - {id: cal-21, question: "¿Desde qué fecha se aplica la tarifa de 120 EUR de Globex?", user: dave, project: globex, must_find: true}
+  - {id: cal-22, question: "Until what date was the 100 EUR Globex day rate in force?", user: dave, project: globex, must_find: true}
+
+  # ---- unanswerable: absent from the corpus, several with a close distractor present ----
+  - {id: cal-11, question: "How many offices does Acme Corp have worldwide?", user: alice, project: acme, must_find: false}
+  - {id: cal-12, question: "¿Qué certificación ISO tiene Globex Consulting?", user: dave, project: globex, must_find: false}
+  # distractor: acme-pricing-en states an SLA in hours, never an availability percentage
+  - {id: cal-13, question: "What uptime percentage does Acme Cloud guarantee?", user: alice, project: acme, must_find: false}
+  # distractor: acme-eng-arch-es names María López as a project lead, never an officer of the company
+  - {id: cal-14, question: "Who is the chief technology officer of Acme Corp?", user: alice, project: acme, must_find: false}
+  # distractor: globex-scanned-en dates the Q3 meeting; there is no Q4 meeting anywhere
+  - {id: cal-15, question: "In which city is the Globex Q4 partner meeting?", user: dave, project: globex, must_find: false}
+  - {id: cal-16, question: "¿Cuál es el límite de gastos de viaje en Acme?", user: alice, project: acme, must_find: false}
+  # distractor: acme-overview-en says the company builds developer tooling, never in what language
+  - {id: cal-17, question: "What programming language is Acme's developer tooling written in?", user: alice, project: acme, must_find: false}
+  # distractor: the SLA table has Standard and Priority tiers and no Enterprise tier at all
+  - {id: cal-23, question: "¿Qué penalización aplica el nivel Enterprise de Globex?", user: erin, project: globex, must_find: false}
+  # distractor: two dated Acme SLAs exist (24 hours, then 12); a 6-hour one never did
+  - {id: cal-24, question: "From what date does the 6-hour Acme support SLA apply?", user: alice, project: acme, must_find: false}

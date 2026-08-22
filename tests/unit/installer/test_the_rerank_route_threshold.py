@@ -32,6 +32,21 @@ def test_the_default_threshold_is_flagged_for_the_rerank_route() -> None:
     assert "0.34" in check.detail, "the measurement, so the operator can pick a number"
 
 
+def test_the_advice_to_calibrate_says_what_calibrating_does_to_the_number() -> None:
+    """AUDIT-136. This check is what sends an operator to sweep a threshold, and a sweep run over the
+    cases they then quote produces a fitted number that reads exactly like a held-out one. Measured on
+    the cross-encoder route: 0.325 held out against 0.085 fitted, and 0.667 retrieval precision
+    against the fitted run's 0.833. Guidance that omits that is guidance toward the same mistake."""
+    check = _check_rerank_threshold_is_calibrated(
+        RerankerKind.RERANK_API, reranker_enabled=True, recall=RecallConfig()
+    )
+
+    assert check is not None
+    assert "evals.gate_run calibrate" in check.detail, "name the tool, not just the advice"
+    assert "held OUT" in check.detail
+    assert "0.325" in check.detail and "0.085" in check.detail, "both numbers or the gap is a claim"
+
+
 def test_an_explicit_threshold_is_accepted() -> None:
     check = _check_rerank_threshold_is_calibrated(
         RerankerKind.RERANK_API, reranker_enabled=True, recall=RecallConfig(tau_rerank=0.1)

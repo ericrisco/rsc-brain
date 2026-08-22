@@ -18,6 +18,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from evals.holdout import holdout_report
 from evals.schema import (
     Contradictions,
     Corpus,
@@ -27,6 +28,7 @@ from evals.schema import (
     FoundationalStatus,
     Golden,
     PromptInjectionSuite,
+    RerankCalibration,
     Taxonomy,
 )
 from rsc_brain.ingest.prompt_injection import detect_prompt_injection
@@ -508,6 +510,47 @@ def check_golden(*, repo: Path = REPO) -> list[str]:
     return errors
 
 
+def check_rerank_calibration(*, repo: Path = REPO) -> list[str]:
+    """The `tau_rerank` sweep set must stay held out from the set the gates score (AUDIT-136).
+
+    A unit test asserts the same disjointness; this is the copy that runs wherever `evals.validate`
+    runs, so a corpus edit that reintroduces the overlap fails the content gate and not only pytest.
+    A sweep also needs both labels present — one label has nothing to separate — and enough of each
+    that the threshold is not decided by a single passage.
+    """
+    path = repo / "evals" / "rerank_calibration.yaml"
+    golden_path = repo / "evals" / "golden.yaml"
+    if not path.is_file():
+        return ["rerank calibration: missing evals/rerank_calibration.yaml"]
+    calibration = RerankCalibration(**yaml.safe_load(path.read_text(encoding="utf-8")))
+    errors: list[str] = []
+    positives = sum(1 for case in calibration.cases if case.must_find)
+    negatives = len(calibration.cases) - positives
+    if positives < 5 or negatives < 5:
+        errors.append(
+            f"rerank calibration: {positives} answerable / {negatives} unanswerable "
+            "(each needs >= 5; a sweep with one label has nothing to separate)"
+        )
+    if golden_path.is_file():
+        golden = Golden(**yaml.safe_load(golden_path.read_text(encoding="utf-8")))
+        report = holdout_report(calibration.cases, golden.cases)
+        if not report.held_out:
+            errors.append(f"rerank calibration: {report.explain()}")
+    users_path = repo / "evals" / "users.yaml"
+    if users_path.is_file():
+        users = yaml.safe_load(users_path.read_text(encoding="utf-8"))["users"]
+        for case in calibration.cases:
+            spec = users.get(case.user)
+            if spec is None:
+                errors.append(f"rerank calibration: {case.id} names unknown principal {case.user}")
+            elif spec["project"] != case.project:
+                errors.append(
+                    f"rerank calibration: {case.id} asks {case.user} "
+                    f"({spec['project']}) about {case.project}"
+                )
+    return errors
+
+
 def check_contradictions(*, repo: Path = REPO) -> list[str]:
     path = repo / "evals" / "contradictions.yaml"
     if not path.is_file():
@@ -557,6 +600,7 @@ def validate(*, repo: Path = REPO) -> list[str]:
         + check_corpus(repo=repo)
         + check_foundational_quality(repo=repo)
         + check_golden(repo=repo)
+        + check_rerank_calibration(repo=repo)
         + check_contradictions(repo=repo)
         + check_prompt_injection(repo=repo)
     )
