@@ -7,3 +7,15 @@ title = "rsc-brain"
 
 [extend]
 useDefault = true
+
+# AUDIT-142: the default rules do not recognise a generated first-admin password. It is written by
+# `rsc_brain.deploy.bootstrap.store_generated_credential` as a two-line file — `email:` then
+# `password: <token_urlsafe(24)>` — and one such file sat tracked in this PUBLIC repository from
+# 2026-07-25 past a scan that runs over the full history. AUDIT-116 taught the same lesson about this
+# product's token prefixes: a scanner that does not know your credential formats is a scanner for
+# somebody else's secrets, and this format is defined in this repository.
+[[rules]]
+id = "rsc-brain-generated-password"
+description = "A generated first-admin password, in the shape bootstrap writes it"
+regex = '(?im)^password:[ \t]*[A-Za-z0-9_-]{20,}[ \t]*$'
+tags = ["credential", "rsc-brain"]

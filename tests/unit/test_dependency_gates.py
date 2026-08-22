@@ -31,6 +31,20 @@ EXPECTED_HISTORICAL_FIXTURES = {
     "tests/integration/test_console_hunting_skills.py:generic-api-key:124",
     "9cc99438b0211551ce27005822cccacd2c081560:tests/unit/test_doctor.py:generic-api-key:13",
     "9cc99438b0211551ce27005822cccacd2c081560:tests/unit/test_doctor.py:generic-api-key:30",
+    # AUDIT-142, and the only entry here that is a REAL credential rather than a test fixture: a
+    # generated first-admin password committed on 2026-07-25, public since, and invisible to both the
+    # scanner and this repository's own tracked-credential test until the `rsc-brain-generated-password`
+    # rule was added. Fingerprinted rather than allowlisted, so the same format anywhere new fails.
+    # The value belongs to a local development database that no longer exists; removing it from history
+    # needs a force-push and is the owner's decision, not a scanner's.
+    "82b03a93537f87d7acea4d12f5433798b53ac262:"
+    "data/first-admin-credential:rsc-brain-generated-password:2",
+    # AUDIT-142's own fixture, in the abandoned branch that first carried it. Not a credential: a
+    # realistic-looking token invented to prove the new rule matches. Its commit is unreachable from
+    # any branch and still published, because GitHub keeps a closed PR's head ref — so an abandoned
+    # branch is not a rewritten one, and this is the entry that records that.
+    "2d393b1a4a66e945beb87259d83476900b86ac67:"
+    "tests/unit/test_no_tracked_credentials.py:generic-api-key:154",
 }
 
 
