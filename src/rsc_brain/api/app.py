@@ -34,7 +34,7 @@ from rsc_brain.ingest.service import IngestService
 from rsc_brain.mcp.server import build_mcp_server, normalize_mcp_security_headers
 from rsc_brain.ontology.ingest import OntologyIngest
 from rsc_brain.ontology.recall import OntologyRecall
-from rsc_brain.recall.reranker import LlmReranker, RerankApiReranker, Reranker
+from rsc_brain.recall.reranker import reranker_for
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import CrossProjectScopeError, ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
@@ -115,25 +115,10 @@ class ApiDeps:
             # install that has not opted in takes the SPEC-06 blended path with nothing added. The
             # capability's route was mandatory to configure and had no call site until now
             # (AUDIT-077); this is that call site.
-            reranker=_reranker_for(self.gateway, self.reranker_enabled, self.reranker_kind),
+            reranker=reranker_for(
+                self.gateway, enabled=self.reranker_enabled, kind=self.reranker_kind
+            ),
         )
-
-
-def _reranker_for(
-    gateway: ModelGateway, enabled: bool, kind: RerankerKind | None
-) -> Reranker | None:
-    """The configured reranker implementation, or None when the operator has not opted in.
-
-    AUDIT-130: two implementations of one seam. `chat` asks a chat model for JSON scores — the only
-    route for most of this product's life. `rerank_api` calls a real rerank endpoint, which is what a
-    cross-encoder speaks and what a `cpu_only` install would need to be able to refuse anything at all
-    (AUDIT-128). Default is `chat`, so an existing install keeps the behaviour it was measured with.
-    """
-    if not enabled:
-        return None
-    if kind is RerankerKind.RERANK_API:
-        return RerankApiReranker(gateway)
-    return LlmReranker(gateway)
 
 
 def _deps_from_config() -> tuple[ApiDeps, AsyncEngine]:

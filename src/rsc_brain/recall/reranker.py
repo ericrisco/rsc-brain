@@ -28,7 +28,7 @@ from typing import Protocol, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from rsc_brain.config.models import Capability
+from rsc_brain.config.models import Capability, RerankerKind
 from rsc_brain.gateway.errors import GatewayError
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.prompts import load_prompt
@@ -379,3 +379,30 @@ async def degradation_of(reranker: Reranker, query: str, passages: Sequence[str]
     except RerankerUnavailable as exc:
         return f"reranker unavailable, abstention fell back to the blended threshold: {exc}"
     return None
+
+
+def reranker_for(
+    gateway: ModelGateway, *, enabled: bool, kind: RerankerKind | None
+) -> Reranker | None:
+    """The configured reranker implementation, or ``None`` when the operator has not opted in.
+
+    AUDIT-130 gave this seam two implementations: ``chat`` asks a chat model for JSON scores — the only
+    route for most of this product's life — and ``rerank_api`` calls a real rerank endpoint, which is
+    what a cross-encoder speaks and what a ``cpu_only`` install would need to refuse anything at all
+    (AUDIT-128). The default stays ``chat`` so an existing install keeps the behaviour it was measured
+    with.
+
+    It lives here, beside both implementations, because two places were choosing and a third was not.
+    ``api/app.py`` honoured ``kind``; ``evals.gate_run._calibrate`` honoured it; and
+    ``evals.gate_run._measure`` — the function that produces the G2/G4 gate numbers — hardcoded
+    ``LlmReranker``. So an install configured for ``rerank_api`` could calibrate ``tau_rerank`` on its
+    cross-encoder's scale (which AUDIT-131 measured as a completely different scale: 0.34 where a chat
+    model says 0.95) and then have its gates measured by the chat route against that threshold. Not a
+    crash — a number that looks like a gate result. One selector, so the instrument cannot measure a
+    reranker the product would not serve.
+    """
+    if not enabled:
+        return None
+    if kind is RerankerKind.RERANK_API:
+        return RerankApiReranker(gateway)
+    return LlmReranker(gateway)
