@@ -39,6 +39,12 @@ EXPECTED_HISTORICAL_FIXTURES = {
     # needs a force-push and is the owner's decision, not a scanner's.
     "82b03a93537f87d7acea4d12f5433798b53ac262:"
     "data/first-admin-credential:rsc-brain-generated-password:2",
+    # AUDIT-142's own fixture, in the abandoned branch that first carried it. Not a credential: a
+    # realistic-looking token invented to prove the new rule matches. Its commit is unreachable from
+    # any branch and still published, because GitHub keeps a closed PR's head ref — so an abandoned
+    # branch is not a rewritten one, and this is the entry that records that.
+    "2d393b1a4a66e945beb87259d83476900b86ac67:"
+    "tests/unit/test_no_tracked_credentials.py:generic-api-key:154",
 }
 
 
