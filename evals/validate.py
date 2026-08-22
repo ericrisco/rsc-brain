@@ -59,6 +59,7 @@ REQUIRED_GOLDEN_FAMILIES = {
     "exact_id",
     "temporal",
     "injection",
+    "qualifier",
 }
 
 

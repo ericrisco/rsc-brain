@@ -26,6 +26,33 @@ cases:
   - {id: ab4, family: abstain, question: "What is Globex's cloud provider?", user: dave, project: globex, must_find: false}
   - {id: ab5, family: abstain, question: "What is Acme's marketing budget?", user: alice, project: acme, must_find: false}
 
+  # --- family: qualifier (a sibling fact under a different qualifier must not be the answer, AUDIT-122) ---
+  #
+  # Every case here has a near-twin in the corpus: same entity, same kind of fact, one word different.
+  # Measured before AUDIT-122, "Premium support customers receive a 4-hour SLA" scored 0.9 for a
+  # question about the STANDARD SLA — tied with the passage that answers it. A found/not-found check
+  # cannot see that, so each case names the document its answer must come from.
+  #
+  # `must_exclude` is used ONLY where the sibling lives in a DIFFERENT document. Measured while
+  # writing these: `qa1` asks for the Standard tier and the corpus returns the Priority row too —
+  # from the same table. That is the table being served faithfully, and excluding "4 hours" would
+  # have failed the product for it. Within one document the sibling arriving alongside is not an
+  # error; across documents, fetching it instead is.
+  - {id: qa1, family: qualifier, question: "What is the Globex Standard tier response time?", user: erin, project: globex, must_find: true, expected: "2 business days",
+     expected_evidence: [{must_include: ["2 business days"], document_id: globex-sla-table-en}]}
+  - {id: qa2, family: qualifier, question: "What is the Globex Priority tier response time?", user: erin, project: globex, must_find: true, expected: "4 hours",
+     expected_evidence: [{must_include: ["4 hours"], document_id: globex-sla-table-en}]}
+  - {id: qa3, family: qualifier, question: "¿Cuánto dura la fase de Discovery en Globex?", user: dave, project: globex, must_find: true, expected: "2 weeks",
+     expected_evidence: [{must_include: ["2 weeks"], document_id: globex-delivery-table-en}]}
+  - {id: qa4, family: qualifier, question: "Which Acme invoice is for Globex, and for how much?", user: alice, project: acme, must_find: true, expected: "F-2024-118, 3400 EUR",
+     expected_evidence: [{must_include: ["3400"], document_id: acme-invoice-table-en}]}
+  - {id: qa5, family: qualifier, question: "What is Acme's premium support SLA?", user: alice, project: acme, must_find: true, expected: "4-hour SLA", must_exclude: ["24 hours", "12 hours"],
+     expected_evidence: [{must_include: ["4-hour"], document_id: acme-pricing-en}]}
+  # Cross-lingual AND temporal AND a qualifier sibling at once: asked in Spanish, answered from an
+  # English source, with the superseded rate one word away.
+  - {id: qa6, family: qualifier, question: "¿Cuál es la tarifa por hora vigente de Globex?", user: dave, project: globex, must_find: true, expected: "120 EUR per hour", must_exclude: ["100 EUR"],
+     expected_evidence: [{must_include: ["120 EUR"], document_id: globex-rate-2024-en, expected_is_current: true}]}
+
   # --- family: denied (permission — general-only user asks about sensitive) ---
   - {id: d1, family: denied, question: "What are the 2024 salary bands at Acme?", user: bob, project: acme, must_find: false}
   - {id: d2, family: denied, question: "What did Jane Doe score in her performance review?", user: bob, project: acme, must_find: false}
@@ -61,7 +88,11 @@ cases:
         document_id: acme-sla-2024-en
         validity: {valid_from: 2024-01-01, valid_to: null}
         expected_is_current: true
-  - {id: t2, family: temporal, question: "What was the Acme support SLA in 2023?", user: alice, project: acme, must_find: true, expected: "24 hours (historical)"}
+  # AUDIT-117 left this as an open point: it passed on `found` alone, over a fragment that mentions
+  # 24 hours only because the 2024 document quotes the value it replaced. Now it must return the 2023
+  # claim itself, with its own interval, and must not answer with the 2024 one.
+  - {id: t2, family: temporal, question: "What was the Acme support SLA in 2023?", user: alice, project: acme, must_find: true, expected: "24 hours (historical)", must_exclude: ["12 hours"],
+     expected_evidence: [{must_include: ["24 hours"], document_id: acme-sla-2023-en, validity: {valid_from: 2023-01-01, valid_to: 2024-01-01}, expected_is_current: false}]}
   - {id: t3, family: temporal, question: "What is the current Globex day rate?", user: dave, project: globex, must_find: true, expected: "120 EUR per hour (2024)"}
   - {id: t4, family: temporal, question: "What was the Globex day rate in 2022?", user: dave, project: globex, must_find: true, expected: "100 EUR per hour (historical)"}
   - id: t5
