@@ -29,7 +29,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import yaml
 
@@ -46,6 +46,9 @@ from rsc_brain.recall.permissions import sensitive_tags
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.recall.timeline import build_timeline
 from rsc_brain.stores.age_graph_store import AgeGraphStore
+
+if TYPE_CHECKING:
+    from rsc_brain.recall.reranker import Reranker
 
 EVALS = Path(__file__).resolve().parent
 STATE = EVALS / ".gate_run_state.json"
@@ -290,6 +293,68 @@ async def _ingest(principals: Principals) -> dict[str, str]:
         await dependencies.dispose()
 
 
+class _WatchTheBlend:
+    """Wraps the configured reranker to see, for free, how far down the blend put the answer.
+
+    AUDIT-126 left this open: the blend-off margin — where retrieval alone ranked the passage that
+    ends up justifying the answer — was measured by hand, and the spec explicitly refused the obvious
+    fix, because a second reranker-off pass "doubles the model calls for a diagnostic, which is the
+    same trade-off that made `degradation_of` unreachable (AUDIT-096) — so it needs a cheaper shape,
+    not more enthusiasm."
+
+    This is the cheaper shape: **no extra model calls at all, and no product change.** The number is
+    already implicit in the calls the product makes, so the instrument observes them instead of
+    recomputing them. `decide()` scores the whole page in one batch call and then confirms candidates
+    one at a time in descending order (AUDIT-120), so the call sequence for one recall is:
+
+        relevance(query, [p0, p1, ... pn])   <- the page, in blend order
+        relevance(query, [pk])               <- a solo confirmation, possibly several
+
+    The confirmed passage is the solo call that holds the threshold, and its blend-off rank is where
+    that same text sat in the batch. Deliberately **derived from the product's own calls** rather than
+    by re-implementing the winner rule here: a copy of that rule in the instrument would drift from
+    `decide()` and start reporting a number that looks measured and is not. `test_the_instrument_reads_the_products_own_verdict`
+    pins the agreement.
+
+    A case with no confirmation — an abstention, or a reranker that could not confirm and answered on
+    the batch score — yields ``None``, and is counted as unmeasured rather than as rank 0.
+    """
+
+    def __init__(self, inner: Reranker, threshold: float) -> None:
+        self._inner = inner
+        self._threshold = threshold
+        self._page: list[str] = []
+        self._confirmed: int | None = None
+        self._seen_batch = False
+
+    @property
+    def version(self) -> str:
+        return self._inner.version
+
+    def begin(self) -> None:
+        """Start watching one recall. The caller owns the loop, so it owns the boundary."""
+        self._page = []
+        self._confirmed = None
+        self._seen_batch = False
+
+    @property
+    def confirmed_rank(self) -> int | None:
+        return self._confirmed
+
+    async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+        scores = await self._inner.relevance(query, passages)
+        if not self._seen_batch:
+            # The first call of a recall is the page, whatever its length — including a page of one.
+            self._seen_batch = True
+            self._page = list(passages)
+            return scores
+        if len(passages) == 1 and scores:
+            score = scores[0]
+            if score is not None and score >= self._threshold and passages[0] in self._page:
+                self._confirmed = self._page.index(passages[0])
+        return scores
+
+
 def _answer_rank(case: Any, result: Any) -> int | None:
     """Zero-based position of the expected document among the returned fragments, or None.
 
@@ -471,18 +536,28 @@ async def _measure(
         from rsc_brain.ontology.recall import OntologyRecall
         from rsc_brain.recall.reranker import LlmReranker
 
+        watcher = (
+            _WatchTheBlend(LlmReranker(dependencies.gateway), dependencies.recall_config.tau_rerank)
+            if dependencies.reranker_enabled
+            else None
+        )
         retriever = PgRetriever(
             sessionmaker=dependencies.sessionmaker,
             gateway=dependencies.gateway,
             graph_store=AgeGraphStore(dependencies.sessionmaker),
             config=dependencies.recall_config,
             ontology=OntologyRecall(dependencies.sessionmaker),
-            reranker=LlmReranker(dependencies.gateway) if dependencies.reranker_enabled else None,
+            reranker=watcher,
         )
         outcomes = []
         margins: list[tuple[str, int]] = []
+        #: AUDIT-126: where retrieval ALONE ranked the passage that justified the answer.
+        blend_off: list[tuple[str, int]] = []
+        unconfirmed: list[str] = []
         for case in golden.cases:
             runnable = eval_case_from_golden(case, document_ids=document_ids)
+            if watcher is not None:
+                watcher.begin()
             # The scope comes from the principal's own PAT through the real authentication path: a
             # fabricated scope would make every permission case prove nothing (R01/AUDIT-020).
             scope = await authenticate(
@@ -518,6 +593,16 @@ async def _measure(
             rank = _answer_rank(runnable, result)
             if rank is not None:
                 margins.append((case.id, rank))
+                # The blend-off margin only means something where the payload position does: a
+                # must-find recall case naming a document. On a case that PASSED, the passage the
+                # reranker confirmed is the answer, so this says how far retrieval alone had put the
+                # answer from the top — which is the number AUDIT-126 measured by hand.
+                if watcher is not None and outcomes[-1].passed:
+                    blend = watcher.confirmed_rank
+                    if blend is None:
+                        unconfirmed.append(case.id)
+                    else:
+                        blend_off.append((case.id, blend))
             mark = "ok " if outcomes[-1].passed else "XX "
             # AUDIT-121: print the reason when there is one. Chasing why a case abstained meant
             # re-running probes by hand for hours; the verdict now arrives with its own explanation.
@@ -533,8 +618,31 @@ async def _measure(
                 f"\nanswer position in the payload: worst {worst[1]} ({worst[0]}), "
                 f"median {sorted(rank for _, rank in margins)[len(margins) // 2]}, "
                 f"over {len(margins)} recall cases naming a document. Post-promotion "
-                "(AUDIT-124), so this says what the caller sees, NOT how much margin retrieval had "
-                "— for that, measure with the reranker off.",
+                "(AUDIT-124), so this says what the caller sees, NOT how much margin retrieval had.",
+                flush=True,
+            )
+        if blend_off or unconfirmed:
+            # AUDIT-126 closed: the margin no longer needs a hand measurement or a second pass. It is
+            # read off the reranker calls the run already made, so it costs nothing and cannot go
+            # stale between runs.
+            ranks = sorted(rank for _, rank in blend_off)
+            worst_blend = max(blend_off, key=lambda pair: pair[1]) if blend_off else None
+            reached_past = sum(1 for _, rank in blend_off if rank > 0)
+            print(
+                "blend-off margin (retrieval alone, no extra model calls): "
+                + (
+                    f"worst {worst_blend[1]} ({worst_blend[0]}), median {ranks[len(ranks) // 2]}, "
+                    f"{reached_past}/{len(blend_off)} answers the reranker had to reach past the "
+                    "blend's own top choice to confirm"
+                    if worst_blend is not None
+                    else "no confirmed answer to measure"
+                )
+                + (
+                    f". {len(unconfirmed)} passing case(s) confirmed nothing "
+                    f"({', '.join(unconfirmed)}): abstained, or answered on the batch score"
+                    if unconfirmed
+                    else ""
+                ),
                 flush=True,
             )
         return compute_eval_metrics(outcomes), outcomes
