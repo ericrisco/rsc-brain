@@ -72,3 +72,36 @@ def test_the_embedder_is_not_a_chat_model() -> None:
     }
 
     assert embedder not in chat, f"the embedder names {embedder!r}, which is used as a chat model"
+
+
+def test_no_shipped_configuration_names_a_cross_encoder_as_the_reranker() -> None:
+    """AUDIT-085 fixed this in the Compose defaults and stopped there.
+
+    Two places kept the unservable name: `config.example.yaml` — the file the getting-started tutorial
+    tells the reader to use — and `deploy/helm/e2e.sh`, the Kubernetes end-to-end script. An
+    incomplete fix is the shape this campaign finds most often, so the property is asserted across
+    every shipped configuration surface rather than per file.
+    """
+    surfaces = [
+        REPO / "config.example.yaml",
+        REPO / "deploy" / "docker-compose.prod.yml",
+        REPO / "deploy" / "docker-compose.version.yml",
+        REPO / "deploy" / "helm" / "e2e.sh",
+        REPO / "deploy" / "helm" / "rsc-brain" / "values.yaml",
+    ]
+    offenders = [
+        path.relative_to(REPO).as_posix()
+        for path in surfaces
+        if path.is_file()
+        # The prose explaining why the name is wrong necessarily contains it; a VALUE assignment does
+        # not sit inside a comment.
+        and any(
+            "bge-reranker" in line and not line.lstrip().startswith("#")
+            for line in path.read_text(encoding="utf-8").splitlines()
+        )
+    ]
+
+    assert not offenders, (
+        "these shipped configurations name a cross-encoder as the reranker model, which the "
+        f"LLM-based seam cannot call: {offenders}"
+    )
