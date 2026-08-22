@@ -12,8 +12,22 @@
 # `deploy/helm/check-parity.sh` guards this file against the canonical one, so the two cannot drift
 # silently — the same discipline the chart already lives under.
 #
-#   RSC_BRAIN_VERSION=0.13.0 docker compose --env-file deploy/.env \
+# THIS FILE IS COUPLED TO THE VERSION IT PINS. It sets the environment the application expects, and
+# that environment changes between versions — so install version X with the copy of this file that
+# shipped in tag vX, not with a newer checkout. Measured: `main`'s copy sets
+# `RSC_BRAIN_CAPABILITIES__*__EGRESS__*` (added by AUDIT-005), and pinning 0.13.1-rc2 — published
+# before that field existed — crash-loops the API on `extra_forbidden`, a pydantic dump that says
+# nothing about the real cause being a version mismatch. So check the tag out first, and take this
+# file from there — the example is parametric on purpose, because a hard-coded version here would be
+# either foreign to your checkout or, today, not published at all:
+#
+#   git checkout vVERSION          # e.g. the version you intend to install
+#   RSC_BRAIN_VERSION=VERSION docker compose --env-file deploy/.env \
 #     -f deploy/docker-compose.version.yml -f deploy/compose.models.yml up -d
+#
+# `RSC_BRAIN_VERSION` names the published image tag; `deploy/compose.models.yml` is the untracked
+# overlay carrying your model routes (see deploy/README.md — it holds provider secrets, so it is
+# deliberately not in this repository).
 #
 # rsc-brain — canonical PRODUCTION compose (SPEC-18, E15.1, principle D18).
 #

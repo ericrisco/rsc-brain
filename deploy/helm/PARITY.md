@@ -160,3 +160,41 @@ provisioned, topology up, and `brain verify` inside the api image reporting `sta
 50 s** from the build command, against the <30 min gate. `brain --version` in the image answers
 `0.13.0+source-build`, which is the honest identity the default is meant to produce.
 
+
+## 2026-08-22 — the versioned compose file states the coupling it always had
+
+`docker-compose.version.yml` gained a header only: no service, no environment key, no volume, no
+topology. **Nothing to reconcile in the chart, and this is why**: the chart takes `image.tag` from
+values and carries none of this file's environment defaults, so a comment cannot drift from it. The
+hashes are re-recorded because the guard hashes bytes, which is the right thing for it to do — a guard
+that tried to judge which edits "matter" would be a guard that could be argued with.
+
+What the header now says was measured rather than reasoned. Following the documented invocation with
+`main`'s copy of the file and a published version pinned:
+
+```
+RSC_BRAIN_VERSION=0.13.1-rc2 → api crash-loops:
+  capabilities.embedder.egress — Extra inputs are not permitted [type=extra_forbidden]
+```
+
+`main`'s copy sets `RSC_BRAIN_CAPABILITIES__*__EGRESS__*` (AUDIT-005); `0.13.1-rc2` was published
+before that field existed, and its `CapabilityConfig` has no `egress`. The coherent pairing does
+exist — the copy of this file at tag `v0.13.1-rc2` carries zero EGRESS references — so the failure is
+mixing a newer checkout with an older pin, which is precisely what the old example (`0.13.0`) invited.
+
+The example is now **parametric**, and that was forced rather than chosen. The guard written for this
+first demanded the example name this checkout's own version, and failed on the replacement example
+immediately: **no published image corresponds to any released version of this repository.** The only
+images that exist are for `v0.13.1-rc1` and `v0.13.1-rc2`; this checkout is `0.13.0`, which was tagged
+before the publish job existed. So every concrete version the file could name today is either foreign
+to the checkout (skew) or unpublished (pull failure). It stays parametric until a released version has
+a pullable image — which is the first signed release, and that is the owner's call to make.
+
+Verified positively in the same run, against the published image and not a local build:
+
+- `brain --version` inside `ghcr.io/ericrisco/rsc-brain/app:0.13.1-rc2` answers **`v0.13.1-rc2`**, and
+  `RSC_BRAIN_BUILD_IDENTITY` is stamped into the image. The identity a published artifact reports is
+  its own — which is the whole point of SPEC release-identity, now confirmed in a shipped artifact.
+- `migrate` from that image applied the schema and created the first admin: **exit 0**.
+- The compose file interpolates and resolves all three images (`app`, `console`, `db`) to published
+  tags.
