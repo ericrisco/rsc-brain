@@ -172,9 +172,33 @@ Two things to read off this, and one not to:
 
 - **The route works, and it is three orders of magnitude cheaper.** 0.182 s against 142–256 s is the
   difference between a reranker a CPU install can run and one it cannot.
-- **It is not a drop-in replacement for the chat route.** It loses two `qualifier` cases and three
-  `temporal` ones, so an install that needs those right should keep the chat route and give it a GPU.
-  *Why* it loses them is not established by this run — it is the next measurement, not a conclusion.
+- **It is not a drop-in replacement for the chat route**, and the reason is not tuning. It loses two
+  `qualifier` cases and three `temporal` ones. Scoring every candidate page by hand shows two distinct
+  failures, neither fixable by moving the threshold:
+
+  **The score distributions interleave.** A correct answer to a *dated or qualified* question scores
+  0.014–0.058, while the best passage for a question the corpus **cannot** answer scores up to 0.069:
+
+  ```
+  0.0066 unanswerable   0.0081 unanswerable   0.0124 unanswerable   0.0143 ANSWER (missed)
+  0.0305 ANSWER         0.0354 ANSWER         0.0376 ANSWER         0.0436 unanswerable
+  0.0577 ANSWER         0.0693 unanswerable
+  ```
+
+  No scalar `tau_rerank` separates those. The swept 0.085 was not a miscalibration — it protected
+  abstention (5/5) at the cost of recall because **no threshold could do both**. Lowering it to 0.02
+  would recover three answers and start answering two questions whose answers are not in the corpus.
+
+  **Two cases have the ranking inverted**, which a threshold cannot fix at any value. Asked for the
+  *Standard tier response time*, "Globex **standard** contracts include a 30-day termination notice"
+  scored **0.127** against the actual answer's **0.058** — a keyword-sharing sibling winning by 2.2×.
+  Asked whether the 24-hour SLA is still current, the **premium** 4-hour SLA scored **0.162** against
+  the standard 12-hour one's **0.117**. This is the qualifier mismatch that the chat route needed
+  prompt v3 to get right — an *instruction*, which a cross-encoder has no way to receive.
+
+  So: give the chat route a GPU where the qualified and as-of-a-date cases have to be right. Measured
+  on one model over one 27-document corpus; the shape of the failure is what generalizes, not the
+  numbers.
 - **Do not read the latency as hardware-independent.** The quality numbers are: the identical run with
   the model on Apple's `mps` device produced the same six failing cases and the same metrics to four
   decimals. The latency is not.
