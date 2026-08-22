@@ -65,13 +65,29 @@ Two paths, and both are supported.
 **Installing a published version** (recommended, and much faster — no source build):
 
 ```bash
+git checkout <version>-tag        # e.g. the tag whose images you are about to run
 RSC_BRAIN_VERSION=<version> docker compose --env-file deploy/.env \
   -f deploy/docker-compose.version.yml \
   -f deploy/compose.models.yml \
   up -d
 ```
 
-Rolling back is the same command with the previous version. Nothing is rebuilt.
+**Check out the matching tag first — this is the step a rollback gets wrong.** The compose file
+supplies the environment the application expects, and that environment changes between versions. Run a
+newer copy of the file against an older image and the API crash-loops on configuration it has never
+heard of. Measured, pairing `main`'s copy with a published `0.13.1-rc2`:
+
+```
+capabilities.embedder.egress — Extra inputs are not permitted [type=extra_forbidden]
+```
+
+Nothing in that message says "your checkout is newer than your pin", so budget for the confusion if you
+skip the checkout.
+
+Rolling back is the same command with the previous version **and its tag**. Changing only
+`RSC_BRAIN_VERSION` is the exact pairing above — a newer file against an older image — which is to say
+the rollback would fail in the one situation you need it: mid-incident, under time pressure. Nothing is
+rebuilt either way.
 
 ### Verify where an image came from, before you run it
 
@@ -119,16 +135,24 @@ docker compose --env-file deploy/.env \
 
 ## Upgrade a Helm deployment
 
-Update the pinned tag while preserving the release's existing values:
+Update the pinned tag while preserving the release's existing values — using the chart from the
+release whose images you are pinning:
 
 ```bash
+git checkout <version>-tag        # the chart travels with the images it was reconciled against
 helm upgrade rsc-brain deploy/helm/rsc-brain \
   --namespace rsc-brain \
   --reuse-values \
-  --set image.tag=0.13.0 \
+  --set image.tag=<version> \
   --wait \
   --wait-for-jobs
 ```
+
+The chart declares this coupling itself: `Chart.yaml`'s `appVersion` names the rsc-brain release its
+images ship with. Setting `image.tag` to something other than the chart's own `appVersion` runs a
+configuration the older image may not accept — the chart's ConfigMap emits capability environment that
+arrived in a specific version, and an image published before it refuses to start. Same failure as the
+Compose path above, same cause.
 
 The migration Job is an ordinary Helm resource named for the release revision, not a pre-upgrade
 hook. `--wait-for-jobs` waits for that Job, while API and worker init containers independently wait
