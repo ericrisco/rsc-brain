@@ -88,11 +88,15 @@ async def test_recall_tool_provenance_untrusted_and_schema(
     assert output.fragments
     fragment = output.fragments[0]
     assert fragment.content_type == "untrusted_data"
-    # §5.8 fragment shape exactly (plus the content_type marker).
+    # §5.8 fragment shape exactly (plus the content_type marker). The set is pinned so the MCP
+    # contract cannot drift unnoticed — which is why AUDIT-121 had to come through here to add
+    # `degraded`: the reason an abstention fell back to the blended threshold is part of what the
+    # caller is owed, and a client that cannot see it presents a degraded verdict as a judged one.
     assert set(RecallOutput.model_json_schema()["properties"]) == {
         "found",
         "fragments",
         "gap_registered",
+        "degraded",
     }
     fragment_props = set(fragment.model_dump().keys())
     assert {"text", "claim_ids", "document", "page", "credibility", "tags"} <= fragment_props
