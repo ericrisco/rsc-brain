@@ -9,35 +9,57 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Security
+## [0.14.0] - 2026-08-22
 
-- A generated first-admin password was tracked in this public repository. `brain init` writes
-  `<data_dir>/first-admin-credential` (mode 0600) when it generates one, the ingest data directory was
-  not ignored, and a `git add -A` committed the file on 2026-07-25; 39 generated document blobs
-  followed it in. Neither the gitleaks job — which scans the full history on every push — nor this
-  repository's own tracked-credential test recognised it: the test was written after AUDIT-116 to know
-  this product's *token* prefixes, and never learned the other credential format the same repository
-  defines. The file and the blobs are untracked, `data/` is ignored, gitleaks has a rule for the
-  format with the one already-published occurrence recorded by fingerprint, and the guard now checks
-  the credential by name (from the product's own constant), by content, by directory, and that the
-  directory is *ignored* rather than merely untracked — because untracking without ignoring is half a
-  fix that the next `git add -A` undoes. The value belongs to a local development database that no
-  longer exists and is not in use by any deployment; purging it from history needs a force-push and is
-  the repository owner's decision (AUDIT-142).
+> This section grew after it was written. `0.14.0` was prepared but never tagged, so it had no
+> external meaning yet, and publishing it with a security fix recorded under *Unreleased* would
+> have shipped a version whose changelog understated it. Folded rather than bumped for that
+> reason; a version that was never published is still a draft.
 
-### Security
+### Added
 
-- Under `policy: source_tags` and `policy: manual` — the two ingestion policies that exist so that no
-  model decides a document's classification — each **chunk's** tags were the topicalizer's decision
-  floored by the source's declared tags, while only the document's tags came from the source. The
-  authorization filter matches on chunk tags and visibility is any-match, so a model could only ever
-  widen a chunk's audience, never narrow it. Observed on the evaluation corpus: a source declaring
-  `{legal}` produced a document row `{legal}` and a chunk row `{legal, corp, delivery}`, and a
-  principal holding `corp, delivery` retrieved the contract; `legal` sits below the sensitivity
-  threshold, so the FR-4.14 veto never fired. Chunks under those two policies now carry the source's
-  declared tags, and the topicalizer is still consulted so the prompt-injection quarantine — a review
-  decision, not a classification one — keeps working under every policy. `llm` and `llm_review` are
-  unchanged: there the model is the declared authority (AUDIT-141).
+- `evals/gate_run.py` takes `--corpus DIR`, so the success gates can be measured over knowledge the
+  maintainer has never seen, through the same code path that produced every published number. The run
+  state follows the corpus rather than the checkout, and an incomplete corpus directory is refused up
+  front naming the missing file. Until now the corpus path was the module's own directory: the only
+  people who could run the gates were the people who had written the corpus (AUDIT-138).
+
+
+- Added the console Hunting Directory and Skill Lifecycle contracts: immutable topic-scoped hunts,
+  minimized person collections with dependency-aware versioned deletion, and audited optimistic
+  skill validation/archive commands with durable replay semantics.
+- Added a Diátaxis-based public documentation set for installation, first use, operations,
+  configuration, REST, MCP, security, architecture, and troubleshooting.
+- Added executable documentation, MCP transport, platform-overlay, and Helm regression checks.
+
+### Changed
+
+- `docs/INSTALL.md` no longer presents `brain eval` and `brain calibrate` as the calibration
+  procedure. Both inspect — they report what a set contains and which threshold governs — and neither
+  runs a query or computes a value, which the runbook did not say while telling operators that until
+  they had "done this" every answer was unverified. It now labels the two inspection commands as such
+  and names the sweep that produces a number, with the corpus flag that makes it runnable on the
+  operator's own knowledge (AUDIT-137).
+
+
+- The `recall.tau_rerank` sweep now calibrates on `evals/rerank_calibration.yaml`, a 24-case set held
+  out from the 53 cases the gates score, instead of drawing from `golden.yaml` itself. Disjointness is
+  computed from the two corpora — id, question and reworded near-duplicate — and both the content gate
+  and the sweep's own output fail loudly when it stops holding. Measured on `BAAI/bge-reranker-v2-m3`:
+  the honest threshold is **0.325** against the **0.085** a sweep fitted on the gate's own cases
+  produced, and it reports 0.667 retrieval precision where the fitted one reported 0.833. Gate G4
+  stayed 5/5 either way, so what fitting concealed was the recall it cost. `docs/reference/`
+  `configuration.md` publishes both columns, and `brain verify --probe-models` now says what
+  calibrating does to the number the operator will quote (AUDIT-136).
+
+
+
+- Migrated the MCP knowledge surface to SDK 2.0. The per-principal skill catalogue now resolves
+  through a server middleware, because `list_tools()` no longer receives the request context, and
+  the transport posture (DNS-rebinding allow-list, stateless mode) is applied where 2.0 accepts it —
+  when the ASGI app is built — while remaining owned by the composition root.
+- Released chart schema `0.14.0`: top-level Helm `extraEnv` now reaches only API and worker;
+  console-only values move to `console.extraEnv`. Application images remain at `0.13.0`.
 
 ### Fixed
 
@@ -63,64 +85,6 @@ All notable changes to this project are documented here. The format follows
   all. `d7` and `d8` ask `h9`'s and `h2`'s questions as principals the corpus does not grant the
   answering document's topic to.
 
-### Added
-
-- `evals/gate_run.py` takes `--corpus DIR`, so the success gates can be measured over knowledge the
-  maintainer has never seen, through the same code path that produced every published number. The run
-  state follows the corpus rather than the checkout, and an incomplete corpus directory is refused up
-  front naming the missing file. Until now the corpus path was the module's own directory: the only
-  people who could run the gates were the people who had written the corpus (AUDIT-138).
-
-### Changed
-
-- `docs/INSTALL.md` no longer presents `brain eval` and `brain calibrate` as the calibration
-  procedure. Both inspect — they report what a set contains and which threshold governs — and neither
-  runs a query or computes a value, which the runbook did not say while telling operators that until
-  they had "done this" every answer was unverified. It now labels the two inspection commands as such
-  and names the sweep that produces a number, with the corpus flag that makes it runnable on the
-  operator's own knowledge (AUDIT-137).
-
-### Changed
-
-- The `recall.tau_rerank` sweep now calibrates on `evals/rerank_calibration.yaml`, a 24-case set held
-  out from the 53 cases the gates score, instead of drawing from `golden.yaml` itself. Disjointness is
-  computed from the two corpora — id, question and reworded near-duplicate — and both the content gate
-  and the sweep's own output fail loudly when it stops holding. Measured on `BAAI/bge-reranker-v2-m3`:
-  the honest threshold is **0.325** against the **0.085** a sweep fitted on the gate's own cases
-  produced, and it reports 0.667 retrieval precision where the fitted one reported 0.833. Gate G4
-  stayed 5/5 either way, so what fitting concealed was the recall it cost. `docs/reference/`
-  `configuration.md` publishes both columns, and `brain verify --probe-models` now says what
-  calibrating does to the number the operator will quote (AUDIT-136).
-
-## [0.14.0] - 2026-08-22
-
-### Added
-
-- Added the console Hunting Directory and Skill Lifecycle contracts: immutable topic-scoped hunts,
-  minimized person collections with dependency-aware versioned deletion, and audited optimistic
-  skill validation/archive commands with durable replay semantics.
-- Added a Diátaxis-based public documentation set for installation, first use, operations,
-  configuration, REST, MCP, security, architecture, and troubleshooting.
-- Added executable documentation, MCP transport, platform-overlay, and Helm regression checks.
-
-### Changed
-
-- Migrated the MCP knowledge surface to SDK 2.0. The per-principal skill catalogue now resolves
-  through a server middleware, because `list_tools()` no longer receives the request context, and
-  the transport posture (DNS-rebinding allow-list, stateless mode) is applied where 2.0 accepts it —
-  when the ASGI app is built — while remaining owned by the composition root.
-- Released chart schema `0.14.0`: top-level Helm `extraEnv` now reaches only API and worker;
-  console-only values move to `console.extraEnv`. Application images remain at `0.13.0`.
-
-### Security
-
-- Remediated the admin lockfile's current high `js-yaml`, `brace-expansion`, and Redocly findings;
-  full-lock npm audit and pinned OSV now fail CI across the Python and npm dependency graphs.
-- Replaced global secret-literal suppression with reasoned line-local fixtures and four exact
-  historical fingerprints, and added explicit three-day Dependabot cooldowns for every configured
-  ecosystem including the admin console.
-
-### Fixed
 
 - Served streamable HTTP MCP at the documented `/mcp` path and retained DNS-rebinding protection
   for the canonical configured public origin, including strict Host, Origin, and port boundaries.
@@ -129,6 +93,41 @@ All notable changes to this project are documented here. The format follows
   and connected Dokploy's exposed services to its explicit proxy network.
 - Kept application capability secrets out of the console render and made Helm rendering examples
   treat generated Secret manifests as sensitive temporary artifacts.
+
+### Security
+
+- A generated first-admin password was tracked in this public repository. `brain init` writes
+  `<data_dir>/first-admin-credential` (mode 0600) when it generates one, the ingest data directory was
+  not ignored, and a `git add -A` committed the file on 2026-07-25; 39 generated document blobs
+  followed it in. Neither the gitleaks job — which scans the full history on every push — nor this
+  repository's own tracked-credential test recognised it: the test was written after AUDIT-116 to know
+  this product's *token* prefixes, and never learned the other credential format the same repository
+  defines. The file and the blobs are untracked, `data/` is ignored, gitleaks has a rule for the
+  format with the one already-published occurrence recorded by fingerprint, and the guard now checks
+  the credential by name (from the product's own constant), by content, by directory, and that the
+  directory is *ignored* rather than merely untracked — because untracking without ignoring is half a
+  fix that the next `git add -A` undoes. The value belongs to a local development database that no
+  longer exists and is not in use by any deployment; purging it from history needs a force-push and is
+  the repository owner's decision (AUDIT-142).
+
+- Under `policy: source_tags` and `policy: manual` — the two ingestion policies that exist so that no
+  model decides a document's classification — each **chunk's** tags were the topicalizer's decision
+  floored by the source's declared tags, while only the document's tags came from the source. The
+  authorization filter matches on chunk tags and visibility is any-match, so a model could only ever
+  widen a chunk's audience, never narrow it. Observed on the evaluation corpus: a source declaring
+  `{legal}` produced a document row `{legal}` and a chunk row `{legal, corp, delivery}`, and a
+  principal holding `corp, delivery` retrieved the contract; `legal` sits below the sensitivity
+  threshold, so the FR-4.14 veto never fired. Chunks under those two policies now carry the source's
+  declared tags, and the topicalizer is still consulted so the prompt-injection quarantine — a review
+  decision, not a classification one — keeps working under every policy. `llm` and `llm_review` are
+  unchanged: there the model is the declared authority (AUDIT-141).
+
+
+- Remediated the admin lockfile's current high `js-yaml`, `brace-expansion`, and Redocly findings;
+  full-lock npm audit and pinned OSV now fail CI across the Python and npm dependency graphs.
+- Replaced global secret-literal suppression with reasoned line-local fixtures and four exact
+  historical fingerprints, and added explicit three-day Dependabot cooldowns for every configured
+  ecosystem including the admin console.
 
 ## [0.13.0] - 2026-07-27
 
