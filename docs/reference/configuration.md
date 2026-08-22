@@ -138,14 +138,52 @@ leaving the default in place makes the install abstain from everything. Set `rec
 explicitly for your reranker model; `brain verify --probe-models` fails the `rerank_threshold` check
 until you do.
 
-This product does not yet run that measurement through its own `rerank_api` route end to end — it
-needs a rerank server (TEI, llama.cpp's `/v1/rerank`, or a hosted API). The model's CPU viability is
-established; the integration is not.
+#### The whole route, measured end to end
+
+The integration is now measured, and not only the model. `BAAI/bge-reranker-v2-m3` served over a
+Cohere-shaped `/rerank` endpoint — the shape Infinity and TEI speak, and what litellm's `infinity`
+provider parses — reached through the product's own `rerank_api` route, on the 27-document corpus and
+all 53 golden cases, with the model **pinned to CPU**:
+
+| | chat route (`gemma4:12b`) | `rerank_api` (cross-encoder, CPU) | reranker off |
+| --- | --- | --- | --- |
+| per-call latency | 142–256 s on CPU | **0.182 s mean, 0.319 s max** | — |
+| finds what is there (`retrieval_precision`) | 1.0 | **0.833** | 0.967 |
+| abstains when it should (`correct_abstention_rate`) | 1.0 | **0.957** | 0.0 |
+| discloses nothing unauthorized (`permission_leaks`) | 0 | **0** | 0 |
+| resists an embedded instruction (`injection`) | 6/6 | **6/6** | 1/6 |
+| refuses what is absent (`abstain`) | 5/5 | **5/5** | 0/5 |
+| answers present in the corpus (`hit`) | 12/12 | 11/12 | 12/12 |
+| serves a qualified sibling correctly (`qualifier`) | 6/6 | **4/6** | — |
+| answers as-of a date (`temporal`) | 9/9 | **6/9** | — |
+
+`recall.tau_rerank` was **swept on this model** rather than carried over: 0.085, against the chat
+route's 0.5. Leaving the chat route's threshold in place would have abstained from everything, which
+is the failure the section above warns about.
+
+Two things to read off this, and one not to:
+
+- **The route works, and it is three orders of magnitude cheaper.** 0.182 s against 142–256 s is the
+  difference between a reranker a CPU install can run and one it cannot.
+- **It is not a drop-in replacement for the chat route.** It loses two `qualifier` cases and three
+  `temporal` ones, so an install that needs those right should keep the chat route and give it a GPU.
+  *Why* it loses them is not established by this run — it is the next measurement, not a conclusion.
+- **Do not read the latency as hardware-independent.** The quality numbers are: the identical run with
+  the model on Apple's `mps` device produced the same six failing cases and the same metrics to four
+  decimals. The latency is not.
+
+The server used was a thin cross-encoder wrapper written for this measurement, so what is established
+is the product's route against a real model over a real socket — not the performance of any particular
+vendor's server.
 
 #### What a `cpu_only` install actually delivers
 
 Measured on the 27-document evaluation corpus, 53 cases, `gemma4:12b` + `bge-m3`, with the reranker
-off — the only `cpu_only` configuration this product permits:
+off. Read this table with the one above it: **`reranker.kind: rerank_api` lifts the limitation this
+section describes.** A cross-encoder on the same CPU abstains at 0.957 and resists embedded
+instructions 6/6, so a `cpu_only` install can refuse after all. What follows is what `cpu_only`
+delivers with **no reranker at all**, which was the only `cpu_only` configuration this product could
+serve until that route was measured:
 
 | | `workstation` (reranker on) | `cpu_only` (reranker off) |
 | --- | --- | --- |
@@ -164,8 +202,14 @@ whose answer is not in the corpus, and the ones asked by a principal who may not
 whatever was nearest.
 
 For a product whose promise is "says *I don't have that* and asks a human", that is not a degraded
-mode; it is the promise switched off. Choose `cpu_only` only where finding is the whole requirement
-and a confidently wrong answer is acceptable. Otherwise give the reranker a GPU.
+mode; it is the promise switched off.
+
+So on a `cpu_only` profile, do not leave the reranker off — set `reranker.kind: rerank_api` and point
+it at a served cross-encoder. That buys back refusal (0.0 → 0.957) and injection resistance (1/6 →
+6/6) at a cost in precision (0.967 → 0.833) concentrated in the `qualifier` and `temporal` families.
+Choose the reranker-off path only where finding is the whole requirement and a confidently wrong
+answer is acceptable; choose the chat route on a GPU where the qualified and as-of-a-date cases have
+to be right.
 
 ### On macOS, the Compose `ollama` profile has no GPU
 
