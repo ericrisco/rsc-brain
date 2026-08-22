@@ -69,6 +69,11 @@ class RecallOutput(BaseModel):
     found: bool
     fragments: list[RecallFragment] = Field(default_factory=list)
     gap_registered: bool = False
+    # AUDIT-121: why this verdict is worth less than it looks, when it is. An abstention that fell
+    # back to the blended threshold because the reranker was unreachable is not the same answer as a
+    # judged one, and an agent that cannot tell them apart will present both with equal confidence.
+    # `None` means nothing degraded — absence stays distinguishable from a reason (AUDIT-090).
+    degraded: str | None = None
 
 
 class TimelineEntry(BaseModel):
@@ -194,7 +199,10 @@ def _fragment_from_provenance(fragment: Fragment, credibility_fallback: float) -
 def to_recall_output(result: RecallResult) -> RecallOutput:
     fragments = [_fragment_from_provenance(f, 0.5) for f in result.fragments]
     return RecallOutput(
-        found=result.found, fragments=fragments, gap_registered=result.gap_registered
+        found=result.found,
+        fragments=fragments,
+        gap_registered=result.gap_registered,
+        degraded=result.degraded,
     )
 
 

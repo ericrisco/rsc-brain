@@ -286,6 +286,11 @@ async def _ingest(principals: Principals) -> dict[str, str]:
         await dependencies.dispose()
 
 
+def _degradation_of(result: Any) -> str | None:
+    """The reason a verdict is worth less than it looks, when the surface carries one."""
+    return getattr(result, "degraded", None)
+
+
 def _as_markdown(document: Any) -> str:
     """Render one corpus document as the markdown this instrument ingests.
 
@@ -336,19 +341,25 @@ async def _measure(
             scope = await authenticate(
                 dependencies.sessionmaker, f"Bearer {principals.tokens[case.user]}"
             )
+            result: Any
             if runnable.surface == "timeline":
                 # A timeline case is answered by the timeline surface, not by recall: that is the
                 # whole point of `surface` (AUDIT-105 AC8). The topic is the one the case's evidence
                 # is tagged with, and `general` is what the temporal corpus carries.
-                entries = await build_timeline(dependencies.sessionmaker, scope, topic="general")
-                outcomes.append(observe(runnable, entries))
+                result = await build_timeline(dependencies.sessionmaker, scope, topic="general")
+                outcomes.append(observe(runnable, result))
             else:
-                recalled = await do_recall(
+                result = await do_recall(
                     retriever, dependencies.sessionmaker, scope, query=case.question, top_k=8
                 )
-                outcomes.append(observe(runnable, _as_recall_result(recalled)))
+                outcomes.append(observe(runnable, _as_recall_result(result)))
             mark = "ok " if outcomes[-1].passed else "XX "
-            print(f"{mark}{case.id:6} {case.family:14} found={outcomes[-1].found}", flush=True)
+            # AUDIT-121: print the reason when there is one. Chasing why a case abstained meant
+            # re-running probes by hand for hours; the verdict now arrives with its own explanation.
+            reason = f"  [{degraded}]" if (degraded := _degradation_of(result)) else ""
+            print(
+                f"{mark}{case.id:6} {case.family:14} found={outcomes[-1].found}{reason}", flush=True
+            )
         return compute_eval_metrics(outcomes), outcomes
     finally:
         await dependencies.dispose()
@@ -389,7 +400,7 @@ def _as_recall_result(output: Any) -> Any:
             )
             for fragment in output.fragments
         ),
-        degraded=getattr(output, "degraded", None),
+        degraded=output.degraded,
     )
 
 
