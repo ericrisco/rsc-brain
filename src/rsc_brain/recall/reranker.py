@@ -86,6 +86,48 @@ def _clamp01(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
+class RerankApiReranker:
+    """Scores relevance through a real rerank endpoint (AUDIT-130).
+
+    The same seam as :class:`LlmReranker`, so everything built on the verdict — the threshold, the
+    winner confirmation (AUDIT-104/120), the treatment of an unscored candidate (AUDIT-100) — is
+    unchanged and cannot tell the two apart.
+
+    Why it exists: the chat implementation costs one 12B inference per query and cannot run on a
+    `cpu_only` profile at all, which is the whole reason such an install cannot refuse anything
+    (AUDIT-128). A cross-encoder is the right tool for scoring a (query, passage) pair, and until now
+    it had no way in — `config.example.yaml` even named one (AUDIT-129).
+
+    A rerank API returns indexed scores natively, so the property the chat path had to be taught by
+    prompt comes for free here: a score belongs to the document whose index it carries.
+    """
+
+    def __init__(self, gateway: object, *, version: str = "rerank-api-v1") -> None:
+        self._gateway = gateway
+        self._version = version
+
+    @property
+    def version(self) -> str:
+        return self._version
+
+    async def relevance(self, query: str, passages: Sequence[str]) -> Sequence[float | None]:
+        """One score per passage in order, ``None`` where the provider did not score it."""
+        if not passages:
+            return []
+        rerank = getattr(self._gateway, "rerank", None)
+        if rerank is None:  # pragma: no cover - a gateway without the method is a wiring error
+            raise RerankerUnavailable("the configured gateway exposes no rerank endpoint")
+        try:
+            scores = await rerank(query, list(passages))
+        except GatewayError as exc:
+            raise RerankerUnavailable(f"rerank endpoint unavailable: {exc}") from exc
+        if len(scores) != len(passages):
+            raise RerankerUnavailable(
+                f"rerank returned {len(scores)} scores for {len(passages)} passages"
+            )
+        return list(scores)
+
+
 class LlmReranker:
     """Scores relevance through the `reranker` capability, mirroring `LlmJudge`.
 

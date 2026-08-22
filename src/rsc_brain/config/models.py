@@ -63,6 +63,19 @@ class ModelEgressConfig(BaseModel):
     )
 
 
+class RerankerKind(StrEnum):
+    """How the reranker capability is called (AUDIT-130).
+
+    ``CHAT`` asks a chat model to return JSON scores — the only implementation for most of this
+    product's life, which is why `config.example.yaml` naming a cross-encoder could not work
+    (AUDIT-129). ``RERANK_API`` calls a real rerank endpoint, whose results are already indexed.
+    Default stays ``CHAT``: an existing install keeps the behaviour it was measured with.
+    """
+
+    CHAT = "chat"
+    RERANK_API = "rerank_api"
+
+
 class CapabilityConfig(BaseModel):
     """Per-capability model routing. Owned by configuration, never by callers.
 
@@ -273,6 +286,9 @@ class RecallConfig(BaseModel):
 class RerankerConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     enabled: bool = False  # FR-3.6 (P2)
+    #: Which implementation serves the seam (AUDIT-130). It belongs here rather than on the capability
+    #: route because it is meaningless for the other four — the documentation gate is what said so.
+    kind: RerankerKind = RerankerKind.CHAT
 
 
 class VisionConfig(BaseModel):

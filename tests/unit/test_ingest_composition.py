@@ -78,7 +78,12 @@ def test_every_pipeline_construction_wires_contradiction_detection() -> None:
 def test_the_root_actually_wires_a_resolver(tmp_path: Path) -> None:
     """The AST checks above prove the call sites; this proves what the root hands them."""
     from rsc_brain import runtime
-    from rsc_brain.config.models import CapabilitiesConfig, CapabilityConfig, ModelEgressConfig
+    from rsc_brain.config.models import (
+        CapabilitiesConfig,
+        CapabilityConfig,
+        ModelEgressConfig,
+        RerankerKind,
+    )
     from rsc_brain.gateway.model_gateway import ModelGateway
     from rsc_brain.ingest.pipeline import PipelineConfig
 
@@ -102,6 +107,7 @@ def test_the_root_actually_wires_a_resolver(tmp_path: Path) -> None:
         hunting=None,  # type: ignore[arg-type]
         maintenance=None,  # type: ignore[arg-type]
         reranker_enabled=False,
+        reranker_kind=RerankerKind.CHAT,
         data_dir=str(tmp_path),
     )
 

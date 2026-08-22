@@ -409,3 +409,57 @@ async def test_confirmation_only_considers_candidates_above_the_threshold() -> N
     assert decision.abstains is True
     # one batch call plus one confirmation for each of the TWO candidates above 0.5, and no more.
     assert calls == [4, 1, 1]
+
+
+async def test_the_rerank_api_reranker_satisfies_the_same_contract() -> None:
+    """AUDIT-130: a second implementation of the same seam, so `decide` cannot tell them apart.
+
+    The abstention machinery — the threshold, the winner confirmation (AUDIT-104/120), the unscored
+    handling (AUDIT-100) — is written against `Reranker`, not against a chat model. A rerank API
+    returns indexed scores natively, which is the contract the chat path had to be taught.
+    """
+    from rsc_brain.recall.reranker import RerankApiReranker
+
+    class _Gateway:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        async def rerank(self, query: str, documents: Sequence[str]) -> list[float | None]:
+            self.calls.append(len(documents))
+            return [0.95 if "120 EUR" in d else 0.1 for d in documents]
+
+    gateway = _Gateway()
+    reranker = RerankApiReranker(cast("object", gateway))
+    passages = ["Globex is in Andorra", "the rate is 120 EUR per hour"]
+
+    decision = await decide(reranker, "what is the rate?", passages, 0.5)
+
+    assert decision.abstains is False
+    assert decision.confirmed == 1, "the passage that answers, confirmed alone"
+    assert gateway.calls == [2, 1], "one batch call and one confirmation, like the chat path"
+
+
+async def test_the_rerank_api_reranker_abstains_when_nothing_answers() -> None:
+    from rsc_brain.recall.reranker import RerankApiReranker
+
+    class _AllLow:
+        async def rerank(self, query: str, documents: Sequence[str]) -> list[float | None]:
+            return [0.1 for _ in documents]
+
+    decision = await decide(RerankApiReranker(cast("object", _AllLow())), "q", ["a", "b"], 0.5)
+
+    assert decision.abstains is True
+
+
+async def test_an_unavailable_rerank_api_yields_no_verdict() -> None:
+    """Same as the chat path: silence is not a verdict (AUDIT-096)."""
+    from rsc_brain.recall.reranker import RerankApiReranker
+
+    class _Down:
+        async def rerank(self, query: str, documents: Sequence[str]) -> list[float | None]:
+            raise GatewayError("provider_unavailable", "ref")
+
+    decision = await decide(RerankApiReranker(cast("object", _Down())), "q", ["a"], 0.5)
+
+    assert decision.abstains is None
+    assert decision.degradation is not None

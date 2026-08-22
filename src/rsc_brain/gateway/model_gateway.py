@@ -53,6 +53,7 @@ T = TypeVar("T", bound=BaseModel)
 Message = Mapping[str, Any]
 CompletionFn = Callable[..., Awaitable[Any]]
 EmbeddingFn = Callable[..., Awaitable[Any]]
+RerankFn = Callable[..., Awaitable[Any]]
 
 
 class _HealthProbe(BaseModel):
@@ -171,6 +172,7 @@ class ModelGateway:
         *,
         completion_fn: CompletionFn | None = None,
         embedding_fn: EmbeddingFn | None = None,
+        rerank: RerankFn | None = None,
         max_repair_attempts: int = 2,
         usage_recorder: UsageRecorder | None = None,
         embedding_cache: EmbeddingCache | None = None,
@@ -181,6 +183,8 @@ class ModelGateway:
         self._embedding = embedding_fn or _default_embedding
         self._completion_uses_default_transport = self._completion is _default_completion
         self._embedding_uses_default_transport = self._embedding is _default_embedding
+        self._rerank = rerank or _default_rerank
+        self._rerank_uses_default_transport = self._rerank is _default_rerank
         self._max_repair = max_repair_attempts
         # SPEC-22 (FR-9.5/9.6): optional, injected — the gateway works without them.
         self._usage = usage_recorder
@@ -204,6 +208,7 @@ class ModelGateway:
             self._caps,
             completion_fn=self._completion,
             embedding_fn=self._embedding,
+            rerank=self._rerank,
             max_repair_attempts=self._max_repair,
             usage_recorder=bound,
             embedding_cache=self._cache,
@@ -383,6 +388,41 @@ class ModelGateway:
         recorder = self._usage
         return getattr(recorder, "project_id", None) if recorder is not None else None
 
+    async def rerank(self, query: str, documents: Sequence[str]) -> list[float | None]:
+        """Relevance of each document to ``query``, in the order given, via a real rerank API.
+
+        AUDIT-130. The alternative — asking a chat model for JSON scores — works and costs a 12B
+        inference per query, which is why it cannot run on `cpu_only` at all (AUDIT-100/128). A
+        cross-encoder is the right tool for this and had no way in (AUDIT-129).
+
+        The response is mapped back **by index**, never by position: a rerank API reorders by score
+        and truncates to ``top_n``, so a positional read would attribute the wrong score to every
+        document. That is AUDIT-100's finding, and here the API states the index itself rather than
+        being asked to.
+
+        ``None`` marks a document the provider did not score. It is not a zero: "not judged" and
+        "irrelevant" are different facts, and inventing the second manufactures a refusal.
+        """
+        ordered = list(documents)
+        if not ordered:
+            return []
+        cap = self._cap(Capability.RERANKER)
+        async with self._attempt(Capability.RERANKER) as attempt:
+            await self._enforce_egress(cap, require_explicit=self._rerank_uses_default_transport)
+            try:
+                response = await self._rerank(
+                    model=cap.litellm_model,
+                    query=query,
+                    documents=ordered,
+                    api_base=cap.api_base,
+                    api_key=cap.api_key.get_secret_value() if cap.api_key else None,
+                    timeout=cap.timeout_s,
+                )
+            except Exception:
+                raise GatewayUnavailableError("provider_unavailable", _new_ref()) from None
+            attempt.spent = _usage_tokens(response) or len(ordered)
+            return _rerank_scores(response, len(ordered))
+
     async def _embed_raw(self, cap: CapabilityConfig, texts: list[str]) -> list[list[float]]:
         # R29: reserved for the duration of the call and settled on the way out, so a batch that fails
         # halfway still accounts for what it cost and cannot leave a hold behind.
@@ -480,6 +520,41 @@ async def _default_completion(**kwargs: Any) -> Any:
         return await litellm.acompletion(**kwargs, client=handler)
     finally:
         await handler.close()
+
+
+def _rerank_scores(response: Any, expected: int) -> list[float | None]:
+    """Indexed scores from a rerank response, one slot per document sent, ``None`` where unscored."""
+    results = (
+        response.get("results")
+        if isinstance(response, Mapping)
+        else getattr(response, "results", None)
+    )
+    if results is None:
+        raise GatewayValidationError("rerank_no_results", _new_ref())
+    scores: list[float | None] = [None] * expected
+    for entry in results:
+        index = entry.get("index") if isinstance(entry, Mapping) else getattr(entry, "index", None)
+        score = (
+            entry.get("relevance_score")
+            if isinstance(entry, Mapping)
+            else getattr(entry, "relevance_score", None)
+        )
+        if not isinstance(index, int) or not 0 <= index < expected:
+            # AUDIT-100's rule: a score attached to a document that was not sent is not a score.
+            raise GatewayValidationError("rerank_index_out_of_range", _new_ref())
+        if scores[index] is not None:
+            raise GatewayValidationError("rerank_duplicate_index", _new_ref())
+        if not isinstance(score, (int, float)):
+            raise GatewayValidationError("rerank_score_not_a_number", _new_ref())
+        scores[index] = float(score)
+    return scores
+
+
+async def _default_rerank(**kwargs: Any) -> Any:
+    import litellm
+
+    harden_litellm_redirects(litellm)
+    return await litellm.arerank(**kwargs)
 
 
 async def _default_embedding(**kwargs: Any) -> Any:
