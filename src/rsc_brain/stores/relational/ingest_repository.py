@@ -1031,9 +1031,23 @@ class IngestRepository:
                 session, scope, document_id, [PipelineStage.TOPICALIZE], phase=status, counters=None
             )
 
-    async def propagate_doc_tags(self, scope: ProjectScope, document_id: str) -> None:
-        """Union the document's tags into every non-needs_review chunk (FR-1.15 inheritance);
-        the chunk keeps its own finer tags. Used on approve and on re-categorize."""
+    async def propagate_doc_tags(
+        self, scope: ProjectScope, document_id: str, *, sensitive: frozenset[str] = frozenset()
+    ) -> None:
+        """Propagate the document's tags to every non-needs_review chunk (FR-1.15 inheritance).
+
+        AUDIT-143: this used to UNION the document's tags into the chunk's, which cannot narrow. A
+        curator correcting a classification downwards — the reason the correction exists — left every
+        chunk carrying the tag they had just removed, and visibility is any-match over chunk tags. The
+        rule now lives in `ingest.inheritance.inherited_chunk_tags`, which keeps a sensitive tag the
+        chunk carries (dropping one would remove an FR-4.14 veto and widen) and drops the rest.
+
+        `sensitive` defaults to empty, which makes this a plain replacement. A caller that does not
+        know the project's sensitive topics must not be silently granted the union it used to get: that
+        default is the safe direction, and both callers pass the real set.
+        """
+        from rsc_brain.ingest.inheritance import inherited_chunk_tags
+
         async with session_scope(self._sm) as session:
             doc = await session.get(models.Document, uuid.UUID(document_id))
             if doc is None or doc.project_id != _pid(scope):
@@ -1045,9 +1059,26 @@ class IngestRepository:
                     models.Chunk.needs_review.is_(False),
                 )
             )
+            updated: dict[uuid.UUID, list[str]] = {}
             for chunk in chunks:
-                merged = list(dict.fromkeys([*chunk.tags, *doc.doc_tags]))
-                chunk.tags = merged
+                chunk.tags = inherited_chunk_tags(doc.doc_tags, chunk.tags, sensitive=sensitive)
+                updated[chunk.id] = list(chunk.tags)
+            if not updated:
+                return
+            # Claims carry their OWN copy of the tags, and `claim_visibility_clause` matches on that
+            # copy — the timeline surface queries claims directly, not chunks (SPEC-17). Narrowing a
+            # chunk and leaving its claims wide would move the leak one table sideways. Publishing
+            # rebuilds claims from the corrected chunks, so this is redundant on the approve path and
+            # is the whole of the fix on any path that repropagates WITHOUT re-publishing.
+            claims = await session.scalars(
+                select(models.Claim).where(
+                    models.Claim.project_id == _pid(scope),
+                    models.Claim.chunk_id.in_(list(updated)),
+                )
+            )
+            for claim in claims:
+                if claim.chunk_id is not None:
+                    claim.tags = list(updated[claim.chunk_id])
 
     # --- publish (post-approval) ---------------------------------------------
 

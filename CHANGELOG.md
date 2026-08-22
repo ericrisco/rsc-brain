@@ -9,6 +9,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- A curator's downward correction of a document's tags could not take effect. FR-1.15 requires a
+  document's tags to reach all its chunks and per-chunk topicalization to only *add* granularity;
+  `propagate_doc_tags` implemented that as a union of the chunk's tags with the document's, and a union
+  cannot narrow. Visibility is any-match over **chunk** tags, so a tag the union left behind was an
+  audience it left behind: an `llm_review` document proposing `[engineering, general]`, approved with
+  `--tags engineering` to keep it off the general staff's shelf, kept every chunk at
+  `[engineering, general]` — the correction recorded, reported as applied, and changing nothing about
+  who could read it. Neither topic is sensitive, so the FR-4.14 veto does not cover this case. A chunk
+  now takes the document's tags plus any *sensitive* tag it already carried (dropping one of those
+  would remove a veto and widen), and the repropagation reaches **claims** as well as chunks, because
+  claims keep their own copy of the tags and the timeline surface queries them directly (AUDIT-143).
+
 ## [0.14.0] - 2026-08-22
 
 > This section grew after it was written. `0.14.0` was prepared but never tagged, so it had no

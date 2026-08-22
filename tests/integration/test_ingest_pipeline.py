@@ -176,6 +176,90 @@ async def test_tag_inheritance_on_approval(
     assert published
     # Corrected document tag is inherited by every published chunk (FR-1.15).
     assert all("finance" in c.tags for c in published)
+    # AUDIT-143: and the tag the curator did NOT restate is gone. This assertion is the one that was
+    # missing — the test proved the correction arrived and never that it took effect. Visibility is
+    # any-match over chunk tags, so a leftover tag is a leftover audience, and `general` is what a
+    # `manual` source with no declared tags falls back to.
+    assert all(set(c.tags) == {"finance"} for c in published), [c.tags for c in published]
+
+
+async def test_a_correction_cannot_drop_a_sensitive_tag_the_chunk_carries(
+    build_harness: Callable[..., Harness],
+    make_completion: Callable[..., object],
+) -> None:
+    """AUDIT-143's guard rail, end to end: narrowing must never remove an FR-4.14 veto.
+
+    A `general` document with an `hr` paragraph, corrected to `general` on approval. `hr` is
+    sensitivity 3, so dropping it from the chunk would widen the audience — the opposite of what a
+    correction is for — and the whole point of the fix is that it narrows in one direction only.
+    """
+    harness = build_harness(completion=make_completion(tags=["hr"]))
+    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    scope = harness.scope(project)
+    await harness.repo.create_source(scope, name="llm-src", type_="folder", policy="llm_review")
+    outcome = await harness.service.ingest_bytes(
+        scope, PROSE_DOC, filename="mixed.md", source="llm-src"
+    )
+
+    await harness.service.approve(scope, outcome.document_id, tags=["general"], approver="cli")
+
+    published = [
+        c for c in await harness.repo.load_chunks(scope, outcome.document_id) if not c.needs_review
+    ]
+    assert published
+    assert all("general" in c.tags for c in published), [c.tags for c in published]
+    assert all("hr" in c.tags for c in published), [c.tags for c in published]
+
+
+async def test_recategorizing_a_published_document_narrows_its_chunks_and_its_claims(
+    build_harness: Callable[..., Harness],
+    make_completion: Callable[..., object],
+) -> None:
+    """Re-categorization repropagates WITHOUT re-publishing, which is where claims matter.
+
+    Claims keep their own copy of the tags and `claim_visibility_clause` matches that copy — SPEC-17's
+    timeline surface queries claims directly, not chunks. On the approve path this is invisible,
+    because publishing rebuilds claims from the corrected chunks; the first version of this test took
+    that path and passed with the claim repropagation removed, which is how it earned its rewrite.
+    `recategorize` is the path where narrowing a chunk and leaving its claims wide would move the leak
+    one table sideways.
+
+    It is also, as of AUDIT-144, the only caller of `recategorize` anywhere in this repository: FR-1.15
+    lists re-categorizing a published document as P0 and no CLI command or API route reaches it.
+    """
+    harness = build_harness(completion=await _default_completion(make_completion))
+    project = await harness.setup_project(unique_slug("acme"), TOPICS)
+    scope = harness.scope(project)
+    await harness.repo.create_source(scope, name="manual-src", type_="folder", policy="manual")
+    outcome = await harness.service.ingest_bytes(
+        scope, PROSE_DOC, filename="hb.md", source="manual-src"
+    )
+    await harness.service.approve(scope, outcome.document_id, tags=["finance"], approver="cli")
+
+    async def _claim_tags() -> list[list[str]]:
+        async with harness.sm() as session:
+            rows = (
+                await session.execute(
+                    select(models.Claim.tags).where(
+                        models.Claim.project_id == uuid.UUID(project),
+                        models.Claim.source_document_id == uuid.UUID(outcome.document_id),
+                    )
+                )
+            ).all()
+        return [list(tags) for (tags,) in rows]
+
+    before = await _claim_tags()
+    assert before, "the document produced no claims, so this would prove nothing"
+    assert all(set(tags) == {"finance"} for tags in before), before
+
+    await harness.pipeline.recategorize(scope, outcome.document_id, tags=["engineering"])
+
+    published = [
+        c for c in await harness.repo.load_chunks(scope, outcome.document_id) if not c.needs_review
+    ]
+    assert all(set(c.tags) == {"engineering"} for c in published), [c.tags for c in published]
+    after = await _claim_tags()
+    assert all(set(tags) == {"engineering"} for tags in after), after
 
 
 async def test_tables_convert_and_headerless_is_needs_review(
