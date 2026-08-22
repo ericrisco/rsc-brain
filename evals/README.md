@@ -49,8 +49,17 @@ corpus in this directory.
 who could run the gates were the people who had written the corpus. "The shape of the failures
 generalizes" was a claim nobody else could check. The first run against a second corpus — 11 documents
 and 21 cases in marine manufacturing and a municipal office, sharing no vocabulary with these two
-fictional companies — found two defects in **how the gates are measured** (AUDIT-139, AUDIT-140) that
-27 documents had hidden. That is the argument for the flag, better than any number it produces.
+fictional companies — found three defects that 27 documents had hidden: two in **how the gates are
+measured** (AUDIT-139, AUDIT-140) and one in the **product** (AUDIT-141, an LLM widening who may read a
+`source_tags` document). That is the argument for the flag, better than any number it produces.
+
+Re-run after those three were fixed, the second corpus reports `permission_leaks: 0`,
+`filter_breaches: 0`, `correct_abstention_rate: 1.0`, `denied` 4/4 and `cross_project` 3/3 — and
+`retrieval_precision` **0.556** against the reference corpus's 0.6 on the same route, losing the same
+kinds of case (a dated fact, a table cell under a qualifier, a scanned date, a time-of-day in Spanish).
+So the claim that the *shape* generalizes now has a second data point instead of only an argument. Its
+swept threshold is 0.575 where the reference corpus's is 0.335, which is the same claim from the other
+side: the number does not travel, and the sweep is why it does not have to.
 
 ## The calibration set is not the exam
 
