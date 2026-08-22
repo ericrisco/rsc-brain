@@ -47,8 +47,21 @@ Running `brain` with no command prints help. Completion commands are not registe
 | `brain status` | List per-document ingestion runs, phases, claim counts, and errors. | Required `--project TEXT`. |
 | `brain docs` | Parent group for document-review commands. | A child command is required for an operation. |
 | `brain docs review` | List documents awaiting approval and their proposed tags. | Required `--project TEXT`. |
-| `brain docs approve` | Approve and publish a pending document. | Required `DOCUMENT_ID` and `--project TEXT`; repeatable `--tags TEXT` replaces proposed tags when supplied. |
+| `brain docs approve` | Approve and publish a pending document. **No topic-authority check applies** — see the note below. | Required `DOCUMENT_ID` and `--project TEXT`; repeatable `--tags TEXT` replaces proposed tags when supplied. |
 | `brain docs reject` | Reject a pending document while retaining the file and an audit reason. | Required `DOCUMENT_ID`, `--project TEXT`, and `--reason TEXT`. |
+
+> **Where topic authority is enforced, and where it is not (AUDIT-145).** The document-lifecycle
+> authority check lives in the HTTP route: `POST /documents/{id}/approve` refuses a caller that does
+> not hold the topics the document carries *and* the ones the correction would apply. `brain docs`
+> reaches the same operation through the service, which does not repeat that check, so a CLI
+> invocation publishes into any topic in the project. The CLI's own principal deliberately holds no
+> topic grants — which means it **cannot list** the review queue it can act on, since
+> `brain docs review` is topic-scoped.
+>
+> Read that as the boundary it is: the guarantee that a principal only publishes into topics it holds
+> is an API guarantee. Anyone who can run `brain` already has the database credentials, so treat shell
+> access to the deployment as equivalent to full topic authority, and use a project-scoped token
+> against the API for anything where the distinction matters.
 | `brain sources` | Parent group for ingestion-source commands. | A child command is required for an operation. |
 | `brain sources list` | List a project's sources and categorization policies. | Required `--project TEXT`. |
 | `brain sources create` | Create an ingestion source. | Required `NAME` and `--project TEXT`; `--type TEXT`, default `folder`; `--policy TEXT`, default `llm`; repeatable `--tag TEXT`; `--review-if-sensitive`/`--no-review`, default enabled. Supported type values are `folder`, `api`, and `connector`; supported policies are `manual`, `source_tags`, `llm`, and `llm_review`. |

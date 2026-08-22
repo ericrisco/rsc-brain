@@ -9,6 +9,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Documentation
+
+- Recorded where document-lifecycle topic authority is enforced and where it is not. The check lives in
+  the HTTP route (`decide_document`); the service and pipeline below it do not repeat it, so a `brain
+  docs approve` invocation publishes into any topic in the project — while the CLI's own principal,
+  which deliberately holds no grants, cannot **list** the review queue it can act on. Measured: a scope
+  with `allowed_topics = frozenset()` approves a document into a sensitivity-3 topic and publishes it.
+  `evals/gate_run.py` asserted the opposite in a comment ("`brain docs` cannot approve them"); the
+  principle it cited stands and the fact was wrong. `docs/reference/cli.md` now states the boundary,
+  and three integration tests pin the behaviour so a future change to it is deliberate (AUDIT-145).
+
 ### Security
 
 - A curator's downward correction of a document's tags could not take effect. FR-1.15 requires a
