@@ -20,6 +20,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Migrated the MCP knowledge surface to SDK 2.0. The per-principal skill catalogue now resolves
+  through a server middleware, because `list_tools()` no longer receives the request context, and
+  the transport posture (DNS-rebinding allow-list, stateless mode) is applied where 2.0 accepts it —
+  when the ASGI app is built — while remaining owned by the composition root.
 - Released chart schema `0.14.0`: top-level Helm `extraEnv` now reaches only API and worker;
   console-only values move to `console.extraEnv`. Application images remain at `0.13.0`.
 

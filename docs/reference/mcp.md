@@ -2,7 +2,7 @@
 
 # MCP reference
 
-rsc-brain mounts a stateless FastMCP streamable-HTTP server at `/mcp`. The same endpoint serves every project; the bearer credential determines the principal, project, role attributes, and visible topics.
+rsc-brain mounts a stateless MCP streamable-HTTP server at `/mcp`. The same endpoint serves every project; the bearer credential determines the principal, project, role attributes, and visible topics.
 
 ## Authentication
 
