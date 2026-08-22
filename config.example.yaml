@@ -40,11 +40,23 @@ capabilities:
     timeout_s: 60
     dimension: 1024              # anchored to BGE-M3 (must equal 1024)
   reranker:
+    # AUDIT-129: this named `bge-reranker-v2-m3`, which is a real and well-known cross-encoder — and
+    # the wrong thing here twice over. It is not in ollama's library (`ollama pull` answers "file does
+    # not exist"), and `LlmReranker` asks a CHAT model to return JSON scores against a schema, which
+    # is not an interface a cross-encoder has. An operator following this file got
+    # `unhealthy capabilities: ['reranker']` from `brain verify --probe-models` on a name that looks
+    # exactly right.
+    #
+    # So the reranker speaks the same interface as the judge, and it is pointed at the same model.
+    # Measured on this route: the qualifier discrimination the abstention gate depends on needs a
+    # capable model — a 3B scored a sibling fact as high as the answer (AUDIT-122).
     provider: ollama
-    model: bge-reranker-v2-m3
+    model: qwen2.5:14b-instruct
     api_base: http://localhost:11434
     egress: {allow_http: true, allow_private_network: true}
-    timeout_s: 30
+    # Higher than the judge's: a relevance call carries ten passages, and a timeout here silently
+    # falls back to the blended threshold that cannot meet G4 (AUDIT-085).
+    timeout_s: 120
 
 # --- Recall tuning (FR-3.2 / §5.8) ---
 recall:
