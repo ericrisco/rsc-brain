@@ -11,7 +11,7 @@ service the API uses, so extraction is whatever the configured models actually p
 
     uv run python -m evals.gate_run setup     # projects, topics, sources, users, PATs
     uv run python -m evals.gate_run ingest    # the 27-document corpus, real models
-    uv run python -m evals.gate_run measure   # the 53 golden cases -> G2/G4
+    uv run python -m evals.gate_run measure   # the 55 golden cases -> G2/G4
     uv run python -m evals.gate_run g3        # the 32 contradiction pairs -> G3
     uv run python -m evals.gate_run calibrate # sweep tau_rerank on the CONFIGURED reranker,
                                               # over rerank_calibration.yaml (HELD OUT from golden)

@@ -151,25 +151,25 @@ Cohere-shaped `/rerank` endpoint — the shape Infinity and TEI speak, and what 
 provider parses — reached through the product's own `rerank_api` route, on the 27-document corpus and
 all 53 golden cases, with the model **pinned to CPU**:
 
-| | chat route (`gemma4:12b`) | `rerank_api` (cross-encoder, CPU) | reranker off |
+| | chat route (`gemma4:12b`) † | `rerank_api` (cross-encoder, CPU) | reranker off † |
 | --- | --- | --- | --- |
-| per-call latency | 142–256 s on CPU | **0.255 s mean** (3.3 s cold first call) | — |
-| finds what is there (`retrieval_precision`) | 1.0 | **0.667** | 0.967 |
+| per-call latency | 142–256 s on CPU | **0.24 s mean** (3.5 s cold first call) | — |
+| finds what is there (`retrieval_precision`) | 1.0 | **0.6** | 0.967 |
 | abstains when it should (`correct_abstention_rate`) | 1.0 | **1.0** | 0.0 |
-| discloses nothing unauthorized (`permission_leaks`) | see below | see below | see below |
+| discloses nothing unauthorized (`permission_leaks`) | — | **0** | — |
+| the filter returned nothing unauthorized (`filter_breaches`) | — | **0** | — |
 | resists an embedded instruction (`injection`) | 6/6 | **5/6** | 1/6 |
 | refuses what is absent (`abstain`) | 5/5 | **5/5** | 0/5 |
+| refuses what is denied (`denied`) | 6/6 | **8/8** | — |
 | answers present in the corpus (`hit`) | 12/12 | 11/12 | 12/12 |
-| serves a qualified sibling correctly (`qualifier`) | 6/6 | **1/6** | — |
-| answers as-of a date (`temporal`) | 9/9 | **6/9** | — |
+| serves a qualified sibling correctly (`qualifier`) | 6/6 | **2/6** | — |
+| answers as-of a date (`temporal`) | 9/9 | **3/9** | — |
 
-> **The `permission_leaks` row was measured by a predicate that could not fail, and the quality rows
-> were measured over a corpus whose tags were wider than it declared.** Both are corrected below;
-> neither correction is folded into the table above, because re-publishing those numbers waits on the
-> product fix the correction uncovered (AUDIT-141). Read the table for the latency and the shape of
-> the recall trade-off, which are unaffected, and read the two paragraphs below for the security
-> number. Every quality figure in the `rerank_api` column was measured on 2026-08-22 against the
-> pre-correction tagging.
+The `rerank_api` column was measured on **2026-08-22** at `tau_rerank: 0.335` over 55 cases, on a corpus
+re-ingested after AUDIT-140 and AUDIT-141 — the two findings that had been widening documents' topics
+on the way in. † The other two columns predate that re-ingest and are **not** directly comparable case
+for case; re-measuring the chat route means 142–256 s per call across 55 cases, so it waits for
+hardware rather than for a decision. Their shape is what the comparison is for.
 
 `recall.tau_rerank` was **swept on this model** rather than carried over: **0.325**, against the chat
 route's 0.5. Leaving the chat route's threshold in place would have abstained from everything, which
@@ -190,6 +190,11 @@ G4. The two numbers are worth seeing side by side, because the difference is not
 | `qualifier` | 4/6 | **1/6** |
 | `temporal` | 6/9 | **6/9** |
 | `injection` | 6/6 | **5/6** |
+
+Both columns of that comparison were taken on the *pre*-AUDIT-140/141 tagging, which is why they differ
+from the table above. That is the point of showing them side by side: the two thresholds were swept and
+scored over the same corpus in the same state, so the difference between them is the fitting and nothing
+else. The threshold on the corrected corpus is **0.335**.
 
 Read the third row first: **an honest threshold did not weaken G4 on this route.** What it removed was
 the recall the fitted one appeared to keep for free — three `qualifier` answers and `i1`, the
@@ -281,18 +286,29 @@ topic to: `globex-contract-en` (declared `[legal]`) by a principal holding `corp
 `acme-eng-deploy-en` (declared `[engineering]`) by one holding `general`. Both had acquired extra
 topics on the way in.
 
-One cause was in the evaluation harness and is fixed (AUDIT-140: one source row was built from the
-union of every document that named it). **The other is in the product and is not fixed yet**
-(AUDIT-141): under `policy: source_tags` and `policy: manual` — the two policies that exist so a model
-does not decide classification — a document's own tags come from the source, but each *chunk's* tags
-are the topicalizer's decision floored by the source's. The visibility filter matches on chunk tags.
-The floor guarantees a model cannot make a chunk less visible; nothing stops it making one more
-visible. Observed directly in the database: document row `{legal}`, chunk row `{legal, corp,
-delivery}`.
+One cause was in the evaluation harness (AUDIT-140: one source row was built from the union of every
+document that named it). **The other was in the product** (AUDIT-141): under `policy: source_tags` and
+`policy: manual` — the two policies that exist so a model does not decide classification — a
+document's own tags came from the source, but each *chunk's* tags were the topicalizer's decision
+floored by the source's. The visibility filter matches on chunk tags, and `Topicalizer.classify`
+returns the floor **union** the model's tags, so a model could only ever make a chunk more visible,
+never less. Observed directly in the database: document row `{legal}`, chunk row
+`{legal, corp, delivery}`. `legal` sits below the sensitivity threshold, so the FR-4.14 veto never
+fired — the topics a model adds to widen an audience are, by their nature, the unremarkable ones.
 
-Until that is fixed, treat a `source_tags` or `manual` source as declaring a *minimum* audience rather
-than an exact one, and put anything whose audience must be exact behind a topic at or above the
-sensitivity threshold — the FR-4.14 veto is enforced in SQL and is not affected.
+Both are fixed. Chunks under those two policies now carry the source's declared tags, the topicalizer
+is still consulted so the prompt-injection quarantine keeps working, and `llm`/`llm_review` are
+untouched because there the model is the declared authority. Re-measured after a clean re-ingest:
+
+| | pre-fix | post-fix |
+| --- | --- | --- |
+| `permission_leaks` | 2 | **0** |
+| `filter_breaches` | 0 | **0** |
+| `denied` | 6/8 | **8/8** |
+
+If you run an older version, treat a `source_tags` or `manual` source as declaring a *minimum*
+audience rather than an exact one, and put anything whose audience must be exact behind a topic at or
+above the sensitivity threshold — the veto is enforced in SQL and was never affected.
 
 #### What a `cpu_only` install actually delivers
 
