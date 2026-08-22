@@ -27,6 +27,31 @@ Of the 53 cases, 30 must find knowledge and 23 must abstain; 52 are scored throu
 through the timeline surface. `contradictions.yaml` supplies contradiction cases for the living-graph
 evaluator.
 
+## Aiming the instrument at your own corpus
+
+Every phase takes `--corpus DIR`:
+
+```bash
+uv run python -m evals.gate_run setup   --corpus /path/to/your-corpus
+uv run python -m evals.gate_run ingest  --corpus /path/to/your-corpus
+uv run python -m evals.gate_run measure --corpus /path/to/your-corpus
+```
+
+`DIR` holds `documents.yaml`, `golden.yaml`, `users.yaml`, `taxonomy.yaml`, `contradictions.yaml` and
+`rerank_calibration.yaml` — this directory is the reference set to copy and replace. A directory
+missing any of them is refused before anything is created. The run state (`.gate_run_state.json`, the
+corpus-id → UUID map) is written inside `DIR`, so two corpora never share a document map.
+
+Without the flag nothing changes, and every number published anywhere in this repository refers to the
+corpus in this directory.
+
+**Why it exists.** Until AUDIT-138 the corpus path was this module's own directory, so the only people
+who could run the gates were the people who had written the corpus. "The shape of the failures
+generalizes" was a claim nobody else could check. The first run against a second corpus — 11 documents
+and 21 cases in marine manufacturing and a municipal office, sharing no vocabulary with these two
+fictional companies — found two defects in **how the gates are measured** (AUDIT-139, AUDIT-140) that
+27 documents had hidden. That is the argument for the flag, better than any number it produces.
+
 ## The calibration set is not the exam
 
 `rerank_calibration.yaml` holds the 24 cases the `recall.tau_rerank` sweep may fit on, and **nothing
