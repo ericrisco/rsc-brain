@@ -354,6 +354,8 @@ def verify(
                 probe_models=probe_models,
                 hardware_profile=settings.hardware_profile,
                 reranker_enabled=settings.reranker.enabled,
+                reranker_kind=settings.reranker.kind,
+                recall=settings.recall,
             )
         finally:
             await engine.dispose()
