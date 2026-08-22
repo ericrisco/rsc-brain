@@ -287,6 +287,29 @@ async def _ingest(principals: Principals) -> dict[str, str]:
         await dependencies.dispose()
 
 
+def _answer_rank(case: Any, result: Any) -> int | None:
+    """Zero-based position of the expected document among the returned fragments, or None.
+
+    Only meaningful for a must-find case that names one: it says how much room retrieval had left
+    before the answer fell out of the reranker's reach entirely.
+    """
+    wanted = {
+        expectation.document_id
+        for expectation in case.expected_evidence
+        if expectation.document_id is not None
+    }
+    # Recall only. A timeline case is scored over the whole ordered evolution, not over a reranked
+    # page, so a "rank" there measures nothing about the margin — reported as 16 on `t9` in the first
+    # run, which is a number with no meaning attached.
+    if not wanted or not case.must_find or case.surface != "recall":
+        return None
+    entries = getattr(result, "fragments", result)
+    for index, entry in enumerate(entries):
+        if getattr(entry, "document_id", None) in wanted:
+            return index
+    return None
+
+
 def _degradation_of(result: Any) -> str | None:
     """The reason a verdict is worth less than it looks, when the surface carries one."""
     return getattr(result, "degraded", None)
@@ -378,6 +401,7 @@ async def _measure(
             reranker=LlmReranker(dependencies.gateway) if dependencies.reranker_enabled else None,
         )
         outcomes = []
+        margins: list[tuple[str, int]] = []
         for case in golden.cases:
             runnable = eval_case_from_golden(case, document_ids=document_ids)
             # The scope comes from the principal's own PAT through the real authentication path: a
@@ -397,12 +421,33 @@ async def _measure(
                     retriever, dependencies.sessionmaker, scope, query=case.question, top_k=8
                 )
                 outcomes.append(observe(runnable, _as_recall_result(result)))
+            # AUDIT-126: where the answer landed in what the CALLER receives. Since AUDIT-124 the
+            # confirmed passage is promoted to the front, so this is a post-promotion position: it
+            # says the caller sees the answer first, and it deliberately does NOT claim anything
+            # about how much margin retrieval had. That margin is a different measurement — taken
+            # with the reranker off — and calling this one a margin would be a number that proves
+            # less than it appears, which is the failure this project keeps finding.
+            rank = _answer_rank(runnable, result)
+            if rank is not None:
+                margins.append((case.id, rank))
             mark = "ok " if outcomes[-1].passed else "XX "
             # AUDIT-121: print the reason when there is one. Chasing why a case abstained meant
             # re-running probes by hand for hours; the verdict now arrives with its own explanation.
             reason = f"  [{degraded}]" if (degraded := _degradation_of(result)) else ""
+            place = f"  answer@{rank}" if rank is not None else ""
             print(
-                f"{mark}{case.id:6} {case.family:14} found={outcomes[-1].found}{reason}", flush=True
+                f"{mark}{case.id:6} {case.family:14} found={outcomes[-1].found}{place}{reason}",
+                flush=True,
+            )
+        if margins:
+            worst = max(margins, key=lambda pair: pair[1])
+            print(
+                f"\nanswer position in the payload: worst {worst[1]} ({worst[0]}), "
+                f"median {sorted(rank for _, rank in margins)[len(margins) // 2]}, "
+                f"over {len(margins)} recall cases naming a document. Post-promotion "
+                "(AUDIT-124), so this says what the caller sees, NOT how much margin retrieval had "
+                "— for that, measure with the reranker off.",
+                flush=True,
             )
         return compute_eval_metrics(outcomes), outcomes
     finally:
