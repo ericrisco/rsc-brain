@@ -246,9 +246,18 @@ async def _approve_pending(dependencies: Any, projects: dict[str, str]) -> int:
     """Work the D13 approval gate as an authorized admin, the way the console does.
 
     Five of the 27 corpus documents are held for human approval — the sensitive ones, which is the
-    point of the gate. `brain docs` cannot approve them and should not be able to: the CLI principal
-    holds no topic authority on purpose (R01/AUDIT-089), so shell access never implies authority.
-    Approval belongs to a principal that holds the topics, so the run creates one per project.
+    point of the gate. Approval belongs to a principal that holds the topics, so the run creates one
+    per project.
+
+    AUDIT-145 corrects what this comment used to claim. It said `brain docs` "cannot approve them and
+    should not be able to", citing R01/AUDIT-089. The second half is the principle and stands; the
+    first half was false. Measured: a scope with `allowed_topics = frozenset()` approves a document
+    into `hr` (sensitivity 3) and publishes it, because the document-lifecycle authority check lives
+    only in the HTTP route (`api/admin.py` calls `decide_document`) and not in the service or the
+    pipeline. AUDIT-089 made the review QUEUE topic-scoped; the approve action was never checked.
+
+    This run creates a topic-holding principal because approval *should* belong to one — not because
+    anything would have stopped it otherwise.
     """
     from rsc_brain.api.authz import decide_document
     from rsc_brain.identity.service import IdentityService as _Identity
