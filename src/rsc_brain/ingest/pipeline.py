@@ -230,7 +230,9 @@ class IngestionPipeline:
         if not won:
             current = (await self._require_document(scope, document_id)).status
             raise ValueError(f"document {document_id} is not awaiting approval (status={current})")
-        await self._repo.propagate_doc_tags(scope, document_id)
+        await self._repo.propagate_doc_tags(
+            scope, document_id, sensitive=await self._sensitive_topics(scope)
+        )
         parsed = self._parse(await self._require_document(scope, document_id))
         await self._publish(scope, document_id, parsed)
         return await self._run_status(scope, document_id)
@@ -270,7 +272,9 @@ class IngestionPipeline:
         if doc.status != DocStatus.PROCESSED.value:
             raise ValueError(f"document {document_id} is not published (status={doc.status})")
         await self._repo.set_status(scope, document_id, doc.status, doc_tags=list(tags))
-        await self._repo.propagate_doc_tags(scope, document_id)
+        await self._repo.propagate_doc_tags(
+            scope, document_id, sensitive=await self._sensitive_topics(scope)
+        )
         return await self._run_status(scope, document_id)
 
     # --- parse phase ---------------------------------------------------------
@@ -324,6 +328,19 @@ class IngestionPipeline:
             if source is not None:
                 return source
         return await self._repo.ensure_default_source(scope)
+
+    async def _sensitive_topics(self, scope: ProjectScope) -> frozenset[str]:
+        """The project's topics at or above the configured sensitivity threshold (FR-4.14).
+
+        Read from the project's own taxonomy rather than from configuration alone, because the
+        threshold is a number and the topics it selects are per-project data.
+        """
+        topics = await self._repo.list_topics(scope)
+        return frozenset(
+            slug
+            for slug, sensitivity in topics
+            if sensitivity >= self._config.sensitivity_threshold
+        )
 
     async def _topicalize_and_policy(
         self, scope: ProjectScope, source: SourceRow, chunk_rows: Sequence[ChunkRow]
