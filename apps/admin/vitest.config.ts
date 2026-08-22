@@ -11,9 +11,11 @@ const rootDir = fileURLToPath(new URL("./", import.meta.url));
  * coverage continue to run through Next and Playwright.
  */
 export default defineConfig({
-  esbuild: {
-    jsx: "automatic",
-  },
+  // vitest 4 / vite 8 transform with oxc rather than esbuild, and `esbuild.jsx` is gone from the
+  // config type. The option existed only to force the automatic JSX runtime; oxc derives that from
+  // `tsconfig.json`, which sets `"jsx": "react-jsx"` — the automatic runtime — so stating it here is both
+  // unnecessary and no longer typeable. Removed rather than translated to `oxc.jsx`: the transform
+  // that actually runs is the one the tests exercise, and they pass without it.
   resolve: {
     alias: {
       "@": rootDir,
