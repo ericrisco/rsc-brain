@@ -51,7 +51,7 @@ uv run brain --version
 The final command prints:
 
 ```text
-0.13.0+unknown
+0.14.0+unknown
 ```
 
 The `+unknown` suffix is correct and deliberate. A build's identity comes from a stamp written when

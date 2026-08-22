@@ -9,7 +9,7 @@ description: >-
 type: application
 # Chart version tracks the chart; appVersion tracks the rsc-brain release the images ship with.
 version: 0.14.0
-appVersion: "0.13.0"
+appVersion: "0.14.0"
 keywords:
   - knowledge-graph
   - mcp

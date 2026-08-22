@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import pytest
 
+from rsc_brain import __version__
 from rsc_brain.identity_release import Identity, public_of, resolve
 
 # A stamp as the build writes it: what `git describe --tags --always --dirty` yields.
@@ -27,6 +28,11 @@ RELEASE = "v0.13.0"
 DESCENDANT = "v0.13.0-49-gb440e6e"
 DIRTY = "v0.13.0-49-gb440e6e-dirty"
 DIRTY_AT_TAG = "v0.13.0-dirty"
+# Those four are test DATA — the stamp `git describe` produced on the host where the defect was
+# measured — so they stay at 0.13.0 through every future release, and the assertions about them stay
+# literal. The *unstamped* cases below are different: `resolve(None)` falls back to the package's own
+# version, so asserting a literal there stops testing the property the moment the package is bumped.
+# Which is why they read `__version__`.
 
 
 class TestFullForm:
@@ -77,7 +83,7 @@ class TestTheHonestFallback:
     def test_an_unstamped_build_does_not_claim_to_be_a_release(self, absent: str | None) -> None:
         identity = resolve(absent)
         assert identity.is_published is False
-        assert identity.full != "0.13.0", (
+        assert identity.full != __version__, (
             "an unstamped build reporting the bare package version is exactly the defect: it is "
             "indistinguishable from the published release"
         )
@@ -85,7 +91,7 @@ class TestTheHonestFallback:
     def test_an_unstamped_build_says_what_it_descends_from(self) -> None:
         """Useless is not the same as honest. It should still name the version line."""
         identity = resolve(None)
-        assert identity.version == "0.13.0"
+        assert identity.version == __version__
 
     def test_an_unstamped_build_is_marked_as_unknown_rather_than_guessed(self) -> None:
         identity = resolve(None)

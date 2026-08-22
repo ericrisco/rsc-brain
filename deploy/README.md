@@ -4,7 +4,7 @@ The repository ships one production Compose topology, two routing overlays, and 
 package the API, worker, console, PostgreSQL 16 with AGE and pgvector, persistent source storage,
 migration ordering, and an HTTPS edge.
 
-Release 0.13.0 is alpha. The deployment definitions are tested for structure, route ownership,
+Release 0.14.0 is alpha. The deployment definitions are tested for structure, route ownership,
 migration ordering, and rendered Kubernetes validity. They are not a zero-configuration model
 stack: operators must supply all model routes and a reachable provider.
 
@@ -128,7 +128,7 @@ export RSC_BRAIN_BUILD_IDENTITY="$(git describe --tags --always --dirty)"
 ```
 
 Skip it and the Compose default `source-build` applies: the image still builds and
-`brain --version` answers `0.13.0+source-build` — honest, and impossible to mistake for a published
+`brain --version` answers `0.14.0+source-build` — honest, and impossible to mistake for a published
 release. Exporting the git description is what the release pipeline does, and it is what makes a
 support conversation about "which build is this" answerable.
 
@@ -248,13 +248,13 @@ The public route ownership is identical on every target:
 | Python service | `/api/v1`, `/mcp`, `/oauth`, `/.well-known`, `/metrics` |
 | Next.js console | `/`, `/api/auth`, `/api/proxy` |
 
-This map has a known 0.13.0 defect: the API also serves `/hunt/{token}`, but none of the packaged
+This map has a known 0.14.0 defect: the API also serves `/hunt/{token}`, but none of the packaged
 edges route `/hunt` to it. SMTP or Slack can therefore deliver an unusable reply link even when
 `RSC_BRAIN_INGRESS__PUBLIC_ORIGIN` is correct. Treat public hunt replies as unavailable on Compose,
 Coolify, Dokploy, and Helm until the route map and its live traversal test include `/hunt`.
 
 It has a second collision: the Next.js console implements a product page at `/metrics`, but every
-packaged edge assigns that path to the API's protected Prometheus endpoint. No 0.13.0 credential can
+packaged edge assigns that path to the API's protected Prometheus endpoint. No 0.14.0 credential can
 satisfy `operator.metrics.read`. The scrape endpoint and console page are therefore both unavailable
 through the packaged public route map.
 
@@ -278,7 +278,7 @@ chart. Selecting an RWX-capable storage class does not change the claims' reques
 - `db_data` or the database PVC stores relational, graph, and vector state.
 - `app_data` stores original source documents and must be shared by API and worker.
 - `inbox` reserves the watcher layout and is separate from stored blobs. No deployed process starts
-  the watcher in 0.13.0, so it is not an operative source transport.
+  the watcher in 0.14.0, so it is not an operative source transport.
 - Compose runs API and worker as UID `10001`; Helm uses UID `1000`. Neither target initializes volume
   ownership. Provision writable ownership before ingestion and retain a successful live-write smoke.
 

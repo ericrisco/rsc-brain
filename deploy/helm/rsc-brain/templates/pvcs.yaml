@@ -1,6 +1,6 @@
 {{- /*
 The shared persistent volumes from Compose: app-data = stored source documents (R39), inbox = a
-reserved watcher layout, model-cache = Ollama/HF weights. No packaged 0.13.0 process starts the
+reserved watcher layout, model-cache = Ollama/HF weights. No packaged 0.14.0 process starts the
 folder watcher. db_data lives in the StatefulSet's volumeClaimTemplate; caddy_* has no Kubernetes
 equivalent because Ingress terminates TLS. resource-policy:keep prevents Helm from deleting these
 claims during uninstall/upgrade.

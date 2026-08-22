@@ -9,6 +9,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-08-22
+
 ### Added
 
 - Added the console Hunting Directory and Skill Lifecycle contracts: immutable topic-scoped hunts,
