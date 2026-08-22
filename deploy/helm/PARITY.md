@@ -135,3 +135,28 @@ plain HTTP and RFC1918/ULA/loopback resolution. The application defaults for bot
 This preserves an installable local topology without silently authorizing an HTTPS cloud route to
 rebind into the cluster network. Operators moving a capability to a public HTTPS provider set both
 grants false. The canonical and versioned Compose hashes were re-recorded with this chart change.
+
+## 2026-08-22 — the documented build could not run (AUDIT-133)
+
+Compose gained a build argument: `RSC_BRAIN_BUILD_IDENTITY`, defaulting to `source-build`.
+
+The Dockerfile refuses an empty build identity — on purpose, so no image can lie about which commit
+it is. `release.yml` passed it and the Compose topology did not, so **every documented
+`docker compose build` / `up --build` failed on a clean checkout** while CI stayed green, because CI
+builds through the release workflow instead. Measured by following `deploy/README.md`:
+
+```
+failed to solve: process "/bin/sh -c test -n \"${RSC_BRAIN_BUILD_IDENTITY}\" || { ... }"
+did not complete successfully: exit code: 1
+```
+
+**Nothing to reconcile in the chart, and this is why**: the chart deploys *published images*
+(`image.repository` / `image.tag`) and builds nothing. A build argument has no chart counterpart —
+the same reason `INSTALL_PDF_BACKEND` has none. Recorded here rather than left as an unexplained hash
+bump, because "no chart change needed" is a conclusion and not an omission.
+
+After the fix, the runbook was followed end to end on a clean checkout: image built, volume ownership
+provisioned, topology up, and `brain verify` inside the api image reporting `status: ok` — **16 min
+50 s** from the build command, against the <30 min gate. `brain --version` in the image answers
+`0.13.0+source-build`, which is the honest identity the default is meant to produce.
+
