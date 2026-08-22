@@ -97,7 +97,11 @@ class LlmReranker:
     def __init__(self, gateway: ModelGateway, *, version: str = "llm-reranker-v2") -> None:
         self._gateway = gateway
         self._version = version
-        self._prompt = load_prompt("relevance_reranker", version="v2")
+        # AUDIT-122: v3 adds the qualifier-mismatch discrimination. Measured on the same probes:
+        # "Premium support customers receive a 4-hour SLA" scored 0.9 for "What was the Acme support
+        # SLA as of 2023-06-01?" under v2 — as high as the passage that answers it — and 0.1 under
+        # v3, while the true answers went 0.95 -> 1.0.
+        self._prompt = load_prompt("relevance_reranker", version="v3")
 
     @property
     def version(self) -> str:
