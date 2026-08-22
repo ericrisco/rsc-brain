@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from evals.metrics import CaseOutcome, calibrate_tau, compute_eval_metrics
 
 from rsc_brain.config.models import HardwareProfile
@@ -25,14 +26,35 @@ def test_eval_metrics_precision_abstention_and_leaks() -> None:
         CaseOutcome("h1", "hit", must_find=True, found=True, max_score=0.8, latency_ms=10),
         CaseOutcome("h2", "hit", must_find=True, found=False, max_score=0.3, latency_ms=12),
         CaseOutcome("a1", "abstain", must_find=False, found=False, max_score=0.2, latency_ms=8),
-        CaseOutcome("d1", "denied", must_find=False, found=True, max_score=0.9, latency_ms=9),
+        # AUDIT-127: a denied case that ANSWERED with authorized content is an abstention failure and
+        # not a leak; only `disclosed` makes it one. Both are represented here so the two cannot be
+        # conflated again — measured on a cpu_only install, the old rule reported 11 leaks where the
+        # real number of disclosures was zero.
+        CaseOutcome(
+            "d1",
+            "denied",
+            must_find=False,
+            found=True,
+            max_score=0.9,
+            latency_ms=9,
+            disclosed=True,
+        ),
+        CaseOutcome(
+            "d2",
+            "denied",
+            must_find=False,
+            found=True,
+            max_score=0.7,
+            latency_ms=11,
+            disclosed=False,
+        ),
     ]
     report = compute_eval_metrics(outcomes)
-    assert report.total == 4
+    assert report.total == 5
     assert report.retrieval_precision == 0.5  # 1 of 2 must-find found
-    assert report.correct_abstention_rate == 0.5  # 1 of 2 must-abstain abstained
-    assert report.permission_leaks == 1  # the denied case leaked
-    assert report.avg_latency_ms == (10 + 12 + 8 + 9) / 4
+    assert report.correct_abstention_rate == pytest.approx(1 / 3)  # 1 of 3 must-abstain abstained
+    assert report.permission_leaks == 1  # only d1 disclosed; d2 answered without disclosing
+    assert report.avg_latency_ms == (10 + 12 + 8 + 9 + 11) / 5
 
 
 def test_calibrate_tau_finds_separating_threshold() -> None:

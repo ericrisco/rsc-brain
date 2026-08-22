@@ -40,6 +40,7 @@ from rsc_brain.identity.service import IdentityService
 from rsc_brain.identity.sessions import membership_for
 from rsc_brain.mcp.auth import authenticate
 from rsc_brain.mcp.tools import do_recall
+from rsc_brain.recall.permissions import sensitive_tags
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.recall.timeline import build_timeline
 from rsc_brain.stores.age_graph_store import AgeGraphStore
@@ -409,18 +410,27 @@ async def _measure(
             scope = await authenticate(
                 dependencies.sessionmaker, f"Bearer {principals.tokens[case.user]}"
             )
+            # AUDIT-127: `permission_leaks` counts DISCLOSURES, and it can only do that if the run
+            # says what this principal may not see. Taken from the project's sensitive topics minus
+            # the scope's own grants — the same rule the in-query filter applies.
+            forbidden = (
+                await sensitive_tags(dependencies.sessionmaker, scope.project_id)
+                - scope.allowed_topics
+            )
             result: Any
             if runnable.surface == "timeline":
                 # A timeline case is answered by the timeline surface, not by recall: that is the
                 # whole point of `surface` (AUDIT-105 AC8). The topic is the one the case's evidence
                 # is tagged with, and `general` is what the temporal corpus carries.
                 result = await build_timeline(dependencies.sessionmaker, scope, topic="general")
-                outcomes.append(observe(runnable, result))
+                outcomes.append(observe(runnable, result, forbidden_topics=forbidden))
             else:
                 result = await do_recall(
                     retriever, dependencies.sessionmaker, scope, query=case.question, top_k=8
                 )
-                outcomes.append(observe(runnable, _as_recall_result(result)))
+                outcomes.append(
+                    observe(runnable, _as_recall_result(result), forbidden_topics=forbidden)
+                )
             # AUDIT-126: where the answer landed in what the CALLER receives. Since AUDIT-124 the
             # confirmed passage is promoted to the front, so this is a post-promotion position: it
             # says the caller sees the answer first, and it deliberately does NOT claim anything

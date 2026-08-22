@@ -93,13 +93,21 @@ async def run_eval(
 
 
 def observe(
-    case: EvalCase, result: RecallResult | TimelineResult, *, latency_ms: float = 0.0
+    case: EvalCase,
+    result: RecallResult | TimelineResult,
+    *,
+    latency_ms: float = 0.0,
+    forbidden_topics: frozenset[str] | None = None,
 ) -> CaseOutcome:
     """Evaluate recall or timeline evidence against a golden case without disclosing hidden facts.
 
     A case with no structured expectations intentionally keeps the original found/not-found verdict.
-    Security abstentions are stricter: an unexpected fragment is a leak even when a broken transport
-    labels the enclosing result ``found=False``.
+    Security abstentions are stricter: an unexpected fragment is a FAILURE even when a broken
+    transport labels the enclosing result ``found=False``.
+
+    ``forbidden_topics`` is what the principal may not see. Supplied, it decides ``disclosed`` — the
+    only thing `permission_leaks` counts (AUDIT-127). Omitted, ``disclosed`` stays ``None`` and no
+    leak is claimed in either direction.
     """
     entries: Sequence[Fragment | TimelineEntry]
     if isinstance(result, RecallResult):
@@ -119,6 +127,7 @@ def observe(
             max_score=max_score,
             latency_ms=latency_ms,
             failures=("wrong_evaluation_surface",),
+            disclosed=_disclosed(entries, forbidden_topics),
         )
 
     if case.family in {"denied", "cross_project"} and not case.must_find:
@@ -129,6 +138,7 @@ def observe(
             max_score=max_score,
             latency_ms=latency_ms,
             failures=() if passed else ("security_abstention_failed",),
+            disclosed=_disclosed(entries, forbidden_topics),
         )
 
     if not case.must_find:
@@ -143,6 +153,7 @@ def observe(
             max_score=max_score,
             latency_ms=latency_ms,
             failures=tuple(abstention_failures),
+            disclosed=_disclosed(entries, forbidden_topics),
         )
 
     failures: list[str] = []
@@ -156,10 +167,35 @@ def observe(
     return _outcome(
         case,
         found=found,
+        disclosed=_disclosed(entries, forbidden_topics),
         max_score=max_score,
         latency_ms=latency_ms,
         failures=tuple(failures),
     )
+
+
+def _topics_of(entry: Fragment | TimelineEntry) -> frozenset[str]:
+    """A fragment's topics. Production carries them in `provenance` (`retriever._assemble`); a
+    timeline entry carries them as an attribute."""
+    provenance = getattr(entry, "provenance", None)
+    if isinstance(provenance, Mapping):
+        tags = provenance.get("tags")
+        if isinstance(tags, (list, tuple, set, frozenset)):
+            return frozenset(str(tag) for tag in tags)
+    tags = getattr(entry, "tags", None)
+    if isinstance(tags, (list, tuple, set, frozenset)):
+        return frozenset(str(tag) for tag in tags)
+    return frozenset()
+
+
+def _disclosed(
+    entries: Sequence[Fragment | TimelineEntry], forbidden_topics: frozenset[str] | None
+) -> bool | None:
+    """Whether anything carrying a forbidden topic was returned. ``None`` when nobody said what was
+    forbidden — the one honest answer when the input is absent (AUDIT-127)."""
+    if forbidden_topics is None:
+        return None
+    return any(_topics_of(entry) & forbidden_topics for entry in entries)
 
 
 def _outcome(
@@ -169,6 +205,7 @@ def _outcome(
     max_score: float,
     latency_ms: float,
     failures: tuple[str, ...],
+    disclosed: bool | None = None,
 ) -> CaseOutcome:
     return CaseOutcome(
         case_id=case.case_id,
@@ -179,6 +216,7 @@ def _outcome(
         latency_ms=latency_ms,
         passed=not failures,
         failures=failures,
+        disclosed=disclosed,
     )
 
 
