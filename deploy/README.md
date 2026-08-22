@@ -119,6 +119,22 @@ for this plain-HTTP private-network example. For a public HTTPS provider, remove
 `false`. If the provider needs credentials, map each API key from a protected environment or secret
 source rather than writing the value into this overlay.
 
+### Stamp the build identity
+
+The image refuses to build without one, so a from-source build needs it exported once per shell:
+
+```bash
+export RSC_BRAIN_BUILD_IDENTITY="$(git describe --tags --always --dirty)"
+```
+
+Skip it and the Compose default `source-build` applies: the image still builds and
+`brain --version` answers `0.13.0+source-build` — honest, and impossible to mistake for a published
+release. Exporting the git description is what the release pipeline does, and it is what makes a
+support conversation about "which build is this" answerable.
+
+Nothing else in this file needs the variable; it is a build argument, not configuration
+(`docs/reference/configuration.md` says so explicitly).
+
 ### Provision application-volume ownership
 
 The image runs as UID `10001`, but the Compose definitions do not initialize ownership on fresh

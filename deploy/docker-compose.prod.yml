@@ -152,6 +152,13 @@ services:
         # backend and torch — gigabytes). This service builds the shared application image, so the
         # flag belongs here. Default off: a box that only ever sees markdown should not carry it.
         INSTALL_PDF_BACKEND: ${INSTALL_PDF_BACKEND:-false}
+        # AUDIT-133: the Dockerfile REFUSES an empty build identity, and nothing here passed one — so
+        # every documented `build`/`up --build` command failed on a fresh checkout while CI stayed
+        # green, because `release.yml` passes it and only the from-source path did not. `source-build`
+        # is deliberately unparseable as a version: `brain --version` reports `0.13.0+source-build`,
+        # which is honest and cannot be mistaken for a published release. Export the variable —
+        # `RSC_BRAIN_BUILD_IDENTITY=$(git describe --tags --always --dirty)` — for a precise stamp.
+        RSC_BRAIN_BUILD_IDENTITY: ${RSC_BRAIN_BUILD_IDENTITY:-source-build}
     image: rsc-brain/app:latest
     command: ["brain", "init"]
     environment:
