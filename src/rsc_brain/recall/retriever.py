@@ -710,6 +710,7 @@ class PgRetriever:
             credibility=candidate.credibility,
             importance=candidate.importance,
             valid_from=candidate.valid_from,
+            valid_to=candidate.valid_to,
             as_of=as_of,
             tags=candidate.tags,
             weights=self._config.weights,
