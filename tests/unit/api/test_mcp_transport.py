@@ -15,7 +15,6 @@ from rsc_brain.config.models import IngressConfig
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.stores.relational.database import make_engine, make_sessionmaker
 
-
 #: An `Accept` that genuinely excludes `text/event-stream`. Every test below that admits a request
 #: through the edge uses `406 Not Acceptable` as the sentinel for "the host/origin check let this
 #: through" — the request is a bare GET, not a real MCP session. That sentinel has to be requested
