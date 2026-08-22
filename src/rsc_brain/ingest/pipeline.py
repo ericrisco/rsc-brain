@@ -362,7 +362,25 @@ class IngestionPipeline:
                 decision.reason == "prompt_injection" or model_owned_policy
             ):
                 review_chunk_ids.append(row.id)
-            chunk_tags[row.id] = tags or (default_tag,)
+            # AUDIT-141: under MANUAL and SOURCE_TAGS the chunk carries the SOURCE's tags, not the
+            # topicalizer's. This line used to be `tags or (default_tag,)` under every policy, and
+            # `Topicalizer.classify` returns `floor | model_tags` — the floor is a lower bound, so a
+            # model could only ever ADD topics. The authorization filter matches on CHUNK tags
+            # (`recall/permissions.py`) and visibility is any-match, so one added topic is one more
+            # audience. Measured on the corpus: source `legal-drive` declaring `{legal}` produced a
+            # document row `{legal}` and a chunk row `{legal, corp, delivery}`, and a principal
+            # holding `corp, delivery` read the contract. `legal` is sensitivity 2, so the FR-4.14
+            # veto never fired — the topics a model adds to widen an audience are, by their nature,
+            # the unremarkable ones.
+            #
+            # These two policies exist so that no model decides classification; `credibility.py`
+            # prices `source_tags` at 0.85 for that reason. The topicalizer is still called, because
+            # the prompt-injection quarantine above is a REVIEW decision and belongs to every policy.
+            # What changes is that its opinion no longer reaches the field permissions are read from.
+            if policy in {SourcePolicy.MANUAL, SourcePolicy.SOURCE_TAGS}:
+                chunk_tags[row.id] = tuple(source.default_tags) or (default_tag,)
+            else:
+                chunk_tags[row.id] = tags or (default_tag,)
 
         if policy in {SourcePolicy.MANUAL, SourcePolicy.SOURCE_TAGS}:
             doc_tags = tuple(source.default_tags)

@@ -9,6 +9,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- Under `policy: source_tags` and `policy: manual` — the two ingestion policies that exist so that no
+  model decides a document's classification — each **chunk's** tags were the topicalizer's decision
+  floored by the source's declared tags, while only the document's tags came from the source. The
+  authorization filter matches on chunk tags and visibility is any-match, so a model could only ever
+  widen a chunk's audience, never narrow it. Observed on the evaluation corpus: a source declaring
+  `{legal}` produced a document row `{legal}` and a chunk row `{legal, corp, delivery}`, and a
+  principal holding `corp, delivery` retrieved the contract; `legal` sits below the sensitivity
+  threshold, so the FR-4.14 veto never fired. Chunks under those two policies now carry the source's
+  declared tags, and the topicalizer is still consulted so the prompt-injection quarantine — a review
+  decision, not a classification one — keeps working under every policy. `llm` and `llm_review` are
+  unchanged: there the model is the declared authority (AUDIT-141).
+
 ### Fixed
 
 - Gate G2 — "discloses nothing unauthorized" — was measured by a predicate that could not fail. The

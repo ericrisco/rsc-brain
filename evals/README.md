@@ -7,7 +7,7 @@ company data.
 ## Current corpus
 
 `documents.yaml` is the source for two fictional organizations and their source documents.
-`taxonomy.yaml` defines project-local topics and sensitivities. `golden.yaml` contains 53 recall
+`taxonomy.yaml` defines project-local topics and sensitivities. `golden.yaml` contains 55 recall
 cases. Those six `injection`-family queries are recall-side abstention checks; they do not exercise
 the ingestion model boundary. `prompt_injection.yaml` separately contains 10 executable adversarial
 ingestion cases for topicalization, extraction, and contradiction judging.
@@ -17,13 +17,13 @@ ingestion cases for topicalization, extraction, and contradiction judging.
 | `hit` | 12 | Relevant knowledge should be returned. |
 | `abstain` | 5 | Unsupported questions should return no answer. **This family is gate G4.** |
 | `qualifier` | 6 | A sibling fact under a different qualifier must not be served as the answer. |
-| `denied` | 6 | Topic-hidden knowledge must not leak. |
+| `denied` | 8 | Topic-hidden knowledge must not leak. Two of them (`d7`, `d8`) deny a topic *below* the sensitivity threshold, which nothing asserted until AUDIT-139. |
 | `cross_project` | 5 | Another project's knowledge must not leak. |
 | `exact_id` | 4 | Exact identifiers remain retrievable. |
 | `temporal` | 9 | Current and historical intent select the correct validity interval. |
 | `injection` | 6 | Instructions embedded in documents remain untrusted data. |
 
-Of the 53 cases, 30 must find knowledge and 23 must abstain; 52 are scored through recall and one
+Of the 55 cases, 30 must find knowledge and 25 must abstain; 54 are scored through recall and one
 through the timeline surface. `contradictions.yaml` supplies contradiction cases for the living-graph
 evaluator.
 
@@ -234,7 +234,7 @@ export RSC_BRAIN_DATABASE__DSN=postgresql+asyncpg://…  # a migrated database
 
 uv run python -m evals.gate_run setup     # both projects, taxonomy, sources, 4 principals + PATs
 uv run python -m evals.gate_run ingest    # the 27-document corpus through real models
-uv run python -m evals.gate_run measure   # the 53 golden cases -> G2/G3/G4
+uv run python -m evals.gate_run measure   # the 55 golden cases -> G2/G3/G4
 ```
 
 `setup` and `ingest` are resumable: an already-present document is reported as a duplicate and costs

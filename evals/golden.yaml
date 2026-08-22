@@ -67,11 +67,12 @@ cases:
   # not grant the answering document's topic to — the same question `h9` and `h2` ask as principals
   # who do hold it. Measured when they were written: both returned the answer, and `permission_leaks`
   # said zero, because the metric was asking the filter its own question.
-  # d7 FAILS as of 2026-08-22, and the expectation is right: it is AUDIT-141. `globex-contract-en` has
-  # `policy: source_tags` and a source declaring `{legal}`; its DOCUMENT row carries `{legal}` and its
-  # CHUNK row carries `{legal, corp, delivery}`, because under every policy the chunk's tags are the
-  # topicalizer's decision floored by the source's. The authorization filter matches on chunk tags, so
-  # a model widened who may read a document whose policy exists to keep models out of that decision.
+  # d7 was the case that caught AUDIT-141. `globex-contract-en` has `policy: source_tags` and a source
+  # declaring `{legal}`; its DOCUMENT row carried `{legal}` while its CHUNK row carried
+  # `{legal, corp, delivery}`, because under every policy the chunk's tags were the topicalizer's
+  # decision floored by the source's — and the authorization filter matches on chunk tags. A model was
+  # widening who may read a document whose policy exists to keep models out of that decision. Fixed;
+  # both pass, and a re-ingest was needed to prove it, since tags are written at ingest time.
   - {id: d7, family: denied, question: "What notice period do Globex contracts require?", user: dave, project: globex, must_find: false}
   - {id: d8, family: denied, question: "What database does Acme run in production?", user: bob, project: acme, must_find: false}
 
