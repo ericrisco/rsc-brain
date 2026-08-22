@@ -6,6 +6,16 @@ on:
   push:
     tags: ["v*"]
   # Manual invocation is deliberately dry-run-only. Jobs with any publication scope are skipped.
+  #
+  # Dispatch it on a quiet ref, or expect it to be cancelled. This workflow calls `ci.yml`, whose
+  # concurrency group is `ci-${{ github.ref }}` with cancel-in-progress — so a rehearsal dispatched on
+  # `main` shares a group with every push to `main`, and the next merge kills it. Observed: ten jobs
+  # green, `data service` cancelled mid-run by a merge, and `dry-build` — the one job that only exists
+  # for the rehearsal — skipped because it needs what was cancelled. A rehearsal that reports
+  # `cancelled` is usually that, not a broken release path.
+  #
+  # A REAL release is unaffected: it triggers on a tag, so `github.ref` is `refs/tags/vX` and the
+  # group is its own. This is a property of rehearsing on a busy branch, not of releasing.
   workflow_dispatch:
 
 # Nothing by default; each job grants only the token scope it demonstrably needs (AUDIT-006).
