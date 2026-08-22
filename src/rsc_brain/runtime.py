@@ -25,6 +25,7 @@ from rsc_brain.config.models import (
     MaintenanceConfig,
     PublicLimits,
     RecallConfig,
+    RerankerKind,
 )
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.ingest.pipeline import PipelineConfig
@@ -52,6 +53,7 @@ class RuntimeDependencies:
     hunting: HuntingConfig
     maintenance: MaintenanceConfig
     reranker_enabled: bool
+    reranker_kind: RerankerKind
     data_dir: str
 
     async def dispose(self) -> None:
@@ -132,6 +134,8 @@ def build(role: Role) -> RuntimeDependencies:
         # spec `reranked-abstention`: one place decides it, so the API and the worker
         # can never disagree about whether abstention is reranked (R53).
         reranker_enabled=settings.reranker.enabled,
+        # AUDIT-130: the reranker capability's own `kind` decides which implementation serves it.
+        reranker_kind=settings.reranker.kind,
         limits=settings.limits,
         ingress=settings.ingress,
         hunting=settings.hunting,

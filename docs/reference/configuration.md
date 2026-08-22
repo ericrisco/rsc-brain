@@ -93,6 +93,7 @@ The four values under `recall.weights` must total `1.0` within a tolerance of `0
 |---|---|---|---|
 | `reranker` | object | configured defaults | Reranker feature settings. |
 | `reranker.enabled` | boolean | `false` | Reranker switch (FR-3.6). When true, recall decides abstention on the reranker's relevance score against `recall.tau_rerank` instead of the blended `recall.tau`; when false the blended path is unchanged. Model routing is under `capabilities.reranker`. **A `cpu_only` hardware profile cannot serve it — see below.** |
+| `reranker.kind` | `chat` or `rerank_api` | `chat` | Which implementation serves the reranker seam. `chat` asks the `capabilities.reranker` model to return JSON relevance scores — one chat inference per query, and the only route this product had for most of its life. `rerank_api` calls a real rerank endpoint through the same capability route, which is what a cross-encoder speaks: far cheaper per call, and the only shape that could serve abstention without a GPU (see the `cpu_only` note below). The default is `chat` so an existing install keeps the behaviour it was measured with. |
 | `vision` | object | configured defaults | Reserved vision settings. |
 | `vision.enabled` | boolean | `false` | Reserved vision switch. The current runtime does not consume it. |
 | `telemetry` | object | configured defaults | Anonymous telemetry settings. |

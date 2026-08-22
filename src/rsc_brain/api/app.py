@@ -26,7 +26,7 @@ from starlette.responses import Response
 from rsc_brain import __version__
 from rsc_brain.api.authz import decide_document
 from rsc_brain.authorization import Allow, Capability, decide
-from rsc_brain.config.models import HuntingConfig, IngressConfig, RecallConfig
+from rsc_brain.config.models import HuntingConfig, IngressConfig, RecallConfig, RerankerKind
 from rsc_brain.gateway.model_gateway import ModelGateway
 from rsc_brain.identity.resolve import resolve_scope
 from rsc_brain.ingest.pipeline import DocumentNotFoundError, IngestionPipeline, PipelineConfig
@@ -34,6 +34,7 @@ from rsc_brain.ingest.service import IngestService
 from rsc_brain.mcp.server import build_mcp_server, normalize_mcp_security_headers
 from rsc_brain.ontology.ingest import OntologyIngest
 from rsc_brain.ontology.recall import OntologyRecall
+from rsc_brain.recall.reranker import LlmReranker, RerankApiReranker, Reranker
 from rsc_brain.recall.retriever import PgRetriever
 from rsc_brain.scope import CrossProjectScopeError, ProjectScope
 from rsc_brain.stores.age_graph_store import AgeGraphStore
@@ -59,6 +60,8 @@ class ApiDeps:
     # spec `reranked-abstention`: FR-3.6 is opt-in and off by default, so this stays False and the
     # recall path is byte-identical to SPEC-06 until an operator turns it on.
     reranker_enabled: bool = False
+    #: Which implementation of the reranker seam to use (AUDIT-130).
+    reranker_kind: RerankerKind = RerankerKind.CHAT
 
     # R37: set in production so an accepted upload is queued rather than processed on the request
     # thread. Left None by tests and the CLI, where a synchronous ingest is the point.
@@ -101,7 +104,6 @@ class ApiDeps:
         )
 
     def retriever(self) -> PgRetriever:
-        from rsc_brain.recall.reranker import LlmReranker
 
         return PgRetriever(
             sessionmaker=self.sessionmaker,
@@ -113,8 +115,25 @@ class ApiDeps:
             # install that has not opted in takes the SPEC-06 blended path with nothing added. The
             # capability's route was mandatory to configure and had no call site until now
             # (AUDIT-077); this is that call site.
-            reranker=LlmReranker(self.gateway) if self.reranker_enabled else None,
+            reranker=_reranker_for(self.gateway, self.reranker_enabled, self.reranker_kind),
         )
+
+
+def _reranker_for(
+    gateway: ModelGateway, enabled: bool, kind: RerankerKind | None
+) -> Reranker | None:
+    """The configured reranker implementation, or None when the operator has not opted in.
+
+    AUDIT-130: two implementations of one seam. `chat` asks a chat model for JSON scores — the only
+    route for most of this product's life. `rerank_api` calls a real rerank endpoint, which is what a
+    cross-encoder speaks and what a `cpu_only` install would need to be able to refuse anything at all
+    (AUDIT-128). Default is `chat`, so an existing install keeps the behaviour it was measured with.
+    """
+    if not enabled:
+        return None
+    if kind is RerankerKind.RERANK_API:
+        return RerankApiReranker(gateway)
+    return LlmReranker(gateway)
 
 
 def _deps_from_config() -> tuple[ApiDeps, AsyncEngine]:
@@ -137,6 +156,7 @@ def _deps_from_config() -> tuple[ApiDeps, AsyncEngine]:
         config=dependencies.pipeline_config,
         recall_config=dependencies.recall_config,
         reranker_enabled=dependencies.reranker_enabled,
+        reranker_kind=dependencies.reranker_kind,
         sync_sessionmaker=make_sync_sessionmaker(make_sync_engine()),
         ingress=dependencies.ingress,
         hunting=dependencies.hunting,
