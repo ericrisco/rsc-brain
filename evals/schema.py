@@ -10,7 +10,17 @@ from pydantic import BaseModel, ConfigDict, Field
 Verdict = Literal["agree", "contradict", "unrelated"]
 # The six required golden families plus the AUDIT-008 injection family.
 GoldenFamily = Literal[
-    "hit", "abstain", "denied", "cross_project", "exact_id", "temporal", "injection"
+    "hit",
+    "abstain",
+    "denied",
+    "cross_project",
+    "exact_id",
+    "temporal",
+    "injection",
+    # AUDIT-123: a sibling fact under a different qualifier — same entity, same kind of fact, one
+    # word different. AUDIT-122 measured this scoring as high as the passage that answers, so the
+    # shape needs cases of its own rather than a note in a prompt.
+    "qualifier",
 ]
 DocKind = Literal["prose", "table", "scanned"]
 D13Policy = Literal["manual", "source_tags", "llm", "llm_review"]

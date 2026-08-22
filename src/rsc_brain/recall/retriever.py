@@ -651,8 +651,13 @@ class PgRetriever:
             anchor = _midnight(mode.as_of)
             return [active_at_clause(vf, vt, anchor)]
         if mode.kind is TemporalKind.RANGE and mode.start and mode.end:
+            # AUDIT-123: `[start, end)`. This was `vf <= end`, so a claim whose validity begins at
+            # the instant that ENDS the range was counted as valid during it — measured on the
+            # corpus, "the Acme support SLA in 2023" returned the claim effective 2024-01-01. Every
+            # other valid-time comparison in this product is half-open; this one was not, and it
+            # only became reachable when AUDIT-117 let a natural question produce a RANGE at all.
             return [
-                or_(vf.is_(None), vf <= _midnight(mode.end)),
+                or_(vf.is_(None), vf < _midnight(mode.end)),
                 or_(vt.is_(None), vt > _midnight(mode.start)),
             ]
         if mode.kind is TemporalKind.HISTORICAL:
