@@ -115,3 +115,38 @@ async def test_a_changed_dispatcher_contract_fails_loudly() -> None:
         await server._extend_catalogue(
             cast(Any, context), cast(Any, _returns_a_shape_we_do_not_know)
         )
+
+
+@pytest.mark.parametrize("client_version", ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"])
+def test_every_published_protocol_version_still_initializes(client_version: str) -> None:
+    """A client that spoke to the 1.x server still completes the handshake against 2.0.
+
+    This is the product-facing risk of the SDK major bump: the MCP endpoint is how Claude and
+    ChatGPT reach the company memory, and a server that answered only the newest protocol revision
+    would silently stop serving every client already deployed. mcp 2.0 raised its own
+    `LATEST_PROTOCOL_VERSION` to `2026-07-28`, so this pins what the server actually negotiates
+    rather than trusting that a version list stays generous.
+
+    Measured alongside this: a client requesting `2026-07-28` is answered `2025-11-25`, because the
+    newest revision needs the SDK's separate modern-transport path. The migration therefore changes
+    no protocol behaviour for any client — which is the intent.
+    """
+    with TestClient(_server().mcp_app()) as client:
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": client_version,
+                    "capabilities": {},
+                    "clientInfo": {"name": "probe", "version": "1"},
+                },
+            },
+            headers={**_HEADERS, "host": "brain.example.com", "origin": _PUBLIC_ORIGIN},
+        )
+
+    assert response.status_code == 200, response.text
+    negotiated = json.loads(response.text.split("data: ", 1)[1])["result"]["protocolVersion"]
+    assert negotiated == client_version
