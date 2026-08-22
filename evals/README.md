@@ -123,7 +123,7 @@ result persistence. The runner returns:
 
 - must-find hit rate (`retrieval_precision` in the 0.13.0 report);
 - correct-abstention rate over must-abstain cases;
-- permission leak count for `denied` and `cross_project` cases; and
+- permission leak count for `denied` and `cross_project` cases — **disclosures**, not answers; and
 - average recall latency.
 
 `evals.runner.run_calibration` runs the same cases through a retriever configured to expose raw top
@@ -206,8 +206,21 @@ does not trust self-reported `passed` or `missing_*` fields.
 
 Run the corpus evaluation before changing a model, provider, embedding, judge, reranker, or
 versioned prompt under `src/rsc_brain/prompts/`. Review golden expectations whenever a source
-document or taxonomy changes. Security cases must remain strict: any result for a denied or
-cross-project case is a permission leak.
+document or taxonomy changes.
+
+Security cases must remain strict: **any** result for a denied or cross-project case is a failure. It
+is not automatically a *leak*. AUDIT-127 separated the two after a `cpu_only` run reported eleven
+permission leaks where the real number of disclosures was zero — eleven abstention failures and no
+confidentiality breach, because the permission filter lives in the query and holds with or without a
+reranker. `correct_abstention_rate` counts answering-when-it-should-abstain; `permission_leaks` counts
+returning something this principal may not see.
+
+Since AUDIT-139 the second is judged against what **`documents.yaml` declares** each document to be,
+not against the effective tags the filter consulted. Judging by the effective tags asked the filter its
+own question: a document carrying a topic it should not carry was admitted BY that topic, so nothing
+looked forbidden about it. That is not theoretical — it hid two real disclosures in this very corpus
+behind a reported zero for every published measurement. `filter_breaches` keeps the older and harder
+question separate: did the SQL predicate itself return something it had no basis for.
 
 ## Running the success gates
 

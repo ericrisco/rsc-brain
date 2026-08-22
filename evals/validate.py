@@ -510,6 +510,43 @@ def check_golden(*, repo: Path = REPO) -> list[str]:
     return errors
 
 
+def check_source_tags_are_declared_per_document(*, repo: Path = REPO) -> list[str]:
+    """One source name, one tag set, one policy (AUDIT-140).
+
+    A source row holds a single set of default tags and a single policy, and under
+    `policy: source_tags` those default tags are what every document from it gets. So a corpus that
+    declares two different tag sets for one source name is asking for something the model cannot hold,
+    and the harness used to resolve it by taking the union — which gave each document its siblings'
+    topics and made two documents readable by principals this corpus does not grant their topic to.
+
+    Enforced here as well as at ingest time, so a corpus edit fails the content gate rather than
+    surfacing later as a widened tag nobody looked at.
+    """
+    path = repo / "evals" / "documents.yaml"
+    if not path.is_file():
+        return []
+    corpus = Corpus.model_validate(_read_yaml(path))
+    grouped: dict[tuple[str, str], list[Any]] = {}
+    for document in corpus.documents:
+        grouped.setdefault((document.project, document.source), []).append(document)
+    errors: list[str] = []
+    for (project, name), documents in sorted(grouped.items()):
+        tag_sets = {tuple(sorted(document.tags)) for document in documents}
+        policies = {document.policy for document in documents}
+        if len(tag_sets) > 1:
+            errors.append(
+                f"corpus: source {project}/{name} is declared with {len(tag_sets)} tag sets "
+                f"({sorted(tag_sets)}); a source row holds one, and the union grants each document "
+                "its siblings' topics"
+            )
+        if len(policies) > 1:
+            errors.append(
+                f"corpus: source {project}/{name} is declared with policies {sorted(policies)}; a "
+                "source row holds one, so all but the first are silently discarded"
+            )
+    return errors
+
+
 def check_rerank_calibration(*, repo: Path = REPO) -> list[str]:
     """The `tau_rerank` sweep set must stay held out from the set the gates score (AUDIT-136).
 
@@ -600,6 +637,7 @@ def validate(*, repo: Path = REPO) -> list[str]:
         + check_corpus(repo=repo)
         + check_foundational_quality(repo=repo)
         + check_golden(repo=repo)
+        + check_source_tags_are_declared_per_document(repo=repo)
         + check_rerank_calibration(repo=repo)
         + check_contradictions(repo=repo)
         + check_prompt_injection(repo=repo)

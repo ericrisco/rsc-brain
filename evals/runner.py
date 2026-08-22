@@ -93,12 +93,36 @@ async def run_eval(
     return compute_eval_metrics(outcomes)
 
 
+@dataclass(frozen=True, slots=True)
+class TopicAuthority:
+    """What a principal may see, and what the CORPUS says each document is (AUDIT-139).
+
+    `declared` is the only ground truth an evaluation holds that the authorization filter does not
+    also hold. Judging a disclosure by the fragment's *effective* tags asks the filter its own
+    question: the wrong tag is what admitted the fragment, so the check then finds nothing wrong with
+    it. Judging by what the corpus DECLARED catches a document that carries a topic it should not.
+
+    Keys may be either the corpus document id or the runtime UUID; the lookup tries both, because the
+    two surfaces carry different ones and a key mismatch here would silently make every case
+    unjudgeable — reported as safety.
+    """
+
+    allowed: frozenset[str]
+    declared: Mapping[str, frozenset[str]]
+    #: The project's topics at or above the sensitivity threshold. Needed because visibility is not
+    #: "holds any topic": a sensitive topic the caller does not hold VETOES, so a document declared
+    #: `[hr, general]` must not reach a `general`-only caller even though the overlap allows it
+    #: (FR-4.14, and the example in `rsc_brain/recall/permissions.py`'s own docstring).
+    sensitive: frozenset[str] = frozenset()
+
+
 def observe(
     case: EvalCase,
     result: RecallResult | TimelineResult,
     *,
     latency_ms: float = 0.0,
     forbidden_topics: frozenset[str] | None = None,
+    authority: TopicAuthority | None = None,
 ) -> CaseOutcome:
     """Evaluate recall or timeline evidence against a golden case without disclosing hidden facts.
 
@@ -106,9 +130,15 @@ def observe(
     Security abstentions are stricter: an unexpected fragment is a FAILURE even when a broken
     transport labels the enclosing result ``found=False``.
 
-    ``forbidden_topics`` is what the principal may not see. Supplied, it decides ``disclosed`` — the
-    only thing `permission_leaks` counts (AUDIT-127). Omitted, ``disclosed`` stays ``None`` and no
-    leak is claimed in either direction.
+    ``authority`` decides ``disclosed`` — the only thing `permission_leaks` counts (AUDIT-127) — by
+    comparing each returned fragment's **declared** topics against the grant (AUDIT-139). It also
+    decides ``filter_breach``, which is the older and stricter question: did the in-query filter itself
+    return a topic this principal does not hold, at any sensitivity.
+
+    ``forbidden_topics`` is the pre-AUDIT-139 input and still answers a real question — effective tags
+    against a named forbidden set. It is used for ``disclosed`` only when no ``authority`` is given.
+    With neither, ``disclosed`` stays ``None`` and no leak is claimed in either direction: absence of
+    the input is not evidence of safety.
     """
     entries: Sequence[Fragment | TimelineEntry]
     if isinstance(result, RecallResult):
@@ -120,6 +150,9 @@ def observe(
         entries = result
         max_score = max((entry.credibility for entry in result), default=0.0)
 
+    disclosed = _disclosed(entries, forbidden_topics, authority)
+    breach = _filter_breach(entries, authority)
+
     result_is_recall = isinstance(result, RecallResult)
     if (case.surface == "recall") != result_is_recall:
         return _outcome(
@@ -128,7 +161,8 @@ def observe(
             max_score=max_score,
             latency_ms=latency_ms,
             failures=("wrong_evaluation_surface",),
-            disclosed=_disclosed(entries, forbidden_topics),
+            disclosed=disclosed,
+            filter_breach=breach,
         )
 
     if case.family in {"denied", "cross_project"} and not case.must_find:
@@ -139,7 +173,8 @@ def observe(
             max_score=max_score,
             latency_ms=latency_ms,
             failures=() if passed else ("security_abstention_failed",),
-            disclosed=_disclosed(entries, forbidden_topics),
+            disclosed=disclosed,
+            filter_breach=breach,
         )
 
     if not case.must_find:
@@ -154,7 +189,8 @@ def observe(
             max_score=max_score,
             latency_ms=latency_ms,
             failures=tuple(abstention_failures),
-            disclosed=_disclosed(entries, forbidden_topics),
+            disclosed=disclosed,
+            filter_breach=breach,
         )
 
     failures: list[str] = []
@@ -168,7 +204,8 @@ def observe(
     return _outcome(
         case,
         found=found,
-        disclosed=_disclosed(entries, forbidden_topics),
+        disclosed=disclosed,
+        filter_breach=breach,
         max_score=max_score,
         latency_ms=latency_ms,
         failures=tuple(failures),
@@ -189,14 +226,102 @@ def _topics_of(entry: Fragment | TimelineEntry) -> frozenset[str]:
     return frozenset()
 
 
+def _document_key(entry: Fragment | TimelineEntry) -> str | None:
+    """The corpus id if the entry carries one, else the runtime id. Either can key `declared`."""
+    provenance = getattr(entry, "provenance", None)
+    if isinstance(provenance, Mapping):
+        document = provenance.get("document")
+        if isinstance(document, str) and document:
+            return document
+    for attribute in ("document", "document_id"):
+        value = getattr(entry, attribute, None)
+        if value:
+            return str(value)
+    return None
+
+
+def visible_under(topics: frozenset[str], authority: TopicAuthority) -> bool:
+    """The product's own visibility rule, applied to an arbitrary topic set.
+
+    Mirrors `rsc_brain.recall.permissions.chunk_visibility_clause`, which is SQL and cannot be reused
+    here:
+
+        visible  <=>  topics & allowed  is non-empty
+                 AND  topics & (project_sensitive - allowed)  is empty
+
+    Both halves matter and they fail differently. Holding none of a document's topics means no basis
+    to read it at all. Holding one of them is not enough when another is sensitive and unheld — that
+    is FR-4.14, and the leak it prevents (`{hr, general}` reaching a `general`-only caller) is the
+    example in the permission module's own docstring.
+
+    A mirror can drift from what it mirrors. It is here rather than in the product because an
+    evaluation needs to ask the question of tags the product never saw — the ones the corpus DECLARED
+    — and a test pins it against the docstring's example.
+    """
+    if not topics:
+        return False
+    if not topics & authority.allowed:
+        return False
+    return not (topics & (authority.sensitive - authority.allowed))
+
+
+def _judgeable(
+    entries: Sequence[Fragment | TimelineEntry], authority: TopicAuthority
+) -> list[frozenset[str]]:
+    """The declared topic sets of the entries the corpus can speak for."""
+    return [
+        authority.declared[key]
+        for entry in entries
+        if (key := _document_key(entry)) is not None and authority.declared.get(key)
+    ]
+
+
 def _disclosed(
-    entries: Sequence[Fragment | TimelineEntry], forbidden_topics: frozenset[str] | None
+    entries: Sequence[Fragment | TimelineEntry],
+    forbidden_topics: frozenset[str] | None,
+    authority: TopicAuthority | None = None,
 ) -> bool | None:
-    """Whether anything carrying a forbidden topic was returned. ``None`` when nobody said what was
-    forbidden — the one honest answer when the input is absent (AUDIT-127)."""
+    """Whether anything this principal may not see was returned.
+
+    AUDIT-139: judged by re-applying the product's visibility rule to what the CORPUS declares each
+    document to be. The old check used the effective tags — the same data the filter had just
+    consulted — so a document carrying a topic it should not carry was admitted BY that topic and the
+    check then found nothing forbidden about it. Measured on the shipped corpus, that hid two real
+    disclosures behind a reported zero.
+
+    ``None`` when nobody said what the principal may see, and also when entries were returned and NONE
+    of them could be resolved to a declared tag set — a verdict on an empty sample would be a claim of
+    safety derived from a missing input, which is the shape of AUDIT-090 and AUDIT-127.
+    """
+    if authority is not None:
+        judged = _judgeable(entries, authority)
+        if entries and not judged:
+            return None
+        return any(not visible_under(topics, authority) for topics in judged)
     if forbidden_topics is None:
         return None
     return any(_topics_of(entry) & forbidden_topics for entry in entries)
+
+
+def _filter_breach(
+    entries: Sequence[Fragment | TimelineEntry], authority: TopicAuthority | None
+) -> bool | None:
+    """Whether the in-query filter itself returned something it had no basis for (AUDIT-139 AC3).
+
+    The same rule, applied to the tags the fragment actually carries. A different and harder failure
+    than a disclosure: a disclosure needs only a mis-tagged document and a perfectly correct filter,
+    whereas this says the SQL predicate let through a chunk that predicate should have excluded.
+
+    Entries carrying no tags at all are skipped rather than counted. An adapter that forgot to pass
+    provenance through would otherwise report a security breach on every case, which is a false alarm
+    of exactly the kind AUDIT-127 removed.
+    """
+    if authority is None:
+        return None
+    carried = [topics for entry in entries if (topics := _topics_of(entry))]
+    if entries and not carried:
+        return None
+    return any(not visible_under(topics, authority) for topics in carried)
 
 
 def _outcome(
@@ -207,6 +332,7 @@ def _outcome(
     latency_ms: float,
     failures: tuple[str, ...],
     disclosed: bool | None = None,
+    filter_breach: bool | None = None,
 ) -> CaseOutcome:
     return CaseOutcome(
         case_id=case.case_id,
@@ -218,6 +344,7 @@ def _outcome(
         passed=not failures,
         failures=failures,
         disclosed=disclosed,
+        filter_breach=filter_breach,
     )
 
 

@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any, cast
 import yaml
 
 from evals.metrics import CaseOutcome, EvalReport, compute_eval_metrics
-from evals.runner import eval_case_from_golden, observe
+from evals.runner import TopicAuthority, eval_case_from_golden, observe
 from evals.schema import Corpus, Golden, RerankCalibration, Taxonomy
 from rsc_brain import runtime
 from rsc_brain.identity.service import IdentityService
@@ -180,18 +180,57 @@ async def _setup() -> Principals:
         await dependencies.dispose()
 
 
+def _source_rows(corpus: Corpus) -> dict[tuple[str, str], tuple[str, tuple[str, ...]]]:
+    """One source row per (project, name) — or a refusal, if the corpus declares two of them.
+
+    AUDIT-140. This used to keep the UNION of the tags of every document sharing a source name, and
+    the FIRST document's policy, defended as "the way an operator declaring a folder once would". That
+    is true of a folder and false of this corpus, which declares tags per DOCUMENT. Under
+    `policy: source_tags` the source's default tags are what gets applied, so the union silently gave
+    each document its siblings' topics.
+
+    Measured on the shipped corpus before the fix: three sources were affected, and two documents
+    became readable by principals the corpus does not grant their topic to — `globex-contract-en`
+    (declared `[legal]`) by `dave`, and `acme-eng-deploy-en` (declared `[engineering]`) by `bob`. The
+    gates reported zero permission leaks throughout, because the leak metric was reading the same
+    widened tags (AUDIT-139).
+
+    A source row carries one tag set and one policy. A corpus declaring two for one name is asking for
+    something the data model cannot hold, so it is refused with both sets named rather than resolved
+    by a rule nobody chose.
+    """
+    grouped: dict[tuple[str, str], list[Any]] = {}
+    for document in corpus.documents:
+        grouped.setdefault((document.project, document.source), []).append(document)
+    rows: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
+    conflicts: list[str] = []
+    for (project, name), documents in grouped.items():
+        tag_sets = {tuple(sorted(document.tags)) for document in documents}
+        policies = {document.policy for document in documents}
+        if len(tag_sets) > 1 or len(policies) > 1:
+            listed = ", ".join(
+                f"{document.id} tags={sorted(document.tags)} policy={document.policy}"
+                for document in documents
+            )
+            conflicts.append(f"{project}/{name}: {listed}")
+            continue
+        rows[(project, name)] = (documents[0].policy, tuple(sorted(documents[0].tags)))
+    if conflicts:
+        raise SystemExit(
+            "corpus declares more than one tag set or policy for a single source name, and a source "
+            "row holds one of each. Give each combination its own source name — the alternative is "
+            "the union, which grants every document in the source its siblings' topics:\n  "
+            + "\n  ".join(conflicts)
+        )
+    return rows
+
+
 async def _sources(dependencies: Any, corpus: Corpus, projects: dict[str, str]) -> None:
     from rsc_brain.scope import Principal, PrincipalType
     from rsc_brain.stores.relational.ingest_repository import IngestRepository
 
     repository = IngestRepository(dependencies.sessionmaker)
-    wanted: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
-    for document in corpus.documents:
-        # One source row per (project, name); a name reused with different tags keeps the union, the
-        # way an operator declaring a folder once would.
-        key = (document.project, document.source)
-        policy, tags = wanted.get(key, (document.policy, ()))
-        wanted[key] = (policy, tuple(sorted(set(tags) | set(document.tags))))
+    wanted = _source_rows(corpus)
     for (project, name), (policy, tags) in wanted.items():
         scope = Principal(
             id=projects[project], type=PrincipalType.HUMAN, can_curate=True, role="admin"
@@ -636,6 +675,17 @@ async def _measure(
     principals: Principals, document_ids: dict[str, str]
 ) -> tuple[EvalReport, list[CaseOutcome]]:
     golden = _load(Golden, "golden.yaml")
+    # AUDIT-139: the corpus's DECLARED topics per document, keyed by both ids a fragment can carry —
+    # the corpus id it names in provenance and the runtime UUID. Keyed by one only, a surface carrying
+    # the other would make every case unjudgeable, and `_disclosed` reports that as `None` rather than
+    # as safety; correct, and it would silently retire the gate.
+    corpus = _load(Corpus, "documents.yaml")
+    declared: dict[str, frozenset[str]] = {}
+    for document in corpus.documents:
+        topics = frozenset(document.tags)
+        declared[document.id] = topics
+        if (runtime_id := document_ids.get(document.id)) is not None:
+            declared[runtime_id] = topics
     dependencies = runtime.build("cli")
     try:
         from rsc_brain.ontology.recall import OntologyRecall
@@ -677,12 +727,20 @@ async def _measure(
             scope = await authenticate(
                 dependencies.sessionmaker, f"Bearer {principals.tokens[case.user]}"
             )
-            # AUDIT-127: `permission_leaks` counts DISCLOSURES, and it can only do that if the run
-            # says what this principal may not see. Taken from the project's sensitive topics minus
-            # the scope's own grants — the same rule the in-query filter applies.
-            forbidden = (
-                await sensitive_tags(dependencies.sessionmaker, scope.project_id)
-                - scope.allowed_topics
+            # AUDIT-127 asked what this principal may not see, and AUDIT-139 changed where the
+            # answer comes from. It used to be `sensitive_tags(project) - scope.allowed_topics`:
+            # computed from the same effective tags the in-query filter had just consulted, so a
+            # document carrying a topic it should not carry was admitted BY that topic and the check
+            # then found nothing forbidden about it. It also ignored every topic below sensitivity 3.
+            #
+            # The corpus is the one source of truth the filter does NOT share: it declares each
+            # document's topics. Judging against that catches the mis-tagging, and `filter_breach`
+            # keeps the older question — did the filter itself hand back an unauthorized topic —
+            # separate, because a disclosure needs only a mis-tagged document and a correct filter.
+            authority = TopicAuthority(
+                allowed=frozenset(scope.allowed_topics),
+                declared=declared,
+                sensitive=await sensitive_tags(dependencies.sessionmaker, scope.project_id),
             )
             result: Any
             if runnable.surface == "timeline":
@@ -690,14 +748,12 @@ async def _measure(
                 # whole point of `surface` (AUDIT-105 AC8). The topic is the one the case's evidence
                 # is tagged with, and `general` is what the temporal corpus carries.
                 result = await build_timeline(dependencies.sessionmaker, scope, topic="general")
-                outcomes.append(observe(runnable, result, forbidden_topics=forbidden))
+                outcomes.append(observe(runnable, result, authority=authority))
             else:
                 result = await do_recall(
                     retriever, dependencies.sessionmaker, scope, query=case.question, top_k=8
                 )
-                outcomes.append(
-                    observe(runnable, _as_recall_result(result), forbidden_topics=forbidden)
-                )
+                outcomes.append(observe(runnable, _as_recall_result(result), authority=authority))
             # AUDIT-126: where the answer landed in what the CALLER receives. Since AUDIT-124 the
             # confirmed passage is promoted to the front, so this is a post-promotion position: it
             # says the caller sees the answer first, and it deliberately does NOT claim anything

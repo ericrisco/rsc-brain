@@ -60,6 +60,20 @@ cases:
   - {id: d4, family: denied, question: "Show me the HR grievance procedure draft.", user: bob, project: acme, must_find: false}
   - {id: d5, family: denied, question: "What are Globex personnel emergency contacts?", user: dave, project: globex, must_find: false}
   - {id: d6, family: denied, question: "Salary review scores for engineering?", user: alice, project: acme, must_find: false}
+  #
+  # AUDIT-139: d1..d6 all deny a topic at sensitivity >= 3 (hr, payroll, personnel), so nothing here
+  # asserted that a LOW-sensitivity grant restricts anything at all. It does not have to be sensitive
+  # to be unauthorized. These two ask a question whose answer exists, as a principal the corpus does
+  # not grant the answering document's topic to — the same question `h9` and `h2` ask as principals
+  # who do hold it. Measured when they were written: both returned the answer, and `permission_leaks`
+  # said zero, because the metric was asking the filter its own question.
+  # d7 FAILS as of 2026-08-22, and the expectation is right: it is AUDIT-141. `globex-contract-en` has
+  # `policy: source_tags` and a source declaring `{legal}`; its DOCUMENT row carries `{legal}` and its
+  # CHUNK row carries `{legal, corp, delivery}`, because under every policy the chunk's tags are the
+  # topicalizer's decision floored by the source's. The authorization filter matches on chunk tags, so
+  # a model widened who may read a document whose policy exists to keep models out of that decision.
+  - {id: d7, family: denied, question: "What notice period do Globex contracts require?", user: dave, project: globex, must_find: false}
+  - {id: d8, family: denied, question: "What database does Acme run in production?", user: bob, project: acme, must_find: false}
 
   # --- family: cross_project (acme user must never see globex data and vice versa) ---
   - {id: x1, family: cross_project, question: "Where is Globex headquartered?", user: alice, project: acme, must_find: false}
