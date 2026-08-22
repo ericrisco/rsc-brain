@@ -371,8 +371,10 @@ def _as_recall_result(output: Any) -> Any:
     Measuring through `do_recall` rather than the retriever keeps the guardrail and the audit in the
     path, which is where AUDIT-016 lives — but MCP deliberately does not expose similarity scores, so
     `score` is 0.0 here. That is safe for the verdict: `max_score` feeds the report and the tau
-    calibration helper, never the pass/fail decision (`evals.metrics._passed`). Validity and
-    provenance ARE carried, because the temporal expectations check them.
+    calibration helper, never the pass/fail decision (`evals.metrics._passed`). Everything the oracle
+    reads IS carried — text, document id, provenance, both validity boundaries and `is_current` —
+    because a field this adapter forgets becomes a case that can never pass, attributed to the
+    product.
     """
     from datetime import date
 
@@ -397,6 +399,10 @@ def _as_recall_result(output: Any) -> Any:
                 },
                 valid_from=_day(fragment.valid_from),
                 valid_to=_day(fragment.valid_to),
+                # AUDIT-119's sibling: the oracle checks `is_current`, the MCP fragment carries it,
+                # and this adapter defaulted it to True — so every expectation asserting a HISTORICAL
+                # fragment (`expected_is_current: false`) could not match. `t7` failed on that alone.
+                is_current=fragment.is_current,
             )
             for fragment in output.fragments
         ),

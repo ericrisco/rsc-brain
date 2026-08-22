@@ -84,7 +84,10 @@ def _passing_evidence(repo: Path) -> FoundationalEvidence:
 def test_manifest_covers_every_current_prompt_and_template() -> None:
     manifest = load_artifact_manifest()
 
-    assert len(manifest.artifacts) == 15
+    # The count is pinned so a new prompt cannot arrive unmanifested — and so that adding one is a
+    # deliberate act. 16 since AUDIT-122 added `relevance_reranker.v3`; the foundational counts below
+    # are unchanged, because a reranker prompt is not one of SPEC-02's five foundational prompts.
+    assert len(manifest.artifacts) == 16
     assert sum(a.foundational for a in manifest.artifacts if a.kind == "prompt") == 5
     assert sum(a.foundational for a in manifest.artifacts if a.kind == "template") == 8
     assert validate_artifact_manifest() == []

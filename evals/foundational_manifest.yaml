@@ -56,6 +56,14 @@ artifacts:
     language: null
     foundational: false
     owner: AUDIT-100
+  - path: src/rsc_brain/prompts/relevance_reranker.v3.md
+    id: relevance_reranker
+    version: v3
+    kind: prompt
+    role: reranker
+    language: null
+    foundational: false
+    owner: AUDIT-122
   - path: src/rsc_brain/hunting/templates/consent.en.md
     id: consent
     version: v1

@@ -1,9 +1,9 @@
 schema_version: 1
-run_at: '2026-08-21T13:14:06.578767Z'
+run_at: '2026-08-22T03:16:58.580205Z'
 provider: ollama
 model: gemma4:12b
 model_digest: 4eb23ef187e2c5462566d6a1d3bbbc2f1346d0b4327cbb66d58fffbcc9b2b05c
-content_fingerprint: 230f0b84f8aeda69f7cb7ab34aad61fe5e26a83b58d1acd393c82b20801e82b6
+content_fingerprint: b6418c0a9e37937a8e47b2759a163416ce54cf65647f9ab8f5f8463aba89e30a
 prompt_versions:
   extractor_entities: v1
   extractor_relations: v1
