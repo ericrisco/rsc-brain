@@ -37,7 +37,6 @@ from evals.metrics import CaseOutcome, EvalReport, compute_eval_metrics
 from evals.runner import eval_case_from_golden, observe
 from evals.schema import Corpus, Golden, Taxonomy
 from rsc_brain import runtime
-from rsc_brain.config.models import RerankerKind
 from rsc_brain.identity.service import IdentityService
 from rsc_brain.identity.sessions import membership_for
 from rsc_brain.mcp.auth import authenticate
@@ -417,22 +416,25 @@ async def _calibrate(principals: Principals) -> int:
     """
     from evals.runner import calibrate_reranker_tau
     from rsc_brain.ontology.recall import OntologyRecall
-    from rsc_brain.recall.reranker import LlmReranker, RerankApiReranker
+    from rsc_brain.recall.reranker import reranker_for
     from rsc_brain.recall.retriever import PgRetriever
 
     golden = _load(Golden, "golden.yaml")
     dependencies = runtime.build("cli")
     try:
-        if not dependencies.reranker_enabled:
+        # The product's own selector, so a sweep can only ever calibrate the reranker the product
+        # would serve for this configuration — and its `None` IS the "not opted in" answer, so there
+        # is one gate here rather than a check and a construction that could disagree.
+        reranker = reranker_for(
+            dependencies.gateway,
+            enabled=dependencies.reranker_enabled,
+            kind=dependencies.reranker_kind,
+        )
+        if reranker is None:
             raise SystemExit(
                 "reranker.enabled is false: there is no reranker score to calibrate. The blended "
                 "path's threshold is recall.tau, and it was measured unable to meet G4."
             )
-        reranker = (
-            RerankApiReranker(dependencies.gateway)
-            if dependencies.reranker_kind is RerankerKind.RERANK_API
-            else LlmReranker(dependencies.gateway)
-        )
         # Candidates come from the real retriever with the reranker OFF, so the sweep sees the page
         # the product would actually hand it rather than a hand-picked passage.
         retriever = PgRetriever(
@@ -534,11 +536,20 @@ async def _measure(
     dependencies = runtime.build("cli")
     try:
         from rsc_brain.ontology.recall import OntologyRecall
-        from rsc_brain.recall.reranker import LlmReranker
+        from rsc_brain.recall.reranker import reranker_for
 
+        # AUDIT-134: this hardcoded `LlmReranker` and ignored `reranker.kind`, so an install
+        # configured for `rerank_api` had its gate numbers produced by the chat route — against a
+        # threshold calibrated on a cross-encoder's entirely different scale (AUDIT-131). The
+        # instrument now asks the product which reranker this configuration means.
+        configured = reranker_for(
+            dependencies.gateway,
+            enabled=dependencies.reranker_enabled,
+            kind=dependencies.reranker_kind,
+        )
         watcher = (
-            _WatchTheBlend(LlmReranker(dependencies.gateway), dependencies.recall_config.tau_rerank)
-            if dependencies.reranker_enabled
+            _WatchTheBlend(configured, dependencies.recall_config.tau_rerank)
+            if configured is not None
             else None
         )
         retriever = PgRetriever(
