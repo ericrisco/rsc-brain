@@ -292,7 +292,7 @@ def create_app(*, deps: ApiDeps | None = None) -> FastAPI:
     # SPEC release-identity: unauthenticated, and mounted before the catch-all MCP mount so the
     # edge's existing `/api/v1/*` rule reaches it with no Caddyfile or ingress change.
     app.include_router(version_router)
-    app.mount("/", normalize_mcp_security_headers(mcp_server.streamable_http_app()))
+    app.mount("/", normalize_mcp_security_headers(mcp_server.mcp_app()))
     return app
 
 
