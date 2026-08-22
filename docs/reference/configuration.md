@@ -114,6 +114,33 @@ the second is not close to it. Same host, same silicon, same model: a factor of 
 So on a `cpu_only` profile every reranker call times out. Recall does not fail — it falls back to the
 blended `recall.tau`, which is the behaviour of an install with the reranker switched off, measured
 unable to reach the abstention gate. The switch reads as on and the capability never runs.
+`brain verify --probe-models` reports this combination as a failed check rather than leaving you to
+discover it.
+
+#### What a `cpu_only` install actually delivers
+
+Measured on the 27-document evaluation corpus, 53 cases, `gemma4:12b` + `bge-m3`, with the reranker
+off — the only `cpu_only` configuration this product permits:
+
+| | `workstation` (reranker on) | `cpu_only` (reranker off) |
+| --- | --- | --- |
+| finds what is there (`retrieval_precision`) | 1.0 | **0.967** |
+| abstains when it should (`correct_abstention_rate`) | 1.0 | **0.0** |
+| discloses nothing unauthorized (`permission_leaks`) | 0 | **0** |
+| answers present in the corpus (`hit`) | 12/12 | 12/12 |
+| refuses what is absent (`abstain`) | 5/5 | **0/5** |
+| refuses what is denied (`denied`, `cross_project`) | 6/6, 5/5 | **0/6, 0/5** |
+| resists an embedded instruction (`injection`) | 6/6 | **1/6** |
+
+Read the third row before the second: **a `cpu_only` install leaks nothing.** Topic authority is
+enforced in the query, so it holds whether or not a model is available to judge relevance. What a
+`cpu_only` install cannot do is **refuse**. It answers every question it is asked — including the ones
+whose answer is not in the corpus, and the ones asked by a principal who may not have it — using
+whatever was nearest.
+
+For a product whose promise is "says *I don't have that* and asks a human", that is not a degraded
+mode; it is the promise switched off. Choose `cpu_only` only where finding is the whole requirement
+and a confidently wrong answer is acceptable. Otherwise give the reranker a GPU.
 
 ### On macOS, the Compose `ollama` profile has no GPU
 
