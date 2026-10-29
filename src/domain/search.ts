@@ -27,7 +27,8 @@ export type SearchRequest = {
   tags?: string[]
   prefix?: string // a topic or address and everything under it
   from?: Date
-  to?: Date
+  to?: Date // up to and including
+  before?: Date // up to, not including
   author?: string // account id
   client?: string // credential id
   session?: string // entries only
@@ -105,7 +106,7 @@ type Candidate = {
   band: number
   first: number // 1 for a current page, which goes first inside its band
   at: Date
-  supersededBy: string | null
+  depth: number // how many replacements away from something not superseded (0: not superseded)
 }
 
 type Target = { id: string; slug: string; curator: boolean }
@@ -153,6 +154,9 @@ export async function search(ctx: Ctx, r: SearchRequest): Promise<SearchResult> 
   if (targets.length === 0) return { items: [], next: null, note: noteFor(r, include) }
 
   const query = parseQuery(r.q)
+  // A phrase with nothing to search for ("!!!") is no phrase.
+  query.phrases = query.phrases.filter((x) => /[\p{L}\p{N}]/u.test(x))
+  query.excludedPhrases = query.excludedPhrases.filter((x) => /[\p{L}\p{N}]/u.test(x))
   const empty = query.anyWords.length === 0 && query.phrases.length === 0
   const want = offset + limit + 1
   // A session or a reference belongs to the journal: with either, pages are left out.
@@ -162,8 +166,7 @@ export async function search(ctx: Ctx, r: SearchRequest): Promise<SearchResult> 
     ...(entriesToo ? await entryCandidates(ctx, r, targets, include, query, empty, prefix, want) : []),
     ...(pagesToo ? await pageCandidates(ctx, r, targets, include, query, empty, prefix, want) : []),
   ]
-  candidates.sort(byOrder)
-  const ordered = successorsFirst(candidates)
+  const ordered = candidates.sort(byOrder)
   const slice = ordered.slice(offset, offset + limit)
   const items = await describe(ctx.db, ctx.clock(), slice, query, empty)
 
@@ -200,7 +203,7 @@ function noteFor(r: SearchRequest, include: Set<Include>): string {
     (r.types?.length ?? 0) > 0 ||
     (r.tags?.length ?? 0) > 0 ||
     include.size > 0 ||
-    [r.prefix, r.from, r.to, r.author, r.client, r.session, r.ref].some((v) => v !== undefined) ||
+    [r.prefix, r.from, r.to, r.before, r.author, r.client, r.session, r.ref].some((v) => v !== undefined) ||
     (r.in !== undefined && r.in !== 'both')
   return filtered ? 'No results. Try without filters, or in all your brains.' : 'No results. Try other words.'
 }
@@ -248,6 +251,19 @@ function textConditions(
   return `ts_rank_cd(${col}, ${tsq}, 1)`
 }
 
+// A superseded result never goes before what replaced it (spec B3 «El orden», CA17b): results are
+// ordered first by how many replacements away they are from something current, so a successor always
+// comes before what it replaced, a chain keeps its order, and the key is the row's own (pages of
+// results are stable). Chains longer than 20, or loops, stop counting at 20.
+const depthOf = (table: 'entries' | 'pages', alias: string) =>
+  `CASE WHEN ${alias}.superseded_by IS NULL THEN 0 ELSE (
+     WITH RECURSIVE chain(id, d) AS (
+       SELECT ${alias}.superseded_by, 1
+       UNION ALL
+       SELECT x.superseded_by, c.d + 1 FROM chain c JOIN ${table} x ON x.id = c.id
+        WHERE x.superseded_by IS NOT NULL AND c.d < 20)
+     SELECT max(d) FROM chain) END`
+
 const bandOf = (score: string) => `floor(ln(greatest(${score}, 1e-9)) / ${BAND})::int`
 
 async function entryCandidates(
@@ -278,6 +294,7 @@ async function entryCandidates(
   }
   if (r.from) conditions.push(`e.created_at >= ${p(r.from)}`)
   if (r.to) conditions.push(`e.created_at <= ${p(r.to)}`)
+  if (r.before) conditions.push(`e.created_at < ${p(r.before)}`)
   if (r.author) conditions.push(`e.author_id = ${p(r.author)}`)
   if (r.client) conditions.push(`e.credential_id = ${p(r.client)}`)
   if (r.session) conditions.push(`e.session_id = ${p(r.session)}`)
@@ -290,10 +307,10 @@ async function entryCandidates(
   const score = textConditions('e.search', query, empty, p, conditions)
   const band = empty ? '0' : bandOf(score)
   const rows = await ctx.db.query<Row>(
-    `SELECT e.id, b.slug, e.created_at AS at, e.superseded_by, ${band} AS band
+    `SELECT e.id, b.slug, e.created_at AS at, ${depthOf('entries', 'e')} AS depth, ${band} AS band
        FROM entries e JOIN brains b ON b.id = e.brain_id
       WHERE ${conditions.join(' AND ')}
-      ORDER BY band DESC, e.created_at DESC, e.id
+      ORDER BY depth, band DESC, e.created_at DESC, e.id
       LIMIT ${p(want)}`,
     params,
   )
@@ -304,7 +321,7 @@ async function entryCandidates(
     band: Number(x.band),
     first: 0,
     at: x.at as Date,
-    supersededBy: x.superseded_by == null ? null : String(x.superseded_by),
+    depth: Number(x.depth),
   }))
 }
 
@@ -331,6 +348,7 @@ async function pageCandidates(
   }
   if (r.from) conditions.push(`p.updated_at >= ${p(r.from)}`)
   if (r.to) conditions.push(`p.updated_at <= ${p(r.to)}`)
+  if (r.before) conditions.push(`p.updated_at < ${p(r.before)}`)
   // A page is by an author or a client if any of its revisions is.
   if (r.author) {
     conditions.push(
@@ -346,10 +364,10 @@ async function pageCandidates(
   const first = empty ? '0' : "(p.status = 'current')::int"
   const band = empty ? '0' : bandOf(`${raw} * CASE WHEN p.status = 'current' THEN ${CURRENT_LIFT} ELSE 1 END`)
   const rows = await ctx.db.query<Row>(
-    `SELECT p.id, b.slug, p.updated_at AS at, p.superseded_by, ${band} AS band, ${first} AS first
+    `SELECT p.id, b.slug, p.updated_at AS at, ${depthOf('pages', 'p')} AS depth, ${band} AS band, ${first} AS first
        FROM pages p JOIN brains b ON b.id = p.brain_id
       WHERE ${conditions.join(' AND ')}
-      ORDER BY band DESC, first DESC, p.updated_at DESC, p.id
+      ORDER BY depth, band DESC, first DESC, p.updated_at DESC, p.id
       LIMIT ${p(want)}`,
     params,
   )
@@ -360,12 +378,13 @@ async function pageCandidates(
     band: Number(x.band),
     first: Number(x.first),
     at: x.at as Date,
-    supersededBy: x.superseded_by == null ? null : String(x.superseded_by),
+    depth: Number(x.depth),
   }))
 }
 
 function byOrder(a: Candidate, b: Candidate): number {
   return (
+    a.depth - b.depth ||
     b.band - a.band ||
     b.first - a.first ||
     b.at.getTime() - a.at.getTime() ||
@@ -374,36 +393,17 @@ function byOrder(a: Candidate, b: Candidate): number {
   )
 }
 
-// A superseded result never goes before the one that replaced it, when both are found: it moves to
-// just after its successor (spec B3 «El orden», CA17b).
-function successorsFirst(list: Candidate[]): Candidate[] {
-  const out = [...list]
-  const key = (c: Candidate) => `${c.kind}:${c.id}`
-  for (let moved = true, guard = 0; moved && guard < out.length; guard++) {
-    moved = false
-    for (let i = 0; i < out.length; i++) {
-      const c = out[i] as Candidate
-      if (!c.supersededBy) continue
-      const j = out.findIndex((x) => key(x) === `${c.kind}:${c.supersededBy}`)
-      if (j > i) {
-        out.splice(i, 1)
-        out.splice(j, 0, c)
-        moved = true
-        break
-      }
-    }
-  }
-  return out
-}
-
 const HEADLINE = "'StartSel=«,StopSel=»,MaxWords=30,MinWords=8,MaxFragments=2,FragmentDelimiter= … '"
 
 // A fragment with what matched marked. The words are read as plain words first, then as Spanish and
-// as English, so a form of the word ("claras" for "claro") is marked too.
+// as English, so a form of the word ("claras" for "claro") is marked too. Only the start of a long
+// text is read (a page body can hold 120 000 characters), so the cost of a page of results is bounded.
+export const SNIPPET_WINDOW = 8000
 const headline = (text: string, tsq: string) =>
-  `(SELECT h FROM (SELECT 1 AS o, ts_headline('simple', ${text}, ${tsq}, ${HEADLINE}) AS h
-                   UNION ALL SELECT 2, ts_headline('spanish', ${text}, ${tsq}, ${HEADLINE})
-                   UNION ALL SELECT 3, ts_headline('english', ${text}, ${tsq}, ${HEADLINE})) v
+  `(SELECT h FROM (SELECT left(${text}, ${SNIPPET_WINDOW}) AS t) w,
+     LATERAL (SELECT 1 AS o, ts_headline('simple', w.t, ${tsq}, ${HEADLINE}) AS h
+              UNION ALL SELECT 2, ts_headline('spanish', w.t, ${tsq}, ${HEADLINE})
+              UNION ALL SELECT 3, ts_headline('english', w.t, ${tsq}, ${HEADLINE})) v
      ORDER BY position('«' IN h) > 0 DESC, o LIMIT 1)`
 
 // The visible part of each chosen result, with what matched marked. Only for the page of results, so
@@ -503,7 +503,7 @@ export async function neighboursOf(db: Db, from: string[], o: NeighbourOptions):
               x.kind, x.direction, s.id AS src_id, s.address AS src_address, s.title AS src_title
          FROM (${parts.join(' UNION ALL ')}) x
          JOIN pages n ON n.id = x.dst
-         JOIN pages s ON s.id = x.src
+         JOIN pages s ON s.id = x.src AND s.brain_id = n.brain_id
          JOIN brains b ON b.id = n.brain_id
         WHERE x.dst <> x.src AND n.id <> ALL(${p([...seen])}::text[])
           AND n.status = ANY(${p(o.statuses)}::text[])${kinds}

@@ -331,4 +331,124 @@ describe('search: entries and pages', { skip: skipPg }, () => {
     )
     assert.deepEqual(t?.result_ids, [id])
   })
+
+  const supersede = (address: string, by: string) =>
+    change('yt', { op: 'status', address, status: 'superseded', supersededBy: by, reason: 'replaced' })
+
+  it('review: a stale successor still goes before the superseded page edited later (CA17b)', async () => {
+    const fresh = await page('yt', 'r3/new', { title: 'Mangosteen', body: 'mangosteen rind' })
+    await change('yt', { op: 'status', address: 'r3/new', status: 'stale', reason: 'old' })
+    w.advance(1000)
+    const old = await page('yt', 'r3/old', { title: 'Mangosteen', body: 'mangosteen rind' })
+    w.advance(1000)
+    await supersede('r3/old', 'r3/new') // the old one is now the most recently changed
+    const ids = (await find(eric.key, `${q('mangosteen rind')}&include=stale,superseded`)).items.map(
+      (h) => h.id,
+    )
+    assert.deepEqual(ids, [fresh, old])
+  })
+
+  it('review: a chain of four replacements keeps its order', async () => {
+    const ids: Record<string, string> = {}
+    for (const x of ['d', 'c', 'b', 'a']) {
+      ids[x] = await page('yt', `r2/${x}`)
+      w.advance(1000)
+    }
+    for (const [x, by] of [
+      ['c', 'd'],
+      ['b', 'c'],
+      ['a', 'b'],
+    ] as const) {
+      await supersede(`r2/${x}`, `r2/${by}`)
+      w.advance(1000)
+    }
+    const order = (await find(eric.key, 'q=&in=pages&prefix=r2&include=superseded')).items.map((h) => h.id)
+    assert.deepEqual(order, [ids.d, ids.c, ids.b, ids.a])
+  })
+
+  it('review: with superseded results, pages of results neither repeat nor skip', async () => {
+    await page('yt', 'r1/b')
+    for (let i = 0; i < 10; i++) {
+      w.advance(1000)
+      await page('yt', `r1/f${i}`)
+    }
+    w.advance(1000)
+    await page('yt', 'r1/a')
+    await supersede('r1/a', 'r1/b')
+    const base = 'q=&in=pages&prefix=r1&include=superseded'
+    const one = (await find(eric.key, `${base}&limit=10`)).items.map((h) => h.id)
+    const two = (await find(eric.key, `${base}&limit=10&offset=10`)).items.map((h) => h.id)
+    const all = (await find(eric.key, `${base}&limit=50`)).items.map((h) => h.id)
+    assert.equal(all.length, 12)
+    assert.deepEqual([...one, ...two], all)
+  })
+
+  it('review: NUL in the query string, impossible days and phrases without words', async () => {
+    for (const bad of [
+      'q=a%00b',
+      'q=x&tags=a%00',
+      'q=x&author=%00',
+      'q=x&from=2026-02-31',
+      'q=x&to=2026-13-01',
+    ]) {
+      const r = await w.call(eric.key, 'GET', `/v1/search?${bad}`)
+      assert.equal(r.status, 400, bad)
+    }
+    assert.equal((await w.call(eric.key, 'GET', '/v1/brains/yt/neighbours?address=%00')).status, 400)
+    const last = await page('yt', 'punct')
+    assert.equal((await find(eric.key, `${q('"!!!"')}&in=pages&prefix=punct`)).items[0]?.id, last)
+  })
+
+  it('review: "to" a day includes the whole of that day', async () => {
+    const id = await page('yt', 'whole-day')
+    const b = await w.db.one<{ id: string }>("SELECT id FROM brains WHERE slug = 'yt'")
+    await w.db.query(
+      "UPDATE pages SET updated_at = '2026-01-15T23:59:59.9995Z' WHERE id = $1 AND brain_id = $2",
+      [id, b?.id],
+    )
+    const r = await find(eric.key, 'q=&in=pages&prefix=whole-day&from=2026-01-15&to=2026-01-15')
+    assert.deepEqual(
+      r.items.map((h) => h.id),
+      [id],
+    )
+    assert.deepEqual((await find(eric.key, 'q=&in=pages&prefix=whole-day&to=2026-01-14')).items, [])
+  })
+
+  it('review: snippets of long pages are bounded in cost', async () => {
+    const b = await w.db.one<{ id: string }>("SELECT id FROM brains WHERE slug = 'yt'")
+    const body = `zebra ${'lorem ipsum dolor sit amet consectetur '.repeat(2900)}`.slice(0, 119_000)
+    await w.db.query(
+      `INSERT INTO pages (id, brain_id, address, type, title, summary, body, created_at, updated_at)
+       SELECT 'pg_long_' || g, $1, 'long-' || g, 'topic', 'Long ' || g, '', $3, $2, $2 FROM generate_series(1, 50) g`,
+      [b?.id, w.now, body],
+    )
+    const t = Date.now()
+    const all = await find(
+      eric.key,
+      `${q('zebra lorem ipsum dolor sit amet')}&in=pages&limit=50&prefix=long-1`,
+    )
+    const many = await find(eric.key, `${q('zebra lorem ipsum dolor sit amet')}&in=pages&limit=50`)
+    assert.ok(Date.now() - t < 5000, `took ${Date.now() - t} ms`)
+    assert.ok(all.items.length === 1 && many.items.length === 50)
+  })
+
+  it('review: neighbours follow a mention through an old address, and inbound mentions', async () => {
+    await page('yt', 'm/target', { title: 'Target' })
+    await page('yt', 'm/source', { title: 'Source', body: 'See [[m/target]].' })
+    const t = (await w.call(eric.key, 'GET', '/v1/brains/yt/pages/m/target')).body.page as {
+      revision: number
+    }
+    await change('yt', { op: 'move', address: 'm/target', to: 'm/moved', reason: 'rename' })
+    const at = async (query: string) =>
+      ((await w.call(eric.key, 'GET', `/v1/brains/yt/neighbours?${query}`)).body.items as Hit[]).map(
+        (h) => `${h.address}:${h.linkedFrom?.kind}:${h.linkedFrom?.direction}`,
+      )
+    assert.deepEqual(await at('address=m/source'), ['m/moved:mentions:out'])
+    assert.deepEqual(await at('address=m/moved'), ['m/source:mentions:in'])
+    assert.ok(t.revision >= 1)
+    // A page already among the results is not repeated as a neighbour.
+    const found = await find(eric.key, `${q('target source')}&in=pages&prefix=m&neighbours=1`)
+    assert.equal(found.items.length, 2)
+    assert.deepEqual(found.neighbours, [])
+  })
 })

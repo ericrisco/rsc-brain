@@ -113,6 +113,11 @@ export function createHandler(deps: AppDeps) {
       if (found === 'method') {
         throw new AppError(405, 'method_not_allowed', `${method} is not allowed here.`, 'Check the method.')
       }
+      // The query string holds text that reaches the database too.
+      for (const [k, v] of url.searchParams) {
+        const bad = badText(k) ?? badText(v)
+        if (bad) throw invalid(bad.replace('The request', 'The query string'), 'Remove those characters.')
+      }
       const key = bearer(req.headers.authorization)
       const cookie = key ? null : sessionCookie(req.headers.cookie)
       // A cookie-borne write must come from the web itself: a page elsewhere cannot add this header
