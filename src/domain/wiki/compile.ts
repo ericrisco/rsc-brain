@@ -25,6 +25,7 @@ export type CompilePack = {
   guide: string
   entries: Entry[]
   remaining: number
+  remainingCorrections: number
   corrections: Entry[]
   map: Awaited<ReturnType<typeof wikiMap>>
   pages: RelatedPage[]
@@ -50,21 +51,27 @@ export async function compilePack(
       ORDER BY created_at, id`,
     [brain.id],
   )
-  const corrections = (
+  const allCorrections = (
     await ctx.db.query(
       `SELECT * FROM entries WHERE brain_id = $1 AND state = 'active' AND NOT compiled AND type = 'correction'
         ORDER BY created_at, id`,
       [brain.id],
     )
   ).map(entryOf)
-  let used = corrections.reduce((n, e) => n + size(e), 0)
-  const entries: Entry[] = []
-  for (const r of rows) {
-    const e = entryOf(r as Row)
-    if (entries.length > 0 && used + size(e) > maxChars) break
-    entries.push(e)
-    used += size(e)
+  // People's corrections first, then entries, oldest first, within the budget. One item always goes,
+  // even over the budget, so an entry larger than the budget can still be compiled.
+  let used = 0
+  const take = <T extends Entry>(list: T[]): T[] => {
+    const out: T[] = []
+    for (const e of list) {
+      if (used > 0 && used + size(e) > maxChars) break
+      out.push(e)
+      used += size(e)
+    }
+    return out
   }
+  const corrections = take(allCorrections)
+  const entries = corrections.length === allCorrections.length ? take(rows.map((r) => entryOf(r as Row))) : []
   const all = [...corrections, ...entries]
   const related = new Map<string, RelatedPage>()
   const add = (r: Row, why: RelatedPage['why']) => {
@@ -129,6 +136,7 @@ export async function compilePack(
     guide: settings.guide,
     entries,
     remaining: rows.length - entries.length,
+    remainingCorrections: allCorrections.length - corrections.length,
     corrections,
     map: await wikiMap(ctx, slug),
     pages: [...related.values()],

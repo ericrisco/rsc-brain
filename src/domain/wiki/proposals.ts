@@ -142,8 +142,21 @@ async function problemsOf(
   const problems: Problem[] = []
   const ops = all.filter((o): o is Op => o !== null)
   const known = await knownAddresses(db, brainId, ops)
-  const born = bornIn(ops)
-  const exists = (a: string) => known.has(a) || born.has(a)
+  // Which page each address names once the proposal's own creates and moves are played in order: an
+  // existing page's id, or "new:<op>" for a page the proposal creates. Self-references and "is it an
+  // existing page" are decided on that, not on the address text (an old address is the same page).
+  const ident = new Map<string, string>([...known].map(([a, k]) => [a, k.pageId]))
+  const byId = new Map([...known.values()].map((k) => [k.pageId, k]))
+  all.forEach((o, i) => {
+    if (o?.op === 'create' && !ident.has(o.address)) ident.set(o.address, `new:${i}`)
+  })
+  for (const o of all) {
+    if (o?.op !== 'move') continue
+    const id = ident.get(o.address)
+    if (id && !ident.has(o.to)) ident.set(o.to, id)
+  }
+  const exists = (a: string) => ident.has(a)
+  const same = (a: string, b: string) => ident.get(a) !== undefined && ident.get(a) === ident.get(b)
   const claimed = new Map<string, number>()
   all.forEach((o, i) => {
     if (o === null) return
@@ -171,6 +184,7 @@ async function problemsOf(
       for (const l of o.links) {
         if (!exists(l.to))
           p(`The ${l.kind} link points at "${l.to}", which does not exist and is not created here.`)
+        else if (same(l.to, o.address)) p(`The ${l.kind} link points at the page itself.`)
       }
       return
     }
@@ -178,7 +192,8 @@ async function problemsOf(
       p(`There is no page at "${o.address}", and this proposal does not create it.`)
       return
     }
-    const k = known.get(o.address)
+    const id = ident.get(o.address) as string
+    const k = byId.get(id)
     switch (o.op) {
       case 'edit':
         if (k && o.baseRevision === undefined) {
@@ -195,15 +210,20 @@ async function problemsOf(
       case 'unlink':
         if (!exists(o.to))
           p(`The ${o.kind} link points at "${o.to}", which does not exist and is not created here.`)
+        else if (same(o.to, o.address)) p(`"${o.to}" is the page itself; a page cannot link to itself.`)
         break
       case 'status':
         if (o.supersededBy !== undefined && !exists(o.supersededBy)) {
           p(`"supersededBy" points at "${o.supersededBy}", which does not exist and is not created here.`)
+        } else if (o.supersededBy !== undefined && same(o.supersededBy, o.address)) {
+          p('A page cannot supersede itself.')
         }
         break
       case 'merge':
         if (!exists(o.from))
           p(`There is no page at "${o.from}" to merge, and this proposal does not create it.`)
+        else if (same(o.from, o.address))
+          p(`"${o.from}" is the page itself; a page cannot be merged into itself.`)
         break
       case 'revert':
         if (!k) p(`"${o.address}" is created in this proposal; there is nothing to go back to.`)
@@ -342,7 +362,7 @@ export async function submitProposal(
     )
   }
   const collected = [...new Set(collectedRaw as string[])]
-  const agent = (ctx.who.credential.agent ?? input.agent ?? '').trim() || null
+  const agent = redact((ctx.who.credential.agent ?? input.agent ?? '').trim()).text || null
   if (agent && agent.length > WIKI_LIMITS.agent)
     throw invalid('"agent" is too long.', 'Name the agent briefly.')
   const problems: Problem[] = []
@@ -496,6 +516,9 @@ export async function withdrawProposal(ctx: Ctx, id: string): Promise<Proposal> 
   return ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
     const { row } = await loadProposal(c, id, true)
+    // Withdrawing is a write: the same bar as proposing (a read-only key or an archived brain cannot).
+    const { brain, role } = await inBrain(c, { id: String(row.brain_id) }, 'share')
+    await allow(c, 'wiki.propose', { role, brainStatus: brain.status }, brain.id)
     if (row.author_id !== ctx.who.accountId) {
       throw new AppError(
         403,

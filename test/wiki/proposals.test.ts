@@ -439,4 +439,165 @@ describe('wiki proposals and reading', { skip: skipPg }, () => {
     }
     assert.deepEqual([log.items, log.total], [[], 0])
   })
+
+  it('review: the agent name is redacted like every stored text', async () => {
+    const r = await propose(factory.key, { title: 'Agent', agent: GITHUB, ops: [create('agent/redacted')] })
+    assert.equal(r.status, 201)
+    assert.ok(!JSON.stringify(await w.db.query('SELECT agent FROM proposals')).includes(GITHUB))
+  })
+
+  it('review: broken text, odd values, deep nesting and odd cursors are 400, never 500', async () => {
+    const raw = (body: string) => w.call(factory.key, 'POST', '/v1/brains/yt/proposals', body)
+    const op = (extra: string) =>
+      `{"title":"t","ops":[{"op":"create","address":"odd/x","type":"topic","title":"x","sources":[{"entryId":"${entries[0]}"}],"reason":"r"${extra}}]}`
+    assert.equal((await raw(op(',"body":"\\ud800"'))).status, 400)
+    assert.equal((await raw(op(',"tags":["\\udfff"]'))).status, 400)
+    assert.equal((await raw('{"title":"t","ops":[{"op":{"toString":1}}]}')).status, 400)
+    assert.equal((await raw(op(',"type":{"toString":1}').replace('"type":"topic",', ''))).status, 400)
+    assert.equal((await raw(`{"title":"t","ops":${'['.repeat(5000)}${']'.repeat(5000)}}`)).status, 400)
+    const cursor = Buffer.from(JSON.stringify({ at: '1', id: 'x' })).toString('base64url')
+    for (const path of ['/v1/brains/yt/wiki/log', '/v1/brains/yt/proposals', '/v1/brains/yt/entries']) {
+      assert.equal((await w.call(eric.key, 'GET', `${path}?cursor=${cursor}`)).status, 400, path)
+    }
+  })
+
+  it('review: withdrawing needs what proposing needs: a write key and an active brain', async () => {
+    const p = (await propose(ana.key, { title: 'Mine', ops: [create('withdraw/mine')] })).body.proposal as {
+      id: string
+    }
+    const ro = await w.token(ana.id, { perm: 'read' })
+    assert.equal((await w.call(ro, 'POST', `/v1/proposals/${p.id}/withdraw`)).status, 403)
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'arch' })
+    await w.member('arch', ana.id, 'contributor')
+    await save(ana.key, { type: 'note', title: 'n', content: 'archived soon' }, 'arch')
+    const e = (
+      await w.db.one<{ id: string }>(
+        "SELECT e.id FROM entries e JOIN brains b ON b.id = e.brain_id WHERE b.slug = 'arch'",
+      )
+    )?.id
+    const q = (
+      await propose(ana.key, { title: 'A', ops: [create('arch/one', { sources: [{ entryId: e }] })] }, 'arch')
+    ).body.proposal as { id: string }
+    await w.call(eric.key, 'POST', '/v1/brains/arch/archive')
+    assert.equal((await w.call(ana.key, 'POST', `/v1/proposals/${q.id}/withdraw`)).status, 403)
+    assert.equal(
+      ((await w.call(ana.key, 'GET', `/v1/proposals/${p.id}`)).body.proposal as { status: string }).status,
+      'pending',
+    )
+  })
+
+  it('review: a page cannot point at itself, not even through an old address', async () => {
+    await plant('self/page', { old: ['self/old'] })
+    const cases = [
+      [create('self/new', { links: [{ kind: 'related', to: 'self/new' }] })],
+      [{ op: 'link', address: 'self/page', kind: 'related', to: 'self/old', reason: 'r' }],
+      [{ op: 'merge', address: 'self/page', from: 'self/old', body: 'b', reason: 'r' }],
+      [{ op: 'status', address: 'self/page', status: 'superseded', supersededBy: 'self/old', reason: 'r' }],
+      [{ op: 'status', address: 'self/page', status: 'superseded', supersededBy: 'self/page', reason: 'r' }],
+    ]
+    for (const ops of cases) {
+      const r = await propose(factory.key, { title: 'Self', ops })
+      assert.equal(r.status, 400, JSON.stringify(ops))
+      assert.match(JSON.stringify(r.body), /itself/)
+    }
+  })
+
+  it('review: operations after a move in the same proposal reach the existing page', async () => {
+    await plant('moved/page')
+    await w.db.query("UPDATE pages SET revision = 3 WHERE address = 'moved/page'")
+    const noBase = await propose(factory.key, {
+      title: 'Move and edit',
+      ops: [
+        { op: 'move', address: 'moved/page', to: 'moved/page-2', reason: 'r' },
+        { op: 'edit', address: 'moved/page-2', body: 'x', reason: 'r' },
+      ],
+    })
+    assert.equal(noBase.status, 400)
+    assert.match(JSON.stringify(noBase.body), /baseRevision/)
+    const revert = await propose(factory.key, {
+      title: 'Move and revert',
+      ops: [
+        { op: 'move', address: 'moved/page', to: 'moved/page-3', reason: 'r' },
+        { op: 'revert', address: 'moved/page-3', toRevision: 1, reason: 'r' },
+      ],
+    })
+    assert.equal(revert.status, 201)
+    const back = await propose(factory.key, {
+      title: 'There and back',
+      ops: [
+        { op: 'move', address: 'moved/page', to: 'moved/page-4', reason: 'r' },
+        { op: 'move', address: 'moved/page-4', to: 'moved/page', reason: 'r' },
+      ],
+    })
+    assert.equal(back.status, 201)
+  })
+
+  it('review: the map keeps each area in one group; a page names another once', async () => {
+    await plant('zz')
+    await plant('zz-x/y')
+    await plant('zz/a', { body: 'see [[zz]]' })
+    const map = (await w.call(reader.key, 'GET', '/v1/brains/yt/wiki/map')).body as {
+      groups: { type: string; area: string; pages: { address: string }[] }[]
+    }
+    const zz = map.groups.filter((g) => g.type === 'topic' && g.area === 'zz')
+    assert.equal(zz.length, 1)
+    assert.deepEqual(
+      zz[0]?.pages.map((p) => p.address),
+      ['zz', 'zz/a'],
+    )
+    const t = await plant('dup/target', { old: ['dup/target-old'] })
+    const s2 = await plant('dup/source', { body: '[[dup/target]] [[dup/target-old]] [[dup/source]]' })
+    for (const a of ['dup/target', 'dup/target-old', 'dup/source']) {
+      await w.db.query(
+        "INSERT INTO page_links (brain_id, from_page, kind, to_address) VALUES ($1,$2,'mentions',$3)",
+        [s2.brainId, s2.id, a],
+      )
+    }
+    const src = (await w.call(reader.key, 'GET', '/v1/brains/yt/pages/dup/source')).body as {
+      links: { out: { address: string }[]; in: { address: string }[] }
+    }
+    assert.deepEqual(
+      src.links.out.map((l) => l.address),
+      ['dup/target'],
+    )
+    assert.deepEqual(src.links.in, [])
+    void t
+  })
+
+  it('review: corrections count against the compile budget; tags and sources are counted once', async () => {
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'budget' })
+    await w.member('budget', factory.id, 'contributor')
+    await w.member('budget', ana.id, 'contributor')
+    const anaEmail = (await w.db.one<{ email: string }>('SELECT email FROM accounts WHERE id = $1', [ana.id]))
+      ?.email
+    for (const i of [1, 2, 3, 4]) {
+      await w.call(factory.key, 'POST', '/v1/brains/budget/corrections/relay', {
+        onBehalf: anaEmail,
+        title: `Big correction ${i}`,
+        content: 'x'.repeat(1900),
+      })
+    }
+    await save(ana.key, { type: 'note', title: 'small', content: 'small entry' }, 'budget')
+    const pk = (await w.call(factory.key, 'GET', '/v1/brains/budget/wiki/compile?maxChars=4000')).body as {
+      corrections: { content: string; title: string }[]
+      entries: unknown[]
+      remainingCorrections: number
+    }
+    const chars = pk.corrections.reduce((n, c) => n + c.content.length + c.title.length + 200, 0)
+    assert.ok(chars <= 4000, String(chars))
+    assert.ok(pk.remainingCorrections > 0)
+    assert.deepEqual(pk.entries, [])
+    const tags = await propose(factory.key, {
+      title: 'Tags',
+      ops: [
+        create('tags/same', {
+          tags: Array.from({ length: 21 }, () => 'same'),
+          sources: [{ entryId: entries[0] }, { entryId: entries[0] }],
+        }),
+      ],
+    })
+    assert.equal(tags.status, 201)
+    const op = (tags.body.ops as { op: { tags: string[]; sources: unknown[] } }[])[0]?.op
+    assert.deepEqual([op?.tags, op?.sources.length], [['same'], 1])
+  })
 })

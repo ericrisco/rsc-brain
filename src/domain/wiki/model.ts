@@ -104,6 +104,9 @@ export function mentionsOf(body: string): string[] {
 
 export type Problem = { op: number | null; message: string }
 
+// A value from the request, shown in a message without trusting it to turn into text by itself.
+const shown = (v: unknown): string => (typeof v === 'string' ? v.slice(0, 80) : typeof v)
+
 type Raw = Record<string, unknown>
 
 // Reads one operation. Every string is redacted first (pack rule 1); limits are measured on what is
@@ -117,7 +120,7 @@ export function readOp(raw: unknown, i: number, problems: Problem[]): Op | null 
   const o = raw as Raw
   const kind = o.op
   if (typeof kind !== 'string' || !(OP_KINDS as readonly string[]).includes(kind)) {
-    return bad(`Unknown operation "${String(kind)}". Use one of: ${OP_KINDS.join(', ')}.`)
+    return bad(`Unknown operation "${shown(kind)}". Use one of: ${OP_KINDS.join(', ')}.`)
   }
   const before = problems.length
   const text = (key: string, max: number, required: boolean): string | undefined => {
@@ -146,7 +149,8 @@ export function readOp(raw: unknown, i: number, problems: Problem[]): Op | null 
     return v
   }
   const reason = text('reason', WIKI_LIMITS.reason, true) ?? ''
-  if (o.reason !== undefined && !reason.trim()) problems.push({ op: i, message: 'Say why, in "reason".' })
+  if (typeof o.reason === 'string' && !reason.trim())
+    problems.push({ op: i, message: 'Say why, in "reason".' })
   const address = addr('address')
   const pageType = (required: boolean): PageType | undefined => {
     const v = o.type
@@ -157,7 +161,7 @@ export function readOp(raw: unknown, i: number, problems: Problem[]): Op | null 
     if (typeof v !== 'string' || !(PAGE_TYPES as readonly string[]).includes(v)) {
       problems.push({
         op: i,
-        message: `Unknown page type "${String(v)}". Use one of: ${PAGE_TYPES.join(', ')}.`,
+        message: `Unknown page type "${shown(v)}". Use one of: ${PAGE_TYPES.join(', ')}.`,
       })
       return undefined
     }
@@ -170,14 +174,14 @@ export function readOp(raw: unknown, i: number, problems: Problem[]): Op | null 
       problems.push({ op: i, message: '"tags" must be a list of non-empty texts.' })
       return undefined
     }
-    const out = (v as string[]).map((t) => redact(t.trim()).text)
+    const out = [...new Set((v as string[]).map((t) => redact(t.trim()).text))]
     if (out.length > WIKI_LIMITS.tags || out.some((t) => t.length > WIKI_LIMITS.tag)) {
       problems.push({
         op: i,
         message: `Up to ${WIKI_LIMITS.tags} tags of up to ${WIKI_LIMITS.tag} characters.`,
       })
     }
-    return [...new Set(out)]
+    return out
   }
   const sources = (key: string): Source[] | undefined => {
     const v = o[key]
@@ -207,7 +211,9 @@ export function readOp(raw: unknown, i: number, problems: Problem[]): Op | null 
         })
       }
     }
-    return out
+    // The same source twice is one source.
+    const seen = new Set<string>()
+    return out.filter((s) => !seen.has(sourceKey(s)) && Boolean(seen.add(sourceKey(s))))
   }
   const links = (key: string): LinkRef[] => {
     const v = o[key]
@@ -230,7 +236,8 @@ export function readOp(raw: unknown, i: number, problems: Problem[]): Op | null 
         })
         continue
       }
-      out.push({ kind: x.kind as LinkKind, to: x.to })
+      if (!out.some((l) => l.kind === x.kind && l.to === x.to))
+        out.push({ kind: x.kind as LinkKind, to: x.to })
     }
     return out
   }
@@ -272,6 +279,8 @@ export function readOp(raw: unknown, i: number, problems: Problem[]): Op | null 
         links: links('links'),
         reason,
       }
+      if (op.links.some((l) => l.to === address))
+        problems.push({ op: i, message: 'A page cannot link to itself.' })
       break
     }
     case 'edit': {
@@ -323,8 +332,10 @@ export function readOp(raw: unknown, i: number, problems: Problem[]): Op | null 
         status: (v as PageStatus) ?? 'current',
         reason,
       }
-      if (s.status === 'superseded') s.supersededBy = addr('supersededBy')
-      else if (o.supersededBy !== undefined) {
+      if (s.status === 'superseded') {
+        s.supersededBy = addr('supersededBy')
+        if (s.supersededBy === address) problems.push({ op: i, message: 'A page cannot supersede itself.' })
+      } else if (o.supersededBy !== undefined) {
         problems.push({ op: i, message: '"supersededBy" only goes with status "superseded".' })
       }
       op = s

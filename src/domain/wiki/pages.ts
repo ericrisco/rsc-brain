@@ -69,18 +69,23 @@ const stateOf = (status: unknown): LinkView['state'] =>
 
 export async function linksOf(db: Db, page: { id: string; brainId: string }) {
   const out = await db.query(
-    `SELECT l.kind, coalesce(p.address, l.to_address) AS address, p.id, p.title, p.status
-       FROM page_links l
-       LEFT JOIN page_addresses a ON l.to_page IS NULL AND a.brain_id = l.brain_id AND a.address = l.to_address
-       LEFT JOIN pages p ON p.id = coalesce(l.to_page, a.page_id)
-      WHERE l.from_page = $1
-      ORDER BY l.kind, address`,
+    // One row per kind and page: a body that mentions a page by its current and an old address names it
+    // once; a page that mentions itself is not its own link.
+    `SELECT * FROM (
+       SELECT DISTINCT ON (l.kind, coalesce(p.id, l.to_address))
+              l.kind, coalesce(p.address, l.to_address) AS address, p.id, p.title, p.status
+         FROM page_links l
+         LEFT JOIN page_addresses a ON l.to_page IS NULL AND a.brain_id = l.brain_id AND a.address = l.to_address
+         LEFT JOIN pages p ON p.id = coalesce(l.to_page, a.page_id)
+        WHERE l.from_page = $1 AND p.id IS DISTINCT FROM $1
+        ORDER BY l.kind, coalesce(p.id, l.to_address)
+     ) x ORDER BY kind, address`,
     [page.id],
   )
   const inbound = await db.query(
     `SELECT DISTINCT l.kind, p.address, p.id, p.title, p.status
        FROM page_links l JOIN pages p ON p.id = l.from_page
-      WHERE (l.to_page = $1
+      WHERE l.from_page <> $1 AND (l.to_page = $1
              OR (l.to_page IS NULL AND l.brain_id = $2
                  AND l.to_address IN (SELECT address FROM page_addresses WHERE page_id = $1)))
       ORDER BY l.kind, p.address`,
@@ -250,7 +255,7 @@ export async function wikiMap(
   const { brain } = await inBrain(ctx, { slug })
   const s = await settingsOf(ctx.db, brain.id)
   const rows = await ctx.db.query(
-    "SELECT address, type, title, summary FROM pages WHERE brain_id = $1 AND status = 'current' ORDER BY type, address",
+    "SELECT address, type, title, summary FROM pages WHERE brain_id = $1 AND status = 'current' ORDER BY type, split_part(address, '/', 1), address",
     [brain.id],
   )
   const groups: MapGroup[] = []

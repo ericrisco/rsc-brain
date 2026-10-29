@@ -12,11 +12,20 @@ export const PAGE = { default: 50, max: 200 }
 
 type Cursor = { at: string; id: string }
 
+// Only what `encode` writes: a full ISO instant (Date.parse alone accepts "1" as a year).
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+
 export function decode(cursor: string | undefined): Cursor | null {
   if (!cursor) return null
   try {
     const c = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as Cursor
-    if (typeof c.at === 'string' && typeof c.id === 'string' && !Number.isNaN(Date.parse(c.at))) return c
+    if (
+      typeof c.at === 'string' &&
+      typeof c.id === 'string' &&
+      ISO.test(c.at) &&
+      !Number.isNaN(Date.parse(c.at))
+    )
+      return c
   } catch {}
   throw invalid('The cursor is not valid.', 'Use the "next" value of the previous page, unchanged.')
 }

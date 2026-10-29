@@ -25,9 +25,11 @@ CREATE TABLE pages (
   revision      integer NOT NULL DEFAULT 1 CHECK (revision >= 1),
   created_at    timestamptz NOT NULL,
   updated_at    timestamptz NOT NULL,
-  search        tsvector GENERATED ALWAYS AS (brain_page_tsv(address, title, summary, body, tags)) STORED,
-  UNIQUE (brain_id, address)
+  search        tsvector GENERATED ALWAYS AS (brain_page_tsv(address, title, summary, body, tags)) STORED
 );
+-- Not unique here: which page an address leads to is page_addresses' job (a merged page keeps its last
+-- address as text while that address now leads to the page it was merged into).
+CREATE INDEX pages_address ON pages (brain_id, address);
 CREATE INDEX pages_search ON pages USING gin (search);
 
 -- Every address a page has had. The key makes an old address reserved for that page forever: it
