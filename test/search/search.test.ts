@@ -389,12 +389,14 @@ describe('search: entries and pages', { skip: skipPg }, () => {
       'q=x&tags=a%00',
       'q=x&author=%00',
       'q=x&from=2026-02-31',
+      'q=x&from=2026-02-29',
       'q=x&to=2026-13-01',
     ]) {
       const r = await w.call(eric.key, 'GET', `/v1/search?${bad}`)
       assert.equal(r.status, 400, bad)
     }
     assert.equal((await w.call(eric.key, 'GET', '/v1/brains/yt/neighbours?address=%00')).status, 400)
+    assert.equal((await w.call(eric.key, 'GET', '/v1/search?q=x&from=2028-02-29')).status, 200)
     const last = await page('yt', 'punct')
     assert.equal((await find(eric.key, `${q('"!!!"')}&in=pages&prefix=punct`)).items[0]?.id, last)
   })

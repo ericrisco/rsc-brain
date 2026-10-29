@@ -55,7 +55,9 @@ function day(v: string | null, field: string): Date | undefined {
   const m = DAY.exec(v)
   const d = new Date(v)
   const [y, mo, da] = [Number(m?.[1]), Number(m?.[2]), Number(m?.[3])]
-  const real = new Date(Date.UTC(2000, mo - 1, da))
+  // The real year: 29 February exists only in leap years.
+  const real = new Date(Date.UTC(2000, 0, 1))
+  real.setUTCFullYear(y, mo - 1, da)
   if (
     !m ||
     Number.isNaN(d.getTime()) ||
