@@ -219,4 +219,31 @@ describe('the trail of what was consulted', { skip: skipPg }, () => {
     const t = await trail(eric.key, 'page=retention')
     assert.equal(t.items.filter((l) => l.kind === 'read' && l.account.id === ana.id).length, 3)
   })
+
+  it("review: after midnight a line goes to today's session, like the writes, not yesterday's", async () => {
+    w.now = new Date('2026-12-01T23:00:00.000Z')
+    const key = await w.token(ana.id)
+    const write = async () =>
+      (
+        await w.call(key, 'POST', '/v1/brains/yt/entries', {
+          type: 'note',
+          title: 'n',
+          content: `c ${w.now.getTime()}`,
+        })
+      ).body.receipt as { entryId: string }
+    const sessionOf = async (id: string) =>
+      ((await w.call(key, 'GET', `/v1/entries/${id}`)).body.entry as { sessionId: string }).sessionId
+    const lineOf = async (q: string) =>
+      (await w.db.one<{ session_id: string | null }>('SELECT session_id FROM trail WHERE query = $1', [q]))
+        ?.session_id
+    const yesterday = await sessionOf((await write()).entryId)
+    w.now = new Date('2026-12-02T01:00:00.000Z')
+    // Before any write today there is no session of today yet: the line has none, not yesterday's.
+    await w.call(key, 'GET', '/v1/search?q=beforewrite&brains=yt')
+    assert.equal(await lineOf('beforewrite'), null)
+    const today = await sessionOf((await write()).entryId)
+    assert.notEqual(today, yesterday)
+    await w.call(key, 'GET', '/v1/search?q=afterwrite&brains=yt')
+    assert.equal(await lineOf('afterwrite'), today)
+  })
 })

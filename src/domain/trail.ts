@@ -6,6 +6,7 @@ import { invalid } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
 import { redact } from '../privacy/redact.ts'
 import { type Ctx, inBrain } from './context.ts'
+import { dayIn } from './sessions.ts'
 import { resolve } from './wiki/pages.ts'
 
 export const TRAIL_DAYS = 90
@@ -28,6 +29,7 @@ export async function track(
     `INSERT INTO trail (brain_id, at, account_id, credential_id, ref, kind, query, result_ids, session_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
              (SELECT id FROM sessions WHERE credential_id = $4 AND brain_id = $1 AND status = 'open'
+                 AND (day IS NULL OR day = $9::date)
                ORDER BY (day IS NULL) DESC, opened_at DESC, id DESC LIMIT 1))`,
     [
       t.brainId,
@@ -38,6 +40,7 @@ export async function track(
       t.kind,
       t.query == null ? null : redact(t.query).text,
       t.resultIds,
+      dayIn(ctx.tz ?? 'UTC', ctx.clock()),
     ],
   )
 }
