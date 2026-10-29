@@ -133,11 +133,13 @@ export function bornIn(ops: Op[]): Set<string> {
 
 // The blocking checks (spec B2 «Al enviarla»).
 // Operations that could not be read are null here and skipped; the others keep their index.
-async function problemsOf(
+// `byAgent`: a new page proposed by an agent must cite a source; a curator writing in the web need not.
+export async function problemsOf(
   db: Db,
   brainId: string,
   all: (Op | null)[],
   collected: string[],
+  byAgent = true,
 ): Promise<Problem[]> {
   const problems: Problem[] = []
   const ops = all.filter((o): o is Op => o !== null)
@@ -176,7 +178,7 @@ async function problemsOf(
     }
     if (o.op === 'create') {
       claim(o.address, null)
-      if (o.sources.length === 0) {
+      if (byAgent && o.sources.length === 0) {
         p(
           `The new page "${o.address}" cites no sources. Cite the journal entries (or addresses) it comes from.`,
         )

@@ -3,6 +3,7 @@
 import { invalid } from '../../core/errors.ts'
 import { limitOf } from '../../domain/listing.ts'
 import { compilePack, getGuide, PACK } from '../../domain/wiki/compile.ts'
+import { wikiHealth } from '../../domain/wiki/health.ts'
 import {
   getPage,
   pageHistory,
@@ -57,6 +58,9 @@ export const wikiRoutes: Route[] = [
       compact({ cursor: q(r.query.get('cursor')), limit: limitOf(r.query.get('limit')) }),
     ),
   })),
+  route('GET /v1/brains/:slug/wiki/health', async (r) => ({
+    body: await wikiHealth(ctxOf(r), r.params.slug as string),
+  })),
   route('GET /v1/brains/:slug/wiki/guide', async (r) => ({
     body: await getGuide(ctxOf(r), r.params.slug as string),
   })),
@@ -72,6 +76,19 @@ export const wikiRoutes: Route[] = [
     const address = r.params.address as string
     const rev = whole(r.query.get('revision'), 'revision', 1, 1_000_000)
     if (rev !== undefined) return { body: { revision: await pageRevision(ctxOf(r), slug, address, rev) } }
+    const compare = r.query.get('compare')
+    if (compare !== null) {
+      const parts = compare.split(',')
+      const [a, b] = parts.map((x) => whole(x, 'compare', 1, 1_000_000))
+      if (parts.length !== 2 || a === undefined || b === undefined)
+        throw invalid('"compare" is two revisions, e.g. 3,5.', 'Fix "compare".')
+      return {
+        body: {
+          a: await pageRevision(ctxOf(r), slug, address, a),
+          b: await pageRevision(ctxOf(r), slug, address, b),
+        },
+      }
+    }
     if (r.query.get('history') === '1')
       return { body: { history: await pageHistory(ctxOf(r), slug, address) } }
     return { body: await getPage(ctxOf(r), slug, address) }
