@@ -2,7 +2,7 @@
 // program would make, with the same key: same checks, same limits, same result. A tool only builds the
 // request; the route does the rest. Write tools are not listed for a read-only key, and creating a
 // brain only for a key that may.
-import type { Principal } from '../auth/principal.ts'
+import { type Principal, roleIn } from '../auth/principal.ts'
 import { invalid } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
 
@@ -50,6 +50,7 @@ function text(a: Json, k: string, required = false): string | undefined {
     return undefined
   }
   if (typeof v !== 'string') throw invalid(`"${k}" must be text.`, `Send "${k}" as a string.`)
+  if (required && !v.trim()) throw invalid(`"${k}" is empty.`, `Give "${k}" a value.`)
   return v
 }
 const pick = (a: Json, keys: string[]) => {
@@ -420,7 +421,7 @@ export const TOOLS: Tool[] = [
     inputSchema: obj({
       brain: BRAIN,
       session: SESSION,
-      maxChars: { type: 'integer', minimum: 2000, maximum: 200000 },
+      maxChars: { type: 'integer', minimum: 4000, maximum: 400000 },
     }),
     writes: false,
     annotations: { readOnlyHint: true },
@@ -524,50 +525,73 @@ export const TOOLS: Tool[] = [
 ]
 
 // What this key may call: write tools need read + write; creating needs the right to create brains.
-export function allowed(t: Tool, who: Principal): string | null {
+export type Refusal = { code: string; message: string; howToProceed: string }
+
+export function allowed(t: Tool, who: Principal): Refusal | null {
   if (t.writes && who.credential.perm === 'read') {
-    return `This key is read-only, so "${t.name}" is not available. Use a read + write token, or connect again choosing read and write.`
+    return {
+      code: 'read_only_key',
+      message: `This key is read-only, so "${t.name}" is not available.`,
+      howToProceed: 'Use a read + write token, or connect again choosing read and write.',
+    }
   }
   if (t.creates && (!(who.isAdmin || who.canCreateBrains) || who.credential.kind === 'short')) {
-    return `This key cannot create brains. Ask the administration for the "can create brains" permission.`
+    return {
+      code: 'cannot_create_brains',
+      message: 'This key cannot create brains.',
+      howToProceed: 'Ask the administration for the "can create brains" permission, and use your own token.',
+    }
   }
   return null
 }
 
-// The brain a call is about when it names none: the session's, the short key's, or the only one.
+// The brains this key can use, by name (the same narrowing as brain_list).
+async function visible(db: Db, who: Principal): Promise<string[]> {
+  const rows = await db.query(
+    `SELECT b.id, b.slug FROM memberships m JOIN brains b ON b.id = m.brain_id
+      WHERE m.account_id = $1 ORDER BY b.slug`,
+    [who.accountId],
+  )
+  const out: string[] = []
+  for (const r of rows) if (await roleIn(db, who, String(r.id))) out.push(String(r.slug))
+  return out
+}
+
+// The brain a call is about when it names none: the session's (one this key can use), the short key's
+// write brain, or the only brain the key reaches.
 export async function defaultBrain(db: Db, who: Principal, a: Json): Promise<string> {
   const named = text(a, 'brain')
   if (named) return named
   const session = text(a, 'session')
   if (session) {
-    const s = await db.one<{ slug: string }>(
-      'SELECT b.slug FROM sessions s JOIN brains b ON b.id = s.brain_id WHERE s.id = $1',
+    const s = await db.one<{ id: string; slug: string }>(
+      'SELECT b.id, b.slug FROM sessions s JOIN brains b ON b.id = s.brain_id WHERE s.id = $1',
       [session],
     )
-    if (s) return s.slug
+    // Someone else's session and one that does not exist answer the same.
+    if (!s || !(await roleIn(db, who, s.id))) {
+      throw invalid(
+        'That session is not one this key can use.',
+        'Pass the "session" that mem_session_start gave you, or name the "brain".',
+      )
+    }
+    return s.slug
   }
   const c = who.credential
-  const only =
-    c.kind === 'short' ? c.writeBrainId : !c.allBrains && c.brainIds.length === 1 ? c.brainIds[0] : null
-  if (only) {
-    const b = await db.one<{ slug: string }>('SELECT slug FROM brains WHERE id = $1', [only])
+  if (c.kind === 'short' && c.writeBrainId) {
+    const b = await db.one<{ slug: string }>('SELECT slug FROM brains WHERE id = $1', [c.writeBrainId])
     if (b) return b.slug
   }
-  const mine = await db.query(
-    `SELECT b.slug FROM memberships m JOIN brains b ON b.id = m.brain_id JOIN accounts a ON a.id = m.account_id
-      WHERE m.account_id = $1 AND a.status = 'active' ORDER BY b.slug LIMIT 11`,
-    [who.accountId],
-  )
-  if (mine.length === 1 && c.allBrains) return String(mine[0]?.slug)
+  const mine = await visible(db, who)
+  if (mine.length === 1) return mine[0] as string
+  if (mine.length === 0) {
+    throw invalid(
+      'This key reaches no brain.',
+      'Ask a curator to add you to a brain, or use a key that reaches one.',
+    )
+  }
   throw invalid(
-    'Which brain? This key reaches more than one, and the call names none.',
-    `Pass "brain"${
-      mine.length
-        ? ` (one of: ${mine
-            .slice(0, 10)
-            .map((m) => m.slug)
-            .join(', ')})`
-        : ''
-    }, call brain_resolve for your repository, or pass the "session" from mem_session_start.`,
+    `Which brain? This key reaches ${mine.length}, and the call names none.`,
+    `Pass "brain" (one of: ${mine.slice(0, 10).join(', ')}${mine.length > 10 ? ', …' : ''}), call brain_resolve for your repository, or pass the "session" from mem_session_start.`,
   )
 }

@@ -3,14 +3,15 @@
 // older ones (2025-11-25, 2025-06-18) start with initialize. Every answer is one JSON object. A tool call
 // runs the same /v1 route a program would, with the same key.
 import { bearer, resolveKey } from '../auth/principal.ts'
-import { AppError } from '../core/errors.ts'
+import { AppError, invalid } from '../core/errors.ts'
 import { installation } from '../domain/installation.ts'
 import { match, type PublicReq, type Reply, type Route } from '../http/router.ts'
 import { INSTRUCTIONS, PROMPTS } from './instructions.ts'
 import { allowed, defaultBrain, TOOLS } from './tools.ts'
 
 export const MODERN = '2026-07-28'
-export const LEGACY = ['2025-11-25', '2025-06-18', '2025-03-26']
+// 2025-03-26 is not offered: it asks servers to take batches, which later revisions dropped.
+export const LEGACY = ['2025-11-25', '2025-06-18']
 export const SUPPORTED = [MODERN, ...LEGACY]
 export const MAX_REPLY_CHARS = 256_000
 const SERVER_INFO = { name: 'rsc-brain', title: 'RSC Brain', version: '0.1.0' }
@@ -123,6 +124,10 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
       )
     }
     const notification = !('id' in m)
+    // A request id is a string or a whole number (MCP narrows JSON-RPC here).
+    if (!notification && !(typeof m.id === 'string' || Number.isSafeInteger(m.id))) {
+      return failure(null, new RpcError(400, -32600, 'A request "id" is a string or a whole number.'))
+    }
     if (notification) return { status: 202, body: '', headers: { 'content-type': 'text/plain' } }
     const params = (m.params && typeof m.params === 'object' ? m.params : {}) as Json
     const meta = (params._meta ?? {}) as Json
@@ -272,24 +277,42 @@ const toolError = (text: string) => ({ content: [{ type: 'text', text }], isErro
 
 async function callTool(r: PublicReq, who: Who, params: Json, routes: () => Route[]): Promise<Json> {
   const tool = TOOLS.find((t) => t.name === params.name)
-  if (!tool) throw new RpcError(200, -32602, `Unknown tool: ${String(params.name)}`)
+  if (!tool) {
+    throw new RpcError(
+      200,
+      -32602,
+      `Unknown tool: ${String(params.name)}. Call tools/list for the tools this key can use.`,
+    )
+  }
   const why = allowed(tool, who)
-  if (why) return toolError(`forbidden: ${why}`)
+  if (why) return toolError(`${why.code}: ${why.message} How to proceed: ${why.howToProceed}`)
   const args = (params.arguments ?? {}) as Json
-  if (typeof args !== 'object' || Array.isArray(args))
-    return toolError('invalid_request: "arguments" must be an object.')
+  if (typeof args !== 'object' || args === null || Array.isArray(args)) {
+    return toolError(
+      'invalid_request: "arguments" must be an object. How to proceed: Send the arguments as {"name": value, …}.',
+    )
+  }
   try {
     const call = await tool.call(args, { db: r.db, who, brain: (a) => defaultBrain(r.db, who, a) })
     const query = new URLSearchParams(call.query ?? {})
     const found = match(routes(), call.method, call.path)
-    if (!found || found === 'method' || found.route.public)
-      throw new Error(`no route for ${call.method} ${call.path}`)
+    // A path no route takes means a value in it was malformed (such as an empty id).
+    if (!found || found === 'method' || found.route.public) {
+      throw invalid(
+        'A value in this call is not one Brain can use (an empty or malformed id or address).',
+        'Check the arguments and try again.',
+      )
+    }
     const reply = await found.route.handler({ ...r, params: found.params, query, body: call.body, who })
     const body = reply.body as Json
     let text = JSON.stringify(body)
-    let structured: unknown = body
+    // The result goes as text and as structured content: both together stay within the limit.
+    let structured: unknown = text.length <= MAX_REPLY_CHARS / 2 ? body : undefined
     if (text.length > MAX_REPLY_CHARS) {
-      text = `${text.slice(0, MAX_REPLY_CHARS)}\n[cut at ${MAX_REPLY_CHARS} characters: ask for less, with a smaller limit, a filter or the next page]`
+      let cut = text.slice(0, MAX_REPLY_CHARS)
+      // Never half a character: a high surrogate at the cut goes too.
+      if (/[\ud800-\udbff]$/.test(cut)) cut = cut.slice(0, -1)
+      text = `${cut}\n[cut at ${MAX_REPLY_CHARS} characters: ask for less, with a smaller limit, a filter or the next page]`
       structured = undefined
     }
     return {
