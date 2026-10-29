@@ -113,11 +113,14 @@ describe('redaction', () => {
       'Authorization: Bearer '.repeat(1454),
       '-----BEGIN RSA PRIVATE KEY-----'.repeat(1032),
     ]
+    // A quadratic rule takes seconds on 32 000 characters; a linear one, a few ms. The margin absorbs
+    // slow CI runners and the first, unoptimised run.
+    redact('warm up '.repeat(100))
     for (const text of hostile) {
       const t0 = performance.now()
       redact(text)
       const ms = performance.now() - t0
-      assert.ok(ms < 100, `${text.slice(0, 12)}… took ${ms.toFixed(0)} ms`)
+      assert.ok(ms < 500, `${text.slice(0, 12)}… took ${ms.toFixed(0)} ms`)
     }
   })
 })
