@@ -500,4 +500,49 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     assert.ok(h2.stale.some((x) => x.address === 'sales'))
     assert.equal((await w.call(eric.key, 'GET', '/v1/brains/yt/pages/sales?compare=1,1,1')).status, 400)
   })
+
+  it('review: edits on top of purged text are named and must be purged together; nothing is half done', async () => {
+    await create('pt/page', { body: 'one', summary: 'sum', tags: ['a'] })
+    await edit('pt/page', 1, { body: 'one SECRETONE', summary: 'sum SECRETSUM', tags: ['a', 'sectagx'] })
+    await edit('pt/page', 2, { body: 'one SECRETONE and more', tags: ['a', 'sectagx', 'b'] })
+    const refused = await purgeRev('pt/page', 2)
+    assert.deepEqual([refused.status, refused.body.error?.code], [409, 'purge_incomplete'])
+    assert.match(refused.body.error?.howToProceed ?? '', /\[2, 3\]/)
+    assert.equal((await page('pt/page')).page.body, 'one SECRETONE and more')
+    const ok = await w.callWeb(adminWeb, 'POST', '/v1/brains/yt/wiki/purge', {
+      address: 'pt/page',
+      revisions: [2, 3],
+      reason: 'personal data',
+    })
+    assert.equal(ok.status, 200, ok.text)
+    const p = (await w.call(eric.key, 'GET', '/v1/brains/yt/pages/pt/page')).body as {
+      page: { body: string; summary: string; tags: string[] }
+    }
+    assert.deepEqual([p.page.body, p.page.summary, p.page.tags], ['one', 'sum', ['a']])
+    await nowhere('SECRETONE')
+    await nowhere('SECRETSUM')
+    await nowhere('sectagx')
+  })
+
+  it('review: tags and source titles a purged revision added leave later revisions on their own', async () => {
+    await create('ps/page', { body: 'one', tags: ['a'], sources: [{ url: 'https://x.test/a', title: 'ok' }] })
+    await edit('ps/page', 1, {
+      tags: ['a', 'sectagy'],
+      sources: [{ url: 'https://x.test/a', title: 'SECRETTITLE' }],
+    })
+    await edit('ps/page', 2, { body: 'two', tags: ['a', 'sectagy', 'b'] })
+    const r = await purgeRev('ps/page', 2)
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(r.body.cleaned, [3])
+    const p = (await w.call(eric.key, 'GET', '/v1/brains/yt/pages/ps/page')).body as {
+      page: { body: string; tags: string[] }
+      sources: { url: string; title: string }[]
+    }
+    assert.deepEqual(
+      [p.page.body, p.page.tags, p.sources],
+      ['two', ['a', 'b'], [{ url: 'https://x.test/a', title: 'ok' }]],
+    )
+    await nowhere('sectagy')
+    await nowhere('SECRETTITLE')
+  })
 })

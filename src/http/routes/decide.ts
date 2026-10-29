@@ -5,7 +5,7 @@
 import { invalid } from '../../core/errors.ts'
 import { approveProposal, returnProposal, reviewProposal } from '../../domain/wiki/decide.ts'
 import { directChange, maintenanceAsked, setWikiSettings } from '../../domain/wiki/direct.ts'
-import { purgePageRevision, purgeProposal } from '../../domain/wiki/purge.ts'
+import { purgePageRevisions, purgeProposal } from '../../domain/wiki/purge.ts'
 import { compact, int, type Obj, obj, reqStr, str } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
@@ -103,12 +103,21 @@ export const decideRoutes: Route[] = [
   })),
   route('POST /v1/brains/:slug/wiki/purge', async (r) => {
     const b = obj(r.body)
+    const one = int(b, 'revision', { min: 1, max: 1_000_000 })
+    const many = b.revisions
+    if (
+      many !== undefined &&
+      (!Array.isArray(many) || many.some((n) => typeof n !== 'number' || !Number.isSafeInteger(n) || n < 1))
+    ) {
+      throw invalid('"revisions" is a list of revision numbers.', 'Send "revisions": [4, 5].')
+    }
+    const list = [...(one === undefined ? [] : [one]), ...((many as number[] | undefined) ?? [])]
     return {
-      body: await purgePageRevision(
+      body: await purgePageRevisions(
         ctxOf(r),
         r.params.slug as string,
         compact({ address: reqStr(b, 'address', 200), pageId: str(b, 'pageId', { max: 40 }) }),
-        int(b, 'revision', { required: true, min: 1, max: 1_000_000 }) as number,
+        list,
         reqStr(b, 'reason'),
       ),
     }
