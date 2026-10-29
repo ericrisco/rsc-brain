@@ -7,6 +7,7 @@
 // can appear after id 42. The poller delivers in id order and, at a missing id, waits up to `holeMs`
 // for it (a write still committing); after that the id is taken as never coming (a rolled-back write).
 // With the defaults an event reaches its streams within pollMs + holeMs < 2 s (CA12).
+import { AppError } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
 import { type EventRow, eventsAfter, lastEventId } from '../domain/events.ts'
 
@@ -15,6 +16,9 @@ export type EventTimings = {
   holeMs: number // how long it waits for a missing id before moving past it
   heartbeatMs: number // a comment on every stream, so proxies keep it open
   recheckMs: number // how often a stream checks its key and role again (B4 CA30)
+  perKey: number // open streams one key may hold
+  total: number // open streams the installation holds
+  bufferBytes: number // what a stream may have waiting for a client that does not read
 }
 
 export const EVENT_TIMINGS: EventTimings = {
@@ -22,6 +26,10 @@ export const EVENT_TIMINGS: EventTimings = {
   holeMs: 1000,
   heartbeatMs: 15_000,
   recheckMs: 2_000,
+  // Each open stream costs a check of its key every 2 s; one installation serves a team, not a crowd.
+  perKey: 5,
+  total: 200,
+  bufferBytes: 1_000_000,
 }
 
 const BATCH = 500
@@ -34,6 +42,8 @@ export type Subscription = {
 }
 
 export type EventHub = {
+  // A place for one more stream of this key, or a refusal; the function gives the place back.
+  admit(keyId: string): () => void
   subscribe(brainId: string, push: (rows: EventRow[]) => void): Promise<Subscription>
 }
 
@@ -93,7 +103,38 @@ export function eventHub(db: Db, t: EventTimings, log: (line: string) => void): 
     return starting
   }
 
+  const open = new Map<string, number>()
+  let openTotal = 0
   return {
+    admit(keyId) {
+      if ((open.get(keyId) ?? 0) >= t.perKey) {
+        throw new AppError(
+          429,
+          'too_many_streams',
+          `This key already holds ${t.perKey} open event streams.`,
+          'Close one you no longer read; one stream per brain is enough.',
+        )
+      }
+      if (openTotal >= t.total) {
+        throw new AppError(
+          503,
+          'busy',
+          'The installation holds as many event streams as it serves.',
+          'Try again in a minute, or follow with the lists for now.',
+        )
+      }
+      open.set(keyId, (open.get(keyId) ?? 0) + 1)
+      openTotal++
+      let given = false
+      return () => {
+        if (given) return
+        given = true
+        openTotal--
+        const n = (open.get(keyId) ?? 1) - 1
+        if (n > 0) open.set(keyId, n)
+        else open.delete(keyId)
+      }
+    },
     async subscribe(brainId, push) {
       const sub: Sub = { brainId, push }
       subs.add(sub)

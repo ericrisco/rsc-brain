@@ -50,7 +50,13 @@ const CLOSED: Record<string, string> = {
   role_changed: 'Your role in this brain changed, or you left it.',
 }
 
-async function follow(r: Req, out: StreamOut, brain: { id: string; slug: string }, role: string) {
+async function follow(
+  r: Req,
+  out: StreamOut,
+  brain: { id: string; slug: string },
+  role: string,
+  release: () => void,
+) {
   const t = r.timings
   const who = r.who
   const viewer: Viewer = {
@@ -83,6 +89,7 @@ async function follow(r: Req, out: StreamOut, brain: { id: string; slug: string 
   const close = (reason?: string, message?: string) => {
     if (finished) return
     finished = true
+    release()
     if (reason) out.write(frame({ event: 'closed', data: { reason, message } }))
     for (const x of timers) clearInterval(x)
     sub.stop()
@@ -156,6 +163,16 @@ export const eventRoutes: Route[] = [
     // Refusals (no such brain, a malformed id) come as ordinary answers, before the stream starts.
     const { brain, role } = await inBrain(ctxOf(r), { slug: r.params.slug as string })
     lastIdOf(r)
-    return { body: null, stream: (out) => follow(r, out, brain, role) }
+    const release = r.hub.admit(r.who.credential.id)
+    return {
+      body: null,
+      stream: async (out) => {
+        try {
+          await follow(r, out, brain, role, release)
+        } finally {
+          release()
+        }
+      },
+    }
   }),
 ]

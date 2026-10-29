@@ -198,6 +198,7 @@ async function stream(
   res: ServerResponse,
   run: NonNullable<Reply['stream']>,
   log: (line: string) => void,
+  bufferBytes: number,
 ): Promise<void> {
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
@@ -209,8 +210,11 @@ async function stream(
   res.flushHeaders()
   const closed = () => res.destroyed || res.writableEnded
   const out: StreamOut = {
+    // A client that stops reading is let go before what waits for it grows without end.
     write: (text) => {
-      if (!closed()) res.write(text)
+      if (closed()) return
+      res.write(text)
+      if (res.writableLength > bufferBytes) res.destroy()
     },
     end: () => {
       if (!closed()) res.end()
@@ -317,7 +321,7 @@ export function createHandler(deps: AppDeps) {
       rate.take(who.credential.id, who.rateLimit)
       const body = await readBody(req)
       const reply = await found.route.handler({ ...base, body, who })
-      if (reply.stream) return await stream(res, reply.stream, log)
+      if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)
       send(res, reply.status ?? 200, reply.body, reply.headers)
     } catch (err) {
       // The standard sign-in's endpoints answer in the standard's shape, even for a malformed request.
