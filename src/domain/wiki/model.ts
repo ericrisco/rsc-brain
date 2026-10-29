@@ -190,8 +190,11 @@ export function readOp(raw: unknown, i: number, problems: Problem[]): Op | null 
       problems.push({ op: i, message: `"${key}" must be a list.` })
       return undefined
     }
-    if (v.length > WIKI_LIMITS.sources)
+    // Limits count distinct items; a list far over any limit is refused before reading it.
+    if (v.length > WIKI_LIMITS.sources * 10) {
       problems.push({ op: i, message: `At most ${WIKI_LIMITS.sources} ${key}.` })
+      return undefined
+    }
     const out: Source[] = []
     for (const s of v) {
       const x = (s ?? {}) as Raw
@@ -213,12 +216,15 @@ export function readOp(raw: unknown, i: number, problems: Problem[]): Op | null 
     }
     // The same source twice is one source.
     const seen = new Set<string>()
-    return out.filter((s) => !seen.has(sourceKey(s)) && Boolean(seen.add(sourceKey(s))))
+    const distinct = out.filter((s) => !seen.has(sourceKey(s)) && Boolean(seen.add(sourceKey(s))))
+    if (distinct.length > WIKI_LIMITS.sources)
+      problems.push({ op: i, message: `At most ${WIKI_LIMITS.sources} ${key}.` })
+    return distinct
   }
   const links = (key: string): LinkRef[] => {
     const v = o[key]
     if (v === undefined || v === null) return []
-    if (!Array.isArray(v) || v.length > WIKI_LIMITS.links) {
+    if (!Array.isArray(v) || v.length > WIKI_LIMITS.links * 10) {
       problems.push({ op: i, message: `"${key}" must be a list of at most ${WIKI_LIMITS.links} links.` })
       return []
     }
@@ -238,6 +244,9 @@ export function readOp(raw: unknown, i: number, problems: Problem[]): Op | null 
       }
       if (!out.some((l) => l.kind === x.kind && l.to === x.to))
         out.push({ kind: x.kind as LinkKind, to: x.to })
+    }
+    if (out.length > WIKI_LIMITS.links) {
+      problems.push({ op: i, message: `"${key}" must be a list of at most ${WIKI_LIMITS.links} links.` })
     }
     return out
   }

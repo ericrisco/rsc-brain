@@ -58,20 +58,24 @@ export async function compilePack(
       [brain.id],
     )
   ).map(entryOf)
-  // People's corrections first, then entries, oldest first, within the budget. One item always goes,
-  // even over the budget, so an entry larger than the budget can still be compiled.
+  // People's corrections first, up to half the budget, then entries, oldest first, with what is left:
+  // corrections never collected cannot starve the entries. One item of each always goes, even over
+  // its share, so an item larger than the budget can still be compiled.
   let used = 0
-  const take = <T extends Entry>(list: T[]): T[] => {
+  const take = <T extends Entry>(list: T[], limit: number): T[] => {
     const out: T[] = []
     for (const e of list) {
-      if (used > 0 && used + size(e) > maxChars) break
+      if (out.length > 0 && used + size(e) > limit) break
       out.push(e)
       used += size(e)
     }
     return out
   }
-  const corrections = take(allCorrections)
-  const entries = corrections.length === allCorrections.length ? take(rows.map((r) => entryOf(r as Row))) : []
+  const corrections = take(allCorrections, Math.floor(maxChars / 2))
+  const entries = take(
+    rows.map((r) => entryOf(r as Row)),
+    maxChars,
+  )
   const all = [...corrections, ...entries]
   const related = new Map<string, RelatedPage>()
   const add = (r: Row, why: RelatedPage['why']) => {

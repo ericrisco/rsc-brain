@@ -584,9 +584,14 @@ describe('wiki proposals and reading', { skip: skipPg }, () => {
       remainingCorrections: number
     }
     const chars = pk.corrections.reduce((n, c) => n + c.content.length + c.title.length + 200, 0)
-    assert.ok(chars <= 4000, String(chars))
+    assert.ok(chars <= 2000 + 2100, String(chars))
     assert.ok(pk.remainingCorrections > 0)
-    assert.deepEqual(pk.entries, [])
+    assert.equal(pk.entries.length, 1)
+    const many = await propose(factory.key, {
+      title: 'Same source 60 times',
+      ops: [create('dup/sources', { sources: Array.from({ length: 60 }, () => ({ entryId: entries[0] })) })],
+    })
+    assert.equal(many.status, 201)
     const tags = await propose(factory.key, {
       title: 'Tags',
       ops: [
