@@ -49,11 +49,12 @@ export async function wikiHealth(ctx: Ctx, slug: string): Promise<Health> {
     [brain.id],
   )
   const conflicts = await db.query(
-    `SELECT p.address AS a, q.address AS b FROM page_links l
+    // One conflict per pair of pages, whichever way the links go.
+    `SELECT DISTINCT least(p.address, q.address) AS a, greatest(p.address, q.address) AS b FROM page_links l
        JOIN pages p ON p.id = l.from_page JOIN pages q ON q.id = l.to_page
       WHERE l.brain_id = $1 AND l.kind = 'contradicts'
         AND p.status IN ('current', 'stale') AND q.status IN ('current', 'stale')
-      ORDER BY p.address, q.address`,
+      ORDER BY a, b`,
     [brain.id],
   )
   // Stale: untouched for `staleDays`, and the journal has written about it since (by its topic, by
@@ -62,7 +63,8 @@ export async function wikiHealth(ctx: Ctx, slug: string): Promise<Health> {
   const stale = await db.query(
     `SELECT p.address, p.title, p.updated_at, count(e.id)::int AS n
        FROM pages p JOIN entries e ON e.brain_id = p.brain_id AND e.state = 'active' AND e.created_at > p.updated_at
-        AND (e.topic = p.address OR strpos(e.content, p.address) > 0)
+        -- The whole address as a word: "sales" is not in "presales", nor "h/old" in "h/older".
+        AND (e.topic = p.address OR e.content ~ ('(^|[^a-z0-9/-])' || p.address || '($|[^a-z0-9/-])'))
       WHERE p.brain_id = $1 AND ${LIVE} AND p.updated_at < $2
       GROUP BY p.id ORDER BY p.address`,
     [brain.id, cutoff],

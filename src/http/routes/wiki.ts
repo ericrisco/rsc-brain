@@ -78,8 +78,9 @@ export const wikiRoutes: Route[] = [
     if (rev !== undefined) return { body: { revision: await pageRevision(ctxOf(r), slug, address, rev) } }
     const compare = r.query.get('compare')
     if (compare !== null) {
-      const [a, b] = compare.split(',').map((x) => whole(x, 'compare', 1, 1_000_000))
-      if (a === undefined || b === undefined)
+      const parts = compare.split(',')
+      const [a, b] = parts.map((x) => whole(x, 'compare', 1, 1_000_000))
+      if (parts.length !== 2 || a === undefined || b === undefined)
         throw invalid('"compare" is two revisions, e.g. 3,5.', 'Fix "compare".')
       return {
         body: {

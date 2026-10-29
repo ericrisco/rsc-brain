@@ -107,7 +107,7 @@ export const decideRoutes: Route[] = [
       body: await purgePageRevision(
         ctxOf(r),
         r.params.slug as string,
-        reqStr(b, 'address', 200),
+        compact({ address: reqStr(b, 'address', 200), pageId: str(b, 'pageId', { max: 40 }) }),
         int(b, 'revision', { required: true, min: 1, max: 1_000_000 }) as number,
         reqStr(b, 'reason'),
       ),

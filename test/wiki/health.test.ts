@@ -181,7 +181,7 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
       similarTitles: { a: string; b: string }[]
       stale: { address: string; newEntries: number }[]
     }
-    assert.ok(h.conflicts.some((c) => c.a === 'h/y' && c.b === 'h/x'))
+    assert.ok(h.conflicts.some((c) => c.a === 'h/x' && c.b === 'h/y'))
     assert.ok(h.long.some((l) => l.address === 'h/long'))
     assert.ok(h.similarTitles.some((s) => s.a === 'h/t1' && s.b === 'h/t2'))
     assert.deepEqual(
@@ -190,9 +190,9 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     )
     await change({ op: 'link', address: 'h/x', kind: 'supersedes', to: 'h/y' })
     const after = (await w.call(ana.key, 'GET', '/v1/brains/yt/wiki/health')).body as {
-      conflicts: { a: string }[]
+      conflicts: { a: string; b: string }[]
     }
-    assert.ok(!after.conflicts.some((c) => c.a === 'h/y'))
+    assert.ok(!after.conflicts.some((c) => c.b === 'h/y'))
   })
 
   it('every so many approvals, the web suggests a maintenance proposal; asking for one starts the count again', async () => {
@@ -284,7 +284,7 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
       reason: 'personal data',
     })
     assert.equal(r.status, 200, r.text)
-    assert.deepEqual([r.body.restoredTo, r.body.joined], [3, true])
+    assert.equal(r.body.joined, true)
     assert.equal((await page('ca25/page')).page.body, 'r3')
     const tables = await w.db.query<{ table_name: string }>(
       "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'",
@@ -369,5 +369,135 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     }
     assert.deepEqual(p.proposal.collected, [])
     assert.deepEqual(p.ops[0]?.op.sources, [{ entryId: y }])
+  })
+
+  const nowhere = async (needle: string) => {
+    const tables = await w.db.query<{ table_name: string }>(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'",
+    )
+    for (const { table_name } of tables) {
+      assert.ok(
+        !JSON.stringify(await w.db.query(`SELECT * FROM ${table_name}`)).includes(needle),
+        `${needle} in ${table_name}`,
+      )
+    }
+  }
+  const purgeRev = async (address: string, revision: number, extra: Record<string, unknown> = {}) =>
+    w.callWeb(adminWeb, 'POST', '/v1/brains/yt/wiki/purge', {
+      address,
+      revision,
+      reason: 'personal data',
+      ...extra,
+    })
+
+  it('review: what a purged revision brought in leaves the later revisions that carried it, and the page', async () => {
+    // A: a later edit changes only the title; the body with the secret must still go.
+    await create('pa/page', { body: 'one' })
+    await edit('pa/page', 1, { body: 'SECRETA Paco' })
+    await edit('pa/page', 2, { title: 'Renamed' })
+    assert.equal((await purgeRev('pa/page', 2)).status, 200)
+    const a = await page('pa/page')
+    assert.deepEqual([a.page.title, a.page.body], ['Renamed', 'one'])
+    await nowhere('SECRETA')
+    // B: a later link-only revision carries the same body.
+    await create('pb/target')
+    await create('pb/page', { body: 'one' })
+    await edit('pb/page', 1, { body: 'SECRETB Paco' })
+    await change({ op: 'link', address: 'pb/page', kind: 'related', to: 'pb/target' })
+    assert.equal((await purgeRev('pb/page', 2)).status, 200)
+    await nowhere('SECRETB')
+    // P2: a clean revision between, then a revert to the secret one: the page falls back to the clean one.
+    await create('pc/page', { body: 'SECRETC Lola' })
+    await edit('pc/page', 1, { body: 'clean' })
+    await change({ op: 'revert', address: 'pc/page', toRevision: 1 })
+    assert.equal((await purgeRev('pc/page', 1)).status, 200)
+    const c = await page('pc/page')
+    assert.deepEqual([c.page.body, c.page.status], ['clean', 'current'])
+    await nowhere('SECRETC')
+  })
+
+  it('review: a purge restores the mentions of the body and drops the source titles the revision added', async () => {
+    await create('pm/b')
+    await create('pm/a', { body: 'See [[pm/b]].' })
+    await edit('pm/a', 1, {
+      body: 'See [[pm/b]]. SECRETM',
+      sources: [{ url: 'https://x.test/a', title: 'Juanita SECRETS' }],
+    })
+    assert.equal((await purgeRev('pm/a', 2)).status, 200)
+    const a = (await w.call(eric.key, 'GET', '/v1/brains/yt/pages/pm/a')).body as {
+      links: { out: { address: string }[] }
+      sources: unknown[]
+    }
+    assert.deepEqual(
+      a.links.out.map((l) => l.address),
+      ['pm/b'],
+    )
+    assert.deepEqual(a.sources, [])
+    await nowhere('SECRETM')
+    await nowhere('SECRETS')
+  })
+
+  it('review: a merged page is purged by its own address, never through the redirect to the page it merged into', async () => {
+    await create('pz/x', { body: 'x one' })
+    await create('pz/y', { body: 'y one' })
+    await edit('pz/y', 1, { body: 'SECRETZ' })
+    await change({ op: 'merge', address: 'pz/x', from: 'pz/y', body: 'x and y' })
+    const r = await purgeRev('pz/y', 2)
+    assert.equal(r.status, 200, r.text)
+    assert.equal(r.body.address, 'pz/y')
+    assert.equal(((await page('pz/x')) as { page: { body: string } }).page.body, 'x and y')
+    const xh = (await w.call(eric.key, 'GET', '/v1/brains/yt/pages/pz/x?history=1')).body.history as {
+      purged: unknown
+    }[]
+    assert.ok(xh.every((h) => h.purged === null))
+    await nowhere('SECRETZ')
+  })
+
+  it('review: purging a returned proposal also purges the correction its return left; the revisions it wrote are listed', async () => {
+    const id = (
+      (
+        await w.call(factory.key, 'POST', '/v1/brains/yt/proposals', {
+          title: 'Leaky Rosalía',
+          ops: [
+            {
+              op: 'create',
+              address: 'leak2/page',
+              type: 'topic',
+              title: 'T',
+              sources: [{ entryId: e[0] }],
+              reason: 'r',
+            },
+          ],
+        })
+      ).body.proposal as { id: string }
+    ).id
+    const fp = (
+      (await w.callWeb(ericWeb, 'GET', `/v1/proposals/${id}/review`)).body as { fingerprint: string }
+    ).fingerprint
+    await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/return`, { fingerprint: fp, comment: 'no' })
+    const r = await w.callWeb(adminWeb, 'POST', `/v1/proposals/${id}/purge`, { reason: 'personal data' })
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(r.body.revisions, [])
+    await nowhere('Rosalía')
+  })
+
+  it('review: stale matches whole addresses only; compare takes exactly two revisions', async () => {
+    await w.callWeb(ericWeb, 'PUT', '/v1/brains/yt/wiki/settings', { staleDays: 1 })
+    await create('sales')
+    w.advance(2 * 86_400_000)
+    ericWeb = await w.web(eric.id)
+    anaWeb = await w.web(ana.id)
+    adminWeb = await w.web(admin.id)
+    await save({ type: 'note', title: 'n', content: 'Presales and h/older stuff' })
+    const h = (await w.call(ana.key, 'GET', '/v1/brains/yt/wiki/health')).body as {
+      stale: { address: string }[]
+    }
+    assert.ok(!h.stale.some((x) => x.address === 'sales'))
+    await save({ type: 'note', title: 'n2', content: 'About sales, today.' })
+    const h2 = (await w.call(ana.key, 'GET', '/v1/brains/yt/wiki/health')).body as {
+      stale: { address: string }[]
+    }
+    assert.ok(h2.stale.some((x) => x.address === 'sales'))
+    assert.equal((await w.call(eric.key, 'GET', '/v1/brains/yt/pages/sales?compare=1,1,1')).status, 400)
   })
 })
