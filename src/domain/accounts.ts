@@ -23,6 +23,9 @@ export async function createAccount(db: Db, clock: Clock, a: NewAccount): Promis
   if (a.kind === 'person' && (!email || !EMAIL.test(email))) {
     throw invalid('A person needs a valid email.', 'Give an email such as ana@example.com.')
   }
+  if (a.kind === 'service' && email) {
+    throw invalid('A service account has no email.', 'Leave the email out.')
+  }
   if (a.kind === 'service' && a.isAdmin) {
     throw invalid('A service account cannot be an administrator.', 'Create a person account instead.')
   }
@@ -55,7 +58,8 @@ export async function accountByEmail(
   db: Db,
   email: string,
 ): Promise<{ id: string; status: string } | undefined> {
-  return db.one<{ id: string; status: string }>('SELECT id, status FROM accounts WHERE email = $1', [
-    email.trim().toLowerCase(),
-  ])
+  return db.one<{ id: string; status: string }>(
+    "SELECT id, status FROM accounts WHERE email = $1 AND kind = 'person'",
+    [email.trim().toLowerCase()],
+  )
 }

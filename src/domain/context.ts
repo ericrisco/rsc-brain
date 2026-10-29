@@ -8,7 +8,9 @@ import { brainNotFound, denied } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
 import { audit } from './audit.ts'
 
-export type Ctx = { db: Db; clock: Clock; who: Principal }
+// root: the pool, outside any transaction. Denials are audited through it so a rollback cannot erase
+// them (the refusal is thrown, which rolls the transaction back).
+export type Ctx = { db: Db; clock: Clock; who: Principal; root?: Db }
 
 export type Brain = {
   id: string
@@ -36,13 +38,18 @@ export const brainOf = (r: Record<string, unknown>): Brain => ({
 
 export type InBrain = { brain: Brain; role: Role }
 
-// Loads a brain the caller can read. `lock` takes a row lock so a concurrent archive cannot slip
-// between the check and the write.
-export async function inBrain(ctx: Ctx, ref: { slug?: string; id?: string }, lock = false): Promise<InBrain> {
-  const row = await ctx.db.one(
-    `SELECT * FROM brains WHERE ${ref.id ? 'id' : 'slug'} = $1${lock ? ' FOR SHARE' : ''}`,
-    [ref.id ?? ref.slug],
-  )
+// Loads a brain the caller can read. `lock`: 'share' for writes inside the brain (a concurrent archive
+// waits for them), 'update' for changing the brain row itself (two of those queue instead of
+// deadlocking on a shared lock).
+export async function inBrain(
+  ctx: Ctx,
+  ref: { slug?: string; id?: string },
+  lock: 'share' | 'update' | null = null,
+): Promise<InBrain> {
+  const clause = lock === 'share' ? ' FOR SHARE' : lock === 'update' ? ' FOR UPDATE' : ''
+  const row = await ctx.db.one(`SELECT * FROM brains WHERE ${ref.id ? 'id' : 'slug'} = $1${clause}`, [
+    ref.id ?? ref.slug,
+  ])
   if (!row) throw brainNotFound()
   const role = await roleIn(ctx.db, ctx.who, String(row.id))
   if (!role) throw brainNotFound()
@@ -53,7 +60,7 @@ export async function inBrain(ctx: Ctx, ref: { slug?: string; id?: string }, loc
 export async function allow(ctx: Ctx, action: Action, facts: Facts, brainId?: string): Promise<void> {
   const d = can(actorOf(ctx.who), action, facts)
   if (d.ok) return
-  await audit(ctx.db, {
+  await audit(ctx.root ?? ctx.db, {
     at: ctx.clock(),
     actorId: ctx.who.accountId,
     credentialId: ctx.who.credential.id,

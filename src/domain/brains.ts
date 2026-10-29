@@ -9,6 +9,7 @@ import { accountByEmail } from './accounts.ts'
 import { allow, type Brain, brainOf, type Ctx, inBrain, ok } from './context.ts'
 
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export type NewBrain = {
   slug: string
@@ -33,6 +34,12 @@ export async function addMember(
   role: Role,
   at: Date,
 ): Promise<void> {
+  if (role === 'curator') {
+    const a = await db.one<{ kind: string }>('SELECT kind FROM accounts WHERE id = $1', [accountId])
+    if (a?.kind === 'service') {
+      throw invalid('A service account is never a curator.', 'Give it the contributor or reader role.')
+    }
+  }
   await db.query(
     `INSERT INTO memberships (brain_id, account_id, role, created_at) VALUES ($1, $2, $3, $4)
      ON CONFLICT (brain_id, account_id) DO UPDATE SET role = EXCLUDED.role`,
@@ -72,7 +79,7 @@ export async function createBrain(ctx: Ctx, input: NewBrain): Promise<Brain> {
             [named],
           )
       if (found && found.status === 'active') curatorId = found.id
-      else if (named.includes('@') && !found && ctx.who.canInvite) pendingEmail = named.toLowerCase()
+      else if (EMAIL.test(named) && !found && ctx.who.canInvite) pendingEmail = named.toLowerCase()
       else {
         throw invalid(
           'The first curator must be an active person account.',
@@ -130,7 +137,7 @@ export async function getBrain(ctx: Ctx, slug: string): Promise<BrainListed> {
 export async function setArchived(ctx: Ctx, slug: string, archived: boolean): Promise<Brain> {
   return ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
-    const { brain, role } = await inBrain(c, { slug }, true)
+    const { brain, role } = await inBrain(c, { slug }, 'update')
     await allow(c, 'brain.archive', { role }, brain.id)
     const row = await db.one('UPDATE brains SET status = $2, updated_at = $3 WHERE id = $1 RETURNING *', [
       brain.id,
@@ -152,6 +159,12 @@ export async function deleteBrain(ctx: Ctx, slug: string, confirm: string): Prom
     if (confirm !== slug) {
       throw invalid('To delete a brain, type its name to confirm.', `Send {"confirm": "${slug}"}.`)
     }
+    // Short keys writing to this brain are revoked, not erased: a running agent learns its key was
+    // revoked, and the audit keeps pointing at a key that exists.
+    await db.query(
+      "UPDATE credentials SET revoked_at = coalesce(revoked_at, $2) WHERE kind = 'short' AND write_brain_id = $1",
+      [row.id, ctx.clock()],
+    )
     await db.query('DELETE FROM brains WHERE id = $1', [row.id])
     await ok({ ...ctx, db }, 'brain.delete', row.id, slug)
   })

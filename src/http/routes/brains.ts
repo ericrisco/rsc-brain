@@ -3,7 +3,7 @@ import type { Ctx } from '../../domain/context.ts'
 import { compact, obj, reqStr, str } from '../input.ts'
 import { type Req, type Route, route } from '../router.ts'
 
-export const ctxOf = (r: Req): Ctx => ({ db: r.db, clock: r.clock, who: r.who })
+export const ctxOf = (r: Req): Ctx => ({ db: r.db, root: r.db, clock: r.clock, who: r.who })
 
 export const brainRoutes: Route[] = [
   route('GET /v1/brains', async (r) => ({ body: { brains: await listBrains(ctxOf(r)) } })),

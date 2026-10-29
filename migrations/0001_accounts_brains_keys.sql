@@ -13,7 +13,7 @@ CREATE TABLE accounts (
   can_invite        boolean NOT NULL DEFAULT false,
   status            text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'removed')),
   created_at        timestamptz NOT NULL,
-  CHECK (kind = 'service' OR email IS NOT NULL),
+  CHECK ((kind = 'person') = (email IS NOT NULL)),
   CHECK (kind = 'person' OR NOT is_admin)
 );
 
@@ -51,7 +51,7 @@ CREATE TABLE credentials (
   perm           text NOT NULL CHECK (perm IN ('read', 'write')),
   all_brains     boolean NOT NULL DEFAULT false,
   brain_ids      text[] NOT NULL DEFAULT '{}',
-  write_brain_id text REFERENCES brains(id) ON DELETE CASCADE,
+  write_brain_id text REFERENCES brains(id) ON DELETE SET NULL,
   read_brain_ids text[] NOT NULL DEFAULT '{}',
   ref            text CHECK (ref IS NULL OR length(ref) <= 200),
   agent          text CHECK (agent IS NULL OR length(agent) <= 80),
@@ -61,7 +61,7 @@ CREATE TABLE credentials (
   expires_at     timestamptz,
   revoked_at     timestamptz,
   last_used_at   timestamptz,
-  CHECK (kind <> 'short' OR (parent_id IS NOT NULL AND write_brain_id IS NOT NULL AND expires_at IS NOT NULL)),
+  CHECK (kind <> 'short' OR (parent_id IS NOT NULL AND expires_at IS NOT NULL AND (write_brain_id IS NOT NULL OR revoked_at IS NOT NULL))),
   CHECK (kind <> 'token' OR expires_at IS NOT NULL),
   CHECK (cardinality(read_brain_ids) = 0 OR on_behalf_id IS NOT NULL)
 );

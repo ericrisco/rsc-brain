@@ -42,7 +42,10 @@ export function match(
     if (r.method !== method) continue
     const params: Record<string, string> = {}
     r.keys.forEach((k, i) => {
-      params[k] = decodeURIComponent(m[i + 1] ?? '')
+      const v = decodeURIComponent(m[i + 1] ?? '')
+      // PostgreSQL text cannot hold NUL; refuse it here instead of failing in the database.
+      if (v.includes('\u0000')) throw new URIError('NUL in path')
+      params[k] = v
     })
     return { route: r, params }
   }

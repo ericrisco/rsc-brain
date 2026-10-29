@@ -152,4 +152,47 @@ describe('brains over HTTP', { skip: skipPg }, () => {
     assert.equal((await w.call(eric.key, 'GET', '/v1/nothing')).status, 404)
     assert.equal((await w.call(eric.key, 'PUT', '/v1/brains')).status, 405)
   })
+
+  it('concurrent archive and unarchive queue instead of deadlocking', async () => {
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'race' })
+    const calls = Array.from({ length: 20 }, (_, i) =>
+      w.call(eric.key, 'POST', `/v1/brains/race/${i % 2 ? 'archive' : 'unarchive'}`),
+    )
+    const statuses = (await Promise.all(calls)).map((r) => r.status)
+    assert.deepEqual([...new Set(statuses)], [200])
+  })
+
+  it('a refused archive is in the audit', async () => {
+    await w.member('race', ana.id, 'reader')
+    assert.equal((await w.call(ana.key, 'POST', '/v1/brains/race/archive')).status, 403)
+    const rows = await w.db.query(
+      `SELECT action FROM audit WHERE actor_id = $1 AND outcome = 'denied' AND action = 'brain.archive'
+         AND brain_id = (SELECT id FROM brains WHERE slug = 'race')`,
+      [ana.id],
+    )
+    assert.equal(rows.length, 1)
+  })
+
+  it('a service account is never curator, even if its membership row says so', async () => {
+    const svc = await w.service('Bot')
+    await assert.rejects(() => w.member('race', svc.id, 'curator'), /never a curator/)
+    await w.db.query(
+      "INSERT INTO memberships (brain_id, account_id, role, created_at) SELECT id, $1, 'curator', now() FROM brains WHERE slug = 'race'",
+      [svc.id],
+    )
+    const got = await w.call(svc.key, 'GET', '/v1/brains/race')
+    assert.equal((got.body.brain as { role: string }).role, 'contributor')
+    assert.equal((await w.call(svc.key, 'POST', '/v1/brains/race/archive')).status, 403)
+  })
+
+  it('deleting a brain revokes its short keys instead of erasing them', async () => {
+    const svc = await w.service('Runner')
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'doomed' })
+    await w.member('doomed', svc.id, 'contributor')
+    const k = (
+      await w.call(svc.key, 'POST', '/v1/keys/short', { writeBrain: 'doomed', ref: 'r', ttlMinutes: 30 })
+    ).body.key as { id: string; secret: string }
+    assert.equal((await w.call(eric.key, 'DELETE', '/v1/brains/doomed', { confirm: 'doomed' })).status, 200)
+    assert.equal((await w.call(k.secret, 'GET', '/v1/me')).body.error?.code, 'key_revoked')
+  })
 })

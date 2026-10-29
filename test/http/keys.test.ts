@@ -167,4 +167,27 @@ describe('keys over HTTP', { skip: skipPg }, () => {
     const dump = JSON.stringify(await w.db.query('SELECT * FROM credentials'))
     assert.ok(!dump.includes(eric.key))
   })
+
+  it('a short key revokes only itself, never its main key or a sibling', async () => {
+    const svc = await w.service('Isolated')
+    await w.member('project', svc.id, 'contributor')
+    const a = (await mint({ writeBrain: 'project', ref: 'a', ttlMinutes: 30 }, svc.key)).body.key as {
+      id: string
+      secret: string
+    }
+    const b = (await mint({ writeBrain: 'project', ref: 'b', ttlMinutes: 30 }, svc.key)).body.key as {
+      id: string
+      secret: string
+    }
+    const main = await w.db.one<{ id: string }>(
+      "SELECT id FROM credentials WHERE account_id = $1 AND kind = 'main'",
+      [svc.id],
+    )
+    assert.equal((await w.call(a.secret, 'DELETE', `/v1/keys/${main?.id}`)).status, 404)
+    assert.equal((await w.call(a.secret, 'DELETE', `/v1/keys/${b.id}`)).status, 404)
+    assert.equal((await w.call(svc.key, 'GET', '/v1/me')).status, 200)
+    assert.equal((await w.call(b.secret, 'GET', '/v1/me')).status, 200)
+    assert.equal((await w.call(a.secret, 'DELETE', `/v1/keys/${a.id}`)).status, 200)
+    assert.equal((await w.call(a.secret, 'GET', '/v1/me')).body.error?.code, 'key_revoked')
+  })
 })

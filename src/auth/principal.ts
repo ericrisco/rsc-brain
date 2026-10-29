@@ -135,8 +135,10 @@ export async function roleIn(db: Db, p: Principal, brainId: string): Promise<Rol
     if (!c.allBrains && !c.brainIds.includes(brainId)) return null
     return c.perm === 'read' ? minRole(member, 'reader') : member
   }
-  if (c.kind === 'main') return member
-  if (brainId === c.writeBrainId) return c.perm === 'read' ? minRole(member, 'reader') : member
+  // A service account is never curator (spec B4); its keys are capped at contributor whatever happens
+  // to its membership row.
+  if (c.kind === 'main') return minRole(member, 'contributor')
+  if (brainId === c.writeBrainId) return minRole(member, c.perm === 'read' ? 'reader' : 'contributor')
   if (c.readBrainIds.includes(brainId) && c.onBehalfId) {
     const theirs = await memberRole(db, brainId, c.onBehalfId)
     return member && theirs ? 'reader' : null

@@ -31,11 +31,26 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
     chunks.push(chunk as Buffer)
   }
   if (size === 0) return undefined
+  let parsed: unknown
   try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'))
   } catch {
     throw invalid('The request body is not valid JSON.', 'Send a JSON object.')
   }
+  if (hasNul(parsed)) {
+    throw invalid(
+      'The request contains a NUL character (\\u0000), which cannot be stored.',
+      'Remove it and retry.',
+    )
+  }
+  return parsed
+}
+
+function hasNul(v: unknown): boolean {
+  if (typeof v === 'string') return v.includes('\u0000')
+  if (Array.isArray(v)) return v.some(hasNul)
+  if (v && typeof v === 'object') return Object.entries(v).some(([k, x]) => k.includes('\u0000') || hasNul(x))
+  return false
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {
@@ -56,7 +71,8 @@ export function createHandler(deps: AppDeps) {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost')
       const method = req.method ?? 'GET'
-      if (url.pathname === '/v1/health' && method === 'GET') return send(res, 200, { ok: true })
+      if (url.pathname === '/v1/health' && (method === 'GET' || method === 'HEAD'))
+        return send(res, 200, { ok: true })
       let found: ReturnType<typeof match>
       try {
         found = match(routes, method, url.pathname)

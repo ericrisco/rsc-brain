@@ -56,7 +56,18 @@ async function main(argv: string[]): Promise<number> {
     const db = openPool(cfg.databaseUrl)
     await migrate(db)
     const server = createServer(createHandler({ db, clock: systemClock }))
-    await new Promise<void>((resolve) => server.listen(cfg.port, cfg.host, resolve))
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', (err: NodeJS.ErrnoException) => {
+        reject(
+          new Error(
+            err.code === 'EADDRINUSE'
+              ? `Port ${cfg.port} is already in use. Stop the other process or set RSC_BRAIN_PORT.`
+              : err.message,
+          ),
+        )
+      })
+      server.listen(cfg.port, cfg.host, resolve)
+    })
     out(`RSC Brain listening on http://${cfg.host}:${cfg.port}\n`)
     const stop = () => {
       server.close(() => {
@@ -81,30 +92,34 @@ async function main(argv: string[]): Promise<number> {
       )
       return 2
     }
-    return withDb(async (db) => {
-      await migrate(db)
-      const any = await db.one("SELECT 1 FROM accounts WHERE is_admin AND status = 'active'")
-      if (any) {
-        process.stderr.write('This installation already has an administrator. Ask them for an account.\n')
-        return 1
-      }
-      const id = await createAccount(db, systemClock, {
-        kind: 'person',
-        email: values.email as string,
-        name: values.name as string,
-        isAdmin: true,
-        canCreateBrains: true,
-        canInvite: true,
+    return withDb(async (pool) => {
+      await migrate(pool)
+      // One bootstrap at a time: two runs at once must not both create an administrator.
+      return pool.tx(async (db) => {
+        await db.query('SELECT pg_advisory_xact_lock(7310420002)')
+        const any = await db.one("SELECT 1 FROM accounts WHERE is_admin AND status = 'active'")
+        if (any) {
+          process.stderr.write('This installation already has an administrator. Ask them for an account.\n')
+          return 1
+        }
+        const id = await createAccount(db, systemClock, {
+          kind: 'person',
+          email: values.email as string,
+          name: values.name as string,
+          isAdmin: true,
+          canCreateBrains: true,
+          canInvite: true,
+        })
+        const k = await mintPersonToken(db, systemClock, {
+          accountId: id,
+          name: 'bootstrap',
+          perm: 'write',
+          allBrains: true,
+          days: 90,
+        })
+        out(`Administrator created (${id}).\nKey (shown once, valid until ${k.expiresAt}):\n${k.secret}\n`)
+        return 0
       })
-      const k = await mintPersonToken(db, systemClock, {
-        accountId: id,
-        name: 'bootstrap',
-        perm: 'write',
-        allBrains: true,
-        days: 90,
-      })
-      out(`Administrator created (${id}).\nKey (shown once, valid until ${k.expiresAt}):\n${k.secret}\n`)
-      return 0
     })
   }
   if (cmd === 'service' && sub === 'create') {
