@@ -195,7 +195,9 @@ export async function embedPending(db: Db, providers: Providers, now: Date, batc
     [p.name, p.model, batch],
   )
   if (rows.length === 0) return 0
-  if (Number(rows[0]?.attempts) > 0) rows = rows.slice(0, 1)
+  // After an outage everything pending failed once, and goes in full batches again. What failed twice
+  // goes alone, so the text the provider refuses is found and the rest moves on.
+  if (Number(rows[0]?.attempts) > 1) rows = rows.slice(0, 1)
   const excluded = new Set(
     (
       await db.query<{ brain_id: string }>(
@@ -215,7 +217,9 @@ export async function embedPending(db: Db, providers: Providers, now: Date, batc
   } catch (err) {
     for (const r of send) {
       await db.query(
-        `INSERT INTO meaning_failures (kind, target_id, brain_id, attempts, at) VALUES ($1, $2, $3, 1, $4)
+        `INSERT INTO meaning_failures (kind, target_id, brain_id, attempts, at)
+         SELECT $1, $2, $3, 1, $4
+          WHERE EXISTS (SELECT 1 FROM (${EMBEDDABLE}) x WHERE x.kind = $1 AND x.id = $2)
          ON CONFLICT (kind, target_id) DO UPDATE SET attempts = meaning_failures.attempts + 1, at = $4`,
         [r.kind, r.id, r.brain_id, now],
       )
@@ -227,6 +231,23 @@ export async function embedPending(db: Db, providers: Providers, now: Date, batc
     if (v) await store(db, r, v, p, now)
   }
   return send.length
+}
+
+// One run of the server's worker: batches while there is work, at most `max` of them. A failure ends the
+// run; the next run tries again.
+export async function embedRound(db: Db, providers: Providers, clock: () => Date, max = 20): Promise<number> {
+  let n = 0
+  for (let i = 0; i < max; i++) {
+    let k: number
+    try {
+      k = await embedPending(db, providers, clock())
+    } catch {
+      break
+    }
+    if (k === 0) break
+    n += k
+  }
+  return n
 }
 
 export type MeaningMatches = {

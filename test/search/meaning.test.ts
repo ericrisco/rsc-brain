@@ -3,7 +3,7 @@
 // excluded by its curator loses its vectors and sends nothing more.
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
-import { embedPending } from '../../src/domain/meaning.ts'
+import { embedPending, embedRound } from '../../src/domain/meaning.ts'
 import { type FakeProvider, fakeProvider } from '../helpers/meaning.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
@@ -41,20 +41,10 @@ describe('search by meaning', { skip: skipPg }, () => {
       (await w.call(eric.key, 'GET', `/v1/brains/${slug}/pages/${address}`)).body.page as { id: string }
     ).id
   }
-  // Runs the worker until nothing is left, as the server does run after run; a failing run counts as
-  // nothing done and the next one goes on.
-  const process = async () => {
+  // The server's runs, one a minute: `rounds` of them, each exactly as the server does it.
+  const process = async (rounds = 10) => {
     let n = 0
-    for (let i = 0; i < 80; i++) {
-      let k = 0
-      try {
-        k = await embedPending(w.db, { test, other }, w.clock())
-      } catch {
-        continue
-      }
-      n += k
-      if (k === 0) break
-    }
+    for (let i = 0; i < rounds; i++) n += await embedRound(w.db, { test, other }, w.clock)
     return n
   }
 
@@ -354,5 +344,26 @@ describe('search by meaning', { skip: skipPg }, () => {
       f.items.some((h) => h.id === m && h.why === 'meaning'),
       JSON.stringify(f.items),
     )
+  })
+
+  it('review: after an outage the backlog goes in full batches again, not one text a minute', async () => {
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'backlog', purpose: 'Backlog.' })
+    for (let i = 0; i < 40; i++) {
+      await w.call(eric.key, 'POST', '/v1/brains/backlog/entries', {
+        type: 'note',
+        title: `Note ${i}`,
+        content: `viewers stay ${i}`,
+      })
+    }
+    test.failing = true
+    await process(2)
+    test.failing = false
+    // One run of the server after the outage clears it.
+    await process(1)
+    const left = await w.db.one<{ n: number }>(
+      `SELECT count(*)::int AS n FROM entries e WHERE e.brain_id = (SELECT id FROM brains WHERE slug = 'backlog')
+         AND NOT EXISTS (SELECT 1 FROM meaning_vectors v WHERE v.target_id = e.id)`,
+    )
+    assert.equal(left?.n, 0)
   })
 })

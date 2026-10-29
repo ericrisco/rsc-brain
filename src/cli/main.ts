@@ -9,7 +9,7 @@ import { openPool } from '../db/db.ts'
 import { migrate } from '../db/migrate.ts'
 import { createAccount } from '../domain/accounts.ts'
 import { mintMainKey, mintPersonToken } from '../domain/keys.ts'
-import { BATCH, embedPending } from '../domain/meaning.ts'
+import { embedRound } from '../domain/meaning.ts'
 import { closeIdle } from '../domain/sessions.ts'
 import { foldTrail } from '../domain/trail.ts'
 import { createHandler } from '../http/app.ts'
@@ -88,9 +88,7 @@ async function main(argv: string[]): Promise<number> {
     const embed = setInterval(() => {
       if (embedding) return
       embedding = true
-      ;(async () => {
-        for (let i = 0; i < 20; i++) if ((await embedPending(db, meaning, systemClock())) < BATCH) break
-      })()
+      embedRound(db, meaning, systemClock)
         .catch(() => {})
         .finally(() => {
           embedding = false
