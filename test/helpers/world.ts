@@ -40,7 +40,13 @@ export async function world(): Promise<World> {
   w.advance = (ms) => {
     w.now = new Date(w.now.getTime() + ms)
   }
-  const server: Server = createServer(createHandler({ db: t.db, clock: w.clock, log: () => {} }))
+  const server: Server = createServer(
+    createHandler({
+      db: t.db,
+      clock: w.clock,
+      log: process.env.BRAIN_TEST_LOG ? (l) => process.stderr.write(`${l}\n`) : () => {},
+    }),
+  )
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
   const port = (server.address() as AddressInfo).port
   let n = 0

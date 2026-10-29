@@ -11,6 +11,7 @@ import { normalize, redactAll } from '../privacy/redact.ts'
 import { allow, type Ctx, inBrain } from './context.ts'
 import { emit } from './events.ts'
 import { ownsSession, sessionFor, touch } from './sessions.ts'
+import { track } from './trail.ts'
 
 export const ENTRY_TYPES = [
   'decision',
@@ -662,6 +663,7 @@ export async function getEntry(
   })
   if (row.state === 'forgotten' && role !== 'curator') throw notFound('entry')
   const entry = entryOf(row)
+  await track(ctx.root ?? ctx.db, ctx, { brainId: entry.brainId, kind: 'read', resultIds: [entry.id] })
   if (!o.history || row.state === 'purged') return { entry }
   const revs = await ctx.db.query('SELECT * FROM entry_revisions WHERE entry_id = $1 ORDER BY revision', [id])
   return {

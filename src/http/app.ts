@@ -9,12 +9,13 @@ import { match, type Route } from './router.ts'
 import { brainRoutes } from './routes/brains.ts'
 import { journalRoutes } from './routes/journal.ts'
 import { keyRoutes } from './routes/keys.ts'
+import { recallRoutes } from './routes/recall.ts'
 
 export const MAX_BODY = 1_048_576
 
 export type AppDeps = { db: Db; clock: Clock; tz?: string; routes?: Route[]; log?: (line: string) => void }
 
-export const ROUTES: Route[] = [...brainRoutes, ...keyRoutes, ...journalRoutes]
+export const ROUTES: Route[] = [...brainRoutes, ...keyRoutes, ...journalRoutes, ...recallRoutes]
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
