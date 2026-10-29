@@ -137,6 +137,8 @@ async function follow(
         const rows = await eventsOfBrain(r.db, brain.id, lastSent, sub.from, since, REPLAY_BATCH)
         send(rows)
         if (rows.length < REPLAY_BATCH || out.closed()) break
+        // A slow client is waited for between batches, not cut for being behind.
+        await out.drained()
       }
     } else lastSent = Math.max(lastSent, sub.from)
     replaying = false

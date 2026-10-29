@@ -223,6 +223,17 @@ async function stream(
     onClose: (f) => {
       res.on('close', f)
     },
+    drained: () =>
+      new Promise<void>((resolve) => {
+        if (closed() || !res.writableNeedDrain) return resolve()
+        const done = () => {
+          res.off('drain', done)
+          res.off('close', done)
+          resolve()
+        }
+        res.on('drain', done)
+        res.on('close', done)
+      }),
   }
   try {
     await run(out)

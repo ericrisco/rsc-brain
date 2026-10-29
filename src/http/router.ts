@@ -48,6 +48,8 @@ export type StreamOut = {
   end(): void
   closed(): boolean
   onClose(f: () => void): void
+  // Settles once the client has taken what was written (or left): a sender with a lot to send waits.
+  drained(): Promise<void>
 }
 export type Reply = {
   status?: number

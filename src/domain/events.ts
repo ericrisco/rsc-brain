@@ -112,18 +112,21 @@ export async function lastSeq(db: Db): Promise<number> {
 // statement, committed on its own: what it numbers is visible to every reader from then on, so a feed
 // that reads past its last number never misses one. A write still uncommitted is not seen (nor locked),
 // and gets its number in a later round. Numbers come from one sequence and are given by one feed per
-// installation (one process); several processes would each have to keep their own cursor over `seq`
-// and never number concurrently, or a number could become visible after a later one was read.
+// installation (one process). A lock held until the round commits keeps two processes (an overlapping
+// deploy) from numbering at once: otherwise a number could become visible after a later one was read.
 export async function sequenceEvents(db: Db, limit: number): Promise<number[]> {
-  const rows = await db.query<{ seq: string }>(
-    `UPDATE events e SET seq = n.seq
+  const rows = await db.tx(async (t) => {
+    await t.query("SELECT pg_advisory_xact_lock(hashtext('rsc-brain:events-seq'))")
+    return t.query<{ seq: string }>(
+      `UPDATE events e SET seq = n.seq
        FROM (SELECT id, nextval('events_seq') AS seq
                FROM (SELECT id FROM events WHERE seq IS NULL ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED) p
               ORDER BY id) n
       WHERE e.id = n.id
       RETURNING e.seq`,
-    [limit],
-  )
+      [limit],
+    )
+  })
   return rows.map((r) => Number(r.seq)).sort((x, y) => x - y)
 }
 
