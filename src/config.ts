@@ -15,10 +15,18 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {
     throw new Error(`RSC_BRAIN_PORT must be a port number, got "${env.RSC_BRAIN_PORT}".`)
   }
+  const timezone = env.RSC_BRAIN_TIMEZONE ?? 'UTC'
+  try {
+    new Intl.DateTimeFormat('en-CA', { timeZone: timezone })
+  } catch {
+    throw new Error(
+      `RSC_BRAIN_TIMEZONE "${timezone}" is not a time zone. Use a name such as Europe/Madrid or UTC.`,
+    )
+  }
   return {
     databaseUrl,
     port,
     host: env.RSC_BRAIN_HOST ?? '127.0.0.1',
-    timezone: env.RSC_BRAIN_TIMEZONE ?? 'UTC',
+    timezone,
   }
 }

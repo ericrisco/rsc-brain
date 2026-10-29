@@ -9,6 +9,7 @@ import { openPool } from '../db/db.ts'
 import { migrate } from '../db/migrate.ts'
 import { createAccount } from '../domain/accounts.ts'
 import { mintMainKey, mintPersonToken } from '../domain/keys.ts'
+import { closeIdle } from '../domain/sessions.ts'
 import { createHandler } from '../http/app.ts'
 
 const HELP = `rsc-brain — self-hosted knowledge server for AI agents
@@ -55,7 +56,7 @@ async function main(argv: string[]): Promise<number> {
     const cfg = readConfig()
     const db = openPool(cfg.databaseUrl)
     await migrate(db)
-    const server = createServer(createHandler({ db, clock: systemClock }))
+    const server = createServer(createHandler({ db, clock: systemClock, tz: cfg.timezone }))
     await new Promise<void>((resolve, reject) => {
       server.once('error', (err: NodeJS.ErrnoException) => {
         reject(
@@ -69,6 +70,11 @@ async function main(argv: string[]): Promise<number> {
       server.listen(cfg.port, cfg.host, resolve)
     })
     out(`RSC Brain listening on http://${cfg.host}:${cfg.port}\n`)
+    // Sessions idle for 24 hours close themselves (spec B1); listings also sweep before they answer.
+    const sweep = setInterval(() => {
+      closeIdle(db, systemClock()).catch(() => {})
+    }, 10 * 60_000)
+    sweep.unref()
     const stop = () => {
       server.close(() => {
         db.close().then(

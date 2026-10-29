@@ -7,6 +7,7 @@ import type { Clock } from '../core/clock.ts'
 import { brainNotFound, denied, invalid, notFound } from '../core/errors.ts'
 import { newId } from '../core/ids.ts'
 import type { Db } from '../db/db.ts'
+import { redact } from '../privacy/redact.ts'
 import { allow, type Ctx, ok } from './context.ts'
 
 export type Minted = { id: string; secret: string; expiresAt: string | null }
@@ -125,7 +126,7 @@ const need = (perm: 'read' | 'write'): Role => (perm === 'write' ? 'contributor'
 export async function mintShortKey(ctx: Ctx, r: ShortKeyRequest): Promise<Minted & { writeBrainId: string }> {
   await allow(ctx, 'key.short', {})
   const perm = r.perm ?? 'write'
-  const ref = (r.ref ?? '').trim()
+  const ref = redact((r.ref ?? '').trim()).text
   if (!ref || ref.length > 200) {
     throw invalid(
       'A short key needs a reference of 1 to 200 characters.',

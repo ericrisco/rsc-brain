@@ -10,6 +10,7 @@ export type Req = {
   who: Principal
   db: Db
   clock: Clock
+  tz: string
 }
 export type Reply = { status?: number; body: unknown }
 export type Handler = (r: Req) => Promise<Reply>

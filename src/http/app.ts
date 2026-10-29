@@ -7,13 +7,14 @@ import { AppError, invalid } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
 import { match, type Route } from './router.ts'
 import { brainRoutes } from './routes/brains.ts'
+import { journalRoutes } from './routes/journal.ts'
 import { keyRoutes } from './routes/keys.ts'
 
 export const MAX_BODY = 1_048_576
 
-export type AppDeps = { db: Db; clock: Clock; routes?: Route[]; log?: (line: string) => void }
+export type AppDeps = { db: Db; clock: Clock; tz?: string; routes?: Route[]; log?: (line: string) => void }
 
-export const ROUTES: Route[] = [...brainRoutes, ...keyRoutes]
+export const ROUTES: Route[] = [...brainRoutes, ...keyRoutes, ...journalRoutes]
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
@@ -99,6 +100,7 @@ export function createHandler(deps: AppDeps) {
         who,
         db: deps.db,
         clock: deps.clock,
+        tz: deps.tz ?? 'UTC',
       })
       send(res, reply.status ?? 200, reply.body)
     } catch (err) {
