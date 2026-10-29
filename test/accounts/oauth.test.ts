@@ -194,7 +194,7 @@ describe('connections with the standard sign-in', { skip: skipPg }, () => {
     }>
     assert.deepEqual(
       apps.map((a) => [a.name, a.brains, a.perm, a.returnsTo]),
-      [['Claude Code', ['alpha'], 'write', '127.0.0.1:43123']],
+      [['Claude Code', ['alpha'], 'write', '127.0.0.1:43123 (this computer)']],
     )
     // A role lower than consented wins: as a reader of alpha, the connection cannot write.
     const ana = await w.person('Ana')
@@ -377,6 +377,8 @@ describe('connections with the standard sign-in', { skip: skipPg }, () => {
       })
     ).json()
     assert.ok(second.access_token && second.refresh_token !== first.refresh_token)
+    // Past the moment two requests could be racing, the old token again is a leak.
+    w.advance(31_000)
     const replay = await form('/oauth/token', {
       grant_type: 'refresh_token',
       refresh_token: first.refresh_token,
@@ -403,13 +405,18 @@ describe('connections with the standard sign-in', { skip: skipPg }, () => {
     w.advance(3_601_000)
     assert.equal((await w.call(t.access_token, 'GET', '/v1/brains/alpha')).body.error?.code, 'key_expired')
     const fresh = (
-      await form('/oauth/token', { grant_type: 'refresh_token', refresh_token: t.refresh_token })
+      await form('/oauth/token', {
+        grant_type: 'refresh_token',
+        refresh_token: t.refresh_token,
+        client_id: client,
+      })
     ).json()
     assert.ok(fresh.access_token)
     w.advance(91 * 86_400_000)
     const old = await form('/oauth/token', {
       grant_type: 'refresh_token',
       refresh_token: fresh.refresh_token,
+      client_id: client,
     })
     assert.equal(old.json().error, 'invalid_grant')
     assert.match(old.json().error_description, /Sign in again/)
@@ -424,7 +431,7 @@ describe('connections with the standard sign-in', { skip: skipPg }, () => {
       const t = (
         await exchange({ code: c.code, code_verifier: verifier, redirect_uri: redirect, client_id: client })
       ).json()
-      return { ...t, session: c.session }
+      return { ...t, session: c.session, client }
     }
     const a = await mk(43127)
     const apps = (await w.callWeb(a.session, 'GET', '/v1/me/apps')).body.apps as Array<{ id: string }>
@@ -433,16 +440,26 @@ describe('connections with the standard sign-in', { skip: skipPg }, () => {
     const cut = await w.call(a.access_token, 'GET', '/v1/brains/alpha')
     assert.equal(cut.status, 401)
     assert.equal(
-      (await form('/oauth/token', { grant_type: 'refresh_token', refresh_token: a.refresh_token })).json()
-        .error,
+      (
+        await form('/oauth/token', {
+          grant_type: 'refresh_token',
+          refresh_token: a.refresh_token,
+          client_id: a.client,
+        })
+      ).json().error,
       'invalid_grant',
     )
     const b = await mk(43128)
     await bumpKeyEpoch(w.db)
     assert.equal((await w.call(b.access_token, 'GET', '/v1/brains/alpha')).status, 401)
     assert.equal(
-      (await form('/oauth/token', { grant_type: 'refresh_token', refresh_token: b.refresh_token })).json()
-        .error,
+      (
+        await form('/oauth/token', {
+          grant_type: 'refresh_token',
+          refresh_token: b.refresh_token,
+          client_id: b.client,
+        })
+      ).json().error,
       'invalid_grant',
     )
   })

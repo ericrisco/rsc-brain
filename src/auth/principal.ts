@@ -174,8 +174,13 @@ export async function resolveKey(
     kind: r.a_kind as 'person' | 'service',
     name: String(r.a_name),
     email: r.email == null ? null : String(r.email),
-    isAdmin: Boolean(r.is_admin),
-    canCreateBrains: Boolean(r.can_create_brains),
+    // What the administration may do travels only with the person in the web or a personal token that
+    // reaches all their brains with read + write. A connected app, a narrowed token or a service key
+    // never carries it, whatever the account is (a connection consented to one brain stays in it).
+    isAdmin:
+      Boolean(r.is_admin) &&
+      (r.kind === 'web' || (r.kind === 'token' && Boolean(r.all_brains) && r.perm === 'write')),
+    canCreateBrains: Boolean(r.can_create_brains) && r.kind !== 'app',
     canInvite: Boolean(r.can_invite),
     credential: {
       id: String(r.id),

@@ -189,13 +189,18 @@ export const peopleRoutes: Route[] = [
     return { body: { revoked: r.params.id } }
   }),
   route('GET /v1/admin/audit', async (r) => ({ body: await readAudit(ctxOf(r), filters(r)) })),
-  route('GET /v1/admin/audit/export', async (r) => ({
-    body: await exportAudit(ctxOf(r), filters(r)),
-    headers: {
-      'content-type': 'text/csv; charset=utf-8',
-      'content-disposition': `attachment; filename="brain-audit-${r.clock().toISOString().slice(0, 10)}.csv"`,
-    },
-  })),
+  route('GET /v1/admin/audit/export', async (r) => {
+    const out = await exportAudit(ctxOf(r), filters(r))
+    return {
+      body: out.csv,
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="brain-audit-${r.clock().toISOString().slice(0, 10)}.csv"`,
+        // More rows than one file holds: narrow with "from" and "to" to get the older ones.
+        'x-audit-truncated': out.truncated ? 'true' : 'false',
+      },
+    }
+  }),
   route('GET /v1/brains/:slug/audit', async (r) => ({
     body: await brainAudit(ctxOf(r), r.params.slug as string, filters(r)),
   })),

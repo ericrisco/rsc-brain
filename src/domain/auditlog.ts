@@ -3,7 +3,7 @@
 import { atLeast } from '../auth/can.ts'
 import { brainNotFound, invalid } from '../core/errors.ts'
 import type { Row } from '../db/db.ts'
-import { type Ctx, inBrain } from './context.ts'
+import { type Ctx, inBrain, ok } from './context.ts'
 import { adminOnly, inWeb } from './guards.ts'
 
 export const AUDIT_PAGE = 100
@@ -112,9 +112,20 @@ const cell = (v: string | null) => {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
-export async function exportAudit(ctx: Ctx, f: AuditFilters): Promise<string> {
+// Up to 100 000 rows, newest first; when there are more it says so, so a file never looks complete
+// when it is not. Downloading is itself recorded.
+export async function exportAudit(ctx: Ctx, f: AuditFilters): Promise<{ csv: string; truncated: boolean }> {
   adminOnly(ctx)
-  const rows = await query(ctx, f, null, AUDIT_EXPORT_MAX)
+  const all = await query(ctx, f, null, AUDIT_EXPORT_MAX + 1)
+  const truncated = all.length > AUDIT_EXPORT_MAX
+  const rows = all.slice(0, AUDIT_EXPORT_MAX)
+  await ok(
+    ctx,
+    'audit.export',
+    null,
+    undefined,
+    `${rows.length} row(s)${truncated ? ', more not included' : ''}`,
+  )
   const head = 'id,at,actor_id,actor_name,key,action,brain,target,outcome,detail'
   const lines = rows.map((r) =>
     [
@@ -132,5 +143,5 @@ export async function exportAudit(ctx: Ctx, f: AuditFilters): Promise<string> {
       .map((v) => cell(v))
       .join(','),
   )
-  return `${[head, ...lines].join('\r\n')}\r\n`
+  return { csv: `${[head, ...lines].join('\r\n')}\r\n`, truncated }
 }

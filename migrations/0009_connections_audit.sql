@@ -26,6 +26,7 @@ CREATE TABLE oauth_grants (
   perm          text NOT NULL CHECK (perm IN ('read', 'write')),
   refresh_hash  text NOT NULL UNIQUE,
   previous_hash text,
+  rotated_at    timestamptz,
   epoch         integer NOT NULL,
   created_at    timestamptz NOT NULL,
   last_used_at  timestamptz NOT NULL,
@@ -63,5 +64,7 @@ BEGIN
 END $$;
 CREATE TRIGGER audit_append_only BEFORE UPDATE OR DELETE ON audit
   FOR EACH ROW EXECUTE FUNCTION audit_is_append_only();
+CREATE TRIGGER audit_never_emptied BEFORE TRUNCATE ON audit
+  FOR EACH STATEMENT EXECUTE FUNCTION audit_is_append_only();
 CREATE INDEX audit_at ON audit (at, id);
 CREATE INDEX audit_actor ON audit (actor_id, at);

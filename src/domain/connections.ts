@@ -19,7 +19,9 @@ import { installation } from './installation.ts'
 export const CODE_SECONDS = 60
 export const ACCESS_SECONDS = 3600
 export const MAX_DAYS = 365
-export const CIMD_REFRESH_HOURS = 24
+export const CIMD_REFRESH_HOURS = 1
+// Two refreshes sent at once with one token are a race, not a leak: the second one fails quietly.
+export const REFRESH_RACE_SECONDS = 30
 export const DCR_MAX_URIS = 5
 
 // An error of the standard sign-in, answered as the standard says (not as Brain's own errors).
@@ -89,10 +91,24 @@ export function redirectMatches(registered: string[], uri: string): boolean {
   })
 }
 
+// Control characters (C0, DEL, C1): never stored from what a client declares.
+const isControl = (ch: string) => {
+  const c = ch.codePointAt(0) ?? 0
+  return c < 32 || (c >= 127 && c < 160)
+}
+
+// A name as a client declares it, with control characters and broken text taken out.
 const clientName = (v: unknown, fallback: string) => {
-  const n = typeof v === 'string' ? v.trim().replace(/\s+/g, ' ') : ''
+  const raw = typeof v === 'string' && v.isWellFormed() ? v : ''
+  const n = [...raw]
+    .map((ch) => (isControl(ch) ? ' ' : ch))
+    .join('')
+    .trim()
+    .replace(/\s+/g, ' ')
   return (n || fallback).slice(0, 120)
 }
+const cleanUri = (x: unknown): x is string =>
+  typeof x === 'string' && x.isWellFormed() && ![...x].some(isControl) && redirectAllowed(x)
 
 // A client that names itself by the address of its metadata document (the standard's preferred way).
 async function fetchClient(db: Db, now: Date, clientId: string, policy: FetchPolicy): Promise<Client> {
@@ -112,7 +128,10 @@ async function fetchClient(db: Db, now: Date, clientId: string, policy: FetchPol
       throw new FetchRefused('The document is not an object.')
     doc = got as Record<string, unknown>
   } catch (err) {
-    throw bad('invalid_client', `The client's document could not be used: ${(err as Error).message}`)
+    // Brain's own reasons only: a network error says nothing about what is out there.
+    const why =
+      err instanceof FetchRefused && !/could not be fetched/.test(err.message) ? ` ${err.message}` : ''
+    throw bad('invalid_client', `The client's document could not be fetched or used.${why}`)
   }
   if (doc.client_id !== clientId) {
     throw bad(
@@ -121,12 +140,7 @@ async function fetchClient(db: Db, now: Date, clientId: string, policy: FetchPol
     )
   }
   const uris = doc.redirect_uris
-  if (
-    !Array.isArray(uris) ||
-    uris.length === 0 ||
-    uris.length > 20 ||
-    uris.some((x) => typeof x !== 'string' || !redirectAllowed(x))
-  ) {
+  if (!Array.isArray(uris) || uris.length === 0 || uris.length > 20 || uris.some((x) => !cleanUri(x))) {
     throw bad(
       'invalid_client',
       'The client document lists no usable return address (https, this machine, or an app scheme).',
@@ -440,10 +454,15 @@ export async function exchangeCode(db: Db, clock: Clock, b: Record<string, unkno
   })
 }
 
+// Where a code goes back to, as a person should read it: the domain of a web address, "this computer"
+// for a local one, and for an app's own scheme the scheme itself (what follows it is chosen by the
+// app and proves nothing: x-app://claude.ai is not claude.ai).
 export function hostOf(uri: string): string {
   try {
     const u = new URL(uri)
-    return u.host || `${u.protocol}${u.pathname.split('/')[0] ?? ''}`
+    if (u.protocol === 'https:') return u.host
+    if (u.protocol === 'http:') return `${u.host} (this computer)`
+    return `${u.protocol} (an app on this device)`
   } catch {
     return uri.slice(0, 100)
   }
@@ -459,9 +478,12 @@ export async function refreshGrant(db: Db, clock: Clock, b: Record<string, unkno
   // An old refresh token used again means it leaked: the connection ends for good (the refusal that
   // follows must not undo that).
   const replay = await db.one<Row>(
-    'SELECT id FROM oauth_grants WHERE previous_hash = $1 AND revoked_at IS NULL',
+    'SELECT id, rotated_at FROM oauth_grants WHERE previous_hash = $1 AND revoked_at IS NULL',
     [h],
   )
+  if (replay && now.getTime() - (replay.rotated_at as Date).getTime() < REFRESH_RACE_SECONDS * 1000) {
+    throw bad('invalid_grant', 'This refresh token was just used by another request. Use the new one it got.')
+  }
   if (replay) {
     await endGrant(db, String(replay.id), now)
     await audit(db, {
@@ -482,8 +504,8 @@ export async function refreshGrant(db: Db, clock: Clock, b: Record<string, unkno
       [h],
     )
     if (!g) throw bad('invalid_grant', 'This refresh token is unknown or was already used. Sign in again.')
-    if (b.client_id !== undefined && b.client_id !== g.client_id)
-      throw bad('invalid_grant', 'This refresh token belongs to another client.')
+    if (b.client_id !== g.client_id)
+      throw bad('invalid_grant', 'This refresh token belongs to another client (send its "client_id").')
     const idle = now.getTime() - (g.last_used_at as Date).getTime() > 90 * 86_400_000
     if (
       g.revoked_at != null ||
@@ -499,7 +521,7 @@ export async function refreshGrant(db: Db, clock: Clock, b: Record<string, unkno
     }
     const next = newSecret()
     await tx.query(
-      'UPDATE oauth_grants SET refresh_hash = $2, previous_hash = $3, last_used_at = $4 WHERE id = $1',
+      'UPDATE oauth_grants SET refresh_hash = $2, previous_hash = $3, last_used_at = $4, rotated_at = $4 WHERE id = $1',
       [g.id, hashSecret(next), h, now],
     )
     const access = await mintAccess(tx, now, {
@@ -547,7 +569,7 @@ export async function revokeByToken(db: Db, clock: Clock, b: Record<string, unkn
   )
 }
 
-const appView = async (db: Db, r: Row) => {
+const appView = async (db: Db, r: Row, now: Date) => {
   const slugs = await db.query('SELECT slug FROM brains WHERE id = ANY($1) ORDER BY slug', [r.brain_ids])
   return {
     id: String(r.id),
@@ -561,27 +583,37 @@ const appView = async (db: Db, r: Row) => {
     endsAt: new Date(
       Math.min((r.last_used_at as Date).getTime() + 90 * 86_400_000, (r.expires_max as Date).getTime()),
     ).toISOString(),
+    ended: !live(r, now),
   }
 }
 
-// «Connected apps» in the profile.
+// A connection still alive: not revoked, used within 90 days, not a year old, of this key epoch.
+const live = (r: Row, now: Date) =>
+  r.revoked_at == null &&
+  now.getTime() - (r.last_used_at as Date).getTime() <= 90 * 86_400_000 &&
+  (r.expires_max as Date).getTime() > now.getTime() &&
+  Number(r.epoch) === Number(r.key_epoch)
+
+// «Connected apps» in the profile: the live ones.
 export async function listApps(ctx: Ctx) {
   inWeb(ctx, 'Seeing your connected apps')
+  const now = ctx.clock()
   const rows = await ctx.db.query(
-    `SELECT * FROM oauth_grants WHERE account_id = $1 AND revoked_at IS NULL AND expires_max > $2
-       AND last_used_at > $2::timestamptz - interval '90 days' ORDER BY last_used_at DESC`,
-    [ctx.who.accountId, ctx.clock()],
+    `SELECT g.*, i.key_epoch FROM oauth_grants g CROSS JOIN installation i
+      WHERE g.account_id = $1 AND g.revoked_at IS NULL ORDER BY g.last_used_at DESC`,
+    [ctx.who.accountId],
   )
-  return Promise.all(rows.map((r) => appView(ctx.db, r)))
+  return Promise.all(rows.filter((r) => live(r, now)).map((r) => appView(ctx.db, r, now)))
 }
 
 export async function adminApps(ctx: Ctx, accountId: string) {
   adminOnly(ctx)
   const rows = await ctx.db.query(
-    'SELECT * FROM oauth_grants WHERE account_id = $1 AND revoked_at IS NULL ORDER BY last_used_at DESC',
+    `SELECT g.*, i.key_epoch FROM oauth_grants g CROSS JOIN installation i
+      WHERE g.account_id = $1 AND g.revoked_at IS NULL ORDER BY g.last_used_at DESC`,
     [accountId],
   )
-  return Promise.all(rows.map((r) => appView(ctx.db, r)))
+  return Promise.all(rows.map((r) => appView(ctx.db, r, ctx.clock())))
 }
 
 // The person, or the administration, ends a connection: its keys stop at the next request.

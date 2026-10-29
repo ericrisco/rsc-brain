@@ -10,6 +10,7 @@ import {
   checkRequest,
   consentBrains,
   exchangeCode,
+  hostOf,
   issueCode,
   issuer,
   OAuthError,
@@ -153,15 +154,19 @@ ${message ? `<p class="error" role="alert">${esc(message)}</p>` : ''}
   )
 }
 
+// The consent form is signed for this session and this very request (client, return, challenge).
+const consentKey = (who: Principal, a: AuthzRequest) =>
+  `consent:${who.credential.id}:${a.client.clientId}:${a.redirectUri}:${a.challenge}`
+
 async function consentPage(
   r: PublicReq,
   who: Principal,
   a: AuthzRequest,
   q: Record<string, string>,
+  message?: string,
 ): Promise<Reply> {
   const brains = await consentBrains(r.db, who.accountId)
-  const domain = new URL(a.redirectUri)
-  const shown = domain.host || `${domain.protocol}${domain.pathname}`
+  const shown = hostOf(a.redirectUri)
   const list = brains.length
     ? brains
         .map(
@@ -174,9 +179,10 @@ async function consentPage(
     'Connect an app',
     `<h1>Connect “${esc(a.client.name)}”?</h1>
 <div class="warn">This name is declared by the app, not verified. After you approve, you go back to <span class="domain">${esc(shown)}</span>. Approve only if you started this from that app.</div>
+${message ? `<p class="error" role="alert">${esc(message)}</p>` : ''}
 <p>It asks to read your brains${a.scope?.includes('write') ? ' and to write to them' : ''}. It never does more than your role in each brain allows.</p>
 <form method="post" action="/oauth/authorize">${hidden(q)}
-<input type="hidden" name="csrf" value="${sign(r, `consent:${who.credential.id}`)}">
+<input type="hidden" name="csrf" value="${sign(r, consentKey(who, a))}">
 <fieldset><legend>Brains it can reach</legend>${list}</fieldset>
 <fieldset><legend>Permission</legend>
 <label class="opt"><input type="radio" name="perm" value="read" checked> Read</label>
@@ -315,11 +321,11 @@ export const oauthRoutes: Route[] = [
     if (step.reply) return step.reply
     const who = await personOf(r)
     if (!who) return errorPage('Your session ended. Start the connection again from the app.', 401)
+    const a = step.a
     // The approval must come from this page, in this session: another site cannot make it.
-    if (typeof b.csrf !== 'string' || !sameText(b.csrf, sign(r, `consent:${who.credential.id}`))) {
+    if (typeof b.csrf !== 'string' || !sameText(b.csrf, sign(r, consentKey(who, a)))) {
       return errorPage('This approval did not come from the consent page. Start again from the app.', 403)
     }
-    const a = step.a
     if (b.decision !== 'approve') {
       return back(a.redirectUri, {
         error: 'access_denied',
@@ -336,7 +342,7 @@ export const oauthRoutes: Route[] = [
       const code = await issueCode(r.db, r.clock, a, who.accountId, { brainIds, perm })
       return back(a.redirectUri, { code, state: a.state, iss: step.iss })
     } catch (err) {
-      if (err instanceof OAuthError) return consentPage(r, who, a, q)
+      if (err instanceof OAuthError) return consentPage(r, who, a, q, err.description)
       throw err
     }
   }),

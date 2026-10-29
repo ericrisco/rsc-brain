@@ -36,8 +36,9 @@ for (const [net, bits] of [
   blocked.addSubnet(net, bits, 'ipv4')
 }
 for (const [net, bits] of [
-  ['::', 128],
-  ['::1', 128],
+  ['::', 96], // unspecified, loopback and IPv4-compatible
+  ['::ffff:0:0:0', 96], // IPv4-translated
+  ['fec0::', 10], // site-local (deprecated)
   ['64:ff9b::', 96],
   ['64:ff9b:1::', 48],
   ['100::', 64],

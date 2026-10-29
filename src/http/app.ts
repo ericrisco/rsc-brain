@@ -248,6 +248,18 @@ export function createHandler(deps: AppDeps) {
       const reply = await found.route.handler({ ...base, body, who })
       send(res, reply.status ?? 200, reply.body, reply.headers)
     } catch (err) {
+      // The standard sign-in's endpoints answer in the standard's shape, even for a malformed request.
+      if (
+        err instanceof AppError &&
+        /^\/oauth\/(token|register|revoke)$/.test(new URL(req.url ?? '/', 'http://localhost').pathname)
+      ) {
+        return send(
+          res,
+          err.status,
+          { error: 'invalid_request', error_description: err.message },
+          err.headers,
+        )
+      }
       if (err instanceof AppError) return send(res, err.status, { error: err.body() }, err.headers)
       const id = Math.random().toString(36).slice(2, 10)
       log(`internal error ${id}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
