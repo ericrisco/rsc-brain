@@ -9,7 +9,14 @@ import {
 } from '../../domain/curation.ts'
 import { around, limitOf, listView, type View } from '../../domain/listing.ts'
 import { conflicts, relate } from '../../domain/relations.ts'
-import { type Include, MAX_OFFSET, search } from '../../domain/search.ts'
+import {
+  INCLUDES,
+  type Include,
+  MAX_OFFSET,
+  pageNeighbours,
+  type SearchRequest,
+  search,
+} from '../../domain/search.ts'
 import { CONTEXT, startContext } from '../../domain/startup.ts'
 import { compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
@@ -24,7 +31,45 @@ function nullableDate(b: Obj, key: string): string | null | undefined {
   return str(b, key, { max: 40 })
 }
 
-const INCLUDES: Include[] = ['forgotten', 'superseded', 'expired']
+// A comma-separated list; absent or empty is no list.
+function list(v: string | null): string[] | undefined {
+  const items = (v ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (items.length > 50) throw invalid('A list has at most 50 values.', 'Ask for fewer.')
+  return items.length > 0 ? items : undefined
+}
+
+// "to" a day includes the whole day: up to the next midnight, not included.
+const upTo = (d: Date | undefined, v: string | null) =>
+  d === undefined ? {} : v?.length === 10 ? { before: new Date(d.getTime() + 86_400_000) } : { to: d }
+
+const flag = (v: string | null) => v === '1' || v === 'true'
+
+// A date filter (UTC): a day ("2026-10-29") or a full ISO instant, between years 1 and 9999. A day
+// that does not exist ("2026-02-31") is refused, not rolled over.
+const DAY = /^(\d{4})-(\d{2})-(\d{2})(T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2}))?$/
+function day(v: string | null, field: string): Date | undefined {
+  if (v === null || v === '') return undefined
+  const m = DAY.exec(v)
+  const d = new Date(v)
+  const [y, mo, da] = [Number(m?.[1]), Number(m?.[2]), Number(m?.[3])]
+  // The real year: 29 February exists only in leap years.
+  const real = new Date(Date.UTC(2000, 0, 1))
+  real.setUTCFullYear(y, mo - 1, da)
+  if (
+    !m ||
+    Number.isNaN(d.getTime()) ||
+    y < 1 ||
+    real.getUTCMonth() !== mo - 1 ||
+    real.getUTCDate() !== da ||
+    d.getUTCFullYear() < 1 ||
+    d.getUTCFullYear() > 9999
+  )
+    throw invalid(`"${field}" is not a date.`, 'Send a day like 2026-10-29, or an ISO instant.')
+  return d
+}
 
 export const recallRoutes: Route[] = [
   route('PATCH /v1/entries/:id', async (r) => {
@@ -97,9 +142,12 @@ export const recallRoutes: Route[] = [
     })),
   ),
   route('GET /v1/search', async (r) => {
-    const include = (q(r.query.get('include'))?.split(',') ?? []).map((s) => s.trim())
-    const bad = include.find((i) => !(INCLUDES as string[]).includes(i))
+    const include = list(r.query.get('include'))
+    const bad = include?.find((i) => !(INCLUDES as readonly string[]).includes(i))
     if (bad) throw invalid(`Unknown "include" value "${bad}".`, `Use any of: ${INCLUDES.join(', ')}.`)
+    const scope = q(r.query.get('in'))
+    if (scope !== undefined && !['entries', 'pages', 'both'].includes(scope))
+      throw invalid('"in" must be entries, pages or both.', 'Leave it out to search both.')
     const brains = q(r.query.get('brains'))
     const offset = r.query.get('offset') ? Number(r.query.get('offset')) : 0
     if (!Number.isInteger(offset) || offset < 0 || offset > MAX_OFFSET)
@@ -107,16 +155,49 @@ export const recallRoutes: Route[] = [
     const limit = r.query.get('limit') ? Number(r.query.get('limit')) : 10
     if (!Number.isInteger(limit) || limit < 1 || limit > 50)
       throw invalid('"limit" must be between 1 and 50.', 'Ask for fewer.')
+    // "type" (one) is kept from B1; "types" takes several.
+    const types = list(r.query.get('types')) ?? list(r.query.get('type'))
     return {
       body: await search(
         ctxOf(r),
         compact({
           q: r.query.get('q') ?? '',
-          brains: brains && brains !== 'all' ? brains.split(',').map((s) => s.trim()) : undefined,
-          include: include as Include[],
-          type: q(r.query.get('type')),
+          in: scope as SearchRequest['in'],
+          brains: brains && brains !== 'all' ? (list(brains) as string[]) : undefined,
+          include: include as Include[] | undefined,
+          types,
+          tags: list(r.query.get('tags')),
+          prefix: q(r.query.get('prefix')),
+          from: day(r.query.get('from'), 'from'),
+          ...upTo(day(r.query.get('to'), 'to'), r.query.get('to')),
+          author: q(r.query.get('author')),
+          client: q(r.query.get('client')),
+          session: q(r.query.get('session')),
+          ref: q(r.query.get('ref')),
+          neighbours: flag(r.query.get('neighbours')),
           limit,
           offset,
+        }),
+      ),
+    }
+  }),
+  route('GET /v1/brains/:slug/neighbours', async (r) => {
+    const address = q(r.query.get('address'))
+    if (!address) throw invalid('"address" is required.', 'Name the page, like "style/intros".')
+    const hops = r.query.get('hops') ? Number(r.query.get('hops')) : 1
+    if (hops !== 1 && hops !== 2) throw invalid('"hops" must be 1 or 2.', 'Ask for 1 or 2.')
+    const direction = q(r.query.get('direction')) ?? 'both'
+    if (!['out', 'in', 'both'].includes(direction))
+      throw invalid('"direction" must be out, in or both.', 'Leave it out for both.')
+    return {
+      body: await pageNeighbours(
+        ctxOf(r),
+        r.params.slug as string,
+        address,
+        compact({
+          hops: hops as 1 | 2,
+          direction: direction as 'out' | 'in' | 'both',
+          kinds: list(r.query.get('kinds')),
         }),
       ),
     }
