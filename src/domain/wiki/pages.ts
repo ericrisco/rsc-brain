@@ -337,6 +337,7 @@ export type WikiSettings = {
   guide: string
   customGuide: boolean
   mapIntro: string
+  usageNote: string
   staleDays: number
   longChars: number
   maintenanceEvery: number
@@ -361,6 +362,7 @@ export async function settingsOf(db: Db, brainId: string): Promise<WikiSettings>
     guide: r?.guide == null ? DEFAULT_GUIDE : String(r.guide),
     customGuide: r?.guide != null,
     mapIntro: r ? String(r.map_intro) : '',
+    usageNote: r ? String(r.usage_note) : '',
     staleDays: r ? Number(r.stale_days) : 90,
     longChars: r ? Number(r.long_chars) : 20_000,
     maintenanceEvery: r ? Number(r.maintenance_every) : 20,

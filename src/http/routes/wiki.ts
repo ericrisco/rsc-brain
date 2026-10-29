@@ -2,6 +2,7 @@
 // the compile pack; send, read, list and withdraw proposals. Deciding is in the web only.
 import { invalid } from '../../core/errors.ts'
 import { limitOf } from '../../domain/listing.ts'
+import { track } from '../../domain/trail.ts'
 import { compilePack, getGuide, PACK } from '../../domain/wiki/compile.ts'
 import { wikiHealth } from '../../domain/wiki/health.ts'
 import {
@@ -91,7 +92,15 @@ export const wikiRoutes: Route[] = [
     }
     if (r.query.get('history') === '1')
       return { body: { history: await pageHistory(ctxOf(r), slug, address) } }
-    return { body: await getPage(ctxOf(r), slug, address) }
+    const ctx = ctxOf(r)
+    const reading = await getPage(ctx, slug, address)
+    // A page read joins the trail («who read this page», spec B3).
+    await track(ctx.root ?? ctx.db, ctx, {
+      brainId: reading.page.brainId,
+      kind: 'read',
+      resultIds: [reading.page.id],
+    })
+    return { body: reading }
   }),
   route('POST /v1/brains/:slug/proposals', async (r) => {
     const b = obj(r.body)

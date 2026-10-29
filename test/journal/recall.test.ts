@@ -491,7 +491,7 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
       omitted: Record<string, number>
     }
     assert.ok(c.chars <= 4000)
-    assert.match(c.text, /## Left out\n\d+ /)
+    assert.match(c.text, /## Left out\nDid not fit in 4000 characters:\n- \d+ /)
     const tiny = (await w.call(ana.key, 'GET', '/v1/brains/yt/context?max=10')).body as {
       max: number
       adjusted: boolean

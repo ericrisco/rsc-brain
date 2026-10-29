@@ -10,6 +10,7 @@ import { migrate } from '../db/migrate.ts'
 import { createAccount } from '../domain/accounts.ts'
 import { mintMainKey, mintPersonToken } from '../domain/keys.ts'
 import { closeIdle } from '../domain/sessions.ts'
+import { foldTrail } from '../domain/trail.ts'
 import { createHandler } from '../http/app.ts'
 
 const HELP = `rsc-brain — self-hosted knowledge server for AI agents
@@ -71,8 +72,10 @@ async function main(argv: string[]): Promise<number> {
     })
     out(`RSC Brain listening on http://${cfg.host}:${cfg.port}\n`)
     // Sessions idle for 24 hours close themselves (spec B1); listings also sweep before they answer.
+    // The trail older than 90 days folds into counters (spec B3).
     const sweep = setInterval(() => {
       closeIdle(db, systemClock()).catch(() => {})
+      foldTrail(db, systemClock()).catch(() => {})
     }, 10 * 60_000)
     sweep.unref()
     const stop = () => {
