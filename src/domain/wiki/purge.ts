@@ -35,83 +35,119 @@ async function scrubOp(db: Db, proposalId: unknown, index: unknown): Promise<voi
 // The fields a revision holds text in. URL sources (their address and title) count as one field;
 // sources that are journal entries are ids, not text, and stay.
 // Where wiki text of a brain lives, for the scrub: each table with its text, text-array and JSON columns.
-type Target = { table: string; scope: string; text: string[]; arrays: string[]; json: string[] }
+// Where text of a brain's wiki lives, for the scrub: each table, its free-text columns with their
+// stored limit, its text-array columns, and its JSON columns (only their free-text keys are touched).
+type Target = {
+  table: string
+  scope: string
+  text: Record<string, number | null>
+  arrays: string[]
+  json: string[]
+}
 const TARGETS: Target[] = [
-  { table: 'pages', scope: 'brain_id = $1', text: ['title', 'summary', 'body'], arrays: ['tags'], json: [] },
+  {
+    table: 'pages',
+    scope: 'brain_id = $1',
+    text: { title: 260, summary: 400, body: 120_000 },
+    arrays: ['tags'],
+    json: [],
+  },
   {
     table: 'page_revisions',
     scope: 'page_id IN (SELECT id FROM pages WHERE brain_id = $1)',
-    text: ['title', 'summary', 'body', 'note'],
+    text: { title: null, summary: null, body: null, note: null, purged_reason: null },
     arrays: ['tags'],
-    json: ['sources', 'links'],
+    json: ['sources'],
   },
   {
     table: 'page_sources',
     scope: 'page_id IN (SELECT id FROM pages WHERE brain_id = $1)',
-    text: ['url', 'title'],
+    text: { url: 2000, title: 300 },
     arrays: [],
     json: [],
   },
   {
     table: 'proposals',
     scope: 'brain_id = $1',
-    text: ['title', 'reason', 'comment', 'agent', 'last_error'],
+    text: { title: 260, reason: 2600, comment: null, agent: null, last_error: null, purged_reason: null },
     arrays: [],
     json: [],
   },
   {
     table: 'proposal_ops',
     scope: 'proposal_id IN (SELECT id FROM proposals WHERE brain_id = $1)',
-    text: [],
+    text: {},
     arrays: [],
     json: ['op'],
   },
-  { table: 'wiki_log', scope: 'brain_id = $1', text: ['summary'], arrays: ['pages'], json: [] },
-  { table: 'events', scope: 'brain_id = $1', text: ['label'], arrays: [], json: [] },
+  { table: 'wiki_log', scope: 'brain_id = $1', text: { summary: 500 }, arrays: [], json: [] },
+  {
+    table: 'wiki_settings',
+    scope: 'brain_id = $1',
+    text: { guide: 20_000, map_intro: 4000 },
+    arrays: [],
+    json: [],
+  },
+  { table: 'events', scope: 'brain_id = $1', text: { label: null }, arrays: [], json: [] },
+  { table: 'trail', scope: 'brain_id = $1', text: { query: null }, arrays: [], json: [] },
 ]
 const MARK = '[purged]'
+// Inside JSON (operations, revision sources) only these keys hold free text; the rest (op, address,
+// type, kind, to, from, entryId…) is structure and is never touched.
+const FREE = new Set(['title', 'summary', 'body', 'reason', 'tags', 'url', 'sources'])
 
+// Longest first, so a shorter text cannot cut a longer one that contains it. Matching is on NFC text.
 const pattern = (texts: string[]) =>
-  new RegExp(texts.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'giu')
+  new RegExp(
+    [...texts]
+      .sort((a, b) => b.length - a.length)
+      .map((t) => t.normalize('NFC').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|'),
+    'giu',
+  )
 
-// Every string inside a value, replaced where it holds a purged text. Returns how many were found.
-function scrubbed(v: unknown, re: RegExp): { value: unknown; hits: number } {
+type Hits = Map<string, number>
+const count = (hits: Hits, found: RegExpMatchArray | null, needles: string[]) => {
+  for (const m of found ?? []) {
+    const k = needles.find((n) => n.normalize('NFC').toLowerCase() === m.toLowerCase()) ?? m
+    hits.set(k, (hits.get(k) ?? 0) + 1)
+  }
+}
+
+// Every free-text string inside a value, replaced where it holds a purged text (NFC-normalized).
+function scrubbed(v: unknown, re: RegExp, hits: Hits, needles: string[], free = true): unknown {
   if (typeof v === 'string') {
-    const hits = v.match(re)?.length ?? 0
-    return { value: hits ? v.replace(re, MARK) : v, hits }
+    if (!free) return v
+    const n = v.normalize('NFC')
+    const found = n.match(re)
+    if (!found) return v
+    count(hits, found, needles)
+    return n.replace(re, MARK)
   }
-  if (Array.isArray(v)) {
-    let hits = 0
-    const value = v.map((x) => {
-      const r = scrubbed(x, re)
-      hits += r.hits
-      return r.value
-    })
-    return { value, hits }
-  }
+  if (Array.isArray(v)) return v.map((x) => scrubbed(x, re, hits, needles, free))
   if (v && typeof v === 'object') {
-    let hits = 0
-    const value = Object.fromEntries(
-      Object.entries(v).map(([k, x]) => {
-        const r = scrubbed(x, re)
-        hits += r.hits
-        return [k, r.value]
-      }),
+    return Object.fromEntries(
+      Object.entries(v).map(([k, x]) => [k, scrubbed(x, re, hits, needles, FREE.has(k))]),
     )
-    return { value, hits }
   }
-  return { value: v, hits: 0 }
+  return v
 }
 
 // Scrubs (or only counts, when `dry`) every copy of the purged texts in a brain's wiki, in batches.
-async function scrubWiki(db: Db, brainId: string, re: RegExp, dry: boolean): Promise<Record<string, number>> {
-  const found: Record<string, number> = {}
+async function scrubWiki(
+  db: Db,
+  brainId: string,
+  re: RegExp,
+  needles: string[],
+  dry: boolean,
+): Promise<Hits> {
+  const total: Hits = new Map()
   for (const t of TARGETS) {
-    const cols = [...t.text, ...t.arrays, ...t.json]
+    const cols = [...Object.keys(t.text), ...t.arrays, ...t.json]
     let after = '(0,0)'
     for (;;) {
       const rows = await db.query(
-        `SELECT ctid::text AS _at, ${cols.join(', ')} FROM ${t.table}
+        `SELECT ctid::text AS _at, ${cols.join(', ')}${t.table === 'page_sources' ? ', page_id' : ''} FROM ${t.table}
           WHERE ${t.scope} AND ctid > $2::tid ORDER BY ctid LIMIT 500`,
         [brainId, after],
       )
@@ -121,20 +157,38 @@ async function scrubWiki(db: Db, brainId: string, re: RegExp, dry: boolean): Pro
         const sets: string[] = []
         const values: unknown[] = []
         for (const c of cols) {
-          const out = scrubbed(r[c], re)
-          if (out.hits === 0) continue
-          found[t.table] = (found[t.table] ?? 0) + out.hits
-          values.push(t.json.includes(c) ? JSON.stringify(out.value) : out.value)
+          const hits: Hits = new Map()
+          let out = t.json.includes(c)
+            ? scrubbed(r[c], re, hits, needles, false)
+            : scrubbed(r[c], re, hits, needles)
+          if (hits.size === 0) continue
+          for (const [k, n] of hits) total.set(k, (total.get(k) ?? 0) + n)
+          // What is stored must still fit the column.
+          const limit = t.text[c]
+          if (typeof out === 'string' && typeof limit === 'number' && out.length > limit)
+            out = out.slice(0, limit)
+          values.push(t.json.includes(c) ? JSON.stringify(out) : out)
           sets.push(`${c} = $${values.length + 1}`)
         }
-        if (!dry && sets.length > 0) {
-          await db.query(`UPDATE ${t.table} SET ${sets.join(', ')} WHERE ctid = $1::tid`, [r._at, ...values])
+        if (dry || sets.length === 0) continue
+        if (t.table === 'page_sources' && cols.includes('url')) {
+          const i = sets.findIndex((x) => x.startsWith('url = '))
+          const url = i === -1 ? null : values[i]
+          // Two sources that become the same address are one source.
+          if (
+            url !== null &&
+            (await db.one('SELECT 1 FROM page_sources WHERE page_id = $1 AND url = $2', [r.page_id, url]))
+          ) {
+            await db.query('DELETE FROM page_sources WHERE ctid = $1::tid', [r._at])
+            continue
+          }
         }
+        await db.query(`UPDATE ${t.table} SET ${sets.join(', ')} WHERE ctid = $1::tid`, [r._at, ...values])
       }
       if (rows.length < 500) break
     }
   }
-  return found
+  return total
 }
 
 // Purging wiki text (spec B2 «Historia», CA25). The administration names the revisions that cannot
@@ -160,7 +214,6 @@ export async function purgePageRevisions(
 }> {
   webOnly(ctx)
   await allow(ctx, 'entry.purge', {})
-  const why = reasonOf(reason)
   const wanted = [...new Set(purge)].sort((a, b) => a - b)
   if (wanted.length === 0 || wanted.length > 1000)
     throw invalid('Name 1 to 1 000 revisions to purge.', 'Send "revisions".')
@@ -168,7 +221,10 @@ export async function purgePageRevisions(
   if (
     needles.length === 0 ||
     needles.length > 20 ||
-    needles.some((t) => t.length < 3 || t.length > 500 || !t.isWellFormed())
+    needles.some(
+      (t) =>
+        t.length < 3 || t.length > 500 || !t.isWellFormed() || MARK.toLowerCase().includes(t.toLowerCase()),
+    )
   ) {
     throw invalid(
       'Name the text that must go, in "text": 1 to 20 pieces of 3 to 500 characters.',
@@ -176,6 +232,8 @@ export async function purgePageRevisions(
     )
   }
   const re = pattern(needles)
+  // The reason is stored and shown in the history: the text it names cannot ride along in it.
+  const why = reasonOf(reason).normalize('NFC').replace(re, MARK)
   return ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
     const brain = await db.one('SELECT id FROM brains WHERE slug = $1', [slug])
@@ -225,6 +283,21 @@ export async function purgePageRevisions(
       )
     }
     const joined = await joinAsAdmin(c, brainId, 'joined to purge a wiki revision')
+    const found = await scrubWiki(db, brainId, re, needles, false)
+    // A named text found nowhere was mistyped (or written another way): say so instead of a false success.
+    // (A text inside a longer one that was found went with it.)
+    const low = (x: string) => x.normalize('NFC').toLowerCase()
+    const absent = needles.filter(
+      (n) => !found.has(n) && ![...found.keys()].some((f) => f !== n && low(f).includes(low(n))),
+    )
+    if (absent.length > 0) {
+      const err = conflict(
+        'text_not_found',
+        `The text ${absent.map((a) => `"${a}"`).join(', ')} is not in this brain's wiki. Nothing was purged.`,
+        'Copy it exactly as it appears in the page (letters, accents, spaces).',
+      )
+      throw err
+    }
     const now = ctx.clock()
     const proposalIds = new Set<string>()
     for (const n of wanted) {
@@ -270,7 +343,6 @@ export async function purgePageRevisions(
         await db.query('DELETE FROM page_sources WHERE page_id = $1 AND url IS NOT NULL', [page.id])
       }
     }
-    const found = await scrubWiki(db, brainId, re, false)
     // Mentions follow the body as it now stands.
     const body = String(
       (await db.one('SELECT body, address FROM pages WHERE id = $1', [page.id]))?.body ?? '',
@@ -284,8 +356,8 @@ export async function purgePageRevisions(
         [brainId, page.id, a],
       )
     }
-    const left = await scrubWiki(db, brainId, re, true)
-    if (Object.keys(left).length > 0) {
+    const left = await scrubWiki(db, brainId, re, needles, true)
+    if (left.size > 0) {
       throw conflict(
         'purge_incomplete',
         'Some copy of the text could not be removed; nothing was purged.',
@@ -316,7 +388,7 @@ export async function purgePageRevisions(
     return {
       address: String(page.address),
       revisions: wanted,
-      scrubbed: found,
+      scrubbed: Object.fromEntries(found),
       // The proposals that wrote them keep their reasons for the record; their titles and operations were
       // scrubbed of the text. Purge those proposals too if they should not stay at all.
       proposalIds: [...proposalIds],

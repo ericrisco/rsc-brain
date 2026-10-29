@@ -508,4 +508,75 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     assert.ok(h2.stale.some((x) => x.address === 'sales'))
     assert.equal((await w.call(eric.key, 'GET', '/v1/brains/yt/pages/sales?compare=1,1,1')).status, 400)
   })
+
+  it('review: the reason cannot carry the text; overlapping texts go whole; decomposed accents match', async () => {
+    await create('pr/page', { body: 'one' })
+    await edit('pr/page', 1, { body: 'client Lucia Mendozaq and José Pérezq here' })
+    await edit('pr/page', 2, { body: 'kept: Lucia Mendozaq' })
+    const r = await w.callWeb(adminWeb, 'POST', '/v1/brains/yt/wiki/purge', {
+      address: 'pr/page',
+      revisions: [2],
+      text: ['Lucia', 'Lucia Mendozaq', 'José Pérezq'],
+      reason: 'removes Lucia Mendozaq of the client',
+    })
+    assert.equal(r.status, 200, r.text)
+    await nowhere('Mendozaq')
+    await nowhere('rezq')
+    const h = (await w.call(eric.key, 'GET', '/v1/brains/yt/pages/pr/page?history=1')).body.history as {
+      purged: { reason: string } | null
+    }[]
+    assert.ok(h.some((x) => x.purged?.reason === 'removes [purged] of the client'))
+  })
+
+  it('review: a text found nowhere is refused, not reported as purged; a text inside the mark is refused', async () => {
+    await create('pn/page', { body: 'STRASSEQ here' })
+    const r = await purgeRev('pn/page', [1], ['straßeq'])
+    assert.deepEqual([r.status, r.body.error?.code], [409, 'text_not_found'])
+    assert.equal((await page('pn/page')).page.body, 'STRASSEQ here')
+    assert.equal((await purgeRev('pn/page', [1], ['urged'])).status, 400)
+  })
+
+  it('review: the scrub never touches structure; long fields and colliding sources are handled', async () => {
+    const id = (
+      (
+        await w.call(factory.key, 'POST', '/v1/brains/yt/proposals', {
+          title: 'Unrelated',
+          ops: [
+            {
+              op: 'create',
+              address: 'p9/other',
+              type: 'topic',
+              title: 'Other',
+              sources: [{ entryId: e[0] }],
+              reason: 'r',
+            },
+          ],
+        })
+      ).body.proposal as { id: string }
+    ).id
+    await create('pq/page', {
+      body: 'eat qzv',
+      sources: [
+        { url: 'https://x.test/?u=alicexx', title: `${'x'.repeat(297)}qzv` },
+        { url: 'https://x.test/?u=bobyyyy' },
+      ],
+    })
+    const r = await purgeRev('pq/page', [1], ['eat', 'qzv', 'alicexx', 'bobyyyy'])
+    assert.equal(r.status, 200, r.text)
+    const op = await w.db.one<{ op: { op: string; type: string } }>(
+      'SELECT op FROM proposal_ops WHERE proposal_id = $1',
+      [id],
+    )
+    assert.deepEqual([op?.op.op, op?.op.type], ['create', 'topic'])
+    const fp = (
+      (await w.callWeb(ericWeb, 'GET', `/v1/proposals/${id}/review`)).body as { fingerprint: string }
+    ).fingerprint
+    assert.equal(
+      (await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, { fingerprint: fp })).status,
+      200,
+    )
+    assert.equal((await w.call(eric.key, 'GET', '/v1/brains/yt/pages/p9/other')).status, 200)
+    await nowhere('alicexx')
+    await nowhere('bobyyyy')
+  })
 })
