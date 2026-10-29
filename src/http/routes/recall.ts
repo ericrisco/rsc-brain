@@ -18,6 +18,7 @@ import {
   search,
 } from '../../domain/search.ts'
 import { CONTEXT, startContext } from '../../domain/startup.ts'
+import { readTrail } from '../../domain/trail.ts'
 import { compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
@@ -177,6 +178,25 @@ export const recallRoutes: Route[] = [
           neighbours: flag(r.query.get('neighbours')),
           limit,
           offset,
+        }),
+      ),
+    }
+  }),
+  route('GET /v1/brains/:slug/trail', async (r) => {
+    const after = r.query.get('after')
+    const n = after === null || after === '' ? undefined : Number(after)
+    if (n !== undefined && (!Number.isSafeInteger(n) || n < 0))
+      throw invalid('"after" is the "next" value of the previous page.', 'Use it unchanged.')
+    return {
+      body: await readTrail(
+        ctxOf(r),
+        r.params.slug as string,
+        compact({
+          ref: q(r.query.get('ref')),
+          session: q(r.query.get('session')),
+          page: q(r.query.get('page')),
+          after: n,
+          limit: limitOf(r.query.get('limit')),
         }),
       ),
     }

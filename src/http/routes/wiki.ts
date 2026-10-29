@@ -2,6 +2,7 @@
 // the compile pack; send, read, list and withdraw proposals. Deciding is in the web only.
 import { invalid } from '../../core/errors.ts'
 import { limitOf } from '../../domain/listing.ts'
+import { track, trackPageRead } from '../../domain/trail.ts'
 import { compilePack, getGuide, PACK } from '../../domain/wiki/compile.ts'
 import { wikiHealth } from '../../domain/wiki/health.ts'
 import {
@@ -75,23 +76,38 @@ export const wikiRoutes: Route[] = [
     const slug = r.params.slug as string
     const address = r.params.address as string
     const rev = whole(r.query.get('revision'), 'revision', 1, 1_000_000)
-    if (rev !== undefined) return { body: { revision: await pageRevision(ctxOf(r), slug, address, rev) } }
+    // Every read of a page joins the trail («who read this page», spec B3).
+    if (rev !== undefined) {
+      const revision = await pageRevision(ctxOf(r), slug, address, rev)
+      await trackPageRead(ctxOf(r), slug, address)
+      return { body: { revision } }
+    }
     const compare = r.query.get('compare')
     if (compare !== null) {
       const parts = compare.split(',')
       const [a, b] = parts.map((x) => whole(x, 'compare', 1, 1_000_000))
       if (parts.length !== 2 || a === undefined || b === undefined)
         throw invalid('"compare" is two revisions, e.g. 3,5.', 'Fix "compare".')
-      return {
-        body: {
-          a: await pageRevision(ctxOf(r), slug, address, a),
-          b: await pageRevision(ctxOf(r), slug, address, b),
-        },
+      const body = {
+        a: await pageRevision(ctxOf(r), slug, address, a),
+        b: await pageRevision(ctxOf(r), slug, address, b),
       }
+      await trackPageRead(ctxOf(r), slug, address)
+      return { body }
     }
-    if (r.query.get('history') === '1')
-      return { body: { history: await pageHistory(ctxOf(r), slug, address) } }
-    return { body: await getPage(ctxOf(r), slug, address) }
+    if (r.query.get('history') === '1') {
+      const history = await pageHistory(ctxOf(r), slug, address)
+      await trackPageRead(ctxOf(r), slug, address)
+      return { body: { history } }
+    }
+    const ctx = ctxOf(r)
+    const reading = await getPage(ctx, slug, address)
+    await track(ctx.root ?? ctx.db, ctx, {
+      brainId: reading.page.brainId,
+      kind: 'read',
+      resultIds: [reading.page.id],
+    })
+    return { body: reading }
   }),
   route('POST /v1/brains/:slug/proposals', async (r) => {
     const b = obj(r.body)

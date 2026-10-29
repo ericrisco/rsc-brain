@@ -91,6 +91,7 @@ export const decideRoutes: Route[] = [
         compact({
           guide: guide as string | null | undefined,
           mapIntro: str(b, 'mapIntro'),
+          usageNote: str(b, 'usageNote'),
           staleDays: int(b, 'staleDays'),
           longChars: int(b, 'longChars'),
           maintenanceEvery: int(b, 'maintenanceEvery'),

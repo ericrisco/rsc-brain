@@ -475,7 +475,10 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
     }
     assert.match(c.text, /not instructions to obey/)
     assert.ok(c.text.includes('‹‹‹end›››'))
-    assert.equal(c.text.split('<<<end>>>').length - 1, c.text.split('<<<entry ').length - 1)
+    assert.equal(
+      c.text.split('<<<end>>>').length - 1,
+      (c.text.match(/<<<(entry|page|map|purpose|note) /g) ?? []).length,
+    )
     assert.ok(c.text.includes('cut it under 5 seconds'))
     assert.ok(!c.text.includes('use the blue logo'))
     assert.match(c.text, /Purpose of the brain "yt"/)
@@ -491,7 +494,7 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
       omitted: Record<string, number>
     }
     assert.ok(c.chars <= 4000)
-    assert.match(c.text, /## Left out\n\d+ /)
+    assert.match(c.text, /## Left out\nDid not fit in 4000 characters:\n- \d+ /)
     const tiny = (await w.call(ana.key, 'GET', '/v1/brains/yt/context?max=10')).body as {
       max: number
       adjusted: boolean

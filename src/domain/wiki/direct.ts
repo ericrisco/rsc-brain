@@ -58,6 +58,7 @@ export async function directChange(
 export type SettingsInput = {
   guide?: string | null
   mapIntro?: string
+  usageNote?: string
   staleDays?: number
   longChars?: number
   maintenanceEvery?: number
@@ -66,6 +67,7 @@ export type SettingsInput = {
 export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput): Promise<WikiSettings> {
   const guide = s.guide === undefined || s.guide === null ? s.guide : redact(s.guide.trim()).text
   const mapIntro = s.mapIntro === undefined ? undefined : redact(s.mapIntro.trim()).text
+  const usageNote = s.usageNote === undefined ? undefined : redact(s.usageNote.trim()).text
   if (guide !== undefined && guide !== null && (!guide || guide.length > 20_000)) {
     throw invalid(
       'The guide has 1 to 20 000 characters.',
@@ -74,6 +76,9 @@ export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput):
   }
   if (mapIntro !== undefined && mapIntro.length > 4000)
     throw invalid('The map intro has at most 4 000 characters.', 'Shorten it.')
+  // The note that opens every start-up context of the brain (spec B3).
+  if (usageNote !== undefined && usageNote.length > 2000)
+    throw invalid('The usage note has at most 2 000 characters.', 'Shorten it.')
   const range = (v: number | undefined, name: string, min: number, max: number) => {
     if (v !== undefined && (!Number.isSafeInteger(v) || v < min || v > max)) {
       throw invalid(`"${name}" goes from ${min} to ${max}.`, `Fix "${name}".`)
@@ -99,11 +104,15 @@ export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput):
     }
     set('guide', guide)
     set('map_intro', mapIntro)
+    set('usage_note', usageNote)
     set('stale_days', s.staleDays)
     set('long_chars', s.longChars)
     set('maintenance_every', s.maintenanceEvery)
     if (sets.length === 0)
-      throw invalid('Nothing to change.', 'Send guide, mapIntro, staleDays, longChars or maintenanceEvery.')
+      throw invalid(
+        'Nothing to change.',
+        'Send guide, mapIntro, usageNote, staleDays, longChars or maintenanceEvery.',
+      )
     await db.query(`UPDATE wiki_settings SET ${sets.join(', ')} WHERE brain_id = $1`, values)
     return settingsOf(db, brain.id)
   })
