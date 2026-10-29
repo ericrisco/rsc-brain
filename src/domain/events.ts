@@ -13,6 +13,10 @@ export type EventKind =
   | 'entry.changed'
   | 'search'
   | 'read'
+  | 'proposal.submitted'
+  | 'proposal.withdrawn'
+  | 'proposal.decided'
+  | 'wiki.changed'
 
 export async function emit(
   db: Db,

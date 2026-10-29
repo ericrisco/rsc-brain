@@ -1,4 +1,5 @@
-// A small router: "METHOD /v1/brains/:slug" patterns, matched in order.
+// A small router: "METHOD /v1/brains/:slug" patterns, matched in order. A last part written "*name"
+// takes the rest of the path, slashes included (page addresses such as "audience/retention").
 import type { Principal } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import type { Db } from '../db/db.ts'
@@ -22,6 +23,10 @@ export function route(spec: string, handler: Handler): Route {
   const source = path
     .split('/')
     .map((part) => {
+      if (part.startsWith('*')) {
+        keys.push(part.slice(1))
+        return '(.+)'
+      }
       if (!part.startsWith(':')) return part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       keys.push(part.slice(1))
       return '([^/]+)'

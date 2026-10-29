@@ -10,12 +10,19 @@ import { brainRoutes } from './routes/brains.ts'
 import { journalRoutes } from './routes/journal.ts'
 import { keyRoutes } from './routes/keys.ts'
 import { recallRoutes } from './routes/recall.ts'
+import { wikiRoutes } from './routes/wiki.ts'
 
 export const MAX_BODY = 1_048_576
 
 export type AppDeps = { db: Db; clock: Clock; tz?: string; routes?: Route[]; log?: (line: string) => void }
 
-export const ROUTES: Route[] = [...brainRoutes, ...keyRoutes, ...journalRoutes, ...recallRoutes]
+export const ROUTES: Route[] = [
+  ...brainRoutes,
+  ...keyRoutes,
+  ...journalRoutes,
+  ...recallRoutes,
+  ...wikiRoutes,
+]
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
@@ -39,20 +46,31 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   } catch {
     throw invalid('The request body is not valid JSON.', 'Send a JSON object.')
   }
-  if (hasNul(parsed)) {
-    throw invalid(
-      'The request contains a NUL character (\\u0000), which cannot be stored.',
-      'Remove it and retry.',
-    )
-  }
+  const bad = badText(parsed)
+  if (bad) throw invalid(bad, 'Fix it and retry.')
   return parsed
 }
 
-function hasNul(v: unknown): boolean {
-  if (typeof v === 'string') return v.includes('\u0000')
-  if (Array.isArray(v)) return v.some(hasNul)
-  if (v && typeof v === 'object') return Object.entries(v).some(([k, x]) => k.includes('\u0000') || hasNul(x))
-  return false
+export const MAX_DEPTH = 32
+
+// Walks the body without recursion (a deeply nested body cannot exhaust the stack) and finds what
+// PostgreSQL cannot store: NUL characters and broken UTF-16 (a lone surrogate).
+function badText(root: unknown): string | null {
+  const stack: [unknown, number][] = [[root, 0]]
+  while (stack.length > 0) {
+    const [v, depth] = stack.pop() as [unknown, number]
+    if (depth > MAX_DEPTH) return `The request is nested more than ${MAX_DEPTH} levels deep.`
+    const texts =
+      typeof v === 'string' ? [v] : v && typeof v === 'object' && !Array.isArray(v) ? Object.keys(v) : []
+    for (const t of texts) {
+      if (t.includes('\u0000'))
+        return 'The request contains a NUL character (\\u0000), which cannot be stored.'
+      if (!t.isWellFormed()) return 'The request contains broken text (a lone UTF-16 surrogate).'
+    }
+    if (Array.isArray(v)) for (const x of v) stack.push([x, depth + 1])
+    else if (v && typeof v === 'object') for (const x of Object.values(v)) stack.push([x, depth + 1])
+  }
+  return null
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {
