@@ -215,6 +215,36 @@ describe('signing in', { skip: skipPg }, () => {
     assert.equal(ok.status, 200, ok.text)
   })
 
+  it('review: wrong codes from the profile take turns at the same brake as signing in', async () => {
+    const ida = await w.person('Ida')
+    await setPassword(ida.id)
+    const web = await w.web(ida.id)
+    const s1 = String((await w.callWeb(web, 'POST', '/v1/me/totp')).body.secret)
+    await w.callWeb(web, 'POST', '/v1/me/totp/confirm', { code: totpAt(s1, stepOf(w.now)) })
+    w.advance(30_000)
+    for (let i = 0; i < 3; i++) await w.callWeb(web, 'POST', '/v1/me/totp', { code: '000000' })
+    for (let i = 0; i < 2; i++) await w.callWeb(web, 'DELETE', '/v1/me/totp', { code: '000000' })
+    // A stolen session cannot keep guessing: even the right code now waits.
+    const right = await w.callWeb(web, 'DELETE', '/v1/me/totp', { code: totpAt(s1, stepOf(w.now)) })
+    assert.deepEqual([right.status, right.body.error?.code], [429, 'too_many_attempts'])
+    const sign = await login(await emailOf(ida.id), PW, { code: totpAt(s1, stepOf(w.now)) })
+    assert.equal(sign.status, 429)
+  })
+
+  it('review: a right password that is only asked for its code is not a failure', async () => {
+    const jo = await w.person('Jo')
+    await setPassword(jo.id)
+    const web = await w.web(jo.id)
+    const s1 = String((await w.callWeb(web, 'POST', '/v1/me/totp')).body.secret)
+    await w.callWeb(web, 'POST', '/v1/me/totp/confirm', { code: totpAt(s1, stepOf(w.now)) })
+    const email = await emailOf(jo.id)
+    for (let i = 0; i < 3; i++) assert.equal((await login(email, PW)).body.error?.code, 'code_required')
+    for (let i = 0; i < 2; i++) await login(email, PW, { code: '000000' })
+    w.advance(30_000)
+    const ok = await login(email, PW, { code: totpAt(s1, stepOf(w.now)) })
+    assert.equal(ok.status, 200, ok.text)
+  })
+
   it('review: behind the trusted proxy, its own last entry counts, not what the client wrote', async () => {
     const hal = await w.person('Hal')
     await setPassword(hal.id)

@@ -35,7 +35,7 @@ function braked(until: Date, now: Date): AppError {
   const err = new AppError(
     429,
     'too_many_attempts',
-    `Too many failed sign-ins in a row. Try again in ${s} seconds (at ${until.toISOString().slice(11, 19)} UTC).`,
+    `Too many failed attempts in a row. Try again in ${s} seconds (at ${until.toISOString().slice(11, 19)} UTC).`,
     'Wait, then try again; or reset your password.',
   )
   err.headers = { 'retry-after': String(s) }
@@ -76,6 +76,46 @@ async function refuse(db: Db, email: string, now: Date, plain: AppError): Promis
 }
 
 const clearBrake = (db: Db, email: string) => db.query('DELETE FROM login_brakes WHERE email = $1', [email])
+
+// The attempt was not a failure (a right password asked for its code): it gives its turn back.
+const giveBack = (db: Db, email: string) =>
+  db.query(
+    `UPDATE login_brakes SET failures = failures - 1,
+       locked_until = CASE WHEN failures - 1 >= $2 THEN locked_until ELSE NULL END
+     WHERE email = $1 AND failures > 0`,
+    [email, BRAKE.after],
+  )
+
+// A code typed from the profile (replace or turn off the second factor) takes its turn at the same
+// brake as signing in, so a stolen session cannot guess codes without end.
+async function profileCode(
+  ctx: Ctx,
+  secret: string | undefined,
+  sealed: string,
+  code: unknown,
+  last: unknown,
+) {
+  const key = ctx.who.email ?? `account:${ctx.who.accountId}`
+  const now = ctx.clock()
+  const waiting = await attempt(ctx.db, key, now)
+  if (waiting) throw braked(waiting, now)
+  const step = checkTotp(
+    openSeed(secret, sealed),
+    String(code ?? ''),
+    now,
+    last == null ? null : Number(last),
+  )
+  if (step === null) {
+    throw await refuse(
+      ctx.db,
+      key,
+      now,
+      invalid('The code is not right.', 'Type the 6 digits your current app shows now.'),
+    )
+  }
+  await clearBrake(ctx.db, key)
+  return step
+}
 
 async function failedAudit(db: Db, id: string | null, now: Date, why: string, conn: ConnFacts) {
   await audit(db, {
@@ -125,7 +165,9 @@ export async function signIn(
   if (a.totp_secret != null) {
     const code = typeof input.code === 'string' ? input.code.trim() : ''
     if (!code) {
-      // The attempt still counts: asking for the code must not become a free password oracle.
+      // A right password is not a failure: its turn is given back. Wrong passwords still count, so
+      // this does not become a free way to guess them.
+      await giveBack(db, email)
       throw unauthorized(
         'code_required',
         'This account asks for the code of its authenticator app.',
@@ -345,18 +387,7 @@ export async function startTotp(ctx: Ctx, secret: string | undefined, code?: unk
     ctx.who.accountId,
   ])
   if (cur?.totp_secret) {
-    const step = checkTotp(
-      openSeed(secret, String(cur.totp_secret)),
-      String(code ?? ''),
-      ctx.clock(),
-      cur.totp_last_step == null ? null : Number(cur.totp_last_step),
-    )
-    if (step === null) {
-      throw invalid(
-        'This account already has a second factor; replacing it needs its current code.',
-        'Send "code" with the 6 digits your current app shows.',
-      )
-    }
+    const step = await profileCode(ctx, secret, String(cur.totp_secret), code, cur.totp_last_step)
     await ctx.db.query('UPDATE accounts SET totp_last_step = $2 WHERE id = $1', [ctx.who.accountId, step])
   }
   const s = newTotpSecret()
@@ -394,13 +425,7 @@ export async function disableTotp(ctx: Ctx, secret: string | undefined, code: un
     ctx.who.accountId,
   ])
   if (!a?.totp_secret) return { enabled: false }
-  const step = checkTotp(
-    openSeed(secret, String(a.totp_secret)),
-    String(code ?? ''),
-    ctx.clock(),
-    a.totp_last_step == null ? null : Number(a.totp_last_step),
-  )
-  if (step === null) throw invalid('The code is not right.', 'Type the 6 digits your app shows now.')
+  await profileCode(ctx, secret, String(a.totp_secret), code, a.totp_last_step)
   await ctx.db.query('UPDATE accounts SET totp_secret = NULL, totp_last_step = NULL WHERE id = $1', [
     ctx.who.accountId,
   ])
