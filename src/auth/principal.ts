@@ -64,6 +64,24 @@ const ended = (r: Row, now: Date): 'expired' | 'revoked' | null => {
   return null
 }
 
+export const CONNECTION_IDLE_DAYS = 90
+
+export function connectionEnded(
+  g: { g_revoked_at?: unknown; g_last_used_at?: unknown; g_expires_max?: unknown },
+  now: Date,
+): boolean {
+  if (g.g_revoked_at != null || g.g_last_used_at == null || g.g_expires_max == null) return true
+  const idle = now.getTime() - (g.g_last_used_at as Date).getTime() > CONNECTION_IDLE_DAYS * 86_400_000
+  return idle || (g.g_expires_max as Date).getTime() <= now.getTime()
+}
+
+export const SIGN_IN_AGAIN = () =>
+  unauthorized(
+    'connection_ended',
+    'This connection ended: it was revoked, unused for 90 days, or is a year old.',
+    'Sign in again from your agent: it will open the consent page.',
+  )
+
 // A web session ends after this many days without use (spec B4).
 export const WEB_SESSION_DAYS = 14
 
@@ -101,9 +119,11 @@ export async function resolveKey(
   if (!secret) throw NO_KEY()
   const r = await db.one(
     `SELECT c.*, a.kind AS a_kind, a.name AS a_name, a.email, a.is_admin, a.can_create_brains, a.can_invite,
-            a.status, p.revoked_at AS p_revoked_at, p.expires_at AS p_expires_at, i.key_epoch, i.public_url
+            a.status, p.revoked_at AS p_revoked_at, p.expires_at AS p_expires_at, i.key_epoch, i.public_url,
+            g.revoked_at AS g_revoked_at, g.last_used_at AS g_last_used_at, g.expires_max AS g_expires_max
        FROM credentials c JOIN accounts a ON a.id = c.account_id
        LEFT JOIN credentials p ON p.id = c.parent_id
+       LEFT JOIN oauth_grants g ON g.id = c.grant_id
        CROSS JOIN installation i
       WHERE c.secret_hash = $1`,
     [hashSecret(secret)],
@@ -121,6 +141,8 @@ export async function resolveKey(
     ended(r, now) ??
     (r.parent_id != null ? ended({ revoked_at: r.p_revoked_at, expires_at: r.p_expires_at }, now) : null)
   if (why) throw ENDED(why, r.public_url == null ? '' : String(r.public_url))
+  // The key of a connection lives while its connection does (spec B4 «Vida de una conexión»).
+  if (r.kind === 'app' && connectionEnded(r, now)) throw SIGN_IN_AGAIN()
   if (r.status !== 'active') throw REMOVED()
   if ((r.kind === 'web') !== (channel === 'cookie')) {
     throw unauthorized(
@@ -133,7 +155,14 @@ export async function resolveKey(
         : 'Send the key in the Authorization header.',
     )
   }
-  // Last use and client, at most once a minute; a web session lives 14 days from its last use.
+  // Last use and client, at most once a minute; a web session lives 14 days from its last use, and a
+  // connection is in use while its key is.
+  if (r.kind === 'app') {
+    await db.query(
+      "UPDATE oauth_grants SET last_used_at = $2 WHERE id = $1 AND last_used_at < $2::timestamptz - interval '60 seconds'",
+      [r.grant_id, now],
+    )
+  }
   await db.query(
     `UPDATE credentials SET last_used_at = $2, last_client = coalesce($3, last_client),
             expires_at = CASE WHEN kind = 'web' THEN $2::timestamptz + make_interval(days => $4) ELSE expires_at END
@@ -145,8 +174,13 @@ export async function resolveKey(
     kind: r.a_kind as 'person' | 'service',
     name: String(r.a_name),
     email: r.email == null ? null : String(r.email),
-    isAdmin: Boolean(r.is_admin),
-    canCreateBrains: Boolean(r.can_create_brains),
+    // What the administration may do travels only with the person in the web or a personal token that
+    // reaches all their brains with read + write. A connected app, a narrowed token or a service key
+    // never carries it, whatever the account is (a connection consented to one brain stays in it).
+    isAdmin:
+      Boolean(r.is_admin) &&
+      (r.kind === 'web' || (r.kind === 'token' && Boolean(r.all_brains) && r.perm === 'write')),
+    canCreateBrains: Boolean(r.can_create_brains) && r.kind !== 'app',
     canInvite: Boolean(r.can_invite),
     credential: {
       id: String(r.id),
@@ -181,7 +215,7 @@ export async function roleIn(db: Db, p: Principal, brainId: string): Promise<Rol
   const member = await memberRole(db, brainId, p.accountId)
   // A web session is the person in the web: their membership, as it is.
   if (c.kind === 'web') return member
-  if (c.kind === 'token') {
+  if (c.kind === 'token' || c.kind === 'app') {
     if (!c.allBrains && !c.brainIds.includes(brainId)) return null
     return c.perm === 'read' ? minRole(member, 'reader') : member
   }

@@ -48,6 +48,26 @@ A curator can exclude a brain: its vectors are deleted and nothing more of it is
 - Mail is optional. Set the sending account in the web. Its password is stored sealed with
   `RSC_BRAIN_SECRET`. The mail log keeps who, what kind, when and how it ended, never the content.
 
+## Connecting agents with the standard sign-in
+
+Agents that support the MCP sign-in (OAuth 2.1 with PKCE) find Brain through
+`/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server`. They open the
+person's browser. The person signs in, chooses which brains to share (read, or read + write) and goes
+back to the agent, without copying any key.
+
+- An access key lasts an hour. The refresh token changes on every use, and using an old one again
+  ends the connection.
+- A connection ends after 90 days without use, or a year in all. Connections show in the profile
+  under "Connected apps", where they can be revoked.
+- Clients can name themselves with a metadata document (an https address that Brain fetches with
+  guards against reaching private networks) or register dynamically.
+
+## Audit
+
+Every sign-in, invitation, role change, key, connection, purge and setting change is recorded. The
+administration reads it with filters and downloads it as CSV. Curators see the part of their brain.
+The database refuses to change or delete it.
+
 ## Behind a reverse proxy
 
 Brain takes a password only over an encrypted connection, or from the same machine. A reverse proxy

@@ -140,6 +140,11 @@ export async function removeAccount(ctx: Ctx, id: string) {
         RETURNING id`,
       [id, now],
     )
+    // Its connections end too.
+    await db.query('UPDATE oauth_grants SET revoked_at = $2 WHERE account_id = $1 AND revoked_at IS NULL', [
+      id,
+      now,
+    ])
     const orphan = await db.query(
       `SELECT b.slug FROM brains b JOIN memberships m ON m.brain_id = b.id AND m.account_id = $1 AND m.role = 'curator'
         WHERE NOT EXISTS (SELECT 1 FROM memberships o JOIN accounts x ON x.id = o.account_id
