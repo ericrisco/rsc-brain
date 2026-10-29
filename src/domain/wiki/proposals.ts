@@ -519,25 +519,43 @@ export type InboxItem = Proposal & { opCount: number }
 export async function listProposals(
   ctx: Ctx,
   slug: string,
-  o: { status?: ProposalStatus | 'all'; cursor?: string; limit?: number },
+  o: { status?: ProposalStatus | 'all'; cursor?: string; limit?: number; mine?: boolean },
 ): Promise<PageOf<InboxItem>> {
   const { brain } = await inBrain(ctx, { slug })
   const status = o.status ?? 'pending'
   const c = decode(o.cursor)
   const limit = o.limit ?? PAGE.default
-  const filter = status === 'all' ? '' : 'AND p.status = $5'
   const params: unknown[] = [brain.id, c?.at ?? null, c?.id ?? '', limit + 1]
-  if (status !== 'all') params.push(status)
+  // "mine": the proposals of the caller's account (an agent asking what became of its proposals).
+  let filter = ''
+  if (status !== 'all') {
+    params.push(status)
+    filter += ` AND p.status = $${params.length}`
+  }
+  if (o.mine) {
+    params.push(ctx.who.accountId)
+    filter += ` AND p.author_id = $${params.length}`
+  }
   const rows = await ctx.db.query(
     `SELECT p.*, (SELECT count(*)::int FROM proposal_ops o WHERE o.proposal_id = p.id) AS op_count
        FROM proposals p
-      WHERE p.brain_id = $1 ${filter} AND ($2::timestamptz IS NULL OR (p.created_at, p.id) < ($2, $3))
+      WHERE p.brain_id = $1${filter} AND ($2::timestamptz IS NULL OR (p.created_at, p.id) < ($2, $3))
       ORDER BY p.created_at DESC, p.id DESC LIMIT $4`,
     params,
   )
+  const totalArgs: unknown[] = [brain.id]
+  let totalFilter = ''
+  if (status !== 'all') {
+    totalArgs.push(status)
+    totalFilter += ` AND p.status = $${totalArgs.length}`
+  }
+  if (o.mine) {
+    totalArgs.push(ctx.who.accountId)
+    totalFilter += ` AND p.author_id = $${totalArgs.length}`
+  }
   const total = await ctx.db.one<{ n: number }>(
-    `SELECT count(*)::int AS n FROM proposals p WHERE p.brain_id = $1 ${status === 'all' ? '' : 'AND p.status = $2'}`,
-    status === 'all' ? [brain.id] : [brain.id, status],
+    `SELECT count(*)::int AS n FROM proposals p WHERE p.brain_id = $1${totalFilter}`,
+    totalArgs,
   )
   const page = rows.slice(0, limit)
   const last = page.at(-1)
