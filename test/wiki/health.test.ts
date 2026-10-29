@@ -281,6 +281,7 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     const r = await w.callWeb(await w.web(outsider.id), 'POST', '/v1/brains/yt/wiki/purge', {
       address: 'ca25/page',
       revision: 4,
+      text: ['Paco Pérez', '12345678Z'],
       reason: 'personal data',
     })
     assert.equal(r.status, 200, r.text)
@@ -376,81 +377,88 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
       "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'",
     )
     for (const { table_name } of tables) {
-      assert.ok(
-        !JSON.stringify(await w.db.query(`SELECT * FROM ${table_name}`)).includes(needle),
-        `${needle} in ${table_name}`,
-      )
+      const dump = JSON.stringify(await w.db.query(`SELECT * FROM ${table_name}`)).toLowerCase()
+      assert.ok(!dump.includes(needle.toLowerCase()), `${needle} in ${table_name}`)
     }
   }
-  const purgeRev = async (address: string, revision: number, extra: Record<string, unknown> = {}) =>
+  const purgeRev = (
+    address: string,
+    revisions: number[],
+    text: string[],
+    extra: Record<string, unknown> = {},
+  ) =>
     w.callWeb(adminWeb, 'POST', '/v1/brains/yt/wiki/purge', {
       address,
-      revision,
+      revisions,
+      text,
       reason: 'personal data',
       ...extra,
     })
 
-  it('review: what a purged revision brought in leaves the later revisions that carried it, and the page', async () => {
-    // A: a later edit changes only the title; the body with the secret must still go.
-    await create('pa/page', { body: 'one' })
-    await edit('pa/page', 1, { body: 'SECRETA Paco' })
-    await edit('pa/page', 2, { title: 'Renamed' })
-    assert.equal((await purgeRev('pa/page', 2)).status, 200)
-    const a = await page('pa/page')
-    assert.deepEqual([a.page.title, a.page.body], ['Renamed', 'one'])
-    await nowhere('SECRETA')
-    // B: a later link-only revision carries the same body.
-    await create('pb/target')
-    await create('pb/page', { body: 'one' })
-    await edit('pb/page', 1, { body: 'SECRETB Paco' })
-    await change({ op: 'link', address: 'pb/page', kind: 'related', to: 'pb/target' })
-    assert.equal((await purgeRev('pb/page', 2)).status, 200)
-    await nowhere('SECRETB')
-    // P2: a clean revision between, then a revert to the secret one: the page falls back to the clean one.
-    await create('pc/page', { body: 'SECRETC Lola' })
-    await edit('pc/page', 1, { body: 'clean' })
-    await change({ op: 'revert', address: 'pc/page', toRevision: 1 })
-    assert.equal((await purgeRev('pc/page', 1)).status, 200)
-    const c = await page('pc/page')
-    assert.deepEqual([c.page.body, c.page.status], ['clean', 'current'])
-    await nowhere('SECRETC')
+  it('review: the named text goes from every revision and field, whatever later edits did to it', async () => {
+    // Small later edits, a case change, a move to another field, a url source, a tag.
+    await create('pa/page', { body: 'one', summary: 'sum', tags: ['a'] })
+    await edit('pa/page', 1, {
+      body: 'one pw=hunter2X end',
+      summary: 'sum Code ZEBRA42Q',
+      tags: ['a', 'hunter2X'],
+      sources: [{ url: 'https://x.test/hunter2X' }],
+    })
+    await edit('pa/page', 2, { body: 'one pw=hunter2X', title: 'Note zebra42q' })
+    await edit('pa/page', 3, { sources: [{ url: 'https://x.test/hunter2X', title: 'ok' }] })
+    const r = await purgeRev('pa/page', [2], ['hunter2X', 'zebra42q'])
+    assert.equal(r.status, 200, r.text)
+    await nowhere('hunter2X')
+    await nowhere('zebra42q')
+    const p = await page('pa/page')
+    assert.deepEqual([p.page.title, p.page.body], ['Note [purged]', 'one pw=[purged]'])
   })
 
-  it('review: a purge restores the mentions of the body and drops the source titles the revision added', async () => {
+  it('review: purging the current revision brings the page back to the last revision left, with its mentions', async () => {
     await create('pm/b')
     await create('pm/a', { body: 'See [[pm/b]].' })
     await edit('pm/a', 1, {
       body: 'See [[pm/b]]. SECRETM',
       sources: [{ url: 'https://x.test/a', title: 'Juanita SECRETS' }],
     })
-    assert.equal((await purgeRev('pm/a', 2)).status, 200)
+    assert.equal((await purgeRev('pm/a', [2], ['SECRETM', 'Juanita SECRETS'])).status, 200)
     const a = (await w.call(eric.key, 'GET', '/v1/brains/yt/pages/pm/a')).body as {
+      page: { body: string }
       links: { out: { address: string }[] }
       sources: unknown[]
     }
+    assert.equal(a.page.body, 'See [[pm/b]].')
     assert.deepEqual(
       a.links.out.map((l) => l.address),
       ['pm/b'],
     )
     assert.deepEqual(a.sources, [])
     await nowhere('SECRETM')
-    await nowhere('SECRETS')
+    await nowhere('Juanita SECRETS')
   })
 
-  it('review: a merged page is purged by its own address, never through the redirect to the page it merged into', async () => {
+  it('review: a merged page is purged by its own address; what the merge copied into the other page goes too', async () => {
     await create('pz/x', { body: 'x one' })
     await create('pz/y', { body: 'y one' })
-    await edit('pz/y', 1, { body: 'SECRETZ' })
-    await change({ op: 'merge', address: 'pz/x', from: 'pz/y', body: 'x and y' })
-    const r = await purgeRev('pz/y', 2)
+    await edit('pz/y', 1, { body: 'SECRETZ here' })
+    await change({ op: 'merge', address: 'pz/x', from: 'pz/y', body: 'x and SECRETZ here' })
+    const r = await purgeRev('pz/y', [2], ['SECRETZ'])
     assert.equal(r.status, 200, r.text)
     assert.equal(r.body.address, 'pz/y')
-    assert.equal(((await page('pz/x')) as { page: { body: string } }).page.body, 'x and y')
+    assert.equal(((await page('pz/x')) as { page: { body: string } }).page.body, 'x and [purged] here')
     const xh = (await w.call(eric.key, 'GET', '/v1/brains/yt/pages/pz/x?history=1')).body.history as {
       purged: unknown
     }[]
     assert.ok(xh.every((h) => h.purged === null))
     await nowhere('SECRETZ')
+  })
+
+  it('review: text inside an address is refused until the page moves; the text must be named', async () => {
+    await create('dni-99887766x/page', { body: 'b' })
+    const r = await purgeRev('dni-99887766x/page', [1], ['99887766x'])
+    assert.deepEqual([r.status, r.body.error?.code], [409, 'text_in_address'])
+    assert.equal((await purgeRev('dni-99887766x/page', [1], [])).status, 400)
+    assert.equal((await purgeRev('dni-99887766x/page', [1], ['ab'])).status, 400)
   })
 
   it('review: purging a returned proposal also purges the correction its return left; the revisions it wrote are listed', async () => {
@@ -499,50 +507,5 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     }
     assert.ok(h2.stale.some((x) => x.address === 'sales'))
     assert.equal((await w.call(eric.key, 'GET', '/v1/brains/yt/pages/sales?compare=1,1,1')).status, 400)
-  })
-
-  it('review: edits on top of purged text are named and must be purged together; nothing is half done', async () => {
-    await create('pt/page', { body: 'one', summary: 'sum', tags: ['a'] })
-    await edit('pt/page', 1, { body: 'one SECRETONE', summary: 'sum SECRETSUM', tags: ['a', 'sectagx'] })
-    await edit('pt/page', 2, { body: 'one SECRETONE and more', tags: ['a', 'sectagx', 'b'] })
-    const refused = await purgeRev('pt/page', 2)
-    assert.deepEqual([refused.status, refused.body.error?.code], [409, 'purge_incomplete'])
-    assert.match(refused.body.error?.howToProceed ?? '', /\[2, 3\]/)
-    assert.equal((await page('pt/page')).page.body, 'one SECRETONE and more')
-    const ok = await w.callWeb(adminWeb, 'POST', '/v1/brains/yt/wiki/purge', {
-      address: 'pt/page',
-      revisions: [2, 3],
-      reason: 'personal data',
-    })
-    assert.equal(ok.status, 200, ok.text)
-    const p = (await w.call(eric.key, 'GET', '/v1/brains/yt/pages/pt/page')).body as {
-      page: { body: string; summary: string; tags: string[] }
-    }
-    assert.deepEqual([p.page.body, p.page.summary, p.page.tags], ['one', 'sum', ['a']])
-    await nowhere('SECRETONE')
-    await nowhere('SECRETSUM')
-    await nowhere('sectagx')
-  })
-
-  it('review: tags and source titles a purged revision added leave later revisions on their own', async () => {
-    await create('ps/page', { body: 'one', tags: ['a'], sources: [{ url: 'https://x.test/a', title: 'ok' }] })
-    await edit('ps/page', 1, {
-      tags: ['a', 'sectagy'],
-      sources: [{ url: 'https://x.test/a', title: 'SECRETTITLE' }],
-    })
-    await edit('ps/page', 2, { body: 'two', tags: ['a', 'sectagy', 'b'] })
-    const r = await purgeRev('ps/page', 2)
-    assert.equal(r.status, 200, r.text)
-    assert.deepEqual(r.body.cleaned, [3])
-    const p = (await w.call(eric.key, 'GET', '/v1/brains/yt/pages/ps/page')).body as {
-      page: { body: string; tags: string[] }
-      sources: { url: string; title: string }[]
-    }
-    assert.deepEqual(
-      [p.page.body, p.page.tags, p.sources],
-      ['two', ['a', 'b'], [{ url: 'https://x.test/a', title: 'ok' }]],
-    )
-    await nowhere('sectagy')
-    await nowhere('SECRETTITLE')
   })
 })

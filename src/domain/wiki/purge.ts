@@ -34,39 +34,126 @@ async function scrubOp(db: Db, proposalId: unknown, index: unknown): Promise<voi
 
 // The fields a revision holds text in. URL sources (their address and title) count as one field;
 // sources that are journal entries are ids, not text, and stay.
-type Fields = { title: string; summary: string; body: string; tags: string; urls: string }
+// Where wiki text of a brain lives, for the scrub: each table with its text, text-array and JSON columns.
+type Target = { table: string; scope: string; text: string[]; arrays: string[]; json: string[] }
+const TARGETS: Target[] = [
+  { table: 'pages', scope: 'brain_id = $1', text: ['title', 'summary', 'body'], arrays: ['tags'], json: [] },
+  {
+    table: 'page_revisions',
+    scope: 'page_id IN (SELECT id FROM pages WHERE brain_id = $1)',
+    text: ['title', 'summary', 'body', 'note'],
+    arrays: ['tags'],
+    json: ['sources', 'links'],
+  },
+  {
+    table: 'page_sources',
+    scope: 'page_id IN (SELECT id FROM pages WHERE brain_id = $1)',
+    text: ['url', 'title'],
+    arrays: [],
+    json: [],
+  },
+  {
+    table: 'proposals',
+    scope: 'brain_id = $1',
+    text: ['title', 'reason', 'comment', 'agent', 'last_error'],
+    arrays: [],
+    json: [],
+  },
+  {
+    table: 'proposal_ops',
+    scope: 'proposal_id IN (SELECT id FROM proposals WHERE brain_id = $1)',
+    text: [],
+    arrays: [],
+    json: ['op'],
+  },
+  { table: 'wiki_log', scope: 'brain_id = $1', text: ['summary'], arrays: ['pages'], json: [] },
+  { table: 'events', scope: 'brain_id = $1', text: ['label'], arrays: [], json: [] },
+]
+const MARK = '[purged]'
 
-const urlsOf = (sources: Source[]) =>
-  JSON.stringify(
-    sources
-      .filter((x): x is { url: string; title?: string } => 'url' in x)
-      .map((x) => [x.url, x.title ?? null])
-      .sort(),
-  )
-const fieldsOf = (r: Row): Fields => ({
-  title: String(r.title),
-  summary: String(r.summary),
-  body: String(r.body),
-  tags: JSON.stringify((r.tags as string[]) ?? []),
-  urls: urlsOf((r.sources as Source[]) ?? []),
-})
-const EMPTY: Fields = { title: '[purged]', summary: '', body: '', tags: '[]', urls: '[]' }
+const pattern = (texts: string[]) =>
+  new RegExp(texts.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'giu')
 
-// Purging revisions (spec B2 «Historia», CA25). Field by field, walking the history: a later revision
-// that holds a purged value as it was is cleaned back to the last clean value (a link-only change, a
-// revert to it); one that holds a piece of purged text inside new text may still hold it, so the purge
-// refuses and names it, to be purged together. Tags and source titles it added are simply removed.
-// Never a success while some revision or the page still holds what was purged.
+// Every string inside a value, replaced where it holds a purged text. Returns how many were found.
+function scrubbed(v: unknown, re: RegExp): { value: unknown; hits: number } {
+  if (typeof v === 'string') {
+    const hits = v.match(re)?.length ?? 0
+    return { value: hits ? v.replace(re, MARK) : v, hits }
+  }
+  if (Array.isArray(v)) {
+    let hits = 0
+    const value = v.map((x) => {
+      const r = scrubbed(x, re)
+      hits += r.hits
+      return r.value
+    })
+    return { value, hits }
+  }
+  if (v && typeof v === 'object') {
+    let hits = 0
+    const value = Object.fromEntries(
+      Object.entries(v).map(([k, x]) => {
+        const r = scrubbed(x, re)
+        hits += r.hits
+        return [k, r.value]
+      }),
+    )
+    return { value, hits }
+  }
+  return { value: v, hits: 0 }
+}
+
+// Scrubs (or only counts, when `dry`) every copy of the purged texts in a brain's wiki, in batches.
+async function scrubWiki(db: Db, brainId: string, re: RegExp, dry: boolean): Promise<Record<string, number>> {
+  const found: Record<string, number> = {}
+  for (const t of TARGETS) {
+    const cols = [...t.text, ...t.arrays, ...t.json]
+    let after = '(0,0)'
+    for (;;) {
+      const rows = await db.query(
+        `SELECT ctid::text AS _at, ${cols.join(', ')} FROM ${t.table}
+          WHERE ${t.scope} AND ctid > $2::tid ORDER BY ctid LIMIT 500`,
+        [brainId, after],
+      )
+      if (rows.length === 0) break
+      after = String(rows.at(-1)?._at)
+      for (const r of rows) {
+        const sets: string[] = []
+        const values: unknown[] = []
+        for (const c of cols) {
+          const out = scrubbed(r[c], re)
+          if (out.hits === 0) continue
+          found[t.table] = (found[t.table] ?? 0) + out.hits
+          values.push(t.json.includes(c) ? JSON.stringify(out.value) : out.value)
+          sets.push(`${c} = $${values.length + 1}`)
+        }
+        if (!dry && sets.length > 0) {
+          await db.query(`UPDATE ${t.table} SET ${sets.join(', ')} WHERE ctid = $1::tid`, [r._at, ...values])
+        }
+      }
+      if (rows.length < 500) break
+    }
+  }
+  return found
+}
+
+// Purging wiki text (spec B2 «Historia», CA25). The administration names the revisions that cannot
+// stay and the exact text that must go (a name, an id number): the revisions are emptied, the page
+// goes back to the last revision left if its current one was purged, and the text is replaced by a
+// mark, any case, wherever the brain's wiki holds it (pages, every revision, sources, proposals,
+// the log, the activity), copies made by merges included. Before it commits, it checks that no copy
+// is left; if one were, nothing is done.
 export async function purgePageRevisions(
   ctx: Ctx,
   slug: string,
   target: { address: string; pageId?: string },
   purge: number[],
+  texts: string[],
   reason: string,
 ): Promise<{
   address: string
   revisions: number[]
-  cleaned: number[]
+  scrubbed: Record<string, number>
   proposalIds: string[]
   joined: boolean
   backupsNote: string
@@ -77,6 +164,18 @@ export async function purgePageRevisions(
   const wanted = [...new Set(purge)].sort((a, b) => a - b)
   if (wanted.length === 0 || wanted.length > 1000)
     throw invalid('Name 1 to 1 000 revisions to purge.', 'Send "revisions".')
+  const needles = [...new Set(texts.map((t) => t.trim()))]
+  if (
+    needles.length === 0 ||
+    needles.length > 20 ||
+    needles.some((t) => t.length < 3 || t.length > 500 || !t.isWellFormed())
+  ) {
+    throw invalid(
+      'Name the text that must go, in "text": 1 to 20 pieces of 3 to 500 characters.',
+      'Copy the exact words that cannot stay (a name, an id number), as they appear.',
+    )
+  }
+  const re = pattern(needles)
   return ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
     const brain = await db.one('SELECT id FROM brains WHERE slug = $1', [slug])
@@ -112,100 +211,25 @@ export async function purgePageRevisions(
         'See its history.',
       )
     }
-    const toPurge = new Set(wanted.filter((n) => !revs.find((r) => Number(r.revision) === n)?.purged_at))
-    const first = Math.min(...wanted)
-    // The text a purged revision brought into a field: what is left of its value once the prefix and
-    // suffix it shares with the clean value are taken off.
-    const brought = (was: string, now: string): string => {
-      let i = 0
-      while (i < was.length && i < now.length && was[i] === now[i]) i += 1
-      let j = 0
-      while (j < was.length - i && j < now.length - i && was[was.length - 1 - j] === now[now.length - 1 - j])
-        j += 1
-      return now.slice(i, now.length - j).trim()
-    }
-    const clean: Fields = { ...EMPTY }
-    // Every value a purged revision held, and the pieces of text it brought in: they may come back later
-    // (a revert to it, a copy), so every later revision is checked against them, not only the next.
-    const purgedValues: Record<'title' | 'summary' | 'body', Set<string>> = {
-      title: new Set(),
-      summary: new Set(),
-      body: new Set(),
-    }
-    const pieces: Record<'title' | 'summary' | 'body', string[]> = { title: [], summary: [], body: [] }
-    const addedTags = new Set<string>()
-    const addedUrls = new Map<string, string | null>() // url -> its title as the purged revision left it
-    const fixes = new Map<number, Partial<Fields>>()
-    const carrying = new Set<number>()
-    let seeded = false
-    for (const r of revs) {
-      const n = Number(r.revision)
-      if (r.purged_at && !toPurge.has(n)) continue
-      const f = fieldsOf(r)
-      if (n < first) {
-        Object.assign(clean, f)
-        seeded = true
-        continue
-      }
-      if (toPurge.has(n)) {
-        for (const k of ['title', 'summary', 'body'] as const) {
-          const base = clean[k]
-          if (!seeded || f[k] !== base) {
-            const piece = seeded ? brought(base, f[k]) : f[k].trim()
-            if (piece) pieces[k].push(piece)
-            purgedValues[k].add(f[k])
-          }
-        }
-        const cleanTags = new Set(JSON.parse(clean.tags) as string[])
-        for (const t of JSON.parse(f.tags) as string[]) if (!cleanTags.has(t)) addedTags.add(t)
-        const cleanUrls = new Map(JSON.parse(clean.urls) as [string, string | null][])
-        for (const [u, t] of JSON.parse(f.urls) as [string, string | null][]) {
-          if (!cleanUrls.has(u) || cleanUrls.get(u) !== t) addedUrls.set(u, t)
-        }
-        seeded = true
-        continue
-      }
-      // A revision after: holds a purged value as it was (cleaned back to the last clean value), holds
-      // a purged piece inside new text (may still hold it: the purge is refused), or holds neither.
-      const fx: Partial<Fields> = {}
-      for (const k of ['title', 'summary', 'body'] as const) {
-        if (purgedValues[k].has(f[k])) {
-          fx[k] = clean[k]
-        } else if (pieces[k].some((p) => f[k].includes(p))) {
-          carrying.add(n)
-        } else {
-          clean[k] = f[k]
-        }
-      }
-      const tags = JSON.parse(f.tags) as string[]
-      const keptTags = tags.filter((t) => !addedTags.has(t))
-      if (keptTags.length !== tags.length) fx.tags = JSON.stringify(keptTags)
-      const cleanUrls = new Map(JSON.parse(clean.urls) as [string, string | null][])
-      const urls = JSON.parse(f.urls) as [string, string | null][]
-      const keptUrls = urls.flatMap(([u, t]): [string, string | null][] => {
-        if (!addedUrls.has(u) || addedUrls.get(u) !== t) return [[u, t]]
-        return cleanUrls.has(u) ? [[u, cleanUrls.get(u) ?? null]] : []
-      })
-      if (JSON.stringify(keptUrls) !== JSON.stringify(urls)) fx.urls = JSON.stringify(keptUrls.sort())
-      if (Object.keys(fx).length > 0) fixes.set(n, fx)
-      clean.tags = JSON.stringify(keptTags)
-      clean.urls = JSON.stringify(keptUrls.sort())
-    }
-    if (carrying.size > 0) {
-      const list = [...carrying].sort((a, b) => a - b)
-      const err = conflict(
-        'purge_incomplete',
-        `Revisions ${list.join(', ')} edited on top of what you purge, so they may still hold it. Nothing was purged.`,
-        `Purge them together: send "revisions": [${[...wanted, ...list].sort((a, b) => a - b).join(', ')}].`,
+    // Addresses are identifiers that links rely on; text inside one is moved away first, by hand.
+    const inAddress = await db.query(
+      'SELECT address FROM page_addresses WHERE brain_id = $1 UNION SELECT to_address FROM page_links WHERE brain_id = $1 AND to_address IS NOT NULL',
+      [brainId],
+    )
+    const hit = inAddress.find((r) => pattern(needles).test(String(r.address)))
+    if (hit) {
+      throw conflict(
+        'text_in_address',
+        `The text is part of the address "${hit.address}". Nothing was purged.`,
+        'Move that page to another address first, then purge.',
       )
-      err.problems = list.map((n) => ({ revision: n }))
-      throw err
     }
     const joined = await joinAsAdmin(c, brainId, 'joined to purge a wiki revision')
     const now = ctx.clock()
     const proposalIds = new Set<string>()
-    for (const n of toPurge) {
+    for (const n of wanted) {
       const r = revs.find((x) => Number(x.revision) === n) as Row
+      if (r.purged_at) continue
       await db.query(
         `UPDATE page_revisions SET title = '[purged]', summary = '', body = '', tags = '{}', sources = '[]', links = '[]',
                 note = NULL, purged_by = $3, purged_at = $4, purged_reason = $5
@@ -215,50 +239,44 @@ export async function purgePageRevisions(
       await scrubOp(db, r.proposal_id, r.op_index)
       if (r.proposal_id != null) proposalIds.add(String(r.proposal_id))
     }
-    const withFields = (r: Row, fx: Partial<Fields>) => {
-      const f = { ...fieldsOf(r), ...fx }
-      const entrySources = ((r.sources as Source[]) ?? []).filter((x) => 'entryId' in x)
-      const urls = (JSON.parse(f.urls) as [string, string | null][]).map(([url, title]) =>
-        title === null ? { url } : { url, title },
-      )
-      return { f, tags: JSON.parse(f.tags) as string[], sources: [...entrySources, ...urls] as Source[] }
-    }
-    for (const [n, fx] of fixes) {
-      const r = revs.find((x) => Number(x.revision) === n) as Row
-      const w = withFields(r, fx)
-      await db.query(
-        'UPDATE page_revisions SET title = $3, summary = $4, body = $5, tags = $6, sources = $7 WHERE page_id = $1 AND revision = $2',
-        [page.id, n, w.f.title, w.f.summary, w.f.body, w.tags, JSON.stringify(w.sources)],
-      )
-      await scrubOp(db, r.proposal_id, r.op_index)
-    }
-    // The page is its last revision as it now stands (or the last clean values, if that one was purged).
-    const latest = (await db.one(
-      'SELECT * FROM page_revisions WHERE page_id = $1 ORDER BY revision DESC LIMIT 1',
-      [page.id],
-    )) as Row
-    const final = latest.purged_at
-      ? withFields({ ...latest, ...clean, tags: JSON.parse(clean.tags), sources: [] } as Row, {
-          urls: clean.urls,
-        })
-      : withFields(latest, {})
-    await db.query(
-      `UPDATE pages SET title = $2, summary = $3, body = $4, tags = $5, updated_at = $6,
-              status = CASE WHEN $2 = '[purged]' AND $4 = '' THEN 'retired' ELSE status END
-        WHERE id = $1`,
-      [page.id, final.f.title, final.f.summary, final.f.body, final.tags, now],
-    )
-    await db.query('DELETE FROM page_sources WHERE page_id = $1 AND url IS NOT NULL', [page.id])
-    for (const x of final.sources) {
-      if ('url' in x) {
+    // The current text was a purged revision's: the page goes back to the last revision left.
+    const latest = revs.at(-1) as Row
+    if (wanted.includes(Number(latest.revision))) {
+      const left = (
         await db.query(
-          'INSERT INTO page_sources (page_id, url, title) VALUES ($1, $2, $3) ON CONFLICT (page_id, url) WHERE url IS NOT NULL DO NOTHING',
-          [page.id, x.url, x.title ?? null],
+          'SELECT * FROM page_revisions WHERE page_id = $1 AND purged_at IS NULL ORDER BY revision DESC LIMIT 1',
+          [page.id],
         )
+      )[0]
+      if (left) {
+        await db.query(
+          'UPDATE pages SET type = $2, title = $3, summary = $4, body = $5, tags = $6, updated_at = $7 WHERE id = $1',
+          [page.id, left.type, left.title, left.summary, left.body, left.tags, now],
+        )
+        await db.query('DELETE FROM page_sources WHERE page_id = $1 AND url IS NOT NULL', [page.id])
+        for (const x of (left.sources as Source[]) ?? []) {
+          if ('url' in x) {
+            await db.query(
+              'INSERT INTO page_sources (page_id, url, title) VALUES ($1, $2, $3) ON CONFLICT (page_id, url) WHERE url IS NOT NULL DO NOTHING',
+              [page.id, x.url, x.title ?? null],
+            )
+          }
+        }
+      } else {
+        await db.query(
+          `UPDATE pages SET title = '[purged]', summary = '', body = '', tags = '{}', status = 'retired', updated_at = $2 WHERE id = $1`,
+          [page.id, now],
+        )
+        await db.query('DELETE FROM page_sources WHERE page_id = $1 AND url IS NOT NULL', [page.id])
       }
     }
+    const found = await scrubWiki(db, brainId, re, false)
+    // Mentions follow the body as it now stands.
+    const body = String(
+      (await db.one('SELECT body, address FROM pages WHERE id = $1', [page.id]))?.body ?? '',
+    )
     await db.query("DELETE FROM page_links WHERE from_page = $1 AND kind = 'mentions'", [page.id])
-    for (const a of mentionsOf(final.f.body)) {
+    for (const a of mentionsOf(body)) {
       if (a === page.address) continue
       await db.query(
         `INSERT INTO page_links (brain_id, from_page, kind, to_address) VALUES ($1, $2, 'mentions', $3)
@@ -266,34 +284,41 @@ export async function purgePageRevisions(
         [brainId, page.id, a],
       )
     }
-    if (toPurge.size > 0) {
-      await audit(db, {
-        at: now,
-        actorId: ctx.who.accountId,
-        credentialId: ctx.who.credential.id,
-        action: 'wiki.purge',
-        brainId,
-        target: `${page.id}#${[...toPurge].join(',')}`,
-        outcome: 'ok',
-        detail: why,
-      })
-      await db.query(
-        `INSERT INTO wiki_log (id, brain_id, at, actor_id, kind, summary, pages) VALUES ($6, $1, $2, $3, 'purge', $4, $5)`,
-        [
-          brainId,
-          now,
-          ctx.who.accountId,
-          `Purged revision ${[...toPurge].join(', ')} of ${page.address}`,
-          [String(page.address)],
-          newId('wlg'),
-        ],
+    const left = await scrubWiki(db, brainId, re, true)
+    if (Object.keys(left).length > 0) {
+      throw conflict(
+        'purge_incomplete',
+        'Some copy of the text could not be removed; nothing was purged.',
+        'Tell the administration of this installation; this should not happen.',
       )
     }
+    await audit(db, {
+      at: now,
+      actorId: ctx.who.accountId,
+      credentialId: ctx.who.credential.id,
+      action: 'wiki.purge',
+      brainId,
+      target: `${page.id}#${wanted.join(',')}`,
+      outcome: 'ok',
+      detail: why,
+    })
+    await db.query(
+      `INSERT INTO wiki_log (id, brain_id, at, actor_id, kind, summary, pages) VALUES ($6, $1, $2, $3, 'purge', $4, $5)`,
+      [
+        brainId,
+        now,
+        ctx.who.accountId,
+        `Purged revision ${wanted.join(', ')} of ${page.address}`,
+        [String(page.address)],
+        newId('wlg'),
+      ],
+    )
     return {
       address: String(page.address),
       revisions: wanted,
-      cleaned: [...fixes.keys()].sort((a, b) => a - b),
-      // The proposals that wrote them keep their titles and reasons: purge those too if they carry it.
+      scrubbed: found,
+      // The proposals that wrote them keep their reasons for the record; their titles and operations were
+      // scrubbed of the text. Purge those proposals too if they should not stay at all.
       proposalIds: [...proposalIds],
       joined,
       backupsNote: BACKUPS,

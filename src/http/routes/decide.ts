@@ -6,7 +6,7 @@ import { invalid } from '../../core/errors.ts'
 import { approveProposal, returnProposal, reviewProposal } from '../../domain/wiki/decide.ts'
 import { directChange, maintenanceAsked, setWikiSettings } from '../../domain/wiki/direct.ts'
 import { purgePageRevisions, purgeProposal } from '../../domain/wiki/purge.ts'
-import { compact, int, type Obj, obj, reqStr, str } from '../input.ts'
+import { compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
@@ -118,6 +118,7 @@ export const decideRoutes: Route[] = [
         r.params.slug as string,
         compact({ address: reqStr(b, 'address', 200), pageId: str(b, 'pageId', { max: 40 }) }),
         list,
+        strList(b, 'text', { maxItems: 20, maxLen: 500 }) ?? [],
         reqStr(b, 'reason'),
       ),
     }
