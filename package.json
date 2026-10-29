@@ -1,0 +1,38 @@
+{
+  "name": "@ericrisco/rsc-brain",
+  "version": "0.1.0",
+  "description": "Self-hosted knowledge server for AI agents: a journal agents write freely, a wiki people approve, searchable over MCP and HTTP.",
+  "license": "MIT",
+  "author": "Eric Risco",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "rsc-brain": "./dist/cli/main.js"
+  },
+  "engines": {
+    "node": ">=25"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ericrisco/rsc-brain.git"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "node --test --test-reporter=spec 'test/**/*.test.ts'",
+    "verify": "bash scripts/verify.sh",
+    "pg:start": "bash scripts/pg-test.sh start",
+    "pg:stop": "bash scripts/pg-test.sh stop"
+  },
+  "dependencies": {
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@types/node": "25.9.9",
+    "@types/pg": "8.23.1",
+    "typescript": "7.0.2"
+  }
+}
