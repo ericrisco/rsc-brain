@@ -6,6 +6,7 @@ import type { Clock } from '../core/clock.ts'
 import type { Db } from '../db/db.ts'
 import type { Outbox } from '../mail/mail.ts'
 import type { Providers } from '../meaning/providers.ts'
+import type { FetchPolicy } from '../oauth/fetch.ts'
 
 // How a request arrived (spec B4): over TLS or not, from this machine or not, from where and with which
 // client. A request through a proxy counts as local only if nothing says it came from elsewhere, and
@@ -26,6 +27,8 @@ export type PublicReq = {
   meaning: Providers
   secret: string | undefined
   mail: Outbox
+  // How the server may fetch a client's metadata document (tests allow this machine over http).
+  fetchPolicy: FetchPolicy
   conn: Conn
   // The web session cookie, when one came, for public pages that also serve a signed-in person.
   cookie: string | null

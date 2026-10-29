@@ -2,7 +2,7 @@
 // access. Pure: it receives the facts (role already narrowed by the key, ownership, brain status).
 export const ROLES = ['reader', 'contributor', 'curator'] as const
 export type Role = (typeof ROLES)[number]
-export type CredentialKind = 'token' | 'main' | 'short' | 'web'
+export type CredentialKind = 'token' | 'main' | 'short' | 'web' | 'app'
 
 export const rank = (r: Role | null): number => (r === null ? 0 : ROLES.indexOf(r) + 1)
 export const atLeast = (r: Role | null, min: Role): boolean => rank(r) >= rank(min)

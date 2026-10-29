@@ -19,6 +19,8 @@ import {
   updateAccount,
   updateSettings,
 } from '../../domain/admin.ts'
+import { type AuditFilters, brainAudit, exportAudit, readAudit } from '../../domain/auditlog.ts'
+import { adminApps, listApps, revokeApp } from '../../domain/connections.ts'
 import {
   acceptInvitation,
   invite,
@@ -31,7 +33,7 @@ import { listMembers, removeMember, setMember, setNotify } from '../../domain/me
 import { markNoticesRead, myNotices } from '../../domain/notices.ts'
 import { createToken, listTokens, revokeToken } from '../../domain/tokens.ts'
 import { bool, obj } from '../input.ts'
-import { publicRoute, type Route, route } from '../router.ts'
+import { publicRoute, type Req, type Route, route } from '../router.ts'
 import { cookie, fromWeb } from './auth.ts'
 import { ctxOf } from './brains.ts'
 
@@ -121,6 +123,11 @@ export const peopleRoutes: Route[] = [
     await revokeToken(ctxOf(r), r.params.id as string)
     return { body: { revoked: r.params.id } }
   }),
+  route('GET /v1/me/apps', async (r) => ({ body: { apps: await listApps(ctxOf(r)) } })),
+  route('DELETE /v1/me/apps/:id', async (r) => {
+    await revokeApp(ctxOf(r), r.params.id as string)
+    return { body: { revoked: r.params.id } }
+  }),
   route('GET /v1/me/notices', async (r) => ({ body: await myNotices(ctxOf(r)) })),
   route('POST /v1/me/notices/read', async (r) => ({ body: { read: await markNoticesRead(ctxOf(r)) } })),
 
@@ -174,6 +181,24 @@ export const peopleRoutes: Route[] = [
       },
     }
   }),
+  route('GET /v1/admin/accounts/:id/apps', async (r) => ({
+    body: { apps: await adminApps(ctxOf(r), r.params.id as string) },
+  })),
+  route('DELETE /v1/admin/apps/:id', async (r) => {
+    await revokeApp(ctxOf(r), r.params.id as string)
+    return { body: { revoked: r.params.id } }
+  }),
+  route('GET /v1/admin/audit', async (r) => ({ body: await readAudit(ctxOf(r), filters(r)) })),
+  route('GET /v1/admin/audit/export', async (r) => ({
+    body: await exportAudit(ctxOf(r), filters(r)),
+    headers: {
+      'content-type': 'text/csv; charset=utf-8',
+      'content-disposition': `attachment; filename="brain-audit-${r.clock().toISOString().slice(0, 10)}.csv"`,
+    },
+  })),
+  route('GET /v1/brains/:slug/audit', async (r) => ({
+    body: await brainAudit(ctxOf(r), r.params.slug as string, filters(r)),
+  })),
   route('GET /v1/admin/brains', async (r) => ({ body: { brains: await adminBrains(ctxOf(r)) } })),
   route('POST /v1/admin/brains/:slug/join', async (r) => ({
     body: await joinBrain(ctxOf(r), r.params.slug as string),
@@ -196,3 +221,16 @@ export const peopleRoutes: Route[] = [
   route('DELETE /v1/admin/mail', async (r) => ({ body: await deleteMail(ctxOf(r)) })),
   route('POST /v1/admin/mail/test', async (r) => ({ body: await testMail(ctxOf(r), obj(r.body).to) })),
 ]
+
+function filters(r: Req): AuditFilters {
+  const g = (k: string) => r.query.get(k) ?? undefined
+  return {
+    action: g('action'),
+    actor: g('actor'),
+    brain: g('brain'),
+    outcome: g('outcome'),
+    from: g('from'),
+    to: g('to'),
+    before: g('before'),
+  }
+}

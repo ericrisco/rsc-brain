@@ -59,7 +59,11 @@ export type World = TestDb & {
 export const TEST_SECRET = 'test-secret-of-at-least-thirty-two-characters'
 
 // `fresh`: leave the first-time setup undone (the setup tests). Otherwise the installation is set up.
-export async function world(o: { meaning?: Providers; fresh?: boolean } = {}): Promise<World> {
+// `localClients`: client documents of the standard sign-in may be served from this machine over http
+// (only tests do that).
+export async function world(
+  o: { meaning?: Providers; fresh?: boolean; localClients?: boolean } = {},
+): Promise<World> {
   const t = await freshDatabase()
   await migrate(t.db)
   if (!o.fresh)
@@ -78,6 +82,7 @@ export async function world(o: { meaning?: Providers; fresh?: boolean } = {}): P
       meaning: o.meaning ?? {},
       secret: TEST_SECRET,
       trustedProxies: ['127.0.0.1'],
+      ...(o.localClients ? { fetchPolicy: { allowLoopbackHttp: true } } : {}),
       mailTransport: () => ({
         async send(m) {
           if (w.mailFails) throw new Error('connection refused by the test mail server')

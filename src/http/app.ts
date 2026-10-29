@@ -9,6 +9,7 @@ import type { Db } from '../db/db.ts'
 import { setupDone } from '../domain/installation.ts'
 import type { Outbox } from '../mail/mail.ts'
 import type { Providers } from '../meaning/providers.ts'
+import type { FetchPolicy } from '../oauth/fetch.ts'
 import { type Conn, match, type Route, WEB_HEADER } from './router.ts'
 import { authRoutes } from './routes/auth.ts'
 import { brainRoutes } from './routes/brains.ts'
@@ -16,6 +17,7 @@ import { decideRoutes } from './routes/decide.ts'
 import { journalRoutes } from './routes/journal.ts'
 import { keyRoutes } from './routes/keys.ts'
 import { meaningRoutes } from './routes/meaning.ts'
+import { oauthRoutes } from './routes/oauth.ts'
 import { peopleRoutes } from './routes/people.ts'
 import { recallRoutes } from './routes/recall.ts'
 import { wikiRoutes } from './routes/wiki.ts'
@@ -36,6 +38,8 @@ export type AppDeps = {
   trustedProxies?: string[]
   // Replaces SMTP (tests); the server sends with the mail settings of the installation.
   mailTransport?: Outbox['transport']
+  // Only tests set this: client documents served from this machine over http.
+  fetchPolicy?: FetchPolicy
 }
 
 export const ROUTES: Route[] = [
@@ -48,6 +52,7 @@ export const ROUTES: Route[] = [
   ...wikiRoutes,
   ...meaningRoutes,
   ...peopleRoutes,
+  ...oauthRoutes,
 ]
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
@@ -67,10 +72,22 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   }
   if (size === 0) return undefined
   let parsed: unknown
-  try {
-    parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-  } catch {
-    throw invalid('The request body is not valid JSON.', 'Send a JSON object.')
+  // Forms (the sign-in and consent pages, and the token endpoint of the standard sign-in) arrive
+  // url-encoded; a parameter given twice is refused, as the standard asks.
+  if (String(req.headers['content-type'] ?? '').startsWith('application/x-www-form-urlencoded')) {
+    const form: Record<string, string> = {}
+    for (const [k, v] of new URLSearchParams(Buffer.concat(chunks).toString('utf8'))) {
+      if (Object.hasOwn(form, k))
+        throw invalid(`"${k}" is given more than once.`, 'Send each parameter once.')
+      form[k] = v
+    }
+    parsed = form
+  } else {
+    try {
+      parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    } catch {
+      throw invalid('The request body is not valid JSON.', 'Send a JSON object.')
+    }
   }
   const bad = badText(parsed)
   if (bad) throw invalid(bad, 'Fix it and retry.')
@@ -207,6 +224,7 @@ export function createHandler(deps: AppDeps) {
         meaning: deps.meaning ?? {},
         secret: deps.secret,
         mail: { secret: deps.secret, ...(deps.mailTransport ? { transport: deps.mailTransport } : {}) },
+        fetchPolicy: deps.fetchPolicy ?? {},
         conn,
         cookie,
       }
