@@ -3,10 +3,10 @@
 // approval happens in the web (CA9) and the wiki does not change.
 
 import { invalid } from '../../core/errors.ts'
-import { inBrain } from '../../domain/context.ts'
 import { approveProposal, returnProposal, reviewProposal } from '../../domain/wiki/decide.ts'
-import { webOnly } from '../../domain/wiki/review.ts'
-import { compact, type Obj, obj, reqStr, str } from '../input.ts'
+import { directChange, maintenanceAsked, setWikiSettings } from '../../domain/wiki/direct.ts'
+import { purgePageRevision, purgeProposal } from '../../domain/wiki/purge.ts'
+import { compact, int, type Obj, obj, reqStr, str } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
@@ -56,10 +56,64 @@ export const decideRoutes: Route[] = [
     }
   }),
   // Editing a page by hand is the web's (direct edits arrive with the web session).
+  // A curator's edit by hand: the page's address in the path, the changed fields and the revision read.
   route('PATCH /v1/brains/:slug/pages/*address', async (r) => {
-    const ctx = ctxOf(r)
-    await inBrain(ctx, { slug: r.params.slug as string })
-    webOnly(ctx)
-    throw invalid('Direct edits are not open yet.', 'Propose the change.')
+    const b = obj(r.body)
+    return {
+      body: await directChange(ctxOf(r), r.params.slug as string, {
+        ...b,
+        op: 'edit',
+        address: r.params.address,
+        reason: typeof b.reason === 'string' ? b.reason : 'direct edit',
+      }),
+    }
   }),
+  route('POST /v1/brains/:slug/wiki/changes', async (r) => {
+    const b = obj(r.body)
+    return {
+      status: 201,
+      body: await directChange(ctxOf(r), r.params.slug as string, {
+        ...b,
+        reason: typeof b.reason === 'string' ? b.reason : 'direct edit',
+      }),
+    }
+  }),
+  route('PUT /v1/brains/:slug/wiki/settings', async (r) => {
+    const b = obj(r.body)
+    const guide = b.guide
+    if (guide !== undefined && guide !== null && typeof guide !== 'string') {
+      throw invalid('"guide" is text, or null for the default.', 'Fix "guide".')
+    }
+    return {
+      body: await setWikiSettings(
+        ctxOf(r),
+        r.params.slug as string,
+        compact({
+          guide: guide as string | null | undefined,
+          mapIntro: str(b, 'mapIntro'),
+          staleDays: int(b, 'staleDays'),
+          longChars: int(b, 'longChars'),
+          maintenanceEvery: int(b, 'maintenanceEvery'),
+        }),
+      ),
+    }
+  }),
+  route('POST /v1/brains/:slug/wiki/maintenance-asked', async (r) => ({
+    body: await maintenanceAsked(ctxOf(r), r.params.slug as string),
+  })),
+  route('POST /v1/brains/:slug/wiki/purge', async (r) => {
+    const b = obj(r.body)
+    return {
+      body: await purgePageRevision(
+        ctxOf(r),
+        r.params.slug as string,
+        reqStr(b, 'address', 200),
+        int(b, 'revision', { required: true, min: 1, max: 1_000_000 }) as number,
+        reqStr(b, 'reason'),
+      ),
+    }
+  }),
+  route('POST /v1/proposals/:id/purge', async (r) => ({
+    body: await purgeProposal(ctxOf(r), r.params.id as string, reqStr(obj(r.body), 'reason')),
+  })),
 ]

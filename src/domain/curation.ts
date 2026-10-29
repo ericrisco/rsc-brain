@@ -227,6 +227,25 @@ export async function scheduleEntry(
 // Purge: the administration, as a member of the brain (it joins as a reader if it is not one, which
 // the brain's curators see). Content and history go; every derived copy goes with them (pack rule 2);
 // a visible mark stays. Backups taken before keep the content until they rotate.
+// The administration touches a brain's content only as a member (pack rule 3): if it is not one, it
+// joins as a reader, which the audit and the brain's activity show. Returns whether it joined.
+export async function joinAsAdmin(c: Ctx, brainId: string, why: string): Promise<boolean> {
+  const member = await c.db.one('SELECT role FROM memberships WHERE brain_id = $1 AND account_id = $2', [
+    brainId,
+    c.who.accountId,
+  ])
+  if (member) return false
+  await addMember(c.db, brainId, c.who.accountId, 'reader', c.clock())
+  await ok(c, 'admin.join', brainId, c.who.accountId, why)
+  await emit(c.db, c, {
+    brainId,
+    kind: 'entry.changed',
+    targetId: null,
+    label: `${c.who.name} (administration) joined`,
+  })
+  return true
+}
+
 export async function purgeEntry(
   ctx: Ctx,
   id: string,
@@ -241,22 +260,7 @@ export async function purgeEntry(
     const row = await db.one('SELECT * FROM entries WHERE id = $1 FOR UPDATE', [id])
     if (!row) throw notFound('entry')
     const brainId = String(row.brain_id)
-    const member = await db.one('SELECT role FROM memberships WHERE brain_id = $1 AND account_id = $2', [
-      brainId,
-      ctx.who.accountId,
-    ])
-    let joined = false
-    if (!member) {
-      await addMember(db, brainId, ctx.who.accountId, 'reader', ctx.clock())
-      await ok(c, 'admin.join', brainId, ctx.who.accountId, 'joined to purge an entry')
-      await emit(db, c, {
-        brainId,
-        kind: 'entry.changed',
-        targetId: null,
-        label: `${ctx.who.name} (administration) joined`,
-      })
-      joined = true
-    }
+    const joined = await joinAsAdmin(c, brainId, 'joined to purge an entry')
     if (row.state !== 'purged') {
       const now = ctx.clock()
       await db.query(
@@ -266,6 +270,18 @@ export async function purgeEntry(
         [id, ctx.who.accountId, why, now],
       )
       await db.query('DELETE FROM entry_revisions WHERE entry_id = $1', [id])
+      // Pending wiki proposals no longer carry it (spec B1 CA13): out of their sources and collected.
+      await db.query(
+        `UPDATE proposal_ops o SET op = jsonb_set(o.op, '{sources}',
+                coalesce((SELECT jsonb_agg(s) FROM jsonb_array_elements(o.op -> 'sources') s WHERE s ->> 'entryId' IS DISTINCT FROM $1), '[]'))
+          FROM proposals p
+         WHERE p.id = o.proposal_id AND p.status = 'pending' AND o.op -> 'sources' @> jsonb_build_array(jsonb_build_object('entryId', $1::text))`,
+        [id],
+      )
+      await db.query(
+        "UPDATE proposals SET collected = array_remove(collected, $1) WHERE status = 'pending' AND $1 = ANY(collected)",
+        [id],
+      )
       // A relation's note can quote the entry; the relation stays, its note goes.
       await db.query("UPDATE relations SET reason = '' WHERE from_id = $1 OR to_id = $1", [id])
       await db.query('DELETE FROM trail WHERE $1 = ANY(result_ids)', [id])
