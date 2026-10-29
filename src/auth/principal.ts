@@ -64,6 +64,21 @@ const ended = (r: Row, now: Date): 'expired' | 'revoked' | null => {
   return null
 }
 
+// The web session travels in this cookie (HttpOnly, set by the sign-in of B4).
+export const SESSION_COOKIE = 'rscb_session'
+
+export function sessionCookie(header: string | undefined): string | null {
+  if (!header) return null
+  for (const part of header.split(';')) {
+    const [k, ...v] = part.trim().split('=')
+    if (k === SESSION_COOKIE) {
+      const secret = v.join('=')
+      return secret.startsWith(KEY_PREFIX) ? secret : null
+    }
+  }
+  return null
+}
+
 export function bearer(header: string | undefined): string | null {
   if (!header) return null
   const m = /^Bearer\s+(\S+)$/i.exec(header.trim())
@@ -71,7 +86,14 @@ export function bearer(header: string | undefined): string | null {
   return key?.startsWith(KEY_PREFIX) ? key : null
 }
 
-export async function resolveKey(db: Db, secret: string | null, now: Date): Promise<Principal> {
+// `channel`: how the secret arrived. A web session only counts as a cookie, and a key only as a bearer
+// header, so an agent holding a key cannot pass for a person in the web, nor a stolen cookie for a key.
+export async function resolveKey(
+  db: Db,
+  secret: string | null,
+  now: Date,
+  channel: 'bearer' | 'cookie' = 'bearer',
+): Promise<Principal> {
   if (!secret) throw NO_KEY()
   const r = await db.one(
     `SELECT c.*, a.kind AS a_kind, a.name AS a_name, a.email, a.is_admin, a.can_create_brains, a.can_invite,
@@ -87,6 +109,17 @@ export async function resolveKey(db: Db, secret: string | null, now: Date): Prom
     (r.parent_id != null ? ended({ revoked_at: r.p_revoked_at, expires_at: r.p_expires_at }, now) : null)
   if (why) throw ENDED(why)
   if (r.status !== 'active') throw REMOVED()
+  if ((r.kind === 'web') !== (channel === 'cookie')) {
+    throw unauthorized(
+      'wrong_channel',
+      r.kind === 'web'
+        ? 'A web session works only in the web.'
+        : 'Keys are sent as "Authorization: Bearer <key>".',
+      r.kind === 'web'
+        ? 'Use a personal token for agents and programs.'
+        : 'Send the key in the Authorization header.',
+    )
+  }
   await db.query(
     `UPDATE credentials SET last_used_at = $2
       WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < $2::timestamptz - interval '60 seconds')`,
@@ -131,6 +164,8 @@ export async function memberRole(db: Db, brainId: string, accountId: string): Pr
 export async function roleIn(db: Db, p: Principal, brainId: string): Promise<Role | null> {
   const c = p.credential
   const member = await memberRole(db, brainId, p.accountId)
+  // A web session is the person in the web: their membership, as it is.
+  if (c.kind === 'web') return member
   if (c.kind === 'token') {
     if (!c.allBrains && !c.brainIds.includes(brainId)) return null
     return c.perm === 'read' ? minRole(member, 'reader') : member

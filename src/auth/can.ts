@@ -2,7 +2,7 @@
 // access. Pure: it receives the facts (role already narrowed by the key, ownership, brain status).
 export const ROLES = ['reader', 'contributor', 'curator'] as const
 export type Role = (typeof ROLES)[number]
-export type CredentialKind = 'token' | 'main' | 'short'
+export type CredentialKind = 'token' | 'main' | 'short' | 'web'
 
 export const rank = (r: Role | null): number => (r === null ? 0 : ROLES.indexOf(r) + 1)
 export const atLeast = (r: Role | null, min: Role): boolean => rank(r) >= rank(min)
@@ -29,6 +29,7 @@ export type Action =
   | 'correction.relay'
   | 'key.short'
   | 'wiki.propose'
+  | 'wiki.decide'
 
 export type Facts = {
   role?: Role | null // the actor's role in the brain, already narrowed by its key
@@ -96,6 +97,7 @@ export function can(actor: Actor, action: Action, f: Facts = {}): Decision {
         'Ask a curator of the brain, or write a new entry.',
       )
     }
+    case 'wiki.decide':
     case 'entry.pin': {
       const r = needRole(f.role, 'curator')
       if (!r.ok) return r
