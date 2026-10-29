@@ -1,43 +1,152 @@
 #!/usr/bin/env node
 // rsc-brain command line. Each command says what it did, or what to do when it cannot.
+import { createServer } from 'node:http'
+import { parseArgs } from 'node:util'
 import { readConfig } from '../config.ts'
+import { systemClock } from '../core/clock.ts'
+import { AppError } from '../core/errors.ts'
 import { openPool } from '../db/db.ts'
 import { migrate } from '../db/migrate.ts'
+import { createAccount } from '../domain/accounts.ts'
+import { mintMainKey, mintPersonToken } from '../domain/keys.ts'
+import { createHandler } from '../http/app.ts'
 
 const HELP = `rsc-brain — self-hosted knowledge server for AI agents
 
 Usage:
-  rsc-brain migrate     apply pending database migrations
-  rsc-brain help        show this help
+  rsc-brain migrate                                   apply pending database migrations
+  rsc-brain serve                                     start the HTTP server
+  rsc-brain admin bootstrap --email E --name N        create the first administrator and print a key
+  rsc-brain service create --name N [--can-create-brains] [--can-invite]
+                                                      create a service account and print its main key
+  rsc-brain help                                      show this help
 
 Environment:
   RSC_BRAIN_DATABASE_URL   PostgreSQL connection URL (required)
+  RSC_BRAIN_PORT           HTTP port (default 8090)
+  RSC_BRAIN_HOST           address to listen on (default 127.0.0.1)
 `
 
+const out = (s: string) => process.stdout.write(s)
+
+async function withDb<T>(fn: (db: ReturnType<typeof openPool>) => Promise<T>): Promise<T> {
+  const db = openPool(readConfig().databaseUrl, { max: 2 })
+  try {
+    return await fn(db)
+  } finally {
+    await db.close()
+  }
+}
+
 async function main(argv: string[]): Promise<number> {
-  const cmd = argv[0] ?? 'help'
-  if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
-    process.stdout.write(HELP)
+  const [cmd, sub, ...rest] = argv
+  if (!cmd || cmd === 'help' || cmd === '--help' || cmd === '-h') {
+    out(HELP)
     return 0
   }
   if (cmd === 'migrate') {
-    const db = openPool(readConfig().databaseUrl, { max: 1 })
-    try {
+    return withDb(async (db) => {
       const applied = await migrate(db)
-      process.stdout.write(applied.length ? `Applied: ${applied.join(', ')}\n` : 'Database is up to date.\n')
+      out(applied.length ? `Applied: ${applied.join(', ')}\n` : 'Database is up to date.\n')
       return 0
-    } finally {
-      await db.close()
-    }
+    })
   }
-  process.stderr.write(`Unknown command "${cmd}". Run "rsc-brain help" to see the commands.\n`)
+  if (cmd === 'serve') {
+    const cfg = readConfig()
+    const db = openPool(cfg.databaseUrl)
+    await migrate(db)
+    const server = createServer(createHandler({ db, clock: systemClock }))
+    await new Promise<void>((resolve) => server.listen(cfg.port, cfg.host, resolve))
+    out(`RSC Brain listening on http://${cfg.host}:${cfg.port}\n`)
+    const stop = () => {
+      server.close(() => {
+        db.close().then(
+          () => process.exit(0),
+          () => process.exit(1),
+        )
+      })
+    }
+    process.once('SIGTERM', stop)
+    process.once('SIGINT', stop)
+    return new Promise<number>(() => {})
+  }
+  if (cmd === 'admin' && sub === 'bootstrap') {
+    const { values } = parseArgs({
+      args: rest,
+      options: { email: { type: 'string' }, name: { type: 'string' } },
+    })
+    if (!values.email || !values.name) {
+      process.stderr.write(
+        'Pass --email and --name, for example: rsc-brain admin bootstrap --email ana@x.com --name Ana\n',
+      )
+      return 2
+    }
+    return withDb(async (db) => {
+      await migrate(db)
+      const any = await db.one("SELECT 1 FROM accounts WHERE is_admin AND status = 'active'")
+      if (any) {
+        process.stderr.write('This installation already has an administrator. Ask them for an account.\n')
+        return 1
+      }
+      const id = await createAccount(db, systemClock, {
+        kind: 'person',
+        email: values.email as string,
+        name: values.name as string,
+        isAdmin: true,
+        canCreateBrains: true,
+        canInvite: true,
+      })
+      const k = await mintPersonToken(db, systemClock, {
+        accountId: id,
+        name: 'bootstrap',
+        perm: 'write',
+        allBrains: true,
+        days: 90,
+      })
+      out(`Administrator created (${id}).\nKey (shown once, valid until ${k.expiresAt}):\n${k.secret}\n`)
+      return 0
+    })
+  }
+  if (cmd === 'service' && sub === 'create') {
+    const { values } = parseArgs({
+      args: rest,
+      options: {
+        name: { type: 'string' },
+        'can-create-brains': { type: 'boolean' },
+        'can-invite': { type: 'boolean' },
+      },
+    })
+    if (!values.name) {
+      process.stderr.write('Pass --name, for example: rsc-brain service create --name "RSC Factory"\n')
+      return 2
+    }
+    return withDb(async (db) => {
+      await migrate(db)
+      const id = await createAccount(db, systemClock, {
+        kind: 'service',
+        name: values.name as string,
+        canCreateBrains: Boolean(values['can-create-brains']),
+        canInvite: Boolean(values['can-invite']),
+      })
+      const k = await mintMainKey(db, systemClock, { accountId: id, name: 'main' })
+      out(`Service account created (${id}).\nMain key (shown once):\n${k.secret}\n`)
+      return 0
+    })
+  }
+  process.stderr.write(`Unknown command "${argv.join(' ')}". Run "rsc-brain help" to see the commands.\n`)
   return 2
 }
 
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (err: unknown) => {
-    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`)
+    const msg =
+      err instanceof AppError
+        ? `${err.message} ${err.howToProceed}`
+        : err instanceof Error
+          ? err.message
+          : String(err)
+    process.stderr.write(`${msg}\n`)
     process.exit(1)
   },
 )
