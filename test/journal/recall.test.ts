@@ -6,7 +6,7 @@ import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
 
 type Receipt = { entryId: string; revision: number }
-type Hit = { entryId: string; brain: string; snippet: string; superseded: boolean; state: string }
+type Hit = { id: string; kind: string; brain: string; snippet: string; state: string }
 
 describe('recall: curate, search, context', { skip: skipPg }, () => {
   let w: World
@@ -99,9 +99,9 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
     const list = (await w.call(eric.key, 'GET', '/v1/brains/yt/forgotten')).body.items as { id: string }[]
     assert.ok(list.some((x) => x.id === id))
     const withF = await find(eric.key, 'q=zeta-nine&include=forgotten')
-    assert.equal(withF.items[0]?.entryId, id)
+    assert.equal(withF.items[0]?.id, id)
     assert.equal((await w.call(eric.key, 'POST', `/v1/entries/${id}/recover`)).status, 200)
-    assert.equal((await find(ana.key, 'q=zeta-nine')).items[0]?.entryId, id)
+    assert.equal((await find(ana.key, 'q=zeta-nine')).items[0]?.id, id)
   })
 
   it('CA13: a purge removes the content everywhere, leaves the mark, and the admin joins visibly', async () => {
@@ -268,8 +268,8 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
     await w.call(ana.key, 'POST', '/v1/brains/yt/relations', { from: neu, to: old, kind: 'supersedes' })
     assert.deepEqual((await find(ana.key, 'q=quokkasans')).items, [])
     const withS = await find(ana.key, 'q=quokkasans&include=superseded')
-    assert.equal(withS.items[0]?.entryId, old)
-    assert.equal(withS.items[0]?.superseded, true)
+    assert.equal(withS.items[0]?.id, old)
+    assert.equal(withS.items[0]?.state, 'superseded')
     // Even a task that asks for exactly that font does not bring the superseded entry back.
     const ctx = (
       await w.call(ana.key, 'GET', '/v1/brains/yt/context?max=128000&task=quokkasans%20quokkaserif%20font')
@@ -374,10 +374,10 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
     await w.call(ana.key, 'POST', `/v1/entries/${id}/schedule`, {
       expiresAt: new Date(w.now.getTime() + 3_600_000).toISOString(),
     })
-    assert.equal((await find(ana.key, 'q=wombatsale')).items[0]?.entryId, id)
+    assert.equal((await find(ana.key, 'q=wombatsale')).items[0]?.id, id)
     w.advance(2 * 3_600_000)
     assert.deepEqual((await find(ana.key, 'q=wombatsale')).items, [])
-    assert.equal((await find(ana.key, 'q=wombatsale&include=expired')).items[0]?.entryId, id)
+    assert.equal((await find(ana.key, 'q=wombatsale&include=expired')).items[0]?.id, id)
     const ctx = (await w.call(ana.key, 'GET', '/v1/brains/yt/context?max=128000')).body as { text: string }
     assert.ok(!ctx.text.includes(id))
   })
@@ -407,28 +407,26 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
       title: 'Retención',
       content: 'retenemos al público con voces claras',
     })
-    assert.equal((await find(ana.key, 'q=retener%20publico')).items[0]?.entryId, a)
-    assert.equal((await find(ana.key, 'q=claro')).items[0]?.entryId, a)
+    assert.equal((await find(ana.key, 'q=retener%20publico')).items[0]?.id, a)
+    assert.equal((await find(ana.key, 'q=claro')).items[0]?.id, a)
     const b = await save(ana.key, { type: 'note', title: 'One', content: 'la intro larga aburre' })
     const c = await save(ana.key, { type: 'note', title: 'Two', content: 'una larga intro mejor' })
-    const phrase = (await find(ana.key, `q=${encodeURIComponent('"intro larga"')}`)).items.map(
-      (h) => h.entryId,
-    )
+    const phrase = (await find(ana.key, `q=${encodeURIComponent('"intro larga"')}`)).items.map((h) => h.id)
     assert.ok(phrase.includes(b) && !phrase.includes(c))
     const d = await save(ana.key, { type: 'note', title: 'Three', content: 'una intro corta funciona' })
-    const minus = (await find(ana.key, `q=${encodeURIComponent('intro -larga')}`)).items.map((h) => h.entryId)
+    const minus = (await find(ana.key, `q=${encodeURIComponent('intro -larga')}`)).items.map((h) => h.id)
     assert.ok(minus.includes(d) && !minus.includes(b) && !minus.includes(c))
     // Exclusions alone, and an excluded phrase.
-    const only = (await find(ana.key, `q=${encodeURIComponent('-larga')}`)).items.map((h) => h.entryId)
+    const only = (await find(ana.key, `q=${encodeURIComponent('-larga')}`)).items.map((h) => h.id)
     assert.ok(!only.includes(b) && !only.includes(c))
     const notPhrase = (await find(ana.key, `q=${encodeURIComponent('intro -"intro larga"')}`)).items.map(
-      (h) => h.entryId,
+      (h) => h.id,
     )
     assert.ok(notPhrase.includes(c) && notPhrase.includes(d) && !notPhrase.includes(b))
-    const stop = (await find(ana.key, `q=${encodeURIComponent('intro -the')}`)).items.map((h) => h.entryId)
+    const stop = (await find(ana.key, `q=${encodeURIComponent('intro -the')}`)).items.map((h) => h.id)
     assert.ok(stop.includes(d))
     const anyWord = (await find(ana.key, `q=${encodeURIComponent('qué voces narran')}`)).items.map(
-      (h) => h.entryId,
+      (h) => h.id,
     )
     assert.ok(anyWord.includes(a))
     await save(eric.key, { type: 'note', title: 'Elsewhere', content: 'voces en otro cerebro' }, 'other')
