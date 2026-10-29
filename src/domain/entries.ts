@@ -181,6 +181,21 @@ async function similarTo(
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 
+// The same receipt, field for field and in the same order, whether fresh or replayed.
+function canonical(r: Receipt): Receipt {
+  const out: Receipt = {
+    entryId: r.entryId,
+    revision: r.revision,
+    at: r.at,
+    deduplicated: r.deduplicated,
+    repeatCount: r.repeatCount,
+    redactions: r.redactions,
+    similar: r.similar.map((s) => ({ entryId: s.entryId, title: s.title, why: s.why })),
+  }
+  if (r.topicNote) out.topicNote = r.topicNote
+  return out
+}
+
 type Prepared = {
   type: EntryType
   title: string
@@ -203,6 +218,16 @@ function prepare(i: EntryInput): Prepared {
     tags: (i.tags ?? []).map((t) => t.trim()),
     refs: (i.refs ?? []).map((t) => t.trim()),
   })
+  // Redaction marks can make a text longer; what is stored must still fit the limits.
+  if (
+    (r.fields.title as string).length > LIMITS.title ||
+    (r.fields.content as string).length > LIMITS.content
+  ) {
+    throw invalid(
+      'Once secrets are replaced by their marks, the text is longer than the limit.',
+      'Shorten the text, or remove the secrets yourself.',
+    )
+  }
   return {
     type: i.type as EntryType,
     title: r.fields.title as string,
@@ -232,6 +257,7 @@ async function write(
   const now = ctx.clock()
   const who = ctx.who
   let requestHash: string | null = null
+  let keyHash: string | null = null
   if (o.requestKey !== undefined) {
     if (!o.requestKey.trim() || o.requestKey.length > 200) {
       throw invalid(
@@ -241,15 +267,17 @@ async function write(
     }
     // Same key, same redacted request: the same receipt. Two retries racing are serialised here.
     requestHash = sha(JSON.stringify([brainId, p, w.onBehalfId, o.sessionId ?? null]))
+    // Only the key's hash is kept: a client could use anything, even a secret, as its key.
+    keyHash = sha(o.requestKey)
     await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-      `${who.credential.id}:${o.requestKey}`,
+      `${who.credential.id}:${keyHash}`,
     ])
     const seen = await db.one<{ request_hash: string; receipt: Receipt }>(
       'SELECT request_hash, receipt FROM request_keys WHERE credential_id = $1 AND key = $2',
-      [who.credential.id, o.requestKey],
+      [who.credential.id, keyHash],
     )
     if (seen) {
-      if (seen.request_hash === requestHash) return seen.receipt
+      if (seen.request_hash === requestHash) return canonical(seen.receipt)
       throw conflict(
         'request_key_reused',
         'This request key was already used for a different request.',
@@ -260,6 +288,12 @@ async function write(
   const sessionId = await sessionFor(db, c, brainId, o.sessionId)
   const stampedRef = who.credential.kind === 'short' ? who.credential.ref : null
   const normHash = sha(normalize(`${p.title}\n${p.content}`))
+  const by = {
+    authorId: who.accountId,
+    credentialId: who.credential.id,
+    onBehalfId: w.onBehalfId,
+    stampedRef,
+  }
   let receipt: Receipt
   let topicNote: string | undefined
 
@@ -280,7 +314,7 @@ async function write(
     await db.query(
       `UPDATE entries SET type = $2, title = $3, content = $4, applies_to = $5, tags = $6, refs = $7,
               revision = $8, norm_hash = $9, review_after = $10, expires_at = $11, updated_at = $12,
-              session_id = $13, credential_id = $14, on_behalf_id = $15, stamped_ref = coalesce($16, stamped_ref)
+              session_id = $13, credential_id = $14, on_behalf_id = $15, stamped_ref = $16
         WHERE id = $1`,
       [
         existingTopic.id,
@@ -301,7 +335,7 @@ async function write(
         stampedRef,
       ],
     )
-    await revisionRow(db, String(existingTopic.id), revision, p, who.accountId, who.credential.id, now)
+    await revisionRow(db, String(existingTopic.id), revision, p, by, now)
     await emit(db, c, { brainId, kind: 'entry.revised', targetId: String(existingTopic.id), label: p.title })
     receipt = {
       entryId: String(existingTopic.id),
@@ -313,14 +347,23 @@ async function write(
       similar: [],
     }
   } else {
-    const dup = p.topic
-      ? undefined
-      : await db.one(
-          `SELECT id, revision, repeat_count FROM entries
-            WHERE brain_id = $1 AND author_id = $2 AND norm_hash = $3 AND topic IS NULL AND state = 'active'
-              AND created_at > $4::timestamptz - make_interval(secs => $5) FOR UPDATE`,
-          [brainId, who.accountId, normHash, now, DEDUP_WINDOW_MS / 1000],
-        )
+    // A repetition is the same account saying the same thing again: same type, same person it speaks
+    // for, same job (stamped reference), within 15 minutes. Summaries are never merged. The advisory
+    // lock makes two identical saves at once count as one and a repetition.
+    let dup: Row | undefined
+    if (!p.topic && p.type !== 'summary') {
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `dedup:${brainId}:${who.accountId}:${normHash}`,
+      ])
+      dup = await db.one(
+        `SELECT id, revision, repeat_count FROM entries
+          WHERE brain_id = $1 AND author_id = $2 AND norm_hash = $3 AND topic IS NULL AND state = 'active'
+            AND type = $6 AND on_behalf_id IS NOT DISTINCT FROM $7 AND stamped_ref IS NOT DISTINCT FROM $8
+            AND created_at > $4::timestamptz - make_interval(secs => $5)
+          ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+        [brainId, who.accountId, normHash, now, DEDUP_WINDOW_MS / 1000, p.type, w.onBehalfId, stampedRef],
+      )
+    }
     if (dup) {
       const row = await db.one<{ repeat_count: number }>(
         'UPDATE entries SET repeat_count = repeat_count + 1, updated_at = $2 WHERE id = $1 RETURNING repeat_count',
@@ -370,7 +413,7 @@ async function write(
           now,
         ],
       )
-      await revisionRow(db, id, 1, p, who.accountId, who.credential.id, now)
+      await revisionRow(db, id, 1, p, by, now)
       await emit(db, c, { brainId, kind: 'entry.saved', targetId: id, label: p.title })
       receipt = {
         entryId: id,
@@ -386,13 +429,13 @@ async function write(
   receipt.similar = await similarTo(db, brainId, receipt.entryId, p.topic, `${p.title} ${p.content}`)
   if (topicNote) receipt.topicNote = topicNote
   await touch(db, sessionId, now)
-  if (o.requestKey !== undefined && requestHash) {
+  if (keyHash && requestHash) {
     await db.query(
       'INSERT INTO request_keys (credential_id, key, request_hash, receipt, created_at) VALUES ($1, $2, $3, $4, $5)',
-      [who.credential.id, o.requestKey, requestHash, JSON.stringify(receipt), now],
+      [who.credential.id, keyHash, requestHash, JSON.stringify(receipt), now],
     )
   }
-  return receipt
+  return canonical(receipt)
 }
 
 async function revisionRow(
@@ -400,14 +443,28 @@ async function revisionRow(
   entryId: string,
   revision: number,
   p: Prepared,
-  authorId: string,
-  credentialId: string,
+  by: { authorId: string; credentialId: string; onBehalfId: string | null; stampedRef: string | null },
   at: Date,
 ): Promise<void> {
   await db.query(
-    `INSERT INTO entry_revisions (entry_id, revision, type, title, content, applies_to, tags, refs, author_id, credential_id, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-    [entryId, revision, p.type, p.title, p.content, p.appliesTo, p.tags, p.refs, authorId, credentialId, at],
+    `INSERT INTO entry_revisions (entry_id, revision, type, title, content, applies_to, tags, refs, author_id,
+       credential_id, on_behalf_id, stamped_ref, created_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+    [
+      entryId,
+      revision,
+      p.type,
+      p.title,
+      p.content,
+      p.appliesTo,
+      p.tags,
+      p.refs,
+      by.authorId,
+      by.credentialId,
+      by.onBehalfId,
+      by.stampedRef,
+      at,
+    ],
   )
 }
 
@@ -549,6 +606,14 @@ export async function summarizeSession(
     })
     await allow(c, 'journal.write', { role, brainStatus: brain.status }, brain.id)
     if (s.status !== 'open') {
+      // A retry of the summary that closed it gets the same receipt back (CA5).
+      if (input.requestKey !== undefined) {
+        const seen = await db.one<{ receipt: Receipt }>(
+          'SELECT receipt FROM request_keys WHERE credential_id = $1 AND key = $2',
+          [ctx.who.credential.id, sha(input.requestKey)],
+        )
+        if (seen && seen.receipt.entryId === s.summary_entry_id) return canonical(seen.receipt)
+      }
       throw conflict('session_closed', 'That session is already closed.', 'Open a new session for new work.')
     }
     const receipt = await write(

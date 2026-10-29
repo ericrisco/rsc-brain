@@ -5,6 +5,7 @@ import type { Principal } from '../auth/principal.ts'
 import { conflict, invalid, notFound } from '../core/errors.ts'
 import { newId } from '../core/ids.ts'
 import type { Db, Row } from '../db/db.ts'
+import { redact } from '../privacy/redact.ts'
 import { allow, type Ctx, inBrain } from './context.ts'
 import { emit } from './events.ts'
 
@@ -76,9 +77,10 @@ export async function openSession(
   slug: string,
   o: { purpose?: string; ref?: string; forKey?: string },
 ): Promise<Session> {
-  const purpose = (o.purpose ?? '').trim()
+  // Everything stored is redacted first (pack rule 1), session purpose and reference included.
+  const purpose = redact((o.purpose ?? '').trim()).text
   if (purpose.length > 500) throw invalid('The purpose is longer than 500 characters.', 'Shorten it.')
-  const ref = o.ref?.trim() || null
+  const ref = o.ref?.trim() ? redact(o.ref.trim()).text : null
   if (ref && ref.length > 200) throw invalid('The reference is longer than 200 characters.', 'Shorten it.')
   return ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
@@ -88,10 +90,11 @@ export async function openSession(
     let bound = false
     let sessionRef = ref
     if (o.forKey) {
-      // A service opens the session of one of its short keys; the key's own reference wins.
+      // A service opens the session of one of its short keys; the key's own reference wins. The key row
+      // is locked so two openings at once give one session and one 409, never a unique-index 500.
       const k = await db.one(
         `SELECT id, ref, write_brain_id FROM credentials
-          WHERE id = $1 AND kind = 'short' AND parent_id = $2 AND revoked_at IS NULL`,
+          WHERE id = $1 AND kind = 'short' AND parent_id = $2 AND revoked_at IS NULL FOR UPDATE`,
         [o.forKey, ctx.who.credential.id],
       )
       if (!k || ctx.who.credential.kind !== 'main') throw notFound('short key')
@@ -101,9 +104,10 @@ export async function openSession(
           'Open the session in the brain the key writes to.',
         )
       }
-      const open = await db.one("SELECT id FROM sessions WHERE credential_id = $1 AND status = 'open'", [
-        k.id,
-      ])
+      const open = await db.one(
+        "SELECT id FROM sessions WHERE credential_id = $1 AND bound AND status = 'open'",
+        [k.id],
+      )
       if (open)
         throw conflict('session_open', 'That key already has an open session.', `Use session ${open.id}.`)
       credentialId = String(k.id)
@@ -136,9 +140,11 @@ export async function sessionFor(db: Db, ctx: Ctx, brainId: string, sessionId?: 
     }
     return String(s.id)
   }
+  // Locked, so a summary, an end or the idle sweep closing it meanwhile makes this write move on to the
+  // implicit session instead of landing in a closed one.
   const own = await db.one(
     `SELECT id FROM sessions WHERE credential_id = $1 AND brain_id = $2 AND status = 'open' AND day IS NULL
-      ORDER BY opened_at DESC LIMIT 1`,
+      ORDER BY opened_at DESC, id DESC LIMIT 1 FOR UPDATE`,
     [ctx.who.credential.id, brainId],
   )
   if (own) return String(own.id)
@@ -173,9 +179,10 @@ export async function endSession(ctx: Ctx, id: string): Promise<Session> {
     const c = { ...ctx, db }
     const s = await db.one('SELECT * FROM sessions WHERE id = $1 FOR UPDATE', [id])
     if (!s || !(await owns(db, ctx.who, s))) throw notFound('session')
-    await inBrain(c, { id: String(s.brain_id) }).catch(() => {
+    const { brain, role } = await inBrain(c, { id: String(s.brain_id) }).catch(() => {
       throw notFound('session')
     })
+    await allow(c, 'journal.write', { role, brainStatus: brain.status }, brain.id)
     if (s.status !== 'open') return sessionOf(s)
     const row = await db.one(
       "UPDATE sessions SET status = 'closed_no_summary', closed_at = $2 WHERE id = $1 RETURNING *",

@@ -89,4 +89,35 @@ describe('redaction', () => {
   it('normalises case and spacing for comparisons', () => {
     assert.equal(normalize('  Intros   of 30s\nWORK  '), 'intros of 30s work')
   })
+
+  it('catches the shapes the review found missing', () => {
+    const cases: [string, string][] = [
+      ['-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF\n-----END PGP PRIVATE KEY BLOCK-----', SECRET_MARK],
+      ['redis://:s3cretPassw0rdXYZ@cache:6379', `redis://:${SECRET_MARK}@cache:6379`],
+      ['{"Authorization": "Bearer abcdefghijklmnop123"}', `{"Authorization": "Bearer ${SECRET_MARK}"}`],
+      ['{"password": "hunter2hunter2"}', `{"password": ${SECRET_MARK}}`],
+      ['DB_PASSWORD=hunter2hunter2', `DB_PASSWORD=${SECRET_MARK}`],
+    ]
+    for (const [input, expected] of cases) assert.equal(redact(input).text, expected, input)
+    assert.equal(redact('a <private note="x">hidden</private> b').text, `a ${PRIVATE_MARK} b`)
+  })
+
+  it('no rule takes long on a hostile 32 000-character text', () => {
+    const hostile = [
+      'eyJ-'.repeat(8000),
+      'a.'.repeat(16000),
+      'sk-'.repeat(10666),
+      'x://'.repeat(8000),
+      'password'.repeat(4000),
+      `${'a'.repeat(31990)}:`,
+      'Authorization: Bearer '.repeat(1454),
+      '-----BEGIN RSA PRIVATE KEY-----'.repeat(1032),
+    ]
+    for (const text of hostile) {
+      const t0 = performance.now()
+      redact(text)
+      const ms = performance.now() - t0
+      assert.ok(ms < 100, `${text.slice(0, 12)}… took ${ms.toFixed(0)} ms`)
+    }
+  })
 })

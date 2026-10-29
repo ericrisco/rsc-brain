@@ -36,6 +36,8 @@ CREATE TABLE sessions (
 CREATE INDEX sessions_brain ON sessions (brain_id, opened_at DESC);
 CREATE INDEX sessions_open ON sessions (credential_id, brain_id) WHERE status = 'open';
 CREATE UNIQUE INDEX sessions_implicit ON sessions (credential_id, brain_id, day) WHERE day IS NOT NULL AND status = 'open';
+-- A short key has at most one open session opened for it by its service.
+CREATE UNIQUE INDEX sessions_bound ON sessions (credential_id) WHERE bound AND status = 'open';
 CREATE INDEX sessions_idle ON sessions (last_activity_at) WHERE status = 'open';
 
 CREATE TABLE entries (
@@ -44,8 +46,8 @@ CREATE TABLE entries (
   session_id       text NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   type             text NOT NULL CHECK (type IN ('decision','learning','attempt','correction','preference','fact','step','summary','note')),
   topic            text CHECK (topic IS NULL OR (length(topic) <= 200 AND topic ~ '^[a-z0-9]+(-[a-z0-9]+)*(/[a-z0-9]+(-[a-z0-9]+)*)*$')),
-  title            text NOT NULL,
-  content          text NOT NULL,
+  title            text NOT NULL CHECK (length(title) <= 260),
+  content          text NOT NULL CHECK (length(content) <= 40000),
   applies_to       text,
   tags             text[] NOT NULL DEFAULT '{}',
   refs             text[] NOT NULL DEFAULT '{}',
@@ -93,13 +95,15 @@ CREATE TABLE entry_revisions (
   refs          text[] NOT NULL DEFAULT '{}',
   author_id     text NOT NULL REFERENCES accounts(id),
   credential_id text REFERENCES credentials(id) ON DELETE SET NULL,
+  on_behalf_id  text REFERENCES accounts(id),
+  stamped_ref   text, -- the reference of the short key that wrote this revision, if any
   created_at    timestamptz NOT NULL,
   PRIMARY KEY (entry_id, revision)
 );
 
 CREATE TABLE request_keys (
   credential_id text NOT NULL REFERENCES credentials(id) ON DELETE CASCADE,
-  key           text NOT NULL CHECK (length(key) BETWEEN 1 AND 200),
+  key           text NOT NULL CHECK (key ~ '^[0-9a-f]{64}$'), -- sha256 of the client's key, never the key itself
   request_hash  text NOT NULL,
   receipt       jsonb NOT NULL,
   created_at    timestamptz NOT NULL,
@@ -119,3 +123,4 @@ CREATE TABLE events (
 );
 CREATE INDEX events_brain ON events (brain_id, id);
 CREATE INDEX events_target ON events (target_id);
+CREATE INDEX entry_revisions_ref ON entry_revisions (stamped_ref) WHERE stamped_ref IS NOT NULL;

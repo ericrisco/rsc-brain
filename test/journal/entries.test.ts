@@ -23,6 +23,7 @@ describe('the journal', { skip: skipPg }, () => {
   let eric: { id: string; key: string; email: string }
   let ana: { id: string; key: string }
   let reader: { id: string; key: string }
+  let bob: { id: string; key: string }
   let factory: { id: string; key: string }
 
   const save = async (key: string, body: Record<string, unknown>, slug = 'yt') => {
@@ -42,10 +43,12 @@ describe('the journal', { skip: skipPg }, () => {
     }
     ana = await w.person('Ana')
     reader = await w.person('Reader')
+    bob = await w.person('Bob')
     factory = await w.service('RSC Factory')
     await w.call(eric.key, 'POST', '/v1/brains', { slug: 'yt', purpose: 'Our channel.' })
     await w.member('yt', ana.id, 'contributor')
     await w.member('yt', reader.id, 'reader')
+    await w.member('yt', bob.id, 'contributor')
     await w.member('yt', factory.id, 'contributor')
   })
   after(async () => w.close())
@@ -432,5 +435,212 @@ describe('the journal', { skip: skipPg }, () => {
     }
     assert.equal(seen, total)
     assert.equal((await w.call(eric.key, 'GET', '/v1/brains/yt/entries?cursor=garbage')).status, 400)
+  })
+
+  it('review: session purpose and reference are redacted, also in the activity', async () => {
+    const s = (
+      await w.call(ana.key, 'POST', '/v1/brains/yt/sessions', {
+        purpose: `deploy with ${GITHUB}`,
+        ref: `job ${GITHUB}`,
+      })
+    ).body.session as { id: string; purpose: string; ref: string }
+    assert.ok(!s.purpose.includes(GITHUB) && !s.ref.includes(GITHUB))
+    for (const t of ['sessions', 'events']) {
+      assert.ok(!JSON.stringify(await w.db.query(`SELECT * FROM ${t}`)).includes(GITHUB), t)
+    }
+  })
+
+  it('review: request keys are stored as hashes, never as given', async () => {
+    await save(ana.key, { type: 'note', title: 'K', content: 'keyed', requestKey: GITHUB })
+    assert.ok(!JSON.stringify(await w.db.query('SELECT * FROM request_keys')).includes(GITHUB))
+  })
+
+  it('review: a short key reference is redacted when the key is minted', async () => {
+    const k = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'yt',
+        ref: `run ${GITHUB}`,
+        ttlMinutes: 5,
+      })
+    ).body.key as { secret: string }
+    const me = (await w.call(k.secret, 'GET', '/v1/me')).body.key as { ref: string }
+    assert.ok(!me.ref.includes(GITHUB))
+  })
+
+  it('review: a revision by someone else neither borrows nor takes away a job reference', async () => {
+    const k = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'yt',
+        ref: 'run r_t, step 1',
+        ttlMinutes: 30,
+      })
+    ).body.key as { secret: string }
+    await save(k.secret, {
+      type: 'step',
+      title: 'Narration',
+      content: 'Narrated by the step.',
+      topic: 'steps/narration',
+    })
+    await save(ana.key, {
+      type: 'step',
+      title: 'Narration',
+      content: 'planted by ana',
+      topic: 'steps/narration',
+    })
+    const byRef = (
+      await w.call(eric.key, 'GET', `/v1/brains/yt/entries?ref=${encodeURIComponent('run r_t, step 1')}`)
+    ).body.items as { content: string; revision: number; ref: string }[]
+    assert.equal(byRef.length, 1)
+    assert.deepEqual([byRef[0]?.content, byRef[0]?.revision], ['Narrated by the step.', 1])
+    const stamped = await w.db.one("SELECT stamped_ref FROM entries WHERE topic = 'steps/narration'")
+    assert.equal(stamped?.stamped_ref, null)
+  })
+
+  it('review: relayed corrections for two people, or after a learning, stay separate', async () => {
+    const relay = (onBehalf: string) =>
+      w.call(factory.key, 'POST', '/v1/brains/yt/corrections/relay', {
+        onBehalf,
+        title: 'Hook slow',
+        content: 'The hook is too slow.',
+      })
+    const anaEmail = (await w.db.one<{ email: string }>('SELECT email FROM accounts WHERE id = $1', [ana.id]))
+      ?.email as string
+    const a = (await relay(anaEmail)).body.receipt as Receipt
+    const b = (await relay(eric.email)).body.receipt as Receipt
+    assert.notEqual(a.entryId, b.entryId)
+    const k = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'yt',
+        ref: 'r-learn',
+        ttlMinutes: 30,
+      })
+    ).body.key as { secret: string }
+    const l = await save(k.secret, {
+      type: 'learning',
+      title: 'Intro long',
+      content: 'Long intro loses retention.',
+    })
+    const c = (
+      await w.call(factory.key, 'POST', '/v1/brains/yt/corrections/relay', {
+        onBehalf: eric.email,
+        title: 'Intro long',
+        content: 'Long intro loses retention.',
+      })
+    ).body.receipt as Receipt
+    assert.notEqual(c.entryId, l.receipt.entryId)
+    assert.equal(c.deduplicated, false)
+  })
+
+  it('review: two jobs saying the same thing keep one entry each', async () => {
+    const mint = async (ref: string) =>
+      (
+        (await w.call(factory.key, 'POST', '/v1/keys/short', { writeBrain: 'yt', ref, ttlMinutes: 30 })).body
+          .key as { secret: string }
+      ).secret
+    const ka = await mint('run A')
+    const kb = await mint('run B')
+    const a = await save(ka, { type: 'step', title: 'Done', content: 'Narration done.' })
+    const b = await save(kb, { type: 'step', title: 'Done', content: 'Narration done.' })
+    assert.notEqual(a.receipt.entryId, b.receipt.entryId)
+  })
+
+  it('review: two sessions closed with the same words each get their own summary', async () => {
+    const open = async () =>
+      (
+        (await w.call(ana.key, 'POST', '/v1/brains/yt/sessions', { purpose: 'p' })).body.session as {
+          id: string
+        }
+      ).id
+    const s1 = await open()
+    const r1 = (await w.call(ana.key, 'POST', `/v1/sessions/${s1}/summary`, { content: 'Nothing pending.' }))
+      .body.receipt as Receipt
+    const s2 = await open()
+    const r2 = (
+      await w.call(ana.key, 'POST', `/v1/sessions/${s2}/summary`, { content: 'nothing   pending.' })
+    ).body.receipt as Receipt
+    assert.notEqual(r1.entryId, r2.entryId)
+    const e2 = (await entry(ana.key, r2.entryId)).entry as { sessionId: string }
+    assert.equal(e2.sessionId, s2)
+  })
+
+  it('review: retrying a summary with its request key returns the same receipt', async () => {
+    const s = (
+      (await w.call(ana.key, 'POST', '/v1/brains/yt/sessions', { purpose: 'retry' })).body.session as {
+        id: string
+      }
+    ).id
+    const body = { content: 'Goal reached.', requestKey: 'sum-retry' }
+    const a = await w.call(ana.key, 'POST', `/v1/sessions/${s}/summary`, body)
+    const b = await w.call(ana.key, 'POST', `/v1/sessions/${s}/summary`, body)
+    assert.equal(b.status, 201)
+    assert.equal(b.text, a.text)
+  })
+
+  it('review: identical saves at once, from a key with its own open session, count once', async () => {
+    const s = (
+      (await w.call(bob.key, 'POST', '/v1/brains/yt/sessions', { purpose: 'storm' })).body.session as {
+        id: string
+      }
+    ).id
+    const body = { type: 'note', title: 'Storm', content: 'same thing ten times' }
+    const rs = await Promise.all(Array.from({ length: 10 }, () => save(bob.key, body)))
+    const ids = new Set(rs.map((r) => r.receipt.entryId))
+    assert.equal(ids.size, 1)
+    const e = (await entry(bob.key, [...ids][0] as string)).entry as {
+      sessionId: string
+      repeatCount: number
+    }
+    assert.deepEqual([e.sessionId, e.repeatCount], [s, 10])
+  })
+
+  it('review: writes racing a summary never land in the closed session', async () => {
+    for (let round = 0; round < 5; round += 1) {
+      const s = (
+        (await w.call(bob.key, 'POST', '/v1/brains/yt/sessions', { purpose: `race ${round}` })).body
+          .session as { id: string }
+      ).id
+      const writes = Array.from({ length: 6 }, (_, i) =>
+        save(bob.key, { type: 'note', title: `r${round}w${i}`, content: `race ${round} ${i}` }),
+      )
+      const sum = w.call(bob.key, 'POST', `/v1/sessions/${s}/summary`, { content: `summary ${round}` })
+      await Promise.all([...writes, sum])
+      const closedAt = await w.db.one<{ closed_at: Date }>('SELECT closed_at FROM sessions WHERE id = $1', [
+        s,
+      ])
+      const late = await w.db.query(
+        'SELECT id FROM entries WHERE session_id = $1 AND created_at > $2 AND type <> $3',
+        [s, closedAt?.closed_at, 'summary'],
+      )
+      assert.deepEqual(late, [])
+    }
+  })
+
+  it('review: a read-only key cannot close sessions', async () => {
+    const ro = await w.token(ana.id, { perm: 'read' })
+    const s = (
+      (await w.call(ana.key, 'POST', '/v1/brains/yt/sessions', { purpose: 'ro' })).body.session as {
+        id: string
+      }
+    ).id
+    assert.equal((await w.call(ro, 'POST', `/v1/sessions/${s}/end`)).status, 403)
+  })
+
+  it('review: one open session per short key, even when opened twice at once', async () => {
+    const k = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', { writeBrain: 'yt', ref: 'twice', ttlMinutes: 30 })
+    ).body.key as { id: string }
+    const rs = await Promise.all(
+      [1, 2].map(() => w.call(factory.key, 'POST', '/v1/brains/yt/sessions', { forKey: k.id })),
+    )
+    assert.deepEqual(rs.map((r) => r.status).sort(), [201, 409])
+  })
+
+  it('review: text still has to fit once secrets become marks', async () => {
+    // 31 998 characters fit; the 10-character password becomes a 17-character mark and no longer does.
+    const content = `${'y'.repeat(31_975)} https://u:p4ssw0rd99@h`
+    assert.equal(content.length, 31_998)
+    const r = await save(ana.key, { type: 'note', title: 't', content })
+    assert.equal(r.status, 400)
+    assert.match(String((r.body.error as { message: string }).message), /Once secrets are replaced/)
   })
 })

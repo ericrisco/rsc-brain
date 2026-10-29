@@ -70,7 +70,14 @@ export async function listEntries(ctx: Ctx, slug: string, f: EntryFilter): Promi
     params.push(v)
     where.push(sql.replace('?', `$${params.length}`))
   }
-  if (f.ref !== undefined) add('stamped_ref = ?', f.ref)
+  // An entry belongs to a job's reference if any of its revisions was written by that job's key (a
+  // later revision by someone else does not take it away, nor lend it that reference).
+  if (f.ref !== undefined) {
+    add(
+      'EXISTS (SELECT 1 FROM entry_revisions rv WHERE rv.entry_id = entries.id AND rv.stamped_ref = ?)',
+      f.ref,
+    )
+  }
   if (f.type !== undefined) add('type = ?', f.type)
   if (f.sessionId !== undefined) add('session_id = ?', f.sessionId)
   const total = await ctx.db.one<{ n: number }>(
@@ -89,8 +96,34 @@ export async function listEntries(ctx: Ctx, slug: string, f: EntryFilter): Promi
   )
   const page = rows.slice(0, limit)
   const last = page.at(-1)
+  let items = page.map(entryOf)
+  if (f.ref !== undefined && items.length > 0) {
+    // Filtered by a job's reference, each entry shows what that job wrote (its last revision there),
+    // not what someone added afterwards; `revision` says which one it is.
+    const revs = await ctx.db.query(
+      `SELECT DISTINCT ON (entry_id) * FROM entry_revisions
+        WHERE entry_id = ANY($1) AND stamped_ref = $2 ORDER BY entry_id, revision DESC`,
+      [items.map((e) => e.id), f.ref],
+    )
+    const byId = new Map(revs.map((r) => [String(r.entry_id), r]))
+    items = items.map((e) => {
+      const r = byId.get(e.id)
+      if (!r) return e
+      return {
+        ...e,
+        type: r.type as Entry['type'],
+        title: String(r.title),
+        content: String(r.content),
+        appliesTo: r.applies_to == null ? null : String(r.applies_to),
+        tags: (r.tags as string[]) ?? [],
+        refs: (r.refs as string[]) ?? [],
+        ref: f.ref ?? null,
+        revision: Number(r.revision),
+      }
+    })
+  }
   return {
-    items: page.map(entryOf),
+    items,
     total: total?.n ?? 0,
     next: rows.length > limit && last ? encode(last.created_at as Date, String(last.id)) : null,
   }
