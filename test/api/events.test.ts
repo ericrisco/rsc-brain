@@ -134,7 +134,7 @@ describe('the event stream of a brain', { skip: skipPg }, () => {
       .key as { id: string; secret: string }
 
   before(async () => {
-    w = await world({ events: { pollMs: 20, holeMs: 200, heartbeatMs: 100, recheckMs: 100 } })
+    w = await world({ events: { pollMs: 20, heartbeatMs: 100, recheckMs: 100 } })
     eric = await w.person('Eric')
     ana = await w.person('Ana')
     bob = await w.person('Bob')
@@ -161,7 +161,7 @@ describe('the event stream of a brain', { skip: skipPg }, () => {
   })
 
   it('the default rhythm: live within 2 s, a heartbeat every 15 s, the key checked every 2 s', () => {
-    assert.ok(EVENT_TIMINGS.pollMs + EVENT_TIMINGS.holeMs < 2000)
+    assert.ok(EVENT_TIMINGS.pollMs < 2000)
     assert.equal(EVENT_TIMINGS.heartbeatMs, 15_000)
     assert.equal(EVENT_TIMINGS.recheckMs, 2_000)
   })

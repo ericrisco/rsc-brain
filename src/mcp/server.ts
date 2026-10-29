@@ -157,6 +157,17 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
     if (!notification && !(typeof m.id === 'string' || Number.isSafeInteger(m.id))) {
       return failure(null, new RpcError(400, -32600, 'A request "id" is a string or a whole number.'))
     }
+    // The reply carries the id back, within the limit of every answer: an id has room, not all of it.
+    if (!notification && JSON.stringify(m.id).length > MAX_ID_CHARS) {
+      return failure(
+        null,
+        new RpcError(
+          400,
+          -32600,
+          `A request "id" has at most ${MAX_ID_CHARS} characters; use a shorter one.`,
+        ),
+      )
+    }
     if (notification) return { status: 202, body: '', headers: { 'content-type': 'text/plain' } }
     const params = (m.params && typeof m.params === 'object' ? m.params : {}) as Json
     const meta = (params._meta ?? {}) as Json
@@ -214,7 +225,9 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
           })
         }
       }
-      const result = await dispatch(r, who, m.method, params, modern, routes)
+      // The reply carries the request id back: its room comes out of the limit too.
+      const idChars = JSON.stringify(m.id).length
+      const result = await dispatch(r, who, m.method, params, modern, routes, idChars)
       return rpc(200, {
         jsonrpc: '2.0',
         id: m.id,
@@ -258,6 +271,7 @@ async function dispatch(
   params: Json,
   modern: boolean,
   routes: () => Route[],
+  idChars: number,
 ): Promise<Json> {
   switch (method) {
     case 'initialize': {
@@ -291,7 +305,7 @@ async function dispatch(
         })),
       }
     case 'tools/call':
-      return callTool(r, who, params, modern, routes)
+      return callTool(r, who, params, modern, routes, idChars)
     case 'prompts/list':
       return {
         prompts: PROMPTS.map((p) => ({
@@ -327,6 +341,7 @@ async function callTool(
   params: Json,
   modern: boolean,
   routes: () => Route[],
+  idChars: number,
 ): Promise<Json> {
   const tool = TOOLS.find((t) => t.name === params.name)
   if (!tool) {
@@ -357,7 +372,7 @@ async function callTool(
     }
     const reply = await found.route.handler({ ...r, params: found.params, query, body: call.body, who })
     const body = reply.body as Json
-    return toolResult(body)
+    return toolResult(body, idChars)
   } catch (err) {
     if (err instanceof AppError) {
       const e = err.body()
@@ -368,22 +383,26 @@ async function callTool(
   }
 }
 
-// Room for the rest of the JSON-RPC answer (jsonrpc, id, resultType, isError).
+// Room for the rest of the JSON-RPC answer (jsonrpc, resultType, isError), besides the request id,
+// which the client chooses and so is counted as it is (`idChars`, its length written as JSON).
 const ENVELOPE = 1_000
+export const MAX_ID_CHARS = 10_000
 
 // The result goes as text and, when it fits too, as structured content. What counts is the size once
 // written as JSON (quotes and line breaks in the text are escaped), so the whole answer stays within
 // the limit of the API (spec B5 «Respuestas acotadas»).
-export function toolResult(body: Json): Json {
+export function toolResult(body: Json, idChars = 0): Json {
   const full = JSON.stringify(body)
   const sent = (text: string, structured?: Json) =>
-    JSON.stringify({ content: [{ type: 'text', text }], structuredContent: structured }).length + ENVELOPE
+    JSON.stringify({ content: [{ type: 'text', text }], structuredContent: structured }).length +
+    ENVELOPE +
+    idChars
   if (!Array.isArray(body) && sent(full, body) <= MAX_REPLY_CHARS) {
     return { content: [{ type: 'text', text: full }], structuredContent: body, isError: false }
   }
   if (sent(full) <= MAX_REPLY_CHARS) return { content: [{ type: 'text', text: full }], isError: false }
   const note = `\n[cut at ${MAX_REPLY_CHARS} characters. ${CUT_HOW}]`
-  let keep = MAX_REPLY_CHARS - note.length - ENVELOPE
+  let keep = MAX_REPLY_CHARS - note.length - ENVELOPE - idChars
   let text = `${head(full, keep)}${note}`
   while (sent(text) > MAX_REPLY_CHARS) {
     keep -= sent(text) - MAX_REPLY_CHARS

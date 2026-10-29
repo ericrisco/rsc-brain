@@ -250,6 +250,12 @@ describe('the journal', { skip: skipPg }, () => {
     const list = await w.call(ana.key, 'GET', '/v1/brains/yt/sessions?limit=200')
     const got = (list.body.items as { id: string; status: string }[]).find((x) => x.id === s.id)
     assert.equal(got?.status, 'closed_no_summary')
+    // Its followers learn it closed (spec B5 «Flujo de eventos»: «sesión cerrada»), by the system.
+    const ev = await w.db.query(
+      "SELECT account_id, credential_id, label FROM events WHERE kind = 'session.closed' AND target_id = $1",
+      [s.id],
+    )
+    assert.deepEqual(ev, [{ account_id: null, credential_id: null, label: 'idle for 24 hours' }])
   })
 
   it("without a session, entries go to the key's implicit session of the day", async () => {

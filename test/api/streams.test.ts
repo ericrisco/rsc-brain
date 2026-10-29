@@ -31,7 +31,7 @@ describe('open event streams are bounded', { skip: skipPg }, () => {
 
   before(async () => {
     w = await world({
-      events: { pollMs: 20, holeMs: 200, heartbeatMs: 100, recheckMs: 100, perKey: 2, total: 3 },
+      events: { pollMs: 20, heartbeatMs: 100, recheckMs: 100, perKey: 2, total: 3 },
     })
     eric = await w.person('Eric')
     await w.call(eric.key, 'POST', '/v1/brains', { slug: 'yt' })

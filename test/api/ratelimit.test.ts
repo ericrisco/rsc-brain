@@ -113,6 +113,30 @@ describe('the rate limit per key', { skip: skipPg }, () => {
     }
   })
 
+  it('lowering the limit counts what a key already did: Retry-After says when enough of it has passed', async () => {
+    const k = await w.person('Busy')
+    // Five requests, ten seconds apart; then the administration lowers the limit to two.
+    for (let i = 0; i < 5; i += 1) {
+      assert.equal((await w.call(k.key, 'GET', '/v1/me')).status, 200)
+      w.advance(10_000)
+    }
+    await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: 2 })
+    try {
+      const r = await w.raw('GET', '/v1/me', { headers: { authorization: `Bearer ${k.key}` } })
+      assert.equal(r.status, 429)
+      // The requests were at 0, 10, 20, 30 and 40 s; it is 50 s. For fewer than two to stand in the
+      // minute, the one at 30 s must leave it: at 90 s, 40 s from now.
+      assert.equal(r.headers.get('retry-after'), '40')
+      w.advance(39_000)
+      assert.equal((await w.call(k.key, 'GET', '/v1/me')).status, 429)
+      w.advance(1_000)
+      assert.equal((await w.call(k.key, 'GET', '/v1/me')).status, 200)
+    } finally {
+      w.advance(60_000)
+      await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: 600 })
+    }
+  })
+
   it('a refused request does not count: a client that keeps knocking gets in once the minute has passed', async () => {
     await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: 2 })
     try {

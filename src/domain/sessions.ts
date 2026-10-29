@@ -50,14 +50,30 @@ export function dayIn(tz: string, at: Date): string {
   }).format(at)
 }
 
-// Sessions with no activity for 24 hours close themselves, without a summary.
+// Sessions with no activity for 24 hours close themselves, without a summary. Whoever follows the
+// brain learns it (an event by the installation itself, with no account or key).
 export async function closeIdle(db: Db, now: Date): Promise<number> {
-  const rows = await db.query(
-    `UPDATE sessions SET status = 'closed_no_summary', closed_at = $1
-      WHERE status = 'open' AND last_activity_at <= $1::timestamptz - interval '24 hours' RETURNING id`,
-    [now],
-  )
-  return rows.length
+  return db.tx(async (tx) => {
+    const rows = await tx.query(
+      `UPDATE sessions SET status = 'closed_no_summary', closed_at = $1
+        WHERE status = 'open' AND last_activity_at <= $1::timestamptz - interval '24 hours'
+        RETURNING id, brain_id`,
+      [now],
+    )
+    for (const r of rows) {
+      await emit(
+        tx,
+        { clock: () => now, who: null },
+        {
+          brainId: String(r.brain_id),
+          kind: 'session.closed',
+          targetId: String(r.id),
+          label: 'idle for 24 hours',
+        },
+      )
+    }
+    return rows.length
+  })
 }
 
 // Who may close or write into a session: the key that owns it, another key of the same person, or

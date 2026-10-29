@@ -1,7 +1,9 @@
 // GET /v1/brains/:slug/events (spec B5 «Flujo de eventos»): the events of a brain as Server-Sent Events.
 // Each one is a "data:" line with the event as JSON and its id in "id:", so a client that reconnects
 // sends Last-Event-ID (or ?lastEventId=) and gets what it missed, in order, from the last 24 hours. A
-// gap longer than that is said with a "gap" event (CA20). Who sees what follows pack rule 7. The key
+// gap longer than that is said with a "gap" event (CA20), and so is an id this installation never gave
+// (one from a copy it was restored from). The id is the event's delivery number (hub.ts): ids grow in
+// the order events are delivered, which is the order they became visible. Who sees what follows pack rule 7. The key
 // and the role are checked again every 2 seconds: a revoked key or a changed role closes the stream
 // with a "closed" event (B4 CA30). A comment every 15 seconds keeps proxies from closing it.
 import { bearer, resolveKey, roleIn } from '../../auth/principal.ts'
@@ -19,7 +21,7 @@ const REPLAY_BATCH = 500
 // The event as a program sees it: identifiers and labels, never a body.
 export function eventOf(e: EventRow) {
   return {
-    id: String(e.id),
+    id: String(e.seq),
     at: e.at.toISOString(),
     brain: e.brain,
     kind: e.kind,
@@ -71,9 +73,9 @@ async function follow(
   const queue: EventRow[] = []
   const send = (rows: EventRow[]) => {
     for (const e of rows) {
-      if (e.id <= lastSent) continue
-      lastSent = e.id
-      if (visibleTo(viewer, e)) out.write(frame({ id: String(e.id), data: eventOf(e) }))
+      if (e.seq <= lastSent) continue
+      lastSent = e.seq
+      if (visibleTo(viewer, e)) out.write(frame({ id: String(e.seq), data: eventOf(e) }))
     }
   }
   const sub = await r.hub.subscribe(brain.id, (rows) => {
@@ -99,7 +101,22 @@ async function follow(
   out.onClose(() => close())
   try {
     out.write(': following\n\n')
-    if (after !== undefined) {
+    if (after !== undefined && after > sub.from) {
+      // An id from the future: this installation never gave it (restored from an older copy?). Nothing
+      // after it can be told apart from what came before, so say so and follow from now.
+      lastSent = sub.from
+      out.write(
+        frame({
+          event: 'gap',
+          data: {
+            kind: 'gap',
+            brain: brain.slug,
+            at: r.clock().toISOString(),
+            message: `The last event id you sent (${after}) is ahead of the newest event of this installation (${sub.from}); it may have been restored from a copy. Catch up with the lists (for example the pending proposals and recent sessions), then follow from here.`,
+          },
+        }),
+      )
+    } else if (after !== undefined) {
       const since = new Date(r.clock().getTime() - REPLAY_HOURS * 3_600_000)
       if (await missedBefore(r.db, brain.id, after, since, viewer)) {
         out.write(

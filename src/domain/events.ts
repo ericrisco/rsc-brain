@@ -1,9 +1,10 @@
 // The activity of a brain: one row per thing that happened, read by the web and by programs that
 // follow a brain (spec B5 «Flujo de eventos»). Identifiers, a short label and, for a search, the text
 // searched (redacted like everything stored); never the body of an entry or a page.
+import type { Principal } from '../auth/principal.ts'
+import type { Clock } from '../core/clock.ts'
 import type { Db, Row } from '../db/db.ts'
 import { redact } from '../privacy/redact.ts'
-import type { Ctx } from './context.ts'
 
 export type EventKind =
   | 'session.opened'
@@ -22,9 +23,10 @@ export type EventKind =
 // What someone looked at, as opposed to what they changed: only curators and whoever looked see these.
 export const LOOKS: readonly EventKind[] = ['search', 'read']
 
+// `who`: null when the installation itself did it (a session closed for being idle).
 export async function emit(
   db: Db,
-  ctx: Ctx,
+  ctx: { clock: Clock; who: Principal | null },
   e: {
     brainId: string
     kind: EventKind
@@ -42,9 +44,9 @@ export async function emit(
       e.brainId,
       ctx.clock(),
       e.kind,
-      ctx.who.accountId,
-      ctx.who.credential.id,
-      ctx.who.credential.kind === 'short' ? ctx.who.credential.ref : null,
+      ctx.who?.accountId ?? null,
+      ctx.who?.credential.id ?? null,
+      ctx.who?.credential.kind === 'short' ? ctx.who.credential.ref : null,
       e.targetId ?? null,
       e.label ? redact(e.label).text.slice(0, 200) : null,
       e.query == null ? null : redact(e.query).text.slice(0, 1000),
@@ -55,6 +57,8 @@ export async function emit(
 
 export type EventRow = {
   id: number
+  // The delivery number (see sequenceEvents): what streams, resuming and gaps go by.
+  seq: number
   brainId: string
   brain: string
   at: Date
@@ -84,6 +88,7 @@ const SELECT = `SELECT e.*, b.slug, a.name AS account_name
 
 const rowOf = (r: Row): EventRow => ({
   id: Number(r.id),
+  seq: Number(r.seq),
   brainId: String(r.brain_id),
   brain: String(r.slug),
   at: r.at as Date,
@@ -97,18 +102,39 @@ const rowOf = (r: Row): EventRow => ({
   query: r.query == null ? null : String(r.query),
 })
 
-export async function lastEventId(db: Db): Promise<number> {
-  const r = await db.one<{ id: string | null }>('SELECT max(id) AS id FROM events')
-  return r?.id == null ? 0 : Number(r.id)
+// The highest delivery number given so far.
+export async function lastSeq(db: Db): Promise<number> {
+  const r = await db.one<{ seq: string | null }>('SELECT max(seq) AS seq FROM events')
+  return r?.seq == null ? 0 : Number(r.seq)
 }
 
-// Events of every brain after an id, oldest first (the live feed reads these).
+// Numbers up to `limit` events that have none yet, oldest first, and returns the numbers given. One
+// statement, committed on its own: what it numbers is visible to every reader from then on, so a feed
+// that reads past its last number never misses one. A write still uncommitted is not seen (nor locked),
+// and gets its number in a later round. Numbers come from one sequence and are given by one feed per
+// installation (one process); several processes would each have to keep their own cursor over `seq`
+// and never number concurrently, or a number could become visible after a later one was read.
+export async function sequenceEvents(db: Db, limit: number): Promise<number[]> {
+  const rows = await db.query<{ seq: string }>(
+    `UPDATE events e SET seq = n.seq
+       FROM (SELECT id, nextval('events_seq') AS seq
+               FROM (SELECT id FROM events WHERE seq IS NULL ORDER BY id LIMIT $1 FOR UPDATE SKIP LOCKED) p
+              ORDER BY id) n
+      WHERE e.id = n.id
+      RETURNING e.seq`,
+    [limit],
+  )
+  return rows.map((r) => Number(r.seq)).sort((x, y) => x - y)
+}
+
+// Events of every brain after a delivery number, in delivery order (the live feed reads these).
 export async function eventsAfter(db: Db, after: number, limit: number): Promise<EventRow[]> {
-  const rows = await db.query(`${SELECT} WHERE e.id > $1 ORDER BY e.id LIMIT $2`, [after, limit])
+  const rows = await db.query(`${SELECT} WHERE e.seq > $1 ORDER BY e.seq LIMIT $2`, [after, limit])
   return rows.map(rowOf)
 }
 
-// Events of one brain in (after, upTo], since a moment, oldest first (resuming after a cut).
+// Events of one brain numbered in (after, upTo], since a moment, in delivery order (resuming after a
+// cut).
 export async function eventsOfBrain(
   db: Db,
   brainId: string,
@@ -118,14 +144,14 @@ export async function eventsOfBrain(
   limit: number,
 ): Promise<EventRow[]> {
   const rows = await db.query(
-    `${SELECT} WHERE e.brain_id = $1 AND e.id > $2 AND e.id <= $3 AND e.at >= $4 ORDER BY e.id LIMIT $5`,
+    `${SELECT} WHERE e.brain_id = $1 AND e.seq > $2 AND e.seq <= $3 AND e.at >= $4 ORDER BY e.seq LIMIT $5`,
     [brainId, after, upTo, since, limit],
   )
   return rows.map(rowOf)
 }
 
-// Whether this viewer missed an event of the brain after `after` that is older than `since`: those are
-// not replayed, so the stream must say there is a gap (CA20).
+// Whether this viewer missed an event of the brain numbered after `after` that is older than `since`:
+// those are not replayed, so the stream must say there is a gap (CA20).
 export async function missedBefore(
   db: Db,
   brainId: string,
@@ -135,7 +161,7 @@ export async function missedBefore(
 ): Promise<boolean> {
   const r = await db.one(
     `SELECT 1 FROM events
-      WHERE brain_id = $1 AND id > $2 AND at < $3
+      WHERE brain_id = $1 AND seq > $2 AND at < $3
         AND ($4 OR kind <> ALL($5::text[]) OR (CASE WHEN $6 THEN credential_id = $7 ELSE account_id = $8 END))
       LIMIT 1`,
     [brainId, after, since, v.curator, LOOKS, v.short, v.credentialId, v.accountId],

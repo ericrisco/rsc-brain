@@ -7,7 +7,7 @@ import { after, before, describe, it } from 'node:test'
 import { createHandler, ROUTES } from '../../src/http/app.ts'
 import { MAX_REPLY_CHARS } from '../../src/http/bounds.ts'
 import { route } from '../../src/http/router.ts'
-import { MAX_REPLY_CHARS as MCP_MAX, MODERN } from '../../src/mcp/server.ts'
+import { MAX_ID_CHARS, MAX_REPLY_CHARS as MCP_MAX, MODERN, toolResult } from '../../src/mcp/server.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
 
@@ -40,6 +40,17 @@ describe('bounded answers', { skip: skipPg }, () => {
     const text = await res.text()
     return { status: res.status, headers: res.headers, text, body: JSON.parse(text) }
   }
+
+  it('a tool result leaves room for the request id the reply carries back, up to the longest id taken', () => {
+    for (const id of [1, 'r'.repeat(MAX_ID_CHARS - 2)]) {
+      const idChars = JSON.stringify(id).length
+      for (const size of [MAX_REPLY_CHARS - 5_000, MAX_REPLY_CHARS + 50_000]) {
+        const result = toolResult({ text: 'x'.repeat(size) }, idChars)
+        const reply = JSON.stringify({ jsonrpc: '2.0', id, result: { resultType: 'complete', ...result } })
+        assert.ok(reply.length <= MAX_REPLY_CHARS, `id of ${idChars}, body of ${size}: ${reply.length}`)
+      }
+    }
+  })
 
   it('one limit for the API and the MCP endpoint: 256 000 characters', () => {
     assert.equal(MAX_REPLY_CHARS, 256_000)
@@ -84,35 +95,45 @@ describe('bounded answers', { skip: skipPg }, () => {
     assert.equal(api.status, 200)
     assert.ok(api.text.length <= MAX_REPLY_CHARS, `${api.text.length}`)
     assert.equal(api.headers.get('x-brain-cut'), 'true')
-    const res = await fetch(`${w.base}/mcp`, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${key}`,
-        'content-type': 'application/json',
-        'mcp-protocol-version': MODERN,
-        'mcp-method': 'tools/call',
-        'mcp-name': 'brain_compile_pack',
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 7,
-        method: 'tools/call',
-        params: {
-          name: 'brain_compile_pack',
-          arguments: { brain: 'big', maxChars: 400000 },
-          _meta: { 'io.modelcontextprotocol/protocolVersion': MODERN },
+    // A long request id too: the reply carries it, and still stays within the limit.
+    for (const id of [7, `run-${'r'.repeat(9_000)}`, `q"${'"'.repeat(4_900)}`]) {
+      const res = await fetch(`${w.base}/mcp`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${key}`,
+          'content-type': 'application/json',
+          'mcp-protocol-version': MODERN,
+          'mcp-method': 'tools/call',
+          'mcp-name': 'brain_compile_pack',
         },
-      }),
-    })
-    const text = await res.text()
-    assert.equal(res.status, 200)
-    assert.ok(text.length <= MAX_REPLY_CHARS, `${text.length}`)
-    const rpc = JSON.parse(text) as {
-      id: number
-      result: { isError: boolean; content: Array<{ text: string }> }
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id,
+          method: 'tools/call',
+          params: {
+            name: 'brain_compile_pack',
+            arguments: { brain: 'big', maxChars: 400000 },
+            _meta: { 'io.modelcontextprotocol/protocolVersion': MODERN },
+          },
+        }),
+      })
+      const text = await res.text()
+      assert.equal(res.status, 200)
+      assert.ok(text.length <= MAX_REPLY_CHARS, `${text.length}`)
+      const rpc = JSON.parse(text) as {
+        id: number | string
+        result: { isError: boolean; content: Array<{ text: string }> }
+      }
+      assert.equal(rpc.id, id)
+      assert.equal(rpc.result.isError, false)
+      assert.match(rpc.result.content[0]?.text ?? '', /\[cut at 256000 characters\. Ask for less/)
     }
-    assert.equal(rpc.id, 7)
-    assert.equal(rpc.result.isError, false)
-    assert.match(rpc.result.content[0]?.text ?? '', /\[cut at 256000 characters\. Ask for less/)
+    // An id longer than that is refused, before any work.
+    const long = await w.raw('POST', '/mcp', {
+      body: { jsonrpc: '2.0', id: 'r'.repeat(MAX_ID_CHARS), method: 'ping', params: {} },
+      headers: { authorization: `Bearer ${key}` },
+    })
+    assert.equal(long.status, 400)
+    assert.equal((long.body.error as unknown as { code: number }).code, -32600)
   })
 })

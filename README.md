@@ -105,13 +105,18 @@ redacted. It never carries the body of an entry or a page.
 - **Who sees what:** curators see everything. Everyone else sees every change and proposal, and only
   their own searches and reads (a service account: what any of its keys did; an agent's short key:
   what it did itself).
+- **Ids and order:** an event's id is its place in the delivery order, which is the order events became
+  visible; ids grow along a stream. A write whose transaction takes long gets a later id, never none.
+  A session left idle for 24 hours closes itself, with a `session.closed` event that has no `who`.
 - **Resuming:** reconnect with `Last-Event-ID` (or `?lastEventId=`) to get what you missed, in order,
   from the last 24 hours. If you missed events older than that, a `gap` event says so first: catch up
-  with the lists (pending proposals, recent sessions).
+  with the lists (pending proposals, recent sessions). An id ahead of the newest event (an installation
+  restored from a copy) also gets a `gap` event, and the stream follows from now.
 - **Liveness:** events arrive within 2 seconds; a comment line every 15 seconds keeps proxies from
   closing the connection. The key and the role are checked every 2 seconds: a revoked key or a
   changed role ends the stream with a `closed` event that says why.
-- One poller per server process reads new events for every open stream.
+- One poller reads new events for every open stream and gives them their ids. An installation runs as
+  one server process.
 
 ## Audit
 
