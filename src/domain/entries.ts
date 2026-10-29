@@ -497,6 +497,27 @@ const compactO = (i: { sessionId?: string; requestKey?: string }) => ({
   ...(i.requestKey !== undefined ? { requestKey: i.requestKey } : {}),
 })
 
+// A person's correction written in the web, inside a transaction the caller holds: a curator returning
+// a wiki proposal leaves the reason as a correction for the agent that proposed (spec B2 «Devolver»).
+export async function webCorrection(
+  ctx: Ctx,
+  db: Db,
+  brainId: string,
+  input: { title: string; content: string; appliesTo?: string; refs?: string[] },
+): Promise<Receipt> {
+  if (ctx.who.credential.kind !== 'web' || ctx.who.kind !== 'person') {
+    throw invalid('Only a person in the web writes corrections this way.', 'Use the Brain web.')
+  }
+  return write(
+    { ...ctx, db },
+    db,
+    brainId,
+    prepare({ ...input, type: 'correction' }),
+    { onBehalfId: null },
+    {},
+  )
+}
+
 // A person's correction, relayed by a service account with its main key (Factory's gate). The person
 // must be an active contributor or curator of the brain; corrections never carry a topic.
 export async function relayCorrection(

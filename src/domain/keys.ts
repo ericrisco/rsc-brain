@@ -20,7 +20,7 @@ async function insert(
   at: Date,
   k: {
     accountId: string
-    kind: 'token' | 'main' | 'short'
+    kind: 'token' | 'main' | 'short' | 'web'
     name: string
     perm: 'read' | 'write'
     allBrains?: boolean
@@ -90,6 +90,33 @@ export async function mintPersonToken(
     allBrains: Boolean(o.allBrains),
     brainIds: o.allBrains ? [] : (o.brainIds ?? []),
     expiresAt: new Date(now.getTime() + o.days * 86_400_000),
+  })
+}
+
+export const WEB_SESSION_HOURS = { default: 12, max: 24 * 30 }
+
+// A person's session in the web (spec B2 clarifications): the only credential that approves wiki
+// proposals, edits pages by hand or purges. Presented as a cookie, never as a bearer key. The sign-in
+// that issues it arrives with B4; until then only tests call this.
+export async function mintWebSession(
+  db: Db,
+  clock: Clock,
+  o: { accountId: string; hours?: number },
+): Promise<Minted> {
+  const hours = o.hours ?? WEB_SESSION_HOURS.default
+  if (!Number.isInteger(hours) || hours < 1 || hours > WEB_SESSION_HOURS.max) {
+    throw invalid(`A web session lasts 1 to ${WEB_SESSION_HOURS.max} hours.`, 'Sign in again.')
+  }
+  const acc = await db.one<{ kind: string }>('SELECT kind FROM accounts WHERE id = $1', [o.accountId])
+  if (acc?.kind !== 'person') throw invalid('Only people sign in to the web.', 'Name a person account.')
+  const now = clock()
+  return insert(db, now, {
+    accountId: o.accountId,
+    kind: 'web',
+    name: 'web session',
+    perm: 'write',
+    allBrains: true,
+    expiresAt: new Date(now.getTime() + hours * 3_600_000),
   })
 }
 

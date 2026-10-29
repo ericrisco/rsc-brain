@@ -6,8 +6,8 @@ import type { Clock } from '../../src/core/clock.ts'
 import { migrate } from '../../src/db/migrate.ts'
 import { createAccount, type NewAccount } from '../../src/domain/accounts.ts'
 import { addMember } from '../../src/domain/brains.ts'
-import { mintMainKey, mintPersonToken } from '../../src/domain/keys.ts'
-import { createHandler } from '../../src/http/app.ts'
+import { mintMainKey, mintPersonToken, mintWebSession } from '../../src/domain/keys.ts'
+import { createHandler, WEB_HEADER } from '../../src/http/app.ts'
 import { freshDatabase, type TestDb } from './pg.ts'
 
 export type Call = {
@@ -29,6 +29,15 @@ export type World = TestDb & {
   ): Promise<string>
   member(brainSlug: string, accountId: string, role: 'curator' | 'contributor' | 'reader'): Promise<void>
   call(key: string | null, method: string, path: string, body?: unknown): Promise<Call>
+  // A person in the web: a session cookie (spec B2), and a call that presents it like the web does.
+  web(personId: string): Promise<string>
+  callWeb(
+    session: string,
+    method: string,
+    path: string,
+    body?: unknown,
+    o?: { csrf?: boolean },
+  ): Promise<Call>
   close(): Promise<void>
 }
 
@@ -91,6 +100,22 @@ export async function world(): Promise<World> {
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
         ...(body === undefined ? {} : { body: typeof body === 'string' ? body : JSON.stringify(body) }),
+      })
+      const text = await res.text()
+      return { status: res.status, body: text ? JSON.parse(text) : {}, text }
+    },
+    async web(personId: string) {
+      return (await mintWebSession(t.db, w.clock, { accountId: personId })).secret
+    },
+    async callWeb(session: string, method: string, path: string, body?: unknown, o: { csrf?: boolean } = {}) {
+      const res = await fetch(`${w.base}${path}`, {
+        method,
+        headers: {
+          cookie: `rscb_session=${session}`,
+          ...(o.csrf === false ? {} : { 'x-requested-with': WEB_HEADER }),
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       })
       const text = await res.text()
       return { status: res.status, body: text ? JSON.parse(text) : {}, text }

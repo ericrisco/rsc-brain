@@ -1,18 +1,20 @@
 // The HTTP face of the server: JSON in, JSON out, a key on every /v1 request except /v1/health.
 // Refusals carry { error: { code, message, howToProceed } }; an unexpected failure reveals nothing.
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import { bearer, resolveKey } from '../auth/principal.ts'
+import { bearer, resolveKey, sessionCookie } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
 import { match, type Route } from './router.ts'
 import { brainRoutes } from './routes/brains.ts'
+import { decideRoutes } from './routes/decide.ts'
 import { journalRoutes } from './routes/journal.ts'
 import { keyRoutes } from './routes/keys.ts'
 import { recallRoutes } from './routes/recall.ts'
 import { wikiRoutes } from './routes/wiki.ts'
 
 export const MAX_BODY = 1_048_576
+export const WEB_HEADER = 'rsc-brain-web'
 
 export type AppDeps = { db: Db; clock: Clock; tz?: string; routes?: Route[]; log?: (line: string) => void }
 
@@ -21,6 +23,7 @@ export const ROUTES: Route[] = [
   ...keyRoutes,
   ...journalRoutes,
   ...recallRoutes,
+  ...decideRoutes,
   ...wikiRoutes,
 ]
 
@@ -110,7 +113,19 @@ export function createHandler(deps: AppDeps) {
       if (found === 'method') {
         throw new AppError(405, 'method_not_allowed', `${method} is not allowed here.`, 'Check the method.')
       }
-      const who = await resolveKey(deps.db, bearer(req.headers.authorization), deps.clock())
+      const key = bearer(req.headers.authorization)
+      const cookie = key ? null : sessionCookie(req.headers.cookie)
+      // A cookie-borne write must come from the web itself: a page elsewhere cannot add this header
+      // to a cross-site request without the browser asking first (CSRF).
+      if (cookie && method !== 'GET' && method !== 'HEAD' && req.headers['x-requested-with'] !== WEB_HEADER) {
+        throw new AppError(
+          403,
+          'csrf',
+          'This request from the web lacks its "X-Requested-With" header.',
+          'Use the Brain web to do this.',
+        )
+      }
+      const who = await resolveKey(deps.db, key ?? cookie, deps.clock(), key ? 'bearer' : 'cookie')
       const body = await readBody(req)
       const reply = await found.route.handler({
         params: found.params,
