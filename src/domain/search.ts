@@ -7,6 +7,7 @@ import type { Db, Row } from '../db/db.ts'
 import { listBrains } from './brains.ts'
 import { type Ctx, inBrain } from './context.ts'
 import { ENTRY_TYPES, words } from './entries.ts'
+import { meaningMatches } from './meaning.ts'
 import { track } from './trail.ts'
 import { ADDRESS, LINK_KINDS, PAGE_TYPES, type PageStatus } from './wiki/model.ts'
 import { pageNotFound } from './wiki/pages.ts'
@@ -55,13 +56,19 @@ export type Hit = {
   state: string
   title: string
   snippet: string
-  why: 'words' | 'recent' | 'link'
+  why: 'words' | 'meaning' | 'recent' | 'link'
   reason: string
   linkedFrom?: LinkedFrom
   at: string
 }
 
-export type SearchResult = { items: Hit[]; neighbours?: Hit[]; next: number | null; note?: string }
+export type SearchResult = {
+  items: Hit[]
+  neighbours?: Hit[]
+  next: number | null
+  note?: string
+  meaning?: 'on' | 'unavailable'
+}
 
 export type ParsedQuery = {
   anyWords: string[]
@@ -107,6 +114,7 @@ type Candidate = {
   first: number // 1 for a current page, which goes first inside its band
   at: Date
   depth: number // how many replacements away from something not superseded (0: not superseded)
+  byWords: boolean // false: found by meaning only
 }
 
 type Target = { id: string; slug: string; curator: boolean }
@@ -159,12 +167,24 @@ export async function search(ctx: Ctx, r: SearchRequest): Promise<SearchResult> 
   query.excludedPhrases = query.excludedPhrases.filter((x) => /[\p{L}\p{N}]/u.test(x))
   const empty = query.anyWords.length === 0 && query.phrases.length === 0
   const want = offset + limit + 1
+  // Close in meaning, when meaning search is on (never for an empty search).
+  const meaning = empty
+    ? { status: 'off' as const, entries: { ids: [], sims: [] }, pages: { ids: [], sims: [] } }
+    : await meaningMatches(
+        ctx,
+        targets.map((t) => t.id),
+        r.q,
+      )
   // A session or a reference belongs to the journal: with either, pages are left out.
   const entriesToo = scope !== 'pages'
   const pagesToo = scope !== 'entries' && r.session === undefined && r.ref === undefined
   const candidates = [
-    ...(entriesToo ? await entryCandidates(ctx, r, targets, include, query, empty, prefix, want) : []),
-    ...(pagesToo ? await pageCandidates(ctx, r, targets, include, query, empty, prefix, want) : []),
+    ...(entriesToo
+      ? await entryCandidates(ctx, r, targets, include, query, empty, prefix, want, meaning.entries)
+      : []),
+    ...(pagesToo
+      ? await pageCandidates(ctx, r, targets, include, query, empty, prefix, want, meaning.pages)
+      : []),
   ]
   const ordered = candidates.sort(byOrder)
   const slice = ordered.slice(offset, offset + limit)
@@ -193,7 +213,11 @@ export async function search(ctx: Ctx, r: SearchRequest): Promise<SearchResult> 
       resultIds: [...items, ...(out.neighbours ?? [])].filter((h) => h.brain === t.slug).map((h) => h.id),
     })
   }
-  if (items.length === 0) out.note = noteFor(r, include)
+  if (meaning.status !== 'off') out.meaning = meaning.status
+  const notes: string[] = []
+  if (meaning.status === 'unavailable') notes.push('Meaning search unavailable: results are by words only.')
+  if (items.length === 0) notes.push(noteFor(r, include))
+  if (notes.length > 0) out.note = notes.join(' ')
   return out
 }
 
@@ -225,13 +249,21 @@ function paramList() {
   return { params, p }
 }
 
+type Near = { ids: string[]; sims: number[] }
+// How much meaning weighs against words: a result found only by meaning ranks like a fair match by words.
+const MEANING_WEIGHT = 0.1
+
+// The match and the score of a search over one kind. With results close in meaning, a result matches by
+// words or by meaning; `byWords` says which.
 function textConditions(
   col: string,
+  idCol: string,
   q: ParsedQuery,
   empty: boolean,
   p: (v: unknown) => string,
   conditions: string[],
-): string {
+  near: Near,
+): { score: string; byWords: string } {
   // Exclusions apply on their own, also with nothing else asked: a result with any excluded word, in
   // any of the three word forms, or with an excluded phrase, is left out.
   if (q.excluded.length > 0) {
@@ -244,11 +276,24 @@ function textConditions(
       `NOT coalesce(${col} @@ brain_query('{}'::text[], ${p([phrase])}::text[], '{}'::text[]), false)`,
     )
   }
-  if (empty) return '1'
+  if (empty) return { score: '1', byWords: 'true' }
   const tsq = `brain_query(${p(q.anyWords)}::text[], ${p(q.phrases)}::text[], '{}'::text[])`
-  conditions.push(`${col} @@ ${tsq}`)
-  // Normalised by the length of the text, so a long page and a short entry compare.
-  return `ts_rank_cd(${col}, ${tsq}, 1)`
+  // A bare match, so the text index can serve it.
+  const words = `${col} @@ ${tsq}`
+  // Normalised by the length of the text, so a long page and a short entry compare. ts_rank, not the
+  // cover-density ts_rank_cd: much cheaper on long pages, and the order is close (CA18).
+  const rank = `ts_rank(${col}, ${tsq}, 1)`
+  if (near.ids.length === 0) {
+    conditions.push(words)
+    return { score: rank, byWords: 'true' }
+  }
+  const ids = p(near.ids)
+  const sim = `coalesce((SELECT u.s FROM unnest(${ids}::text[], ${p(near.sims)}::real[]) AS u(i, s) WHERE u.i = ${idCol}), 0)`
+  conditions.push(`(${words} OR ${idCol} = ANY(${ids}::text[]))`)
+  return {
+    score: `(CASE WHEN ${words} THEN ${rank} ELSE 0 END + ${MEANING_WEIGHT} * ${sim})`,
+    byWords: `coalesce(${words}, false)`,
+  }
 }
 
 // A superseded result never goes before what replaced it (spec B3 «El orden», CA17b): results are
@@ -275,6 +320,7 @@ async function entryCandidates(
   empty: boolean,
   prefix: string | undefined,
   want: number,
+  near: Near,
 ): Promise<Candidate[]> {
   const { params, p } = paramList()
   const conditions = [`e.brain_id = ANY(${p(targets.map((t) => t.id))})`, "e.state <> 'purged'"]
@@ -304,10 +350,10 @@ async function entryCandidates(
       `EXISTS (SELECT 1 FROM entry_revisions rv WHERE rv.entry_id = e.id AND rv.stamped_ref = ${p(r.ref)})`,
     )
   }
-  const score = textConditions('e.search', query, empty, p, conditions)
+  const { score, byWords } = textConditions('e.search', 'e.id', query, empty, p, conditions, near)
   const band = empty ? '0' : bandOf(score)
   const rows = await ctx.db.query<Row>(
-    `SELECT e.id, b.slug, e.created_at AS at, ${depthOf('entries', 'e')} AS depth, ${band} AS band
+    `SELECT e.id, b.slug, e.created_at AS at, ${depthOf('entries', 'e')} AS depth, ${band} AS band, ${byWords} AS by_words
        FROM entries e JOIN brains b ON b.id = e.brain_id
       WHERE ${conditions.join(' AND ')}
       ORDER BY depth, band DESC, e.created_at DESC, e.id
@@ -322,6 +368,7 @@ async function entryCandidates(
     first: 0,
     at: x.at as Date,
     depth: Number(x.depth),
+    byWords: x.by_words !== false,
   }))
 }
 
@@ -334,6 +381,7 @@ async function pageCandidates(
   empty: boolean,
   prefix: string | undefined,
   want: number,
+  near: Near,
 ): Promise<Candidate[]> {
   const { params, p } = paramList()
   const conditions = [
@@ -360,11 +408,11 @@ async function pageCandidates(
       `EXISTS (SELECT 1 FROM page_revisions rv WHERE rv.page_id = p.id AND rv.credential_id = ${p(r.client)})`,
     )
   }
-  const raw = textConditions('p.search', query, empty, p, conditions)
+  const { score: raw, byWords } = textConditions('p.search', 'p.id', query, empty, p, conditions, near)
   const first = empty ? '0' : "(p.status = 'current')::int"
   const band = empty ? '0' : bandOf(`${raw} * CASE WHEN p.status = 'current' THEN ${CURRENT_LIFT} ELSE 1 END`)
   const rows = await ctx.db.query<Row>(
-    `SELECT p.id, b.slug, p.updated_at AS at, ${depthOf('pages', 'p')} AS depth, ${band} AS band, ${first} AS first
+    `SELECT p.id, b.slug, p.updated_at AS at, ${depthOf('pages', 'p')} AS depth, ${band} AS band, ${first} AS first, ${byWords} AS by_words
        FROM pages p JOIN brains b ON b.id = p.brain_id
       WHERE ${conditions.join(' AND ')}
       ORDER BY depth, band DESC, first DESC, p.updated_at DESC, p.id
@@ -379,6 +427,7 @@ async function pageCandidates(
     first: Number(x.first),
     at: x.at as Date,
     depth: Number(x.depth),
+    byWords: x.by_words !== false,
   }))
 }
 
@@ -453,8 +502,8 @@ async function describe(
       state: String(x.state),
       title: String(x.title),
       snippet: String(x.snippet),
-      why: empty ? 'recent' : 'words',
-      reason: empty ? 'most recent' : 'matched by words',
+      why: empty ? 'recent' : c.byWords ? 'words' : 'meaning',
+      reason: empty ? 'most recent' : c.byWords ? 'matched by words' : 'matched by meaning',
       at: c.at.toISOString(),
     }
     if (c.kind === 'page') hit.address = String(x.address)

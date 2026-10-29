@@ -167,6 +167,9 @@ async function scrubWiki(
   dry: boolean,
 ): Promise<Hits> {
   const total: Hits = new Map()
+  // A vector of meaning is computed from the text: the brain's vectors go and are computed again from
+  // what is left (spec B3).
+  if (!dry) await db.query('DELETE FROM meaning_vectors WHERE brain_id = $1', [brainId])
   for (const t of TARGETS) {
     const cols = [...Object.keys(t.text), ...t.arrays, ...t.json]
     let after = '(0,0)'

@@ -5,18 +5,27 @@ import { bearer, resolveKey, sessionCookie } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
+import type { Providers } from '../meaning/providers.ts'
 import { match, type Route } from './router.ts'
 import { brainRoutes } from './routes/brains.ts'
 import { decideRoutes } from './routes/decide.ts'
 import { journalRoutes } from './routes/journal.ts'
 import { keyRoutes } from './routes/keys.ts'
+import { meaningRoutes } from './routes/meaning.ts'
 import { recallRoutes } from './routes/recall.ts'
 import { wikiRoutes } from './routes/wiki.ts'
 
 export const MAX_BODY = 1_048_576
 export const WEB_HEADER = 'rsc-brain-web'
 
-export type AppDeps = { db: Db; clock: Clock; tz?: string; routes?: Route[]; log?: (line: string) => void }
+export type AppDeps = {
+  db: Db
+  clock: Clock
+  tz?: string
+  routes?: Route[]
+  log?: (line: string) => void
+  meaning?: Providers
+}
 
 export const ROUTES: Route[] = [
   ...brainRoutes,
@@ -25,6 +34,7 @@ export const ROUTES: Route[] = [
   ...recallRoutes,
   ...decideRoutes,
   ...wikiRoutes,
+  ...meaningRoutes,
 ]
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
@@ -140,6 +150,7 @@ export function createHandler(deps: AppDeps) {
         db: deps.db,
         clock: deps.clock,
         tz: deps.tz ?? 'UTC',
+        meaning: deps.meaning ?? {},
       })
       send(res, reply.status ?? 200, reply.body)
     } catch (err) {

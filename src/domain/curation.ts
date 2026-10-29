@@ -275,6 +275,7 @@ export async function scrubEntry(c: Ctx, id: string, why: string): Promise<void>
   await c.db.query("UPDATE relations SET reason = '' WHERE from_id = $1 OR to_id = $1", [id])
   await c.db.query('DELETE FROM trail WHERE $1 = ANY(result_ids)', [id])
   await c.db.query('DELETE FROM trail_counts WHERE target_id = $1', [id])
+  await c.db.query("DELETE FROM meaning_vectors WHERE kind = 'entry' AND target_id = $1", [id])
   await c.db.query('DELETE FROM events WHERE target_id = $1', [id])
   await c.db.query('DELETE FROM request_keys WHERE receipt::text LIKE $1', [`%${id}%`])
   await audit(c.db, {

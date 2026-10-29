@@ -3,6 +3,7 @@
 import type { Principal } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import type { Db } from '../db/db.ts'
+import type { Providers } from '../meaning/providers.ts'
 
 export type Req = {
   params: Record<string, string>
@@ -12,6 +13,7 @@ export type Req = {
   db: Db
   clock: Clock
   tz: string
+  meaning: Providers
 }
 export type Reply = { status?: number; body: unknown }
 export type Handler = (r: Req) => Promise<Reply>

@@ -23,3 +23,16 @@ npm run verify      # lint, types, tests, audit
 when the PostgreSQL binaries are installed, a throwaway local cluster in `.pg-test/` (port 55432)
 that it starts for you (`npm run pg:stop` stops it). Without either, the PostgreSQL tests are
 skipped, as in CI.
+
+`node scripts/bench-search.ts` (with `RSC_BRAIN_PG_URL`) loads 10 000 pages and 100 000 entries into a
+throwaway database and times 100 varied searches; 95 % must answer in under a second.
+
+## Search by meaning (optional)
+
+Off by default; search by words works without it. The server offers a provider when its setting is
+present, and the administration turns it on in the web, accepting that text is sent to the provider:
+
+- `RSC_BRAIN_OPENAI_KEY` — OpenAI, model `text-embedding-3-small`;
+- `RSC_BRAIN_OLLAMA_URL` — a local Ollama, model `nomic-embed-text`.
+
+A curator can exclude a brain: its vectors are deleted and nothing more of it is sent.
