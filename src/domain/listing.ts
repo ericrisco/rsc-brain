@@ -1,6 +1,6 @@
 // Reading the journal page by page (spec B1 «Leer el diario»). Every list says how many there are in
 // total and gives a cursor for the next page. Forgotten and purged entries stay out of ordinary lists.
-import { invalid, notFound } from '../core/errors.ts'
+import { denied, invalid, notFound } from '../core/errors.ts'
 import type { Row } from '../db/db.ts'
 import { type Ctx, inBrain } from './context.ts'
 import { type Entry, entryOf } from './entries.ts'
@@ -136,14 +136,15 @@ export async function listView(
   ctx: Ctx,
   slug: string,
   view: View,
-  o: { limit?: number } = {},
+  o: { limit?: number; cursor?: string } = {},
 ): Promise<Page<Entry>> {
   const { brain, role } = await inBrain(ctx, { slug })
   const limit = o.limit ?? PAGE.default
+  const c = decode(o.cursor)
   let where: string
   if (view === 'forgotten') {
     if (role !== 'curator') {
-      throw invalid('Only curators see forgotten entries.', 'Ask a curator of the brain.')
+      throw denied('Only curators see forgotten entries.', 'Ask a curator of the brain.')
     }
     where = "state = 'forgotten'"
   } else if (view === 'to-review') {
@@ -156,11 +157,20 @@ export async function listView(
     `SELECT count(*)::int AS n FROM entries WHERE brain_id = $1 AND ${where}`,
     params,
   )
+  const n = params.length
   const rows = await ctx.db.query(
-    `SELECT * FROM entries WHERE brain_id = $1 AND ${where} ORDER BY created_at, id LIMIT ${limit}`,
-    params,
+    `SELECT * FROM entries WHERE brain_id = $1 AND ${where}
+        AND ($${n + 1}::timestamptz IS NULL OR (created_at, id) > ($${n + 1}, $${n + 2}))
+      ORDER BY created_at, id LIMIT $${n + 3}`,
+    [...params, c?.at ?? null, c?.id ?? '', limit + 1],
   )
-  return { items: rows.map(entryOf), total: total?.n ?? 0, next: null }
+  const page = rows.slice(0, limit)
+  const last = page.at(-1)
+  return {
+    items: page.map(entryOf),
+    total: total?.n ?? 0,
+    next: rows.length > limit && last ? encode(last.created_at as Date, String(last.id)) : null,
+  }
 }
 
 // The entries just before and after one, in its session.

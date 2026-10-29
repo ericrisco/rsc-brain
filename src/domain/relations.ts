@@ -62,10 +62,18 @@ export async function relate(
     // Every key is an agent's; the person's own gesture is the web (spec B6).
     const status = touchesCorrection ? 'pending_person' : 'active'
     if (r.kind === 'supersedes' && status === 'active') {
-      if (from.superseded_by === to.id) {
+      // `to` loses to `from`; if `from` already loses, through any chain, to `to`, that closes a loop.
+      const loop = await db.one(
+        `WITH RECURSIVE chain(id) AS (
+           SELECT superseded_by FROM entries WHERE id = $1 AND superseded_by IS NOT NULL
+           UNION SELECT e.superseded_by FROM entries e JOIN chain ON e.id = chain.id WHERE e.superseded_by IS NOT NULL
+         ) SELECT 1 AS hit FROM chain WHERE id = $2 LIMIT 1`,
+        [from.id, to.id],
+      )
+      if (loop) {
         throw conflict(
           'relation_cycle',
-          'That would make two entries supersede each other.',
+          'That would make entries supersede each other in a loop.',
           'Pick the one that wins.',
         )
       }

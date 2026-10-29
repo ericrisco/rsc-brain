@@ -95,7 +95,7 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
     assert.equal((f.body.entry as { state: string }).state, 'forgotten')
     assert.deepEqual((await find(ana.key, 'q=zeta-nine')).items, [])
     assert.equal((await w.call(ana.key, 'GET', `/v1/entries/${id}`)).status, 404)
-    assert.equal((await w.call(ana.key, 'GET', '/v1/brains/yt/forgotten')).status, 400)
+    assert.equal((await w.call(ana.key, 'GET', '/v1/brains/yt/forgotten')).status, 403)
     const list = (await w.call(eric.key, 'GET', '/v1/brains/yt/forgotten')).body.items as { id: string }[]
     assert.ok(list.some((x) => x.id === id))
     const withF = await find(eric.key, 'q=zeta-nine&include=forgotten')
@@ -139,6 +139,76 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
     assert.ok(await w.db.one("SELECT 1 FROM audit WHERE action = 'admin.join' AND actor_id = $1", [admin.id]))
     assert.deepEqual((await find(eric.key, 'q=Falsa&include=forgotten,superseded,expired')).items, [])
     assert.equal((await w.call(eric.key, 'GET', `/v1/entries/${id}`)).status, 200)
+    // Reading the mark does not put the id back into the trail.
+    assert.equal(await w.db.one('SELECT 1 FROM trail WHERE $1 = ANY(result_ids)', [id]), undefined)
+  })
+
+  it('review: recovering entries that share a topic, at once, gives one 200 and 409s, never a 500', async () => {
+    for (let round = 0; round < 5; round += 1) {
+      const topic = `race/r${round}`
+      const ids: string[] = []
+      for (const n of [1, 2, 3]) {
+        const id = await save(ana.key, { type: 'note', title: `T${n}`, content: `v${round}${n}`, topic })
+        await w.call(eric.key, 'POST', `/v1/entries/${id}/forget`, { reason: 'x' })
+        ids.push(id)
+      }
+      const rs = await Promise.all(ids.map((id) => w.call(eric.key, 'POST', `/v1/entries/${id}/recover`)))
+      assert.deepEqual(rs.map((r) => r.status).sort(), [200, 409, 409])
+    }
+  })
+
+  it('review: no loop of supersedes, however long', async () => {
+    const [a, b, c] = [
+      await save(ana.key, { type: 'note', title: 'L1', content: 'loop one' }),
+      await save(ana.key, { type: 'note', title: 'L2', content: 'loop two' }),
+      await save(ana.key, { type: 'note', title: 'L3', content: 'loop three' }),
+    ]
+    const rel = (from: string, to: string) =>
+      w.call(ana.key, 'POST', '/v1/brains/yt/relations', { from, to, kind: 'supersedes' })
+    assert.equal((await rel(b, a)).status, 201)
+    assert.equal((await rel(c, b)).status, 201)
+    const loop = await rel(a, c)
+    assert.equal(loop.status, 409)
+    assert.equal(loop.body.error?.code, 'relation_cycle')
+    assert.equal((await find(ana.key, 'q=loop')).items.length, 1)
+  })
+
+  it('review: the curator lists go page by page', async () => {
+    const ids: string[] = []
+    for (const n of [1, 2, 3, 4, 5]) {
+      const id = await save(ana.key, { type: 'note', title: `Page ${n}`, content: `paged forgotten ${n}` })
+      await w.call(eric.key, 'POST', `/v1/entries/${id}/forget`, { reason: 'x' })
+      ids.push(id)
+    }
+    const seen: string[] = []
+    let next: string | null = null
+    do {
+      const qs: string = next ? `limit=2&cursor=${next}` : 'limit=2'
+      const p = (await w.call(eric.key, 'GET', `/v1/brains/yt/forgotten?${qs}`)).body as {
+        items: { id: string }[]
+        next: string | null
+      }
+      seen.push(...p.items.map((x) => x.id))
+      next = p.next
+    } while (next)
+    assert.ok(ids.every((id) => seen.includes(id)))
+    assert.equal(new Set(seen).size, seen.length)
+  })
+
+  it('review: out-of-range numbers and dates are refused, not a 500', async () => {
+    assert.equal((await w.call(ana.key, 'GET', '/v1/search?q=kiwi&offset=1e20')).status, 400)
+    const id = await save(ana.key, { type: 'note', title: 'When', content: 'dated' })
+    const far = await w.call(ana.key, 'POST', `/v1/entries/${id}/schedule`, {
+      expiresAt: '-100000-01-01T00:00:00Z',
+    })
+    assert.equal(far.status, 400)
+    const onSave = await w.call(ana.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'x',
+      content: 'y',
+      expiresAt: '+275000-01-01T00:00:00Z',
+    })
+    assert.equal(onSave.status, 400)
   })
 
   it('CA14: a contradiction is listed in conflicts until supersedes or not_related settles it', async () => {
@@ -328,8 +398,18 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
       (h) => h.entryId,
     )
     assert.ok(phrase.includes(b) && !phrase.includes(c))
+    const d = await save(ana.key, { type: 'note', title: 'Three', content: 'una intro corta funciona' })
     const minus = (await find(ana.key, `q=${encodeURIComponent('intro -larga')}`)).items.map((h) => h.entryId)
-    assert.ok(!minus.includes(b) && !minus.includes(c))
+    assert.ok(minus.includes(d) && !minus.includes(b) && !minus.includes(c))
+    // Exclusions alone, and an excluded phrase.
+    const only = (await find(ana.key, `q=${encodeURIComponent('-larga')}`)).items.map((h) => h.entryId)
+    assert.ok(!only.includes(b) && !only.includes(c))
+    const notPhrase = (await find(ana.key, `q=${encodeURIComponent('intro -"intro larga"')}`)).items.map(
+      (h) => h.entryId,
+    )
+    assert.ok(notPhrase.includes(c) && notPhrase.includes(d) && !notPhrase.includes(b))
+    const stop = (await find(ana.key, `q=${encodeURIComponent('intro -the')}`)).items.map((h) => h.entryId)
+    assert.ok(stop.includes(d))
     const anyWord = (await find(ana.key, `q=${encodeURIComponent('qué voces narran')}`)).items.map(
       (h) => h.entryId,
     )

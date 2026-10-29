@@ -144,6 +144,10 @@ export async function recoverEntry(ctx: Ctx, id: string): Promise<Entry> {
     if (row.type === 'correction') throw PERSONS_ONLY()
     if (row.state === 'active') return entryOf(row)
     if (row.topic != null) {
+      // The same lock a save to this topic takes: two recoveries, or a recovery and a save, in turn.
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `topic:${row.brain_id}:${row.topic}`,
+      ])
       const taken = await db.one(
         "SELECT id FROM entries WHERE brain_id = $1 AND topic = $2 AND state = 'active'",
         [row.brain_id, row.topic],
@@ -186,7 +190,7 @@ function when(v: string | null | undefined, field: string): Date | null | undefi
   if (v === undefined) return undefined
   if (v === null) return null
   const d = new Date(v)
-  if (Number.isNaN(d.getTime()))
+  if (Number.isNaN(d.getTime()) || d.getUTCFullYear() < 1 || d.getUTCFullYear() > 9999)
     throw invalid(`"${field}" is not a date.`, 'Send an ISO date, or null to clear it.')
   return d
 }

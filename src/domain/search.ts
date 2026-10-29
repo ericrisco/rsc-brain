@@ -1,7 +1,7 @@
 // Searching the journal by its words (spec B3 minimum for B1): any of the words, quoted phrases,
 // excluded words, no accents, Spanish and English word forms. Forgotten entries only for curators who
 // ask, purged ones never; superseded and expired only when asked. Each search leaves a trail.
-import { invalid } from '../core/errors.ts'
+import { AppError, invalid } from '../core/errors.ts'
 import type { Row } from '../db/db.ts'
 import { listBrains } from './brains.ts'
 import { type Ctx, inBrain } from './context.ts'
@@ -33,11 +33,19 @@ export type Hit = {
   createdAt: string
 }
 
-export function parseQuery(q: string): { anyWords: string[]; phrases: string[]; excluded: string[] } {
+export type ParsedQuery = {
+  anyWords: string[]
+  phrases: string[]
+  excluded: string[]
+  excludedPhrases: string[]
+}
+
+export function parseQuery(q: string): ParsedQuery {
   const phrases: string[] = []
-  const rest = q.replace(/"([^"]+)"/g, (_, p: string) => {
-    if (p.trim()) phrases.push(p.trim())
-    return ' '
+  const excludedPhrases: string[] = []
+  const rest = q.replace(/(^|\s)(-?)"([^"]+)"/g, (_, lead: string, minus: string, p: string) => {
+    if (p.trim()) (minus ? excludedPhrases : phrases).push(p.trim())
+    return lead || ' '
   })
   const excluded: string[] = []
   const free: string[] = []
@@ -46,7 +54,12 @@ export function parseQuery(q: string): { anyWords: string[]; phrases: string[]; 
     if (token.startsWith('-') && token.length > 1) excluded.push(token.slice(1))
     else free.push(token)
   }
-  return { anyWords: words(free.join(' ')), phrases, excluded: excluded.flatMap((x) => words(x)) }
+  return {
+    anyWords: words(free.join(' ')),
+    phrases,
+    excluded: excluded.flatMap((x) => words(x)),
+    excludedPhrases,
+  }
 }
 
 export async function search(
@@ -67,7 +80,8 @@ export async function search(
         targets.push({ id: brain.id, slug: brain.slug, curator: role === 'curator' })
       } catch (err) {
         // A brain you cannot read is left out without saying so; alone, it answers like a missing one.
-        if (r.brains.length === 1) throw err
+        // Any other failure is a real error.
+        if (r.brains.length === 1 || !(err instanceof AppError) || err.status !== 404) throw err
       }
     }
   } else {
@@ -75,7 +89,7 @@ export async function search(
       targets.push({ id: b.id, slug: b.slug, curator: b.role === 'curator' })
   }
   if (targets.length === 0) return { items: [], next: null }
-  const { anyWords, phrases, excluded } = parseQuery(r.q)
+  const { anyWords, phrases, excluded, excludedPhrases } = parseQuery(r.q)
   const empty = anyWords.length === 0 && phrases.length === 0
   const ids = targets.map((t) => t.id)
   const curatorOf = targets.filter((t) => t.curator).map((t) => t.id)
@@ -94,10 +108,22 @@ export async function search(
   if (!include.has('superseded')) conditions.push('e.superseded_by IS NULL')
   if (!include.has('expired')) conditions.push(`(e.expires_at IS NULL OR e.expires_at > ${p(ctx.clock())})`)
   if (r.type) conditions.push(`e.type = ${p(r.type)}`)
+  // Exclusions apply on their own, also with nothing else asked: an entry with any excluded word, in
+  // any of the three word forms, or with an excluded phrase, is left out.
+  if (excluded.length > 0) {
+    conditions.push(
+      `NOT coalesce(e.search @@ brain_query(${p(excluded)}::text[], '{}'::text[], '{}'::text[]), false)`,
+    )
+  }
+  for (const phrase of excludedPhrases) {
+    conditions.push(
+      `NOT coalesce(e.search @@ brain_query('{}'::text[], ${p([phrase])}::text[], '{}'::text[]), false)`,
+    )
+  }
   let rank = '0'
   let snippet = 'left(e.content, 200)'
   if (!empty) {
-    const q = `brain_query(${p(anyWords)}::text[], ${p(phrases)}::text[], ${p(excluded)}::text[])`
+    const q = `brain_query(${p(anyWords)}::text[], ${p(phrases)}::text[], '{}'::text[])`
     conditions.push(`e.search @@ ${q}`)
     rank = `ts_rank_cd(e.search, ${q})`
     snippet = `ts_headline('simple', e.title || ' — ' || e.content, ${q}, 'StartSel=«,StopSel=»,MaxWords=30,MinWords=8,MaxFragments=2,FragmentDelimiter= … ')`

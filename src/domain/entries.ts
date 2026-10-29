@@ -60,7 +60,7 @@ export type Receipt = {
 function date(v: string | undefined, field: string): Date | null {
   if (v === undefined) return null
   const d = new Date(v)
-  if (Number.isNaN(d.getTime()))
+  if (Number.isNaN(d.getTime()) || d.getUTCFullYear() < 1 || d.getUTCFullYear() > 9999)
     throw invalid(`"${field}" is not a date.`, 'Send an ISO date such as 2026-11-30.')
   return d
 }
@@ -670,7 +670,10 @@ export async function getEntry(
   })
   if (row.state === 'forgotten' && role !== 'curator') throw notFound('entry')
   const entry = entryOf(row)
-  await track(ctx.root ?? ctx.db, ctx, { brainId: entry.brainId, kind: 'read', resultIds: [entry.id] })
+  // A purged entry's mark is shown, but its id never goes back into the trail (CA13).
+  if (row.state !== 'purged') {
+    await track(ctx.root ?? ctx.db, ctx, { brainId: entry.brainId, kind: 'read', resultIds: [entry.id] })
+  }
   if (!o.history || row.state === 'purged') return { entry }
   const revs = await ctx.db.query('SELECT * FROM entry_revisions WHERE entry_id = $1 ORDER BY revision', [id])
   return {

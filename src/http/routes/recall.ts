@@ -88,7 +88,12 @@ export const recallRoutes: Route[] = [
   })),
   ...(['forgotten', 'to-review', 'uncompiled'] as View[]).map((view) =>
     route(`GET /v1/brains/:slug/${view}`, async (r) => ({
-      body: await listView(ctxOf(r), r.params.slug as string, view, { limit: limitOf(r.query.get('limit')) }),
+      body: await listView(
+        ctxOf(r),
+        r.params.slug as string,
+        view,
+        compact({ limit: limitOf(r.query.get('limit')), cursor: q(r.query.get('cursor')) }),
+      ),
     })),
   ),
   route('GET /v1/search', async (r) => {
@@ -97,8 +102,8 @@ export const recallRoutes: Route[] = [
     if (bad) throw invalid(`Unknown "include" value "${bad}".`, `Use any of: ${INCLUDES.join(', ')}.`)
     const brains = q(r.query.get('brains'))
     const offset = r.query.get('offset') ? Number(r.query.get('offset')) : 0
-    if (!Number.isInteger(offset) || offset < 0)
-      throw invalid('"offset" must be 0 or more.', 'Use the "next" value.')
+    if (!Number.isInteger(offset) || offset < 0 || offset > 10_000)
+      throw invalid('"offset" must be 0 to 10 000.', 'Use the "next" value, or narrow the search.')
     const limit = r.query.get('limit') ? Number(r.query.get('limit')) : 10
     if (!Number.isInteger(limit) || limit < 1 || limit > 50)
       throw invalid('"limit" must be between 1 and 50.', 'Ask for fewer.')
