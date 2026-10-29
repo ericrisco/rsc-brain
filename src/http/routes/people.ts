@@ -1,5 +1,7 @@
 // People and keys (spec B4): invitations, members of a brain, personal tokens, notices, and the
 // administration of accounts, service accounts, settings and mail. Managing happens in the web.
+
+import { invalid } from '../../core/errors.ts'
 import {
   accountKeys,
   adminBrains,
@@ -93,9 +95,12 @@ export const peopleRoutes: Route[] = [
     await removeMember(ctxOf(r), r.params.slug as string, r.params.account as string)
     return { body: { removed: r.params.account } }
   }),
-  route('PUT /v1/brains/:slug/notify', async (r) => ({
-    body: await setNotify(ctxOf(r), r.params.slug as string, bool(obj(r.body), 'proposals') === true),
-  })),
+  route('PUT /v1/brains/:slug/notify', async (r) => {
+    const on = bool(obj(r.body), 'notifyProposals')
+    if (on === undefined)
+      throw invalid('"notifyProposals" is true or false.', 'Send {"notifyProposals": true}.')
+    return { body: await setNotify(ctxOf(r), r.params.slug as string, on) }
+  }),
 
   // My tokens and notices.
   route('GET /v1/me/tokens', async (r) => ({ body: { tokens: await listTokens(ctxOf(r)) } })),

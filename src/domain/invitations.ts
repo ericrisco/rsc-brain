@@ -70,20 +70,41 @@ async function mailInvitation(
   })
 }
 
-// Stores one invitation and returns its link. When the email already has an open invitation, its
-// grants are added to that one and its link is made again (the old link stops working).
+// Stores one invitation and returns its link. Invitations to one email take turns. An expired one is
+// closed first. When the email already has an open invitation, `merge` adds these grants to it and
+// makes its link again (the old link stops working); without `merge` (a curator inviting) the open
+// invitation is not touched: its link, and whatever it grants, stay with whoever made it.
 export async function storeInvitation(
   db: Db,
   clock: Clock,
-  o: { email: string; grants: Grant[]; isAdmin?: boolean; canCreateBrains?: boolean; by: string },
+  o: {
+    email: string
+    grants: Grant[]
+    isAdmin?: boolean
+    canCreateBrains?: boolean
+    by: string
+    merge: boolean
+  },
 ): Promise<{ id: string; token: string; expiresAt: Date; grants: Grant[]; isAdmin: boolean }> {
   const now = clock()
   const token = newSecret()
   const expiresAt = new Date(now.getTime() + INVITE_HOURS * 3_600_000)
+  await db.query("SELECT pg_advisory_xact_lock(hashtext('rsc-brain invitation ' || $1))", [o.email])
+  await db.query(
+    'UPDATE invitations SET revoked_at = $2 WHERE email = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at <= $2',
+    [o.email, now],
+  )
   const open = await db.one<Row>(
     'SELECT * FROM invitations WHERE email = $1 AND used_at IS NULL AND revoked_at IS NULL FOR UPDATE',
     [o.email],
   )
+  if (open && !o.merge) {
+    throw conflict(
+      'invitation_open',
+      `${o.email} already has a pending invitation.`,
+      'Wait for it to be accepted, then add the person to your brain; or ask the administration.',
+    )
+  }
   if (open) {
     const grants = [...(open.grants as Grant[])]
     for (const g of o.grants) {
@@ -221,6 +242,7 @@ export async function invite(ctx: Ctx, input: InviteInput): Promise<Invited[]> {
         isAdmin,
         canCreateBrains,
         by: ctx.who.accountId,
+        merge: admin,
       })
       out.push({ email, stored })
       await ok({ ...ctx, db }, 'invitation.create', null, email, describe(grants, isAdmin))
@@ -275,6 +297,7 @@ export async function listInvitations(ctx: Ctx): Promise<InvitationListed[]> {
   const now = ctx.clock().getTime()
   const out: InvitationListed[] = []
   for (const r of rows) {
+    if (!(await inReach(ctx, ctx.db, r))) continue
     const grants = r.grants as Grant[]
     const names = await brainNames(ctx.db, grants)
     out.push({
@@ -301,10 +324,28 @@ export async function listInvitations(ctx: Ctx): Promise<InvitationListed[]> {
   return out
 }
 
-async function mine(ctx: Ctx, db: Db, id: string): Promise<Row> {
-  const admin = ctx.who.isAdmin && ctx.who.kind === 'person'
+// A curator reaches an invitation only while it is still one they could make today: theirs, no
+// administrator nor brain-creating rights, and only brains they curate now.
+async function inReach(ctx: Ctx, db: Db, r: Row): Promise<boolean> {
+  if (ctx.who.isAdmin && ctx.who.kind === 'person') return true
+  if (r.invited_by !== ctx.who.accountId || r.is_admin || r.can_create_brains) return false
+  for (const g of r.grants as Grant[]) {
+    if (!atLeast(await memberRole(db, g.brainId, ctx.who.accountId), 'curator')) return false
+  }
+  return true
+}
+
+async function mine(ctx: Ctx, db: Db, id: string, resend: boolean): Promise<Row> {
   const r = await db.one<Row>('SELECT * FROM invitations WHERE id = $1 FOR UPDATE', [id])
-  if (!r || !(admin || r.invited_by === ctx.who.accountId)) throw notFound('invitation')
+  if (!r || !(await inReach(ctx, db, r))) throw notFound('invitation')
+  if (resend && !(ctx.who.isAdmin && ctx.who.kind === 'person') && !(await installation(db)).curatorsInvite) {
+    throw new AppError(
+      403,
+      'forbidden',
+      'Curators may no longer invite in this installation.',
+      'Ask the administration to resend or withdraw it.',
+    )
+  }
   return r
 }
 
@@ -315,7 +356,7 @@ export async function resendInvitation(ctx: Ctx, id: string): Promise<Invited> {
   const now = ctx.clock()
   const expiresAt = new Date(now.getTime() + INVITE_HOURS * 3_600_000)
   const r = await ctx.db.tx(async (db) => {
-    const r = await mine(ctx, db, id)
+    const r = await mine(ctx, db, id, true)
     if (r.used_at != null || r.revoked_at != null) {
       throw conflict(
         'invitation_closed',
@@ -351,7 +392,7 @@ export async function resendInvitation(ctx: Ctx, id: string): Promise<Invited> {
 export async function revokeInvitation(ctx: Ctx, id: string): Promise<void> {
   inWeb(ctx, 'Managing invitations')
   await ctx.db.tx(async (db) => {
-    const r = await mine(ctx, db, id)
+    const r = await mine(ctx, db, id, false)
     if (r.used_at != null) {
       throw conflict(
         'invitation_closed',

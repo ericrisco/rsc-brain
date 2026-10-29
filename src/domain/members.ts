@@ -4,7 +4,7 @@
 // person and every key of theirs, because roles are looked up on every request.
 import { atLeast, ROLES, type Role } from '../auth/can.ts'
 import { memberRole } from '../auth/principal.ts'
-import { AppError, brainNotFound, conflict, invalid } from '../core/errors.ts'
+import { AppError, brainNotFound, conflict, invalid, notFound } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
 import { addMember } from './brains.ts'
 import { type Ctx, inBrain, ok } from './context.ts'
@@ -56,7 +56,9 @@ export async function listMembers(ctx: Ctx, slug: string) {
   )
   for (const a of authors)
     former.push({ accountId: String(a.id), name: String(a.name), label: 'former member' })
-  return { members, former, pendingCurator: brain.pendingCuratorEmail }
+  // Whose email is pending is for curators; the others see only that one is.
+  const pending = brain.pendingCuratorEmail
+  return { members, former, pendingCurator: curator ? pending : pending !== null }
 }
 
 // Who manages the members of this brain: its curators, and the administration (which does not need to
@@ -152,6 +154,15 @@ export async function setMember(ctx: Ctx, slug: string, input: { account: unknow
       text: `The administration (${ctx.who.name}) added the service account "${out.a.name}" to "${slug}" as ${role}.`,
     })
   }
+  // The administration making itself a member is the same as joining: its curators see it.
+  if (out.a.id === ctx.who.accountId && !out.asCurator && !out.before) {
+    await notify(ctx.db, ctx.clock, ctx.mail, await curatorsOf(ctx.db, out.brainId), {
+      kind: 'admin.joined',
+      brainId: out.brainId,
+      subject: `The administration joined "${slug}"`,
+      text: `${ctx.who.name} (administration) joined "${slug}" as ${role}.`,
+    })
+  }
   return { accountId: out.a.id, name: out.a.name, role }
 }
 
@@ -171,7 +182,7 @@ export async function removeMember(ctx: Ctx, slug: string, accountId: string) {
       'SELECT role FROM memberships WHERE brain_id = $1 AND account_id = $2',
       [brainId, accountId],
     )
-    if (!before) throw brainNotFound()
+    if (!before) throw notFound('member')
     if (before.role === 'curator') await lastCuratorCheck(db, brainId, accountId, slug)
     await db.query('DELETE FROM memberships WHERE brain_id = $1 AND account_id = $2', [brainId, accountId])
     await ok(c, 'member.remove', brainId, accountId, `was ${before.role}`)

@@ -299,13 +299,17 @@ export async function requestReset(
   // at most three links an hour, so nobody fills a mailbox with them.
   const id = String(a.id)
   void (async () => {
-    const recent = await db.one<{ n: number }>(
-      "SELECT count(*)::int AS n FROM password_resets WHERE account_id = $1 AND created_by IS NULL AND created_at > $2::timestamptz - interval '1 hour'",
-      [id, now],
-    )
-    if ((recent?.n ?? 0) >= RESETS_PER_HOUR) return
-    const token = await newReset(db, id, null, now)
-    await send(e, await resetLink(db, token))
+    // Requests for one account take turns, so requests sent at once cannot pass the cap together.
+    const token = await db.tx(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock(hashtext('rsc-brain reset ' || $1))", [id])
+      const recent = await tx.one<{ n: number }>(
+        "SELECT count(*)::int AS n FROM password_resets WHERE account_id = $1 AND created_by IS NULL AND created_at > $2::timestamptz - interval '1 hour'",
+        [id, now],
+      )
+      if ((recent?.n ?? 0) >= RESETS_PER_HOUR) return null
+      return newReset(tx, id, null, now)
+    })
+    if (token) await send(e, await resetLink(db, token))
   })().catch(() => {})
 }
 

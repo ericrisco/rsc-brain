@@ -3,7 +3,7 @@
 // token of theirs ends within a week.
 import type { Clock } from '../core/clock.ts'
 import type { Db } from '../db/db.ts'
-import { type MailKind, type Outbox, send } from '../mail/mail.ts'
+import { type MailKind, mailConfigured, type Outbox, send } from '../mail/mail.ts'
 import type { Ctx } from './context.ts'
 import { installation } from './installation.ts'
 
@@ -100,6 +100,8 @@ export async function remindExpiringTokens(
   clock: Clock,
   outbox: Outbox | undefined,
 ): Promise<number> {
+  // Without mail nothing is marked, so the mail still goes once mail is set up.
+  if (!(await mailConfigured(db))) return 0
   const now = clock()
   const soon = new Date(now.getTime() + EXPIRY_NOTICE_DAYS * 86_400_000)
   const rows = await db.query(
@@ -108,12 +110,12 @@ export async function remindExpiringTokens(
       WHERE a.id = c.account_id AND a.status = 'active' AND a.email IS NOT NULL
         AND c.kind = 'token' AND c.revoked_at IS NULL AND c.expiry_noticed_at IS NULL
         AND c.expires_at > $1 AND c.expires_at <= $2
-      RETURNING c.name, c.expires_at, a.email`,
+      RETURNING c.id, c.name, c.expires_at, a.email`,
     [now, soon],
   )
   const base = (await installation(db)).publicUrl ?? ''
   for (const r of rows) {
-    await send(db, clock, outbox, 'token_expiry', {
+    const sent = await send(db, clock, outbox, 'token_expiry', {
       to: String(r.email),
       subject: `Your Brain token "${r.name}" ends soon`,
       text: [
@@ -123,6 +125,8 @@ export async function remindExpiringTokens(
         `Create a new one in your profile: ${base}/profile/tokens`,
       ].join('\n'),
     })
+    // A send that failed is tried again on the next round.
+    if (!sent.sent) await db.query('UPDATE credentials SET expiry_noticed_at = NULL WHERE id = $1', [r.id])
   }
   return rows.length
 }

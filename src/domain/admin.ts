@@ -43,6 +43,11 @@ export async function listAccounts(ctx: Ctx) {
   }))
 }
 
+// Changes to who administers take turns, so two administrators demoting each other cannot both pass
+// the "another administrator remains" check.
+const adminTurn = (db: Ctx['db']) =>
+  db.query("SELECT pg_advisory_xact_lock(hashtext('rsc-brain administrators'))")
+
 async function otherAdmins(db: Ctx['db'], id: string): Promise<number> {
   const r = await db.one<{ n: number }>(
     "SELECT count(*)::int AS n FROM accounts WHERE is_admin AND status = 'active' AND id <> $1",
@@ -70,6 +75,7 @@ export async function updateAccount(
     }
   }
   return ctx.db.tx(async (db) => {
+    await adminTurn(db)
     const a = await db.one<Row>('SELECT * FROM accounts WHERE id = $1 FOR UPDATE', [id])
     if (!a) throw notFound('account')
     if (a.kind === 'service' && input.isAdmin === true) {
@@ -114,6 +120,14 @@ export async function removeAccount(ctx: Ctx, id: string) {
     throw invalid('You cannot remove your own account.', 'Ask another administrator.')
   }
   return ctx.db.tx(async (db) => {
+    await adminTurn(db)
+    // The brains it curates are locked like a member change locks them, so a curator leaving at the
+    // same moment is seen, and a brain left without a curator is reported.
+    await db.query(
+      `SELECT b.id FROM brains b JOIN memberships m ON m.brain_id = b.id
+        WHERE m.account_id = $1 AND m.role = 'curator' ORDER BY b.id FOR UPDATE OF b`,
+      [id],
+    )
     const a = await db.one<Row>('SELECT * FROM accounts WHERE id = $1 FOR UPDATE', [id])
     if (!a) throw notFound('account')
     if (a.status === 'removed') return { removed: true, keysRevoked: 0, brainsWithoutCurator: [] }

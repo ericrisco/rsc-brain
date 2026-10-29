@@ -493,7 +493,10 @@ describe('people and keys', { skip: skipPg }, () => {
     const mo = await w.person('Mo')
     await w.call(mo.key, 'POST', '/v1/brains', { slug: 'notes' })
     const moWeb = await w.web(mo.id)
-    assert.equal((await w.callWeb(moWeb, 'PUT', '/v1/brains/notes/notify', { proposals: true })).status, 200)
+    assert.equal(
+      (await w.callWeb(moWeb, 'PUT', '/v1/brains/notes/notify', { notifyProposals: true })).status,
+      200,
+    )
     const bot = await w.service('Bot')
     await w.member('notes', bot.id, 'contributor')
     const e = await w.call(bot.key, 'POST', '/v1/brains/notes/entries', {

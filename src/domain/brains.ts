@@ -114,6 +114,7 @@ export async function createBrain(ctx: Ctx, input: NewBrain): Promise<Brain> {
           email: pendingEmail,
           grants: [{ brainId: id, role: 'curator' }],
           by: ctx.who.accountId,
+          merge: true,
         })
       : null
     if (invitation) await ok({ ...ctx, db }, 'invitation.create', id, pendingEmail ?? '', 'first curator')
