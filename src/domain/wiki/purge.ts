@@ -84,7 +84,7 @@ const TARGETS: Target[] = [
   {
     table: 'wiki_settings',
     scope: 'brain_id = $1',
-    text: { guide: 20_000, map_intro: 4000 },
+    text: { guide: 20_000, map_intro: 4000, usage_note: 2000 },
     arrays: [],
     json: [],
   },

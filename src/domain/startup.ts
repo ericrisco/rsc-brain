@@ -165,20 +165,27 @@ export async function startContext(
     },
     { name: 'recent entries', items: recent.map((r) => block(r, brain.slug)) },
   ]
+  // Purpose and usage note open the context, delimited like everything stored: they are data too.
   const purpose = brain.purpose
-    ? `\n\n## Purpose of the brain "${brain.slug}"\n${neutralize(brain.purpose)}`
+    ? `\n\n## Purpose of the brain "${brain.slug}"\n<<<purpose brain=${brain.slug}>>>\n${neutralize(brain.purpose)}\n<<<end>>>`
     : ''
-  const note = (await settingsOf(ctx.db, brain.id)).usageNote
-  const usage = note ? `\n\n## How to use this brain (from its curators)\n${neutralize(note)}` : ''
   const reserve = 1000 // room for the closing note
-  // Purpose and note always go in; at the smallest sizes a long note is cut to leave room for the rest.
-  const room = max - reserve - HEADER.length - purpose.length
-  const head = HEADER + purpose + (usage.length > room ? `${usage.slice(0, Math.max(0, room - 1))}…` : usage)
-  const parts: string[] = [head]
-  let used = parts[0]?.length ?? 0
+  const note = neutralize((await settingsOf(ctx.db, brain.id)).usageNote)
+  let usage = ''
+  if (note) {
+    const open = `\n\n## How to use this brain (from its curators)\n<<<note brain=${brain.slug} by="curators">>>\n`
+    const close = '\n<<<end>>>'
+    // At the smallest sizes a long note is cut, so the rest still has room.
+    const room = max - reserve - HEADER.length - purpose.length - open.length - close.length
+    usage = open + (note.length > room ? `${note.slice(0, Math.max(0, room - 1))}…` : note) + close
+  }
+  type Piece = { text: string; section: string; ids: string[]; count: number }
+  const pieces: Piece[] = []
+  const head = HEADER + purpose + usage
+  let used = head.length
   const seen = new Set<string>()
-  const included: Record<string, number> = {}
-  const omitted: Record<string, number> = {}
+  const missed = new Map<string, string>() // an item that did not fit, and the first part it was due in
+  let mapLeft = 0
   for (const s of sections) {
     let title = `\n\n## ${s.name[0]?.toUpperCase()}${s.name.slice(1)}`
     for (const it of s.items) {
@@ -195,42 +202,57 @@ export async function startContext(
           n++
         }
         if (n > 0) {
-          parts.push(open + body + close)
-          used += open.length + body.length + close.length
-          included[s.name] = n
+          const text = open + body + close
+          pieces.push({ text, section: s.name, ids: [], count: n })
+          used += text.length
           title = ''
         }
-        if (n < it.lines.length) omitted[s.name] = it.lines.length - n
+        mapLeft = it.lines.length - n
         continue
       }
-      const piece = `${title}\n${it.block}`
-      if (used + piece.length + reserve > max) {
-        omitted[s.name] = (omitted[s.name] ?? 0) + 1
+      const text = `${title}\n${it.block}`
+      if (used + text.length + reserve > max) {
+        if (!missed.has(it.id)) missed.set(it.id, s.name)
         continue
       }
-      parts.push(piece)
-      used += piece.length
+      pieces.push({ text, section: s.name, ids: [it.id], count: 1 })
+      used += text.length
       seen.add(it.id)
-      included[s.name] = (included[s.name] ?? 0) + 1
       title = ''
     }
   }
-  const left = Object.entries(omitted)
-  const how: Record<string, string> = {
-    map: `the whole map: GET /v1/brains/${brain.slug}/wiki/map`,
-    'pages about your task': `search them: GET /v1/search?brains=${brain.slug}&in=pages&q=…`,
-    'pages they depend on': `GET /v1/brains/${brain.slug}/neighbours?address=…&kinds=depends-on`,
+  const omittedNow = (): Record<string, number> => {
+    const out: Record<string, number> = {}
+    for (const [id, section] of missed) if (!seen.has(id)) out[section] = (out[section] ?? 0) + 1
+    if (mapLeft > 0) out.map = mapLeft
+    return out
   }
-  parts.push(
-    left.length
-      ? `\n\n## Left out\nDid not fit in ${max} characters:\n${left
-          .map(
-            ([k, n]) =>
-              `- ${n} ${k === 'map' ? 'map lines' : k}; ${how[k] ?? `search with GET /v1/search?brains=${brain.slug}&q=…`}`,
-          )
-          .join('\n')}`
-      : '\n\n## Left out\nNothing.',
-  )
+  const closing = (omitted: Record<string, number>): string => {
+    const left = Object.entries(omitted)
+    if (left.length === 0) return '\n\n## Left out\nNothing.'
+    return `\n\n## Left out\nDid not fit in ${max} characters:\n${left
+      .map(([k, n]) => `- ${n} ${k === 'map' ? 'map lines' : k}`)
+      .join(
+        '\n',
+      )}\nAsk for them: GET /v1/search?brains=${brain.slug}&q=… · GET /v1/brains/${brain.slug}/wiki/map · GET /v1/brains/${brain.slug}/neighbours?address=…`
+  }
+  // The closing note always fits: if it would not, the last pieces go out until it does.
+  let omitted = omittedNow()
+  let end = closing(omitted)
+  while (used + end.length > max && pieces.length > 0) {
+    const last = pieces.pop() as Piece
+    used -= last.text.length
+    for (const id of last.ids) {
+      seen.delete(id)
+      if (!missed.has(id)) missed.set(id, last.section)
+    }
+    if (last.section === 'map') mapLeft += last.count
+    omitted = omittedNow()
+    end = closing(omitted)
+  }
+  const included: Record<string, number> = {}
+  for (const piece of pieces) included[piece.section] = (included[piece.section] ?? 0) + piece.count
+  const parts = [head, ...pieces.map((x) => x.text), end]
   const text = parts.join('')
   // A service's main key may name the job it asks for (Factory, spec F1), so its request joins that trail.
   const ref = ctx.who.credential.kind === 'main' && o.ref ? o.ref.slice(0, 200) : null
@@ -238,7 +260,7 @@ export async function startContext(
     brainId: brain.id,
     kind: 'context',
     query: o.task ?? null,
-    resultIds: [...seen].filter((id) => id !== 'map'),
+    resultIds: [...seen],
     ref,
   })
   return { text, chars: text.length, included, omitted, max, adjusted: max !== asked }

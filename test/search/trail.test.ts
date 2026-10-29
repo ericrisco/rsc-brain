@@ -155,6 +155,8 @@ describe('the trail of what was consulted', { skip: skipPg }, () => {
       all.items.slice(0, 4).map((l) => l.id),
     )
     assert.equal((await w.call(eric.key, 'GET', '/v1/brains/yt/trail?after=-1')).status, 400)
+    const last = await trail(eric.key, `limit=200&after=${all.items.at(-2)?.id}`)
+    assert.deepEqual([last.items.length, last.next], [1, null])
   })
 
   it('after 90 days the trail folds into counters per page, which a curator sees', async () => {
@@ -173,7 +175,48 @@ describe('the trail of what was consulted', { skip: skipPg }, () => {
     assert.ok((t.older?.searches ?? 0) >= 1)
     // Only curators see the counters.
     assert.equal((await trail(ana.key, 'page=retention')).older, undefined)
-    // Folding again changes nothing.
+    assert.equal(t.older?.contexts, 1)
+    // Folding again changes nothing; a later fold adds to the counters.
     assert.equal(await foldTrail(w.db, w.clock()), 0)
+    await w.call(eric.key, 'GET', '/v1/brains/yt/pages/retention')
+    await w.call(eric.key, 'GET', '/v1/brains/yt/pages/retention?revision=1')
+    w.advance(91 * 86_400_000)
+    eric.key = await w.token(eric.id)
+    ana.key = await w.token(ana.id)
+    assert.equal(await foldTrail(w.db, w.clock()), 2)
+    assert.equal((await trail(eric.key, 'page=retention')).older?.reads, before + 2)
+  })
+
+  it("review: an agent's short key for one person does not see another person's run", async () => {
+    const forAna = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'yt',
+        ref: 'run ana',
+        ttlMinutes: 30,
+      })
+    ).body.key as { secret: string }
+    const forBob = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'yt',
+        ref: 'run bob',
+        ttlMinutes: 30,
+      })
+    ).body.key as { secret: string }
+    await w.call(forAna.secret, 'GET', '/v1/search?q=salary')
+    await w.call(forBob.secret, 'GET', '/v1/search?q=hooks')
+    const seen = (await trail(forBob.secret, 'limit=200')).items.map((l) => l.query)
+    assert.deepEqual(seen, ['hooks'])
+    // The service's main key sees what all its keys did.
+    const all = (await trail(factory.key, 'limit=200')).items.map((l) => l.query)
+    assert.ok(all.includes('salary') && all.includes('hooks'))
+  })
+
+  it('review: reading an old revision, a comparison or the history is a read', async () => {
+    await w.db.query('DELETE FROM trail')
+    for (const q of ['?revision=1', '?history=1', '?compare=1,1']) {
+      assert.equal((await w.call(ana.key, 'GET', `/v1/brains/yt/pages/retention${q}`)).status, 200, q)
+    }
+    const t = await trail(eric.key, 'page=retention')
+    assert.equal(t.items.filter((l) => l.kind === 'read' && l.account.id === ana.id).length, 3)
   })
 })

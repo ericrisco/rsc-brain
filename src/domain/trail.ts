@@ -1,6 +1,7 @@
 // The trail of what clients searched, read or asked as context (spec B3 «Rastro de lo consultado»).
 // Identifiers only; the query text is redacted like everything stored. Who sees a line: the curators of
-// the brain, and whoever made it (a service sees what its own keys did, never what others did).
+// the brain, and whoever made it (a service sees what its own keys did, never what others did; an
+// agent's short key only what it did itself, since one service runs agents for several people).
 import { invalid } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
 import { redact } from '../privacy/redact.ts'
@@ -21,12 +22,13 @@ export async function track(
   },
 ): Promise<void> {
   const ref = t.ref ?? (ctx.who.credential.kind === 'short' ? ctx.who.credential.ref : null)
-  // The session is the key's open one in that brain, if it has one: its bound session first.
+  // The session is the one the key's writes in that brain go to (as sessionFor picks it, without
+  // opening one): its newest explicit or bound session, else its implicit session of the day.
   await db.query(
     `INSERT INTO trail (brain_id, at, account_id, credential_id, ref, kind, query, result_ids, session_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
              (SELECT id FROM sessions WHERE credential_id = $4 AND brain_id = $1 AND status = 'open'
-               ORDER BY bound DESC, last_activity_at DESC LIMIT 1))`,
+               ORDER BY (day IS NULL) DESC, opened_at DESC, id DESC LIMIT 1))`,
     [
       t.brainId,
       ctx.clock(),
@@ -38,6 +40,14 @@ export async function track(
       t.resultIds,
     ],
   )
+}
+
+// A read of a page by address (its current version, an old revision, a comparison or its history).
+export async function trackPageRead(ctx: Ctx, slug: string, address: string): Promise<void> {
+  const { brain } = await inBrain(ctx, { slug })
+  const row = await resolve(ctx.db, brain.id, address)
+  if (row)
+    await track(ctx.root ?? ctx.db, ctx, { brainId: brain.id, kind: 'read', resultIds: [String(row.id)] })
 }
 
 export type TrailLine = {
@@ -73,7 +83,13 @@ export async function readTrail(
     return `$${params.length}`
   }
   const where = ['t.brain_id = $1']
-  if (role !== 'curator') where.push(`t.account_id = ${p(ctx.who.accountId)}`)
+  if (role !== 'curator') {
+    where.push(
+      ctx.who.credential.kind === 'short'
+        ? `t.credential_id = ${p(ctx.who.credential.id)}`
+        : `t.account_id = ${p(ctx.who.accountId)}`,
+    )
+  }
   if (q.ref !== undefined) where.push(`t.ref = ${p(q.ref)}`)
   if (q.session !== undefined) where.push(`t.session_id = ${p(q.session)}`)
   let pageId: string | null = null
