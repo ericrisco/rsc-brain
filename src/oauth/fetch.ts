@@ -82,7 +82,8 @@ const guardedLookup =
         (a) => !forbiddenAddress(a.address) || (policy.allowLoopbackHttp && LOOPBACK.has(a.address)),
       )
       if (ok.length === 0 || ok.length !== list.length) {
-        return callback(new FetchRefused(`${hostname} resolves to an address Brain does not reach.`), '', 4)
+        // Said like any other failure, so the answer does not map names only reachable inside.
+        return callback(new FetchRefused('The document could not be fetched.'), '', 4)
       }
       if ((options as { all?: boolean }).all)
         return (callback as unknown as (e: null, a: unknown) => void)(null, ok)

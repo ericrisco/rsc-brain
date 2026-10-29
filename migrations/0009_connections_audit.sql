@@ -15,7 +15,7 @@ CREATE TABLE oauth_clients (
 );
 
 -- What a person consented to: these brains, read or read + write, for this client. Only the hash of
--- the current refresh token (and of the previous one, to detect a replay) is kept.
+-- the current refresh token is kept here; the ones already used are kept below.
 CREATE TABLE oauth_grants (
   id            text PRIMARY KEY,
   client_id     text NOT NULL REFERENCES oauth_clients(client_id),
@@ -25,8 +25,6 @@ CREATE TABLE oauth_grants (
   brain_ids     text[] NOT NULL,
   perm          text NOT NULL CHECK (perm IN ('read', 'write')),
   refresh_hash  text NOT NULL UNIQUE,
-  previous_hash text,
-  rotated_at    timestamptz,
   epoch         integer NOT NULL,
   created_at    timestamptz NOT NULL,
   last_used_at  timestamptz NOT NULL,
@@ -34,7 +32,13 @@ CREATE TABLE oauth_grants (
   revoked_at    timestamptz
 );
 CREATE INDEX oauth_grants_account ON oauth_grants (account_id);
-CREATE INDEX oauth_grants_previous ON oauth_grants (previous_hash);
+-- Every refresh token a connection already used: any of them coming back means one leaked.
+CREATE TABLE oauth_used_refresh (
+  hash     text PRIMARY KEY,
+  grant_id text NOT NULL REFERENCES oauth_grants(id) ON DELETE CASCADE,
+  used_at  timestamptz NOT NULL
+);
+CREATE INDEX oauth_used_refresh_grant ON oauth_used_refresh (grant_id);
 
 CREATE TABLE oauth_codes (
   code_hash      text PRIMARY KEY,

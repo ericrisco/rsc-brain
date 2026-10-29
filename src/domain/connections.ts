@@ -462,7 +462,8 @@ export function hostOf(uri: string): string {
     const u = new URL(uri)
     if (u.protocol === 'https:') return u.host
     if (u.protocol === 'http:') return `${u.host} (this computer)`
-    return `${u.protocol} (an app on this device)`
+    // The scheme goes in brackets, after the words: "claude.ai:" must not read as the domain.
+    return `an app on this device (${u.protocol})`
   } catch {
     return uri.slice(0, 100)
   }
@@ -478,10 +479,11 @@ export async function refreshGrant(db: Db, clock: Clock, b: Record<string, unkno
   // An old refresh token used again means it leaked: the connection ends for good (the refusal that
   // follows must not undo that).
   const replay = await db.one<Row>(
-    'SELECT id, rotated_at FROM oauth_grants WHERE previous_hash = $1 AND revoked_at IS NULL',
+    `SELECT g.id, u.used_at FROM oauth_used_refresh u JOIN oauth_grants g ON g.id = u.grant_id
+      WHERE u.hash = $1 AND g.revoked_at IS NULL`,
     [h],
   )
-  if (replay && now.getTime() - (replay.rotated_at as Date).getTime() < REFRESH_RACE_SECONDS * 1000) {
+  if (replay && now.getTime() - (replay.used_at as Date).getTime() < REFRESH_RACE_SECONDS * 1000) {
     throw bad('invalid_grant', 'This refresh token was just used by another request. Use the new one it got.')
   }
   if (replay) {
@@ -520,10 +522,16 @@ export async function refreshGrant(db: Db, clock: Clock, b: Record<string, unkno
       )
     }
     const next = newSecret()
-    await tx.query(
-      'UPDATE oauth_grants SET refresh_hash = $2, previous_hash = $3, last_used_at = $4, rotated_at = $4 WHERE id = $1',
-      [g.id, hashSecret(next), h, now],
-    )
+    await tx.query('UPDATE oauth_grants SET refresh_hash = $2, last_used_at = $3 WHERE id = $1', [
+      g.id,
+      hashSecret(next),
+      now,
+    ])
+    await tx.query('INSERT INTO oauth_used_refresh (hash, grant_id, used_at) VALUES ($1, $2, $3)', [
+      h,
+      g.id,
+      now,
+    ])
     const access = await mintAccess(tx, now, {
       id: String(g.id),
       account_id: String(g.account_id),

@@ -9,7 +9,7 @@ import { after, before, describe, it } from 'node:test'
 import { hashPassword } from '../../src/auth/password.ts'
 import { hashSecret } from '../../src/auth/secrets.ts'
 import { AUDIT_PAGE } from '../../src/domain/auditlog.ts'
-import { forbiddenAddress } from '../../src/oauth/fetch.ts'
+import { FetchRefused, fetchJson, forbiddenAddress } from '../../src/oauth/fetch.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
 
@@ -161,7 +161,7 @@ describe('connections: review', { skip: skipPg }, () => {
     )
     assert.equal(page.status, 200)
     assert.ok(!/<span class="domain">claude\.ai<\/span>/.test(page.text))
-    assert.match(page.text, /x-evil: \(an app on this device\)/)
+    assert.match(page.text, /an app on this device \(x-evil:\)/)
   })
 
   it('a client document is fetched again after an hour: a withdrawn return address stops working', async () => {
@@ -399,6 +399,81 @@ describe('connections: review', { skip: skipPg }, () => {
     const later = await w.web(admin.id)
     assert.equal(((await w.callWeb(later, 'GET', '/v1/me/apps')).body.apps as unknown[]).length, 0)
     w.advance(-91 * 86_400_000)
+  })
+  it("second pass: a connection or a narrowed token revokes only itself, never the person's other keys", async () => {
+    const t = await connect(['alpha'], 44020)
+    const other = await w.web(admin.id)
+    const otherId = String(
+      (await w.db.one('SELECT id FROM credentials WHERE secret_hash = $1', [hashSecret(other)]))?.id,
+    )
+    const tokenId = String(
+      (
+        await w.db.one(
+          "SELECT id FROM credentials WHERE account_id = $1 AND kind = 'token' ORDER BY created_at LIMIT 1",
+          [admin.id],
+        )
+      )?.id,
+    )
+    assert.equal((await w.call(t.access_token, 'DELETE', `/v1/keys/${otherId}`)).status, 404)
+    assert.equal((await w.call(t.access_token, 'DELETE', `/v1/keys/${tokenId}`)).status, 404)
+    assert.equal((await w.callWeb(other, 'GET', '/v1/me')).status, 200)
+    const alpha = String((await w.db.one("SELECT id FROM brains WHERE slug = 'alpha'"))?.id)
+    const narrow = await w.token(admin.id, { brainIds: [alpha] })
+    assert.equal((await w.call(narrow, 'DELETE', `/v1/keys/${tokenId}`)).status, 404)
+    const selfId = String(
+      (await w.db.one('SELECT id FROM credentials WHERE secret_hash = $1', [hashSecret(t.access_token)]))?.id,
+    )
+    assert.equal((await w.call(t.access_token, 'DELETE', `/v1/keys/${selfId}`)).status, 200)
+  })
+
+  it('second pass: any refresh token already used ends the connection when it comes back, not only the last one', async () => {
+    const t = await connect(['alpha'], 44021)
+    const r2 = (
+      await form('/oauth/token', {
+        grant_type: 'refresh_token',
+        refresh_token: t.refresh_token,
+        client_id: t.client,
+      })
+    ).json()
+    w.advance(40_000)
+    const r3 = (
+      await form('/oauth/token', {
+        grant_type: 'refresh_token',
+        refresh_token: r2.refresh_token,
+        client_id: t.client,
+      })
+    ).json()
+    w.advance(40_000)
+    const back = await form('/oauth/token', {
+      grant_type: 'refresh_token',
+      refresh_token: t.refresh_token,
+      client_id: t.client,
+    })
+    assert.equal(back.json().error, 'invalid_grant')
+    const thief = await form('/oauth/token', {
+      grant_type: 'refresh_token',
+      refresh_token: r3.refresh_token,
+      client_id: t.client,
+    })
+    assert.equal(thief.json().error, 'invalid_grant')
+    assert.ok(await w.db.one("SELECT 1 FROM audit WHERE action = 'connection.replay'"))
+    w.advance(-80_000)
+  })
+
+  it('second pass: a name only reachable inside is refused like one that does not exist', async () => {
+    const inside = await fetchJson('https://localhost/x.json').catch((e: Error) => e)
+    assert.ok(inside instanceof FetchRefused)
+    assert.ok(!/localhost/.test(inside.message), inside.message)
+  })
+
+  it('second pass: an app scheme that looks like a domain is not shown as one', async () => {
+    const redirect = 'claude.ai:/cb'
+    const client = await register(redirect, 'Claude')
+    const page = await get(
+      `/oauth/authorize?${query(client, redirect, 'v'.repeat(43))}`,
+      `rscb_session=${session}`,
+    )
+    assert.match(page.text, /<span class="domain">an app on this device \(claude\.ai:\)<\/span>/)
   })
 })
 

@@ -236,10 +236,12 @@ export async function revokeKey(ctx: Ctx, id: string): Promise<void> {
   )
   // A short key only revokes itself; other keys of its service are out of its reach.
   const self = id === ctx.who.credential.id
-  const mine =
-    k &&
-    ctx.who.credential.kind !== 'short' &&
-    (k.account_id === ctx.who.accountId || k.parent_account === ctx.who.accountId)
+  // An app's connection key and a narrowed token, too: they reach only their own brains, not the
+  // person's other keys and sessions.
+  const c = ctx.who.credential
+  const whole =
+    c.kind === 'web' || c.kind === 'main' || (c.kind === 'token' && c.allBrains && c.perm === 'write')
+  const mine = k && whole && (k.account_id === ctx.who.accountId || k.parent_account === ctx.who.accountId)
   if (!k || !(self || mine || (ctx.who.isAdmin && ctx.who.kind === 'person'))) throw notFound('key')
   if (ctx.who.credential.perm === 'read') {
     throw denied('This key is read-only.', 'Use a key with read + write permission.')
