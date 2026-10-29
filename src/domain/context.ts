@@ -10,7 +10,8 @@ import { audit } from './audit.ts'
 
 // root: the pool, outside any transaction. Denials are audited through it so a rollback cannot erase
 // them (the refusal is thrown, which rolls the transaction back).
-export type Ctx = { db: Db; clock: Clock; who: Principal; root?: Db }
+// tz: the installation's time zone, which decides the day of a key's implicit session (spec B1).
+export type Ctx = { db: Db; clock: Clock; who: Principal; root?: Db; tz?: string }
 
 export type Brain = {
   id: string
