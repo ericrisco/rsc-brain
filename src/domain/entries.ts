@@ -66,7 +66,7 @@ function date(v: string | undefined, field: string): Date | null {
 }
 
 // The checks that say exactly what is wrong (spec B1 «Bordes y errores»).
-function validate(i: EntryInput): void {
+export function validate(i: EntryInput): void {
   if (!(ENTRY_TYPES as readonly string[]).includes(i.type)) {
     throw invalid(`Unknown entry type "${i.type}".`, `Use one of: ${ENTRY_TYPES.join(', ')}.`)
   }
@@ -210,6 +210,22 @@ type Prepared = {
   redactions: number
 }
 
+// Redaction marks can make a text longer; what is stored must still fit every limit.
+export function fitsOnceRedacted(f: Record<string, unknown>): void {
+  const tooLong =
+    (f.title as string).length > LIMITS.title ||
+    (f.content as string).length > LIMITS.content ||
+    ((f.appliesTo as string | null) ?? '').length > LIMITS.appliesTo ||
+    (f.tags as string[]).some((t) => t.length > LIMITS.tag) ||
+    (f.refs as string[]).some((t) => t.length > LIMITS.ref)
+  if (tooLong) {
+    throw invalid(
+      'Once secrets are replaced by their marks, the text is longer than the limit.',
+      'Shorten the text, or remove the secrets yourself.',
+    )
+  }
+}
+
 function prepare(i: EntryInput): Prepared {
   validate(i)
   const r = redactAll({
@@ -219,16 +235,7 @@ function prepare(i: EntryInput): Prepared {
     tags: (i.tags ?? []).map((t) => t.trim()),
     refs: (i.refs ?? []).map((t) => t.trim()),
   })
-  // Redaction marks can make a text longer; what is stored must still fit the limits.
-  if (
-    (r.fields.title as string).length > LIMITS.title ||
-    (r.fields.content as string).length > LIMITS.content
-  ) {
-    throw invalid(
-      'Once secrets are replaced by their marks, the text is longer than the limit.',
-      'Shorten the text, or remove the secrets yourself.',
-    )
-  }
+  fitsOnceRedacted(r.fields)
   return {
     type: i.type as EntryType,
     title: r.fields.title as string,

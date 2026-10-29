@@ -109,6 +109,15 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
     const id = await save(ana.key, { type: 'fact', title: 'Address', content: secretish, requestKey: 'pk-1' })
     await find(ana.key, 'q=Calle%20Falsa')
     await w.call(ana.key, 'GET', `/v1/entries/${id}`)
+    // A relation whose note quotes the entry, and a forget reason that does too: both must go.
+    const other = await save(bob.key, { type: 'note', title: 'Moved', content: 'She moved away.' })
+    await w.call(bob.key, 'POST', '/v1/brains/yt/relations', {
+      from: other,
+      to: id,
+      kind: 'contradicts',
+      reason: `${secretish} moved`,
+    })
+    await w.call(eric.key, 'POST', `/v1/entries/${id}/forget`, { reason: `${secretish} is personal` })
     const notAdmin = await w.call(eric.key, 'POST', `/v1/entries/${id}/purge`, { reason: 'personal data' })
     assert.equal(notAdmin.status, 403)
     const p = await w.call(admin.key, 'POST', `/v1/entries/${id}/purge`, { reason: 'personal data' })
@@ -220,6 +229,35 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
       (await w.call(eric.key, 'POST', `/v1/entries/${corr.entryId}/forget`, { reason: 'x' })).status,
       400,
     )
+    // Review: an expiry date would take it out of the context just the same; nobody sets one here.
+    const short = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', { writeBrain: 'yt', ref: 'r-corr', ttlMinutes: 5 })
+    ).body.key as { secret: string }
+    for (const key of [short.secret, factory.key, eric.key]) {
+      const s = await w.call(key, 'POST', `/v1/entries/${corr.entryId}/schedule`, {
+        expiresAt: '2000-01-01T00:00:00Z',
+      })
+      assert.equal(s.status, 400)
+    }
+    const still = (await w.call(ana.key, 'GET', '/v1/brains/yt/context?agent=narrator')).body as {
+      text: string
+    }
+    assert.ok(still.text.includes(corr.entryId))
+  })
+
+  it('review: an edit meets the same limits as a save, also once secrets become marks', async () => {
+    const id = await save(ana.key, { type: 'note', title: 'Short', content: 'fine' })
+    const title = Array.from({ length: 25 }, () => 'a://:p@').join(' ')
+    assert.ok(title.length <= 200)
+    const grown = await w.call(ana.key, 'PATCH', `/v1/entries/${id}`, { baseRevision: 1, title })
+    assert.equal(grown.status, 400)
+    const tags = await w.call(ana.key, 'PATCH', `/v1/entries/${id}`, {
+      baseRevision: 1,
+      tags: Array.from({ length: 21 }, (_, i) => `t${i}`),
+    })
+    assert.equal(tags.status, 400)
+    const ok = await w.call(ana.key, 'PATCH', `/v1/entries/${id}`, { baseRevision: 1, tags: ['a', 'b'] })
+    assert.equal(ok.status, 200)
   })
 
   it('CA16: a pinned entry is always in the context', async () => {

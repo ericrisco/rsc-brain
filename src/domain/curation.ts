@@ -8,7 +8,7 @@ import { normalize, redact, redactAll } from '../privacy/redact.ts'
 import { audit } from './audit.ts'
 import { addMember } from './brains.ts'
 import { allow, type Ctx, type InBrain, inBrain, ok } from './context.ts'
-import { ENTRY_TYPES, type Entry, entryOf, LIMITS } from './entries.ts'
+import { type Entry, entryOf, fitsOnceRedacted, validate } from './entries.ts'
 import { emit } from './events.ts'
 
 const PERSONS_ONLY = () =>
@@ -67,24 +67,18 @@ export async function editEntry(ctx: Ctx, id: string, e: EntryEdit): Promise<Ent
       err.current = entryOf(row)
       throw err
     }
+    // The same checks as a save, before and after redaction (spec B1 «Bordes y errores»).
     const type = e.type ?? String(row.type)
-    if (!(ENTRY_TYPES as readonly string[]).includes(type)) {
-      throw invalid(`Unknown entry type "${type}".`, `Use one of: ${ENTRY_TYPES.join(', ')}.`)
+    const appliesTo = e.appliesTo === undefined ? (row.applies_to as string | null) : e.appliesTo
+    const fields = {
+      title: (e.title ?? String(row.title)).trim(),
+      content: e.content ?? String(row.content),
+      tags: (e.tags ?? (row.tags as string[])).map((t) => t.trim()),
+      refs: (e.refs ?? (row.refs as string[])).map((t) => t.trim()),
     }
-    const title = (e.title ?? String(row.title)).trim()
-    const content = e.content ?? String(row.content)
-    if (!title || title.length > LIMITS.title)
-      throw invalid(`A title has 1 to ${LIMITS.title} characters.`, 'Fix it.')
-    if (!content.trim() || content.length > LIMITS.content) {
-      throw invalid(`Content has 1 to ${LIMITS.content} characters.`, 'Split it into several entries.')
-    }
-    const r = redactAll({
-      title,
-      content,
-      appliesTo: e.appliesTo === undefined ? (row.applies_to as string | null) : e.appliesTo,
-      tags: e.tags ?? (row.tags as string[]),
-      refs: e.refs ?? (row.refs as string[]),
-    })
+    validate({ type, ...fields, ...(appliesTo == null ? {} : { appliesTo: appliesTo.trim() }) })
+    const r = redactAll({ ...fields, appliesTo: appliesTo?.trim() ?? null })
+    fitsOnceRedacted(r.fields)
     const now = ctx.clock()
     const revision = Number(row.revision) + 1
     const f = r.fields
@@ -147,6 +141,7 @@ export async function recoverEntry(ctx: Ctx, id: string): Promise<Entry> {
     const c = { ...ctx, db }
     const { row, at } = await load(ctx, db, id)
     await allow(c, 'entry.pin', { role: at.role, brainStatus: at.brain.status }, at.brain.id)
+    if (row.type === 'correction') throw PERSONS_ONLY()
     if (row.state === 'active') return entryOf(row)
     if (row.topic != null) {
       const taken = await db.one(
@@ -213,6 +208,8 @@ export async function scheduleEntry(
       { role: at.role, isOwner: isOwner(ctx, row), brainStatus: at.brain.status },
       at.brain.id,
     )
+    // An expiry date takes a correction out of the context: the same as forgetting it.
+    if (row.type === 'correction') throw PERSONS_ONLY()
     const out = await db.one(
       `UPDATE entries SET review_after = CASE WHEN $2 THEN $3::timestamptz ELSE review_after END,
               expires_at = CASE WHEN $4 THEN $5::timestamptz ELSE expires_at END, updated_at = $6
@@ -260,11 +257,13 @@ export async function purgeEntry(
       const now = ctx.clock()
       await db.query(
         `UPDATE entries SET state = 'purged', title = '[purged]', content = '', applies_to = NULL, tags = '{}', refs = '{}',
-                topic = NULL, pinned = false, purged_by = $2, purged_reason = $3, purged_at = $4, updated_at = $4
+                topic = NULL, pinned = false, forgotten_reason = NULL, purged_by = $2, purged_reason = $3, purged_at = $4, updated_at = $4
           WHERE id = $1`,
         [id, ctx.who.accountId, why, now],
       )
       await db.query('DELETE FROM entry_revisions WHERE entry_id = $1', [id])
+      // A relation's note can quote the entry; the relation stays, its note goes.
+      await db.query("UPDATE relations SET reason = '' WHERE from_id = $1 OR to_id = $1", [id])
       await db.query('DELETE FROM trail WHERE $1 = ANY(result_ids)', [id])
       await db.query('DELETE FROM events WHERE target_id = $1', [id])
       await db.query('DELETE FROM request_keys WHERE receipt::text LIKE $1', [`%${id}%`])
