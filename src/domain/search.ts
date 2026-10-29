@@ -167,17 +167,21 @@ export async function search(ctx: Ctx, r: SearchRequest): Promise<SearchResult> 
   query.excludedPhrases = query.excludedPhrases.filter((x) => /[\p{L}\p{N}]/u.test(x))
   const empty = query.anyWords.length === 0 && query.phrases.length === 0
   const want = offset + limit + 1
-  // Close in meaning, when meaning search is on (never for an empty search).
-  const meaning = empty
-    ? { status: 'off' as const, entries: { ids: [], sims: [] }, pages: { ids: [], sims: [] } }
-    : await meaningMatches(
-        ctx,
-        targets.map((t) => t.id),
-        r.q,
-      )
   // A session or a reference belongs to the journal: with either, pages are left out.
   const entriesToo = scope !== 'pages'
   const pagesToo = scope !== 'entries' && r.session === undefined && r.ref === undefined
+  // Close in meaning, when meaning search is on: never for an empty search, nor with an exact phrase
+  // (it asks for those words, not for their meaning). Only the words searched for are sent, not the
+  // excluded ones.
+  const meaning =
+    empty || query.phrases.length > 0
+      ? { status: 'off' as const, entries: { ids: [], sims: [] }, pages: { ids: [], sims: [] } }
+      : await meaningMatches(
+          ctx,
+          targets.map((t) => t.id),
+          query.anyWords.join(' '),
+          [...(entriesToo ? ['entry' as const] : []), ...(pagesToo ? ['page' as const] : [])],
+        )
   const candidates = [
     ...(entriesToo
       ? await entryCandidates(ctx, r, targets, include, query, empty, prefix, want, meaning.entries)
@@ -250,8 +254,6 @@ function paramList() {
 }
 
 type Near = { ids: string[]; sims: number[] }
-// How much meaning weighs against words: a result found only by meaning ranks like a fair match by words.
-const MEANING_WEIGHT = 0.1
 
 // The match and the score of a search over one kind. With results close in meaning, a result matches by
 // words or by meaning; `byWords` says which.
@@ -291,7 +293,9 @@ function textConditions(
   const sim = `coalesce((SELECT u.s FROM unnest(${ids}::text[], ${p(near.sims)}::real[]) AS u(i, s) WHERE u.i = ${idCol}), 0)`
   conditions.push(`(${words} OR ${idCol} = ANY(${ids}::text[]))`)
   return {
-    score: `(CASE WHEN ${words} THEN ${rank} ELSE 0 END + ${MEANING_WEIGHT} * ${sim})`,
+    // Found by words: ranked by words. Found only by meaning: ranked by how close it is, after every
+    // result found by words (spec B3 «El orden»: the most pertinent first).
+    score: `(CASE WHEN ${words} THEN ${rank} ELSE ${sim} END)`,
     byWords: `coalesce(${words}, false)`,
   }
 }
@@ -356,7 +360,7 @@ async function entryCandidates(
     `SELECT e.id, b.slug, e.created_at AS at, ${depthOf('entries', 'e')} AS depth, ${band} AS band, ${byWords} AS by_words
        FROM entries e JOIN brains b ON b.id = e.brain_id
       WHERE ${conditions.join(' AND ')}
-      ORDER BY depth, band DESC, e.created_at DESC, e.id
+      ORDER BY depth, by_words DESC, band DESC, e.created_at DESC, e.id
       LIMIT ${p(want)}`,
     params,
   )
@@ -415,7 +419,7 @@ async function pageCandidates(
     `SELECT p.id, b.slug, p.updated_at AS at, ${depthOf('pages', 'p')} AS depth, ${band} AS band, ${first} AS first, ${byWords} AS by_words
        FROM pages p JOIN brains b ON b.id = p.brain_id
       WHERE ${conditions.join(' AND ')}
-      ORDER BY depth, band DESC, first DESC, p.updated_at DESC, p.id
+      ORDER BY depth, by_words DESC, band DESC, first DESC, p.updated_at DESC, p.id
       LIMIT ${p(want)}`,
     params,
   )
@@ -434,6 +438,7 @@ async function pageCandidates(
 function byOrder(a: Candidate, b: Candidate): number {
   return (
     a.depth - b.depth ||
+    Number(b.byWords) - Number(a.byWords) ||
     b.band - a.band ||
     b.first - a.first ||
     b.at.getTime() - a.at.getTime() ||

@@ -39,14 +39,15 @@ function vectors(raw: unknown, n: number): number[][] {
   })
 }
 
-export function openai(key: string, model = 'text-embedding-3-small'): Provider {
+// 256 dimensions (the model can shorten its vectors): close in quality, six times cheaper to compare.
+export function openai(key: string, model = 'text-embedding-3-small', dimensions = 256): Provider {
   return {
     name: 'openai',
-    model,
+    model: `${model}@${dimensions}`,
     async embed(texts, { signal }) {
       const out = await post(
         'https://api.openai.com/v1/embeddings',
-        { model, input: texts },
+        { model, input: texts, dimensions },
         { authorization: `Bearer ${key}` },
         signal,
       )

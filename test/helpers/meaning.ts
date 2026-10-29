@@ -23,7 +23,15 @@ const CONCEPTS: Record<string, number> = {
   brand: 3,
 }
 
-export type FakeProvider = Provider & { sent: string[]; failing: boolean; calls: number }
+export type FakeProvider = Provider & {
+  sent: string[]
+  failing: boolean
+  calls: number
+  // Held until it resolves: lets a test change the data while texts are with the provider.
+  gate: Promise<void> | null
+  // Texts it refuses one by one.
+  refuse: (text: string) => boolean
+}
 
 export function fakeProvider(name = 'test', model = 'fake-1'): FakeProvider {
   const p: FakeProvider = {
@@ -32,10 +40,14 @@ export function fakeProvider(name = 'test', model = 'fake-1'): FakeProvider {
     sent: [],
     failing: false,
     calls: 0,
+    gate: null,
+    refuse: () => false,
     async embed(texts) {
       p.calls += 1
       if (p.failing) throw new Error('provider down')
+      if (texts.some((t) => p.refuse(t))) throw new Error('refused')
       p.sent.push(...texts)
+      if (p.gate !== null) await p.gate
       return texts.map((t) => {
         const v = new Array(32).fill(0)
         const words = t

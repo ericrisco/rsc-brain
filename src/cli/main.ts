@@ -83,7 +83,7 @@ async function main(argv: string[]): Promise<number> {
       foldTrail(db, systemClock()).catch(() => {})
     }, 10 * 60_000)
     sweep.unref()
-    // What has no vector yet is sent to the provider in batches, one run at a time.
+    // What has no vector yet is sent to the provider in batches, one run a minute at most.
     let embedding = false
     const embed = setInterval(() => {
       if (embedding) return
@@ -95,7 +95,7 @@ async function main(argv: string[]): Promise<number> {
         .finally(() => {
           embedding = false
         })
-    }, 20_000)
+    }, 60_000)
     embed.unref()
     const stop = () => {
       server.close(() => {

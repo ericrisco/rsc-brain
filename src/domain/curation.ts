@@ -10,6 +10,7 @@ import { addMember } from './brains.ts'
 import { allow, type Ctx, type InBrain, inBrain, ok } from './context.ts'
 import { type Entry, entryOf, fitsOnceRedacted, validate } from './entries.ts'
 import { emit } from './events.ts'
+import { lockMeaning } from './meaning.ts'
 
 const PERSONS_ONLY = () =>
   invalid(
@@ -252,6 +253,8 @@ export async function joinAsAdmin(c: Ctx, brainId: string, why: string): Promise
 export async function scrubEntry(c: Ctx, id: string, why: string): Promise<void> {
   const brainId = String((await c.db.one('SELECT brain_id FROM entries WHERE id = $1', [id]))?.brain_id)
   const now = c.clock()
+  // No vector of this text is stored while, or after, it is purged.
+  await lockMeaning(c.db, brainId)
   await c.db.query(
     `UPDATE entries SET state = 'purged', title = '[purged]', content = '', applies_to = NULL, tags = '{}', refs = '{}',
               topic = NULL, pinned = false, forgotten_reason = NULL, purged_by = $2, purged_reason = $3, purged_at = $4, updated_at = $4

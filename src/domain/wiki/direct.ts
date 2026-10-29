@@ -5,6 +5,7 @@
 import { conflict, invalid } from '../../core/errors.ts'
 import { redact } from '../../privacy/redact.ts'
 import { allow, type Ctx, inBrain } from '../context.ts'
+import { lockMeaning } from '../meaning.ts'
 import { applyOps, type Revised } from './apply.ts'
 import { type Problem, readOp } from './model.ts'
 import { getPage, type PageReading, settingsOf, type WikiSettings } from './pages.ts'
@@ -115,6 +116,8 @@ export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput):
         'Nothing to change.',
         'Send guide, mapIntro, usageNote, meaningExcluded, staleDays, longChars or maintenanceEvery.',
       )
+    // Waits for any vector being stored for this brain, so none lands after the exclusion.
+    if (s.meaningExcluded !== undefined) await lockMeaning(db, brain.id)
     await db.query(`UPDATE wiki_settings SET ${sets.join(', ')} WHERE brain_id = $1`, values)
     // Excluding a brain from meaning search deletes its vectors now; nothing more of it is sent (CA8).
     if (s.meaningExcluded === true)

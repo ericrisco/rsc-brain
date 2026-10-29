@@ -143,15 +143,51 @@ export async function disableMeaning(ctx: Ctx) {
   return getMeaning(ctx)
 }
 
+// One lock per brain between storing vectors and what makes them wrong: excluding the brain, purging
+// in it. Storing takes it shared; those take it exclusive, so a vector computed from text that is
+// being purged, or for a brain being excluded, is never stored after the fact.
+export async function lockMeaning(db: Db, brainId: string, shared = false): Promise<void> {
+  await db.query(
+    `SELECT ${shared ? 'pg_advisory_xact_lock_shared' : 'pg_advisory_xact_lock'}(hashtext($1))`,
+    [`meaning:${brainId}`],
+  )
+}
+
+const SKIPPED = `NOT EXISTS (SELECT 1 FROM meaning_failures f WHERE f.kind = x.kind AND f.target_id = x.id
+                              AND f.provider = $1 AND f.model = $2 AND f.text_hash = md5(x.text))`
+
+// Stores one vector if, under the brain's lock, its source still has the same text and may be sent.
+async function store(db: Db, r: Row, vec: number[], p: { name: string; model: string }, now: Date) {
+  await db.tx(async (tx) => {
+    await lockMeaning(tx, String(r.brain_id), true)
+    const still = await tx.one(
+      `SELECT 1 FROM (${EMBEDDABLE}) x
+        WHERE x.kind = $1 AND x.id = $2 AND md5(x.text) = $3
+          AND NOT EXISTS (SELECT 1 FROM wiki_settings ws WHERE ws.brain_id = x.brain_id AND ws.meaning_excluded)`,
+      [r.kind, r.id, r.hash],
+    )
+    if (!still) return
+    await tx.query(
+      `INSERT INTO meaning_vectors (kind, target_id, brain_id, provider, model, text_hash, vec, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (kind, target_id) DO UPDATE
+         SET provider = EXCLUDED.provider, model = EXCLUDED.model, text_hash = EXCLUDED.text_hash,
+             vec = EXCLUDED.vec, updated_at = EXCLUDED.updated_at`,
+      [r.kind, r.id, r.brain_id, p.name, p.model, r.hash, vec, now],
+    )
+  })
+}
+
 // Processes up to one batch of what has no current vector. Whether a brain is excluded is checked right
-// before sending and again when storing, so nothing of an excluded brain is sent or kept (CA8).
+// before sending and again, under the brain's lock, when storing (CA8). A text the provider refuses on
+// its own is set aside, so it never blocks what comes after it.
 export async function embedPending(db: Db, providers: Providers, now: Date, batch = BATCH): Promise<number> {
   const s = await meaningSettings(db)
   const p = s.enabled && s.provider ? providers[s.provider] : undefined
   if (!p || p.model !== s.model) return 0
   const rows = await db.query<Row>(
     `SELECT x.kind, x.id, x.brain_id, x.text, md5(x.text) AS hash FROM (${EMBEDDABLE}) x
-      WHERE ${NOT_EXCLUDED}
+      WHERE ${NOT_EXCLUDED} AND ${SKIPPED}
         AND NOT EXISTS (SELECT 1 FROM meaning_vectors v WHERE v.kind = x.kind AND v.target_id = x.id
                           AND v.provider = $1 AND v.model = $2 AND v.text_hash = md5(x.text))
       ORDER BY x.kind, x.id LIMIT $3`,
@@ -168,20 +204,46 @@ export async function embedPending(db: Db, providers: Providers, now: Date, batc
   )
   const send = rows.filter((r) => !excluded.has(String(r.brain_id)))
   if (send.length === 0) return 0
-  const vecs = await p.embed(
-    send.map((r) => String(r.text).slice(0, SEND_CHARS)),
-    { signal: AbortSignal.timeout(30_000) },
-  )
+  const texts = send.map((r) => String(r.text).slice(0, SEND_CHARS))
+  let vecs: (number[] | null)[]
+  try {
+    vecs = await p.embed(texts, { signal: AbortSignal.timeout(30_000) })
+  } catch (err) {
+    if (send.length === 1) {
+      const r = send[0] as Row
+      await db.query(
+        `INSERT INTO meaning_failures (kind, target_id, provider, model, text_hash, at) VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (kind, target_id) DO UPDATE SET provider = $3, model = $4, text_hash = $5, at = $6`,
+        [r.kind, r.id, p.name, p.model, r.hash, now],
+      )
+      return 1
+    }
+    // The batch failed: try each text on its own to find the one the provider refuses. A provider that
+    // is down fails them all, and the next run tries again.
+    vecs = []
+    let down = 0
+    for (const t of texts) {
+      try {
+        const [v] = await p.embed([t], { signal: AbortSignal.timeout(30_000) })
+        vecs.push(v ?? null)
+      } catch {
+        vecs.push(null)
+        down++
+      }
+    }
+    if (down === texts.length) throw err
+    for (const [i, r] of send.entries()) {
+      if (vecs[i] !== null) continue
+      await db.query(
+        `INSERT INTO meaning_failures (kind, target_id, provider, model, text_hash, at) VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (kind, target_id) DO UPDATE SET provider = $3, model = $4, text_hash = $5, at = $6`,
+        [r.kind, r.id, p.name, p.model, r.hash, now],
+      )
+    }
+  }
   for (const [i, r] of send.entries()) {
-    await db.query(
-      `INSERT INTO meaning_vectors (kind, target_id, brain_id, provider, model, text_hash, vec, updated_at)
-       SELECT $1, $2, $3, $4, $5, $6, $7, $8
-        WHERE NOT EXISTS (SELECT 1 FROM wiki_settings WHERE brain_id = $3 AND meaning_excluded)
-       ON CONFLICT (kind, target_id) DO UPDATE
-         SET provider = EXCLUDED.provider, model = EXCLUDED.model, text_hash = EXCLUDED.text_hash,
-             vec = EXCLUDED.vec, updated_at = EXCLUDED.updated_at`,
-      [r.kind, r.id, r.brain_id, p.name, p.model, r.hash, vecs[i], now],
-    )
+    const v = vecs[i]
+    if (v) await store(db, r, v, p, now)
   }
   return send.length
 }
@@ -198,11 +260,29 @@ const none = (status: MeaningMatches['status']): MeaningMatches => ({
   pages: { ids: [], sims: [] },
 })
 
-// The entries and pages closest in meaning to a search, in the given brains (not excluded ones). Any
-// failure of the provider answers "unavailable", never an error (CA5).
-export async function meaningMatches(ctx: Ctx, brainIds: string[], text: string): Promise<MeaningMatches> {
+// How long the similarity scan may take before the search goes on by words only.
+export const SCAN_TIMEOUT_MS = 2000
+export const NEAR_LIMIT = 500
+
+// The entries and pages closest in meaning to a search, in the given brains (not excluded ones), of the
+// kinds asked for and alive. Nothing is sent when no brain asked takes part. Any failure or slowness of
+// the provider or the scan answers "unavailable", never an error (CA5).
+export async function meaningMatches(
+  ctx: Ctx,
+  brainIds: string[],
+  text: string,
+  kinds: ('entry' | 'page')[],
+): Promise<MeaningMatches> {
   const s = await meaningSettings(ctx.db)
-  if (!s.enabled || !s.provider) return none('off')
+  if (!s.enabled || !s.provider || kinds.length === 0 || !text.trim()) return none('off')
+  const taking = (
+    await ctx.db.query<{ id: string }>(
+      `SELECT b.id FROM brains b WHERE b.id = ANY($1)
+          AND NOT EXISTS (SELECT 1 FROM wiki_settings ws WHERE ws.brain_id = b.id AND ws.meaning_excluded)`,
+      [brainIds],
+    )
+  ).map((r) => r.id)
+  if (taking.length === 0) return none('off')
   const p = ctx.meaning?.[s.provider]
   if (!p || p.model !== s.model) return none('unavailable')
   let q: number[]
@@ -214,21 +294,33 @@ export async function meaningMatches(ctx: Ctx, brainIds: string[], text: string)
     return none('unavailable')
   }
   // A vector whose text changed since (an edit, a purge) is not used: it speaks of the old text.
-  const rows = await ctx.db.query<Row>(
-    `SELECT top.kind, top.target_id, top.sim FROM (
-       SELECT v.kind, v.target_id, v.text_hash,
-              (SELECT sum(a * b) FROM unnest(v.vec, $4::real[]) AS t(a, b)) AS sim
-         FROM meaning_vectors v
-        WHERE v.brain_id = ANY($1) AND v.provider = $2 AND v.model = $3 AND cardinality(v.vec) = $5
-          AND NOT EXISTS (SELECT 1 FROM wiki_settings ws WHERE ws.brain_id = v.brain_id AND ws.meaning_excluded)
-        ORDER BY sim DESC LIMIT 200) top
-      WHERE top.text_hash = CASE top.kind
-        WHEN 'entry' THEN (SELECT md5(e.title || E'\\n' || e.content) FROM entries e WHERE e.id = top.target_id)
-        ELSE (SELECT md5(p.title || E'\\n' || p.summary || E'\\n' || p.body) FROM pages p WHERE p.id = top.target_id)
-      END
-      ORDER BY top.sim DESC`,
-    [brainIds, p.name, p.model, q, q.length],
-  )
+  let rows: Row[]
+  try {
+    rows = await ctx.db.tx(async (tx) => {
+      await tx.query(`SET LOCAL statement_timeout = ${SCAN_TIMEOUT_MS}`)
+      return tx.query<Row>(
+        `SELECT top.kind, top.target_id, top.sim FROM (
+           SELECT v.kind, v.target_id, v.text_hash,
+                  (SELECT sum(a * b) FROM unnest(v.vec, $4::real[]) AS t(a, b)) AS sim
+             FROM meaning_vectors v
+            WHERE v.brain_id = ANY($1) AND v.provider = $2 AND v.model = $3 AND cardinality(v.vec) = $5
+              AND v.kind = ANY($6)
+              AND CASE v.kind
+                    WHEN 'entry' THEN EXISTS (SELECT 1 FROM entries e WHERE e.id = v.target_id AND e.state <> 'purged')
+                    ELSE EXISTS (SELECT 1 FROM pages pg WHERE pg.id = v.target_id AND pg.status <> 'retired')
+                  END
+            ORDER BY sim DESC LIMIT ${NEAR_LIMIT}) top
+          WHERE top.text_hash = CASE top.kind
+            WHEN 'entry' THEN (SELECT md5(e.title || E'\\n' || e.content) FROM entries e WHERE e.id = top.target_id)
+            ELSE (SELECT md5(p.title || E'\\n' || p.summary || E'\\n' || p.body) FROM pages p WHERE p.id = top.target_id)
+          END
+          ORDER BY top.sim DESC`,
+        [taking, p.name, p.model, q, q.length, kinds],
+      )
+    })
+  } catch {
+    return none('unavailable')
+  }
   const out = none('on')
   for (const r of rows) {
     const sim = Number(r.sim)

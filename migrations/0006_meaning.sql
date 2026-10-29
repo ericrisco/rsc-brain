@@ -27,3 +27,15 @@ CREATE TABLE meaning_vectors (
   PRIMARY KEY (kind, target_id)
 );
 CREATE INDEX meaning_vectors_brain ON meaning_vectors (brain_id, provider, model);
+
+-- A text the provider refused on its own is set aside until its text changes, so it never blocks the
+-- queue.
+CREATE TABLE meaning_failures (
+  kind      text NOT NULL,
+  target_id text NOT NULL,
+  provider  text NOT NULL,
+  model     text NOT NULL,
+  text_hash text NOT NULL,
+  at        timestamptz NOT NULL,
+  PRIMARY KEY (kind, target_id)
+);

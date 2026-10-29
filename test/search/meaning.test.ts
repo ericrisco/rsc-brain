@@ -225,4 +225,108 @@ describe('search by meaning', { skip: skipPg }, () => {
     assert.equal(f.meaning, undefined)
     assert.ok(!f.items.some((h) => h.why === 'meaning'))
   })
+
+  it('review: with an exact phrase, meaning adds nothing; words come before meaning', async () => {
+    const on = await w.callWeb(adminWeb, 'PUT', '/v1/admin/meaning', { provider: 'test', accept: true })
+    assert.equal(on.status, 200, on.text)
+    const a = await page('yt', 'r/a', 'A', 'voces claras para el narrador')
+    const b = await page('yt', 'r/b', 'B', 'claras voces para el narrador')
+    const x = await page('yt', 'r/x', 'X', 'voice retention retention retention retention')
+    await process()
+    const phrase = (await find(`${q('"voces claras"')}&prefix=r`)).items.map((h) => h.id)
+    assert.deepEqual(phrase, [a])
+    const voice = (await find(`${q('voice')}&prefix=r`)).items
+    assert.equal(voice[0]?.id, x)
+    assert.equal(voice[0]?.why, 'words')
+    assert.ok(voice.slice(1).every((h) => h.why === 'meaning'))
+    assert.ok([a, b].every((id) => voice.some((h) => h.id === id)))
+  })
+
+  it('review: a search only in excluded brains sends nothing to the provider', async () => {
+    test.sent = []
+    const f = await find(`${q('patient diagnosis')}&brains=private`)
+    assert.deepEqual(test.sent, [])
+    assert.equal(f.meaning, undefined)
+    // The excluded words of a search are not sent either.
+    await find(q('voice -secretword'))
+    assert.ok(!(test.sent as string[]).some((t) => t.includes('secretword')))
+  })
+
+  it('review: a purge or an exclusion while texts are with the provider leaves no vector', async () => {
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'race', purpose: 'Race.' })
+    const r = await w.call(eric.key, 'POST', '/v1/brains/race/entries', {
+      type: 'fact',
+      title: 'PURGEME',
+      content: 'the audience retention secret',
+    })
+    const id = (r.body.receipt as { entryId: string }).entryId
+    const vectors = async () =>
+      (
+        await w.db.one<{ n: number }>(
+          "SELECT count(*)::int AS n FROM meaning_vectors WHERE brain_id = (SELECT id FROM brains WHERE slug = 'race')",
+        )
+      )?.n
+    let release = () => {}
+    test.gate = new Promise((res) => {
+      release = res
+    })
+    const running = embedPending(w.db, { test, other }, w.clock())
+    while (test.calls === 0 || !test.sent.some((t) => t.includes('PURGEME')))
+      await new Promise((res) => setTimeout(res, 5))
+    assert.equal((await w.call(admin.key, 'POST', `/v1/entries/${id}/purge`, { reason: 'x' })).status, 200)
+    release()
+    test.gate = null
+    await running
+    assert.equal(await vectors(), 0)
+
+    await page('race', 'p', 'Audience', 'viewers stay')
+    test.gate = new Promise((res) => {
+      release = res
+    })
+    const again = embedPending(w.db, { test, other }, w.clock())
+    while (!test.sent.some((t) => t.includes('viewers stay'))) await new Promise((res) => setTimeout(res, 5))
+    const ex = await w.callWeb(ericWeb, 'PUT', '/v1/brains/race/wiki/settings', { meaningExcluded: true })
+    assert.equal(ex.status, 200, ex.text)
+    release()
+    test.gate = null
+    await again
+    assert.equal(await vectors(), 0)
+  })
+
+  it('review: a text the provider refuses is set aside and does not block the rest', async () => {
+    test.refuse = (t) => t.includes('POISON')
+    await page('yt', 'poison', 'POISON', 'a page the provider refuses')
+    const after = await page('yt', 'zz-after', 'Audience', 'viewers stay to the end')
+    await process()
+    test.refuse = () => false
+    const has = await w.db.one<{ n: number }>(
+      'SELECT count(*)::int AS n FROM meaning_vectors WHERE target_id = $1',
+      [after],
+    )
+    assert.equal(has?.n, 1)
+    const set = await w.db.one<{ n: number }>(
+      "SELECT count(*)::int AS n FROM meaning_failures WHERE kind = 'page'",
+    )
+    assert.equal(set?.n, 1)
+  })
+
+  it('review: what is asked for is chosen before the closest 500 are taken', async () => {
+    const b = await w.db.one<{ id: string }>("SELECT id FROM brains WHERE slug = 'yt'")
+    const s = await w.db.one<{ id: string }>(
+      'SELECT session_id AS id FROM entries WHERE brain_id = $1 LIMIT 1',
+      [b?.id],
+    )
+    await w.db.query(
+      `INSERT INTO entries (id, brain_id, session_id, type, title, content, author_id, norm_hash, created_at, updated_at)
+       SELECT 'ent_voz' || g, $1, $2, 'note', 'voz', 'voz', $3, md5('voz' || g), $4, $4 FROM generate_series(1, 501) g`,
+      [b?.id, s?.id, eric.id, w.now],
+    )
+    const m = await page('yt', 'm/voice', 'Speakers', 'voice voice retention')
+    await process()
+    const f = await find(`${q('narrator')}&in=pages&prefix=m`)
+    assert.ok(
+      f.items.some((h) => h.id === m && h.why === 'meaning'),
+      JSON.stringify(f.items),
+    )
+  })
 })
