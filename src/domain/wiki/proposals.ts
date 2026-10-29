@@ -5,9 +5,11 @@
 import { AppError, conflict, invalid, notFound } from '../../core/errors.ts'
 import { newId } from '../../core/ids.ts'
 import type { Db, Row } from '../../db/db.ts'
+import { send } from '../../mail/mail.ts'
 import { redact } from '../../privacy/redact.ts'
 import { allow, type Ctx, inBrain } from '../context.ts'
 import { emit } from '../events.ts'
+import { installation } from '../installation.ts'
 import { decode, encode, PAGE, type Page as PageOf } from '../listing.ts'
 import { mentionsOf, nearlySame, type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
 
@@ -375,7 +377,7 @@ export async function submitProposal(
     })
   }
   const ops = input.ops.slice(0, WIKI_LIMITS.ops).map((raw, i) => readOp(raw, i, problems))
-  return ctx.db.tx(async (db) => {
+  const out = await ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
     const { brain, role } = await inBrain(c, { slug }, 'share')
     await allow(c, 'wiki.propose', { role, brainStatus: brain.status }, brain.id)
@@ -441,11 +443,44 @@ export async function submitProposal(
     }
     await emit(db, c, { brainId: brain.id, kind: 'proposal.submitted', targetId: id, label: title })
     return {
+      brain,
       proposal: proposalOf(row as Row, now),
       ops: await loadOps(db, id),
       warnings: await warningsOf(db, brain.id, good),
     }
   })
+  await proposalNotice(ctx, out.brain, out.proposal.id, out.ops.length)
+  return { proposal: out.proposal, ops: out.ops, warnings: out.warnings }
+}
+
+// Curators who asked for it get a mail: which brain, who proposes, how many changes and a link that
+// needs signing in. Never the content (spec B4 «Avisos por email»).
+async function proposalNotice(
+  ctx: Ctx,
+  brain: { id: string; slug: string; name: string },
+  id: string,
+  n: number,
+) {
+  const to = await ctx.db.query(
+    `SELECT a.email FROM memberships m JOIN accounts a ON a.id = m.account_id
+      WHERE m.brain_id = $1 AND m.role = 'curator' AND m.notify_proposals AND a.status = 'active'
+        AND a.email IS NOT NULL AND a.id <> $2`,
+    [brain.id, ctx.who.accountId],
+  )
+  if (!to.length) return
+  const base = (await installation(ctx.db)).publicUrl ?? ''
+  const by = ctx.who.credential.ref ? `${ctx.who.name} (${ctx.who.credential.ref})` : ctx.who.name
+  for (const r of to) {
+    await send(ctx.db, ctx.clock, ctx.mail, 'proposal', {
+      to: String(r.email),
+      subject: `New proposal in "${brain.name}"`,
+      text: [
+        `${by} proposed ${n} change${n === 1 ? '' : 's'} to the wiki of "${brain.name}".`,
+        '',
+        `Review it (you will be asked to sign in): ${base}/brains/${brain.slug}/proposals/${id}`,
+      ].join('\n'),
+    })
+  }
 }
 
 async function loadProposal(ctx: Ctx, id: string, lock = false): Promise<{ row: Row; slug: string }> {

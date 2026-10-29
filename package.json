@@ -27,11 +27,13 @@
     "pg:stop": "bash scripts/pg-test.sh stop"
   },
   "dependencies": {
+    "nodemailer": "10.1.7",
     "pg": "8.23.1"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.2",
     "@types/node": "25.9.9",
+    "@types/nodemailer": "8.0.2",
     "@types/pg": "8.23.1",
     "typescript": "7.0.2"
   }

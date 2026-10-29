@@ -12,6 +12,7 @@ import { companionSetup, setupDone } from '../domain/installation.ts'
 import { mintMainKey, mintPersonToken } from '../domain/keys.ts'
 import { newReset, resetLink } from '../domain/login.ts'
 import { embedRound } from '../domain/meaning.ts'
+import { remindExpiringTokens } from '../domain/notices.ts'
 import { closeIdle } from '../domain/sessions.ts'
 import { foldTrail } from '../domain/trail.ts'
 import { createHandler } from '../http/app.ts'
@@ -98,6 +99,8 @@ async function main(argv: string[]): Promise<number> {
     const sweep = setInterval(() => {
       closeIdle(db, systemClock()).catch(() => {})
       foldTrail(db, systemClock()).catch(() => {})
+      // A week before a token ends, its person gets a mail (once).
+      remindExpiringTokens(db, systemClock, { secret: cfg.secret }).catch(() => {})
     }, 10 * 60_000)
     sweep.unref()
     // What has no vector yet is sent to the provider in batches, one run a minute at most.

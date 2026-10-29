@@ -37,6 +37,17 @@ present, and the administration turns it on in the web, accepting that text is s
 
 A curator can exclude a brain: its vectors are deleted and nothing more of it is sent.
 
+## People, keys and mail
+
+- The administration invites people by email to brains, each with a role: curator, contributor or
+  reader. The link works once, for 72 hours. Without mail, the administration copies it from the web.
+- People make their own tokens for agents in their profile: read, or read + write, for 30, 90 or 365
+  days. A token is shown once. It never does more than its person's current role.
+- Service accounts (such as RSC Factory) get a main key, and may hold two at once to rotate without
+  a cut. With it they mint short keys, one per job.
+- Mail is optional. Set the sending account in the web. Its password is stored sealed with
+  `RSC_BRAIN_SECRET`. The mail log keeps who, what kind, when and how it ended, never the content.
+
 ## Behind a reverse proxy
 
 Brain takes a password only over an encrypted connection, or from the same machine. A reverse proxy

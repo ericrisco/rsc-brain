@@ -295,9 +295,21 @@ export async function requestReset(
     detail: `from ${conn.ip}`,
   })
   if (!a || !send) return
-  const token = await newReset(db, String(a.id), null, now)
-  await send(e, await resetLink(db, token))
+  // In the background, so the answer takes as long for an email with an account as for one without;
+  // at most three links an hour, so nobody fills a mailbox with them.
+  const id = String(a.id)
+  void (async () => {
+    const recent = await db.one<{ n: number }>(
+      "SELECT count(*)::int AS n FROM password_resets WHERE account_id = $1 AND created_by IS NULL AND created_at > $2::timestamptz - interval '1 hour'",
+      [id, now],
+    )
+    if ((recent?.n ?? 0) >= RESETS_PER_HOUR) return
+    const token = await newReset(db, id, null, now)
+    await send(e, await resetLink(db, token))
+  })().catch(() => {})
 }
+
+export const RESETS_PER_HOUR = 3
 
 // The administration makes a reset link to copy by hand (no mail, or mail failing).
 export async function adminResetLink(
