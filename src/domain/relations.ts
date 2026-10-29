@@ -63,6 +63,8 @@ export async function relate(
     const status = touchesCorrection ? 'pending_person' : 'active'
     if (r.kind === 'supersedes' && status === 'active') {
       // `to` loses to `from`; if `from` already loses, through any chain, to `to`, that closes a loop.
+      // One supersede at a time per brain, so two at once cannot each close half of a loop.
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`supersede:${brain.id}`])
       const loop = await db.one(
         `WITH RECURSIVE chain(id) AS (
            SELECT superseded_by FROM entries WHERE id = $1 AND superseded_by IS NOT NULL

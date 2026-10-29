@@ -9,7 +9,7 @@ import {
 } from '../../domain/curation.ts'
 import { around, limitOf, listView, type View } from '../../domain/listing.ts'
 import { conflicts, relate } from '../../domain/relations.ts'
-import { type Include, search } from '../../domain/search.ts'
+import { type Include, MAX_OFFSET, search } from '../../domain/search.ts'
 import { CONTEXT, startContext } from '../../domain/startup.ts'
 import { compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
@@ -102,7 +102,7 @@ export const recallRoutes: Route[] = [
     if (bad) throw invalid(`Unknown "include" value "${bad}".`, `Use any of: ${INCLUDES.join(', ')}.`)
     const brains = q(r.query.get('brains'))
     const offset = r.query.get('offset') ? Number(r.query.get('offset')) : 0
-    if (!Number.isInteger(offset) || offset < 0 || offset > 10_000)
+    if (!Number.isInteger(offset) || offset < 0 || offset > MAX_OFFSET)
       throw invalid('"offset" must be 0 to 10 000.', 'Use the "next" value, or narrow the search.')
     const limit = r.query.get('limit') ? Number(r.query.get('limit')) : 10
     if (!Number.isInteger(limit) || limit < 1 || limit > 50)

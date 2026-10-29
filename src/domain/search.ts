@@ -9,6 +9,7 @@ import { words } from './entries.ts'
 import { track } from './trail.ts'
 
 export const MAX_QUERY = 1000
+export const MAX_OFFSET = 10_000
 
 export type Include = 'forgotten' | 'superseded' | 'expired'
 
@@ -43,9 +44,10 @@ export type ParsedQuery = {
 export function parseQuery(q: string): ParsedQuery {
   const phrases: string[] = []
   const excludedPhrases: string[] = []
-  const rest = q.replace(/(^|\s)(-?)"([^"]+)"/g, (_, lead: string, minus: string, p: string) => {
+  // Any quoted text is a phrase; a minus right before the quote, at the start or after a space, excludes it.
+  const rest = q.replace(/((?<=^|\s)-)?"([^"]+)"/g, (_, minus: string | undefined, p: string) => {
     if (p.trim()) (minus ? excludedPhrases : phrases).push(p.trim())
-    return lead || ' '
+    return ' '
   })
   const excluded: string[] = []
   const free: string[] = []
@@ -160,7 +162,7 @@ export async function search(
   }))
   const out: { items: Hit[]; next: number | null; note?: string } = {
     items,
-    next: rows.length > limit ? offset + limit : null,
+    next: rows.length > limit && offset + limit <= MAX_OFFSET ? offset + limit : null,
   }
   if (items.length === 0) {
     out.note =

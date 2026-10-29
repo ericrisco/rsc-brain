@@ -173,6 +173,20 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
     assert.equal((await find(ana.key, 'q=loop')).items.length, 1)
   })
 
+  it('review: two supersedes at once cannot close a loop between them', async () => {
+    for (let round = 0; round < 10; round += 1) {
+      const mk = (n: string) =>
+        save(ana.key, { type: 'note', title: `Q${round}${n}`, content: `quad ${round} ${n}` })
+      const [a, b, c, d] = [await mk('a'), await mk('b'), await mk('c'), await mk('d')]
+      const rel = (from: string, to: string) =>
+        w.call(ana.key, 'POST', '/v1/brains/yt/relations', { from, to, kind: 'supersedes' })
+      await rel(a, b)
+      await rel(c, d)
+      const rs = await Promise.all([rel(b, c), rel(d, a)])
+      assert.deepEqual(rs.map((r) => r.status).sort(), [201, 409])
+    }
+  })
+
   it('review: the curator lists go page by page', async () => {
     const ids: string[] = []
     for (const n of [1, 2, 3, 4, 5]) {
@@ -256,7 +270,10 @@ describe('recall: curate, search, context', { skip: skipPg }, () => {
     const withS = await find(ana.key, 'q=quokkasans&include=superseded')
     assert.equal(withS.items[0]?.entryId, old)
     assert.equal(withS.items[0]?.superseded, true)
-    const ctx = (await w.call(ana.key, 'GET', '/v1/brains/yt/context?max=128000')).body as { text: string }
+    // Even a task that asks for exactly that font does not bring the superseded entry back.
+    const ctx = (
+      await w.call(ana.key, 'GET', '/v1/brains/yt/context?max=128000&task=quokkasans%20quokkaserif%20font')
+    ).body as { text: string }
     assert.ok(!ctx.text.includes(old))
     assert.ok(ctx.text.includes(neu))
   })
