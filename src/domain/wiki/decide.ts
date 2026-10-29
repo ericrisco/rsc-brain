@@ -4,6 +4,7 @@
 // proposed, so it learns why. Only what was seen is approved: the fingerprint must match.
 import { AppError, conflict, invalid, notFound } from '../../core/errors.ts'
 import type { Row } from '../../db/db.ts'
+import { redact } from '../../privacy/redact.ts'
 import { allow, type Ctx, inBrain } from '../context.ts'
 import { webCorrection } from '../entries.ts'
 import { emit } from '../events.ts'
@@ -74,7 +75,8 @@ async function stillAsSeen(ctx: Ctx, row: Row, seen: string): Promise<ProposalOp
 
 const commentOf = (raw: string | undefined): string | undefined => {
   if (raw === undefined) return undefined
-  const c = raw.trim()
+  // Stored and shown to the agent: redacted first, like every stored text (pack rule 1).
+  const c = redact(raw.trim()).text
   if (!c || c.length > WIKI_LIMITS.comment) {
     throw invalid(`A comment has 1 to ${WIKI_LIMITS.comment} characters.`, 'Say why, briefly.')
   }
@@ -114,6 +116,7 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     const { row, brainId } = await load(c, id, true)
     const ops = await stillAsSeen(c, row, input.fingerprint)
     const all = ops.map((o) => o.index)
+    const original = ops.map((o) => o.op)
     const approve = [...new Set(input.approve ?? all)].sort((a, b) => a - b)
     if (approve.length === 0)
       throw invalid('Approve at least one operation.', 'To approve none, return the proposal.')
@@ -206,6 +209,10 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
       ).revised
     } catch (err) {
       await db.query('ROLLBACK TO SAVEPOINT apply')
+      // A deadlock or a serialisation failure is the database's, not the proposal's: let it fail whole
+      // so the curator retries, instead of recording it on the proposal.
+      const code = (err as { code?: string }).code
+      if (code === '40P01' || code === '40001') throw err
       const e =
         err instanceof ApplyError ? err : new ApplyError(undefined, 'the change could not be applied.')
       await db.query('UPDATE proposals SET last_error = $2 WHERE id = $1', [row.id, e.message])
@@ -215,6 +222,7 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     const now = ctx.clock()
     for (const o of ops) {
       const ok = approve.includes(o.index)
+      // The operation's own page (a supersedes link also revises the page it supersedes, after).
       const first = applied.find((r) => r.index === o.index)
       await db.query(
         `UPDATE proposal_ops SET status = $3, op = $4, corrected_by = $5, base_reviewed_by = $6,
@@ -223,9 +231,10 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
           row.id,
           o.index,
           ok ? 'approved' : 'returned',
-          JSON.stringify(o.op),
-          corrected.has(o.index) ? ctx.who.accountId : null,
-          reviewedBase.has(o.index) ? ctx.who.accountId : null,
+          // A returned operation stays as its author sent it; corrections and marks are for what applied.
+          JSON.stringify(ok ? o.op : original[o.index]),
+          ok && corrected.has(o.index) ? ctx.who.accountId : null,
+          ok && reviewedBase.has(o.index) ? ctx.who.accountId : null,
           first?.pageId ?? null,
           first?.revision ?? null,
         ],

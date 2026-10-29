@@ -428,4 +428,99 @@ describe('wiki decisions in the web', { skip: skipPg }, () => {
     const left = await uncompiled()
     assert.ok(!left.includes(e[5] as string) && !left.includes(e[6] as string))
   })
+
+  it('review: a rename and an edit of the same page, approved together, both apply (CA4b whole)', async () => {
+    const setup = await propose([create('p1/a'), create('p2/t'), create('p3/x')])
+    assert.equal((await approve(setup)).status, 200)
+    const both = await propose([
+      { op: 'move', address: 'p1/a', to: 'p1/b', reason: 'rename' },
+      { op: 'edit', address: 'p1/b', baseRevision: 1, body: 'renamed and edited', reason: 'r' },
+    ])
+    const r = await approve(both)
+    assert.equal(r.status, 200, r.text)
+    assert.equal(((await page('p1/b')) as { page: { body: string } }).page.body, 'renamed and edited')
+    const sup = await propose([
+      { op: 'edit', address: 'p2/t', baseRevision: 1, summary: 'edited first', reason: 'r' },
+      create('p2/n', { links: [{ kind: 'supersedes', to: 'p2/t' }] }),
+    ])
+    assert.equal((await approve(sup)).status, 200)
+    const twice = await propose([
+      { op: 'edit', address: 'p3/x', baseRevision: 1, title: 'New title', reason: 'r' },
+      { op: 'edit', address: 'p3/x', baseRevision: 1, summary: 'New summary', reason: 'r' },
+    ])
+    assert.equal((await approve(twice)).status, 200)
+    const x = (await page('p3/x')) as { page: { title: string; summary: string } }
+    assert.deepEqual([x.page.title, x.page.summary], ['New title', 'New summary'])
+  })
+
+  it('review: operations apply in the proposal order, so a later edit is not overwritten by an earlier merge', async () => {
+    const setup = await propose([create('p4/x'), create('p4/y'), create('p6/t')])
+    await approve(setup)
+    const m = await propose([
+      { op: 'merge', address: 'p4/x', from: 'p4/y', body: 'merged', reason: 'r' },
+      { op: 'edit', address: 'p4/x', baseRevision: 1, body: 'final after merge', reason: 'r' },
+    ])
+    assert.equal((await approve(m)).status, 200)
+    assert.equal(((await page('p4/x')) as { page: { body: string } }).page.body, 'final after merge')
+    const st = await propose([
+      { op: 'status', address: 'p6/t', status: 'stale', reason: 'old' },
+      create('p6/n', { links: [{ kind: 'supersedes', to: 'p6/t' }] }),
+    ])
+    assert.equal((await approve(st)).status, 200)
+    const t = await w.db.one<{ status: string }>("SELECT status FROM pages WHERE address = 'p6/t'")
+    assert.equal(t?.status, 'superseded')
+  })
+
+  it('review: a supersedes link records its own page; merging drops supersedes links that went to the merged page', async () => {
+    const setup = await propose([
+      create('p5/a'),
+      create('p5/b'),
+      create('p7/x'),
+      create('p7/y'),
+      create('p7/w'),
+    ])
+    await approve(setup)
+    const l = await propose([
+      { op: 'link', address: 'p5/a', kind: 'supersedes', to: 'p5/b', reason: 'a wins' },
+    ])
+    await approve(l)
+    const applied = await w.db.one<{ address: string }>(
+      'SELECT p.address FROM proposal_ops o JOIN pages p ON p.id = o.applied_page WHERE o.proposal_id = $1',
+      [l],
+    )
+    assert.equal(applied?.address, 'p5/a')
+    await approve(
+      await propose([{ op: 'link', address: 'p7/w', kind: 'supersedes', to: 'p7/y', reason: 'w wins' }]),
+    )
+    await approve(
+      await propose([{ op: 'merge', address: 'p7/x', from: 'p7/y', body: 'x and y', reason: 'same' }]),
+    )
+    const x = await w.db.one<{ status: string }>("SELECT status FROM pages WHERE address = 'p7/x'")
+    assert.equal(x?.status, 'current')
+    const inbound = await w.db.query(
+      "SELECT 1 FROM page_links l JOIN pages p ON p.id = l.to_page WHERE p.address = 'p7/x' AND l.kind = 'supersedes'",
+    )
+    assert.deepEqual(inbound, [])
+  })
+
+  it('review: a return comment is redacted like every stored text; returned operations keep what their author sent', async () => {
+    const id = await propose([create('sec/a', { body: 'agent body' }), create('sec/b')])
+    const fp = (await review(id)).fingerprint
+    const r = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
+      fingerprint: fp,
+      approve: [0],
+      comment: 'bad key AKIAABCDEFGHIJKLMNOP',
+      corrections: { 1: create('sec/b', { body: 'person body' }) },
+    })
+    assert.equal(r.status, 200, r.text)
+    assert.ok(!r.text.includes('AKIAABCDEFGHIJKLMNOP'))
+    assert.ok(
+      !JSON.stringify(await w.db.query('SELECT comment FROM proposals')).includes('AKIAABCDEFGHIJKLMNOP'),
+    )
+    const returned = await w.db.one<{ op: { body: string }; corrected_by: string | null }>(
+      'SELECT op, corrected_by FROM proposal_ops WHERE proposal_id = $1 AND idx = 1',
+      [id],
+    )
+    assert.deepEqual([returned?.op.body, returned?.corrected_by], ['Text of sec/b.', null])
+  })
 })

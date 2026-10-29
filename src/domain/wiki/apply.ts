@@ -7,7 +7,8 @@ import { newId } from '../../core/ids.ts'
 import type { Db, Row } from '../../db/db.ts'
 import type { Ctx } from '../context.ts'
 import { emit } from '../events.ts'
-import { type LinkKind, mentionsOf, type Op, type OpKind, type Source, sourceKey } from './model.ts'
+import { type LinkKind, mentionsOf, type Op, type Source, sourceKey } from './model.ts'
+import { dependencies } from './review.ts'
 
 export class ApplyError extends AppError {
   constructor(index: number | undefined, message: string) {
@@ -28,15 +29,19 @@ export type ApplyMeta = {
 }
 export type Revised = { index?: number; pageId: string; address: string; revision: number }
 
-const ORDER: Record<OpKind, number> = {
-  create: 0,
-  move: 1,
-  edit: 2,
-  merge: 3,
-  revert: 4,
-  link: 5,
-  unlink: 6,
-  status: 7,
+// The order operations apply in: the proposal's own, except that an operation goes after those it
+// depends on (a link after the page it points at is created). A cycle cannot be approved anyway.
+export function applyOrder(ops: Op[]): number[] {
+  const deps = dependencies(ops)
+  const done = new Set<number>()
+  const out: number[] = []
+  while (out.length < ops.length) {
+    const next = ops.findIndex((_, i) => !done.has(i) && (deps[i] ?? []).every((j) => done.has(j)))
+    const pick = next === -1 ? ops.findIndex((_, i) => !done.has(i)) : next
+    done.add(pick)
+    out.push(pick)
+  }
+  return out
 }
 
 export async function applyOps(
@@ -51,9 +56,10 @@ export async function applyOps(
   const now = ctx.clock()
   const revised: Revised[] = []
   const touched = new Set<string>()
-  const sorted = items
-    .map((it, i) => ({ it, i }))
-    .sort((a, b) => ORDER[a.it.op.op] - ORDER[b.it.op.op] || a.i - b.i)
+  const sorted = applyOrder(items.map((x) => x.op)).map((i) => ({ it: items[i] as ApplyItem }))
+  // Each page's revision before this call: an edit's baseRevision is checked against it, not against
+  // what earlier operations of the same approval made of the page (a move, then an edit of it).
+  const startRevision = new Map<string, number>()
 
   const fail = (it: ApplyItem, message: string): never => {
     throw new ApplyError(it.index, message)
@@ -64,6 +70,7 @@ export async function applyOps(
         WHERE a.brain_id = $1 AND a.address = $2 FOR UPDATE OF p`,
       [brainId, address],
     )
+    if (r && !startRevision.has(String(r.id))) startRevision.set(String(r.id), Number(r.revision))
     return r ?? fail(it, `there is no page at "${address}".`)
   }
   const checkEntries = async (it: ApplyItem, sources: Source[]) => {
@@ -113,8 +120,6 @@ export async function applyOps(
        ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
       [brainId, from.id, kind, to.id],
     )
-    // "supersedes": this page replaces that one, which becomes superseded (spec B2 «Enlaces»).
-    if (kind === 'supersedes') await setStatus(it, to, 'superseded', String(from.id))
   }
   // A revision of the page as it now stands: content, current sources and typed links.
   const revise = async (it: ApplyItem, pageId: string, note?: string) => {
@@ -222,11 +227,14 @@ export async function applyOps(
         const p = await page(it, o.address)
         if (
           o.baseRevision !== undefined &&
-          Number(p.revision) !== o.baseRevision &&
+          (startRevision.get(String(p.id)) ?? Number(p.revision)) !== o.baseRevision &&
           !it.corrected &&
           !it.baseReviewed
         ) {
-          fail(it, `"${p.address}" changed since revision ${o.baseRevision} (it is at ${p.revision}).`)
+          fail(
+            it,
+            `"${p.address}" changed since revision ${o.baseRevision} (it is at ${startRevision.get(String(p.id)) ?? p.revision}).`,
+          )
         }
         const sets: string[] = []
         const values: unknown[] = []
@@ -268,9 +276,12 @@ export async function applyOps(
       }
       case 'link': {
         const p = await page(it, o.address)
-        await addLink(it, p, o.kind, await page(it, o.to))
+        const t = await page(it, o.to)
+        await addLink(it, p, o.kind, t)
         await bump(String(p.id), '', [])
         await revise(it, String(p.id))
+        // "supersedes": this page replaces that one, which becomes superseded (spec B2 «Enlaces»).
+        if (o.kind === 'supersedes') await setStatus(it, t, 'superseded', String(p.id))
         break
       }
       case 'unlink': {
@@ -332,6 +343,7 @@ export async function applyOps(
         await db.query(
           `INSERT INTO page_links (brain_id, from_page, kind, to_page)
            SELECT brain_id, from_page, kind, $2 FROM page_links WHERE to_page = $1 AND from_page <> $2
+              AND kind <> 'supersedes'
            ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
           [y.id, x.id],
         )
@@ -360,7 +372,23 @@ export async function applyOps(
           old.body,
           old.tags,
         ])
-        await setSources(String(p.id), (old.sources as Source[]) ?? [])
+        // Sources purged since that revision do not come back.
+        const was = (old.sources as Source[]) ?? []
+        const ids = was.flatMap((s) => ('entryId' in s ? [s.entryId] : []))
+        const alive = new Set(
+          ids.length === 0
+            ? []
+            : (
+                await db.query(
+                  "SELECT id FROM entries WHERE brain_id = $1 AND id = ANY($2) AND state <> 'purged'",
+                  [brainId, ids],
+                )
+              ).map((r) => String(r.id)),
+        )
+        await setSources(
+          String(p.id),
+          was.filter((s) => !('entryId' in s) || alive.has(s.entryId)),
+        )
         await db.query('DELETE FROM page_links WHERE from_page = $1 AND to_page IS NOT NULL', [p.id])
         for (const l of (old.links as { kind: LinkKind; to: string }[]) ?? []) {
           const t = await db.one(
