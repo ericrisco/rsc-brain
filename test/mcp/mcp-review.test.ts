@@ -237,6 +237,47 @@ describe('the MCP endpoint: review', { skip: skipPg }, () => {
     assert.match(String(unknown.body.error?.message), /tools\/list/)
   })
 
+  it('a brain someone added me to is not chosen alone for my repository until I work in it', async () => {
+    const victim = await w.person('Victim')
+    const mal = await w.person('Mal2')
+    await w.call(mal.key, 'POST', '/v1/brains', { slug: 'mal-trap' })
+    await w.member('mal-trap', victim.id, 'contributor')
+    await w.callWeb(await w.web(mal.id), 'POST', '/v1/brains/mal-trap/repos', {
+      repo: 'https://github.com/victimco/secret-app',
+    })
+    const r = await call(victim.key, 'brain_resolve', { repos: ['git@github.com:victimco/secret-app.git'] })
+    const d = r.data as { brain: unknown; brains: Array<{ slug: string }>; howToProceed: string }
+    assert.equal(d.brain, null)
+    assert.deepEqual(
+      d.brains.map((b) => b.slug),
+      ['mal-trap'],
+    )
+    assert.match(d.howToProceed, /Ask the person/)
+    // Once the person chose it and worked in it, it is chosen alone.
+    await call(victim.key, 'mem_save', { brain: 'mal-trap', type: 'note', title: 'Chosen', content: 'x' })
+    const again = await call(victim.key, 'brain_resolve', { repos: ['github.com/victimco/secret-app'] })
+    assert.equal((again.data as { brain: { slug: string } }).brain.slug, 'mal-trap')
+  })
+
+  it('values that cannot become text are refused, never a server error', async () => {
+    const odd = { toString: 1 }
+    const tool = await rpc(eric.key, 'tools/call', { name: odd, arguments: {} })
+    assert.deepEqual([tool.status, tool.body.error?.code], [400, -32602])
+    const prompt = await rpc(eric.key, 'prompts/get', { name: odd })
+    assert.deepEqual([prompt.status, prompt.body.error?.code], [400, -32602])
+    const withArg = await rpc(eric.key, 'prompts/get', { name: 'compile_brain', arguments: { brain: odd } })
+    assert.equal(withArg.status, 200)
+    for (const [name, args] of [
+      ['mem_search', { brain: 'alpha', q: odd }],
+      ['brain_proposals', { brain: 'alpha', status: odd }],
+    ] as const) {
+      const r = await call(eric.key, name, args)
+      assert.equal(r.status, 200, name)
+      assert.equal(r.isError, true, name)
+      assert.match(r.text, SHAPE, name)
+    }
+  })
+
   it('protocol edges: an object id is refused; an old client asking 2025-03-26 gets a version it can use', async () => {
     const bad = await rpc(eric.key, 'tools/list', {}, { a: 1 })
     assert.deepEqual([bad.status, bad.body.error?.code], [400, -32600])

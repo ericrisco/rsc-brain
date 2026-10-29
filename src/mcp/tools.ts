@@ -58,12 +58,17 @@ const pick = (a: Json, keys: string[]) => {
   for (const k of keys) if (a[k] !== undefined) out[k] = a[k]
   return out
 }
+// A query value is text, a number or a yes/no; a list of those is joined with commas.
+function scalar(k: string, v: unknown): string {
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v)
+  throw invalid(`"${k}" must be text, a number or true/false.`, `Send "${k}" as a plain value.`)
+}
 const query = (a: Json, keys: Record<string, string>) => {
   const out: Record<string, string> = {}
   for (const [arg, param] of Object.entries(keys)) {
     const v = a[arg]
     if (v === undefined || v === null) continue
-    out[param] = Array.isArray(v) ? v.map(String).join(',') : String(v)
+    out[param] = Array.isArray(v) ? v.map((x) => scalar(arg, x)).join(',') : scalar(arg, v)
   }
   return out
 }
@@ -484,7 +489,7 @@ export const TOOLS: Tool[] = [
     call: async (a, k) => ({
       method: 'GET',
       path: `/v1/brains/${enc(await k.brain(a))}/proposals`,
-      query: { mine: '1', status: String(a.status ?? 'all'), ...query(a, { cursor: 'cursor' }) },
+      query: { mine: '1', status: text(a, 'status') ?? 'all', ...query(a, { cursor: 'cursor' }) },
     }),
   },
   {

@@ -1,7 +1,7 @@
 // Repositories linked to a brain (spec B5 «brain_resolve»): curators link the repositories a brain is
 // about; an agent working in one asks which brain is its. A repository may be linked to several
 // brains (each team links its own); a key is only told about the ones it can see.
-import { atLeast } from '../auth/can.ts'
+import { atLeast, type Role } from '../auth/can.ts'
 import { roleIn } from '../auth/principal.ts'
 import { invalid, notFound } from '../core/errors.ts'
 import { listBrains } from './brains.ts'
@@ -87,6 +87,16 @@ export async function unlinkRepo(ctx: Ctx, slug: string, url: unknown) {
   await ok(ctx, 'repo.unlink', brain.id, key ?? '')
 }
 
+async function workedIn(ctx: Ctx, slug: string) {
+  const r = await ctx.db.one(
+    `SELECT 1 FROM brains b WHERE b.slug = $1 AND (
+       EXISTS (SELECT 1 FROM entries e WHERE e.brain_id = b.id AND e.author_id = $2)
+       OR EXISTS (SELECT 1 FROM sessions s WHERE s.brain_id = b.id AND s.account_id = $2))`,
+    [slug, ctx.who.accountId],
+  )
+  return Boolean(r)
+}
+
 const HOW_TO_LINK =
   'A curator can link this repository to a brain in the Brain web (the brain’s settings, Repositories); until then, name the brain in each call.'
 
@@ -118,14 +128,30 @@ export async function resolveRepo(ctx: Ctx, repos: unknown) {
       if (b) seen.push({ slug: String(b.slug), name: String(b.name), purpose: String(b.purpose), role })
     }
     seen.sort((x, y) => x.slug.localeCompare(y.slug))
-    if (seen.length === 1) return { brain: seen[0], repo: key }
+    // Anyone who curates a brain can add a person to it and link that person's repository. So a brain
+    // is chosen alone only when it is already the person's: they curate it, or they have worked in it.
+    // The first time, the person chooses.
+    const only = seen.length === 1 ? seen[0] : undefined
+    if (only && (atLeast(only.role as Role, 'curator') || (await workedIn(ctx, only.slug)))) {
+      return { brain: only, repo: key }
+    }
+    if (only) {
+      return {
+        brain: null,
+        repo: key,
+        brains: seen,
+        message: `This repository is linked to "${only.slug}", a brain you have not worked in yet.`,
+        howToProceed:
+          'Ask the person whether to use it. If they agree, pass it as "brain" in your calls; after the first entry it is chosen alone.',
+      }
+    }
     if (seen.length > 1) {
       return {
         brain: null,
         repo: key,
         brains: seen,
         message: 'Several of your brains are linked to this repository.',
-        howToProceed: 'Choose one and pass it as "brain" in your calls.',
+        howToProceed: 'Ask the person which one, and pass it as "brain" in your calls.',
       }
     }
   }

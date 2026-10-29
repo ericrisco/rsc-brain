@@ -134,6 +134,10 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
     const asked = meta['io.modelcontextprotocol/protocolVersion']
     const modern = typeof asked === 'string'
     try {
+      // A name that is not text could not even be written into an error.
+      if ((m.method === 'tools/call' || m.method === 'prompts/get') && typeof params.name !== 'string') {
+        throw new RpcError(modern ? 400 : 200, -32602, '"name" must be text.')
+      }
       if (modern) {
         if (!SUPPORTED.includes(asked as string) || LEGACY.includes(asked as string)) {
           throw new RpcError(400, -32022, 'Unsupported protocol version', {
@@ -161,7 +165,7 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
             throw new RpcError(
               400,
               -32020,
-              `Header mismatch: Mcp-Name is "${hn ?? ''}", the body says "${String(params.name)}".`,
+              `Header mismatch: Mcp-Name is "${hn ?? ''}", the body says "${params.name}".`,
             )
         }
       } else {
@@ -261,8 +265,12 @@ async function dispatch(
       }
     case 'prompts/get': {
       const p = PROMPTS.find((x) => x.name === params.name)
-      if (!p) throw new RpcError(modern ? 400 : 200, -32602, `Unknown prompt: ${String(params.name)}`)
-      const args = (params.arguments ?? {}) as Record<string, string>
+      if (!p) throw new RpcError(modern ? 400 : 200, -32602, `Unknown prompt: ${params.name}`)
+      // Only text arguments reach the prompt; anything else is left out.
+      const given = params.arguments && typeof params.arguments === 'object' ? (params.arguments as Json) : {}
+      const args = Object.fromEntries(
+        Object.entries(given).filter(([, v]) => typeof v === 'string'),
+      ) as Record<string, string>
       return {
         description: p.description,
         messages: [{ role: 'user', content: { type: 'text', text: p.text(args) } }],
@@ -281,7 +289,7 @@ async function callTool(r: PublicReq, who: Who, params: Json, routes: () => Rout
     throw new RpcError(
       200,
       -32602,
-      `Unknown tool: ${String(params.name)}. Call tools/list for the tools this key can use.`,
+      `Unknown tool: ${params.name}. Call tools/list for the tools this key can use.`,
     )
   }
   const why = allowed(tool, who)
