@@ -11,6 +11,7 @@ import { normalize, redactAll } from '../privacy/redact.ts'
 import { allow, type Ctx, inBrain } from './context.ts'
 import { emit } from './events.ts'
 import { ownsSession, sessionFor, touch } from './sessions.ts'
+import { track } from './trail.ts'
 
 export const ENTRY_TYPES = [
   'decision',
@@ -59,13 +60,13 @@ export type Receipt = {
 function date(v: string | undefined, field: string): Date | null {
   if (v === undefined) return null
   const d = new Date(v)
-  if (Number.isNaN(d.getTime()))
+  if (Number.isNaN(d.getTime()) || d.getUTCFullYear() < 1 || d.getUTCFullYear() > 9999)
     throw invalid(`"${field}" is not a date.`, 'Send an ISO date such as 2026-11-30.')
   return d
 }
 
 // The checks that say exactly what is wrong (spec B1 «Bordes y errores»).
-function validate(i: EntryInput): void {
+export function validate(i: EntryInput): void {
   if (!(ENTRY_TYPES as readonly string[]).includes(i.type)) {
     throw invalid(`Unknown entry type "${i.type}".`, `Use one of: ${ENTRY_TYPES.join(', ')}.`)
   }
@@ -209,6 +210,22 @@ type Prepared = {
   redactions: number
 }
 
+// Redaction marks can make a text longer; what is stored must still fit every limit.
+export function fitsOnceRedacted(f: Record<string, unknown>): void {
+  const tooLong =
+    (f.title as string).length > LIMITS.title ||
+    (f.content as string).length > LIMITS.content ||
+    ((f.appliesTo as string | null) ?? '').length > LIMITS.appliesTo ||
+    (f.tags as string[]).some((t) => t.length > LIMITS.tag) ||
+    (f.refs as string[]).some((t) => t.length > LIMITS.ref)
+  if (tooLong) {
+    throw invalid(
+      'Once secrets are replaced by their marks, the text is longer than the limit.',
+      'Shorten the text, or remove the secrets yourself.',
+    )
+  }
+}
+
 function prepare(i: EntryInput): Prepared {
   validate(i)
   const r = redactAll({
@@ -218,16 +235,7 @@ function prepare(i: EntryInput): Prepared {
     tags: (i.tags ?? []).map((t) => t.trim()),
     refs: (i.refs ?? []).map((t) => t.trim()),
   })
-  // Redaction marks can make a text longer; what is stored must still fit the limits.
-  if (
-    (r.fields.title as string).length > LIMITS.title ||
-    (r.fields.content as string).length > LIMITS.content
-  ) {
-    throw invalid(
-      'Once secrets are replaced by their marks, the text is longer than the limit.',
-      'Shorten the text, or remove the secrets yourself.',
-    )
-  }
+  fitsOnceRedacted(r.fields)
   return {
     type: i.type as EntryType,
     title: r.fields.title as string,
@@ -662,6 +670,10 @@ export async function getEntry(
   })
   if (row.state === 'forgotten' && role !== 'curator') throw notFound('entry')
   const entry = entryOf(row)
+  // A purged entry's mark is shown, but its id never goes back into the trail (CA13).
+  if (row.state !== 'purged') {
+    await track(ctx.root ?? ctx.db, ctx, { brainId: entry.brainId, kind: 'read', resultIds: [entry.id] })
+  }
   if (!o.history || row.state === 'purged') return { entry }
   const revs = await ctx.db.query('SELECT * FROM entry_revisions WHERE entry_id = $1 ORDER BY revision', [id])
   return {

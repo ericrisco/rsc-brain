@@ -1,6 +1,6 @@
 // Reading the journal page by page (spec B1 «Leer el diario»). Every list says how many there are in
 // total and gives a cursor for the next page. Forgotten and purged entries stay out of ordinary lists.
-import { invalid } from '../core/errors.ts'
+import { denied, invalid, notFound } from '../core/errors.ts'
 import type { Row } from '../db/db.ts'
 import { type Ctx, inBrain } from './context.ts'
 import { type Entry, entryOf } from './entries.ts'
@@ -128,3 +128,74 @@ export async function listEntries(ctx: Ctx, slug: string, f: EntryFilter): Promi
     next: rows.length > limit && last ? encode(last.created_at as Date, String(last.id)) : null,
   }
 }
+
+// The curator's lists and the views around one entry (spec B1 «Leer el diario»).
+export type View = 'forgotten' | 'to-review' | 'uncompiled'
+
+export async function listView(
+  ctx: Ctx,
+  slug: string,
+  view: View,
+  o: { limit?: number; cursor?: string } = {},
+): Promise<Page<Entry>> {
+  const { brain, role } = await inBrain(ctx, { slug })
+  const limit = o.limit ?? PAGE.default
+  const c = decode(o.cursor)
+  let where: string
+  if (view === 'forgotten') {
+    if (role !== 'curator') {
+      throw denied('Only curators see forgotten entries.', 'Ask a curator of the brain.')
+    }
+    where = "state = 'forgotten'"
+  } else if (view === 'to-review') {
+    where = "state = 'active' AND review_after IS NOT NULL AND review_after <= $2"
+  } else {
+    where = "state = 'active' AND NOT compiled AND type <> 'summary'"
+  }
+  const params = view === 'to-review' ? [brain.id, ctx.clock()] : [brain.id]
+  const total = await ctx.db.one<{ n: number }>(
+    `SELECT count(*)::int AS n FROM entries WHERE brain_id = $1 AND ${where}`,
+    params,
+  )
+  const n = params.length
+  const rows = await ctx.db.query(
+    `SELECT * FROM entries WHERE brain_id = $1 AND ${where}
+        AND ($${n + 1}::timestamptz IS NULL OR (created_at, id) > ($${n + 1}, $${n + 2}))
+      ORDER BY created_at, id LIMIT $${n + 3}`,
+    [...params, c?.at ?? null, c?.id ?? '', limit + 1],
+  )
+  const page = rows.slice(0, limit)
+  const last = page.at(-1)
+  return {
+    items: page.map(entryOf),
+    total: total?.n ?? 0,
+    next: rows.length > limit && last ? encode(last.created_at as Date, String(last.id)) : null,
+  }
+}
+
+// The entries just before and after one, in its session.
+export async function around(
+  ctx: Ctx,
+  id: string,
+  n: number,
+): Promise<{ before: Entry[]; entry: Entry; after: Entry[] }> {
+  const row = await ctx.db.one('SELECT * FROM entries WHERE id = $1', [id])
+  if (!row) throw notFoundEntry()
+  await inBrain(ctx, { id: String(row.brain_id) }).catch(() => {
+    throw notFoundEntry()
+  })
+  if (row.state !== 'active') throw notFoundEntry()
+  const before = await ctx.db.query(
+    `SELECT * FROM entries WHERE session_id = $1 AND state = 'active' AND (created_at, id) < ($2, $3)
+      ORDER BY created_at DESC, id DESC LIMIT $4`,
+    [row.session_id, row.created_at, row.id, n],
+  )
+  const after = await ctx.db.query(
+    `SELECT * FROM entries WHERE session_id = $1 AND state = 'active' AND (created_at, id) > ($2, $3)
+      ORDER BY created_at, id LIMIT $4`,
+    [row.session_id, row.created_at, row.id, n],
+  )
+  return { before: before.reverse().map(entryOf), entry: entryOf(row), after: after.map(entryOf) }
+}
+
+const notFoundEntry = () => notFound('entry')
