@@ -41,10 +41,17 @@ describe('search by meaning', { skip: skipPg }, () => {
       (await w.call(eric.key, 'GET', `/v1/brains/${slug}/pages/${address}`)).body.page as { id: string }
     ).id
   }
+  // Runs the worker until nothing is left, as the server does run after run; a failing run counts as
+  // nothing done and the next one goes on.
   const process = async () => {
     let n = 0
-    for (let i = 0; i < 50; i++) {
-      const k = await embedPending(w.db, { test, other }, w.clock())
+    for (let i = 0; i < 80; i++) {
+      let k = 0
+      try {
+        k = await embedPending(w.db, { test, other }, w.clock())
+      } catch {
+        continue
+      }
       n += k
       if (k === 0) break
     }
@@ -304,10 +311,29 @@ describe('search by meaning', { skip: skipPg }, () => {
       [after],
     )
     assert.equal(has?.n, 1)
-    const set = await w.db.one<{ n: number }>(
-      "SELECT count(*)::int AS n FROM meaning_failures WHERE kind = 'page'",
+    // Only the refused page is still waiting, after more than one attempt.
+    const set = await w.db.query<{ target_id: string; attempts: number }>(
+      'SELECT target_id, attempts FROM meaning_failures',
     )
-    assert.equal(set?.n, 1)
+    assert.equal(set.length, 1)
+    assert.ok((set[0]?.attempts ?? 0) > 1)
+  })
+
+  it('review: a short outage drops nothing: after it, what was pending is processed', async () => {
+    const r = await w.call(eric.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'fact',
+      title: 'Outage',
+      content: 'viewers stay through the outage',
+    })
+    const id = (r.body.receipt as { entryId: string }).entryId
+    test.failing = true
+    await assert.rejects(embedPending(w.db, { test, other }, w.clock()))
+    test.failing = false
+    await process()
+    const count = async (table: string) =>
+      (await w.db.one<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE target_id = $1`, [id]))?.n
+    assert.equal(await count('meaning_vectors'), 1)
+    assert.equal(await count('meaning_failures'), 0)
   })
 
   it('review: what is asked for is chosen before the closest 500 are taken', async () => {

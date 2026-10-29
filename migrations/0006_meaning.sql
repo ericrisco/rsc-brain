@@ -28,14 +28,14 @@ CREATE TABLE meaning_vectors (
 );
 CREATE INDEX meaning_vectors_brain ON meaning_vectors (brain_id, provider, model);
 
--- A text the provider refused on its own is set aside until its text changes, so it never blocks the
--- queue.
+-- How many times sending a text failed. What failed goes to the end of the queue and alone, so a text the
+-- provider always refuses never blocks the rest, and an outage never drops anything for good. No text,
+-- no hash: only how many times.
 CREATE TABLE meaning_failures (
   kind      text NOT NULL,
   target_id text NOT NULL,
-  provider  text NOT NULL,
-  model     text NOT NULL,
-  text_hash text NOT NULL,
+  brain_id  text NOT NULL REFERENCES brains(id) ON DELETE CASCADE,
+  attempts  integer NOT NULL DEFAULT 1,
   at        timestamptz NOT NULL,
   PRIMARY KEY (kind, target_id)
 );

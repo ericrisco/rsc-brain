@@ -153,9 +153,6 @@ export async function lockMeaning(db: Db, brainId: string, shared = false): Prom
   )
 }
 
-const SKIPPED = `NOT EXISTS (SELECT 1 FROM meaning_failures f WHERE f.kind = x.kind AND f.target_id = x.id
-                              AND f.provider = $1 AND f.model = $2 AND f.text_hash = md5(x.text))`
-
 // Stores one vector if, under the brain's lock, its source still has the same text and may be sent.
 async function store(db: Db, r: Row, vec: number[], p: { name: string; model: string }, now: Date) {
   await db.tx(async (tx) => {
@@ -175,25 +172,30 @@ async function store(db: Db, r: Row, vec: number[], p: { name: string; model: st
              vec = EXCLUDED.vec, updated_at = EXCLUDED.updated_at`,
       [r.kind, r.id, r.brain_id, p.name, p.model, r.hash, vec, now],
     )
+    await tx.query('DELETE FROM meaning_failures WHERE kind = $1 AND target_id = $2', [r.kind, r.id])
   })
 }
 
 // Processes up to one batch of what has no current vector. Whether a brain is excluded is checked right
-// before sending and again, under the brain's lock, when storing (CA8). A text the provider refuses on
-// its own is set aside, so it never blocks what comes after it.
+// before sending and again, under the brain's lock, when storing (CA8). A batch that fails counts one
+// attempt for each of its texts and is tried again later: what failed before goes last, and alone, so
+// a text the provider always refuses never blocks the rest.
 export async function embedPending(db: Db, providers: Providers, now: Date, batch = BATCH): Promise<number> {
   const s = await meaningSettings(db)
   const p = s.enabled && s.provider ? providers[s.provider] : undefined
   if (!p || p.model !== s.model) return 0
-  const rows = await db.query<Row>(
-    `SELECT x.kind, x.id, x.brain_id, x.text, md5(x.text) AS hash FROM (${EMBEDDABLE}) x
-      WHERE ${NOT_EXCLUDED} AND ${SKIPPED}
+  let rows = await db.query<Row>(
+    `SELECT x.kind, x.id, x.brain_id, x.text, md5(x.text) AS hash, coalesce(f.attempts, 0) AS attempts
+       FROM (${EMBEDDABLE}) x
+       LEFT JOIN meaning_failures f ON f.kind = x.kind AND f.target_id = x.id
+      WHERE ${NOT_EXCLUDED}
         AND NOT EXISTS (SELECT 1 FROM meaning_vectors v WHERE v.kind = x.kind AND v.target_id = x.id
                           AND v.provider = $1 AND v.model = $2 AND v.text_hash = md5(x.text))
-      ORDER BY x.kind, x.id LIMIT $3`,
+      ORDER BY coalesce(f.attempts, 0), x.kind, x.id LIMIT $3`,
     [p.name, p.model, batch],
   )
   if (rows.length === 0) return 0
+  if (Number(rows[0]?.attempts) > 0) rows = rows.slice(0, 1)
   const excluded = new Set(
     (
       await db.query<{ brain_id: string }>(
@@ -204,42 +206,21 @@ export async function embedPending(db: Db, providers: Providers, now: Date, batc
   )
   const send = rows.filter((r) => !excluded.has(String(r.brain_id)))
   if (send.length === 0) return 0
-  const texts = send.map((r) => String(r.text).slice(0, SEND_CHARS))
-  let vecs: (number[] | null)[]
+  let vecs: number[][]
   try {
-    vecs = await p.embed(texts, { signal: AbortSignal.timeout(30_000) })
+    vecs = await p.embed(
+      send.map((r) => String(r.text).slice(0, SEND_CHARS)),
+      { signal: AbortSignal.timeout(30_000) },
+    )
   } catch (err) {
-    if (send.length === 1) {
-      const r = send[0] as Row
+    for (const r of send) {
       await db.query(
-        `INSERT INTO meaning_failures (kind, target_id, provider, model, text_hash, at) VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (kind, target_id) DO UPDATE SET provider = $3, model = $4, text_hash = $5, at = $6`,
-        [r.kind, r.id, p.name, p.model, r.hash, now],
-      )
-      return 1
-    }
-    // The batch failed: try each text on its own to find the one the provider refuses. A provider that
-    // is down fails them all, and the next run tries again.
-    vecs = []
-    let down = 0
-    for (const t of texts) {
-      try {
-        const [v] = await p.embed([t], { signal: AbortSignal.timeout(30_000) })
-        vecs.push(v ?? null)
-      } catch {
-        vecs.push(null)
-        down++
-      }
-    }
-    if (down === texts.length) throw err
-    for (const [i, r] of send.entries()) {
-      if (vecs[i] !== null) continue
-      await db.query(
-        `INSERT INTO meaning_failures (kind, target_id, provider, model, text_hash, at) VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (kind, target_id) DO UPDATE SET provider = $3, model = $4, text_hash = $5, at = $6`,
-        [r.kind, r.id, p.name, p.model, r.hash, now],
+        `INSERT INTO meaning_failures (kind, target_id, brain_id, attempts, at) VALUES ($1, $2, $3, 1, $4)
+         ON CONFLICT (kind, target_id) DO UPDATE SET attempts = meaning_failures.attempts + 1, at = $4`,
+        [r.kind, r.id, r.brain_id, now],
       )
     }
+    throw err
   }
   for (const [i, r] of send.entries()) {
     const v = vecs[i]
