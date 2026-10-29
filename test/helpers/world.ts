@@ -39,12 +39,26 @@ export type World = TestDb & {
     body?: unknown,
     o?: { csrf?: boolean },
   ): Promise<Call>
+  // Any request, with its own headers; the answer keeps its headers (cookies, Retry-After).
+  raw(
+    method: string,
+    path: string,
+    o?: { body?: unknown; headers?: Record<string, string> },
+  ): Promise<Call & { headers: Headers }>
   close(): Promise<void>
 }
 
-export async function world(o: { meaning?: Providers } = {}): Promise<World> {
+// The installation secret of the tests (never a real one).
+export const TEST_SECRET = 'test-secret-of-at-least-thirty-two-characters'
+
+// `fresh`: leave the first-time setup undone (the setup tests). Otherwise the installation is set up.
+export async function world(o: { meaning?: Providers; fresh?: boolean } = {}): Promise<World> {
   const t = await freshDatabase()
   await migrate(t.db)
+  if (!o.fresh)
+    await t.db.query(
+      "UPDATE installation SET name = 'Test', public_url = 'http://localhost', setup_done_at = now() WHERE id = 1",
+    )
   const w = { now: new Date('2026-10-29T10:00:00.000Z') } as World
   w.clock = () => new Date(w.now.getTime())
   w.advance = (ms) => {
@@ -55,6 +69,8 @@ export async function world(o: { meaning?: Providers } = {}): Promise<World> {
       db: t.db,
       clock: w.clock,
       meaning: o.meaning ?? {},
+      secret: TEST_SECRET,
+      trustedProxies: ['127.0.0.1'],
       log: process.env.BRAIN_TEST_LOG ? (l) => process.stderr.write(`${l}\n`) : () => {},
     }),
   )
@@ -121,6 +137,18 @@ export async function world(o: { meaning?: Providers } = {}): Promise<World> {
       })
       const text = await res.text()
       return { status: res.status, body: text ? JSON.parse(text) : {}, text }
+    },
+    async raw(method: string, path: string, o: { body?: unknown; headers?: Record<string, string> } = {}) {
+      const res = await fetch(`${w.base}${path}`, {
+        method,
+        headers: {
+          ...(o.body === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(o.headers ?? {}),
+        },
+        ...(o.body === undefined ? {} : { body: JSON.stringify(o.body) }),
+      })
+      const text = await res.text()
+      return { status: res.status, body: text ? JSON.parse(text) : {}, text, headers: res.headers }
     },
     async close() {
       await new Promise<void>((r) => server.close(() => r()))

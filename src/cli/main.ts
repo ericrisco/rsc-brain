@@ -8,6 +8,7 @@ import { AppError } from '../core/errors.ts'
 import { openPool } from '../db/db.ts'
 import { migrate } from '../db/migrate.ts'
 import { createAccount } from '../domain/accounts.ts'
+import { companionSetup, setupDone } from '../domain/installation.ts'
 import { mintMainKey, mintPersonToken } from '../domain/keys.ts'
 import { embedRound } from '../domain/meaning.ts'
 import { closeIdle } from '../domain/sessions.ts'
@@ -62,7 +63,16 @@ async function main(argv: string[]): Promise<number> {
     // Providers of meaning come from the environment; meaning search stays off until the
     // administration turns it on in the web (spec B3).
     const meaning = providersFromEnv()
-    const server = createServer(createHandler({ db, clock: systemClock, tz: cfg.timezone, meaning }))
+    const server = createServer(
+      createHandler({
+        db,
+        clock: systemClock,
+        tz: cfg.timezone,
+        meaning,
+        secret: cfg.secret,
+        trustedProxies: cfg.trustedProxies,
+      }),
+    )
     await new Promise<void>((resolve, reject) => {
       server.once('error', (err: NodeJS.ErrnoException) => {
         reject(
@@ -107,6 +117,32 @@ async function main(argv: string[]): Promise<number> {
     process.once('SIGINT', stop)
     return new Promise<number>(() => {})
   }
+  // Companion mode (spec B4 CA24): the installer of Factory prepares Brain from environment variables
+  // and gets the main key of Factory's service account, printed once as JSON.
+  if (cmd === 'setup' && sub === '--from-env') {
+    const env = process.env
+    return withDb(async (pool) => {
+      await migrate(pool)
+      if (await setupDone(pool)) {
+        process.stderr.write('This installation is already set up.\n')
+        return 1
+      }
+      const made = await companionSetup(pool, systemClock, {
+        name: env.RSC_BRAIN_SETUP_NAME ?? 'RSC Brain',
+        publicUrl: env.RSC_BRAIN_SETUP_URL,
+        admin: {
+          name: env.RSC_BRAIN_ADMIN_NAME,
+          email: env.RSC_BRAIN_ADMIN_EMAIL,
+          password: env.RSC_BRAIN_ADMIN_PASSWORD,
+        },
+        serviceName: env.RSC_BRAIN_SERVICE_NAME ?? 'RSC Factory',
+      })
+      out(
+        `${JSON.stringify({ adminId: made.adminId, serviceId: made.serviceId, serviceKey: made.serviceKey })}\n`,
+      )
+      return 0
+    })
+  }
   if (cmd === 'admin' && sub === 'bootstrap') {
     const { values } = parseArgs({
       args: rest,
@@ -143,6 +179,10 @@ async function main(argv: string[]): Promise<number> {
           allBrains: true,
           days: 90,
         })
+        // A bootstrapped installation counts as set up: there is an administrator.
+        await db.query('UPDATE installation SET setup_done_at = coalesce(setup_done_at, $1) WHERE id = 1', [
+          systemClock(),
+        ])
         out(`Administrator created (${id}).\nKey (shown once, valid until ${k.expiresAt}):\n${k.secret}\n`)
         return 0
       })

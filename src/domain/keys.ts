@@ -38,8 +38,9 @@ async function insert(
   const secret = newSecret()
   await db.query(
     `INSERT INTO credentials (id, account_id, kind, name, secret_hash, last4, perm, all_brains, brain_ids,
-       write_brain_id, read_brain_ids, ref, agent, on_behalf_id, parent_id, created_at, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+       write_brain_id, read_brain_ids, ref, agent, on_behalf_id, parent_id, created_at, expires_at, epoch)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
+             (SELECT key_epoch FROM installation WHERE id = 1))`,
     [
       id,
       k.accountId,
@@ -93,11 +94,11 @@ export async function mintPersonToken(
   })
 }
 
-export const WEB_SESSION_HOURS = { default: 12, max: 24 * 30 }
+export const WEB_SESSION_HOURS = { default: 14 * 24, max: 24 * 30 }
 
 // A person's session in the web (spec B2 clarifications): the only credential that approves wiki
-// proposals, edits pages by hand or purges. Presented as a cookie, never as a bearer key. The sign-in
-// that issues it arrives with B4; until then only tests call this.
+// proposals, edits pages by hand or purges. Presented as a cookie, never as a bearer key. Signing in
+// (spec B4) issues it; it lasts 14 days from its last use.
 export async function mintWebSession(
   db: Db,
   clock: Clock,

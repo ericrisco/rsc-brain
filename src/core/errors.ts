@@ -17,6 +17,10 @@ export class AppError extends Error {
   current?: unknown
   // Everything wrong with a request at once, when it is checked as a whole (a wiki proposal).
   problems?: unknown
+  // HTTP headers that go with the refusal (Retry-After on a sign-in brake).
+  headers?: Record<string, string>
+  // Extra fields the caller needs (retryAfter seconds), sent in the error body.
+  extra?: Record<string, unknown>
   constructor(status: number, code: string, message: string, howToProceed: string) {
     super(message)
     this.status = status
@@ -27,6 +31,7 @@ export class AppError extends Error {
     const b: ErrorBody = { code: this.code, message: this.message, howToProceed: this.howToProceed }
     if (this.current !== undefined) b.current = this.current
     if (this.problems !== undefined) b.problems = this.problems
+    if (this.extra !== undefined) Object.assign(b, this.extra)
     return b
   }
 }

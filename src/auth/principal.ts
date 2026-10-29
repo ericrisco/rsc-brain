@@ -64,6 +64,9 @@ const ended = (r: Row, now: Date): 'expired' | 'revoked' | null => {
   return null
 }
 
+// A web session ends after this many days without use (spec B4).
+export const WEB_SESSION_DAYS = 14
+
 // The web session travels in this cookie (HttpOnly, set by the sign-in of B4).
 export const SESSION_COOKIE = 'rscb_session'
 
@@ -93,17 +96,27 @@ export async function resolveKey(
   secret: string | null,
   now: Date,
   channel: 'bearer' | 'cookie' = 'bearer',
+  conn?: { userAgent: string },
 ): Promise<Principal> {
   if (!secret) throw NO_KEY()
   const r = await db.one(
     `SELECT c.*, a.kind AS a_kind, a.name AS a_name, a.email, a.is_admin, a.can_create_brains, a.can_invite,
-            a.status, p.revoked_at AS p_revoked_at, p.expires_at AS p_expires_at
+            a.status, p.revoked_at AS p_revoked_at, p.expires_at AS p_expires_at, i.key_epoch
        FROM credentials c JOIN accounts a ON a.id = c.account_id
        LEFT JOIN credentials p ON p.id = c.parent_id
+       CROSS JOIN installation i
       WHERE c.secret_hash = $1`,
     [hashSecret(secret)],
   )
   if (!r) throw NO_KEY()
+  // A key of an earlier epoch (before a copy was restored) never works again (spec B4 CA33).
+  if (Number(r.epoch) !== Number(r.key_epoch)) {
+    throw unauthorized(
+      'key_invalidated',
+      'This key is from before the installation was restored, so it no longer works.',
+      'Create a new key (a person: in your profile; a service: ask the administration).',
+    )
+  }
   const why =
     ended(r, now) ??
     (r.parent_id != null ? ended({ revoked_at: r.p_revoked_at, expires_at: r.p_expires_at }, now) : null)
@@ -120,10 +133,12 @@ export async function resolveKey(
         : 'Send the key in the Authorization header.',
     )
   }
+  // Last use and client, at most once a minute; a web session lives 14 days from its last use.
   await db.query(
-    `UPDATE credentials SET last_used_at = $2
+    `UPDATE credentials SET last_used_at = $2, last_client = coalesce($3, last_client),
+            expires_at = CASE WHEN kind = 'web' THEN $2::timestamptz + make_interval(days => $4) ELSE expires_at END
       WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < $2::timestamptz - interval '60 seconds')`,
-    [r.id, now],
+    [r.id, now, conn?.userAgent || null, WEB_SESSION_DAYS],
   )
   return {
     accountId: String(r.account_id),

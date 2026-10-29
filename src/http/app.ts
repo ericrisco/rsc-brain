@@ -1,12 +1,15 @@
 // The HTTP face of the server: JSON in, JSON out, a key on every /v1 request except /v1/health.
 // Refusals carry { error: { code, message, howToProceed } }; an unexpected failure reveals nothing.
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { TLSSocket } from 'node:tls'
 import { bearer, resolveKey, sessionCookie } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
+import { setupDone } from '../domain/installation.ts'
 import type { Providers } from '../meaning/providers.ts'
-import { match, type Route } from './router.ts'
+import { type Conn, match, type Route, WEB_HEADER } from './router.ts'
+import { authRoutes } from './routes/auth.ts'
 import { brainRoutes } from './routes/brains.ts'
 import { decideRoutes } from './routes/decide.ts'
 import { journalRoutes } from './routes/journal.ts'
@@ -16,7 +19,7 @@ import { recallRoutes } from './routes/recall.ts'
 import { wikiRoutes } from './routes/wiki.ts'
 
 export const MAX_BODY = 1_048_576
-export const WEB_HEADER = 'rsc-brain-web'
+export { WEB_HEADER } from './router.ts'
 
 export type AppDeps = {
   db: Db
@@ -25,9 +28,14 @@ export type AppDeps = {
   routes?: Route[]
   log?: (line: string) => void
   meaning?: Providers
+  // The installation secret (RSC_BRAIN_SECRET) that seals what the server must read back.
+  secret?: string | undefined
+  // Addresses of proxies in front of Brain whose X-Forwarded-* headers are believed.
+  trustedProxies?: string[]
 }
 
 export const ROUTES: Route[] = [
+  ...authRoutes,
   ...brainRoutes,
   ...keyRoutes,
   ...journalRoutes,
@@ -86,12 +94,46 @@ function badText(root: unknown): string | null {
   return null
 }
 
-function send(res: ServerResponse, status: number, body: unknown): void {
-  const text = JSON.stringify(body)
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+
+function connOf(req: IncomingMessage, trusted: string[]): Conn {
+  const remote = req.socket.remoteAddress ?? ''
+  const h = req.headers
+  const proxied =
+    h['x-forwarded-for'] !== undefined || h['x-forwarded-proto'] !== undefined || h.forwarded !== undefined
+  const userAgent = String(h['user-agent'] ?? '').slice(0, 200)
+  if (proxied && trusted.includes(remote)) {
+    const proto = String(h['x-forwarded-proto'] ?? '')
+      .split(',')[0]
+      ?.trim()
+    const ip =
+      String(h['x-forwarded-for'] ?? '')
+        .split(',')[0]
+        ?.trim() || remote
+    return { encrypted: proto === 'https', local: false, ip, userAgent }
+  }
+  return {
+    encrypted: Boolean((req.socket as TLSSocket).encrypted),
+    local: LOOPBACK.has(remote) && !proxied,
+    ip: remote,
+    userAgent,
+  }
+}
+
+// JSON by default; a reply that names its own content type (a page) is sent as it is.
+function send(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string | string[]> = {},
+): void {
+  const raw = typeof body === 'string' && headers['content-type'] !== undefined
+  const text = raw ? (body as string) : JSON.stringify(body)
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
+    ...headers,
     'content-length': Buffer.byteLength(text),
   })
   res.end(text)
@@ -100,6 +142,9 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 export function createHandler(deps: AppDeps) {
   const routes = deps.routes ?? ROUTES
   const log = deps.log ?? ((line: string) => process.stderr.write(`${line}\n`))
+  const trusted = deps.trustedProxies ?? []
+  // Once the first-time setup is done it stays done: no need to ask the database again.
+  let ready = false
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost')
@@ -128,8 +173,38 @@ export function createHandler(deps: AppDeps) {
         const bad = badText(k) ?? badText(v)
         if (bad) throw invalid(bad.replace('The request', 'The query string'), 'Remove those characters.')
       }
+      // Until the first-time setup is done, everything leads to it (spec B4 CA1).
+      if (!ready && !found.route.beforeSetup) {
+        ready = await setupDone(deps.db)
+        if (!ready) {
+          throw new AppError(
+            503,
+            'setup_required',
+            'This installation is not set up yet.',
+            'Open the Brain web address to run the first-time setup.',
+          )
+        }
+      }
+      const conn = connOf(req, trusted)
       const key = bearer(req.headers.authorization)
       const cookie = key ? null : sessionCookie(req.headers.cookie)
+      const base = {
+        headers: req.headers,
+        params: found.params,
+        query: url.searchParams,
+        db: deps.db,
+        clock: deps.clock,
+        tz: deps.tz ?? 'UTC',
+        meaning: deps.meaning ?? {},
+        secret: deps.secret,
+        conn,
+        cookie,
+      }
+      if (found.route.public) {
+        // A page that a browser posts to checks its own origin; JSON callers send no cookie here.
+        const reply = await found.route.public({ ...base, body: await readBody(req) })
+        return send(res, reply.status ?? 200, reply.body, reply.headers)
+      }
       // A cookie-borne write must come from the web itself: a page elsewhere cannot add this header
       // to a cross-site request without the browser asking first (CSRF).
       if (cookie && method !== 'GET' && method !== 'HEAD' && req.headers['x-requested-with'] !== WEB_HEADER) {
@@ -140,21 +215,12 @@ export function createHandler(deps: AppDeps) {
           'Use the Brain web to do this.',
         )
       }
-      const who = await resolveKey(deps.db, key ?? cookie, deps.clock(), key ? 'bearer' : 'cookie')
+      const who = await resolveKey(deps.db, key ?? cookie, deps.clock(), key ? 'bearer' : 'cookie', conn)
       const body = await readBody(req)
-      const reply = await found.route.handler({
-        params: found.params,
-        query: url.searchParams,
-        body,
-        who,
-        db: deps.db,
-        clock: deps.clock,
-        tz: deps.tz ?? 'UTC',
-        meaning: deps.meaning ?? {},
-      })
-      send(res, reply.status ?? 200, reply.body)
+      const reply = await found.route.handler({ ...base, body, who })
+      send(res, reply.status ?? 200, reply.body, reply.headers)
     } catch (err) {
-      if (err instanceof AppError) return send(res, err.status, { error: err.body() })
+      if (err instanceof AppError) return send(res, err.status, { error: err.body() }, err.headers)
       const id = Math.random().toString(36).slice(2, 10)
       log(`internal error ${id}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
       send(res, 500, {
