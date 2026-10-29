@@ -6,6 +6,7 @@ import { actorOf, type Principal, roleIn } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import { brainNotFound, denied } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
+import type { Outbox } from '../mail/mail.ts'
 import type { Providers } from '../meaning/providers.ts'
 import { audit } from './audit.ts'
 
@@ -13,7 +14,16 @@ import { audit } from './audit.ts'
 // them (the refusal is thrown, which rolls the transaction back).
 // tz: the installation's time zone, which decides the day of a key's implicit session (spec B1).
 // meaning: the providers of meaning configured for this installation (spec B3); none in most tests.
-export type Ctx = { db: Db; clock: Clock; who: Principal; root?: Db; tz?: string; meaning?: Providers }
+// mail: how to send mail (spec B4); without it nothing is sent.
+export type Ctx = {
+  db: Db
+  clock: Clock
+  who: Principal
+  root?: Db
+  tz?: string
+  meaning?: Providers
+  mail?: Outbox
+}
 
 export type Brain = {
   id: string
@@ -63,6 +73,21 @@ export async function inBrain(
 export async function allow(ctx: Ctx, action: Action, facts: Facts, brainId?: string): Promise<void> {
   const d = can(actorOf(ctx.who), action, facts)
   if (d.ok) return
+  // "Ask a curator" says who they are (spec B4: every denial says whom to ask).
+  let how = d.howToProceed
+  if (brainId && how.startsWith('Ask a curator of the brain')) {
+    const names = await ctx.db.query(
+      `SELECT a.name FROM memberships m JOIN accounts a ON a.id = m.account_id
+        WHERE m.brain_id = $1 AND m.role = 'curator' AND a.status = 'active' ORDER BY lower(a.name) LIMIT 3`,
+      [brainId],
+    )
+    if (names.length) {
+      how = how.replace(
+        'Ask a curator of the brain',
+        `Ask a curator of the brain (${names.map((n) => n.name).join(', ')})`,
+      )
+    }
+  }
   await audit(ctx.root ?? ctx.db, {
     at: ctx.clock(),
     actorId: ctx.who.accountId,
@@ -72,7 +97,7 @@ export async function allow(ctx: Ctx, action: Action, facts: Facts, brainId?: st
     outcome: 'denied',
     detail: d.reason,
   })
-  throw denied(d.reason, d.howToProceed)
+  throw denied(d.reason, how)
 }
 
 export async function ok(ctx: Ctx, action: string, brainId: string | null, target?: string, detail?: string) {

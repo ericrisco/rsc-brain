@@ -7,6 +7,7 @@ import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
 import { setupDone } from '../domain/installation.ts'
+import type { Outbox } from '../mail/mail.ts'
 import type { Providers } from '../meaning/providers.ts'
 import { type Conn, match, type Route, WEB_HEADER } from './router.ts'
 import { authRoutes } from './routes/auth.ts'
@@ -15,6 +16,7 @@ import { decideRoutes } from './routes/decide.ts'
 import { journalRoutes } from './routes/journal.ts'
 import { keyRoutes } from './routes/keys.ts'
 import { meaningRoutes } from './routes/meaning.ts'
+import { peopleRoutes } from './routes/people.ts'
 import { recallRoutes } from './routes/recall.ts'
 import { wikiRoutes } from './routes/wiki.ts'
 
@@ -32,6 +34,8 @@ export type AppDeps = {
   secret?: string | undefined
   // Addresses of proxies in front of Brain whose X-Forwarded-* headers are believed.
   trustedProxies?: string[]
+  // Replaces SMTP (tests); the server sends with the mail settings of the installation.
+  mailTransport?: Outbox['transport']
 }
 
 export const ROUTES: Route[] = [
@@ -43,6 +47,7 @@ export const ROUTES: Route[] = [
   ...decideRoutes,
   ...wikiRoutes,
   ...meaningRoutes,
+  ...peopleRoutes,
 ]
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
@@ -201,6 +206,7 @@ export function createHandler(deps: AppDeps) {
         tz: deps.tz ?? 'UTC',
         meaning: deps.meaning ?? {},
         secret: deps.secret,
+        mail: { secret: deps.secret, ...(deps.mailTransport ? { transport: deps.mailTransport } : {}) },
         conn,
         cookie,
       }

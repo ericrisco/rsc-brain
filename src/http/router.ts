@@ -4,6 +4,7 @@ import type { IncomingHttpHeaders } from 'node:http'
 import type { Principal } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import type { Db } from '../db/db.ts'
+import type { Outbox } from '../mail/mail.ts'
 import type { Providers } from '../meaning/providers.ts'
 
 // How a request arrived (spec B4): over TLS or not, from this machine or not, from where and with which
@@ -24,6 +25,7 @@ export type PublicReq = {
   tz: string
   meaning: Providers
   secret: string | undefined
+  mail: Outbox
   conn: Conn
   // The web session cookie, when one came, for public pages that also serve a signed-in person.
   cookie: string | null

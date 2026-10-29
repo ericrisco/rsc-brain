@@ -16,16 +16,17 @@ import {
   signOut,
   startTotp,
 } from '../../domain/login.ts'
+import { send } from '../../mail/mail.ts'
 import { obj } from '../input.ts'
 import { type Conn, type PublicReq, publicRoute, type Route, route, WEB_HEADER } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
-const cookie = (secret: string, conn: Conn) =>
+export const cookie = (secret: string, conn: Conn) =>
   `${SESSION_COOKIE}=${secret}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${WEB_SESSION_DAYS * 86_400}${conn.encrypted ? '; Secure' : ''}`
 const clearCookie = (conn: Conn) =>
   `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${conn.encrypted ? '; Secure' : ''}`
 
-function fromWeb(r: PublicReq): void {
+export function fromWeb(r: PublicReq): void {
   if (r.headers['x-requested-with'] !== WEB_HEADER) {
     throw new AppError(
       403,
@@ -81,7 +82,19 @@ export const authRoutes: Route[] = [
     return { body: { signedOut: n }, headers: { 'set-cookie': clearCookie(r.conn) } }
   }),
   publicRoute('POST /v1/auth/reset', async (r) => {
-    await requestReset(r.db, r.clock, r.conn, obj(r.body).email)
+    await requestReset(r.db, r.clock, r.conn, obj(r.body).email, async (to, link) => {
+      await send(r.db, r.clock, r.mail, 'reset', {
+        to,
+        subject: 'Reset your Brain password',
+        text: [
+          'Someone asked to reset the password of your Brain account.',
+          'Open this link to choose a new one. It works once, for 1 hour:',
+          link,
+          '',
+          'If it was not you, ignore this mail: your password stays as it is.',
+        ].join('\n'),
+      })
+    })
     return {
       status: 202,
       body: {

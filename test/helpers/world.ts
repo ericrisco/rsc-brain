@@ -8,6 +8,7 @@ import { createAccount, type NewAccount } from '../../src/domain/accounts.ts'
 import { addMember } from '../../src/domain/brains.ts'
 import { mintMainKey, mintPersonToken, mintWebSession } from '../../src/domain/keys.ts'
 import { createHandler, WEB_HEADER } from '../../src/http/app.ts'
+import type { Message, Sender } from '../../src/mail/mail.ts'
 import type { Providers } from '../../src/meaning/providers.ts'
 import { freshDatabase, type TestDb } from './pg.ts'
 
@@ -45,6 +46,12 @@ export type World = TestDb & {
     path: string,
     o?: { body?: unknown; headers?: Record<string, string> },
   ): Promise<Call & { headers: Headers }>
+  // Mail never leaves the tests: what would be sent is kept here. `mailFails` makes sending fail.
+  mails: Array<Message & { from: Sender }>
+  mailFails: boolean
+  setUpMail(): Promise<void>
+  // Waits until a mail to `to` arrives (sends that happen in the background).
+  mailTo(to: string, subject?: RegExp): Promise<Message>
   close(): Promise<void>
 }
 
@@ -59,7 +66,7 @@ export async function world(o: { meaning?: Providers; fresh?: boolean } = {}): P
     await t.db.query(
       "UPDATE installation SET name = 'Test', public_url = 'http://localhost', setup_done_at = now() WHERE id = 1",
     )
-  const w = { now: new Date('2026-10-29T10:00:00.000Z') } as World
+  const w = { now: new Date('2026-10-29T10:00:00.000Z'), mails: [], mailFails: false } as unknown as World
   w.clock = () => new Date(w.now.getTime())
   w.advance = (ms) => {
     w.now = new Date(w.now.getTime() + ms)
@@ -71,6 +78,12 @@ export async function world(o: { meaning?: Providers; fresh?: boolean } = {}): P
       meaning: o.meaning ?? {},
       secret: TEST_SECRET,
       trustedProxies: ['127.0.0.1'],
+      mailTransport: () => ({
+        async send(m) {
+          if (w.mailFails) throw new Error('connection refused by the test mail server')
+          w.mails.push(m)
+        },
+      }),
       log: process.env.BRAIN_TEST_LOG ? (l) => process.stderr.write(`${l}\n`) : () => {},
     }),
   )
@@ -149,6 +162,27 @@ export async function world(o: { meaning?: Providers; fresh?: boolean } = {}): P
       })
       const text = await res.text()
       return { status: res.status, body: text ? JSON.parse(text) : {}, text, headers: res.headers }
+    },
+    async setUpMail() {
+      await t.db.query('UPDATE installation SET mail = $1 WHERE id = 1', [
+        JSON.stringify({
+          host: 'smtp.test',
+          port: 587,
+          secure: false,
+          user: null,
+          password: null,
+          from: { name: 'Test Brain', address: 'brain@example.com' },
+        }),
+      ])
+    },
+    async mailTo(to: string, subject?: RegExp) {
+      const end = Date.now() + 2000
+      for (;;) {
+        const m = [...w.mails].reverse().find((x) => x.to === to && (!subject || subject.test(x.subject)))
+        if (m) return m
+        if (Date.now() > end) throw new Error(`no mail to ${to}`)
+        await new Promise((r) => setTimeout(r, 20))
+      }
     },
     async close() {
       await new Promise<void>((r) => server.close(() => r()))

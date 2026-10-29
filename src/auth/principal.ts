@@ -45,11 +45,11 @@ const NO_KEY = () =>
     'Missing or unknown key.',
     'Send "Authorization: Bearer <key>" with a key of this installation.',
   )
-const ENDED = (why: 'expired' | 'revoked') =>
+const ENDED = (why: 'expired' | 'revoked', base: string) =>
   unauthorized(
     `key_${why}`,
     `This key has ${why === 'expired' ? 'expired' : 'been revoked'}.`,
-    'Create a new key (a person: in your profile; a service: ask the administration).',
+    `Create a new key (a person: in your profile, ${base}/profile/tokens; a service: ask the administration).`,
   )
 const REMOVED = () =>
   unauthorized(
@@ -101,7 +101,7 @@ export async function resolveKey(
   if (!secret) throw NO_KEY()
   const r = await db.one(
     `SELECT c.*, a.kind AS a_kind, a.name AS a_name, a.email, a.is_admin, a.can_create_brains, a.can_invite,
-            a.status, p.revoked_at AS p_revoked_at, p.expires_at AS p_expires_at, i.key_epoch
+            a.status, p.revoked_at AS p_revoked_at, p.expires_at AS p_expires_at, i.key_epoch, i.public_url
        FROM credentials c JOIN accounts a ON a.id = c.account_id
        LEFT JOIN credentials p ON p.id = c.parent_id
        CROSS JOIN installation i
@@ -120,7 +120,7 @@ export async function resolveKey(
   const why =
     ended(r, now) ??
     (r.parent_id != null ? ended({ revoked_at: r.p_revoked_at, expires_at: r.p_expires_at }, now) : null)
-  if (why) throw ENDED(why)
+  if (why) throw ENDED(why, r.public_url == null ? '' : String(r.public_url))
   if (r.status !== 'active') throw REMOVED()
   if ((r.kind === 'web') !== (channel === 'cookie')) {
     throw unauthorized(

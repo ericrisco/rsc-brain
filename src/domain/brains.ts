@@ -7,6 +7,7 @@ import { newId } from '../core/ids.ts'
 import type { Db } from '../db/db.ts'
 import { accountByEmail } from './accounts.ts'
 import { allow, type Brain, brainOf, type Ctx, inBrain, ok } from './context.ts'
+import { sendInvitation, storeInvitation } from './invitations.ts'
 
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -60,7 +61,7 @@ export async function createBrain(ctx: Ctx, input: NewBrain): Promise<Brain> {
   const description = text(input.description, 2000, 'description')
   const purpose = text(input.purpose, 1000, 'purpose')
   const now = ctx.clock()
-  return ctx.db.tx(async (db) => {
+  const made = await ctx.db.tx(async (db) => {
     const id = newId('brn')
     let curatorId: string | null = null
     let pendingEmail: string | null = null
@@ -107,9 +108,31 @@ export async function createBrain(ctx: Ctx, input: NewBrain): Promise<Brain> {
       if (curatorId) await addMember(db, id, curatorId, 'curator', now)
     }
     await ok({ ...ctx, db }, 'brain.create', id, slug)
+    // The pending curator gets an invitation to curate this brain (spec B4 CA31).
+    const invitation = pendingEmail
+      ? await storeInvitation(db, ctx.clock, {
+          email: pendingEmail,
+          grants: [{ brainId: id, role: 'curator' }],
+          by: ctx.who.accountId,
+          as: 'service',
+        })
+      : null
+    if (invitation) await ok({ ...ctx, db }, 'invitation.create', id, pendingEmail ?? '', 'first curator')
     const row = await db.one('SELECT * FROM brains WHERE id = $1', [id])
-    return brainOf(row as Record<string, unknown>)
+    return { brain: brainOf(row as Record<string, unknown>), invitation, pendingEmail }
   })
+  // A new invitation, or one whose link this service made, is mailed; one the person already holds
+  // just gains the brain.
+  if (made.invitation?.token && made.pendingEmail) {
+    await sendInvitation(ctx.db, ctx.clock, ctx.mail, {
+      email: made.pendingEmail,
+      token: made.invitation.token,
+      by: ctx.who.name,
+      grants: made.invitation.grants,
+      isAdmin: made.invitation.isAdmin,
+    })
+  }
+  return made.brain
 }
 
 export type BrainListed = Brain & { role: Role }
