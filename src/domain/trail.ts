@@ -6,6 +6,7 @@ import { invalid } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
 import { redact } from '../privacy/redact.ts'
 import { type Ctx, inBrain } from './context.ts'
+import { emit } from './events.ts'
 import { dayIn } from './sessions.ts'
 import { resolve } from './wiki/pages.ts'
 
@@ -20,6 +21,8 @@ export async function track(
     query?: string | null
     resultIds: string[]
     ref?: string | null
+    // For a read: the address or title of what was read, for the event (spec B5).
+    label?: string | null
   },
 ): Promise<void> {
   const ref = t.ref ?? (ctx.who.credential.kind === 'short' ? ctx.who.credential.ref : null)
@@ -43,6 +46,18 @@ export async function track(
       dayIn(ctx.tz ?? 'UTC', ctx.clock()),
     ],
   )
+  // Searches and reads are also events of the brain, for whoever follows it live (spec B5 CA12).
+  if (t.kind === 'search') {
+    await emit(db, ctx, { brainId: t.brainId, kind: 'search', query: t.query ?? '', resultIds: t.resultIds })
+  }
+  if (t.kind === 'read') {
+    await emit(db, ctx, {
+      brainId: t.brainId,
+      kind: 'read',
+      targetId: t.resultIds[0] ?? null,
+      label: t.label ?? null,
+    })
+  }
 }
 
 // A read of a page by address (its current version, an old revision, a comparison or its history).
@@ -50,7 +65,12 @@ export async function trackPageRead(ctx: Ctx, slug: string, address: string): Pr
   const { brain } = await inBrain(ctx, { slug })
   const row = await resolve(ctx.db, brain.id, address)
   if (row)
-    await track(ctx.root ?? ctx.db, ctx, { brainId: brain.id, kind: 'read', resultIds: [String(row.id)] })
+    await track(ctx.root ?? ctx.db, ctx, {
+      brainId: brain.id,
+      kind: 'read',
+      resultIds: [String(row.id)],
+      label: String(row.address),
+    })
 }
 
 export type TrailLine = {

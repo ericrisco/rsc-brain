@@ -8,6 +8,7 @@ import { createAccount, type NewAccount } from '../../src/domain/accounts.ts'
 import { addMember } from '../../src/domain/brains.ts'
 import { mintMainKey, mintPersonToken, mintWebSession } from '../../src/domain/keys.ts'
 import { createHandler, WEB_HEADER } from '../../src/http/app.ts'
+import type { EventTimings } from '../../src/http/hub.ts'
 import type { Message, Sender } from '../../src/mail/mail.ts'
 import type { Providers } from '../../src/meaning/providers.ts'
 import { freshDatabase, type TestDb } from './pg.ts'
@@ -62,7 +63,7 @@ export const TEST_SECRET = 'test-secret-of-at-least-thirty-two-characters'
 // `localClients`: client documents of the standard sign-in may be served from this machine over http
 // (only tests do that).
 export async function world(
-  o: { meaning?: Providers; fresh?: boolean; localClients?: boolean } = {},
+  o: { meaning?: Providers; fresh?: boolean; localClients?: boolean; events?: Partial<EventTimings> } = {},
 ): Promise<World> {
   const t = await freshDatabase()
   await migrate(t.db)
@@ -83,6 +84,7 @@ export async function world(
       secret: TEST_SECRET,
       trustedProxies: ['127.0.0.1'],
       ...(o.localClients ? { fetchPolicy: { allowLoopbackHttp: true } } : {}),
+      ...(o.events ? { events: o.events } : {}),
       mailTransport: () => ({
         async send(m) {
           if (w.mailFails) throw new Error('connection refused by the test mail server')

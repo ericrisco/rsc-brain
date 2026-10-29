@@ -106,6 +106,7 @@ export const wikiRoutes: Route[] = [
       brainId: reading.page.brainId,
       kind: 'read',
       resultIds: [reading.page.id],
+      label: reading.page.address,
     })
     return { body: reading }
   }),

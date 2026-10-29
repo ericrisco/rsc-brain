@@ -78,6 +78,41 @@ works, never save secrets, close with a summary.
   and results.
 - Curators link repositories to their brain, so an agent finds it with `brain_resolve`.
 
+## The API for programs
+
+Everything a tool does is also a `/v1` route, with the same keys and permissions. The description of
+the API is at `GET /v1/openapi.json` (OpenAPI 3.1, no key needed: it describes routes and holds no
+data). Version 1 is a contract: its routes and the main fields of its answers do not change; a
+breaking change goes to `/v2`, and `/v1` keeps working alongside it.
+
+- **Errors** always come as `{ "error": { "code", "message", "howToProceed" } }`.
+- **Rate limit:** each key may make 600 requests per minute by default. Beyond that the answer is
+  429 `rate_limited`, with `Retry-After` and `retryAfter` in seconds; over MCP the same refusal comes
+  as a JSON-RPC error. The administration changes the limit with `PUT /v1/admin/settings`
+  (`{ "rateLimit": 1200 }`). The count lives in the memory of the server process.
+- **Bounded answers:** no answer passes 256 000 characters. Lists go by pages and say how to ask for
+  the next one. An answer that would still pass the limit is cut: it comes as
+  `{ "cut": { "message", "howToProceed", … }, "partial": "…" }` with the header `X-Brain-Cut: true`.
+
+## Following a brain live
+
+`GET /v1/brains/:slug/events` is a stream of Server-Sent Events: sessions opened and closed, entries
+saved and changed, searches, reads, proposals sent, withdrawn and decided, and wiki changes. Each event
+carries its id, time, brain, kind, who and with which key (and the external reference of a short key),
+and the id and title or address of what it touches; a search carries the text searched, already
+redacted. It never carries the body of an entry or a page.
+
+- **Who sees what:** curators see everything. Everyone else sees every change and proposal, and only
+  their own searches and reads (a service account: what any of its keys did; an agent's short key:
+  what it did itself).
+- **Resuming:** reconnect with `Last-Event-ID` (or `?lastEventId=`) to get what you missed, in order,
+  from the last 24 hours. If you missed events older than that, a `gap` event says so first: catch up
+  with the lists (pending proposals, recent sessions).
+- **Liveness:** events arrive within 2 seconds; a comment line every 15 seconds keeps proxies from
+  closing the connection. The key and the role are checked every 2 seconds: a revoked key or a
+  changed role ends the stream with a `closed` event that says why.
+- One poller per server process reads new events for every open stream.
+
 ## Audit
 
 Every sign-in, invitation, role change, key, connection, purge and setting change is recorded. The

@@ -12,7 +12,7 @@ import { addMember } from './brains.ts'
 import { type Ctx, ok } from './context.ts'
 import { joinAsAdmin } from './curation.ts'
 import { adminOnly, EMAIL, emailOf } from './guards.ts'
-import { installation } from './installation.ts'
+import { DEFAULT_RATE_LIMIT, installation, MAX_RATE_LIMIT } from './installation.ts'
 import { type Minted, mintMainKey } from './keys.ts'
 import { curatorsOf, notify } from './notices.ts'
 
@@ -228,13 +228,30 @@ export async function joinBrain(ctx: Ctx, slug: string) {
 export async function getSettings(ctx: Ctx) {
   adminOnly(ctx)
   const i = await installation(ctx.db)
-  return { name: i.name, publicUrl: i.publicUrl, curatorsInvite: i.curatorsInvite }
+  return { name: i.name, publicUrl: i.publicUrl, curatorsInvite: i.curatorsInvite, rateLimit: i.rateLimit }
 }
 
-export async function updateSettings(ctx: Ctx, input: { name?: unknown; curatorsInvite?: unknown }) {
+// rateLimit: the requests per minute each key may make (spec B5).
+export async function updateSettings(
+  ctx: Ctx,
+  input: { name?: unknown; curatorsInvite?: unknown; rateLimit?: unknown },
+) {
   adminOnly(ctx)
   if (input.curatorsInvite !== undefined && typeof input.curatorsInvite !== 'boolean') {
     throw invalid('"curatorsInvite" is true or false.', 'Fix "curatorsInvite".')
+  }
+  const limit = input.rateLimit
+  if (
+    limit !== undefined &&
+    (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > MAX_RATE_LIMIT)
+  ) {
+    throw invalid(
+      `"rateLimit" is the requests per minute of each key: a whole number from 1 to ${MAX_RATE_LIMIT}.`,
+      `Fix "rateLimit" (the default is ${DEFAULT_RATE_LIMIT}).`,
+    )
+  }
+  if (limit !== undefined) {
+    await ctx.db.query('UPDATE installation SET rate_limit = $1 WHERE id = 1', [limit])
   }
   if (input.name !== undefined) {
     const n = typeof input.name === 'string' ? input.name.trim() : ''
