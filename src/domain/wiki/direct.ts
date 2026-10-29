@@ -5,6 +5,7 @@
 import { conflict, invalid } from '../../core/errors.ts'
 import { redact } from '../../privacy/redact.ts'
 import { allow, type Ctx, inBrain } from '../context.ts'
+import { lockMeaning } from '../meaning.ts'
 import { applyOps, type Revised } from './apply.ts'
 import { type Problem, readOp } from './model.ts'
 import { getPage, type PageReading, settingsOf, type WikiSettings } from './pages.ts'
@@ -59,6 +60,7 @@ export type SettingsInput = {
   guide?: string | null
   mapIntro?: string
   usageNote?: string
+  meaningExcluded?: boolean
   staleDays?: number
   longChars?: number
   maintenanceEvery?: number
@@ -105,15 +107,21 @@ export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput):
     set('guide', guide)
     set('map_intro', mapIntro)
     set('usage_note', usageNote)
+    set('meaning_excluded', s.meaningExcluded)
     set('stale_days', s.staleDays)
     set('long_chars', s.longChars)
     set('maintenance_every', s.maintenanceEvery)
     if (sets.length === 0)
       throw invalid(
         'Nothing to change.',
-        'Send guide, mapIntro, usageNote, staleDays, longChars or maintenanceEvery.',
+        'Send guide, mapIntro, usageNote, meaningExcluded, staleDays, longChars or maintenanceEvery.',
       )
+    // Waits for any vector being stored for this brain, so none lands after the exclusion.
+    if (s.meaningExcluded !== undefined) await lockMeaning(db, brain.id)
     await db.query(`UPDATE wiki_settings SET ${sets.join(', ')} WHERE brain_id = $1`, values)
+    // Excluding a brain from meaning search deletes its vectors now; nothing more of it is sent (CA8).
+    if (s.meaningExcluded === true)
+      await db.query('DELETE FROM meaning_vectors WHERE brain_id = $1', [brain.id])
     return settingsOf(db, brain.id)
   })
 }

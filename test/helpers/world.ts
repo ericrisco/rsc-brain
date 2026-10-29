@@ -8,6 +8,7 @@ import { createAccount, type NewAccount } from '../../src/domain/accounts.ts'
 import { addMember } from '../../src/domain/brains.ts'
 import { mintMainKey, mintPersonToken, mintWebSession } from '../../src/domain/keys.ts'
 import { createHandler, WEB_HEADER } from '../../src/http/app.ts'
+import type { Providers } from '../../src/meaning/providers.ts'
 import { freshDatabase, type TestDb } from './pg.ts'
 
 export type Call = {
@@ -41,7 +42,7 @@ export type World = TestDb & {
   close(): Promise<void>
 }
 
-export async function world(): Promise<World> {
+export async function world(o: { meaning?: Providers } = {}): Promise<World> {
   const t = await freshDatabase()
   await migrate(t.db)
   const w = { now: new Date('2026-10-29T10:00:00.000Z') } as World
@@ -53,6 +54,7 @@ export async function world(): Promise<World> {
     createHandler({
       db: t.db,
       clock: w.clock,
+      meaning: o.meaning ?? {},
       log: process.env.BRAIN_TEST_LOG ? (l) => process.stderr.write(`${l}\n`) : () => {},
     }),
   )

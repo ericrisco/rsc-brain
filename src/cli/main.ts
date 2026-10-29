@@ -9,9 +9,11 @@ import { openPool } from '../db/db.ts'
 import { migrate } from '../db/migrate.ts'
 import { createAccount } from '../domain/accounts.ts'
 import { mintMainKey, mintPersonToken } from '../domain/keys.ts'
+import { embedRound } from '../domain/meaning.ts'
 import { closeIdle } from '../domain/sessions.ts'
 import { foldTrail } from '../domain/trail.ts'
 import { createHandler } from '../http/app.ts'
+import { providersFromEnv } from '../meaning/providers.ts'
 
 const HELP = `rsc-brain — self-hosted knowledge server for AI agents
 
@@ -57,7 +59,10 @@ async function main(argv: string[]): Promise<number> {
     const cfg = readConfig()
     const db = openPool(cfg.databaseUrl)
     await migrate(db)
-    const server = createServer(createHandler({ db, clock: systemClock, tz: cfg.timezone }))
+    // Providers of meaning come from the environment; meaning search stays off until the
+    // administration turns it on in the web (spec B3).
+    const meaning = providersFromEnv()
+    const server = createServer(createHandler({ db, clock: systemClock, tz: cfg.timezone, meaning }))
     await new Promise<void>((resolve, reject) => {
       server.once('error', (err: NodeJS.ErrnoException) => {
         reject(
@@ -78,6 +83,18 @@ async function main(argv: string[]): Promise<number> {
       foldTrail(db, systemClock()).catch(() => {})
     }, 10 * 60_000)
     sweep.unref()
+    // What has no vector yet is sent to the provider in batches, one run a minute at most.
+    let embedding = false
+    const embed = setInterval(() => {
+      if (embedding) return
+      embedding = true
+      embedRound(db, meaning, systemClock)
+        .catch(() => {})
+        .finally(() => {
+          embedding = false
+        })
+    }, 60_000)
+    embed.unref()
     const stop = () => {
       server.close(() => {
         db.close().then(

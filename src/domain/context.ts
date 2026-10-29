@@ -6,12 +6,14 @@ import { actorOf, type Principal, roleIn } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import { brainNotFound, denied } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
+import type { Providers } from '../meaning/providers.ts'
 import { audit } from './audit.ts'
 
 // root: the pool, outside any transaction. Denials are audited through it so a rollback cannot erase
 // them (the refusal is thrown, which rolls the transaction back).
 // tz: the installation's time zone, which decides the day of a key's implicit session (spec B1).
-export type Ctx = { db: Db; clock: Clock; who: Principal; root?: Db; tz?: string }
+// meaning: the providers of meaning configured for this installation (spec B3); none in most tests.
+export type Ctx = { db: Db; clock: Clock; who: Principal; root?: Db; tz?: string; meaning?: Providers }
 
 export type Brain = {
   id: string

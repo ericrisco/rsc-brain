@@ -9,6 +9,7 @@ import { redact } from '../../privacy/redact.ts'
 import { audit } from '../audit.ts'
 import { allow, type Ctx } from '../context.ts'
 import { joinAsAdmin, scrubEntry } from '../curation.ts'
+import { lockMeaning } from '../meaning.ts'
 import { mentionsOf, type Source } from './model.ts'
 import { pageNotFound } from './pages.ts'
 import { webOnly } from './review.ts'
@@ -167,6 +168,12 @@ async function scrubWiki(
   dry: boolean,
 ): Promise<Hits> {
   const total: Hits = new Map()
+  // A vector of meaning is computed from the text: the brain's vectors go and are computed again from
+  // what is left (spec B3).
+  if (!dry) {
+    await lockMeaning(db, brainId)
+    await db.query('DELETE FROM meaning_vectors WHERE brain_id = $1', [brainId])
+  }
   for (const t of TARGETS) {
     const cols = [...Object.keys(t.text), ...t.arrays, ...t.json]
     let after = '(0,0)'

@@ -1,0 +1,369 @@
+// Spec B3 «Búsqueda por significado»: off by default; on only by the administration in the web with the
+// warning accepted; found by meaning with its reason; a provider down never fails a search; a brain
+// excluded by its curator loses its vectors and sends nothing more.
+import assert from 'node:assert/strict'
+import { after, before, describe, it } from 'node:test'
+import { embedPending, embedRound } from '../../src/domain/meaning.ts'
+import { type FakeProvider, fakeProvider } from '../helpers/meaning.ts'
+import { skipPg } from '../helpers/pg.ts'
+import { type World, world } from '../helpers/world.ts'
+
+type Hit = { kind: string; id: string; address?: string; why: string; reason: string; brain: string }
+type Found = { items: Hit[]; note?: string; meaning?: string }
+
+describe('search by meaning', { skip: skipPg }, () => {
+  let w: World
+  let test: FakeProvider
+  let other: FakeProvider
+  let eric: { id: string; key: string }
+  let admin: { id: string; key: string }
+  let ericWeb: string
+  let adminWeb: string
+  let retention: string
+
+  const find = async (query: string) => {
+    const r = await w.call(eric.key, 'GET', `/v1/search?${query}`)
+    assert.equal(r.status, 200, r.text)
+    return r.body as unknown as Found
+  }
+  const q = (text: string) => `q=${encodeURIComponent(text)}`
+  const page = async (slug: string, address: string, title: string, body: string) => {
+    const r = await w.callWeb(ericWeb, 'POST', `/v1/brains/${slug}/wiki/changes`, {
+      op: 'create',
+      address,
+      type: 'topic',
+      title,
+      summary: '',
+      body,
+    })
+    assert.equal(r.status, 201, r.text)
+    return (
+      (await w.call(eric.key, 'GET', `/v1/brains/${slug}/pages/${address}`)).body.page as { id: string }
+    ).id
+  }
+  // The server's runs, one a minute: `rounds` of them, each exactly as the server does it.
+  const process = async (rounds = 10) => {
+    let n = 0
+    for (let i = 0; i < rounds; i++) n += await embedRound(w.db, { test, other }, w.clock)
+    return n
+  }
+
+  before(async () => {
+    test = fakeProvider('test', 'fake-1')
+    other = fakeProvider('other', 'fake-2')
+    w = await world({ meaning: { test, other } })
+    eric = await w.person('Eric')
+    admin = await w.person('Admin', { isAdmin: true })
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'yt', purpose: 'Videos.' })
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'private', purpose: 'Private.' })
+    ericWeb = await w.web(eric.id)
+    adminWeb = await w.web(admin.id)
+    retention = await page('yt', 'retention', 'Retention', 'How viewers stay to the end of a video.')
+    await page('yt', 'voces', 'Claridad', 'retenemos al público con voces claras')
+    await page('yt', 'cameras', 'Cameras', 'Which lens to buy.')
+  })
+  after(async () => w.close())
+
+  it('CA6: off by default, search works by words and says nothing about meaning', async () => {
+    const f = await find(q('audience drop-off'))
+    assert.deepEqual(f.items, [])
+    assert.equal(f.meaning, undefined)
+    assert.equal(await process(), 0)
+    assert.deepEqual(test.sent, [])
+  })
+
+  it('CA7: only the administration, in the web, and only with the warning accepted, turns it on', async () => {
+    const get = await w.callWeb(adminWeb, 'GET', '/v1/admin/meaning')
+    assert.equal(get.status, 200, get.text)
+    assert.deepEqual([get.body.enabled, get.body.available], [false, ['test', 'other']])
+    assert.match(String(get.body.warning), /will be sent to this provider.*cannot be taken back/)
+    const noAccept = await w.callWeb(adminWeb, 'PUT', '/v1/admin/meaning', { provider: 'test' })
+    assert.equal(noAccept.status, 400)
+    assert.match(JSON.stringify(noAccept.body), /cannot be taken back/)
+    assert.equal((await w.callWeb(adminWeb, 'GET', '/v1/admin/meaning')).body.enabled, false)
+    assert.equal(
+      (await w.callWeb(ericWeb, 'PUT', '/v1/admin/meaning', { provider: 'test', accept: true })).status,
+      403,
+    )
+    assert.equal(
+      (await w.call(admin.key, 'PUT', '/v1/admin/meaning', { provider: 'test', accept: true })).status,
+      403,
+    )
+    assert.equal(
+      (await w.callWeb(adminWeb, 'PUT', '/v1/admin/meaning', { provider: 'nope', accept: true })).status,
+      400,
+    )
+    const on = await w.callWeb(adminWeb, 'PUT', '/v1/admin/meaning', { provider: 'test', accept: true })
+    assert.equal(on.status, 200, on.text)
+    assert.deepEqual([on.body.enabled, on.body.provider, on.body.acceptedBy], [true, 'test', admin.id])
+    const audit = await w.db.one("SELECT detail FROM audit WHERE action = 'meaning.enable'")
+    assert.match(String(audit?.detail), /warning accepted/)
+  })
+
+  it('progress shows what is processed; what is not yet is still found by words', async () => {
+    const before = (await w.callWeb(adminWeb, 'GET', '/v1/admin/meaning')).body.progress as {
+      done: number
+      total: number
+    }
+    assert.equal(before.done, 0)
+    assert.ok(before.total >= 3)
+    assert.equal((await find(q('retention'))).items[0]?.id, retention)
+    await process()
+    const now = (await w.callWeb(adminWeb, 'GET', '/v1/admin/meaning')).body.progress as {
+      done: number
+      total: number
+    }
+    assert.equal(now.done, now.total)
+  })
+
+  it('CA4 (and CA2 "voice"): found by meaning, with the reason', async () => {
+    const f = await find(q('audience drop-off'))
+    assert.equal(f.meaning, 'on')
+    const hit = f.items.find((h) => h.id === retention)
+    assert.deepEqual([hit?.why, hit?.reason], ['meaning', 'matched by meaning'])
+    assert.ok(!f.items.some((h) => h.address === 'cameras'))
+    const voice = await find(q('voice'))
+    assert.ok(voice.items.some((h) => h.address === 'voces' && h.why === 'meaning'))
+    // Words still win where they match.
+    assert.equal((await find(q('retention'))).items[0]?.why, 'words')
+  })
+
+  it('CA5: with the provider down, results by words and a note, never an error', async () => {
+    test.failing = true
+    const f = await find(q('retention'))
+    assert.equal(f.items[0]?.id, retention)
+    assert.equal(f.meaning, 'unavailable')
+    assert.match(f.note ?? '', /Meaning search unavailable/)
+    test.failing = false
+  })
+
+  it('an edited page is not found by its old meaning before it is processed again', async () => {
+    const r = await w.call(eric.key, 'GET', '/v1/brains/yt/pages/cameras')
+    const rev = (r.body.page as { revision: number }).revision
+    const e = await w.callWeb(ericWeb, 'PATCH', '/v1/brains/yt/pages/cameras', {
+      baseRevision: rev,
+      body: 'Which lens to buy for the narrator voice.',
+    })
+    assert.equal(e.status, 200, e.text)
+    assert.ok(!(await find(q('audience drop-off'))).items.some((h) => h.address === 'cameras'))
+    await process()
+    assert.ok((await find(q('voice'))).items.some((h) => h.address === 'cameras'))
+  })
+
+  it('CA8: a brain excluded by its curator loses its vectors, sends nothing more, and is not found by meaning', async () => {
+    await page('private', 'secret', 'Secret', 'Our audience retention numbers.')
+    await process()
+    const b = await w.db.one<{ id: string }>("SELECT id FROM brains WHERE slug = 'private'")
+    const count = async () =>
+      (
+        await w.db.one<{ n: number }>('SELECT count(*)::int AS n FROM meaning_vectors WHERE brain_id = $1', [
+          b?.id,
+        ])
+      )?.n
+    assert.ok(((await count()) ?? 0) > 0)
+    const ex = await w.callWeb(ericWeb, 'PUT', '/v1/brains/private/wiki/settings', { meaningExcluded: true })
+    assert.equal(ex.status, 200, ex.text)
+    assert.equal(ex.body.meaningExcluded, true)
+    assert.equal(await count(), 0)
+    test.sent = []
+    await page('private', 'secret2', 'More', 'viewers stay longer with captions')
+    await process()
+    assert.ok(!test.sent.some((t) => t.includes('captions') || t.includes('Our audience')))
+    assert.equal(await count(), 0)
+    const f = await find(`${q('audience drop-off')}&brains=private`)
+    assert.ok(!f.items.some((h) => h.why === 'meaning'))
+    // A contributor cannot exclude a brain.
+    const ana = await w.person('Ana')
+    await w.member('yt', ana.id, 'contributor')
+    const no = await w.callWeb(await w.web(ana.id), 'PUT', '/v1/brains/yt/wiki/settings', {
+      meaningExcluded: true,
+    })
+    assert.equal(no.status, 403)
+  })
+
+  it('changing provider processes everything again with the new one', async () => {
+    const on = await w.callWeb(adminWeb, 'PUT', '/v1/admin/meaning', { provider: 'other', accept: true })
+    assert.equal(on.status, 200, on.text)
+    assert.equal(
+      (
+        await w.db.one<{ n: number }>(
+          "SELECT count(*)::int AS n FROM meaning_vectors WHERE provider = 'test'",
+        )
+      )?.n,
+      0,
+    )
+    const p = (await w.callWeb(adminWeb, 'GET', '/v1/admin/meaning')).body.progress as { done: number }
+    assert.equal(p.done, 0)
+    await process()
+    assert.ok(other.sent.length > 0)
+    assert.ok((await find(q('audience drop-off'))).items.some((h) => h.id === retention))
+  })
+
+  it('a purged entry loses its vector; turning it off stops meaning search', async () => {
+    const r = await w.call(eric.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'fact',
+      title: 'Brand',
+      content: 'the logo is blue',
+    })
+    const id = (r.body.receipt as { entryId: string }).entryId
+    await process()
+    const has = async () =>
+      (
+        await w.db.one<{ n: number }>('SELECT count(*)::int AS n FROM meaning_vectors WHERE target_id = $1', [
+          id,
+        ])
+      )?.n
+    assert.equal(await has(), 1)
+    assert.equal((await w.call(admin.key, 'POST', `/v1/entries/${id}/purge`, { reason: 'x' })).status, 200)
+    assert.equal(await has(), 0)
+    const off = await w.callWeb(adminWeb, 'DELETE', '/v1/admin/meaning')
+    assert.equal(off.status, 200, off.text)
+    const f = await find(q('audience drop-off'))
+    assert.equal(f.meaning, undefined)
+    assert.ok(!f.items.some((h) => h.why === 'meaning'))
+  })
+
+  it('review: with an exact phrase, meaning adds nothing; words come before meaning', async () => {
+    const on = await w.callWeb(adminWeb, 'PUT', '/v1/admin/meaning', { provider: 'test', accept: true })
+    assert.equal(on.status, 200, on.text)
+    const a = await page('yt', 'r/a', 'A', 'voces claras para el narrador')
+    const b = await page('yt', 'r/b', 'B', 'claras voces para el narrador')
+    const x = await page('yt', 'r/x', 'X', 'voice retention retention retention retention')
+    await process()
+    const phrase = (await find(`${q('"voces claras"')}&prefix=r`)).items.map((h) => h.id)
+    assert.deepEqual(phrase, [a])
+    const voice = (await find(`${q('voice')}&prefix=r`)).items
+    assert.equal(voice[0]?.id, x)
+    assert.equal(voice[0]?.why, 'words')
+    assert.ok(voice.slice(1).every((h) => h.why === 'meaning'))
+    assert.ok([a, b].every((id) => voice.some((h) => h.id === id)))
+  })
+
+  it('review: a search only in excluded brains sends nothing to the provider', async () => {
+    test.sent = []
+    const f = await find(`${q('patient diagnosis')}&brains=private`)
+    assert.deepEqual(test.sent, [])
+    assert.equal(f.meaning, undefined)
+    // The excluded words of a search are not sent either.
+    await find(q('voice -secretword'))
+    assert.ok(!(test.sent as string[]).some((t) => t.includes('secretword')))
+  })
+
+  it('review: a purge or an exclusion while texts are with the provider leaves no vector', async () => {
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'race', purpose: 'Race.' })
+    const r = await w.call(eric.key, 'POST', '/v1/brains/race/entries', {
+      type: 'fact',
+      title: 'PURGEME',
+      content: 'the audience retention secret',
+    })
+    const id = (r.body.receipt as { entryId: string }).entryId
+    const vectors = async () =>
+      (
+        await w.db.one<{ n: number }>(
+          "SELECT count(*)::int AS n FROM meaning_vectors WHERE brain_id = (SELECT id FROM brains WHERE slug = 'race')",
+        )
+      )?.n
+    let release = () => {}
+    test.gate = new Promise((res) => {
+      release = res
+    })
+    const running = embedPending(w.db, { test, other }, w.clock())
+    while (test.calls === 0 || !test.sent.some((t) => t.includes('PURGEME')))
+      await new Promise((res) => setTimeout(res, 5))
+    assert.equal((await w.call(admin.key, 'POST', `/v1/entries/${id}/purge`, { reason: 'x' })).status, 200)
+    release()
+    test.gate = null
+    await running
+    assert.equal(await vectors(), 0)
+
+    await page('race', 'p', 'Audience', 'viewers stay')
+    test.gate = new Promise((res) => {
+      release = res
+    })
+    const again = embedPending(w.db, { test, other }, w.clock())
+    while (!test.sent.some((t) => t.includes('viewers stay'))) await new Promise((res) => setTimeout(res, 5))
+    const ex = await w.callWeb(ericWeb, 'PUT', '/v1/brains/race/wiki/settings', { meaningExcluded: true })
+    assert.equal(ex.status, 200, ex.text)
+    release()
+    test.gate = null
+    await again
+    assert.equal(await vectors(), 0)
+  })
+
+  it('review: a text the provider refuses is set aside and does not block the rest', async () => {
+    test.refuse = (t) => t.includes('POISON')
+    await page('yt', 'poison', 'POISON', 'a page the provider refuses')
+    const after = await page('yt', 'zz-after', 'Audience', 'viewers stay to the end')
+    await process()
+    test.refuse = () => false
+    const has = await w.db.one<{ n: number }>(
+      'SELECT count(*)::int AS n FROM meaning_vectors WHERE target_id = $1',
+      [after],
+    )
+    assert.equal(has?.n, 1)
+    // Only the refused page is still waiting, after more than one attempt.
+    const set = await w.db.query<{ target_id: string; attempts: number }>(
+      'SELECT target_id, attempts FROM meaning_failures',
+    )
+    assert.equal(set.length, 1)
+    assert.ok((set[0]?.attempts ?? 0) > 1)
+  })
+
+  it('review: a short outage drops nothing: after it, what was pending is processed', async () => {
+    const r = await w.call(eric.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'fact',
+      title: 'Outage',
+      content: 'viewers stay through the outage',
+    })
+    const id = (r.body.receipt as { entryId: string }).entryId
+    test.failing = true
+    await assert.rejects(embedPending(w.db, { test, other }, w.clock()))
+    test.failing = false
+    await process()
+    const count = async (table: string) =>
+      (await w.db.one<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE target_id = $1`, [id]))?.n
+    assert.equal(await count('meaning_vectors'), 1)
+    assert.equal(await count('meaning_failures'), 0)
+  })
+
+  it('review: what is asked for is chosen before the closest 500 are taken', async () => {
+    const b = await w.db.one<{ id: string }>("SELECT id FROM brains WHERE slug = 'yt'")
+    const s = await w.db.one<{ id: string }>(
+      'SELECT session_id AS id FROM entries WHERE brain_id = $1 LIMIT 1',
+      [b?.id],
+    )
+    await w.db.query(
+      `INSERT INTO entries (id, brain_id, session_id, type, title, content, author_id, norm_hash, created_at, updated_at)
+       SELECT 'ent_voz' || g, $1, $2, 'note', 'voz', 'voz', $3, md5('voz' || g), $4, $4 FROM generate_series(1, 501) g`,
+      [b?.id, s?.id, eric.id, w.now],
+    )
+    const m = await page('yt', 'm/voice', 'Speakers', 'voice voice retention')
+    await process()
+    const f = await find(`${q('narrator')}&in=pages&prefix=m`)
+    assert.ok(
+      f.items.some((h) => h.id === m && h.why === 'meaning'),
+      JSON.stringify(f.items),
+    )
+  })
+
+  it('review: after an outage the backlog goes in full batches again, not one text a minute', async () => {
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'backlog', purpose: 'Backlog.' })
+    for (let i = 0; i < 40; i++) {
+      await w.call(eric.key, 'POST', '/v1/brains/backlog/entries', {
+        type: 'note',
+        title: `Note ${i}`,
+        content: `viewers stay ${i}`,
+      })
+    }
+    test.failing = true
+    await process(2)
+    test.failing = false
+    // One run of the server after the outage clears it.
+    await process(1)
+    const left = await w.db.one<{ n: number }>(
+      `SELECT count(*)::int AS n FROM entries e WHERE e.brain_id = (SELECT id FROM brains WHERE slug = 'backlog')
+         AND NOT EXISTS (SELECT 1 FROM meaning_vectors v WHERE v.target_id = e.id)`,
+    )
+    assert.equal(left?.n, 0)
+  })
+})

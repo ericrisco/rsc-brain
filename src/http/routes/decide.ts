@@ -6,7 +6,7 @@ import { invalid } from '../../core/errors.ts'
 import { approveProposal, returnProposal, reviewProposal } from '../../domain/wiki/decide.ts'
 import { directChange, maintenanceAsked, setWikiSettings } from '../../domain/wiki/direct.ts'
 import { purgePageRevisions, purgeProposal } from '../../domain/wiki/purge.ts'
-import { compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
+import { bool, compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
@@ -92,6 +92,7 @@ export const decideRoutes: Route[] = [
           guide: guide as string | null | undefined,
           mapIntro: str(b, 'mapIntro'),
           usageNote: str(b, 'usageNote'),
+          meaningExcluded: bool(b, 'meaningExcluded'),
           staleDays: int(b, 'staleDays'),
           longChars: int(b, 'longChars'),
           maintenanceEvery: int(b, 'maintenanceEvery'),
