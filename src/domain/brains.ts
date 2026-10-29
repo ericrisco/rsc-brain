@@ -114,14 +114,16 @@ export async function createBrain(ctx: Ctx, input: NewBrain): Promise<Brain> {
           email: pendingEmail,
           grants: [{ brainId: id, role: 'curator' }],
           by: ctx.who.accountId,
-          merge: true,
+          as: 'service',
         })
       : null
     if (invitation) await ok({ ...ctx, db }, 'invitation.create', id, pendingEmail ?? '', 'first curator')
     const row = await db.one('SELECT * FROM brains WHERE id = $1', [id])
     return { brain: brainOf(row as Record<string, unknown>), invitation, pendingEmail }
   })
-  if (made.invitation && made.pendingEmail) {
+  // A new invitation, or one whose link this service made, is mailed; one the person already holds
+  // just gains the brain.
+  if (made.invitation?.token && made.pendingEmail) {
     await sendInvitation(ctx.db, ctx.clock, ctx.mail, {
       email: made.pendingEmail,
       token: made.invitation.token,

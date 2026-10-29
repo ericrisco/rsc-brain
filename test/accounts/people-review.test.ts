@@ -260,4 +260,86 @@ describe('people: review', { skip: skipPg }, () => {
     await new Promise((r) => setTimeout(r, 100))
     assert.equal(w.mails.length, before)
   })
+
+  it('second pass: two batch invitations of the same emails in opposite orders both succeed', async () => {
+    const emails = Array.from({ length: 25 }, (_, i) => `batch${i}@example.com`)
+    const [a, b] = [await w.web(admin.id), await w.web(admin.id)]
+    for (let round = 0; round < 3; round++) {
+      const list = emails.map((e) => e.replace('@', `-${round}@`))
+      const out = await Promise.all([
+        w.callWeb(a, 'POST', '/v1/invitations', { emails: list }),
+        w.callWeb(b, 'POST', '/v1/invitations', { emails: [...list].reverse() }),
+      ])
+      assert.deepEqual(
+        out.map((o) => o.status),
+        [201, 201],
+      )
+    }
+  })
+
+  it('second pass: a first-curator place survives its invitation expiring; a curator cannot take it over', async () => {
+    const svc = await w.service('Inviter 2', { canInvite: true })
+    await w.call(svc.key, 'POST', '/v1/brains', { slug: 'pendb', firstCurator: 'pc@example.com' })
+    w.advance(73 * 3_600_000)
+    const byCurator = await w.callWeb(anaWeb, 'POST', '/v1/invitations', {
+      emails: ['pc@example.com'],
+      brains: [{ slug: 'yt', role: 'reader' }],
+    })
+    assert.deepEqual([byCurator.status, byCurator.body.error?.code], [409, 'invitation_open'])
+    const byAdmin = await w.callWeb(adminWeb, 'POST', '/v1/invitations', {
+      emails: ['pc@example.com'],
+      brains: [{ slug: 'yt', role: 'reader' }],
+    })
+    assert.equal(byAdmin.status, 201, byAdmin.text)
+    const link = (byAdmin.body.invitations as Array<{ link: string }>)[0]?.link ?? ''
+    const ok = await w.raw('POST', '/v1/invitations/accept', {
+      headers: { 'x-requested-with': 'rsc-brain-web' },
+      body: { token: tokenOf(link), name: 'PC', password: 'a long enough password' },
+    })
+    assert.equal(ok.status, 201, ok.text)
+    const role = await w.db.one(
+      "SELECT m.role FROM memberships m JOIN brains b ON b.id = m.brain_id WHERE b.slug = 'pendb' AND m.account_id = $1",
+      [(ok.body.account as { id: string }).id],
+    )
+    assert.equal(role?.role, 'curator')
+    w.advance(-73 * 3_600_000)
+  })
+
+  it('second pass: a service naming someone already invited keeps their link and mails nothing new', async () => {
+    const r = await w.callWeb(adminWeb, 'POST', '/v1/invitations', {
+      emails: ['boss2@example.com'],
+      isAdmin: true,
+    })
+    const link = (r.body.invitations as Array<{ link: string }>)[0]?.link ?? ''
+    await w.setUpMail()
+    const before = w.mails.filter((m) => m.to === 'boss2@example.com').length
+    const svc = await w.service('Sneaky', { canInvite: true })
+    assert.equal(
+      (await w.call(svc.key, 'POST', '/v1/brains', { slug: 'sneak', firstCurator: 'boss2@example.com' }))
+        .status,
+      201,
+    )
+    const seen = await w.raw('POST', '/v1/invitations/look', { body: { token: tokenOf(link) } })
+    assert.equal(seen.status, 200)
+    assert.ok(
+      (seen.body.invitation as { brains: Array<{ slug: string }> }).brains.some((b) => b.slug === 'sneak'),
+    )
+    assert.equal(w.mails.filter((m) => m.to === 'boss2@example.com').length, before)
+  })
+
+  it('second pass: an invitation the administration widened names the administration as inviter', async () => {
+    await w.callWeb(anaWeb, 'POST', '/v1/invitations', {
+      emails: ['ee@example.com'],
+      brains: [{ slug: 'yt', role: 'reader' }],
+    })
+    await w.callWeb(adminWeb, 'POST', '/v1/invitations', {
+      emails: ['ee@example.com'],
+      canCreateBrains: true,
+    })
+    const list = (await w.callWeb(adminWeb, 'GET', '/v1/invitations')).body.invitations as Array<{
+      email: string
+      invitedBy: string
+    }>
+    assert.equal(list.find((i) => i.email === 'ee@example.com')?.invitedBy, 'Admin')
+  })
 })

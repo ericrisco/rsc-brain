@@ -70,10 +70,15 @@ async function mailInvitation(
   })
 }
 
-// Stores one invitation and returns its link. Invitations to one email take turns. An expired one is
-// closed first. When the email already has an open invitation, `merge` adds these grants to it and
-// makes its link again (the old link stops working); without `merge` (a curator inviting) the open
-// invitation is not touched: its link, and whatever it grants, stay with whoever made it.
+// Stores one invitation. Invitations to one email take turns (callers lock emails in sorted order).
+// Who stores it decides what happens when the email already has one that was never used:
+// - a curator never touches it (409): its link, and whatever it grants, stay with whoever made it;
+// - the administration adds these grants to an open one, takes it over and makes its link again (the
+//   old link stops working). An expired one is closed, and a new one is made;
+// - a service naming a first curator adds the grant to an open one, keeping its link (nothing new is
+//   mailed, and the link stays with whoever has it); an expired one is closed, and a new one is made.
+// A closed expired invitation passes on the first-curator places of brains still waiting for this
+// email, never the administrator rights.
 export async function storeInvitation(
   db: Db,
   clock: Clock,
@@ -83,43 +88,68 @@ export async function storeInvitation(
     isAdmin?: boolean
     canCreateBrains?: boolean
     by: string
-    merge: boolean
+    as: 'admin' | 'service' | 'curator'
   },
-): Promise<{ id: string; token: string; expiresAt: Date; grants: Grant[]; isAdmin: boolean }> {
+): Promise<{ id: string; token: string | null; expiresAt: Date; grants: Grant[]; isAdmin: boolean }> {
   const now = clock()
   const token = newSecret()
   const expiresAt = new Date(now.getTime() + INVITE_HOURS * 3_600_000)
   await db.query("SELECT pg_advisory_xact_lock(hashtext('rsc-brain invitation ' || $1))", [o.email])
-  await db.query(
-    'UPDATE invitations SET revoked_at = $2 WHERE email = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at <= $2',
-    [o.email, now],
-  )
-  const open = await db.one<Row>(
+  const unused = await db.one<Row>(
     'SELECT * FROM invitations WHERE email = $1 AND used_at IS NULL AND revoked_at IS NULL FOR UPDATE',
     [o.email],
   )
-  if (open && !o.merge) {
+  if (unused && o.as === 'curator') {
     throw conflict(
       'invitation_open',
-      `${o.email} already has a pending invitation.`,
-      'Wait for it to be accepted, then add the person to your brain; or ask the administration.',
+      `${o.email} already has an invitation that was not used yet.`,
+      'Once the person is in, add them to your brain; or ask the administration.',
     )
   }
-  if (open) {
-    const grants = [...(open.grants as Grant[])]
+  const merge = (base: Grant[]) => {
+    const grants = [...base]
     for (const g of o.grants) {
       const i = grants.findIndex((x) => x.brainId === g.brainId)
       if (i < 0) grants.push(g)
       else grants[i] = g
     }
-    const isAdmin = Boolean(open.is_admin) || Boolean(o.isAdmin)
+    return grants
+  }
+  let carried: Grant[] = []
+  if (unused && (unused.expires_at as Date).getTime() <= now.getTime()) {
+    await db.query('UPDATE invitations SET revoked_at = $2 WHERE id = $1', [unused.id, now])
+    const waiting = await db.query('SELECT id FROM brains WHERE pending_curator_email = $1', [o.email])
+    const ids = new Set(waiting.map((b) => String(b.id)))
+    carried = (unused.grants as Grant[]).filter((g) => g.role === 'curator' && ids.has(g.brainId))
+  } else if (unused) {
+    const grants = merge(unused.grants as Grant[])
+    if (o.as === 'service') {
+      await db.query('UPDATE invitations SET grants = $2 WHERE id = $1', [unused.id, JSON.stringify(grants)])
+      return {
+        id: String(unused.id),
+        token: null,
+        expiresAt: unused.expires_at as Date,
+        grants,
+        isAdmin: Boolean(unused.is_admin),
+      }
+    }
+    const isAdmin = Boolean(unused.is_admin) || Boolean(o.isAdmin)
     await db.query(
       `UPDATE invitations SET grants = $2, is_admin = $3, can_create_brains = can_create_brains OR $4,
-              token_hash = $5, expires_at = $6 WHERE id = $1`,
-      [open.id, JSON.stringify(grants), isAdmin, Boolean(o.canCreateBrains), hashSecret(token), expiresAt],
+              token_hash = $5, expires_at = $6, invited_by = $7 WHERE id = $1`,
+      [
+        unused.id,
+        JSON.stringify(grants),
+        isAdmin,
+        Boolean(o.canCreateBrains),
+        hashSecret(token),
+        expiresAt,
+        o.by,
+      ],
     )
-    return { id: String(open.id), token, expiresAt, grants, isAdmin }
+    return { id: String(unused.id), token, expiresAt, grants, isAdmin }
   }
+  const grants = merge(carried)
   const id = newId('inv')
   await db.query(
     `INSERT INTO invitations (id, email, token_hash, grants, is_admin, can_create_brains, invited_by, created_at, expires_at)
@@ -128,7 +158,7 @@ export async function storeInvitation(
       id,
       o.email,
       hashSecret(token),
-      JSON.stringify(o.grants),
+      JSON.stringify(grants),
       Boolean(o.isAdmin),
       Boolean(o.canCreateBrains),
       o.by,
@@ -136,7 +166,7 @@ export async function storeInvitation(
       expiresAt,
     ],
   )
-  return { id, token, expiresAt, grants: o.grants, isAdmin: Boolean(o.isAdmin) }
+  return { id, token, expiresAt, grants, isAdmin: Boolean(o.isAdmin) }
 }
 
 // Sends the mail of an invitation already stored; used when a service account names a curator by email.
@@ -193,6 +223,8 @@ export async function invite(ctx: Ctx, input: InviteInput): Promise<Invited[]> {
       )
     if (!emails.includes(e)) emails.push(e)
   }
+  // Sorted, so two invitations of the same emails at once take their turns in the same order.
+  emails.sort()
   const isAdmin = input.isAdmin === true
   const canCreateBrains = input.canCreateBrains === true
   const asked = grantsOf(input.brains)
@@ -242,7 +274,7 @@ export async function invite(ctx: Ctx, input: InviteInput): Promise<Invited[]> {
         isAdmin,
         canCreateBrains,
         by: ctx.who.accountId,
-        merge: admin,
+        as: admin ? 'admin' : 'curator',
       })
       out.push({ email, stored })
       await ok({ ...ctx, db }, 'invitation.create', null, email, describe(grants, isAdmin))
@@ -252,6 +284,8 @@ export async function invite(ctx: Ctx, input: InviteInput): Promise<Invited[]> {
   // Mail goes after the commit: a slow mail server never holds the invitation back.
   const result: Invited[] = []
   for (const { email, stored } of made) {
+    // The administration and curators always get a fresh link.
+    if (!stored.token) continue
     const sent = await sendInvitation(ctx.db, ctx.clock, ctx.mail, {
       email,
       token: stored.token,
