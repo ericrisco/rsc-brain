@@ -53,7 +53,7 @@ describe('signing in', { skip: skipPg }, () => {
       body: { email: await emailOf(ana.id), password: PW },
     })
     assert.equal(csrf.status, 403)
-    await w.db.query('UPDATE accounts SET failed_logins = 0, locked_until = NULL WHERE id = $1', [ana.id])
+    await w.db.query('DELETE FROM login_brakes')
   })
 
   it('CA21: after five failures in a row the sixth is refused until the wait, and says when', async () => {
@@ -173,5 +173,69 @@ describe('signing in', { skip: skipPg }, () => {
       (await w.db.one('SELECT totp_pending FROM accounts WHERE id = $1', [dana.id]))?.totp_pending,
     )
     assert.ok(sealed.startsWith('v1.') && !sealed.includes(secret))
+  })
+
+  it('review: attempts sent at once cannot slip past the brake', async () => {
+    const eve = await w.person('Eve')
+    await setPassword(eve.id)
+    const email = await emailOf(eve.id)
+    const answers = await Promise.all([
+      ...Array.from({ length: 30 }, () => login(email, 'a wrong guess here')),
+      login(email, PW),
+    ])
+    const checked = await w.db.one<{ n: number }>(
+      "SELECT count(*)::int AS n FROM audit WHERE action = 'auth.failed' AND actor_id = $1",
+      [eve.id],
+    )
+    assert.ok((checked?.n ?? 99) <= 5, `${checked?.n} guesses were checked`)
+    assert.ok(answers.filter((a) => a.status === 429).length >= 25)
+  })
+
+  it('review: the brake answers the same for an email with an account and one without', async () => {
+    const fred = await w.person('Fred')
+    await setPassword(fred.id)
+    const real = await emailOf(fred.id)
+    const seq = async (email: string) => {
+      const out: number[] = []
+      for (let i = 0; i < 6; i++) out.push((await login(email, 'a wrong guess here')).status)
+      return out
+    }
+    assert.deepEqual(await seq('ghost@example.com'), await seq(real))
+  })
+
+  it('review: replacing a second factor needs its current code', async () => {
+    const gus = await w.person('Gus')
+    const web = await w.web(gus.id)
+    const s1 = String((await w.callWeb(web, 'POST', '/v1/me/totp')).body.secret)
+    await w.callWeb(web, 'POST', '/v1/me/totp/confirm', { code: totpAt(s1, stepOf(w.now)) })
+    const swap = await w.callWeb(web, 'POST', '/v1/me/totp')
+    assert.equal(swap.status, 400)
+    w.advance(30_000)
+    const ok = await w.callWeb(web, 'POST', '/v1/me/totp', { code: totpAt(s1, stepOf(w.now)) })
+    assert.equal(ok.status, 200, ok.text)
+  })
+
+  it('review: behind the trusted proxy, its own last entry counts, not what the client wrote', async () => {
+    const hal = await w.person('Hal')
+    await setPassword(hal.id)
+    const email = await emailOf(hal.id)
+    const spoofed = await login(
+      email,
+      PW,
+      {},
+      { 'x-forwarded-for': '203.0.113.9, 198.51.100.4', 'x-forwarded-proto': 'https, http' },
+    )
+    assert.equal(spoofed.status, 403, 'the proxy saw http')
+    const real = await login(
+      email,
+      PW,
+      {},
+      { 'x-forwarded-for': '203.0.113.9, 198.51.100.4', 'x-forwarded-proto': 'http, https' },
+    )
+    assert.equal(real.status, 200, real.text)
+    const row = await w.db.one("SELECT detail FROM audit WHERE action = 'auth.signin' AND actor_id = $1", [
+      hal.id,
+    ])
+    assert.equal(row?.detail, 'from 198.51.100.4')
   })
 })

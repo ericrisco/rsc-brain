@@ -19,8 +19,6 @@ ALTER TABLE accounts ADD COLUMN password_hash text;
 ALTER TABLE accounts ADD COLUMN totp_secret text;          -- sealed with the installation secret
 ALTER TABLE accounts ADD COLUMN totp_pending text;         -- sealed; until the first code confirms it
 ALTER TABLE accounts ADD COLUMN totp_last_step bigint;     -- a code works once
-ALTER TABLE accounts ADD COLUMN failed_logins integer NOT NULL DEFAULT 0;
-ALTER TABLE accounts ADD COLUMN locked_until timestamptz;
 
 ALTER TABLE credentials ADD COLUMN epoch integer NOT NULL DEFAULT 1;
 ALTER TABLE credentials ADD COLUMN last_client text CHECK (last_client IS NULL OR length(last_client) <= 200);
@@ -34,3 +32,12 @@ CREATE TABLE password_resets (
   used_at    timestamptz
 );
 CREATE INDEX password_resets_account ON password_resets (account_id);
+
+-- The brake on sign-ins, by email: every attempt is counted before the password is checked, in one
+-- statement, so attempts sent at once cannot slip past it; unknown emails are braked the same way, so
+-- the brake does not tell which emails have an account.
+CREATE TABLE login_brakes (
+  email        text PRIMARY KEY CHECK (length(email) <= 320),
+  failures     integer NOT NULL DEFAULT 0,
+  locked_until timestamptz
+);

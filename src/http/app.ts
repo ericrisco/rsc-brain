@@ -103,14 +103,18 @@ function connOf(req: IncomingMessage, trusted: string[]): Conn {
     h['x-forwarded-for'] !== undefined || h['x-forwarded-proto'] !== undefined || h.forwarded !== undefined
   const userAgent = String(h['user-agent'] ?? '').slice(0, 200)
   if (proxied && trusted.includes(remote)) {
-    const proto = String(h['x-forwarded-proto'] ?? '')
-      .split(',')[0]
-      ?.trim()
-    const ip =
-      String(h['x-forwarded-for'] ?? '')
-        .split(',')[0]
-        ?.trim() || remote
-    return { encrypted: proto === 'https', local: false, ip, userAgent }
+    // The trusted proxy appends what it saw: the last entry is its own; earlier ones the client wrote.
+    const last = (v: string | string[] | undefined) =>
+      String(v ?? '')
+        .split(',')
+        .at(-1)
+        ?.trim() ?? ''
+    return {
+      encrypted: last(h['x-forwarded-proto']) === 'https',
+      local: false,
+      ip: last(h['x-forwarded-for']) || remote,
+      userAgent,
+    }
   }
   return {
     encrypted: Boolean((req.socket as TLSSocket).encrypted),

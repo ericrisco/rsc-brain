@@ -43,18 +43,41 @@ function braked(until: Date, now: Date): AppError {
   return err
 }
 
-async function failed(db: Db, id: string, now: Date, why: string, conn: ConnFacts): Promise<void> {
-  const r = await db.one<{ n: number }>(
-    'UPDATE accounts SET failed_logins = failed_logins + 1 WHERE id = $1 RETURNING failed_logins AS n',
-    [id],
+// Counts one attempt for this email before anything is checked, in one statement: attempts sent at
+// once each take their turn, and once the count reaches five the email waits. Returns the wait if the
+// email is already waiting (nothing is counted then). Unknown emails are counted the same way.
+async function attempt(db: Db, email: string, now: Date): Promise<Date | null> {
+  const r = await db.one<{ failures: number; locked_until: Date | null }>(
+    `INSERT INTO login_brakes (email, failures, locked_until) VALUES ($1, 1, NULL)
+     ON CONFLICT (email) DO UPDATE
+       SET failures = login_brakes.failures + 1,
+           locked_until = CASE WHEN login_brakes.failures + 1 >= $3
+             THEN $2::timestamptz + make_interval(secs => least($4, $5 * 2 ^ (login_brakes.failures + 1 - $3)))
+             ELSE NULL END
+       WHERE login_brakes.locked_until IS NULL OR login_brakes.locked_until <= $2
+     RETURNING failures, locked_until`,
+    [email, now, BRAKE.after, BRAKE.maxS, BRAKE.firstS],
   )
-  const wait = brakeSeconds(Number(r?.n))
-  if (wait > 0) {
-    await db.query('UPDATE accounts SET locked_until = $2 WHERE id = $1', [
-      id,
-      new Date(now.getTime() + wait * 1000),
-    ])
-  }
+  if (r) return null
+  const held = await db.one<{ locked_until: Date }>(
+    'SELECT locked_until FROM login_brakes WHERE email = $1',
+    [email],
+  )
+  return held?.locked_until ?? null
+}
+
+// After a refusal: if this attempt was the one that started the wait, say so with the time.
+async function refuse(db: Db, email: string, now: Date, plain: AppError): Promise<AppError> {
+  const r = await db.one<{ locked_until: Date | null }>(
+    'SELECT locked_until FROM login_brakes WHERE email = $1',
+    [email],
+  )
+  return r?.locked_until && r.locked_until.getTime() > now.getTime() ? braked(r.locked_until, now) : plain
+}
+
+const clearBrake = (db: Db, email: string) => db.query('DELETE FROM login_brakes WHERE email = $1', [email])
+
+async function failedAudit(db: Db, id: string | null, now: Date, why: string, conn: ConnFacts) {
   await audit(db, {
     at: now,
     actorId: id,
@@ -80,8 +103,10 @@ export async function signIn(
   requireSecure(conn)
   const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : ''
   const password = typeof input.password === 'string' ? input.password : ''
-  if (!email || !password || password.length > 200) throw wrong()
+  if (!email || email.length > 320 || !password || password.length > 200) throw wrong()
   const now = clock()
+  const waiting = await attempt(db, email, now)
+  if (waiting) throw braked(waiting, now)
   const a = await db.one<Row>(
     "SELECT * FROM accounts WHERE email = $1 AND kind = 'person' AND status = 'active'",
     [email],
@@ -89,29 +114,18 @@ export async function signIn(
   if (!a?.password_hash) {
     // Same work as a real check, so a missing account takes as long as a wrong password.
     await verifyPassword(password, await dummyHash())
-    await audit(db, {
-      at: now,
-      actorId: null,
-      credentialId: null,
-      action: 'auth.failed',
-      outcome: 'denied',
-      detail: `unknown account from ${conn.ip}`,
-    })
-    throw wrong()
+    await failedAudit(db, null, now, 'unknown account', conn)
+    throw await refuse(db, email, now, wrong())
   }
   const id = String(a.id)
-  if (a.locked_until != null && (a.locked_until as Date).getTime() > now.getTime())
-    throw braked(a.locked_until as Date, now)
   if (!(await verifyPassword(password, String(a.password_hash)))) {
-    await failed(db, id, now, 'wrong password', conn)
-    const after = await db.one<Row>('SELECT locked_until FROM accounts WHERE id = $1', [id])
-    if (after?.locked_until != null && (after.locked_until as Date).getTime() > now.getTime())
-      throw braked(after.locked_until as Date, now)
-    throw wrong()
+    await failedAudit(db, id, now, 'wrong password', conn)
+    throw await refuse(db, email, now, wrong())
   }
   if (a.totp_secret != null) {
     const code = typeof input.code === 'string' ? input.code.trim() : ''
     if (!code) {
+      // The attempt still counts: asking for the code must not become a free password oracle.
       throw unauthorized(
         'code_required',
         'This account asks for the code of its authenticator app.',
@@ -119,7 +133,7 @@ export async function signIn(
       )
     }
     const step = checkTotp(
-      unseal(secret, String(a.totp_secret)),
+      openSeed(secret, String(a.totp_secret)),
       code,
       now,
       a.totp_last_step == null ? null : Number(a.totp_last_step),
@@ -132,15 +146,20 @@ export async function signIn(
         [id, step],
       ))
     if (!used) {
-      await failed(db, id, now, 'wrong code', conn)
-      throw unauthorized(
-        'bad_code',
-        'The code is not right, or was already used.',
-        'Wait for the next code and try again.',
+      await failedAudit(db, id, now, 'wrong code', conn)
+      throw await refuse(
+        db,
+        email,
+        now,
+        unauthorized(
+          'bad_code',
+          'The code is not right, or was already used.',
+          'Wait for the next code and try again.',
+        ),
       )
     }
   }
-  await db.query('UPDATE accounts SET failed_logins = 0, locked_until = NULL WHERE id = $1', [id])
+  await clearBrake(db, email)
   const s = await mintWebSession(db, clock, { accountId: id })
   await audit(db, {
     at: now,
@@ -153,6 +172,21 @@ export async function signIn(
   return {
     session: s.secret,
     account: { id, name: String(a.name), email, isAdmin: Boolean(a.is_admin) },
+  }
+}
+
+// A seed sealed with another installation secret cannot be read: say so, not "internal error".
+function openSeed(secret: string | undefined, sealed: string): string {
+  try {
+    return unseal(secret, sealed)
+  } catch (err) {
+    if (err instanceof AppError) throw err
+    throw new AppError(
+      409,
+      'installation_secret_changed',
+      'The second factor of this account cannot be checked: the installation secret changed.',
+      'Ask the administration to put back the previous RSC_BRAIN_SECRET, or to reset your second factor.',
+    )
   }
 }
 
@@ -179,7 +213,7 @@ export async function signOut(ctx: Ctx, everywhere: boolean): Promise<number> {
   return r.length
 }
 
-async function newReset(db: Db, accountId: string, by: string | null, now: Date): Promise<string> {
+export async function newReset(db: Db, accountId: string, by: string | null, now: Date): Promise<string> {
   const token = newSecret()
   await db.query(
     'INSERT INTO password_resets (token_hash, account_id, created_by, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)',
@@ -281,10 +315,12 @@ export async function confirmReset(
     )
     if (!r) throw badLink()
     const id = String(r.account_id)
-    await tx.query(
-      'UPDATE accounts SET password_hash = $2, failed_logins = 0, locked_until = NULL WHERE id = $1',
-      [id, hash],
-    )
+    const acc = await tx.one<Row>('UPDATE accounts SET password_hash = $2 WHERE id = $1 RETURNING email', [
+      id,
+      hash,
+    ])
+    // A new password lifts the brake on its email.
+    if (acc?.email) await clearBrake(tx, String(acc.email))
     await tx.query(
       "UPDATE credentials SET revoked_at = $2 WHERE account_id = $1 AND kind = 'web' AND revoked_at IS NULL",
       [id, now],
@@ -301,8 +337,28 @@ export async function confirmReset(
 }
 
 // Second factor: start (a secret to scan), confirm with a first code, turn off with a current code.
-export async function startTotp(ctx: Ctx, secret: string | undefined) {
+// With a second factor already on, replacing it needs its current code: a stolen session must not be
+// enough to bind another authenticator.
+export async function startTotp(ctx: Ctx, secret: string | undefined, code?: unknown) {
   webOnly(ctx)
+  const cur = await ctx.db.one<Row>('SELECT totp_secret, totp_last_step FROM accounts WHERE id = $1', [
+    ctx.who.accountId,
+  ])
+  if (cur?.totp_secret) {
+    const step = checkTotp(
+      openSeed(secret, String(cur.totp_secret)),
+      String(code ?? ''),
+      ctx.clock(),
+      cur.totp_last_step == null ? null : Number(cur.totp_last_step),
+    )
+    if (step === null) {
+      throw invalid(
+        'This account already has a second factor; replacing it needs its current code.',
+        'Send "code" with the 6 digits your current app shows.',
+      )
+    }
+    await ctx.db.query('UPDATE accounts SET totp_last_step = $2 WHERE id = $1', [ctx.who.accountId, step])
+  }
   const s = newTotpSecret()
   await ctx.db.query('UPDATE accounts SET totp_pending = $2 WHERE id = $1', [
     ctx.who.accountId,
@@ -316,7 +372,7 @@ export async function confirmTotp(ctx: Ctx, secret: string | undefined, code: un
   webOnly(ctx)
   const a = await ctx.db.one<Row>('SELECT totp_pending FROM accounts WHERE id = $1', [ctx.who.accountId])
   if (!a?.totp_pending) throw invalid('There is no second factor being set up.', 'Start it first.')
-  const step = checkTotp(unseal(secret, String(a.totp_pending)), String(code ?? ''), ctx.clock(), null)
+  const step = checkTotp(openSeed(secret, String(a.totp_pending)), String(code ?? ''), ctx.clock(), null)
   if (step === null) throw invalid('The code is not right.', 'Type the 6 digits your app shows now.')
   await ctx.db.query(
     'UPDATE accounts SET totp_secret = totp_pending, totp_pending = NULL, totp_last_step = $2 WHERE id = $1',
@@ -339,7 +395,7 @@ export async function disableTotp(ctx: Ctx, secret: string | undefined, code: un
   ])
   if (!a?.totp_secret) return { enabled: false }
   const step = checkTotp(
-    unseal(secret, String(a.totp_secret)),
+    openSeed(secret, String(a.totp_secret)),
     String(code ?? ''),
     ctx.clock(),
     a.totp_last_step == null ? null : Number(a.totp_last_step),

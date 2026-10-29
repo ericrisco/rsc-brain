@@ -64,6 +64,17 @@ describe('first-time setup', { skip: skipPg }, () => {
   })
 
   it('CA1: the setup makes the administration, signs it in, and is then gone', async () => {
+    // An address that grows past the limit once normalised is refused, not a 500.
+    const long = await w.raw('POST', '/v1/setup', {
+      headers: WEB,
+      body: { name: 'Risco Brain', publicUrl: `https://brain.example.com/${'é'.repeat(100)}`, admin },
+    })
+    assert.equal(long.status, 400, long.text)
+    const notText = await w.raw('POST', '/v1/setup', {
+      headers: WEB,
+      body: { name: 'Risco Brain', publicUrl: 'http://localhost', admin: { ...admin, name: {} } },
+    })
+    assert.equal(notText.status, 400)
     const weak = await w.raw('POST', '/v1/setup', {
       headers: WEB,
       body: {

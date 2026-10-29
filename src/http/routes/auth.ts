@@ -95,7 +95,9 @@ export const authRoutes: Route[] = [
     await confirmReset(r.db, r.clock, r.conn, { token: b.token, password: b.password })
     return { body: { reset: true } }
   }),
-  route('POST /v1/me/totp', async (r) => ({ body: await startTotp(ctxOf(r), r.secret) })),
+  route('POST /v1/me/totp', async (r) => ({
+    body: await startTotp(ctxOf(r), r.secret, (r.body as { code?: unknown } | undefined)?.code),
+  })),
   route('POST /v1/me/totp/confirm', async (r) => ({
     body: await confirmTotp(ctxOf(r), r.secret, obj(r.body).code),
   })),

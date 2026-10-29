@@ -7,9 +7,10 @@ import { systemClock } from '../core/clock.ts'
 import { AppError } from '../core/errors.ts'
 import { openPool } from '../db/db.ts'
 import { migrate } from '../db/migrate.ts'
-import { createAccount } from '../domain/accounts.ts'
+import { accountByEmail, createAccount } from '../domain/accounts.ts'
 import { companionSetup, setupDone } from '../domain/installation.ts'
 import { mintMainKey, mintPersonToken } from '../domain/keys.ts'
+import { newReset, resetLink } from '../domain/login.ts'
 import { embedRound } from '../domain/meaning.ts'
 import { closeIdle } from '../domain/sessions.ts'
 import { foldTrail } from '../domain/trail.ts'
@@ -21,7 +22,11 @@ const HELP = `rsc-brain — self-hosted knowledge server for AI agents
 Usage:
   rsc-brain migrate                                   apply pending database migrations
   rsc-brain serve                                     start the HTTP server
+  rsc-brain setup --from-env                          prepare the installation from RSC_BRAIN_SETUP_URL,
+                                                      RSC_BRAIN_ADMIN_NAME/_EMAIL/_PASSWORD [RSC_BRAIN_SETUP_NAME,
+                                                      RSC_BRAIN_SERVICE_NAME]; prints Factory's service key once
   rsc-brain admin bootstrap --email E --name N        create the first administrator and print a key
+  rsc-brain admin reset-link --email E                print a single-use link to set a password
   rsc-brain service create --name N [--can-create-brains] [--can-invite]
                                                       create a service account and print its main key
   rsc-brain help                                      show this help
@@ -30,6 +35,8 @@ Environment:
   RSC_BRAIN_DATABASE_URL   PostgreSQL connection URL (required)
   RSC_BRAIN_PORT           HTTP port (default 8090)
   RSC_BRAIN_HOST           address to listen on (default 127.0.0.1)
+  RSC_BRAIN_SECRET         installation secret (32+ characters) that seals second factors and mail
+  RSC_BRAIN_TRUSTED_PROXIES  proxies whose X-Forwarded-Proto/-For are believed (comma separated)
 `
 
 const out = (s: string) => process.stdout.write(s)
@@ -121,6 +128,16 @@ async function main(argv: string[]): Promise<number> {
   // and gets the main key of Factory's service account, printed once as JSON.
   if (cmd === 'setup' && sub === '--from-env') {
     const env = process.env
+    const missing = [
+      'RSC_BRAIN_SETUP_URL',
+      'RSC_BRAIN_ADMIN_NAME',
+      'RSC_BRAIN_ADMIN_EMAIL',
+      'RSC_BRAIN_ADMIN_PASSWORD',
+    ].filter((k) => !env[k])
+    if (missing.length > 0) {
+      process.stderr.write(`Set ${missing.join(', ')} to prepare the installation.\n`)
+      return 2
+    }
     return withDb(async (pool) => {
       await migrate(pool)
       if (await setupDone(pool)) {
@@ -139,6 +156,26 @@ async function main(argv: string[]): Promise<number> {
       })
       out(
         `${JSON.stringify({ adminId: made.adminId, serviceId: made.serviceId, serviceKey: made.serviceKey })}\n`,
+      )
+      return 0
+    })
+  }
+  // A single-use link to set a password, for a person who cannot sign in (spec B4 «Entrar»).
+  if (cmd === 'admin' && sub === 'reset-link') {
+    const { values } = parseArgs({ args: rest, options: { email: { type: 'string' } } })
+    if (!values.email) {
+      process.stderr.write('Pass --email, for example: rsc-brain admin reset-link --email ana@x.com\n')
+      return 2
+    }
+    return withDb(async (pool) => {
+      await migrate(pool)
+      const a = await accountByEmail(pool, values.email as string)
+      if (!a) {
+        process.stderr.write('There is no person with that email.\n')
+        return 1
+      }
+      out(
+        `${await resetLink(pool, await newReset(pool, a.id, null, systemClock()))}\n(valid once, for one hour)\n`,
       )
       return 0
     })
@@ -179,11 +216,16 @@ async function main(argv: string[]): Promise<number> {
           allBrains: true,
           days: 90,
         })
-        // A bootstrapped installation counts as set up: there is an administrator.
+        // A bootstrapped installation counts as set up: there is an administrator, who sets a password
+        // for the web with a single-use link.
         await db.query('UPDATE installation SET setup_done_at = coalesce(setup_done_at, $1) WHERE id = 1', [
           systemClock(),
         ])
-        out(`Administrator created (${id}).\nKey (shown once, valid until ${k.expiresAt}):\n${k.secret}\n`)
+        const link = await resetLink(db, await newReset(db, id, null, systemClock()))
+        out(
+          `Administrator created (${id}).\nKey (shown once, valid until ${k.expiresAt}):\n${k.secret}\n` +
+            `Set a password for the web within an hour: ${link}\n`,
+        )
         return 0
       })
     })

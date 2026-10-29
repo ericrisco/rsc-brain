@@ -76,7 +76,20 @@ function publicUrlOf(v: unknown): string {
       'Give an address such as https://brain.example.com.',
     )
   }
-  return u.toString().replace(/\/+$/, '')
+  // Checked after normalising: percent-encoding can make the stored form longer than what was typed.
+  const out = u.toString().replace(/\/+$/, '')
+  if (out.length > 300) {
+    throw invalid(
+      '"publicUrl" is longer than 300 characters.',
+      'Give the address people open, without a long path.',
+    )
+  }
+  return out
+}
+
+const text = (v: unknown, field: string): string => {
+  if (typeof v !== 'string') throw invalid(`"${field}" is text.`, `Give the ${field}.`)
+  return v
 }
 
 function nameOf(v: unknown): string {
@@ -96,12 +109,17 @@ const setupGone = () =>
   new AppError(404, 'setup_done', 'This installation is already set up.', 'Sign in instead.')
 
 // Runs once, as one transaction: the installation row is locked, so two setups at once make one admin.
-async function setUp(
+// `also`: more to do in the same transaction (companion mode creates Factory's service account), so a
+// failure there leaves nothing set up and the setup can be run again.
+async function setUp<T>(
   db: Db,
   clock: Clock,
   input: SetupInput,
   o: { by: 'web' | 'companion'; ip?: string },
-): Promise<{ adminId: string; publicUrl: string; warning: string | null }> {
+  also?: (tx: Db) => Promise<T>,
+): Promise<{ adminId: string; publicUrl: string; warning: string | null; more: T | undefined }> {
+  const adminName = text(input.admin?.name, 'admin name')
+  const adminEmail = text(input.admin?.email, 'admin email')
   const name = nameOf(input.name)
   const publicUrl = publicUrlOf(input.publicUrl)
   const password = checkPassword(input.admin?.password)
@@ -111,8 +129,8 @@ async function setUp(
     if (row?.setup_done_at != null) throw setupGone()
     const adminId = await createAccount(tx, clock, {
       kind: 'person',
-      name: String(input.admin?.name ?? ''),
-      email: String(input.admin?.email ?? ''),
+      name: adminName,
+      email: adminEmail,
       isAdmin: true,
       canCreateBrains: true,
       canInvite: true,
@@ -132,7 +150,8 @@ async function setUp(
       outcome: 'ok',
       detail: `${o.by}${o.ip ? ` from ${o.ip}` : ''}: ${name} at ${publicUrl}`,
     })
-    return { adminId, publicUrl, warning: insecureWarning(publicUrl) }
+    const more = also ? await also(tx) : undefined
+    return { adminId, publicUrl, warning: insecureWarning(publicUrl), more }
   })
 }
 
@@ -160,15 +179,18 @@ export async function companionSetup(
   clock: Clock,
   input: SetupInput & { serviceName?: string },
 ): Promise<{ adminId: string; serviceId: string; serviceKey: string }> {
-  const { adminId } = await setUp(db, clock, input, { by: 'companion' })
-  const serviceId = await createAccount(db, clock, {
-    kind: 'service',
-    name: input.serviceName?.trim() || 'RSC Factory',
-    canCreateBrains: true,
-    canInvite: true,
+  const { adminId, more } = await setUp(db, clock, input, { by: 'companion' }, async (tx) => {
+    const serviceId = await createAccount(tx, clock, {
+      kind: 'service',
+      name: input.serviceName?.trim() || 'RSC Factory',
+      canCreateBrains: true,
+      canInvite: true,
+    })
+    const key = await mintMainKey(tx, clock, { accountId: serviceId, name: 'main' })
+    return { serviceId, serviceKey: key.secret }
   })
-  const key = await mintMainKey(db, clock, { accountId: serviceId, name: 'main' })
-  return { adminId, serviceId, serviceKey: key.secret }
+  if (!more) throw new Error('companion setup made no service account')
+  return { adminId, ...more }
 }
 
 // Restoring a copy (B7) calls this: every key, session and connection made before stops working.
