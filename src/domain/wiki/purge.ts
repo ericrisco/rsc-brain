@@ -107,11 +107,36 @@ const pattern = (texts: string[]) =>
   )
 
 type Hits = Map<string, number>
+// Each match goes to the text it is: tested with that text's own pattern, the way the scrub matched it.
 const count = (hits: Hits, found: RegExpMatchArray | null, needles: string[]) => {
   for (const m of found ?? []) {
-    const k = needles.find((n) => n.normalize('NFC').toLowerCase() === m.toLowerCase()) ?? m
+    const k = needles.find((n) => new RegExp(`^${pattern([n]).source}$`, 'iu').test(m)) ?? m
     hits.set(k, (hits.get(k) ?? 0) + 1)
   }
+}
+
+// Keys that hold addresses: text inside one cannot be scrubbed (links rely on it). The other
+// structural keys (op, type, kind, entryId) hold a fixed vocabulary or ids, never someone's text.
+const ADDRESSES = new Set(['address', 'to', 'from', 'supersededBy'])
+
+// The first address, anywhere inside a value, that holds a purged text.
+function inStructure(v: unknown, re: RegExp, isAddress = false): string | null {
+  if (typeof v === 'string')
+    return isAddress && new RegExp(re.source, 'iu').test(v.normalize('NFC')) ? v : null
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      const hit = inStructure(x, re, isAddress)
+      if (hit) return hit
+    }
+    return null
+  }
+  if (v && typeof v === 'object') {
+    for (const [k, x] of Object.entries(v)) {
+      const hit = inStructure(x, re, ADDRESSES.has(k))
+      if (hit) return hit
+    }
+  }
+  return null
 }
 
 // Every free-text string inside a value, replaced where it holds a purged text (NFC-normalized).
@@ -282,6 +307,21 @@ export async function purgePageRevisions(
         'Move that page to another address first, then purge.',
       )
     }
+    // Nor in the addresses and link targets proposals and revisions name (a pending "create" at it).
+    for (const r of await db.query(
+      `SELECT o.proposal_id AS id, o.op AS v FROM proposal_ops o JOIN proposals p ON p.id = o.proposal_id WHERE p.brain_id = $1
+       UNION ALL SELECT r.page_id, r.links FROM page_revisions r JOIN pages g ON g.id = r.page_id WHERE g.brain_id = $1`,
+      [brainId],
+    )) {
+      const where = inStructure(r.v, re)
+      if (where) {
+        throw conflict(
+          'text_in_address',
+          `The text is part of the address "${where}" in ${String(r.id).startsWith('prp_') ? `proposal ${r.id}` : 'a page history'}. Nothing was purged.`,
+          'Purge or withdraw that proposal, or move the page, first.',
+        )
+      }
+    }
     const joined = await joinAsAdmin(c, brainId, 'joined to purge a wiki revision')
     const found = await scrubWiki(db, brainId, re, needles, false)
     // A named text found nowhere was mistyped (or written another way): say so instead of a false success.
@@ -324,14 +364,23 @@ export async function purgePageRevisions(
       if (left) {
         await db.query(
           'UPDATE pages SET type = $2, title = $3, summary = $4, body = $5, tags = $6, updated_at = $7 WHERE id = $1',
-          [page.id, left.type, left.title, left.summary, left.body, left.tags, now],
+          // The scrub may have made them longer; what goes back on the page must fit its columns.
+          [
+            page.id,
+            left.type,
+            String(left.title).slice(0, 260),
+            String(left.summary).slice(0, 400),
+            String(left.body).slice(0, 120_000),
+            left.tags,
+            now,
+          ],
         )
         await db.query('DELETE FROM page_sources WHERE page_id = $1 AND url IS NOT NULL', [page.id])
         for (const x of (left.sources as Source[]) ?? []) {
           if ('url' in x) {
             await db.query(
               'INSERT INTO page_sources (page_id, url, title) VALUES ($1, $2, $3) ON CONFLICT (page_id, url) WHERE url IS NOT NULL DO NOTHING',
-              [page.id, x.url, x.title ?? null],
+              [page.id, x.url.slice(0, 2000), x.title?.slice(0, 300) ?? null],
             )
           }
         }

@@ -579,4 +579,29 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     await nowhere('alicexx')
     await nowhere('bobyyyy')
   })
+
+  it('review: text in a pending proposal address is refused; a restored title that grew still fits', async () => {
+    await w.call(factory.key, 'POST', '/v1/brains/yt/proposals', {
+      title: 'People',
+      ops: [
+        {
+          op: 'create',
+          address: 'people/garciaq',
+          type: 'entity',
+          title: 'G',
+          sources: [{ entryId: e[0] }],
+          reason: 'r',
+        },
+      ],
+    })
+    await create('pg1/page', { body: 'Mr garciaq was here' })
+    const r = await purgeRev('pg1/page', [1], ['garciaq'])
+    assert.deepEqual([r.status, r.body.error?.code], [409, 'text_in_address'])
+    await create('pg2/page', { title: 'zqw '.repeat(50).trim(), body: 'b' })
+    await edit('pg2/page', 1, { title: 'Clean' })
+    const ok = await purgeRev('pg2/page', [2], ['zqw'])
+    assert.equal(ok.status, 200, ok.text)
+    assert.ok((await page('pg2/page')).page.title.length <= 260)
+    await nowhere('zqw')
+  })
 })
