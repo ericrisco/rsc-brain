@@ -152,10 +152,22 @@ describe('the MCP endpoint: review', { skip: skipPg }, () => {
     await w.callWeb(web, 'POST', '/v1/brains/topsecret/repos', { repo: 'ssh://git@git.corp:2222/team/svc' })
     const other = await call(eric.key, 'brain_resolve', { repos: ['https://git.corp:8443/team/svc'] })
     assert.equal((other.data as { brain: unknown }).brain, null)
-    const same = await call(eric.key, 'brain_resolve', { repos: ['git@git.corp:2222/team/svc'] })
+    const same = await call(eric.key, 'brain_resolve', { repos: ['ssh://git@git.corp:2222/team/svc.git'] })
     assert.equal((same.data as { brain: { slug: string } }).brain.slug, 'topsecret')
-    const usual = await call(eric.key, 'brain_resolve', { repos: ['ssh://git@git.corp:2222/team/svc.git'] })
-    assert.equal((usual.data as { brain: { slug: string } }).brain.slug, 'topsecret')
+    // The usual port of each scheme says nothing.
+    await w.callWeb(web, 'POST', '/v1/brains/topsecret/repos', { repo: 'https://github.com/acme/tools' })
+    for (const form of [
+      'ssh://git@github.com:22/acme/tools',
+      'git+ssh://git@github.com:22/acme/tools.git',
+      'https://github.com:443/acme/tools',
+    ]) {
+      const r = await call(eric.key, 'brain_resolve', { repos: [form] })
+      assert.equal((r.data as { brain: { slug: string } | null }).brain?.slug, 'topsecret', form)
+    }
+    // git@host:path has no port: a numeric owner is an owner.
+    await w.callWeb(web, 'POST', '/v1/brains/topsecret/repos', { repo: 'https://github.com/2024/app' })
+    const numeric = await call(eric.key, 'brain_resolve', { repos: ['git@github.com:2024/app.git'] })
+    assert.equal((numeric.data as { brain: { slug: string } | null }).brain?.slug, 'topsecret')
   })
 
   it('a folder is answered with how to get the address', async () => {
@@ -276,6 +288,120 @@ describe('the MCP endpoint: review', { skip: skipPg }, () => {
       assert.equal(r.isError, true, name)
       assert.match(r.text, SHAPE, name)
     }
+  })
+
+  it('a short key writes to its own brain even when its service is in several', async () => {
+    const svc = await w.service('Svc3')
+    await w.member('alpha', svc.id, 'contributor')
+    await w.member('beta', svc.id, 'contributor')
+    const short = await w.call(svc.key, 'POST', '/v1/keys/short', {
+      writeBrain: 'beta',
+      readBrains: ['alpha'],
+      onBehalf: eric.id,
+      ref: 'r',
+      ttlMinutes: 10,
+    })
+    assert.equal(short.status, 201, JSON.stringify(short.body))
+    const shortKey = String((short.body.key as { secret: string }).secret)
+    const r = await call(shortKey, 'mem_save', { type: 'learning', title: 'Short to beta', content: 'x' })
+    assert.equal(r.isError, false, r.text)
+    const row = await w.db.one(
+      "SELECT b.slug FROM entries e JOIN brains b ON b.id = e.brain_id WHERE e.title = 'Short to beta'",
+    )
+    assert.equal(row?.slug, 'beta')
+  })
+
+  it('brain_proposals shows only my proposals', async () => {
+    const other = await w.person('Author')
+    await w.member('alpha', other.id, 'contributor')
+    const e = await call(other.key, 'mem_save', {
+      brain: 'alpha',
+      type: 'learning',
+      title: 'Theirs',
+      content: 'T.',
+    })
+    const entryId = (e.data as { receipt: { entryId: string } }).receipt.entryId
+    const op = {
+      op: 'create',
+      address: 'theirs/page',
+      type: 'topic',
+      title: 'Theirs',
+      summary: 'S.',
+      body: 'B.',
+      sources: [{ entryId }],
+      reason: 'R.',
+    }
+    const p = await call(other.key, 'brain_propose', { brain: 'alpha', title: 'Their proposal', ops: [op] })
+    const theirId = (p.data as { proposal: { id: string } }).proposal.id
+    const mine = (await call(eric.key, 'brain_proposals', { brain: 'alpha' })).data as {
+      items: Array<{ id: string }>
+    }
+    assert.ok(!mine.items.some((x) => x.id === theirId))
+    const theirs = (await call(other.key, 'brain_proposals', { brain: 'alpha' })).data as {
+      items: Array<{ id: string }>
+    }
+    assert.ok(theirs.items.some((x) => x.id === theirId))
+  })
+
+  it('mem_timeline with a null id lists recent work; mem_context accepts what the server serves', async () => {
+    const t = await call(eric.key, 'mem_timeline', { brain: 'alpha', id: null })
+    assert.equal(t.isError, false, t.text)
+    const tools = (
+      (await rpc(eric.key, 'tools/list')).body.result as {
+        tools: Array<{
+          name: string
+          inputSchema: { properties: Record<string, { minimum?: number; maximum?: number }> }
+        }>
+      }
+    ).tools
+    const max = tools.find((x) => x.name === 'mem_context')?.inputSchema.properties.max
+    assert.deepEqual([max?.minimum, max?.maximum], [4000, 128000])
+  })
+
+  it('version refusals never list the version they refuse', async () => {
+    const legacyInMeta = await fetch(`${w.base}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${eric.key}`,
+        'mcp-protocol-version': '2025-11-25',
+        'mcp-method': 'tools/list',
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/list',
+        params: { _meta: { 'io.modelcontextprotocol/protocolVersion': '2025-11-25' } },
+      }),
+    })
+    const a = (await legacyInMeta.json()) as { error: { code: number; data: { supported: string[] } } }
+    assert.equal(a.error.code, -32022)
+    assert.ok(!a.error.data.supported.includes('2025-11-25'))
+    const modernNoMeta = await fetch(`${w.base}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${eric.key}`,
+        'mcp-protocol-version': MODERN,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }),
+    })
+    const b = (await modernNoMeta.json()) as { error: { code: number; message: string } }
+    assert.equal(modernNoMeta.status, 400)
+    assert.equal(b.error.code, -32602)
+    assert.match(b.error.message, /_meta/)
+    const unknownHeader = await fetch(`${w.base}/mcp`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${eric.key}`,
+        'mcp-protocol-version': '2099-01-01',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} }),
+    })
+    assert.equal(((await unknownHeader.json()) as { error: { code: number } }).error.code, -32022)
+    const unknownTool = await rpc(eric.key, 'tools/call', { name: 'nope', arguments: {} })
+    assert.equal(unknownTool.status, 400)
   })
 
   it('protocol edges: an object id is refused; an old client asking 2025-03-26 gets a version it can use', async () => {

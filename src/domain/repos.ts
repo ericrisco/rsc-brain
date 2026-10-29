@@ -9,7 +9,14 @@ import { type Ctx, inBrain, ok } from './context.ts'
 import { inWeb } from './guards.ts'
 
 // The port of a server tells servers on one host apart; the usual port of the scheme says nothing.
-const USUAL: Record<string, string> = { ssh: '22', https: '443', http: '80', git: '9418' }
+const USUAL: Record<string, string> = {
+  ssh: '22',
+  'git+ssh': '22',
+  'ssh+git': '22',
+  https: '443',
+  http: '80',
+  git: '9418',
+}
 
 // A repository address as people and tools write it, reduced to host (and an unusual port) and path:
 // "https://user@github.com/Org/Repo.git", "git@github.com:org/repo" and "ssh://git@github.com:22/org/repo/"
@@ -19,7 +26,8 @@ export function repoKey(v: unknown): string | null {
   let s = v.trim()
   if (!s || s.length > 500) return null
   let scheme = 'ssh'
-  const scp = /^[^/@\s]+@([^:/\s]+):(?!\d+\/)(.+)$/.exec(s) // git@host:path
+  // git@host:path has no port: in "git@host:2024/app", 2024 is the owner.
+  const scp = /^[^/@\s]+@([^:/\s]+):(?!\/)(.+)$/.exec(s)
   if (scp) s = `${scp[1]}/${scp[2]}`
   else {
     scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(s)?.[1]?.toLowerCase() ?? 'https'

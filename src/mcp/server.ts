@@ -139,9 +139,10 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
         throw new RpcError(modern ? 400 : 200, -32602, '"name" must be text.')
       }
       if (modern) {
-        if (!SUPPORTED.includes(asked as string) || LEGACY.includes(asked as string)) {
+        // In _meta only the stateless version is spoken; the older ones start with initialize.
+        if (asked !== MODERN) {
           throw new RpcError(400, -32022, 'Unsupported protocol version', {
-            supported: SUPPORTED,
+            supported: [MODERN],
             requested: asked,
           })
         }
@@ -170,6 +171,13 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
         }
       } else {
         const hv = headerValue(r.headers['mcp-protocol-version'])
+        if (hv === MODERN && m.method !== 'initialize') {
+          throw new RpcError(
+            400,
+            -32602,
+            `A ${MODERN} request carries its version in params._meta["io.modelcontextprotocol/protocolVersion"].`,
+          )
+        }
         if (hv !== undefined && !LEGACY.includes(hv) && m.method !== 'initialize') {
           throw new RpcError(400, -32022, 'Unsupported protocol version', {
             supported: SUPPORTED,
@@ -253,7 +261,7 @@ async function dispatch(
         })),
       }
     case 'tools/call':
-      return callTool(r, who, params, routes)
+      return callTool(r, who, params, modern, routes)
     case 'prompts/list':
       return {
         prompts: PROMPTS.map((p) => ({
@@ -283,11 +291,17 @@ async function dispatch(
 
 const toolError = (text: string) => ({ content: [{ type: 'text', text }], isError: true })
 
-async function callTool(r: PublicReq, who: Who, params: Json, routes: () => Route[]): Promise<Json> {
+async function callTool(
+  r: PublicReq,
+  who: Who,
+  params: Json,
+  modern: boolean,
+  routes: () => Route[],
+): Promise<Json> {
   const tool = TOOLS.find((t) => t.name === params.name)
   if (!tool) {
     throw new RpcError(
-      200,
+      modern ? 400 : 200,
       -32602,
       `Unknown tool: ${params.name}. Call tools/list for the tools this key can use.`,
     )

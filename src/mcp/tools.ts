@@ -124,7 +124,7 @@ export const TOOLS: Tool[] = [
       brain: BRAIN,
       session: SESSION,
       task: str('What you are about to do.'),
-      max: { type: 'integer', minimum: 1000, maximum: 60000 },
+      max: { type: 'integer', minimum: 4000, maximum: 128000 },
     }),
     writes: false,
     annotations: { readOnlyHint: true },
@@ -353,10 +353,10 @@ export const TOOLS: Tool[] = [
     writes: false,
     annotations: { readOnlyHint: true },
     call: async (a, k) =>
-      a.id !== undefined
+      a.id !== undefined && a.id !== null
         ? {
             method: 'GET',
-            path: `/v1/entries/${enc(text(a, 'id') as string)}/around`,
+            path: `/v1/entries/${enc(text(a, 'id', true) as string)}/around`,
             query: query(a, { n: 'n' }),
           }
         : {
