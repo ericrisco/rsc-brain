@@ -36,3 +36,11 @@ present, and the administration turns it on in the web, accepting that text is s
 - `RSC_BRAIN_OLLAMA_URL` — a local Ollama, model `nomic-embed-text`.
 
 A curator can exclude a brain: its vectors are deleted and nothing more of it is sent.
+
+## Behind a reverse proxy
+
+Brain takes a password only over an encrypted connection, or from the same machine. A reverse proxy
+on the same machine must therefore send `X-Forwarded-For` and `X-Forwarded-Proto` (nginx:
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` and
+`proxy_set_header X-Forwarded-Proto $scheme;`). List the proxy's own address in
+`RSC_BRAIN_TRUSTED_PROXIES`. Without those headers, everything the proxy forwards looks local.
