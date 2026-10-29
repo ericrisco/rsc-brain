@@ -8,7 +8,7 @@ import type { Db, Row } from '../../db/db.ts'
 import type { Ctx } from '../context.ts'
 import { emit } from '../events.ts'
 import { type LinkKind, mentionsOf, type Op, type Source, sourceKey } from './model.ts'
-import { dependencies } from './review.ts'
+import { uses } from './review.ts'
 
 export class ApplyError extends AppError {
   constructor(index: number | undefined, message: string) {
@@ -29,14 +29,20 @@ export type ApplyMeta = {
 }
 export type Revised = { index?: number; pageId: string; address: string; revision: number }
 
-// The order operations apply in: the proposal's own, except that an operation goes after those it
-// depends on (a link after the page it points at is created). A cycle cannot be approved anyway.
+// The order operations apply in: the proposal's own, except that an operation using an address
+// another operation brings into being (a page it creates, the new address of a move) goes after it, so
+// a link listed before the page it points at still applies. Approval grouping (dependencies) is a
+// different question: "edit y" before "merge y into x" must still edit y, then merge.
 export function applyOrder(ops: Op[]): number[] {
-  const deps = dependencies(ops)
+  const born = ops.map((o) => (o.op === 'create' ? [o.address] : o.op === 'move' ? [o.to] : []))
+  const after = ops.map((o, i) => {
+    const mine = new Set(uses(o))
+    return ops.flatMap((_, j) => (j !== i && (born[j] ?? []).some((a) => mine.has(a)) ? [j] : []))
+  })
   const done = new Set<number>()
   const out: number[] = []
   while (out.length < ops.length) {
-    const next = ops.findIndex((_, i) => !done.has(i) && (deps[i] ?? []).every((j) => done.has(j)))
+    const next = ops.findIndex((_, i) => !done.has(i) && (after[i] ?? []).every((j) => done.has(j)))
     const pick = next === -1 ? ops.findIndex((_, i) => !done.has(i)) : next
     done.add(pick)
     out.push(pick)

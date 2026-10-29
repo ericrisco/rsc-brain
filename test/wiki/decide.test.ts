@@ -523,4 +523,23 @@ describe('wiki decisions in the web', { skip: skipPg }, () => {
     )
     assert.deepEqual([returned?.op.body, returned?.corrected_by], ['Text of sec/b.', null])
   })
+
+  it('review: an edit of y listed before "merge y into x" edits y, then the merge happens', async () => {
+    await approve(await propose([create('m/x'), create('m/y')]))
+    const id = await propose([
+      { op: 'edit', address: 'm/y', baseRevision: 1, title: 'Y retitled', reason: 'r' },
+      { op: 'merge', address: 'm/x', from: 'm/y', body: 'merged', reason: 'r' },
+    ])
+    assert.equal((await approve(id)).status, 200)
+    const rows = await w.db.query<{ address: string; title: string; status: string }>(
+      "SELECT address, title, status FROM pages WHERE address IN ('m/x', 'm/y') ORDER BY address",
+    )
+    assert.deepEqual(
+      rows.map((r) => [r.address, r.title, r.status]),
+      [
+        ['m/x', 'Page m/x', 'current'],
+        ['m/y', 'Y retitled', 'superseded'],
+      ],
+    )
+  })
 })

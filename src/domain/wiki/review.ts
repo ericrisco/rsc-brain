@@ -35,7 +35,7 @@ function produces(o: Op): string[] {
   return []
 }
 
-function uses(o: Op): string[] {
+export function uses(o: Op): string[] {
   const out = [o.address]
   if (o.op === 'move' || o.op === 'link' || o.op === 'unlink') out.push(o.to)
   if (o.op === 'status' && o.supersededBy) out.push(o.supersededBy)
