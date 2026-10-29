@@ -8,6 +8,7 @@ import { AppError, invalid } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
 import { setupDone } from '../domain/installation.ts'
 import type { Outbox } from '../mail/mail.ts'
+import { mcpRoutes } from '../mcp/server.ts'
 import type { Providers } from '../meaning/providers.ts'
 import type { FetchPolicy } from '../oauth/fetch.ts'
 import { type Conn, match, type Route, WEB_HEADER } from './router.ts'
@@ -54,6 +55,8 @@ export const ROUTES: Route[] = [
   ...peopleRoutes,
   ...oauthRoutes,
 ]
+// The MCP endpoint calls the same routes a program would (spec B5 parity).
+ROUTES.push(...mcpRoutes(() => ROUTES))
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
@@ -259,6 +262,17 @@ export function createHandler(deps: AppDeps) {
           { error: 'invalid_request', error_description: err.message },
           err.headers,
         )
+      }
+      // The MCP endpoint answers in JSON-RPC, even for a body that is not JSON.
+      if (err instanceof AppError && new URL(req.url ?? '/', 'http://localhost').pathname === '/mcp') {
+        return send(res, err.status, {
+          jsonrpc: '2.0',
+          id: null,
+          error: {
+            code: err.code === 'invalid_request' ? -32700 : -32600,
+            message: `${err.message} ${err.howToProceed}`,
+          },
+        })
       }
       if (err instanceof AppError) return send(res, err.status, { error: err.body() }, err.headers)
       const id = Math.random().toString(36).slice(2, 10)

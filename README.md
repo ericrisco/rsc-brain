@@ -62,6 +62,22 @@ back to the agent, without copying any key.
 - Clients can name themselves with a metadata document (an https address that Brain fetches with
   guards against reaching private networks) or register dynamically.
 
+## Agents over MCP
+
+Brain serves MCP at `/mcp` (Streamable HTTP; protocol `2026-07-28`, and `2025-11-25` / `2025-06-18` for
+older clients). An agent connects with the standard sign-in or a personal token, and on connecting
+receives a short protocol: resolve its brain, read the context, search before deciding, save as it
+works, never save secrets, close with a summary.
+
+- Tools: `brain_list`, `brain_resolve`, `mem_context`, `mem_session_start`, `mem_save`, `mem_update`,
+  `mem_suggest_topic`, `mem_relate`, `mem_forget`, `mem_session_summary`, `mem_session_end`,
+  `mem_search`, `mem_get`, `mem_timeline`, `brain_page`, `brain_neighbors`, `brain_map`,
+  `brain_health`, `brain_compile_pack`, `brain_propose`, `brain_proposals`, `brain_withdraw`,
+  `brain_create`. A key sees only the tools it may use.
+- Each tool runs the same `/v1` route a program would, with the same key: the same checks, limits
+  and results.
+- Curators link repositories to their brain, so an agent finds it with `brain_resolve`.
+
 ## Audit
 
 Every sign-in, invitation, role change, key, connection, purge and setting change is recorded. The

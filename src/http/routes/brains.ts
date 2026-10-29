@@ -1,5 +1,6 @@
 import { createBrain, deleteBrain, getBrain, listBrains, setArchived } from '../../domain/brains.ts'
 import type { Ctx } from '../../domain/context.ts'
+import { linkRepo, listRepos, resolveRepo, unlinkRepo } from '../../domain/repos.ts'
 import { compact, obj, reqStr, str } from '../input.ts'
 import { type Req, type Route, route } from '../router.ts'
 
@@ -35,6 +36,18 @@ export const brainRoutes: Route[] = [
   route('POST /v1/brains/:slug/unarchive', async (r) => ({
     body: { brain: await setArchived(ctxOf(r), r.params.slug as string, false) },
   })),
+  route('GET /v1/brains/:slug/repos', async (r) => ({
+    body: { repos: await listRepos(ctxOf(r), r.params.slug as string) },
+  })),
+  route('POST /v1/brains/:slug/repos', async (r) => ({
+    status: 201,
+    body: await linkRepo(ctxOf(r), r.params.slug as string, obj(r.body).repo),
+  })),
+  route('DELETE /v1/brains/:slug/repos', async (r) => {
+    await unlinkRepo(ctxOf(r), r.params.slug as string, obj(r.body).repo)
+    return { body: { unlinked: true } }
+  }),
+  route('POST /v1/resolve', async (r) => ({ body: await resolveRepo(ctxOf(r), obj(r.body).repos) })),
   route('DELETE /v1/brains/:slug', async (r) => {
     await deleteBrain(ctxOf(r), r.params.slug as string, str(obj(r.body), 'confirm') ?? '')
     return { body: { deleted: r.params.slug } }

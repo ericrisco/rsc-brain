@@ -136,6 +136,7 @@ export const wikiRoutes: Route[] = [
           | undefined,
         cursor: q(r.query.get('cursor')),
         limit: limitOf(r.query.get('limit')),
+        mine: r.query.get('mine') === '1' || r.query.get('mine') === 'true',
       }),
     ),
   })),
