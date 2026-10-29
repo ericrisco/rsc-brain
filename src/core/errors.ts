@@ -1,7 +1,13 @@
 // Every refusal says what happened and how to proceed (general constitution P6). The HTTP layer turns
 // an AppError into { error: { code, message, howToProceed } } with its status; anything else is a 500
 // that reveals nothing.
-export type ErrorBody = { code: string; message: string; howToProceed: string; current?: unknown }
+export type ErrorBody = {
+  code: string
+  message: string
+  howToProceed: string
+  current?: unknown
+  problems?: unknown
+}
 
 export class AppError extends Error {
   readonly status: number
@@ -9,6 +15,8 @@ export class AppError extends Error {
   readonly howToProceed: string
   // What the caller needs to recover, when there is something: the current version after a conflict.
   current?: unknown
+  // Everything wrong with a request at once, when it is checked as a whole (a wiki proposal).
+  problems?: unknown
   constructor(status: number, code: string, message: string, howToProceed: string) {
     super(message)
     this.status = status
@@ -18,6 +26,7 @@ export class AppError extends Error {
   body(): ErrorBody {
     const b: ErrorBody = { code: this.code, message: this.message, howToProceed: this.howToProceed }
     if (this.current !== undefined) b.current = this.current
+    if (this.problems !== undefined) b.problems = this.problems
     return b
   }
 }

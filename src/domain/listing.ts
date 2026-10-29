@@ -12,7 +12,7 @@ export const PAGE = { default: 50, max: 200 }
 
 type Cursor = { at: string; id: string }
 
-function decode(cursor: string | undefined): Cursor | null {
+export function decode(cursor: string | undefined): Cursor | null {
   if (!cursor) return null
   try {
     const c = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as Cursor
@@ -21,7 +21,7 @@ function decode(cursor: string | undefined): Cursor | null {
   throw invalid('The cursor is not valid.', 'Use the "next" value of the previous page, unchanged.')
 }
 
-const encode = (at: Date, id: string) =>
+export const encode = (at: Date, id: string) =>
   Buffer.from(JSON.stringify({ at: at.toISOString(), id })).toString('base64url')
 
 export function limitOf(v: string | null | undefined): number {

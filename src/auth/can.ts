@@ -28,6 +28,7 @@ export type Action =
   | 'relation.write'
   | 'correction.relay'
   | 'key.short'
+  | 'wiki.propose'
 
 export type Facts = {
   role?: Role | null // the actor's role in the brain, already narrowed by its key
@@ -79,7 +80,8 @@ export function can(actor: Actor, action: Action, f: Facts = {}): Decision {
       if (actor.isAdmin && actor.kind === 'person') return OK
       return no('Only the administration can delete a brain.', 'Ask the administration of this installation.')
     case 'journal.write':
-    case 'relation.write': {
+    case 'relation.write':
+    case 'wiki.propose': {
       const r = needRole(f.role, 'contributor')
       if (!r.ok) return r
       return f.brainStatus === 'archived' ? ARCHIVED : OK
