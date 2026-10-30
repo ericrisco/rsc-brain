@@ -154,6 +154,58 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   'POST /v1/auth/reset/confirm': {
     '': ['reset'],
   },
+  // The wiki in the web (spec B6, PR19): the fixture answers these in CI, so the real answers are pinned.
+  'GET /v1/brains/{slug}/wiki/pages': {
+    '': ['items', 'next', 'total'],
+    'items[]': ['address', 'title', 'type', 'status', 'tags', 'in', 'out', 'updatedAt'],
+  },
+  'GET /v1/brains/{slug}/wiki/map': {
+    '': ['intro', 'groups', 'count'],
+    'groups[]': ['type', 'area', 'pages'],
+    'groups[].pages[]': ['address', 'title', 'summary', 'tags'],
+  },
+  'GET /v1/brains/{slug}/wiki/decisions': {
+    'decisions[]': ['address', 'title', 'summary', 'status', 'createdAt', 'updatedAt'],
+  },
+  'GET /v1/brains/{slug}/wiki/log': {
+    '': ['items', 'next', 'total'],
+    'items[]': ['id', 'at', 'actorId', 'actorName', 'kind', 'proposalId', 'summary', 'pages'],
+  },
+  'GET /v1/brains/{slug}/pages/{address}': {
+    page: [
+      'id',
+      'address',
+      'type',
+      'title',
+      'summary',
+      'body',
+      'tags',
+      'status',
+      'supersededBy',
+      'revision',
+      'createdAt',
+      'updatedAt',
+    ],
+    links: ['out', 'in'],
+    'links.out[]': ['kind', 'address', 'pageId', 'title', 'state'],
+    'sources[]': ['title'],
+  },
+  'GET /v1/brains/{slug}/pages/{address} +history': {
+    'history[]': ['revision', 'address', 'title', 'status', 'kind', 'authorId', 'authorName', 'createdAt'],
+  },
+  'GET /v1/brains/{slug}/pages/{address} +compare': {
+    a: ['revision', 'title', 'summary', 'body', 'tags', 'sources', 'links', 'authorName', 'createdAt'],
+    b: ['revision', 'title', 'summary', 'body', 'tags', 'sources', 'links', 'authorName', 'createdAt'],
+  },
+  'PATCH /v1/brains/{slug}/pages/{address}': {
+    '': ['revised', 'page'],
+    'revised[]': ['pageId', 'address', 'revision'],
+    page: ['page', 'links', 'sources'],
+  },
+  'POST /v1/brains/{slug}/wiki/changes': {
+    '': ['revised', 'page'],
+    'revised[]': ['pageId', 'address', 'revision'],
+  },
 }
 
 type Json = Record<string, unknown>
@@ -320,6 +372,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       'GET /v1/branding': (await w.call(null, 'GET', '/v1/branding')).body,
       ...(await doors()),
       ...(await people()),
+      ...(await wiki(entryId)),
     }
     const paths = doc.paths as Record<string, Record<string, Json>>
     for (const [op, shape] of Object.entries(SHAPES)) {
@@ -423,6 +476,40 @@ describe('the v1 contract', { skip: skipPg }, () => {
     return out
   }
 
+  // The wiki as the web reads and edits it (PR19): two pages, a link, an edit by hand.
+  async function wiki(entryId: string): Promise<Record<string, Json>> {
+    const out: Record<string, Json> = {}
+    const web = await w.web(eric.id)
+    const changed = await w.callWeb(web, 'POST', '/v1/brains/contract/wiki/changes', {
+      op: 'create',
+      address: 'growth/intros',
+      type: 'decision',
+      title: 'Intros',
+      summary: 'Short intros.',
+      body: 'Keep them short. See [[growth/retention]].',
+      tags: ['q4'],
+      sources: [{ entryId }],
+      reason: 'From the journal.',
+    })
+    assert.equal(changed.status, 201, changed.text)
+    out['POST /v1/brains/{slug}/wiki/changes'] = changed.body
+    const edited = await w.callWeb(web, 'PATCH', '/v1/brains/contract/pages/growth/intros', {
+      baseRevision: 1,
+      body: 'Keep them under ten seconds. See [[growth/retention]].',
+    })
+    assert.equal(edited.status, 200, edited.text)
+    out['PATCH /v1/brains/{slug}/pages/{address}'] = edited.body
+    const get = async (path: string) => (await w.call(eric.key, 'GET', `/v1/brains/contract${path}`)).body
+    out['GET /v1/brains/{slug}/wiki/pages'] = await get('/wiki/pages')
+    out['GET /v1/brains/{slug}/wiki/map'] = await get('/wiki/map')
+    out['GET /v1/brains/{slug}/wiki/decisions'] = await get('/wiki/decisions')
+    out['GET /v1/brains/{slug}/wiki/log'] = await get('/wiki/log')
+    out['GET /v1/brains/{slug}/pages/{address}'] = await get('/pages/growth/intros')
+    out['GET /v1/brains/{slug}/pages/{address} +history'] = await get('/pages/growth/intros?history=1')
+    out['GET /v1/brains/{slug}/pages/{address} +compare'] = await get('/pages/growth/intros?compare=1,2')
+    return out
+  }
+
   it('every refusal the web meets keeps its status within v1 (ERROR_STATUS, which the fixture obeys)', async () => {
     const lou = await withPassword('Louis')
     const reader = await withPassword('Rita')
@@ -480,6 +567,33 @@ describe('the v1 contract', { skip: skipPg }, () => {
       }),
     )
     await w.callWeb(bossWeb, 'PUT', '/v1/admin/settings', { curatorsInvite: false })
+    // The wiki (PR19): a page that does not exist, and an edit made on a revision that moved on.
+    await add('page_not_found', w.call(eric.key, 'GET', '/v1/brains/contract/pages/no/such-page'))
+    await add(
+      'revision_not_found',
+      w.call(eric.key, 'GET', '/v1/brains/contract/pages/growth/intros?revision=99'),
+    )
+    const ericWeb = await w.web(eric.id)
+    await w.callWeb(ericWeb, 'POST', '/v1/brains/contract/wiki/changes', {
+      op: 'create',
+      address: 'conflict/page',
+      type: 'topic',
+      title: 'Conflict',
+      summary: 'Two edits.',
+      body: 'One.',
+      reason: 'Contract.',
+    })
+    await w.callWeb(ericWeb, 'PATCH', '/v1/brains/contract/pages/conflict/page', {
+      baseRevision: 1,
+      body: 'Two.',
+    })
+    await add(
+      'page_changed',
+      w.callWeb(ericWeb, 'PATCH', '/v1/brains/contract/pages/conflict/page', {
+        baseRevision: 1,
+        body: 'Three.',
+      }),
+    )
     await add('no_logo', w.raw('GET', '/v1/branding/logo'))
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))
     await add('setup_done', w.raw('GET', '/v1/setup'))

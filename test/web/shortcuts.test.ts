@@ -47,6 +47,8 @@ describe('keyboard shortcuts', () => {
     assert.equal(m.handle(key('o')), null)
     assert.equal(m.handle(key('g')), null)
     assert.equal(m.handle(key('o')), 'go-overview')
+    assert.equal(m.handle(key('g')), null)
+    assert.equal(m.handle(key('w')), 'go-wiki')
   })
 
   it('nothing fires while typing, or with a modifier the browser owns', () => {
@@ -65,6 +67,6 @@ describe('keyboard shortcuts', () => {
       assert.ok(!ids.has(s.id), `${s.id} twice`)
       ids.add(s.id)
     }
-    assert.deepEqual([...ids].sort(), ['go-home', 'go-overview', 'go-people', 'help', 'search'])
+    assert.deepEqual([...ids].sort(), ['go-home', 'go-overview', 'go-people', 'go-wiki', 'help', 'search'])
   })
 })

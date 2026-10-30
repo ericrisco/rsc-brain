@@ -459,6 +459,119 @@ describe('the fixture API', () => {
     )
   })
 
+  it('the wiki: map, pages, a page with its links, sources, history and readers, decisions and the log', async () => {
+    const s = fx.scenario('signed-in')
+    const cookie = s.cookie
+    const get = async (path: string) => call('GET', path, { scenario: s.id, cookie })
+    const map = (await get('/v1/brains/growth/wiki/map')).body as { groups: Array<{ pages: unknown[] }> }
+    assert.ok(map.groups.length > 1)
+    const pages = (await get('/v1/brains/growth/wiki/pages?q=intro&limit=5')).body as {
+      items: Array<{ address: string }>
+      total: number
+    }
+    assert.ok(pages.items.some((p) => p.address === 'audience/intros'))
+    const reading = (await get('/v1/brains/growth/pages/audience/retention')).body as {
+      page: { revision: number; body: string }
+      links: { out: Array<{ state: string }>; in: unknown[] }
+      sources: Array<{ entryId?: string }>
+    }
+    assert.ok(reading.page.revision >= 3)
+    assert.ok(reading.links.out.some((l) => l.state === 'broken'))
+    assert.equal(reading.sources.filter((x) => x.entryId).length >= 2, true)
+    assert.equal((await get('/v1/brains/growth/pages/no/such-page')).status, 404)
+    const history = (await get('/v1/brains/growth/pages/audience/retention?history=1')).body as {
+      history: unknown[]
+    }
+    assert.equal(history.history.length, reading.page.revision)
+    const pair = (await get('/v1/brains/growth/pages/audience/retention?compare=1,3')).body as {
+      a: { body: string }
+      b: { body: string }
+    }
+    assert.notEqual(pair.a.body, pair.b.body)
+    assert.equal((await get('/v1/brains/growth/pages/audience/retention?revision=1')).status, 200)
+    const entry = reading.sources.find((x) => x.entryId)?.entryId as string
+    assert.equal((await get(`/v1/entries/${entry}`)).status, 200)
+    const readers = (await get('/v1/brains/growth/trail?page=audience/retention')).body as {
+      items: unknown[]
+    }
+    assert.ok(readers.items.length > 0)
+    assert.ok(
+      ((await get('/v1/brains/growth/wiki/decisions')).body as { decisions: unknown[] }).decisions.length,
+    )
+    const log = (await get('/v1/brains/growth/wiki/log?kind=direct')).body as {
+      items: Array<{ kind: string }>
+    }
+    for (const l of log.items) assert.equal(l.kind, 'direct')
+    s.set('log', 'much-data')
+    const first = (await get('/v1/brains/growth/wiki/log')).body as { next: string | null }
+    assert.ok(first.next)
+    assert.equal((await get(`/v1/brains/growth/wiki/log?cursor=${first.next}`)).status, 200)
+  })
+
+  it('a curator edits a page by hand, and an edit on a revision that moved on keeps nothing', async () => {
+    const s = fx.scenario('signed-in')
+    const cookie = s.cookie
+    const at = '/v1/brains/growth/pages/audience/intros'
+    const now = (await call('GET', at, { scenario: s.id, cookie })).body as { page: { revision: number } }
+    const r = now.page.revision
+    const ok = await call('PATCH', at, {
+      scenario: s.id,
+      cookie,
+      body: { baseRevision: r, body: 'Shorter.' },
+    })
+    assert.equal(ok.status, 200)
+    const late = await call('PATCH', at, { scenario: s.id, cookie, body: { baseRevision: r, body: 'Mine.' } })
+    assert.equal(late.status, 409)
+    const e = (
+      late.body as { error: { code: string; current: { page: { revision: number; body: string } } } }
+    ).error
+    assert.equal(e.code, 'page_changed')
+    assert.deepEqual([e.current.page.revision, e.current.page.body], [r + 1, 'Shorter.'])
+    // Another curator edits meanwhile (a control route of the tests).
+    await fetch(`${fx.url}/__fixture/scenarios/${s.id}/wiki-edit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brain: 'growth', address: 'audience/intros', body: 'By Eva.' }),
+    })
+    const moved = (await call('GET', at, { scenario: s.id, cookie })).body as { page: { revision: number } }
+    assert.equal(moved.page.revision, r + 2)
+    for (const op of [
+      { op: 'link', address: 'audience/intros', kind: 'related', to: 'product/pricing' },
+      { op: 'unlink', address: 'audience/intros', kind: 'related', to: 'product/pricing' },
+      { op: 'status', address: 'audience/intros', status: 'stale' },
+      { op: 'revert', address: 'audience/intros', toRevision: 1 },
+      { op: 'move', address: 'audience/intros', to: 'audience/openings' },
+    ]) {
+      const c = await call('POST', '/v1/brains/growth/wiki/changes', {
+        scenario: s.id,
+        cookie,
+        body: { ...op, reason: 'By hand.' },
+      })
+      assert.equal(c.status, 201, JSON.stringify(op))
+    }
+    const old = (await call('GET', at, { scenario: s.id, cookie })).body as {
+      page: { address: string }
+      redirectedFrom: string
+    }
+    assert.deepEqual([old.page.address, old.redirectedFrom], ['audience/openings', 'audience/intros'])
+    const bad = await call('POST', '/v1/brains/growth/wiki/changes', {
+      scenario: s.id,
+      cookie,
+      body: { op: 'link', address: 'audience/openings', kind: 'related', to: 'no/such', reason: 'x' },
+    })
+    assert.equal(bad.status, 400)
+    // Someone who is not a curator of the brain is told who to ask.
+    const ana = 'rscb_session=fx.acc_ana'
+    const member = fx.scenario('member')
+    const no = await call('PATCH', '/v1/brains/growth/pages/product/pricing', {
+      scenario: member.id,
+      cookie: ana,
+      body: { baseRevision: 1, body: 'x' },
+    })
+    assert.equal(no.status, 403)
+    assert.match((no.body as { error: { howToProceed: string } }).error.howToProceed, /Eric/)
+  })
+
   it('every operation the fixture answers was checked against the description', () => {
     assert.deepEqual(
       [...fx.operations].filter((op) => !seen.has(op)),

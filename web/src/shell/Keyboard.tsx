@@ -57,6 +57,8 @@ export function Keyboard({
         route('/people')
       } else if (id === 'go-overview' && signedIn && brain) {
         route(`/b/${encodeURIComponent(brain)}`)
+      } else if (id === 'go-wiki' && signedIn && brain) {
+        route(`/b/${encodeURIComponent(brain)}/wiki`)
       }
     }
     window.addEventListener('keydown', onKey)

@@ -85,6 +85,32 @@ describe('the API client', () => {
     )
   })
 
+  // An edit on a page that moved on (CA10): the refusal brings the current version, and a change with
+  // problems lists each one, so the screen can show them without losing what was typed.
+  it('a refusal keeps the current version and the problems the server sends with it', async () => {
+    const current = { page: { revision: 3 } }
+    const problems = [{ op: 0, message: '"title" is longer than 200 characters.' }]
+    const f = fake(() => ({
+      status: 409,
+      body: { error: { ...ERR('page_changed').error, current, problems } },
+    }))
+    const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })
+    const err = await api.call('brains').catch((e: unknown) => e)
+    assert.ok(err instanceof ApiError)
+    assert.deepEqual(err.current, current)
+    assert.deepEqual(err.problems, problems)
+    const plain = await createClient({
+      transport: fake(() => ({ status: 400, body: ERR('x') })).transport,
+      onSignedOut: () => {},
+      here: () => '/',
+    })
+      .call('brains')
+      .catch((e: unknown) => e)
+    assert.ok(plain instanceof ApiError)
+    assert.equal(plain.current, undefined)
+    assert.deepEqual(plain.problems, [])
+  })
+
   it('a reply that is not the envelope still says what to do', async () => {
     const f = fake(() => ({ status: 502, text: '<html>bad gateway</html>' }))
     const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })

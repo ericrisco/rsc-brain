@@ -25,6 +25,26 @@ test.describe('sign in', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
   })
 
+  test('a late move between screens never takes the keyboard from a field the person is typing in', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-out')
+    await page.goto('/sign-in')
+    await page.getByLabel('Email').fill('eric@example.test')
+    await page.getByLabel('Password').focus()
+    // A redirect that lands after the person started typing (a slow first answer, say).
+    await page.evaluate(() => {
+      history.replaceState(null, '', '/sign-in?next=%2F')
+      dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await page.waitForTimeout(300)
+    await page.keyboard.type(PASSWORD)
+    await expect(page.getByLabel('Email')).toHaveValue('eric@example.test')
+    await expect(page.getByLabel('Password')).toHaveValue(PASSWORD)
+  })
+
   test('asks for the authenticator code when the account has one', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-out')
     await page.goto('/sign-in')

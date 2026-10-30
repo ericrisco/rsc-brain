@@ -145,3 +145,52 @@ test('the web carries the security headers of plan §0', async ({ request }) => 
     expect(h['cache-control']).toBe('no-cache')
   }
 })
+
+// The wiki (PR19): the map, a page with a source open, its history with a comparison, the editor with
+// the `[[` list open and an edit conflict, the decisions and the log.
+for (const theme of ['dark', 'light'] as const) {
+  test(`the wiki (PR19), ${theme}`, async ({ page, context, baseURL }) => {
+    test.slow()
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
+    await page.goto('/b/growth/wiki')
+    await expect(page.getByRole('link', { name: 'Retention', exact: true })).toBeVisible()
+    await audit(page, `${theme} map`)
+    await page.goto('/b/growth/pages/audience/retention')
+    await expect(page.getByRole('region', { name: 'Who read this' })).toContainText('Ana')
+    await audit(page, `${theme} page`)
+    await page.goto('/b/growth/pages/audience/retention?source=ent_fx_intros')
+    await expect(page.getByRole('dialog', { name: 'Short intros keep viewers' })).toBeVisible()
+    await audit(page, `${theme} source`)
+    await page.goto('/b/growth/pages/audience/retention?view=history&compare=1,3')
+    await expect(
+      page.getByRole('region', { name: 'Changes from revision 1 to 3' }).locator('ins').first(),
+    ).toBeVisible()
+    await audit(page, `${theme} history`)
+    await page.goto('/b/growth/pages/audience/retention?view=edit')
+    const body = page.getByLabel('Body', { exact: true })
+    await body.fill('See [[aud')
+    await expect(page.getByRole('listbox', { name: 'Pages to link' })).toBeVisible()
+    await audit(page, `${theme} editor with suggestions`)
+    await fetch(`${baseURL}/__fixture/scenarios/${s.id}/wiki-edit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brain: 'growth', address: 'audience/retention', body: 'Theirs.' }),
+    })
+    await body.press('Escape')
+    await page.getByRole('button', { name: 'Save changes' }).click()
+    await expect(
+      page.getByRole('region', { name: 'Someone saved this page while you edited it' }),
+    ).toBeVisible()
+    await audit(page, `${theme} edit conflict`)
+    await page.goto('/b/growth/wiki/decisions')
+    await expect(page.getByRole('link', { name: 'Annual plans' })).toBeVisible()
+    await audit(page, `${theme} decisions`)
+    await page.goto('/b/growth/wiki/log')
+    await expect(page.getByRole('list', { name: 'Changes' })).toBeVisible()
+    await audit(page, `${theme} log`)
+    await page.goto('/b/growth/pages/drafts/nothing-yet')
+    await expect(page.getByRole('heading', { level: 1, name: 'No page at drafts/nothing-yet' })).toBeVisible()
+    await audit(page, `${theme} no page`)
+  })
+}

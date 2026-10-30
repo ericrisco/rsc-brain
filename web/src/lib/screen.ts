@@ -8,6 +8,21 @@ import { useEffect, useRef } from 'preact/hooks'
 
 const heading = () => document.querySelector<HTMLElement>('main h1')
 
+// A place where the person types: the keyboard there is theirs.
+export const isField = (el: Element | null): boolean =>
+  !!el &&
+  (el instanceof HTMLTextAreaElement ||
+    el instanceof HTMLSelectElement ||
+    (el instanceof HTMLInputElement &&
+      !['button', 'submit', 'reset', 'checkbox', 'radio'].includes(el.type)) ||
+    (el as HTMLElement).isContentEditable)
+
+// Focus on arrival, unless the person is already typing somewhere (a screen mounted again by a late
+// redirect must not take the keyboard from the password).
+export function focusOnArrival(el: HTMLElement | null): void {
+  if (el && !isField(document.activeElement)) el.focus()
+}
+
 export function useScreenTitle(path: string, installation: string): void {
   // A screen has been shown (its heading appeared): from then on, a new path is a move.
   const shown = useRef(false)
@@ -33,6 +48,8 @@ export function useScreenTitle(path: string, installation: string): void {
     const from = document.activeElement
     const moved = () => {
       const a = document.activeElement
+      // Someone typing in a field keeps it, whatever moved the screen meanwhile (a late redirect).
+      if (a?.isConnected && isField(a)) return true
       return a !== null && a !== document.body && a !== from && a.isConnected
     }
     const land = (): boolean => {

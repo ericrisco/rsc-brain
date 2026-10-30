@@ -15,6 +15,10 @@ import { People } from './screens/People.tsx'
 import { Reset } from './screens/Reset.tsx'
 import { Setup } from './screens/Setup.tsx'
 import { SignIn } from './screens/SignIn.tsx'
+import { WikiDecisions } from './screens/wiki/Decisions.tsx'
+import { WikiLog } from './screens/wiki/Log.tsx'
+import { WikiMap } from './screens/wiki/Map.tsx'
+import { WikiPage } from './screens/wiki/Page.tsx'
 import { branding, installationName, isSignedOut, type Me, me } from './session.ts'
 import { Door } from './shell/Door.tsx'
 import { type BrainNav, Shell } from './shell/Shell.tsx'
@@ -34,8 +38,33 @@ function brainOf(path: string): string | null | undefined {
   }
 }
 
+// Every part of an address must be a valid escape; one that is not is a broken link.
+function decodable(path: string): boolean {
+  try {
+    decodeURIComponent(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function BrainPage({ slug }: { slug?: string }) {
   return <Brain slug={slug ?? ''} />
+}
+
+// Each screen of a brain is drawn again from scratch when its brain or page changes (its state belongs
+// to the one it shows).
+function MapPage({ slug }: { slug?: string }) {
+  return <WikiMap key={slug} slug={slug ?? ''} />
+}
+function DecisionsPage({ slug }: { slug?: string }) {
+  return <WikiDecisions key={slug} slug={slug ?? ''} />
+}
+function LogPage({ slug }: { slug?: string }) {
+  return <WikiLog key={slug} slug={slug ?? ''} />
+}
+function PagePage({ slug, address }: { slug?: string; address?: string }) {
+  return <WikiPage key={`${slug}/${address}`} slug={slug ?? ''} address={address ?? ''} />
 }
 
 function SignedIn() {
@@ -44,7 +73,7 @@ function SignedIn() {
   const slug = brainOf(path)
   // The brain is asked for only once the person is known (a 401 there would race the one of /v1/me).
   const brain = slug && who.data.value ? brainResource(slug).data.value?.brain : undefined
-  const broken = slug === undefined
+  const broken = slug === undefined || !decodable(path)
   const nav: BrainNav | null = brain ? { slug: brain.slug, name: brain.name, role: brain.role } : null
   useEffect(() => {
     if (isSignedOut(who.error.value)) route(signInPath(url), true)
@@ -89,6 +118,10 @@ function SignedIn() {
         <Router>
           <Route path="/" component={Home} />
           <Route path="/b/:slug" component={BrainPage} />
+          <Route path="/b/:slug/wiki" component={MapPage} />
+          <Route path="/b/:slug/wiki/decisions" component={DecisionsPage} />
+          <Route path="/b/:slug/wiki/log" component={LogPage} />
+          <Route path="/b/:slug/pages/:address+" component={PagePage} />
           <Route path="/people" component={People} />
           <Route default component={NotFound} />
         </Router>

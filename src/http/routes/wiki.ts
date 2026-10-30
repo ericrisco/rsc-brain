@@ -7,6 +7,7 @@ import { compilePack, getGuide, PACK } from '../../domain/wiki/compile.ts'
 import { wikiHealth } from '../../domain/wiki/health.ts'
 import {
   getPage,
+  listPages,
   pageHistory,
   pageRevision,
   wikiDecisions,
@@ -56,7 +57,28 @@ export const wikiRoutes: Route[] = [
     body: await wikiLog(
       ctxOf(r),
       r.params.slug as string,
-      compact({ cursor: q(r.query.get('cursor')), limit: limitOf(r.query.get('limit')) }),
+      compact({
+        cursor: q(r.query.get('cursor')),
+        limit: limitOf(r.query.get('limit')),
+        kind: q(r.query.get('kind')),
+        page: q(r.query.get('page')),
+      }),
+    ),
+  })),
+  // The pages by pages, filtered (plan §3.5 G9, minimal form; PR19).
+  route('GET /v1/brains/:slug/wiki/pages', async (r) => ({
+    body: await listPages(
+      ctxOf(r),
+      r.params.slug as string,
+      compact({
+        q: q(r.query.get('q')),
+        prefix: q(r.query.get('prefix')),
+        type: q(r.query.get('type')),
+        status: q(r.query.get('status')),
+        tag: q(r.query.get('tag')),
+        cursor: q(r.query.get('cursor')),
+        limit: limitOf(r.query.get('limit')),
+      }),
     ),
   })),
   route('GET /v1/brains/:slug/wiki/health', async (r) => ({

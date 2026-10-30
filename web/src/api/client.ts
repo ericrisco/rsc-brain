@@ -11,12 +11,29 @@ export class ApiError extends Error {
   readonly code: string
   readonly howToProceed: string
   readonly retryAfter: number | undefined
-  constructor(status: number, code: string, message: string, howToProceed: string, retryAfter?: number) {
+  // The current version after a conflict (an edit on a page that moved on), when the server sends it.
+  readonly current: unknown
+  // Everything wrong with a change checked as a whole, each with its operation.
+  readonly problems: Array<{ op: number | null; message: string }>
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    howToProceed: string,
+    retryAfter?: number,
+    extra: { current?: unknown; problems?: unknown } = {},
+  ) {
     super(message)
     this.status = status
     this.code = code
     this.howToProceed = howToProceed
     this.retryAfter = retryAfter
+    this.current = extra.current
+    this.problems = Array.isArray(extra.problems)
+      ? extra.problems
+          .filter((p): p is { op?: unknown; message: string } => typeof p?.message === 'string')
+          .map((p) => ({ op: typeof p.op === 'number' ? p.op : null, message: p.message }))
+      : []
   }
 }
 
@@ -61,6 +78,7 @@ function errorOf(status: number, text: string): ApiError {
         e.message,
         typeof e.howToProceed === 'string' ? e.howToProceed : 'Try again.',
         typeof e.retryAfter === 'number' ? e.retryAfter : undefined,
+        { current: e.current, problems: e.problems },
       )
     }
   } catch {

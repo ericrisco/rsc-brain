@@ -32,6 +32,16 @@ export const ROUTE_TABLE = {
   resetLink: { route: 'POST /v1/admin/accounts/{id}/reset-link' },
   allBrains: { route: 'GET /v1/admin/brains' },
   createToken: { route: 'POST /v1/me/tokens' },
+  // The wiki (PR19).
+  wikiMap: { route: 'GET /v1/brains/{slug}/wiki/map' },
+  wikiPages: { route: 'GET /v1/brains/{slug}/wiki/pages' },
+  wikiDecisions: { route: 'GET /v1/brains/{slug}/wiki/decisions' },
+  wikiLog: { route: 'GET /v1/brains/{slug}/wiki/log' },
+  page: { route: 'GET /v1/brains/{slug}/pages/{address}' },
+  editPage: { route: 'PATCH /v1/brains/{slug}/pages/{address}' },
+  wikiChange: { route: 'POST /v1/brains/{slug}/wiki/changes' },
+  trail: { route: 'GET /v1/brains/{slug}/trail' },
+  entry: { route: 'GET /v1/entries/{id}' },
 } as const satisfies Record<string, Op>
 
 export type OpName = keyof typeof ROUTE_TABLE

@@ -2,7 +2,7 @@
 // control that does the same: a shortcut is a faster route, never the only one. The keymap is a small
 // state machine, kept free of the DOM so it is tested on its own.
 export type Shortcut = {
-  id: 'search' | 'help' | 'go-home' | 'go-overview' | 'go-people'
+  id: 'search' | 'help' | 'go-home' | 'go-overview' | 'go-wiki' | 'go-people'
   keys: string[]
   label: string
   // The visible control that does the same, as the person sees it.
@@ -36,12 +36,19 @@ export const SHORTCUTS: Shortcut[] = [
     control: '"Overview" in the side bar',
     inBrain: true,
   },
+  {
+    id: 'go-wiki',
+    keys: ['g', 'w'],
+    label: 'Go to the wiki of this brain',
+    control: '"Wiki" in the side bar',
+    inBrain: true,
+  },
 ]
 
 export type KeyLike = { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; typing: boolean }
 
 const SEQUENCE_MS = 1500
-const GO: Record<string, Shortcut['id']> = { h: 'go-home', o: 'go-overview', p: 'go-people' }
+const GO: Record<string, Shortcut['id']> = { h: 'go-home', o: 'go-overview', w: 'go-wiki', p: 'go-people' }
 
 export function createKeymap(now: () => number) {
   let leader: number | null = null
