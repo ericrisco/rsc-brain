@@ -1,0 +1,112 @@
+// The one door of the web to the network (plan §3.2). Same-origin cookie; every write carries the header
+// only the Brain web sends (B4, CSRF); every refusal arrives as { status, code, message, howToProceed }
+// so a screen can always say what happened and what to do. A lost session leads to sign-in and back.
+import { signInPath } from '../lib/nav.ts'
+import { type OpName, ROUTE_TABLE } from './routes.ts'
+
+export const WEB_HEADER = 'rsc-brain-web'
+
+export class ApiError extends Error {
+  readonly status: number
+  readonly code: string
+  readonly howToProceed: string
+  readonly retryAfter: number | undefined
+  constructor(status: number, code: string, message: string, howToProceed: string, retryAfter?: number) {
+    super(message)
+    this.status = status
+    this.code = code
+    this.howToProceed = howToProceed
+    this.retryAfter = retryAfter
+  }
+}
+
+// The subset of fetch the client uses, so tests can stand in for the network.
+export type Transport = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body?: string; credentials: 'same-origin' },
+) => Promise<{ status: number; text(): Promise<string> }>
+
+export type CallOptions = {
+  path?: Record<string, string>
+  query?: Record<string, string | number | boolean | undefined | null>
+  body?: unknown
+  // A 401 is reported to the caller without leading to sign-in (asking "who am I" at start).
+  quiet?: boolean
+}
+
+export type Client = { call<T = Record<string, unknown>>(op: OpName, o?: CallOptions): Promise<T> }
+
+function urlOf(route: string, o: CallOptions): { method: string; url: string } {
+  const [method, template] = route.split(' ') as [string, string]
+  const path = template.replace(/\{(\w+)\}/g, (_, k: string) => {
+    const v = o.path?.[k]
+    if (v === undefined) throw new Error(`missing path parameter ${k} for ${route}`)
+    // A page address keeps its slashes; every other part is one segment.
+    return k === 'address' ? v.split('/').map(encodeURIComponent).join('/') : encodeURIComponent(v)
+  })
+  const q = new URLSearchParams()
+  for (const [k, v] of Object.entries(o.query ?? {}))
+    if (v !== undefined && v !== null && v !== '') q.set(k, String(v))
+  const qs = q.toString()
+  return { method, url: qs ? `${path}?${qs}` : path }
+}
+
+function errorOf(status: number, text: string): ApiError {
+  try {
+    const e = (JSON.parse(text) as { error?: Record<string, unknown> }).error
+    if (e && typeof e.code === 'string' && typeof e.message === 'string') {
+      return new ApiError(
+        status,
+        e.code,
+        e.message,
+        typeof e.howToProceed === 'string' ? e.howToProceed : 'Try again.',
+        typeof e.retryAfter === 'number' ? e.retryAfter : undefined,
+      )
+    }
+  } catch {
+    // Not the envelope: a proxy or a server that is not Brain answered.
+  }
+  return new ApiError(
+    status,
+    'bad_answer',
+    `Brain answered with an unexpected reply (HTTP ${status}).`,
+    'Try again in a moment; if it keeps failing, tell the administration.',
+  )
+}
+
+export function createClient(o: {
+  transport: Transport
+  onSignedOut: (signInAddress: string) => void
+  here: () => string
+}): Client {
+  return {
+    async call<T>(op: OpName, c: CallOptions = {}): Promise<T> {
+      const def = ROUTE_TABLE[op]
+      const { method, url } = urlOf(def.route, c)
+      const headers: Record<string, string> = { accept: 'application/json' }
+      const write = method !== 'GET' && method !== 'HEAD'
+      if (write) headers['x-requested-with'] = WEB_HEADER
+      const init: Parameters<Transport>[1] = { method, headers, credentials: 'same-origin' }
+      if (c.body !== undefined) {
+        headers['content-type'] = 'application/json'
+        init.body = JSON.stringify(c.body)
+      }
+      let res: Awaited<ReturnType<Transport>>
+      try {
+        res = await o.transport(url, init)
+      } catch {
+        throw new ApiError(
+          0,
+          'offline',
+          'Brain could not be reached.',
+          'Check your connection and try again.',
+        )
+      }
+      const text = await res.text()
+      if (res.status >= 200 && res.status < 300) return (text ? JSON.parse(text) : {}) as T
+      const err = errorOf(res.status, text)
+      if (res.status === 401 && !('public' in def) && !c.quiet) o.onSignedOut(signInPath(o.here()))
+      throw err
+    },
+  }
+}

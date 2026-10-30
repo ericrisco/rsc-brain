@@ -16,7 +16,8 @@ Requirements: Node 25 and, for the full test suite, PostgreSQL 17 or newer.
 
 ```sh
 npm install
-npm run verify      # lint, types, tests, audit
+npx playwright install chromium   # once, for the browser tests of the web
+npm run verify      # lint, types, build, tests, the web in a browser, audit
 ```
 
 `scripts/verify.sh` runs the tests against a real PostgreSQL: the server in `RSC_BRAIN_PG_URL`, or,
@@ -26,6 +27,23 @@ skipped, as in CI.
 
 `node scripts/bench-search.ts` (with `RSC_BRAIN_PG_URL`) loads 10 000 pages and 100 000 entries into a
 throwaway database and times 100 varied searches; 95 % must answer in under a second.
+
+## The web
+
+`rsc-brain serve` also serves the Brain web, on the same address as the API: open it in a browser to
+run the first-time setup, sign in, accept an invitation or reset a password. `npm run build` builds it
+into `dist/web`; without that folder the server answers the API as usual and says the web is not built.
+The web only calls the API at `/v1` (with the same permissions a program has) and never answers on
+`/v1`, `/mcp`, `/oauth` or `/.well-known`. Press `?` on any screen for the keyboard shortcuts.
+
+For work on the web: `rsc-brain serve` on port 4100, then `npm run web:dev` (Vite on port 5173, which
+forwards the API to 4100).
+
+The tests of the web run in Chromium. `npm run test:web` uses a fixture of the API (no database; each of
+its answers is checked against the API description), as CI does. `npm run test:e2e` runs against the
+real server and the PostgreSQL in `RSC_BRAIN_PG_URL`; `verify.sh` runs it when that PostgreSQL answers
+and says why it skipped it otherwise. `node test/web/fixture/main.ts` starts the fixture on port 4173 to
+walk the web by hand: open `/__fixture/use?preset=signed-in` (or `fresh`, `signed-out`, `insecure`).
 
 ## Search by meaning (optional)
 

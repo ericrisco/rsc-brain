@@ -11,6 +11,8 @@ type Op = {
   body?: Schema
   reply?: Schema
   stream?: boolean
+  // The answer is an image, not JSON (the logo of the installation).
+  image?: boolean
   query?: Record<string, string>
 }
 
@@ -120,7 +122,100 @@ export const EVENT = obj(
 )
 const PAGE = obj({ items: list({ type: 'object' }), next: NEXT })
 
+const ACCOUNT_SIGNED_IN = obj({
+  id: s('Account id.'),
+  name: s('Name.'),
+  email: s('Email.'),
+  isAdmin: b('An administrator of the installation.'),
+})
+
 const HAND: Record<string, Op> = {
+  'GET /v1/branding': {
+    summary:
+      'The name and logo of the installation, and whether the first-time setup is still to do (no key; answers before the setup).',
+    reply: obj({
+      name: s('The name of the installation; empty until the first-time setup.'),
+      logo: nul({
+        ...obj({
+          url: s('Where the logo is (GET /v1/branding/logo).'),
+          updatedAt: s('When it last changed.', { format: 'date-time' }),
+        }),
+        type: ['object', 'null'],
+      }),
+      setupRequired: b('The first-time setup is still to do: the web leads to it.'),
+    }),
+  },
+  'GET /v1/branding/logo': {
+    summary: 'The logo of the installation (no key). 404 no_logo when there is none.',
+    image: true,
+  },
+  'GET /v1/setup': {
+    summary: 'Whether the first-time setup can run from this connection (404 setup_done once done).',
+    query: { publicUrl: 'The address you are about to give, to warn if it is not safe.' },
+    reply: obj({
+      done: b('Always false: once done, this answers 404.'),
+      connection: obj({ encrypted: b('Over TLS.'), local: b('From this machine.') }),
+      warning: nul(s('Why the address would be unsafe for passwords.')),
+    }),
+  },
+  'POST /v1/setup': {
+    summary: 'The first-time setup (the Brain web only): name, address and the first administrator.',
+    status: 201,
+    body: obj({
+      name: s('The name of the installation.', { maxLength: 80 }),
+      publicUrl: s('The address people open.'),
+      admin: obj({ name: s('Your name.'), email: s('Your email.'), password: s('12 to 200 characters.') }),
+    }),
+    reply: obj({
+      done: b('True.'),
+      publicUrl: s('The address, as stored.'),
+      warning: nul(s('Why the address is unsafe for passwords, if it is.')),
+      adminId: s('The administrator account.'),
+    }),
+  },
+  'POST /v1/auth/login': {
+    summary: 'Sign in to the web (the Brain web only): sets the session cookie.',
+    body: obj(
+      { email: s('Email.'), password: s('Password.'), code: s('The 6 digits of the authenticator app.') },
+      ['code'],
+    ),
+    reply: obj({ account: ACCOUNT_SIGNED_IN }),
+  },
+  'POST /v1/auth/logout': {
+    summary: 'Sign out of this web session.',
+    reply: obj({ signedOut: b('True.') }),
+  },
+  'POST /v1/auth/reset': {
+    summary:
+      'Ask for a password reset link by email; the answer is the same whether the email exists or not.',
+    status: 202,
+    body: obj({ email: s('Email.') }),
+    reply: obj({ message: s('What happens next.') }),
+  },
+  'POST /v1/auth/reset/confirm': {
+    summary: 'Choose a new password with the token of a reset link.',
+    body: obj({ token: s('The token after #token= in the link.'), password: s('12 to 200 characters.') }),
+    reply: obj({ reset: b('True.') }),
+  },
+  'POST /v1/invitations/look': {
+    summary: 'What an invitation offers, before accepting it (the token travels in the body).',
+    body: obj({ token: s('The token after #token= in the link.') }),
+    reply: obj({
+      invitation: obj({
+        email: s('Who it is for.'),
+        installation: s('The name of the installation.'),
+        brains: list(obj({ slug: s('Slug.'), name: s('Name.'), role: s('reader, contributor or curator.') })),
+        isAdmin: b('It makes you an administrator.'),
+        expiresAt: s('Until when it works.', { format: 'date-time' }),
+      }),
+    }),
+  },
+  'POST /v1/invitations/accept': {
+    summary: 'Accept an invitation (the Brain web only): your account, your roles and a web session.',
+    status: 201,
+    body: obj({ token: s('The token.'), name: s('Your name.'), password: s('12 to 200 characters.') }),
+    reply: obj({ account: ACCOUNT_SIGNED_IN }),
+  },
   'GET /v1/health': { summary: 'Whether the server answers.', reply: obj({ ok: b('Always true.') }) },
   'GET /v1/openapi.json': { summary: 'This description.', reply: { type: 'object' } },
   'GET /v1/me': {
@@ -360,15 +455,25 @@ export function openapi(routes: Route[], serverUrl: string | null): Schema {
       description,
       schema: { type: 'string' },
     }))
-    const ok = hand?.stream
+    const ok = hand?.image
       ? {
-          description: 'A stream of events: "id:", "event:" and "data:" lines; "data" is an Event.',
-          content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/Event' } } },
+          description: 'The image; its type comes from its first bytes (PNG, WebP or JPEG).',
+          content: Object.fromEntries(
+            ['image/png', 'image/webp', 'image/jpeg'].map((t) => [
+              t,
+              { schema: { type: 'string', format: 'binary' } },
+            ]),
+          ),
         }
-      : {
-          description: hand ? 'Success.' : 'Success (201 when something was created).',
-          content: { 'application/json': { schema: hand?.reply ?? { type: 'object' } } },
-        }
+      : hand?.stream
+        ? {
+            description: 'A stream of events: "id:", "event:" and "data:" lines; "data" is an Event.',
+            content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/Event' } } },
+          }
+        : {
+            description: hand ? 'Success.' : 'Success (201 when something was created).',
+            content: { 'application/json': { schema: hand?.reply ?? { type: 'object' } } },
+          }
     const op: Schema = {
       operationId: operationId(o.method, o.path),
       summary: hand?.summary ?? `${o.method} ${o.path}`,

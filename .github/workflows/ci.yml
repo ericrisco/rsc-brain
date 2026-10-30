@@ -6,10 +6,30 @@ permissions: { contents: read }
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      CI: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: "25", cache: npm }
       - run: npm ci
+      # Only Chromium, cached by the pinned Playwright version (plan §5.1).
+      - id: pw
+        run: echo "version=$(node -p 'require("./package-lock.json").packages["node_modules/@playwright/test"].version')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.pw.outputs.version }}
+      - if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx --no-install playwright install --with-deps chromium
+      - if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx --no-install playwright install-deps chromium
+      # Lint, types, build, node:test, Playwright + axe against the fixture API, audit. No PostgreSQL.
       - run: bash scripts/verify.sh
-      - run: npm run build
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: test-results/
+          retention-days: 7

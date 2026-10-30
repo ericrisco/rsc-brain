@@ -7,129 +7,7 @@ import { after, before, describe, it } from 'node:test'
 import { ROUTES } from '../../src/http/app.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
-
-// Every operation of v1. Adding one means adding it here (and to the notes of the release); removing or
-// changing one is a breaking change: it goes to v2.
-const V1 = [
-  'DELETE /v1/admin/accounts/{id}/totp',
-  'DELETE /v1/admin/apps/{id}',
-  'DELETE /v1/admin/mail',
-  'DELETE /v1/admin/meaning',
-  'DELETE /v1/brains/{slug}',
-  'DELETE /v1/brains/{slug}/members/{account}',
-  'DELETE /v1/brains/{slug}/repos',
-  'DELETE /v1/invitations/{id}',
-  'DELETE /v1/keys/{id}',
-  'DELETE /v1/me/apps/{id}',
-  'DELETE /v1/me/tokens/{id}',
-  'DELETE /v1/me/totp',
-  'GET /v1/admin/accounts',
-  'GET /v1/admin/accounts/{id}/apps',
-  'GET /v1/admin/accounts/{id}/keys',
-  'GET /v1/admin/audit',
-  'GET /v1/admin/audit/export',
-  'GET /v1/admin/brains',
-  'GET /v1/admin/mail',
-  'GET /v1/admin/meaning',
-  'GET /v1/admin/settings',
-  'GET /v1/brains',
-  'GET /v1/brains/{slug}',
-  'GET /v1/brains/{slug}/audit',
-  'GET /v1/brains/{slug}/conflicts',
-  'GET /v1/brains/{slug}/context',
-  'GET /v1/brains/{slug}/entries',
-  'GET /v1/brains/{slug}/events',
-  'GET /v1/brains/{slug}/forgotten',
-  'GET /v1/brains/{slug}/members',
-  'GET /v1/brains/{slug}/neighbours',
-  'GET /v1/brains/{slug}/pages/{address}',
-  'GET /v1/brains/{slug}/proposals',
-  'GET /v1/brains/{slug}/repos',
-  'GET /v1/brains/{slug}/sessions',
-  'GET /v1/brains/{slug}/to-review',
-  'GET /v1/brains/{slug}/trail',
-  'GET /v1/brains/{slug}/uncompiled',
-  'GET /v1/brains/{slug}/wiki/compile',
-  'GET /v1/brains/{slug}/wiki/decisions',
-  'GET /v1/brains/{slug}/wiki/guide',
-  'GET /v1/brains/{slug}/wiki/health',
-  'GET /v1/brains/{slug}/wiki/log',
-  'GET /v1/brains/{slug}/wiki/map',
-  'GET /v1/connect',
-  'GET /v1/entries/{id}',
-  'GET /v1/entries/{id}/around',
-  'GET /v1/health',
-  'GET /v1/invitations',
-  'GET /v1/me',
-  'GET /v1/me/apps',
-  'GET /v1/me/notices',
-  'GET /v1/me/sessions',
-  'GET /v1/me/tokens',
-  'GET /v1/openapi.json',
-  'GET /v1/proposals/{id}',
-  'GET /v1/proposals/{id}/review',
-  'GET /v1/search',
-  'GET /v1/setup',
-  'PATCH /v1/admin/accounts/{id}',
-  'PATCH /v1/brains/{slug}/pages/{address}',
-  'PATCH /v1/entries/{id}',
-  'POST /v1/admin/accounts/{id}/remove',
-  'POST /v1/admin/accounts/{id}/reset-link',
-  'POST /v1/admin/accounts/{id}/restore',
-  'POST /v1/admin/brains/{slug}/curator',
-  'POST /v1/admin/brains/{slug}/join',
-  'POST /v1/admin/mail/test',
-  'POST /v1/admin/services',
-  'POST /v1/admin/services/{id}/keys',
-  'POST /v1/auth/login',
-  'POST /v1/auth/logout',
-  'POST /v1/auth/logout-everywhere',
-  'POST /v1/auth/reset',
-  'POST /v1/auth/reset/confirm',
-  'POST /v1/brains',
-  'POST /v1/brains/{slug}/archive',
-  'POST /v1/brains/{slug}/corrections/relay',
-  'POST /v1/brains/{slug}/entries',
-  'POST /v1/brains/{slug}/members',
-  'POST /v1/brains/{slug}/proposals',
-  'POST /v1/brains/{slug}/relations',
-  'POST /v1/brains/{slug}/repos',
-  'POST /v1/brains/{slug}/sessions',
-  'POST /v1/brains/{slug}/topics/suggest',
-  'POST /v1/brains/{slug}/unarchive',
-  'POST /v1/brains/{slug}/wiki/changes',
-  'POST /v1/brains/{slug}/wiki/maintenance-asked',
-  'POST /v1/brains/{slug}/wiki/purge',
-  'POST /v1/entries/{id}/forget',
-  'POST /v1/entries/{id}/pin',
-  'POST /v1/entries/{id}/purge',
-  'POST /v1/entries/{id}/recover',
-  'POST /v1/entries/{id}/schedule',
-  'POST /v1/entries/{id}/unpin',
-  'POST /v1/invitations',
-  'POST /v1/invitations/accept',
-  'POST /v1/invitations/look',
-  'POST /v1/invitations/{id}/resend',
-  'POST /v1/keys/short',
-  'POST /v1/me/notices/read',
-  'POST /v1/me/tokens',
-  'POST /v1/me/totp',
-  'POST /v1/me/totp/confirm',
-  'POST /v1/proposals/{id}/approve',
-  'POST /v1/proposals/{id}/purge',
-  'POST /v1/proposals/{id}/return',
-  'POST /v1/proposals/{id}/withdraw',
-  'POST /v1/resolve',
-  'POST /v1/sessions/{id}/end',
-  'POST /v1/sessions/{id}/summary',
-  'POST /v1/setup',
-  'PUT /v1/admin/mail',
-  'PUT /v1/admin/meaning',
-  'PUT /v1/admin/settings',
-  'PUT /v1/brains/{slug}/members/{account}',
-  'PUT /v1/brains/{slug}/notify',
-  'PUT /v1/brains/{slug}/wiki/settings',
-]
+import { V1 } from './v1.ts'
 
 // The fields a program relies on in the main answers. `[]` marks the items of a list.
 const SHAPES: Record<string, Record<string, string[]>> = {
@@ -171,6 +49,9 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   },
   'GET /v1/me/sessions': {
     'items[]': ['id', 'brainId', 'brain', 'status', 'openedAt', 'lastActivityAt'],
+  },
+  'GET /v1/branding': {
+    '': ['name', 'logo', 'setupRequired'],
   },
 }
 
@@ -249,6 +130,8 @@ describe('the v1 contract', { skip: skipPg }, () => {
     const open = (p: string, m: string) => opOf(paths, p, m).security
     assert.deepEqual(open('/v1/openapi.json', 'get'), [])
     assert.deepEqual(open('/v1/auth/login', 'post'), [])
+    assert.deepEqual(open('/v1/branding', 'get'), [])
+    assert.deepEqual(open('/v1/branding/logo', 'get'), [])
     assert.equal(open('/v1/brains', 'get'), undefined)
     assert.deepEqual(doc.security, [{ bearer: [] }])
   })
@@ -276,6 +159,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       'GET /v1/brains/{slug}/trail': (await w.call(eric.key, 'GET', '/v1/brains/contract/trail?ref=x')).body,
       'GET /v1/connect': (await w.call(eric.key, 'GET', '/v1/connect')).body,
       'GET /v1/me/sessions': (await w.call(eric.key, 'GET', '/v1/me/sessions')).body,
+      'GET /v1/branding': (await w.call(null, 'GET', '/v1/branding')).body,
     }
     const paths = doc.paths as Record<string, Record<string, Json>>
     for (const [op, shape] of Object.entries(SHAPES)) {

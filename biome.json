@@ -1,7 +1,15 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
   "files": {
-    "includes": ["**", "!dist", "!node_modules", "!.pg-test", "!**/*.md"]
+    "includes": [
+      "**",
+      "!dist",
+      "!node_modules",
+      "!.pg-test",
+      "!**/*.md",
+      "!test-results",
+      "!playwright-report"
+    ]
   },
   "formatter": {
     "indentStyle": "space",
@@ -27,6 +35,19 @@
         "noFloatingPromises": "error",
         "noMisusedPromises": "error"
       }
+    },
+    "domains": {
+      "playwright": "none"
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["test/browser/**", "test/e2e/**"],
+      "linter": {
+        "domains": {
+          "playwright": "recommended"
+        }
+      }
+    }
+  ]
 }
