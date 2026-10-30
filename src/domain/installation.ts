@@ -1,9 +1,11 @@
 // The installation (spec B4 «Asistente de primera vez»): its name and public address, whether the
 // first-time setup is done, and the epoch every key belongs to. Until the setup is done every request
 // leads to it; once done, the setup is no longer reachable.
+
 import { checkPassword, hashPassword } from '../auth/password.ts'
 import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
+import { SAFE_URL } from '../core/urls.ts'
 import type { Db } from '../db/db.ts'
 import { createAccount } from './accounts.ts'
 import { audit } from './audit.ts'
@@ -85,6 +87,14 @@ function publicUrlOf(v: unknown): string {
   }
   // Checked after normalising: percent-encoding can make the stored form longer than what was typed.
   const out = u.toString().replace(/\/+$/, '')
+  // The address goes into commands people paste into a terminal (spec B5 «kit de conexión»): only
+  // characters no shell reads as anything but text.
+  if (!SAFE_URL.test(out)) {
+    throw invalid(
+      '"publicUrl" may only hold letters, digits and . - _ ~ / : in its host and path.',
+      'Give an address such as https://brain.example.com or https://example.com/brain.',
+    )
+  }
   if (out.length > 300) {
     throw invalid(
       '"publicUrl" is longer than 300 characters.',

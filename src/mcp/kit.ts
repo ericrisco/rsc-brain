@@ -5,6 +5,7 @@
 //
 // Config files read the token from the environment (RSC_BRAIN_TOKEN), so a file shared in a
 // repository never holds it; only the line that sets the variable carries the placeholder.
+import { SAFE_URL } from '../core/urls.ts'
 
 export const TOKEN_ENV = 'RSC_BRAIN_TOKEN'
 export const TOKEN_PLACEHOLDER = '<paste-your-token>'
@@ -71,6 +72,9 @@ const INSTRUCTIONS_TEXT = (brain: string | null) =>
   ].join('\n')
 
 export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: AgentId }): Kit {
+  // Never a character a shell would read: the address goes into commands people paste and into hooks
+  // that run on every session. The installation refuses such an address; this is the second lock.
+  if (!SAFE_URL.test(o.mcpUrl)) throw new Error('The public address holds characters a shell would read.')
   const url = o.mcpUrl
   const check = `Ask your agent: "What does this brain know about X?"${
     o.brain ? ` It should answer from the brain "${o.brain}".` : ''
@@ -91,7 +95,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
     // Claude Code. Sources (2026-10-30): https://code.claude.com/docs/en/mcp ("claude mcp add --transport
     // http <name> <url>", sign-in with /mcp or "claude mcp login"; .mcp.json {"type":"http","url",
     // "headers"} with ${VAR} expansion) and https://code.claude.com/docs/en/hooks (SessionStart with
-    // matchers startup|resume|clear|compact; Stop takes no matcher; {"type":"command","command"}).
+    // matchers startup|resume|clear|compact|fork; Stop takes no matcher; {"type":"command","command"}).
     {
       id: 'claude-code',
       name: 'Claude Code',
@@ -134,7 +138,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
               hooks: {
                 SessionStart: [
                   {
-                    matcher: 'startup|resume|clear|compact',
+                    matcher: 'startup|resume|clear|compact|fork',
                     hooks: [
                       {
                         type: 'command',

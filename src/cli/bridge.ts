@@ -17,7 +17,9 @@ const errorLine = (id: unknown, code: number, message: string) =>
 function reason(err: unknown): string {
   const e = err as { name?: string; cause?: { code?: string; message?: string }; message?: string }
   if (e?.name === 'TimeoutError') return `no answer in ${REQUEST_TIMEOUT_MS / 1000} seconds`
-  return e?.cause?.code ?? e?.cause?.message ?? e?.message ?? String(err)
+  // Only a network code: the message of a request that could not be built can quote its headers.
+  if (e?.cause?.code) return e.cause.code
+  return e?.name === 'TypeError' ? 'the request could not be sent' : 'network error'
 }
 
 export async function runBridge(o: {
@@ -104,7 +106,12 @@ export async function runBridge(o: {
     }
     const m = msg as Json
     // An answer from the client to the server: the server asks nothing, so there is nothing to carry.
-    if (typeof m.method !== 'string') continue
+    if (typeof m.method !== 'string') {
+      if ('id' in m && !('result' in m) && !('error' in m)) {
+        o.out(errorLine(m.id, -32600, 'A request needs a "method", as text.'))
+      }
+      continue
+    }
     const p: Promise<void> = forward(m)
       .catch((err: unknown) => {
         if ('id' in m) o.out(errorLine(m.id, -32603, `The bridge failed: ${reason(err)}.`))

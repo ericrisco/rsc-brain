@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict'
 import { type ChildProcessWithoutNullStreams, execFileSync, spawn } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import http from 'node:http'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -415,6 +416,84 @@ describe('the connection kit', { skip: skipPg }, () => {
       assert.match(plain.stderr, /https/)
     })
 
+    it('a token with a line break inside is refused and never printed', async () => {
+      const r = await run(['bridge', '--url', mcpUrl], {
+        env: { RSC_BRAIN_TOKEN: 'rsc_live_SECRETPART1\nrsc_live_SECRETPART2' },
+      })
+      assert.equal(r.code, 2)
+      assert.match(r.stderr, /line break/)
+      assert.ok(!`${r.stdout}${r.stderr}`.includes('SECRETPART'), 'the token was printed')
+    })
+
+    it('against a stub server: a large answer survives the end of input; the agreed version travels; a bad method is answered', async () => {
+      const seen: Array<{ method: string; version: string | undefined }> = []
+      const big = 'x'.repeat(200_000)
+      const server = http.createServer((req, res) => {
+        let body = ''
+        req.on('data', (c) => {
+          body += c
+        })
+        req.on('end', () => {
+          const m = JSON.parse(body) as { id: unknown; method: string }
+          seen.push({ method: m.method, version: req.headers['mcp-protocol-version'] as string | undefined })
+          const result =
+            m.method === 'initialize'
+              ? {
+                  protocolVersion: '2025-11-25',
+                  capabilities: {},
+                  serverInfo: { name: 'stub', version: '1' },
+                }
+              : { content: [{ type: 'text', text: big }] }
+          res.writeHead(200, { 'content-type': 'application/json' })
+          res.end(JSON.stringify({ jsonrpc: '2.0', id: m.id, result }))
+        })
+      })
+      await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+      const { port } = server.address() as { port: number }
+      try {
+        const lines = [
+          { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-11-25' } },
+          { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'mem_get', arguments: {} } },
+          { jsonrpc: '2.0', id: 3, method: 42 },
+        ]
+          .map((x) => JSON.stringify(x))
+          .join('\n')
+        const r = await run(['bridge', '--url', `http://127.0.0.1:${port}/mcp`], {
+          stdin: `${lines}\n`,
+          env: { RSC_BRAIN_TOKEN: 'stub-token' },
+        })
+        const out = r.stdout
+          .trim()
+          .split('\n')
+          .map((l) => JSON.parse(l) as { id: number; result?: Json; error?: { code: number } })
+        const answer = out.find((x) => x.id === 2)
+        assert.equal(
+          ((answer?.result?.content as Array<{ text: string }>)[0] as { text: string }).text.length,
+          200_000,
+        )
+        assert.equal(out.find((x) => x.id === 3)?.error?.code, -32600)
+        // A client that waits for initialize, as clients do: later requests carry the agreed version.
+        seen.length = 0
+        const b = new Bridge(['--url', `http://127.0.0.1:${port}/mcp`], { RSC_BRAIN_TOKEN: 'stub-token' })
+        try {
+          await b.request(1, 'initialize', { protocolVersion: '2025-11-25' })
+          await b.request(2, 'tools/call', { name: 'mem_get', arguments: {} })
+          assert.deepEqual(
+            seen.map((x) => [x.method, x.version]),
+            [
+              ['initialize', undefined],
+              ['tools/call', '2025-11-25'],
+            ],
+          )
+          await b.close()
+        } finally {
+          b.p.kill()
+        }
+      } finally {
+        server.close()
+      }
+    })
+
     it('reads the token from --token-file', async () => {
       const token = await w.token(eric.id)
       const file = join(stateDir, 'token')
@@ -494,21 +573,26 @@ describe('the connection kit', { skip: skipPg }, () => {
     })
 
     it('stop: a session without summary blocks once, asking for mem_session_summary', async () => {
-      const token = await w.token(eric.id)
+      const p = await w.person('Stopper')
+      await w.member('alpha', p.id, 'contributor')
+      const token = await w.token(p.id)
       const opened = await w.call(token, 'POST', '/v1/brains/alpha/sessions', { purpose: 'work' })
       const sid = (opened.body.session as Json).id as string
+      // The agent is already continuing because of a stop hook: let it stop, and keep the ask for later.
+      const active = await stop({ RSC_BRAIN_TOKEN: token }, { session_id: 'cc-1', stop_hook_active: true })
+      assert.deepEqual([active.code, active.stdout], [0, ''])
       const r = await stop({ RSC_BRAIN_TOKEN: token }, { session_id: 'cc-1', stop_hook_active: false })
       assert.equal(r.code, 0, r.stderr)
       const out = JSON.parse(r.stdout) as { decision: string; reason: string }
       assert.equal(out.decision, 'block')
       assert.match(out.reason, /mem_session_summary/)
       assert.ok(out.reason.includes(sid), 'names the session to close')
-      // The agent is already continuing because of this hook: let it stop.
-      const active = await stop({ RSC_BRAIN_TOKEN: token }, { session_id: 'cc-1', stop_hook_active: true })
-      assert.deepEqual([active.code, active.stdout], [0, ''])
       // Asked once in this Claude Code session; the next stop lets it go.
       const again = await stop({ RSC_BRAIN_TOKEN: token }, { session_id: 'cc-1', stop_hook_active: false })
       assert.deepEqual([again.code, again.stdout], [0, ''])
+      // Another Claude Code session is asked on its own.
+      const other = await stop({ RSC_BRAIN_TOKEN: token }, { session_id: 'cc-9', stop_hook_active: false })
+      assert.equal((JSON.parse(other.stdout) as { decision: string }).decision, 'block')
       // With the summary written, nothing is asked, even in a new Claude Code session.
       const summary = await w.call(token, 'POST', `/v1/sessions/${sid}/summary`, {
         content: 'Goal: x. Done: y.',
@@ -516,6 +600,17 @@ describe('the connection kit', { skip: skipPg }, () => {
       assert.equal(summary.status, 201, summary.text)
       const done = await stop({ RSC_BRAIN_TOKEN: token }, { session_id: 'cc-2', stop_hook_active: false })
       assert.deepEqual([done.code, done.stdout], [0, ''])
+    })
+
+    it('stop: the agent writes with its own key (the standard sign-in) and the reminder runs with a token', async () => {
+      const p = await w.person('Signedin')
+      await w.member('alpha', p.id, 'contributor')
+      // The agent's key is not the hook's: here, the person's main key stands for the connection key.
+      const opened = await w.call(p.key, 'POST', '/v1/brains/alpha/sessions', { purpose: 'agent work' })
+      const sid = (opened.body.session as Json).id as string
+      const hookToken = await w.token(p.id)
+      const r = await stop({ RSC_BRAIN_TOKEN: hookToken }, { session_id: 'cc-s', stop_hook_active: false })
+      assert.ok(r.stdout.includes(sid), r.stdout || r.stderr)
     })
 
     it('stop: what was saved without opening a session (the day session) also asks for a summary', async () => {
@@ -550,20 +645,48 @@ describe('the connection kit', { skip: skipPg }, () => {
   })
 
   describe('GET /v1/me/sessions', () => {
-    it('lists the open sessions of the asking key only, with their brain', async () => {
-      const mine = await w.token(eric.id)
-      const other = await w.token(eric.id)
-      const s = await w.call(mine, 'POST', '/v1/brains/alpha/sessions', { purpose: 'mine' })
-      await w.call(other, 'POST', '/v1/brains/alpha/sessions', { purpose: 'other' })
+    it("a person's key lists that person's open sessions, in brains it can see; a service key only its own", async () => {
+      const p = await w.person('Lister')
+      await w.member('alpha', p.id, 'contributor')
+      await w.call(eric.key, 'POST', '/v1/brains', { slug: 'beta-kit' })
+      await w.member('beta-kit', p.id, 'contributor')
+      const mine = await w.token(p.id)
+      const other = await w.token(p.id)
+      const s1 = await w.call(mine, 'POST', '/v1/brains/alpha/sessions', { purpose: 'mine' })
+      const s2 = await w.call(other, 'POST', '/v1/brains/beta-kit/sessions', { purpose: 'other key' })
       const closed = await w.call(mine, 'POST', '/v1/brains/alpha/sessions', { purpose: 'closed' })
       await w.call(mine, 'POST', `/v1/sessions/${(closed.body.session as Json).id}/end`)
+      await w.call(eric.key, 'POST', '/v1/brains/alpha/sessions', { purpose: 'someone else' })
       const r = await w.call(mine, 'GET', '/v1/me/sessions')
       assert.equal(r.status, 200, r.text)
-      const items = r.body.items as Json[]
+      const ids = (r.body.items as Json[]).map((x) => [x.id, x.brain, x.status])
       assert.deepEqual(
-        items.map((x) => [x.id, x.brain, x.status]),
-        [[(s.body.session as Json).id, 'alpha', 'open']],
+        ids.sort(),
+        [
+          [(s1.body.session as Json).id, 'alpha', 'open'],
+          [(s2.body.session as Json).id, 'beta-kit', 'open'],
+        ].sort(),
       )
+      // A token for alpha only does not hear of beta.
+      const narrow = await w.token(p.id, {
+        brainIds: [String((await w.db.one('SELECT id FROM brains WHERE slug = $1', ['alpha']))?.id)],
+      })
+      const n = await w.call(narrow, 'GET', '/v1/me/sessions')
+      assert.deepEqual(
+        (n.body.items as Json[]).map((x) => x.brain),
+        ['alpha'],
+      )
+      // A service runs agents for several people: its key sees only what it opened itself.
+      const svc = await w.service('ListerSvc')
+      await w.member('alpha', svc.id, 'contributor')
+      const short = await w.call(svc.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'alpha',
+        ref: 'r',
+        ttlMinutes: 10,
+      })
+      const shortKey = String((short.body.key as { secret: string }).secret)
+      await w.call(shortKey, 'POST', '/v1/brains/alpha/sessions', { purpose: 'agent' })
+      assert.deepEqual((await w.call(svc.key, 'GET', '/v1/me/sessions')).body.items, [])
     })
   })
 })

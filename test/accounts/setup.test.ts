@@ -36,6 +36,21 @@ describe('first-time setup', { skip: skipPg }, () => {
     )
   })
 
+  it('an address with characters a shell would read is refused: it goes into commands people paste', async () => {
+    for (const publicUrl of [
+      'https://brain.example.com/x;touch$IFS$9pwned;',
+      'https://brain.example.com/a|b',
+      "https://brain.example.com/it's",
+    ]) {
+      const r = await w.raw('POST', '/v1/setup', {
+        headers: WEB,
+        body: { name: 'Risco Brain', publicUrl, admin },
+      })
+      assert.deepEqual([r.status, r.body.error?.code], [400, 'invalid_request'], publicUrl)
+    }
+    assert.equal((await w.raw('GET', '/v1/setup')).body.done, false)
+  })
+
   it('CA2: a public address without encryption is warned about; a password over it is refused', async () => {
     const warn = await w.raw('GET', '/v1/setup?publicUrl=http%3A%2F%2Fbrain.example.com')
     assert.match(String(warn.body.warning), /not encrypted.*HTTPS.*local address.*tunnel/s)

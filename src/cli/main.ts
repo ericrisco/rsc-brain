@@ -335,7 +335,9 @@ async function hookCommand(which: string | undefined, args: string[]): Promise<n
 }
 
 main(process.argv.slice(2)).then(
-  (code) => process.exit(code),
+  // Exit once stdout is written out: a pipe on macOS takes it asynchronously, and process.exit would
+  // cut a large answer of the bridge.
+  (code) => process.stdout.write('', () => process.exit(code)),
   (err: unknown) => {
     const msg =
       err instanceof AppError

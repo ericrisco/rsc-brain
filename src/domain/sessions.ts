@@ -216,15 +216,19 @@ export async function endSession(ctx: Ctx, id: string): Promise<Session> {
 
 export { owns as ownsSession }
 
-// The open sessions of the asking key, with the brain each is in (spec B5, the reminder at the end of
-// an agent's session: is there work without a summary?). Only brains the key can still see count.
+// The open sessions behind the asking key, with the brain each is in (spec B5, the reminder at the end
+// of an agent's session: is there work without a summary?). A person's key sees all of that person's
+// open sessions: an agent connected with the standard sign-in writes with its own connection key, and
+// the reminder runs with a token. A service's key sees only its own (its agents work for others). Only
+// brains the key can still see count.
 export async function openSessionsOfKey(ctx: Ctx): Promise<Array<Session & { brain: string }>> {
   await closeIdle(ctx.db, ctx.clock())
+  const person = ctx.who.kind === 'person'
   const rows = await ctx.db.query(
     `SELECT s.*, b.slug FROM sessions s JOIN brains b ON b.id = s.brain_id
-      WHERE s.credential_id = $1 AND s.status = 'open'
+      WHERE ${person ? 's.account_id = $1' : 's.credential_id = $1'} AND s.status = 'open'
       ORDER BY s.opened_at DESC, s.id DESC LIMIT 50`,
-    [ctx.who.credential.id],
+    [person ? ctx.who.accountId : ctx.who.credential.id],
   )
   const out: Array<Session & { brain: string }> = []
   for (const r of rows) {

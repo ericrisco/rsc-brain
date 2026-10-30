@@ -45,7 +45,7 @@ const expand = (p: string) => (p === '~' || p.startsWith('~/') ? join(homedir(),
 // cannot be read is an error; no token at all is null.
 export function readToken(file: string | undefined): string | null {
   const env = process.env[TOKEN_ENV]?.trim()
-  if (env) return env
+  if (env) return checked(env)
   const path = expand(file ?? TOKEN_FILE)
   if (!file && !existsSync(path)) return null
   let t: string
@@ -54,7 +54,18 @@ export function readToken(file: string | undefined): string | null {
   } catch {
     throw new UsageError(`Cannot read the token file ${path}. Check that it exists and that you can read it.`)
   }
-  return t || null
+  return checked(t) || null
+}
+
+// A token is one word: a space or a line break inside would end up in an error message, and from
+// there in the agent's context.
+function checked(t: string): string {
+  if (/[\s\x00-\x1f\x7f]/.test(t)) {
+    throw new UsageError(
+      'The token has a space or a line break inside. Copy it again from the Brain web, as one line.',
+    )
+  }
+  return t
 }
 
 export const NO_TOKEN = `No token. Set ${TOKEN_ENV}, or keep it in ${TOKEN_FILE} (or pass --token-file). Create a token in the Brain web, under your profile.`

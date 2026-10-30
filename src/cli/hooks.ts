@@ -15,7 +15,7 @@
 // so the agent's work is never held up by the brain.
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -62,7 +62,8 @@ async function originOf(cwd: string): Promise<string | null> {
     const { stdout } = await promisify(execFile)('git', ['-C', cwd, 'remote', 'get-url', 'origin'], {
       timeout: 3_000,
     })
-    return stdout.trim() || null
+    // Without a user or password: some remotes carry a token in the address.
+    return stdout.trim().replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, '$1') || null
   } catch {
     return null
   }
@@ -86,12 +87,13 @@ export async function sessionStart(o: {
   let note: string | null = null
   const origin = await originOf(cwd)
   if (origin) {
-    const r = await api(base, o.token, 'POST', '/v1/resolve', { repos: [origin] })
+    // An origin Brain cannot match (a folder, say) is the same as none: --brain still applies.
+    const r = await api(base, o.token, 'POST', '/v1/resolve', { repos: [origin] }).catch(() => ({}) as Json)
     const brain = r.brain as Json | null
     if (brain && typeof brain.slug === 'string') {
       slug = brain.slug
       linked = true
-    } else if (!o.brain) {
+    } else if (!o.brain && typeof r.message === 'string') {
       const options = ((r.brains ?? r.candidates ?? []) as Json[]).map((b) => `"${String(b.slug)}"`)
       note = `RSC Brain: ${String(r.message ?? '')} ${String(r.howToProceed ?? '')}${
         options.length ? ` Brains you can use: ${options.join(', ')}.` : ''
@@ -148,12 +150,17 @@ export async function stop(o: {
   if (unasked.length === 0) return
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 })
-    for (const s of unasked) writeFileSync(mark(s.id), '', { mode: 0o600 })
+    // A folder another user made first (a shared /tmp), or a link, is not ours to write in: then the
+    // reminder may repeat, and stop_hook_active still keeps it from looping.
+    const st = lstatSync(dir)
+    const mine = st.isDirectory() && !st.isSymbolicLink() && (!process.getuid || st.uid === process.getuid())
+    if (mine) for (const s of unasked) writeFileSync(mark(s.id), '', { mode: 0o600 })
   } catch {}
   const list = unasked.map((s) => `session "${String(s.id)}" in the brain "${String(s.brain)}"`).join('; ')
   const reason =
     `Before you finish: your RSC Brain work has no summary yet (${list}). ` +
     'Call mem_session_summary with that session and a short summary: goal, done, discovered, decided, pending. ' +
-    'If nothing in it is worth keeping, call mem_session_end instead.'
+    'If nothing in it is worth keeping, call mem_session_end instead. ' +
+    'If the work is not finished, say so, carry on, and summarise when it is: this is asked once.'
   o.out(`${JSON.stringify({ decision: 'block', reason })}\n`)
 }
