@@ -101,15 +101,26 @@ const kept = (words: Segment[], a: string, b: string) =>
   words.filter((w) => w.kind === 'same').reduce((n, w) => n + w.text.trim().length, 0) /
   Math.max(1, a.trim().length, b.trim().length)
 
+// The lines of two texts compared, or undefined past `end` (a time of performance.now()): one deadline can
+// be shared by every difference a screen works out, so together they stay under it.
+type LineParts = ReturnType<typeof diffArrays<string>>
+function lineParts(A: string[], B: string[], end: number): LineParts | undefined {
+  const ms = Math.min(DIFF_MS, end - performance.now())
+  return ms > 1 ? diffArrays(A, B, { timeout: ms, maxEditLength: DIFF_EDITS }) : undefined
+}
+
 // The body's differences by line: a line with a few words changed shows those words; a line mostly
 // rewritten shows the old line and the new one whole (alternating words would be unreadable). Bounded in
 // time like wordDiff.
 export function bodyDiff(a: string, b: string): DiffLine[] {
   const end = performance.now() + DIFF_MS * 1.5
-  const left = () => Math.max(0, end - performance.now())
   const A = a.split('\n')
   const B = b.split('\n')
-  const parts = diffArrays(A, B, { timeout: DIFF_MS, maxEditLength: DIFF_EDITS })
+  return linesOf(A, B, lineParts(A, B, end), end)
+}
+
+function linesOf(A: string[], B: string[], parts: LineParts | undefined, end: number): DiffLine[] {
+  const left = () => Math.max(0, end - performance.now())
   if (!parts) {
     return [
       ...A.map((text) => ({ kind: 'removed' as const, text })),
@@ -149,8 +160,7 @@ export function bodyDiff(a: string, b: string): DiffLine[] {
 
 // The changes from `base` to `other`, as hunks of base lines replaced by other lines.
 type Hunk = { start: number; end: number; lines: string[] }
-function hunksOf(base: string[], other: string[]): Hunk[] | null {
-  const parts = diffArrays(base, other, { timeout: DIFF_MS, maxEditLength: DIFF_EDITS })
+function hunksOf(parts: LineParts | undefined): Hunk[] | null {
   if (!parts) return null
   const out: Hunk[] = []
   let at = 0
@@ -182,9 +192,19 @@ export function merge3(
   mine: string,
   theirs: string,
 ): { ok: true; text: string } | { ok: false } {
+  const end = performance.now() + DIFF_MS * 1.5
   const B = base.split('\n')
-  const m = hunksOf(B, mine.split('\n'))
-  const t = hunksOf(B, theirs.split('\n'))
+  const t = lineParts(B, theirs.split('\n'), end)
+  return mergeOf(B, lineParts(B, mine.split('\n'), end), t)
+}
+
+function mergeOf(
+  B: string[],
+  mineParts: LineParts | undefined,
+  theirParts: LineParts | undefined,
+): { ok: true; text: string } | { ok: false } {
+  const m = hunksOf(mineParts)
+  const t = hunksOf(theirParts)
   if (!m || !t) return { ok: false }
   const out: string[] = []
   let pos = 0
@@ -212,6 +232,28 @@ export function merge3(
   }
   out.push(...B.slice(pos))
   return { ok: true, text: out.join('\n') }
+}
+
+// Everything a conflict on the body works out (CA6, review of PR19): what they changed, by line, and the
+// merge of both sides, under one deadline for all of it. Their side is compared once and serves both;
+// past the deadline their text is shown whole and the merge is not offered.
+const CONFLICT_MS = 120
+export const CONFLICT_MEASURE = 'wiki: conflict worked out'
+export function conflictBody(
+  base: string,
+  mine: string,
+  theirs: string,
+): { merged: { ok: true; text: string } | { ok: false }; theirs: DiffLine[] } {
+  const start = performance.now()
+  const end = start + CONFLICT_MS
+  const B = base.split('\n')
+  const T = theirs.split('\n')
+  const t = lineParts(B, T, end)
+  const merged = mergeOf(B, t && lineParts(B, mine.split('\n'), end), t)
+  const out = { merged, theirs: linesOf(B, T, t, end) }
+  // Seen in the browser's performance tools: how long it took, and how often it ran.
+  performance.measure(CONFLICT_MEASURE, { start, end: performance.now() })
+  return out
 }
 
 // A list merged by item: theirs, without what I removed (unless they removed it too, or it is gone
@@ -348,14 +390,15 @@ export const parseTags = (s: string) => [
 
 // An edit's draft is kept per person, brain and page, under a key made from them (a short hash), so a
 // name such as "claude-code" or "infra/token-rotation" never reads like a secret to the draft store, and
-// another person signing in on the same tab never meets it.
+// another person signing in on the same tab never meets it. The hash is in hex: its letters (a to f)
+// cannot spell a word the store refuses, as base 36 could («code»).
 export function draftKeyOf(account: string, slug: string, page: string): string {
   let h = 0x811c9dc5
   for (const ch of `${account}\u0000${slug}\u0000${page}`) {
     h ^= ch.codePointAt(0) ?? 0
     h = Math.imul(h, 0x01000193) >>> 0
   }
-  return `wiki-edit.${h.toString(36)}`
+  return `wiki-edit.${h.toString(16).padStart(8, '0')}`
 }
 
 // A link or a status changed in the editor makes a new revision of the page without touching its

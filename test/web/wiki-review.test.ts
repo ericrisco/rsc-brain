@@ -5,12 +5,14 @@
 // grouped; what each revision was; search snippets as plain text.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { draft } from '../../web/src/api/draft.ts'
 import { plainText, renderMarkdown } from '../../web/src/lib/markdown.ts'
 import {
   bodyDiff,
   changeLabel,
   completeAt,
   completionAt,
+  conflictBody,
   draftKeyOf,
   filterMap,
   groupReaders,
@@ -18,6 +20,15 @@ import {
   mergeList,
   wordDiff,
 } from '../../web/src/lib/wiki.ts'
+
+// The work a call costs this process, in ms of CPU: other test files running at the same time slow the
+// clock, not the work, and the budget is about the work a browser tab would do.
+function cpuMs<T>(f: () => T): { value: T; ms: number } {
+  const c = process.cpuUsage()
+  const value = f()
+  const d = process.cpuUsage(c)
+  return { value, ms: (d.user + d.system) / 1000 }
+}
 
 describe('a draft of an edit', () => {
   it('is kept per person, brain and page', () => {
@@ -27,6 +38,19 @@ describe('a draft of an edit', () => {
     assert.notEqual(k, draftKeyOf('acc_ana', 'growth', 'pg_one'))
     assert.notEqual(k, draftKeyOf('acc_eric', 'support', 'pg_one'))
     assert.notEqual(k, draftKeyOf('acc_eric', 'growth', 'pg_two'))
+  })
+  it('never spells a word the draft store refuses (a hash that read «code» broke the editor)', () => {
+    const store = new Map<string, string>()
+    const mem = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    }
+    assert.doesNotThrow(() => draft(draftKeyOf('acc_eric', 'growth', 'pg_nsnz'), mem))
+    for (let i = 0; i < 200_000; i++) {
+      const k = draftKeyOf('acc_eric', 'growth', `pg_${i.toString(36)}`)
+      assert.doesNotMatch(k, /password|code|token|secret/i, `pg_${i.toString(36)}`)
+    }
   })
 })
 
@@ -42,6 +66,15 @@ describe('saving over a newer revision', () => {
   })
   it('the same line changed two ways does not merge', () => {
     assert.deepEqual(merge3('a\nb\nc', 'a\nmine\nc', 'a\ntheirs\nc'), { ok: false })
+  })
+  it('an insertion where the other side replaced lines does not merge, whichever side did which', () => {
+    // Mine inserts X before 2; theirs replaces 2 and 3 with Y: not 1,Y,X,2,3,4.
+    assert.deepEqual(merge3('1\n2\n3\n4', '1\nX\n2\n3\n4', '1\nY\n4'), { ok: false })
+    assert.deepEqual(merge3('1\n2\n3\n4', '1\nY\n4', '1\nX\n2\n3\n4'), { ok: false })
+  })
+  it('changes to lines next to each other both stay, whichever side changed the first', () => {
+    assert.deepEqual(merge3('1\n2\n3\n4', '1\nA\n3\n4', '1\n2\nB\n4'), { ok: true, text: '1\nA\nB\n4' })
+    assert.deepEqual(merge3('1\n2\n3\n4', '1\n2\nB\n4', '1\nA\n3\n4'), { ok: true, text: '1\nA\nB\n4' })
   })
   it('the same change made by both is kept once', () => {
     assert.deepEqual(merge3('a\nb', 'a\nB', 'a\nB'), { ok: true, text: 'a\nB' })
@@ -88,16 +121,37 @@ describe('the differences of two revisions', () => {
       Array.from({ length: n }, (_, i) => `${seed}${(i * 7919) % 10007}`).join(' ')
     const a = words(8000, 'a')
     const b = words(8000, 'b')
-    let t = performance.now()
-    const w = wordDiff(a, b)
-    assert.ok(performance.now() - t < 200, `wordDiff took ${performance.now() - t} ms`)
+    const { value: w, ms: wms } = cpuMs(() => wordDiff(a, b))
+    assert.ok(wms < 200, `wordDiff took ${wms.toFixed(0)} ms of CPU`)
     assert.equal(w.map((s) => s.text).join(''), `${a}${b}`)
     const lines = (n: number, seed: string) =>
       Array.from({ length: n }, (_, i) => `${seed} line ${(i * 7919) % 10007} of the text`).join('\n')
-    t = performance.now()
-    const d = bodyDiff(lines(4000, 'old'), lines(4000, 'new'))
-    assert.ok(performance.now() - t < 200, `bodyDiff took ${performance.now() - t} ms`)
+    const { value: d, ms: dms } = cpuMs(() => bodyDiff(lines(4000, 'old'), lines(4000, 'new')))
+    assert.ok(dms < 200, `bodyDiff took ${dms.toFixed(0)} ms of CPU`)
     assert.ok(d.length > 0)
+  })
+  it('a conflict on a long body (both sides rewrote 6000 short lines) is worked out in under 200 ms', () => {
+    let seed = 11
+    const rnd = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff
+      return seed / 0x7fffffff
+    }
+    const text = () =>
+      Array.from({ length: 6000 }, () => ['- a', '- b', '', '- c'][Math.floor(rnd() * 4)]).join('\n')
+    for (let k = 0; k < 3; k++) {
+      const [base, theirs, mine] = [text(), text(), text()]
+      const { value: c, ms: took } = cpuMs(() => conflictBody(base, mine, theirs))
+      assert.ok(took < 200, `the conflict took ${took.toFixed(0)} ms of CPU`)
+      assert.ok(c.theirs.length > 0)
+    }
+  })
+  it('a conflict gives the same merge and differences as each one alone', () => {
+    const base = 'Intro.\nMiddle line here.\nEnd.'
+    const mine = 'Intro!\nMiddle line here.\nEnd.'
+    const theirs = 'Intro.\nMiddle line there.\nEnd.'
+    const c = conflictBody(base, mine, theirs)
+    assert.deepEqual(c.merged, merge3(base, mine, theirs))
+    assert.deepEqual(c.theirs, bodyDiff(base, theirs))
   })
 })
 

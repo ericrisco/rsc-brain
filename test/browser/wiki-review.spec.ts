@@ -262,6 +262,100 @@ test.describe('saving over a newer revision (M4, CA10)', () => {
   })
 })
 
+test.describe('a conflict on a long body (CA6)', () => {
+  test('choosing a version does not work the conflict out again: no click blocks the page', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    let seed = 11
+    const rnd = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff
+      return seed / 0x7fffffff
+    }
+    const text = () =>
+      Array.from({ length: 6000 }, () => ['- a', '- b', '', '- c'][Math.floor(rnd() * 4)]).join('\n')
+    // Typing thousands of lines key by key takes the test runner minutes: the text is put in at once.
+    const put = (v: string) =>
+      body(page).evaluate((el: HTMLTextAreaElement, v) => {
+        el.value = v
+        el.dispatchEvent(new Event('input', { bubbles: true }))
+      }, v)
+    // The page holds 6000 short lines; both sides rewrite all of them.
+    await page.goto(EDIT)
+    await put(text())
+    await page.getByRole('button', { name: 'Save changes' }).click()
+    await expect(said(page, 'Saved as revision 4.')).toBeVisible()
+    await page.goto(EDIT)
+    await put(text())
+    await behind(baseURL as string, s.id, { body: text() })
+    await page.getByRole('button', { name: 'Save changes' }).click()
+    const conflict = page.getByRole('region', { name: /saved revision 5 while you edited/ })
+    await expect(conflict).toBeVisible()
+    // The conflict is worked out once (a performance measure each time), well under 200 ms.
+    const worked = () =>
+      page.evaluate(() => performance.getEntriesByName('wiki: conflict worked out').map((e) => e.duration))
+    await expect.poll(async () => (await worked()).length).toBeGreaterThan(0)
+    const first = await worked()
+    for (const c of ['Keep mine', 'Keep theirs', 'Keep mine', 'Keep theirs']) {
+      await conflict.getByRole('radio', { name: c }).check()
+      await expect(conflict.getByRole('radio', { name: c })).toBeChecked()
+    }
+    const after = await worked()
+    expect(after, 'choosing a version works nothing out again').toEqual(first)
+    for (const ms of after) expect(ms, 'the conflict, in ms').toBeLessThan(200)
+  })
+})
+
+test.describe('a save that is partly refused', () => {
+  test('says what was not saved and why; a second Save sends only what is left', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    // The server keeps the content redacted: what it saved is not what was typed.
+    await page.route('**/v1/brains/growth/**', async (route) => {
+      if (route.request().method() === 'GET') return route.fallback()
+      const r = await route.fetch()
+      const text = (await r.text()).replaceAll('Partial summary.', 'Partial [redacted].')
+      await route.fulfill({ response: r, body: text })
+    })
+    const sent: string[] = []
+    page.on('request', (r) => {
+      if (r.method() !== 'GET' && r.url().includes('/v1/brains/'))
+        sent.push(`${r.method()} ${new URL(r.url()).pathname} ${r.postData() ?? ''}`)
+    })
+    await page.goto(EDIT)
+    await page.getByLabel('Summary').fill('Partial summary.')
+    await page.getByLabel('Status', { exact: true }).selectOption('stale')
+    await page.getByLabel('Address', { exact: true }).fill('audience/intros')
+    await page.getByRole('button', { name: 'Save changes' }).click()
+    const alert = page.getByRole('alert')
+    await expect(alert).toContainText(
+      'The move was not saved: the address "audience/intros" is taken or reserved by another page. Your other changes are saved as revision 5.',
+    )
+    await expect(page.getByText(/nothing was saved/i)).toHaveCount(0)
+    await expect(page.getByText(/Part of it was saved/)).toHaveCount(0)
+    await expect(page.getByLabel('Summary')).toHaveValue('Partial [redacted].')
+    await expect(page.getByLabel('Address', { exact: true })).toHaveValue('audience/intros')
+    expect(sent).toHaveLength(3)
+    sent.length = 0
+    await page.getByLabel('Address', { exact: true }).fill('audience/free-one')
+    await page.getByRole('button', { name: 'Save changes' }).click()
+    await expect(said(page, 'Saved as revision 6.')).toBeVisible()
+    await expect(page).toHaveURL(/\/b\/growth\/pages\/audience\/free-one$/)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toMatch(/^POST \/v1\/brains\/growth\/wiki\/changes /)
+    expect(JSON.parse((sent[0] as string).split(' ').slice(2).join(' '))).toMatchObject({
+      op: 'move',
+      address: 'audience/retention',
+      to: 'audience/free-one',
+    })
+  })
+})
+
 test.describe('the map (M3)', () => {
   test('every page whatever its status, with its status in words; a status filter, all by default', async ({
     page,
@@ -453,6 +547,39 @@ test.describe('the [[ of the body', () => {
     await expect(list.getByRole('option', { name: /product\/monthly-only/ })).toBeVisible()
     await page.waitForTimeout(1000)
     await expect(list.getByRole('option', { name: /zzz\/late/ })).toHaveCount(0)
+  })
+
+  test('keeps the first page chosen when an answer to an older question arrives late', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    let late = () => {}
+    const arrived = new Promise<void>((r) => {
+      late = r
+    })
+    await page.route('**/v1/brains/growth/wiki/pages?q=pro*', async (route) => {
+      if (new URL(route.request().url()).searchParams.get('q') !== 'pro') return route.fallback()
+      await new Promise((r) => setTimeout(r, 900))
+      await route.fulfill({
+        json: { items: [{ address: 'zzz/late', title: 'Late', status: 'current' }], next: null, total: 1 },
+      })
+      late()
+    })
+    await page.goto(EDIT)
+    await body(page).fill('[[pro')
+    await page.waitForTimeout(250)
+    await body(page).fill('[[product/m')
+    const first = page.getByRole('listbox', { name: 'Pages to link' }).getByRole('option').first()
+    await expect(first).toContainText('product/monthly-only')
+    await expect(first).toHaveAttribute('aria-selected', 'true')
+    await arrived
+    await page.waitForTimeout(100)
+    await expect(first).toContainText('product/monthly-only')
+    await expect(first).toHaveAttribute('aria-selected', 'true')
+    await body(page).press('Enter')
+    await expect(body(page)).toHaveValue('[[product/monthly-only]]')
   })
 })
 

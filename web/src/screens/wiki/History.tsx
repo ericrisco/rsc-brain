@@ -6,7 +6,15 @@ import { useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import type { ApiError } from '../../api/client.ts'
 import { api } from '../../api/index.ts'
-import { bodyDiff, changeLabel, pickPair, type Segment, sourceKey, wordDiff } from '../../lib/wiki.ts'
+import {
+  bodyDiff,
+  changeLabel,
+  type DiffLine,
+  pickPair,
+  type Segment,
+  sourceKey,
+  wordDiff,
+} from '../../lib/wiki.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
 import { Dialog } from '../../ui/Dialog.tsx'
@@ -95,11 +103,14 @@ function Words({ segments, as = 'p' }: { segments: Segment[]; as?: 'p' | 'span' 
 }
 
 // The body, line by line: a line mostly rewritten shows old and new whole; a few words changed, those.
-export function BodyDiff({ a, b }: { a: string; b: string }) {
+export const BodyDiff = ({ a, b }: { a: string; b: string }) => <BodyLines lines={bodyDiff(a, b)} />
+
+// Differences worked out already (a conflict works them out once, with the merge).
+export function BodyLines({ lines }: { lines: DiffLine[] }) {
   const w = T.wiki
   return (
     <div class="diff body-diff">
-      {bodyDiff(a, b).map((l, i) =>
+      {lines.map((l, i) =>
         l.kind === 'changed' ? (
           <p key={i} class="diff-line changed">
             <Words segments={l.words} as="span" />
@@ -211,16 +222,17 @@ function Differences({ slug, address, a, b }: { slug: string; address: string; a
           ]),
     ]
   }
+  const shown = d ? parts(d.a, d.b) : null
   return (
     <section class="differences" aria-labelledby={id}>
       <h2 id={id} class="section-title">
         {w.changes(a, b)}
       </h2>
-      {d ? (
-        parts(d.a, d.b).length === 0 ? (
+      {shown ? (
+        shown.length === 0 ? (
           <p class="muted">{w.noChange}</p>
         ) : (
-          parts(d.a, d.b)
+          shown
         )
       ) : r.error.value ? (
         <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />

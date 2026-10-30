@@ -19,11 +19,11 @@ import {
   canRebase,
   completeAt,
   completionAt,
+  conflictBody,
   draftKeyOf,
   type Editable,
   editChanges,
   LINK_KINDS,
-  merge3,
   mergeList,
   PAGE_STATUSES,
   PAGE_TYPES,
@@ -41,7 +41,7 @@ import { Empty, FormAlert } from '../../ui/states.tsx'
 import type { BrainOne } from '../Brain.tsx'
 import { blockedNow, isCurator, pageHref } from './common.tsx'
 import { type Changed, pageChanged, type Reading, wikiChanged } from './data.ts'
-import { BodyDiff, ListDiff } from './History.tsx'
+import { BodyLines, ListDiff } from './History.tsx'
 import { comboOf, EntryList, SuggestList, useEntries, useSuggest } from './Suggest.tsx'
 
 // What the page says after a change made from here, until the person goes elsewhere.
@@ -355,11 +355,18 @@ function Conflict({
   const w = T.wiki
   const ref = useRef<HTMLElement>(null)
   useEffect(() => ref.current?.focus(), [current.page.revision])
-  const theirs = editableOf(current)
+  const theirs = useMemo(() => editableOf(current), [current])
   const mineTags = parseTags(form.tags)
   const value = (x: Base | Form, p: Part) => (p === 'status' ? `${x.status}${x.by ? ` ${x.by}` : ''}` : x[p])
   const parts: Part[] = ['title', 'summary', 'type', 'status', 'address', 'body']
-  const merged = merge3(base.body, form.body, theirs.body)
+  // Worked out once per conflict, under one deadline (CA6): choosing a version never works it out again.
+  const worked = useMemo(
+    () => conflictBody(base.body, form.body, theirs.body),
+    [base.body, form.body, theirs.body],
+  )
+  const merged = worked.merged
+  // Their body's differences, drawn once: a click on a choice does not lay out thousands of lines again.
+  const theirBody = useMemo(() => <BodyLines lines={worked.theirs} />, [worked])
   const clash = parts.filter((p) => {
     const b = value(base, p)
     const m = value(form, p)
@@ -440,22 +447,21 @@ function Conflict({
       : [
           <div key="body" class="diff-part">
             <h4>{w.parts.body}</h4>
-            <BodyDiff a={base.body} b={theirs.body} />
+            {theirBody}
           </div>,
         ]),
   ]
   // What saving now writes over their revision.
-  const after = editableOf(current)
   const outcome = [
     ...(['title', 'summary', 'type', 'status', 'address'] as const)
-      .filter((p) => value(result, p) !== value(after, p))
+      .filter((p) => value(result, p) !== value(theirs, p))
       .map((p) => (
         <div key={p} class="result-part">
           <h4>{w.parts[p]}</h4>
           <p>{shown(p, result)}</p>
         </div>
       )),
-    ...(result.tags !== after.tags.join(', ')
+    ...(result.tags !== theirs.tags.join(', ')
       ? [
           <div key="tags" class="result-part">
             <h4>{w.parts.tags}</h4>
@@ -463,15 +469,15 @@ function Conflict({
           </div>,
         ]
       : []),
-    ...(result.sources.map(sourceKey).join() !== after.sources.map(sourceKey).join()
+    ...(result.sources.map(sourceKey).join() !== theirs.sources.map(sourceKey).join()
       ? [
           <div key="sources" class="result-part">
             <h4>{w.parts.sources}</h4>
-            <ListDiff a={after.sources.map(sourceText)} b={result.sources.map(sourceText)} />
+            <ListDiff a={theirs.sources.map(sourceText)} b={result.sources.map(sourceText)} />
           </div>,
         ]
       : []),
-    ...(result.body !== after.body
+    ...(result.body !== theirs.body
       ? [
           <div key="body" class="result-part">
             <h4>{w.parts.body}</h4>
@@ -591,6 +597,8 @@ function EditForm({ slug, reading }: { slug: string; reading: Reading }) {
   const [preview, setPreview] = useState(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<ApiError | null>(null)
+  // A later step of a save refused after the first ones were saved (kept as one object: it takes focus once).
+  const [refused, setRefused] = useState<{ message: string } | null>(null)
   const [conflict, setConflict] = useState<Reading | null>(null)
   const [gone, setGone] = useState(false)
   const [said, setSaid] = useState<string | null>(null)
@@ -640,11 +648,13 @@ function EditForm({ slug, reading }: { slug: string; reading: Reading }) {
     const status = statusOp(from, to)
     const move = moveTo(from, to)
     setError(null)
+    setRefused(null)
     setSaid(null)
     if (!content && !status && !move) return setSaid(w.nothingChanged)
     setPending(true)
     const why = reason.trim()
     let last: Changed | null = null
+    let doing: 'content' | 'status' | 'move' = 'content'
     const step = async (op: Record<string, unknown>) => {
       last = await api.call<Changed>('wikiChange', {
         path: { slug },
@@ -660,17 +670,34 @@ function EditForm({ slug, reading }: { slug: string; reading: Reading }) {
         })
         if (last.page) pageChanged(slug, last.page)
       }
+      doing = 'status'
       if (status) await step(status)
+      doing = 'move'
       if (move) await step({ op: 'move', address: from.address, to: move })
     } catch (e) {
       const err = e as ApiError
       setPending(false)
       const done = last as Changed | null
-      if (done?.page) {
-        // What was saved stays saved; what is left still differs from it.
+      if (done?.page && doing !== 'content') {
+        // What was saved stays saved, as the server keeps it (it may have redacted it): the form starts
+        // from it, so a second Save sends only the step refused (and the move after a refused status).
         wikiChanged(slug)
-        setBase(editableOf(done.page))
-        setSaid(w.partlySaved(done.revised.at(-1)?.revision ?? now))
+        const saved = editableOf(done.page)
+        setBase(saved)
+        setForm({
+          ...formOf(saved),
+          ...(doing === 'status' ? { status: to.status, by: to.by } : {}),
+          address: to.address,
+        })
+        setRefused({
+          message: w.notSaved(
+            doing,
+            err.problems[0]?.message ?? err.message,
+            done.revised.at(-1)?.revision ?? now,
+            doing === 'status' && move !== null,
+          ),
+        })
+        return
       }
       if (err.code === 'page_changed' && err.current) setConflict(err.current as Reading)
       else if (err.code === 'page_not_found') setGone(true)
@@ -952,6 +979,7 @@ function EditForm({ slug, reading }: { slug: string; reading: Reading }) {
         </fieldset>
         <Field label={w.reason} hint={w.reasonHint} value={reason} onValue={setReason} />
         <Problems error={error} />
+        <FormAlert error={refused} />
         <p class="said ok" role="status">
           {said}
         </p>

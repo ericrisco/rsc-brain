@@ -605,8 +605,11 @@ export const T = {
     save: 'Save changes',
     saving: 'Saving…',
     saved: (n: number) => `Saved as revision ${fmt(n)}.`,
-    partlySaved: (n: number) =>
-      `Part of it was saved, as revision ${fmt(n)}; the rest is still here, not saved.`,
+    // A save done in steps where a later step was refused: what was not saved, why, and what was.
+    notSaved: (step: 'status' | 'move', why: string, n: number, moveToo: boolean) =>
+      `The ${step === 'move' ? 'move' : 'status change'} was not saved: ${why.trim().replace(/\.$/, '')}.${
+        moveToo ? ' The address was not changed either.' : ''
+      } Your other changes are saved as revision ${fmt(n)}.`,
     notSavedYet: 'Not saved yet',
     unsavedKind: 'Not saved',
     unsaved: 'Your changes to this page are not saved yet.',
