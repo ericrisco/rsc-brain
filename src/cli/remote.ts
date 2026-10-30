@@ -60,7 +60,7 @@ export function readToken(file: string | undefined): string | null {
 // A token is one word: a space or a line break inside would end up in an error message, and from
 // there in the agent's context.
 function checked(t: string): string {
-  if (/[\s\x00-\x1f\x7f]/.test(t)) {
+  if ([...t].some((c) => c.charCodeAt(0) <= 0x20 || c.charCodeAt(0) === 0x7f || /\s/.test(c))) {
     throw new UsageError(
       'The token has a space or a line break inside. Copy it again from the Brain web, as one line.',
     )

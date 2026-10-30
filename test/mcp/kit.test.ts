@@ -468,7 +468,7 @@ describe('the connection kit', { skip: skipPg }, () => {
           .map((l) => JSON.parse(l) as { id: number; result?: Json; error?: { code: number } })
         const answer = out.find((x) => x.id === 2)
         assert.equal(
-          ((answer?.result?.content as Array<{ text: string }>)[0] as { text: string }).text.length,
+          (answer?.result?.content as Array<{ text: string }> | undefined)?.[0]?.text.length,
           200_000,
         )
         assert.equal(out.find((x) => x.id === 3)?.error?.code, -32600)
