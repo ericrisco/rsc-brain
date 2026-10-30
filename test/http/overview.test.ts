@@ -61,7 +61,7 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
       assert.equal(account.canCreateBrains, true)
       // Inviting happens in the web: a token cannot invite, even an administrator's.
       assert.equal(account.canInvite, false)
-      assert.equal(account.totp, false)
+      assert.equal(account.totp, null)
       assert.deepEqual(r.body.installation, { name: 'Test', factoryUrl: null })
     })
 
@@ -99,9 +99,18 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
       )
     })
 
-    it('the second factor shows once it is on', async () => {
+    it('the second factor shows once it is on, and only to the web: other keys learn nothing of how the person signs in', async () => {
       await w.db.query("UPDATE accounts SET totp_secret = 'sealed' WHERE id = $1", [bo.id])
-      assert.equal(((await w.call(bo.key, 'GET', '/v1/me')).body.account as Json).totp, true)
+      const web = await w.callWeb(await w.web(bo.id), 'GET', '/v1/me')
+      assert.equal((web.body.account as Json).totp, true)
+      const bos = String((await w.db.one("SELECT id FROM brains WHERE slug = 'bos'"))?.id)
+      for (const key of [bo.key, await w.app(bo.id, [bos])]) {
+        const r = await w.call(key, 'GET', '/v1/me')
+        assert.equal(r.status, 200, r.text)
+        assert.equal((r.body.account as Json).totp, null, r.text)
+      }
+      await w.db.query('UPDATE accounts SET totp_secret = NULL WHERE id = $1', [bo.id])
+      assert.equal(((await w.call(bo.key, 'GET', '/v1/me')).body.account as Json).totp, null)
     })
   })
 
@@ -205,6 +214,224 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
     })
   })
 
+  // Each number counts exactly what it says, and nothing next to it (review of PR18: the numbers must
+  // not be loose). Facts that only other specs make happen (a compiled entry, a decided proposal, a
+  // retired page, a conflict waiting for a person) are set in the database directly.
+  describe('G7: what each number leaves out', () => {
+    const brainOf = async (slug: string) =>
+      String((await w.db.one('SELECT id FROM brains WHERE slug = $1', [slug]))?.id)
+    const stats = async (slug: string) =>
+      ((await w.call(eric.key, 'GET', `/v1/brains/${slug}`)).body.brain as { stats: Stats }).stats
+    const relate = async (from: string, to: string, kind: string) => {
+      const r = await w.call(eric.key, 'POST', '/v1/brains/counts/relations', { from, to, kind })
+      assert.equal(r.status, 201, r.text)
+    }
+    const propose = async (title: string) => {
+      const source = await save(eric.key, 'counts', `Source of ${title}`)
+      const r = await w.call(eric.key, 'POST', '/v1/brains/counts/proposals', {
+        title,
+        reason: 'Because.',
+        ops: [
+          {
+            op: 'create',
+            address: `counts/${title.toLowerCase().replaceAll(' ', '-')}`,
+            type: 'topic',
+            title,
+            summary: 'A page.',
+            body: 'Body.',
+            sources: [{ entryId: source }],
+            reason: 'Asked.',
+          },
+        ],
+      })
+      assert.equal(r.status, 201, r.text)
+      return String((r.body.proposal as { id: string }).id)
+    }
+
+    before(async () => {
+      assert.equal((await w.call(eric.key, 'POST', '/v1/brains', { slug: 'counts' })).status, 201)
+    })
+
+    it('entries: only active ones; uncompiled: active, not compiled, never a session summary', async () => {
+      const a = await save(eric.key, 'counts', 'Compiled already')
+      await save(eric.key, 'counts', 'Still loose')
+      const c = await save(eric.key, 'counts', 'Forgotten later')
+      await w.db.query('UPDATE entries SET compiled = true WHERE id = $1', [a])
+      await w.db.query("UPDATE entries SET state = 'forgotten' WHERE id = $1", [c])
+      const opened = await w.call(eric.key, 'POST', '/v1/brains/counts/sessions', { purpose: 'Count' })
+      const sid = (opened.body.session as { id: string }).id
+      const sum = await w.call(eric.key, 'POST', `/v1/sessions/${sid}/summary`, {
+        title: 'Counted',
+        content: 'We counted.',
+      })
+      assert.ok(sum.status < 300, sum.text)
+      const st = await stats('counts')
+      // a, b and the summary are active; c is forgotten. Only b is loose: a is compiled, the summary
+      // never goes to the wiki.
+      assert.deepEqual([st.entries, st.uncompiled], [3, 1])
+    })
+
+    it('pages: every page but the retired ones', async () => {
+      const id = await brainOf('counts')
+      for (const [n, status] of [
+        [1, 'current'],
+        [2, 'stale'],
+        [3, 'retired'],
+      ] as const) {
+        await w.db.query(
+          `INSERT INTO pages (id, brain_id, address, type, title, status, created_at, updated_at)
+           VALUES ($1, $2, $3, 'topic', $4, $5, $6, $6)`,
+          [`pg_count${n}`, id, `counts/p${n}`, `Page ${n}`, status, w.clock()],
+        )
+      }
+      assert.equal((await stats('counts')).pages, 2)
+    })
+
+    it('conflicts: open contradictions and the ones waiting for a person; never settled ones or forgotten entries', async () => {
+      const e = async (t: string) => save(eric.key, 'counts', t)
+      // Open.
+      await relate(await e('Open one'), await e('Open two'), 'contradicts')
+      // Settled by a later supersedes, and by a not_related, on the same pair (either direction).
+      const s1 = await e('Settled one')
+      const s2 = await e('Settled two')
+      await relate(s1, s2, 'contradicts')
+      w.advance(1000)
+      await relate(s2, s1, 'supersedes')
+      const n1 = await e('Unrelated one')
+      const n2 = await e('Unrelated two')
+      await relate(n1, n2, 'contradicts')
+      w.advance(1000)
+      await relate(n1, n2, 'not_related')
+      // A supersedes older than the contradiction does not settle it.
+      const o1 = await e('Older one')
+      const o2 = await e('Older two')
+      await relate(o2, o1, 'supersedes')
+      w.advance(1000)
+      await relate(o1, o2, 'contradicts')
+      // One side forgotten.
+      const f1 = await e('Forgotten one')
+      const f2 = await e('Forgotten two')
+      await relate(f1, f2, 'contradicts')
+      const g1 = await e('Forgotten three')
+      const g2 = await e('Forgotten four')
+      await relate(g1, g2, 'contradicts')
+      await w.db.query("UPDATE entries SET state = 'forgotten' WHERE id = ANY($1)", [[f2, g1]])
+      // Waiting for a person; and one a person rejected.
+      const p1 = await e('Person one')
+      const p2 = await e('Person two')
+      const r1 = await e('Rejected one')
+      const r2 = await e('Rejected two')
+      await relate(p1, p2, 'supersedes')
+      await relate(r1, r2, 'contradicts')
+      await w.db.query(
+        "UPDATE relations SET status = 'pending_person' WHERE from_id = $1 AND to_id = $2 AND kind = 'supersedes'",
+        [p1, p2],
+      )
+      await w.db.query("UPDATE relations SET status = 'rejected' WHERE from_id = $1 AND to_id = $2", [r1, r2])
+      // Open, older-supersedes and waiting-for-a-person.
+      assert.equal((await stats('counts')).conflicts, 3)
+    })
+
+    it('proposals: the numbers and the overview list only the pending ones', async () => {
+      const keep = await propose('Kept waiting')
+      const done = await propose('Decided already')
+      await w.db.query("UPDATE proposals SET status = 'approved' WHERE id = $1", [done])
+      assert.equal((await stats('counts')).pendingProposals, 1)
+      const ov = await w.call(eric.key, 'GET', '/v1/brains/counts/overview')
+      assert.equal(ov.status, 200, ov.text)
+      assert.deepEqual(
+        (ov.body.pending as Json[]).map((p) => p.id),
+        [keep],
+      )
+      assert.equal((ov.body.stats as Stats).pendingProposals, 1)
+    })
+  })
+
+  // Step 1 «Connect your agent» marks itself on the first thing a key that is not a web session does in
+  // the brain: opening a session, saving, proposing, or only reading (a search, a read, asking for
+  // context). A person in the web doing the same does not count.
+  describe('G8: what marks «Connect your agent»', () => {
+    const steps = async (slug: string) =>
+      (await w.call(eric.key, 'GET', `/v1/brains/${slug}/overview`)).body.firstSteps as Json
+    const fresh = async (slug: string) => {
+      assert.equal((await w.call(eric.key, 'POST', '/v1/brains', { slug })).status, 201)
+      return String((await w.db.one('SELECT id FROM brains WHERE slug = $1', [slug]))?.id)
+    }
+    const webCredential = async (session: string) =>
+      String(
+        (
+          await w.db.one("SELECT id FROM credentials WHERE secret_hash = $1 AND kind = 'web'", [
+            (await import('../../src/auth/secrets.ts')).hashSecret(session),
+          ])
+        )?.id,
+      )
+
+    it('a proposal from an agent marks it; the same proposal from the web does not', async () => {
+      const web = await webCredential(ericWeb)
+      // Only the proposal comes from a key that is not the web: the entry it cites, its session and
+      // what was read are made to look like the web's.
+      const asWeb = async (brainId: string) => {
+        await w.db.query('UPDATE sessions SET credential_id = $2 WHERE brain_id = $1', [brainId, web])
+        await w.db.query('DELETE FROM trail WHERE brain_id = $1', [brainId])
+      }
+      const proposeIn = async (slug: string) => {
+        const source = await save(eric.key, slug, 'Why')
+        const r = await w.call(eric.key, 'POST', `/v1/brains/${slug}/proposals`, {
+          title: 'A page',
+          reason: 'R.',
+          ops: [
+            {
+              op: 'create',
+              address: `${slug}/a`,
+              type: 'topic',
+              title: 'A',
+              summary: 'A.',
+              body: 'A.',
+              sources: [{ entryId: source }],
+              reason: 'A.',
+            },
+          ],
+        })
+        assert.equal(r.status, 201, r.text)
+      }
+      const agent = await fresh('by-agent')
+      await proposeIn('by-agent')
+      await asWeb(agent)
+      assert.equal((await steps('by-agent')).agentConnected, true)
+      const person = await fresh('by-web')
+      await proposeIn('by-web')
+      await asWeb(person)
+      await w.db.query('UPDATE proposals SET credential_id = $2 WHERE brain_id = $1', [person, web])
+      assert.equal((await steps('by-web')).agentConnected, false)
+    })
+
+    it('an agent that only reads marks it: a search, or asking for context', async () => {
+      await fresh('read-only')
+      assert.equal((await steps('read-only')).agentConnected, false)
+      const asked = await w.call(eric.key, 'GET', '/v1/brains/read-only/context')
+      assert.equal(asked.status, 200, asked.text)
+      assert.equal((await steps('read-only')).agentConnected, true)
+      await fresh('searched')
+      const found = await w.call(eric.key, 'GET', '/v1/search?q=anything&brains=searched')
+      assert.equal(found.status, 200, found.text)
+      assert.equal(
+        await w.db.one(
+          "SELECT 1 FROM sessions WHERE brain_id = (SELECT id FROM brains WHERE slug = 'searched')",
+        ),
+        undefined,
+        'a search opens no session: the trail is what marks it',
+      )
+      assert.equal((await steps('searched')).agentConnected, true)
+    })
+
+    it('a person reading in the web does not mark it', async () => {
+      await fresh('web-reads')
+      const asked = await w.callWeb(ericWeb, 'GET', '/v1/brains/web-reads/context')
+      assert.equal(asked.status, 200, asked.text)
+      assert.equal((await steps('web-reads')).agentConnected, false)
+    })
+  })
+
   describe('G8: the overview of a brain', () => {
     it('a new brain shows the three first steps, none done; importing waits for its operation', async () => {
       const r = await w.call(eric.key, 'GET', '/v1/brains/empty/overview')
@@ -249,6 +476,8 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
         'who',
       ])
       assert.deepEqual([s.entries, s.status, s.summary, s.who], [2, 'open', null, 'Eric'])
+      // Saved without opening a session: the session of the day has no purpose, not a placeholder word.
+      assert.equal(s.purpose, '')
       const pending = r.body.pending as Json[]
       assert.deepEqual(
         pending.map((p) => [p.title, p.opCount, p.old]),

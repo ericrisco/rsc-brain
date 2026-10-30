@@ -10,7 +10,7 @@ test('"?" opens the list on every screen, signed in or not', async ({ page, cont
     await page.keyboard.press('?')
     const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
     await expect(help).toBeVisible()
-    await expect(help.locator('[data-shortcut]')).toHaveCount(path === '/' ? 3 : 4)
+    await expect(help.locator('[data-shortcut]')).toHaveCount(path === '/' ? 4 : 5)
     await page.keyboard.press('Escape')
     await expect(help).toBeHidden()
   }
@@ -106,4 +106,62 @@ test('a letter typed in a field is text, not a shortcut', async ({ page, context
   await page.keyboard.type('g h ?')
   await expect(page.getByLabel('Search all your brains')).toHaveValue('g h ?')
   await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toHaveCount(0)
+})
+
+// Review of PR18: «Keyboard shortcuts» is in the account menu of every signed-in person who has a
+// keyboard and a mouse (a person who is not an administrator too), and only a touch-only device goes
+// without it.
+for (const preset of ['signed-in', 'member'] as const) {
+  test(`«Keyboard shortcuts» is in the account menu (${preset})`, async ({ page, context, baseURL }) => {
+    await scenario(context, baseURL as string, preset)
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 844 })
+      await page.goto('/')
+      await page.getByRole('button', { name: /Account/ }).click()
+      await expect(page.getByRole('button', { name: /Keyboard shortcuts/ })).toBeVisible()
+      await page.keyboard.press('Escape')
+    }
+  })
+}
+
+test.describe('on a touch-only phone', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } })
+  test('the account menu does not offer «Keyboard shortcuts»', async ({ page, context, baseURL }) => {
+    await scenario(context, baseURL as string, 'member')
+    await page.goto('/')
+    await page.getByRole('button', { name: /Account/ }).click()
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+    await expect(page.getByRole('button', { name: /Keyboard shortcuts/ })).toBeHidden()
+  })
+})
+
+// Review of PR18: "g p" goes to People for whoever may invite, like the visible «People» link.
+test('"g p" and the «People» link both go to People; a person who may not invite has neither', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/')
+  await page.locator('html[data-keys="on"]').waitFor({ state: 'attached' })
+  await page.keyboard.press('g')
+  await page.keyboard.press('p')
+  await expect(page).toHaveURL(/\/people$/)
+  await page.goto('/')
+  await page.getByRole('banner').getByRole('link', { name: 'People' }).click()
+  await expect(page).toHaveURL(/\/people$/)
+  await context.clearCookies()
+  await scenario(context, baseURL as string, 'member')
+  await page.goto('/')
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  await page.locator('html[data-keys="on"]').waitFor({ state: 'attached' })
+  await page.keyboard.press('g')
+  await page.keyboard.press('p')
+  await page.waitForTimeout(200)
+  await expect(page).not.toHaveURL(/\/people$/)
+  await expect(page.getByRole('banner').getByRole('link', { name: 'People' })).toHaveCount(0)
+  await page.keyboard.press('?')
+  await expect(
+    page.getByRole('dialog', { name: 'Keyboard shortcuts' }).locator('[data-shortcut="go-people"]'),
+  ).toHaveCount(0)
 })

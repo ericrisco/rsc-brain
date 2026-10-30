@@ -8,6 +8,7 @@ import { actorOf } from '../auth/principal.ts'
 import type { Db, Row } from '../db/db.ts'
 import { type BrainListed, getBrain, listBrains } from './brains.ts'
 import { type Ctx, inBrain } from './context.ts'
+import { lastSeq } from './events.ts'
 import { installation } from './installation.ts'
 import { wikiHealth } from './wiki/health.ts'
 import { proposalOf } from './wiki/proposals.ts'
@@ -130,7 +131,8 @@ export async function whoAmI(ctx: Ctx) {
       isAdmin: w.isAdmin,
       canCreateBrains: can(actorOf(w), 'brain.create').ok,
       canInvite,
-      totp: Boolean(facts?.totp),
+      // How the person signs in is the person's business: only their web session learns it.
+      totp: w.credential.kind === 'web' ? Boolean(facts?.totp) : null,
     },
     key: {
       id: w.credential.id,
@@ -159,9 +161,12 @@ export async function brainOverview(ctx: Ctx, slug: string) {
   const db = ctx.db
   const tz = ctx.tz ?? 'UTC'
   const now = ctx.clock()
+  // Read first: every event numbered up to here was committed before the queries below, so they show
+  // it. A stream that resumes from this id (Last-Event-ID) misses nothing that came after.
+  const cursor = String(await lastSeq(db))
   const stats = (await statsOf(db, [brain.id], ctx.who.accountId)).get(brain.id)?.stats ?? ZERO
   const sessions = await db.query(
-    `SELECT s.id, s.purpose, s.ref, s.status, s.opened_at, s.last_activity_at, a.name AS who,
+    `SELECT s.id, s.purpose, s.day, s.ref, s.status, s.opened_at, s.last_activity_at, a.name AS who,
             c.kind AS ckind, c.agent, c.last_client, g.client_name, se.content AS summary,
             (SELECT count(*)::int FROM entries e WHERE e.session_id = s.id AND e.state = 'active'
                 AND e.type <> 'summary') AS entries
@@ -182,22 +187,27 @@ export async function brainOverview(ctx: Ctx, slug: string) {
     [brain.id, PENDING_SHOWN],
   )
   const steps = await db.one<{ agent: boolean; entry: boolean }>(
-    // An agent connected: a key that is not a web session opened a session or proposed in this brain.
+    // An agent connected: a key that is not a web session did something in this brain — opened a
+    // session, saved, proposed, or only read (a search, a read or asking for context: the trail of B3).
     `SELECT EXISTS (SELECT 1 FROM sessions s JOIN credentials c ON c.id = s.credential_id
                      WHERE s.brain_id = $1 AND c.kind <> 'web')
          OR EXISTS (SELECT 1 FROM proposals p JOIN credentials c ON c.id = p.credential_id
-                     WHERE p.brain_id = $1 AND c.kind <> 'web') AS agent,
+                     WHERE p.brain_id = $1 AND c.kind <> 'web')
+         OR EXISTS (SELECT 1 FROM trail t JOIN credentials c ON c.id = t.credential_id
+                     WHERE t.brain_id = $1 AND c.kind <> 'web') AS agent,
             EXISTS (SELECT 1 FROM entries e WHERE e.brain_id = $1) AS entry`,
     [brain.id],
   )
   const h = await wikiHealth(ctx, slug)
   return {
+    cursor,
     stats,
     todaySessions: sessions.map((r) => ({
       id: String(r.id),
       who: String(r.who),
       client: clientOf(r),
-      purpose: String(r.purpose),
+      // The session of the day a key gets by writing without opening one has no purpose of its own.
+      purpose: r.day == null ? String(r.purpose) : '',
       ref: r.ref == null ? null : String(r.ref),
       status: String(r.status),
       entries: Number(r.entries),

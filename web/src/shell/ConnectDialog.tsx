@@ -1,13 +1,17 @@
 // «Connect your agent» (spec B6, B5 «Kit de conexión»): the commands of each agent for this
 // installation, from the server's kit (GET /v1/connect), built from its public address, never from the
 // address the browser is on. The standard sign-in needs no token; the check says how to see it works.
-import { useState } from 'preact/hooks'
+import { useEffect, useState } from 'preact/hooks'
+import type { ApiError } from '../api/client.ts'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
+import { online } from '../session.ts'
 import { T } from '../text.ts'
+import { Button } from '../ui/Button.tsx'
 import { CopyButton } from '../ui/CopyButton.tsx'
 import { Dialog } from '../ui/Dialog.tsx'
-import { ErrorState, Skeleton } from '../ui/states.tsx'
+import { writeBlocked } from '../ui/state.ts'
+import { ErrorState, FormAlert, Skeleton } from '../ui/states.tsx'
 import { connectFor } from './dialogs.ts'
 
 type Block = { title: string; text: string }
@@ -72,9 +76,9 @@ function Body({ brain }: { brain: string | null }) {
         <>
           <p>{T.connect.otherLead}</p>
           <CommandBlock block={{ title: T.connect.address, text: kit.mcpUrl }} />
-          <p class="how">{T.connect.otherToken}</p>
         </>
       )}
+      <TokenInstead brain={brain} agent={a?.name ?? 'Agent'} />
       {a ? (
         <div class="check">
           <h3>{T.connect.check}</h3>
@@ -82,6 +86,72 @@ function Body({ brain }: { brain: string | null }) {
         </div>
       ) : null}
     </>
+  )
+}
+
+type Made = { token: { secret: string; expiresAt: string }; note?: string }
+
+// For an agent that cannot use the browser sign-in: a personal token (B4), made here and shown once —
+// held only by this dialog, never stored, gone when it closes. Listing and revoking tokens comes with
+// the profile page.
+function TokenInstead({ brain, agent }: { brain: string | null; agent: string }) {
+  const c = T.connect
+  const [made, setMade] = useState<Made | null>(null)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<ApiError | null>(null)
+  useEffect(() => {
+    if (made) document.getElementById('copy-token')?.focus()
+  }, [made])
+  const create = async () => {
+    if (pending || !online.value) return
+    setPending(true)
+    setError(null)
+    try {
+      setMade(
+        await api.call<Made>('createToken', {
+          body: {
+            name: c.tokenName(agent),
+            perm: 'write',
+            days: 90,
+            ...(brain ? { brains: [brain] } : { allBrains: true }),
+          },
+        }),
+      )
+    } catch (e) {
+      setError(e as ApiError)
+    } finally {
+      setPending(false)
+    }
+  }
+  return (
+    <section class="token-instead" aria-labelledby="token-instead-title">
+      <h3 id="token-instead-title">{c.tokenTitle}</h3>
+      <p>{c.tokenLead}</p>
+      <FormAlert error={error} />
+      {made ? (
+        <div class="cmd-block">
+          <p class="cmd-title">{c.tokenFor(brain)}</p>
+          <pre class="command">
+            <code>{made.token.secret}</code>
+          </pre>
+          <p class="meta">
+            {c.tokenOnce} {c.tokenUntil(T.date(made.token.expiresAt))}
+          </p>
+          {made.note ? <p class="meta">{made.note}</p> : null}
+          <CopyButton text={made.token.secret} label={c.copyToken} id="copy-token" />
+        </div>
+      ) : (
+        <Button
+          pending={pending}
+          pendingLabel={c.creatingToken}
+          blocked={writeBlocked({ online: online.value, pending: false })}
+          onClick={() => void create()}
+        >
+          {c.createToken}
+        </Button>
+      )}
+      <p class="how">{c.tokenLater}</p>
+    </section>
   )
 }
 

@@ -52,7 +52,7 @@ export function insecureWarning(publicUrl: string | undefined | null): string | 
   if (u.protocol === 'https:' || LOCAL_HOSTS.has(u.hostname)) return null
   return (
     'This address is not local and not encrypted: passwords would travel in clear over the network. ' +
-    'Give Brain a domain with HTTPS, open it on its local address (http://localhost), or reach it through a tunnel.'
+    'Give rsc-brain a domain with HTTPS, open it on its local address (http://localhost), or reach it through a tunnel.'
   )
 }
 
@@ -62,8 +62,8 @@ export function requireSecure(conn: ConnFacts): void {
   throw new AppError(
     403,
     'insecure_connection',
-    'This connection is not encrypted, so Brain does not accept a password over it.',
-    'Open Brain over HTTPS (a domain with a certificate, or a tunnel), or on its local address from the same machine.',
+    'This connection is not encrypted, so rsc-brain does not accept a password over it.',
+    'Open rsc-brain over HTTPS (a domain with a certificate, or a tunnel), or on its local address from the same machine.',
   )
 }
 

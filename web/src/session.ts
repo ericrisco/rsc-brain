@@ -23,7 +23,8 @@ export type Me = {
     // What this session may do (GET /v1/me, G5): the web offers only what the server allows.
     canCreateBrains: boolean
     canInvite: boolean
-    totp: boolean
+    // Only a web session learns it; null for any other key.
+    totp: boolean | null
   }
   key: { id: string; kind: string; perm: string }
   installation: { name: string; factoryUrl: string | null }

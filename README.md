@@ -30,7 +30,7 @@ throwaway database and times 100 varied searches; 95 % must answer in under a se
 
 ## The web
 
-`rsc-brain serve` also serves the Brain web, on the same address as the API: open it in a browser to
+`rsc-brain serve` also serves the rsc-brain web, on the same address as the API: open it in a browser to
 run the first-time setup, sign in, accept an invitation or reset a password. `npm run build` builds it
 into `dist/web`; without that folder the server answers the API as usual and says the web is not built.
 The web only calls the API at `/v1` (with the same permissions a program has) and never answers on
@@ -68,7 +68,7 @@ A curator can exclude a brain: its vectors are deleted and nothing more of it is
 
 ## Connecting agents with the standard sign-in
 
-Agents that support the MCP sign-in (OAuth 2.1 with PKCE) find Brain through
+Agents that support the MCP sign-in (OAuth 2.1 with PKCE) find rsc-brain through
 `/.well-known/oauth-protected-resource` and `/.well-known/oauth-authorization-server`. They open the
 person's browser. The person signs in, chooses which brains to share (read, or read + write) and goes
 back to the agent, without copying any key.
@@ -77,12 +77,12 @@ back to the agent, without copying any key.
   ends the connection.
 - A connection ends after 90 days without use, or a year in all. Connections show in the profile
   under "Connected apps", where they can be revoked.
-- Clients can name themselves with a metadata document (an https address that Brain fetches with
+- Clients can name themselves with a metadata document (an https address that rsc-brain fetches with
   guards against reaching private networks) or register dynamically.
 
 ## Agents over MCP
 
-Brain serves MCP at `/mcp` (Streamable HTTP; protocol `2026-07-28`, and `2025-11-25` / `2025-06-18` for
+rsc-brain serves MCP at `/mcp` (Streamable HTTP; protocol `2026-07-28`, and `2025-11-25` / `2025-06-18` for
 older clients). An agent connects with the standard sign-in or a personal token, and on connecting
 receives a short protocol: resolve its brain, read the context, search before deciding, save as it
 works, never save secrets, close with a summary.
@@ -128,7 +128,7 @@ As a local MCP server: `{"command": "rsc-brain", "args": ["bridge", "--url", "<a
 `/mcp` with the token and the headers the server checks; answers go to stdout, notifications get none.
 It speaks to modern clients and to older ones that start with `initialize`. The token comes from
 `RSC_BRAIN_TOKEN`, `--token-file`, or `~/.config/rsc-brain/token`; there is no option to pass it on the
-command line, and it is never printed. Plain `http` is refused except to this machine. When Brain does
+command line, and it is never printed. Plain `http` is refused except to this machine. When rsc-brain does
 not answer, the request gets a JSON-RPC error that says so and how to proceed; the bridge keeps running.
 
 ### The Claude Code reminder
@@ -143,13 +143,13 @@ not answer, the request gets a JSON-RPC error that says so and how to proceed; t
 }
 ```
 
-- `hook session-start` runs `git remote get-url origin` in the session's folder, asks Brain which brain
+- `hook session-start` runs `git remote get-url origin` in the session's folder, asks rsc-brain which brain
   is linked to it (`/v1/resolve`), and adds that brain's context to the session. `--brain <slug>` is
   used when no brain is linked to the repository.
 - `hook stop` asks `GET /v1/me/sessions` whether the token still has a brain session open (work saved
   without a summary). If so, it asks Claude once, per brain session and Claude Code session, to close it
   with `mem_session_summary`. It lets Claude stop when `stop_hook_active` is set.
-- Both need a token (as for the bridge) and fail open: with no token, a bad input or Brain down, they
+- Both need a token (as for the bridge) and fail open: with no token, a bad input or rsc-brain down, they
   print nothing and let the session go on.
 
 The `rsc-brain` command comes with this package: from a clone, `npm install && npm run build && npm link`.
@@ -202,7 +202,7 @@ The database refuses to change or delete it.
 
 ## Behind a reverse proxy
 
-Brain takes a password only over an encrypted connection, or from the same machine. A reverse proxy
+rsc-brain takes a password only over an encrypted connection, or from the same machine. A reverse proxy
 on the same machine must therefore send `X-Forwarded-For` and `X-Forwarded-Proto` (nginx:
 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` and
 `proxy_set_header X-Forwarded-Proto $scheme;`). List the proxy's own address in

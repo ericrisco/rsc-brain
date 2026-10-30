@@ -4,8 +4,9 @@
 // the invitation went by email, or its link is copied. Risk: a single-use link that grants access; it
 // is shown only once, lives only in this screen's memory, and is gone when the person says it is copied.
 // Who may do what is the server's (B4): this screen only offers it to whoever may.
-import { useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import type { ApiError } from '../api/client.ts'
+import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { invalidate, resource } from '../api/resource.ts'
 import { ago } from '../lib/brains.ts'
@@ -48,8 +49,30 @@ type Account = {
   lastSeenAt: string | null
 }
 type AdminBrain = { slug: string; name: string; status: string }
-// A link to give by hand, shown once.
-type Shown = { key: string; title: string; link: string; note: string; problem?: string }
+// A link to give by hand, shown once, next to what made it: under the form, or in the row of its
+// invitation or person. `key` is unique per link (a new link of the same invitation is another link).
+type Shown = {
+  key: string
+  title: string
+  // Who it is for, for the status that announces it.
+  who: string
+  link: string
+  note: string
+  problem?: string
+  place: 'form' | 'invitation' | 'account'
+  // The invitation or account it belongs to.
+  of: string
+}
+type Links = {
+  shown: Shown[]
+  // Adds links (and drops every earlier link of the same invitation or person: it no longer works).
+  add(more: Shown[]): void
+  // Drops the links of an invitation or person (withdrawn), or one link (copied).
+  drop(o: { of?: string; key?: string }): void
+}
+
+let made = 0
+const nextKey = (kind: string) => `${kind}:${++made}`
 
 const ROLES = ['reader', 'contributor', 'curator'] as const
 
@@ -79,29 +102,58 @@ function useInvitable(who: Me): {
   }
 }
 
-function LinksToSend({ shown, onDone }: { shown: Shown[]; onDone: (key: string) => void }) {
-  if (!shown.length) return null
+// One link to give by hand. The newest one takes the keyboard to its «Copy link» and comes into view,
+// wherever on the page it was made.
+function LinkCard({ x, focus, onDone }: { x: Shown; focus: boolean; onDone: (key: string) => void }) {
+  const copyId = `copy-${x.key.replace(/\W/g, '-')}`
+  useEffect(() => {
+    if (!focus) return
+    const b = document.getElementById(copyId)
+    b?.focus({ preventScroll: true })
+    b?.scrollIntoView({ block: 'center' })
+  }, [focus])
+  return (
+    <section class="link-card" aria-label={x.title}>
+      <p class="list-title">{x.title}</p>
+      {x.problem ? <p class="problem">{x.problem}</p> : null}
+      <pre class="command">
+        <code>{x.link}</code>
+      </pre>
+      <p class="meta">
+        {T.people.shownOnce} {x.note}
+      </p>
+      <div class="actions">
+        <CopyButton text={x.link} label={T.people.copyLink} id={copyId} />
+        <Button kind="quiet" onClick={() => onDone(x.key)}>
+          {T.people.copied}
+        </Button>
+      </div>
+    </section>
+  )
+}
+
+function LinksOf({ links, of, newest }: { links: Links; of: string; newest: string | null }) {
+  const mine = links.shown.filter((x) => x.place !== 'form' && x.of === of)
+  return (
+    <>
+      {mine.map((x) => (
+        <LinkCard key={x.key} x={x} focus={x.key === newest} onDone={(k) => links.drop({ key: k })} />
+      ))}
+    </>
+  )
+}
+
+function LinksToSend({ links, newest }: { links: Links; newest: string | null }) {
+  const mine = links.shown.filter((x) => x.place === 'form')
+  if (!mine.length) return null
   return (
     <section class="links-shown" aria-labelledby="links-title">
       <h2 id="links-title">{T.people.linksTitle}</h2>
       <p class="muted">{T.people.linksLead}</p>
       <ul>
-        {shown.map((x) => (
+        {mine.map((x) => (
           <li key={x.key}>
-            <p class="list-title">{x.title}</p>
-            {x.problem ? <p class="problem">{x.problem}</p> : null}
-            <pre class="command">
-              <code>{x.link}</code>
-            </pre>
-            <p class="meta">
-              {T.people.shownOnce} {x.note}
-            </p>
-            <div class="actions">
-              <CopyButton text={x.link} label={T.people.copyLink} />
-              <Button kind="quiet" onClick={() => onDone(x.key)}>
-                {T.people.copied}
-              </Button>
-            </div>
+            <LinkCard x={x} focus={x.key === newest} onDone={(k) => links.drop({ key: k })} />
           </li>
         ))}
       </ul>
@@ -109,7 +161,7 @@ function LinksToSend({ shown, onDone }: { shown: Shown[]; onDone: (key: string) 
   )
 }
 
-function InviteForm({ who, onLinks }: { who: Me; onLinks: (s: Shown[]) => void }) {
+function InviteForm({ who, links }: { who: Me; links: Links }) {
   const admin = who.account.isAdmin
   const mail = branding().data.value?.canSendMail !== false
   const { brains, error: brainsError } = useInvitable(who)
@@ -153,11 +205,14 @@ function InviteForm({ who, onLinks }: { who: Me; onLinks: (s: Shown[]) => void }
       })
       const mailed = out.invitations.filter((i) => i.mailed).map((i) => i.email)
       if (mailed.length) setSent(T.people.sent(mailed))
-      onLinks(
+      links.add(
         out.invitations
           .filter((i) => !i.mailed)
           .map((i) => ({
-            key: `inv:${i.id}`,
+            key: nextKey('inv'),
+            place: 'form' as const,
+            of: i.id,
+            who: i.email,
             title: T.people.inviteFor(i.email),
             link: i.link,
             note: T.people.until(T.dateTime(i.expiresAt)),
@@ -288,11 +343,22 @@ function InviteForm({ who, onLinks }: { who: Me; onLinks: (s: Shown[]) => void }
   )
 }
 
-function Invitations({ onLinks, names }: { onLinks: (s: Shown[]) => void; names: Map<string, string> }) {
+function Invitations({
+  links,
+  newest,
+  names,
+}: {
+  links: Links
+  newest: string | null
+  names: Map<string, string>
+}) {
   const r = invitationsResource()
+  // Invitations may have been accepted since this list was loaded.
+  useFresh(r)
   const [busy, setBusy] = useState<string | null>(null)
   const [said, setSaid] = useState<{ id: string; text: string; error?: boolean } | null>(null)
   const [asking, setAsking] = useState<Invitation | null>(null)
+  const heading = useRef<HTMLHeadingElement>(null)
   const list = r.data.value?.invitations
   const p = T.people
 
@@ -302,11 +368,16 @@ function Invitations({ onLinks, names }: { onLinks: (s: Shown[]) => void; names:
     try {
       const out = await api.call<{ invitation: Invited }>('inviteResend', { path: { id: inv.id } })
       const i = out.invitation
+      // The link before this one no longer works: it goes, wherever it was shown.
+      links.drop({ of: inv.id })
       if (i.mailed) setSaid({ id: inv.id, text: p.sentOne(i.email) })
       else
-        onLinks([
+        links.add([
           {
-            key: `inv:${i.id}:${Date.now()}`,
+            key: nextKey('inv'),
+            place: 'invitation',
+            of: inv.id,
+            who: i.email,
             title: p.inviteFor(i.email),
             link: i.link,
             note: p.until(T.dateTime(i.expiresAt)),
@@ -329,7 +400,11 @@ function Invitations({ onLinks, names }: { onLinks: (s: Shown[]) => void; names:
     setSaid(null)
     try {
       await api.call('inviteWithdraw', { path: { id: inv.id } })
+      links.drop({ of: inv.id })
       await r.reload()
+      setSaid({ id: inv.id, text: p.withdrawn })
+      // The row loses its buttons: the keyboard goes to the list, not to the top of the page.
+      heading.current?.focus()
     } catch (e) {
       const a = e as ApiError
       setSaid({ id: inv.id, text: `${a.message} ${a.howToProceed}`, error: true })
@@ -341,7 +416,7 @@ function Invitations({ onLinks, names }: { onLinks: (s: Shown[]) => void; names:
   const blocked = writeBlocked({ online: online.value, pending: false })
   return (
     <section aria-labelledby="invitations-title">
-      <h2 id="invitations-title" class="section-title">
+      <h2 id="invitations-title" class="section-title" tabIndex={-1} ref={heading}>
         {p.listTitle}
       </h2>
       {!list ? (
@@ -371,7 +446,13 @@ function Invitations({ onLinks, names }: { onLinks: (s: Shown[]) => void; names:
                       ? inv.brains.map((b) => p.asRole(names.get(b.slug) ?? b.slug, b.role)).join(', ')
                       : p.noBrain}
                   </p>
-                  <p class="meta">{p.invitedBy(inv.invitedBy, T.date(inv.expiresAt))}</p>
+                  <p class="meta">
+                    {inv.status === 'pending'
+                      ? p.invitedUntil(inv.invitedBy, T.date(inv.expiresAt))
+                      : inv.status === 'expired'
+                        ? p.invitedExpired(inv.invitedBy, T.date(inv.expiresAt))
+                        : p.invitedBy(inv.invitedBy)}
+                  </p>
                   {said?.id === inv.id ? (
                     <p class={said.error ? 'problem' : 'meta'} role={said.error ? 'alert' : 'status'}>
                       {said.text}
@@ -380,25 +461,31 @@ function Invitations({ onLinks, names }: { onLinks: (s: Shown[]) => void; names:
                 </div>
                 {open ? (
                   <div class="actions">
-                    <Button pending={busy === inv.id} blocked={blocked} onClick={() => void resend(inv)}>
+                    <Button
+                      pending={busy === inv.id}
+                      blocked={blocked}
+                      aria-label={p.resendFor(inv.email)}
+                      onClick={() => void resend(inv)}
+                    >
                       {p.resend}
                     </Button>
-                    <Button kind="quiet" blocked={blocked} onClick={() => setAsking(inv)}>
+                    <Button
+                      kind="quiet"
+                      blocked={blocked}
+                      aria-label={p.withdrawFor(inv.email)}
+                      onClick={() => setAsking(inv)}
+                    >
                       {p.withdraw}
                     </Button>
                   </div>
                 ) : null}
+                <LinksOf links={links} of={inv.id} newest={newest} />
               </li>
             )
           })}
         </ul>
       )}
-      <Dialog
-        open={asking !== null}
-        title={p.withdrawTitle}
-        onClose={() => setAsking(null)}
-        closeLabel={p.cancel}
-      >
+      <Dialog open={asking !== null} title={p.withdrawTitle} onClose={() => setAsking(null)}>
         {asking ? (
           <>
             <p>{p.withdrawLead(asking.email)}</p>
@@ -417,8 +504,9 @@ function Invitations({ onLinks, names }: { onLinks: (s: Shown[]) => void; names:
   )
 }
 
-function Accounts({ who, onLinks }: { who: Me; onLinks: (s: Shown[]) => void }) {
+function Accounts({ who, links, newest }: { who: Me; links: Links; newest: string | null }) {
   const r = accountsResource()
+  useFresh(r)
   const [busy, setBusy] = useState<string | null>(null)
   const [failed, setFailed] = useState<{ id: string; text: string } | null>(null)
   const p = T.people
@@ -428,9 +516,13 @@ function Accounts({ who, onLinks }: { who: Me; onLinks: (s: Shown[]) => void }) 
     setFailed(null)
     try {
       const out = await api.call<{ link: string; expiresAt: string }>('resetLink', { path: { id: a.id } })
-      onLinks([
+      // A new reset link ends the one before (B4): only the newest is shown.
+      links.add([
         {
-          key: `reset:${a.id}:${Date.now()}`,
+          key: nextKey('reset'),
+          place: 'account',
+          of: a.id,
+          who: a.name,
           title: p.resetFor(a.name, a.email),
           link: out.link,
           note: p.resetUntil,
@@ -479,11 +571,17 @@ function Accounts({ who, onLinks }: { who: Me; onLinks: (s: Shown[]) => void }) 
               </div>
               {a.status === 'active' && a.id !== who.account.id ? (
                 <div class="actions">
-                  <Button pending={busy === a.id} blocked={blocked} onClick={() => void make(a)}>
+                  <Button
+                    pending={busy === a.id}
+                    blocked={blocked}
+                    aria-label={p.resetOf(a.name)}
+                    onClick={() => void make(a)}
+                  >
                     {p.reset}
                   </Button>
                 </div>
               ) : null}
+              <LinksOf links={links} of={a.id} newest={newest} />
             </li>
           ))}
         </ul>
@@ -495,6 +593,9 @@ function Accounts({ who, onLinks }: { who: Me; onLinks: (s: Shown[]) => void }) 
 export function People() {
   const who = me().data.value
   const [shown, setShown] = useState<Shown[]>([])
+  // The link that takes the keyboard (the newest), and what the status says about it.
+  const [newest, setNewest] = useState<string | null>(null)
+  const [announce, setAnnounce] = useState('')
   const admin = who?.account.isAdmin === true
   const names = new Map<string, string>()
   const b = admin ? allBrainsResource().data.value?.brains : brainsResource().data.value?.brains
@@ -515,21 +616,38 @@ export function People() {
       </>
     )
   }
-  const add = (more: Shown[]) => setShown((now) => [...more, ...now])
+  const links: Links = {
+    shown,
+    add: (more) => {
+      if (!more.length) return
+      const ofs = new Set(more.map((x) => x.of))
+      setShown((now) => [...more, ...now.filter((x) => !ofs.has(x.of))])
+      setNewest(more[0]?.key ?? null)
+      setAnnounce(T.people.linkReady(more.map((x) => x.who)))
+    },
+    drop: ({ of, key }) => {
+      setShown((now) => now.filter((x) => x.of !== of && x.key !== key))
+      // The link it announced is gone: so is the announcement.
+      setAnnounce('')
+    },
+  }
   return (
     <>
       <div class="title-row">
         <h1 class="title">{T.people.title}</h1>
       </div>
       <p class="lead">{T.people.lead}</p>
+      <p class="sr-only" role="status">
+        {announce}
+      </p>
       <div class="people">
         <div class="people-main">
-          <InviteForm who={who} onLinks={add} />
-          <LinksToSend shown={shown} onDone={(k) => setShown((now) => now.filter((x) => x.key !== k))} />
+          <InviteForm who={who} links={links} />
+          <LinksToSend links={links} newest={newest} />
         </div>
         <div class="people-side">
-          <Invitations onLinks={add} names={names} />
-          {admin ? <Accounts who={who} onLinks={add} /> : null}
+          <Invitations links={links} newest={newest} names={names} />
+          {admin ? <Accounts who={who} links={links} newest={newest} /> : null}
         </div>
       </div>
     </>

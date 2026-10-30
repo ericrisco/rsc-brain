@@ -5,8 +5,10 @@
 // answers like one that does not exist, and says who to ask (constitution Brain P4, general P6).
 import type { ComponentChildren } from 'preact'
 import { useRef } from 'preact/hooks'
+import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
+import { clientLabel } from '../lib/brains.ts'
 import { useLive } from '../live/follow.ts'
 import { online } from '../session.ts'
 import { connectFor } from '../shell/dialogs.ts'
@@ -31,6 +33,8 @@ type Session = {
 }
 type Pending = { id: string; title: string; agent: string | null; opCount: number; old: boolean }
 type Overview = {
+  // The id of the newest event this overview already shows: the live feed starts there.
+  cursor: string
   stats: Stats
   todaySessions: Session[]
   pending: Pending[]
@@ -49,17 +53,15 @@ const overviewResource = (slug: string) =>
 function Step({
   n,
   done,
-  later,
   title,
   children,
 }: {
   n: number
   done: boolean
-  later?: boolean
   title: string
   children: ComponentChildren
 }) {
-  const word = done ? T.overview.done : later ? T.overview.later : T.overview.todo
+  const word = done ? T.overview.done : T.overview.todo
   return (
     <li class={done ? 'done' : undefined}>
       <div class="step-head">
@@ -97,12 +99,17 @@ function FirstSteps({ slug, steps }: { slug: string; steps: Overview['firstSteps
           <blockquote class="ask">{o.step2Ask(slug)}</blockquote>
           <CopyButton text={o.step2Ask(slug)} label={o.copyAsk} />
         </Step>
-        <Step n={3} done={steps.imported} later title={o.step3}>
+      </ol>
+      {/* Importing a folder is not in this version (B7): a tip with what works today, not a step that
+          cannot be done. It becomes step 3 once importing exists. */}
+      {steps.imported ? null : (
+        <div class="step-tip" role="note" aria-labelledby="tip-title">
+          <h3 id="tip-title">{o.step3}</h3>
           <p>{o.step3Lead}</p>
           <blockquote class="ask">{o.step3Ask(slug)}</blockquote>
           <CopyButton text={o.step3Ask(slug)} label={o.copyAsk} />
-        </Step>
-      </ol>
+        </div>
+      )}
     </section>
   )
 }
@@ -150,7 +157,7 @@ function Today({ sessions }: { sessions: Session[] }) {
             <li key={s.id}>
               <p class="list-title">{s.purpose || <span class="muted">{o.untitled}</span>}</p>
               <p class="meta">
-                {[s.client, s.who, o.entriesIn(s.entries)].filter(Boolean).join(' · ')}
+                {[clientLabel(s.client), s.who, o.entriesIn(s.entries)].filter(Boolean).join(' · ')}
                 {' · '}
                 <span class={s.status === 'open' ? 'live' : undefined}>{o.status[s.status] ?? s.status}</span>
                 {s.ref ? (
@@ -241,7 +248,15 @@ export function Brain({ slug }: { slug: string }) {
   const r = brainResource(slug)
   const ov = overviewResource(slug)
   const b = r.data.value?.brain
-  useLive(b ? slug : null)
+  // A brain opened again shows its last overview at once and asks for a fresh one (it may have changed
+  // while the person was away); the live feed starts only once an overview says from where.
+  useFresh(ov)
+  const cursor = ov.data.value?.cursor
+  useLive(
+    b && cursor !== undefined ? slug : null,
+    cursor,
+    ov.data.value ? !ov.data.value.firstSteps.agentConnected : false,
+  )
   // A new brain shows its first steps; once shown they stay for this visit, so a step that marks itself
   // is seen being marked (CA19), and go once the brain works.
   const stepsShown = useRef<string | null>(null)

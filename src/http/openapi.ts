@@ -183,7 +183,7 @@ const HAND: Record<string, Op> = {
     }),
   },
   'POST /v1/setup': {
-    summary: 'The first-time setup (the Brain web only): name, address and the first administrator.',
+    summary: 'The first-time setup (the rsc-brain web only): name, address and the first administrator.',
     status: 201,
     body: obj({
       name: s('The name of the installation.', { maxLength: 80 }),
@@ -198,7 +198,7 @@ const HAND: Record<string, Op> = {
     }),
   },
   'POST /v1/auth/login': {
-    summary: 'Sign in to the web (the Brain web only): sets the session cookie.',
+    summary: 'Sign in to the web (the rsc-brain web only): sets the session cookie.',
     body: obj(
       { email: s('Email.'), password: s('Password.'), code: s('The 6 digits of the authenticator app.') },
       ['code'],
@@ -241,7 +241,7 @@ const HAND: Record<string, Op> = {
     }),
   },
   'POST /v1/invitations/accept': {
-    summary: 'Accept an invitation (the Brain web only): your account, your roles and a web session.',
+    summary: 'Accept an invitation (the rsc-brain web only): your account, your roles and a web session.',
     status: 201,
     body: obj({ token: s('The token.'), name: s('Your name.'), password: s('12 to 200 characters.') }),
     reply: obj({
@@ -267,7 +267,7 @@ const HAND: Record<string, Op> = {
         canInvite: b(
           'This key may invite people (POST /v1/invitations): a web session of the administration, or of a curator when the installation allows curators to invite.',
         ),
-        totp: b('The account signs in with a second factor.'),
+        totp: nul(b('The account signs in with a second factor; null for any key but a web session.')),
       }),
       installation: obj({
         name: s('The name of the installation.'),
@@ -281,6 +281,34 @@ const HAND: Record<string, Op> = {
         agent: nul(s('Agent of a short key.')),
       }),
     }),
+  },
+  'POST /v1/me/tokens': {
+    summary:
+      'Create a personal token (the rsc-brain web only): read or read + write, for some brains or all, for 30, 90 or 365 days. The secret is shown only in this answer.',
+    status: 201,
+    body: obj(
+      {
+        name: s('What it is for, such as "Claude Code laptop".'),
+        perm: s('read, or write (read + write).'),
+        brains: list(s('The name of a brain.'), 'The brains it reaches.'),
+        allBrains: b('Every brain you are a member of, including brains you join later.'),
+        days: n('30, 90 or 365 (90 by default).'),
+      },
+      ['brains', 'allBrains', 'days'],
+    ),
+    reply: obj(
+      {
+        token: obj({
+          id: s('Credential id.'),
+          secret: s('The token. Shown only here.'),
+          last4: s('Its last four characters, to recognise it later.'),
+          expiresAt: s('When it ends.', { format: 'date-time' }),
+        }),
+        message: s('A reminder that it is shown once.'),
+        note: s('Said when it reaches every brain.'),
+      },
+      ['note'],
+    ),
   },
   'GET /v1/brains': { summary: 'The brains this key can use.', reply: obj({ brains: list(BRAIN_ROLE) }) },
   'POST /v1/brains': {
@@ -303,6 +331,9 @@ const HAND: Record<string, Op> = {
     summary:
       "A brain at a glance: its numbers, today's sessions, the newest pending proposals, health counts and the first steps of a new brain.",
     reply: obj({
+      cursor: s(
+        'The id of the newest event this answer already shows. Follow the brain from here: GET /v1/brains/{slug}/events with Last-Event-ID set to it replays whatever came after.',
+      ),
       stats: STATS,
       todaySessions: list(
         obj({
@@ -348,7 +379,7 @@ const HAND: Record<string, Op> = {
   },
   'POST /v1/invitations': {
     summary:
-      'Invite people by email (the Brain web only): the administration anywhere; a curator, when allowed, to brains they curate.',
+      'Invite people by email (the rsc-brain web only): the administration anywhere; a curator, when allowed, to brains they curate.',
     status: 201,
     body: obj(
       {
@@ -409,7 +440,7 @@ const HAND: Record<string, Op> = {
   },
   'POST /v1/admin/accounts/{id}/reset-link': {
     summary:
-      'A password reset link for a person, to give by hand (the Brain web only, administration). Works once, for 1 hour.',
+      'A password reset link for a person, to give by hand (the rsc-brain web only, administration). Works once, for 1 hour.',
     status: 201,
     reply: obj({
       link: s('The single-use link. Shown only in this answer.'),

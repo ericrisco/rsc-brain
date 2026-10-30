@@ -2,7 +2,7 @@
 // kept out of the screens so it is tested on its own (plan §2: the .tsx files only paint).
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { ago, slugOf, toReview } from '../../web/src/lib/brains.ts'
+import { ago, clientLabel, slugOf, toReview } from '../../web/src/lib/brains.ts'
 import { emailsOf, firstPersonAlone } from '../../web/src/lib/people.ts'
 
 describe('a brain address from its name', () => {
@@ -75,5 +75,27 @@ describe('the "invite people" panel of an administrator', () => {
     assert.equal(firstPersonAlone([person('me'), { id: 's', kind: 'service', status: 'active' }]), true)
     assert.equal(firstPersonAlone([person('me'), person('old', 'removed')]), true)
     assert.equal(firstPersonAlone([person('me'), person('ana')]), false)
+  })
+})
+
+// Review of PR18: a session names its client the way a person says it, never a raw user agent.
+describe('the client of a session, in words', () => {
+  it('known agents by name; programs and browsers by what they are; nothing when unknown', () => {
+    assert.equal(clientLabel('Claude Code'), 'Claude Code')
+    assert.equal(clientLabel('claude-code/2.1.4 (cli)'), 'Claude Code')
+    assert.equal(clientLabel('codex_cli_rs/0.40.0 (Mac OS 15.1; arm64)'), 'Codex')
+    assert.equal(clientLabel('Cursor/1.7.2'), 'Cursor')
+    assert.equal(clientLabel('curl/8.7.1'), 'an API client')
+    assert.equal(clientLabel('python-requests/2.32.3'), 'an API client')
+    assert.equal(clientLabel('node'), 'an API client')
+    assert.equal(
+      clientLabel('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/141.0'),
+      'a browser',
+    )
+    assert.equal(clientLabel('web'), 'the web')
+    assert.equal(clientLabel('Lena agent/0.3'), 'Lena agent')
+    assert.equal(clientLabel(null), null)
+    assert.equal(clientLabel(''), null)
+    assert.ok((clientLabel('x'.repeat(200)) ?? '').length <= 40)
   })
 })

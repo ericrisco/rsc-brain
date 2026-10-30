@@ -66,7 +66,9 @@ describe('what a state says', () => {
   })
 
   it('offline says so and offers to try again', () => {
-    const v = errorView(new ApiError(0, 'offline', 'Brain could not be reached.', 'Check your connection.'))
+    const v = errorView(
+      new ApiError(0, 'offline', 'rsc-brain could not be reached.', 'Check your connection.'),
+    )
     assert.equal(v.kind, 'offline')
     assert.equal(v.retry, true)
   })

@@ -66,6 +66,7 @@ test('on a phone, the side bar folds into a menu that Esc closes, giving the foc
 })
 
 test('the light theme is a choice that stays; dark is the default', async ({ page, context, baseURL }) => {
+  await page.emulateMedia({ colorScheme: 'dark' })
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto('/')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
@@ -77,6 +78,35 @@ test('the light theme is a choice that stays; dark is the default', async ({ pag
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
   expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(ground)
 })
+
+// Review of PR18: until the person chooses, the theme follows the system; once chosen, it stays.
+for (const system of ['dark', 'light'] as const) {
+  test(`with a ${system} system and no choice yet, the web is ${system}; a choice then stays`, async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await page.emulateMedia({ colorScheme: system })
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/')
+    const html = page.locator('html')
+    await expect(html).toHaveAttribute('data-theme', system)
+    // The system changes while the page is open, and no choice was made: the web follows.
+    const other = system === 'dark' ? 'light' : 'dark'
+    await page.emulateMedia({ colorScheme: other })
+    await expect(html).toHaveAttribute('data-theme', other)
+    await page.emulateMedia({ colorScheme: system })
+    await expect(html).toHaveAttribute('data-theme', system)
+    // The person chooses the other one: it stays, whatever the system says.
+    await page.getByRole('button', { name: /Account/ }).click()
+    await page.getByRole('button', { name: /Light theme/ }).click()
+    await expect(html).toHaveAttribute('data-theme', other)
+    await page.reload()
+    await expect(html).toHaveAttribute('data-theme', other)
+    await page.emulateMedia({ colorScheme: other === 'dark' ? 'light' : 'dark' })
+    await expect(html).toHaveAttribute('data-theme', other)
+  })
+}
 
 test('the account menu signs out, and the web forgets the person', async ({ page, context, baseURL }) => {
   await scenario(context, baseURL as string, 'signed-in')

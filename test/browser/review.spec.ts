@@ -275,7 +275,7 @@ test.describe('R6: the small things', () => {
     await context.setOffline(true)
     await page.getByRole('link', { name: 'Support' }).click()
     const alert = page.getByRole('alert')
-    await expect(alert).toContainText('Brain could not be reached')
+    await expect(alert).toContainText('rsc-brain could not be reached')
     await expect(alert.getByText(/could not be reached/i)).toHaveCount(1)
     await context.setOffline(false)
   })

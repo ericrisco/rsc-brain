@@ -6,11 +6,12 @@
 // still alone in the installation is offered to invite people until someone joins.
 import { Fragment } from 'preact'
 import { useEffect, useState } from 'preact/hooks'
+import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
 import { ago } from '../lib/brains.ts'
 import { firstPersonAlone } from '../lib/people.ts'
-import { justJoined, justSetUp, type Me, me, online } from '../session.ts'
+import { branding, justJoined, justSetUp, type Me, me, online } from '../session.ts'
 import { connectFor, createOpen } from '../shell/dialogs.ts'
 import { useSignOut } from '../shell/signOut.ts'
 import { T } from '../text.ts'
@@ -102,7 +103,7 @@ function GetStarted({ who }: { who: Me }) {
         </li>
         {who.account.canInvite ? (
           <li>
-            <p>{T.home.startInvite}</p>
+            <p>{T.home.startInvite(branding().data.value?.canSendMail !== false)}</p>
             <a class="button" href="/people">
               {T.home.invite}
             </a>
@@ -148,13 +149,15 @@ function NotInAny({ who }: { who: Me }) {
 // Shown to an administrator while nobody else is in the installation.
 function InvitePanel() {
   const r = accountsResource()
+  // Someone may have joined since this list was loaded.
+  useFresh(r)
   const accounts = r.data.value?.accounts
   if (!accounts || !firstPersonAlone(accounts)) return null
   return (
     <section class="callout" aria-label={T.home.inviteTitle}>
       <div>
         <h2>{T.home.inviteTitle}</h2>
-        <p class="muted">{T.home.inviteLead}</p>
+        <p class="muted">{T.home.inviteLead(branding().data.value?.canSendMail !== false)}</p>
       </div>
       <a class="button" href="/people">
         {T.home.invite}

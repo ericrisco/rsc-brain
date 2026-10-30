@@ -402,6 +402,13 @@ describe('the fixture API', () => {
       body: {},
     })
     assert.equal(link.status, 201)
+    const token = await call('POST', '/v1/me/tokens', {
+      scenario: s.id,
+      cookie,
+      body: { name: 'Codex', perm: 'write', brains: ['growth'], days: 90 },
+    })
+    assert.equal(token.status, 201)
+    assert.match(String((token.body as { token: { secret: string } }).token.secret), /^rscb_/)
     const member = fx.scenario('member')
     const ana = 'rscb_session=fx.acc_ana'
     assert.equal((await call('GET', '/v1/invitations', { scenario: member.id, cookie: ana })).status, 403)

@@ -573,7 +573,7 @@ describe('people and keys', { skip: skipPg }, () => {
     const email = String((await w.db.one('SELECT email FROM accounts WHERE id = $1', [ana.id]))?.email)
     const r = await w.raw('POST', '/v1/auth/reset', { body: { email } })
     assert.equal(r.status, 202)
-    const m = await w.mailTo(email, /Reset your Brain password/)
+    const m = await w.mailTo(email, /Reset your rsc-brain password/)
     assert.match(m.text, /once, for 1 hour/)
     const token = tokenOf(m.text)
     const ok = await w.raw('POST', '/v1/auth/reset/confirm', {

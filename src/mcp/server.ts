@@ -359,7 +359,7 @@ async function callTool(
     // A path no route takes means a value in it was malformed (such as an empty id).
     if (!found || found === 'method' || found.route.public) {
       throw invalid(
-        'A value in this call is not one Brain can use (an empty or malformed id or address).',
+        'A value in this call is not one rsc-brain can use (an empty or malformed id or address).',
         'Check the arguments and try again.',
       )
     }

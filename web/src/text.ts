@@ -51,7 +51,7 @@ export const T = {
     loading: 'Loading…',
     tryAgain: 'Try again',
     errorTitle: 'This did not load',
-    offlineTitle: 'Brain could not be reached',
+    offlineTitle: 'rsc-brain could not be reached',
     offlineLead: 'No answer came back: this device is offline, or the server is down.',
     forbiddenTitle: 'You cannot open this',
     signedOutTitle: 'Your session ended',
@@ -71,7 +71,7 @@ export const T = {
     submit: 'Sign in',
     submitting: 'Signing in…',
     forgot: 'Forgot your password?',
-    noAccount: 'No account? Brain is by invitation: ask an administrator for one.',
+    noAccount: 'No account? rsc-brain is by invitation: ask an administrator for one.',
     signedOut: 'Signed out.',
     sessionEnded: 'Your session ended. Sign in again.',
     codeTitle: 'Enter your code',
@@ -107,9 +107,9 @@ export const T = {
     submitting: 'Setting up…',
     insecureTitle: 'This connection is not safe for a password',
     insecureLead:
-      'You opened Brain over a connection that is neither encrypted nor on this machine, so it will not take a password.',
+      'You opened rsc-brain over a connection that is neither encrypted nor on this machine, so it will not take a password.',
     insecureHow:
-      'Open Brain on its local address (http://localhost:…) from the machine it runs on, or over HTTPS, and set it up there.',
+      'Open rsc-brain on its local address (http://localhost:…) from the machine it runs on, or over HTTPS, and set it up there.',
     // What to fix, next to each field (checked in the browser before sending).
     need: {
       name: 'Enter a name for this installation.',
@@ -124,7 +124,7 @@ export const T = {
       passwordShort: 'Use at least 12 characters; a few unrelated words make a good password.',
       passwordLong: 'Use 200 characters or fewer.',
     },
-    doneTitle: 'Brain is already set up',
+    doneTitle: 'rsc-brain is already set up',
     doneLead: 'The first-time setup runs once. Sign in with your account.',
     goSignIn: 'Go to sign in',
   },
@@ -143,9 +143,12 @@ export const T = {
     submit: 'Create my account',
     submitting: 'Creating your account…',
     invalidTitle: 'This invitation link does not work',
-    noToken: 'This address has no invitation in it. Open the link from your invitation email again.',
-    reload:
-      'For your safety the invitation is not kept in the address. If you reloaded, open the link from your email again.',
+    noToken: (mail: boolean) =>
+      mail
+        ? 'This address has no invitation in it. Open the link from your invitation email again.'
+        : 'This address has no invitation in it. Open the invitation link you were given again.',
+    reload: (mail: boolean) =>
+      `For your safety the invitation is not kept in the address, only in this tab until you accept. In a new tab, open ${mail ? 'the link from your email' : 'the link you were given'} again.`,
     askNew: 'Need a new link? Ask the person who invited you, or an administrator.',
     haveAccount: 'Already have an account?',
     usedTitle: 'This invitation is already used',
@@ -196,7 +199,10 @@ export const T = {
     startLead:
       'A brain holds what you and your agents learn about one subject. Three steps to the first one:',
     startCreate: 'Create a brain for one subject: a product, a channel, a client.',
-    startInvite: 'Invite the people who work with you. Each gets an email with a link that works once.',
+    startInvite: (mail: boolean) =>
+      mail
+        ? 'Invite the people who work with you. Each gets an email with a link that works once.'
+        : 'Invite the people who work with you. You get a link for each, that works once, to send them yourself.',
     startConnect: 'Connect your agent to this installation. In Claude Code:',
     otherAgents: 'Other agents',
     copyCommand: 'Copy the command',
@@ -215,8 +221,10 @@ export const T = {
     lastActivity: (when: string) => `Last activity ${when}`,
     noActivity: 'No activity yet',
     inviteTitle: 'Invite people',
-    inviteLead:
-      'You are the only person here so far. Invite the people who work with you: each gets an email with a link that works once.',
+    inviteLead: (mail: boolean) =>
+      mail
+        ? 'You are the only person here so far. Invite the people who work with you: each gets an email with a link that works once.'
+        : 'You are the only person here so far. Invite the people who work with you: you get a link for each, that works once, to send them yourself.',
     invite: 'Invite people',
   },
 
@@ -230,8 +238,19 @@ export const T = {
     otherLead:
       'Add this address to any agent that speaks MCP over HTTP. If it supports the standard sign-in, it opens your browser to accept.',
     address: 'MCP address',
-    otherToken:
-      'An agent that needs a token instead: tokens are made in your profile, which arrives in the next version of this web.',
+    tokenTitle: 'Use a token instead',
+    tokenLead:
+      'For an agent that cannot open your browser to sign in: a personal token it sends as "Authorization: Bearer …". It reads and writes as you, for 90 days, and is shown once.',
+    createToken: 'Create a token',
+    creatingToken: 'Creating…',
+    tokenName: (agent: string) => `${agent} (from Connect your agent)`,
+    tokenFor: (brain: string | null) =>
+      brain ? `Token for the brain "${brain}"` : 'Token for all your brains',
+    tokenOnce: 'Shown only now: copy it into your agent.',
+    tokenUntil: (date: string) => `It works until ${date}.`,
+    copyToken: 'Copy the token',
+    tokenLater:
+      'Seeing and revoking your tokens comes with your profile page, in the next version of this web.',
     forBrain: (slug: string) => `The check names the brain "${slug}".`,
   },
 
@@ -266,14 +285,14 @@ export const T = {
     stepsLead: 'Each step marks itself when it happens.',
     done: 'Done',
     todo: 'To do',
-    later: 'Not available yet',
     step1: 'Connect your agent',
-    step1Lead: 'Add this installation to your coding agent. It takes one command.',
+    step1Lead:
+      'Add this installation to your coding agent; it takes one command. This step marks itself when your agent opens a session, searches, reads or saves in this brain.',
     step2: 'Ask it to save its first entry',
     step2Lead: 'Paste this to your agent:',
     step2Ask: (slug: string) =>
       `Save to the brain "${slug}" one thing worth remembering about this project, and keep saving what we learn as we work.`,
-    step3: 'Import a documentation folder',
+    step3: 'Tip: bring in a documentation folder',
     step3Lead:
       'Importing a folder (a 02-DOCS folder or an Obsidian vault) is not in this version yet. Meanwhile your agent can do it: paste this to it.',
     step3Ask: (slug: string) =>
@@ -288,7 +307,7 @@ export const T = {
     today: "Today's sessions",
     noToday: 'No sessions today.',
     noTodayHow: 'Sessions appear here as soon as an agent works in this brain.',
-    untitled: 'Session without a purpose',
+    untitled: 'No purpose given',
     entriesIn: (n: number) => plural(n, 'entry', 'entries'),
     status: { open: 'open', closed: 'closed', closed_no_summary: 'closed without summary' } as Record<
       string,
@@ -328,7 +347,7 @@ export const T = {
     emails: 'Emails',
     emailsHint: 'One or more, separated by commas or new lines.',
     brains: 'Brains they join',
-    brainsHint: 'Optional for the administration. A role per brain.',
+    brainsHint: 'Tick the brains they join, each with a role, or none: you can add them to brains later.',
     brainsCurator: 'Choose at least one brain you curate.',
     roleIn: (name: string) => `Role in ${name}`,
     roles: { reader: 'reader', contributor: 'contributor', curator: 'curator' } as Record<string, string>,
@@ -368,9 +387,16 @@ export const T = {
     asRole: (brain: string, role: string) => `${brain} as ${role}`,
     noBrain: 'no brain yet',
     admin: 'administrator',
-    invitedBy: (who: string, until: string) => `Invited by ${who} · works until ${until}`,
+    invitedBy: (who: string) => `Invited by ${who}`,
+    invitedUntil: (who: string, until: string) => `Invited by ${who} · works until ${until}`,
+    invitedExpired: (who: string, on: string) => `Invited by ${who} · expired on ${on}`,
     resend: 'New link',
+    resendFor: (email: string) => `New link for ${email}`,
     withdraw: 'Withdraw',
+    withdrawFor: (email: string) => `Withdraw invitation for ${email}`,
+    withdrawn: 'Invitation withdrawn.',
+    linkReady: (who: string[]) =>
+      `${who.length === 1 ? `Link for ${who[0]} is ready` : `Links for ${who.join(', ')} are ready`}: copy it now, it is shown only once.`,
     withdrawTitle: 'Withdraw the invitation?',
     withdrawLead: (email: string) =>
       `The link sent to ${email} stops working. You can invite them again later.`,
@@ -382,6 +408,7 @@ export const T = {
     inBrains: (n: number) => (n === 1 ? 'in 1 brain' : `in ${n} brains`),
     seen: (when: string | null) => (when ? `last seen ${when}` : 'never signed in'),
     reset: 'Make a reset link',
+    resetOf: (name: string) => `Make a reset link for ${name}`,
     resetHow: 'For someone who cannot sign in: a link to choose a new password, to give them yourself.',
   },
 
@@ -412,7 +439,7 @@ export const T = {
 
   notFound: {
     title: 'Nothing here',
-    lead: 'This address is not a page of the Brain web.',
+    lead: 'This address is not a page of the rsc-brain web.',
     home: 'Go home',
   },
 

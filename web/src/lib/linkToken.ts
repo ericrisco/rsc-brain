@@ -1,18 +1,39 @@
 // The token of an invitation or reset link, read from "#token=" and taken out of the address at once
-// (never in the server's logs, never in the history). Kept in memory for the visit, so a screen that
-// mounts again still has it; a link pasted again in the same tab (hashchange) is read anew.
+// (never in the server's logs, never in a URL of the history). Kept in memory for the visit, so a screen
+// that mounts again still has it, and in this tab's own history entry (history.state, which the browser
+// keeps for a reload of the same tab and never sends anywhere), so a reload does not lose the
+// invitation; never in storage. Using the link clears both. A link pasted again in the same tab
+// (hashchange) is read anew.
 import { useEffect, useState } from 'preact/hooks'
 import { tokenFromHash } from './nav.ts'
 
 const memory = new Map<string, string>()
+const slot = (kind: string) => `rscb.link.${kind}`
+
+function stateWith(kind: string, token: string | null): Record<string, unknown> {
+  const now = history.state && typeof history.state === 'object' ? { ...history.state } : {}
+  if (token) now[slot(kind)] = token
+  else delete now[slot(kind)]
+  return now
+}
+
+function held(kind: string): string | null {
+  const v = history.state && typeof history.state === 'object' ? history.state[slot(kind)] : null
+  return typeof v === 'string' && v ? v : null
+}
 
 function take(kind: string): string | null {
   const t = tokenFromHash(location.hash)
   if (t) {
     memory.set(kind, t)
-    history.replaceState(history.state, '', location.pathname)
+    history.replaceState(stateWith(kind, t), '', location.pathname)
   }
-  return memory.get(kind) ?? null
+  return memory.get(kind) ?? held(kind)
+}
+
+function drop(kind: string): void {
+  memory.delete(kind)
+  if (held(kind)) history.replaceState(stateWith(kind, null), '', location.pathname)
 }
 
 export function useLinkToken(kind: 'invite' | 'reset'): {
@@ -37,9 +58,9 @@ export function useLinkToken(kind: 'invite' | 'reset'): {
   return {
     token: held.token,
     visit: held.visit,
-    spend: () => memory.delete(kind),
+    spend: () => drop(kind),
     forget: () => {
-      memory.delete(kind)
+      drop(kind)
       setHeld((h) => ({ token: null, visit: h.visit + 1 }))
     },
   }

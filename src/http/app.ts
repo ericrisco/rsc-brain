@@ -311,7 +311,7 @@ export function createHandler(deps: AppDeps) {
             503,
             'setup_required',
             'This installation is not set up yet.',
-            'Open the Brain web address to run the first-time setup.',
+            'Open the rsc-brain web address to run the first-time setup.',
           )
         }
       }
@@ -347,7 +347,7 @@ export function createHandler(deps: AppDeps) {
           403,
           'csrf',
           'This request from the web lacks its "X-Requested-With" header.',
-          'Use the Brain web to do this.',
+          'Use the rsc-brain web to do this.',
         )
       }
       const who = await resolveKey(deps.db, key ?? cookie, deps.clock(), key ? 'bearer' : 'cookie', conn)

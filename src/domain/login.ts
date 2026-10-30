@@ -255,8 +255,17 @@ export async function signOut(ctx: Ctx, everywhere: boolean): Promise<number> {
   return r.length
 }
 
+// Only the newest reset link of an account works: a new link, and any new password, end every older
+// link that was not used yet (they count as spent). Whatever changes a password calls this.
+export const endResets = (db: Db, accountId: string, now: Date) =>
+  db.query('UPDATE password_resets SET used_at = $2 WHERE account_id = $1 AND used_at IS NULL', [
+    accountId,
+    now,
+  ])
+
 export async function newReset(db: Db, accountId: string, by: string | null, now: Date): Promise<string> {
   const token = newSecret()
+  await endResets(db, accountId, now)
   await db.query(
     'INSERT INTO password_resets (token_hash, account_id, created_by, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)',
     [hashSecret(token), accountId, by, now, new Date(now.getTime() + RESET_MINUTES * 60_000)],
@@ -385,6 +394,7 @@ export async function confirmReset(
     )
     if (!r) throw badLink()
     const id = String(r.account_id)
+    await endResets(tx, id, now)
     const acc = await tx.one<Row>('UPDATE accounts SET password_hash = $2 WHERE id = $1 RETURNING email', [
       id,
       hash,

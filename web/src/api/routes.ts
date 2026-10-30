@@ -31,6 +31,7 @@ export const ROUTE_TABLE = {
   accounts: { route: 'GET /v1/admin/accounts' },
   resetLink: { route: 'POST /v1/admin/accounts/{id}/reset-link' },
   allBrains: { route: 'GET /v1/admin/brains' },
+  createToken: { route: 'POST /v1/me/tokens' },
 } as const satisfies Record<string, Op>
 
 export type OpName = keyof typeof ROUTE_TABLE

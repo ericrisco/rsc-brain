@@ -126,7 +126,7 @@ test.describe('first run', () => {
     await expect(page).toHaveURL(/\/$/)
     await expect(page.getByRole('link', { name: /rsc-brain/ })).toBeVisible()
     await page.goto('/setup')
-    await expect(page.getByRole('heading', { name: 'Brain is already set up' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'rsc-brain is already set up' })).toBeVisible()
   })
 
   test('over a connection that is not safe, it explains and does not ask for a password', async ({
@@ -163,6 +163,35 @@ test.describe('accept an invitation', () => {
     expect(
       await page.evaluate(() => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage })),
     ).not.toContain(INVITE)
+  })
+
+  // Review of PR18, P5: a reload in the same tab keeps the invitation (held in this tab's history entry,
+  // never in the address or in storage); once accepted it is gone.
+  test('P5: a reload in the same tab keeps the invitation until it is accepted', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-out')
+    await page.goto(`/invite#token=${INVITE}`)
+    await expect(page.getByRole('heading', { level: 1, name: 'Accept your invitation' })).toBeVisible()
+    await expect(page).toHaveURL(/\/invite$/)
+    await page.reload()
+    await expect(page.getByRole('heading', { level: 1, name: 'Accept your invitation' })).toBeVisible()
+    await expect(page).toHaveURL(/\/invite$/)
+    const kept = await page.evaluate(
+      () => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }) + location.href,
+    )
+    expect(kept).not.toContain(INVITE)
+    await page.getByLabel('Your name').fill('Zoe')
+    await page.getByLabel('Choose a password').fill(PASSWORD)
+    await page.getByRole('button', { name: 'Create my account' }).click()
+    await expect(page.getByRole('heading', { name: 'Your brains' })).toBeVisible()
+    expect(await page.evaluate(() => JSON.stringify(history.state ?? null))).not.toContain(INVITE)
+    // Back on the invite page in this tab: the invitation is no longer held.
+    await page.goto('/invite')
+    await expect(page.getByLabel('Choose a password')).toHaveCount(0)
+    await expect(page.getByText('This address has no invitation in it')).toBeVisible()
   })
 
   test('a used or wrong link says it does not work and who to ask', async ({ page, context, baseURL }) => {

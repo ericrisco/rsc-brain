@@ -83,6 +83,8 @@ type Scen = {
   // Live event streams open in this scenario, by brain.
   streams: Set<{ brain: string; res: ServerResponse }>
   seq: number
+  // Every event of the scenario, so a stream that comes back with Last-Event-ID gets what it missed.
+  log: Array<{ seq: number; brain: string; frame: string }>
 }
 
 type Answer = { status: number; body: unknown; headers?: Record<string, string> }
@@ -121,8 +123,8 @@ const INTERNAL = err(
 const CSRF = err(
   403,
   'csrf',
-  'This request lacks the header of the Brain web.',
-  'Use the Brain web to do this.',
+  'This request lacks the header of the rsc-brain web.',
+  'Use the rsc-brain web to do this.',
 )
 const SHORT = err(
   400,
@@ -267,6 +269,16 @@ function freshScenario(id: string, preset: Preset): Scen {
         expiresAt: '2026-10-31T10:00:00.000Z',
       },
       {
+        id: 'inv_expired_cy',
+        email: 'cy@example.test',
+        status: 'expired',
+        brains: [],
+        isAdmin: false,
+        invitedBy: 'Eric',
+        createdAt: '2026-10-21T10:00:00.000Z',
+        expiresAt: '2026-10-24T10:00:00.000Z',
+      },
+      {
         id: 'inv_used_ana',
         email: 'ana@example.test',
         status: 'used',
@@ -279,6 +291,7 @@ function freshScenario(id: string, preset: Preset): Scen {
     ],
     streams: new Set(),
     seq: 100,
+    log: [],
   }
   if (preset === 'alone') {
     s.accounts.push({
@@ -346,8 +359,8 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         return err(
           403,
           'insecure_connection',
-          'This connection is not encrypted, so Brain does not accept a password over it.',
-          'Open Brain over HTTPS (a domain with a certificate, or a tunnel), or on its local address from the same machine.',
+          'This connection is not encrypted, so rsc-brain does not accept a password over it.',
+          'Open rsc-brain over HTTPS (a domain with a certificate, or a tunnel), or on its local address from the same machine.',
         )
       const admin = (body.admin ?? {}) as Record<string, unknown>
       const name = typeof body.name === 'string' ? body.name.trim() : ''
@@ -540,6 +553,8 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         isAdmin: false,
         totp: false,
         password: body.password,
+        // An administrator alone in the installation now sees her.
+        joined: true,
       }
       s.accounts.push(a)
       s.inviteUsed = true
@@ -663,6 +678,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       return {
         status: 200,
         body: {
+          cursor: String(s.seq),
           stats: fresh && st === 'empty' ? ZERO : b.stats,
           todaySessions: fresh || st === 'empty' ? [] : sessionsOf(b.slug, st === 'much-data' ? 20 : 3),
           pending: fresh ? [] : pendingOf(b.slug, Math.min(5, b.stats.pendingProposals)),
@@ -771,6 +787,33 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       inv.status = 'pending'
       inv.expiresAt = '2026-11-01T10:00:00.000Z'
       return { status: 200, body: { invitation: invited(s, inv) } }
+    },
+  },
+  // A personal token, shown once (the profile page that lists them arrives with PR24).
+  'POST /v1/me/tokens': {
+    run: ({ s, who, body, web }) => {
+      if (!who) return UNAUTHORIZED
+      if (!web) return CSRF
+      const slugs = Array.isArray(body.brains) ? (body.brains as string[]) : null
+      if (slugs && !slugs.every((x) => brainsOf(s, who).some((b) => b.slug === x))) return NO_BRAIN
+      const secret = `rscb_fixturetoken${String(Date.now()).padStart(26, '0')}`
+      return {
+        status: 201,
+        body: {
+          token: {
+            id: 'crd_fixture_token',
+            secret,
+            last4: secret.slice(-4),
+            expiresAt: '2027-01-27T10:00:00.000Z',
+          },
+          message: 'Copy it now: rsc-brain shows it only this once.',
+          ...(slugs
+            ? {}
+            : {
+                note: 'This token reaches every brain you are a member of, including brains you join later.',
+              }),
+        },
+      }
     },
   },
   'DELETE /v1/invitations/{id}': {
@@ -894,6 +937,7 @@ const PRIVATE = new Set([
   'POST /v1/invitations',
   'POST /v1/invitations/{id}/resend',
   'DELETE /v1/invitations/{id}',
+  'POST /v1/me/tokens',
   'GET /v1/admin/accounts',
   'POST /v1/admin/accounts/{id}/reset-link',
   'GET /v1/admin/brains',
@@ -917,9 +961,9 @@ function sessionsOf(slug: string, n: number) {
   return Array.from({ length: n }, (_, i) => ({
     id: `ses_${slug.replace(/-/g, '')}${String(i + 1).padStart(3, '0')}`,
     who: i % 2 ? 'Ana' : 'Eric',
-    client: CLIENTS[i % CLIENTS.length] ?? null,
-    purpose:
-      ['Review the intros of October', 'Fix the onboarding emails', 'Weekly retention notes'][i % 3] ?? '',
+    // The third: a program that opened no session of its own (no purpose, a raw user agent).
+    client: i === 2 ? 'curl/8.7.1' : (CLIENTS[i % CLIENTS.length] ?? null),
+    purpose: ['Review the intros of October', 'Fix the onboarding emails', ''][i % 3] ?? '',
     ref: i % 3 === 2 ? `r_${slug.slice(0, 3)}${i}` : null,
     status: i === 0 ? 'open' : i % 4 === 3 ? 'closed_no_summary' : 'closed',
     entries: (i * 7) % 13,
@@ -1029,6 +1073,8 @@ async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
 function emit(s: Scen, slug: string, kind: string): void {
   const b = s.brains.find((x) => x.slug === slug)
   const life = s.life.get(slug) ?? { entries: 0, agent: false }
+  if (kind === 'proposal.submitted' && b)
+    b.stats = { ...b.stats, pendingProposals: b.stats.pendingProposals + 1 }
   if (kind === 'entry.saved' || kind === 'session.opened') {
     life.agent = true
     if (kind === 'entry.saved') life.entries += 1
@@ -1053,8 +1099,9 @@ function emit(s: Scen, slug: string, kind: string): void {
     target: { id: 'ent_fixture', label: 'First thing the agent learnt' },
     query: null,
   }
-  for (const st of s.streams)
-    if (st.brain === slug) st.res.write(`id: ${s.seq}\ndata: ${JSON.stringify(event)}\n\n`)
+  const frame = `id: ${s.seq}\ndata: ${JSON.stringify(event)}\n\n`
+  s.log.push({ seq: s.seq, brain: slug, frame })
+  for (const st of s.streams) if (st.brain === slug) st.res.write(frame)
 }
 
 export type ScenarioHandle = {
@@ -1188,6 +1235,10 @@ export async function startFixture(
           'x-content-type-options': 'nosniff',
         })
         res.write(': following\n\n')
+        // Resuming: what came after the id the client sends, as the server replays it.
+        const given = String(req.headers['last-event-id'] ?? url.searchParams.get('lastEventId') ?? '')
+        if (/^\d+$/.test(given))
+          for (const e of s.log) if (e.brain === slug && e.seq > Number(given)) res.write(e.frame)
         const stream = { brain: slug, res }
         s.streams.add(stream)
         req.on('close', () => s.streams.delete(stream))

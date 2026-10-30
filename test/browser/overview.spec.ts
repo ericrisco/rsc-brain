@@ -5,7 +5,7 @@
 import { expect, noSideScroll, scenario, test } from './fixture.ts'
 
 test.describe('a new brain', () => {
-  test("CA19: three first steps; the agent's first entry marks steps 1 and 2 without reloading", async ({
+  test("CA19: two first steps and a tip; the agent's first entry marks both without reloading", async ({
     page,
     context,
     baseURL,
@@ -19,20 +19,21 @@ test.describe('a new brain', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Onboarding' })).toBeVisible()
     const steps = page.getByRole('region', { name: 'First steps' })
     const items = steps.getByRole('listitem')
-    await expect(items).toHaveCount(3)
+    // Two steps that work today; importing a folder is a tip under them, not a step that cannot be done.
+    await expect(items).toHaveCount(2)
     await expect(items.nth(0)).toContainText('Connect your agent')
     // A screen reader hears each step with its number.
     await expect(steps.getByRole('heading', { level: 3, name: '1. Connect your agent' })).toBeVisible()
-    await expect(
-      steps.getByRole('heading', { level: 3, name: '3. Import a documentation folder' }),
-    ).toBeVisible()
     await expect(items.nth(0)).toContainText('To do')
+    // Step 1 says what marks it.
+    await expect(items.nth(0)).toContainText('when your agent opens a session, searches, reads or saves')
     await expect(items.nth(1)).toContainText('first entry')
     await expect(items.nth(1)).toContainText('To do')
-    // Step 3 is honest about importing and still gives a way that works today.
-    await expect(items.nth(2)).toContainText('Import')
-    await expect(items.nth(2)).toContainText('not in this version yet')
-    await expect(items.nth(2).getByRole('button', { name: /Copy/ })).toBeVisible()
+    const tip = steps.getByRole('note')
+    await expect(tip).toContainText('Import')
+    await expect(tip).toContainText('not in this version yet')
+    await expect(tip.getByRole('button', { name: /Copy/ })).toBeVisible()
+    await expect(steps).not.toContainText('Not available yet')
     // The first step opens the connection kit, naming this brain.
     await items.nth(0).getByRole('button', { name: 'Connect your agent' }).click()
     await expect(page.getByRole('dialog', { name: 'Connect your agent' })).toContainText('onboarding')
@@ -42,7 +43,6 @@ test.describe('a new brain', () => {
     await s.emit('onboarding')
     await expect(items.nth(0)).toContainText('Done', { timeout: 5_000 })
     await expect(items.nth(1)).toContainText('Done')
-    await expect(items.nth(2)).not.toContainText('Done')
     expect(page.url()).toBe(url)
     await expect(page.getByText('1 entry', { exact: false }).first()).toBeVisible()
   })
@@ -70,6 +70,12 @@ test.describe('a brain at work', () => {
     await expect(today).toContainText('Claude Code')
     await expect(today).toContainText('Short intros keep viewers past 30 seconds')
     await expect(today).toContainText('open')
+    // A program without a purpose: said in words, never a raw user agent.
+    const third = today.getByRole('listitem').nth(2)
+    await expect(third).toContainText('No purpose given')
+    await expect(third).toContainText('an API client')
+    await expect(today).not.toContainText('curl/')
+    await expect(today).not.toContainText('Session without a purpose')
     const waiting = page.getByRole('region', { name: 'Waiting for review' })
     await expect(waiting.getByRole('listitem')).toHaveCount(3)
     await expect(waiting).toContainText('Intros: keep them under 10 seconds')

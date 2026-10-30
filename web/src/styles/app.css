@@ -323,7 +323,6 @@ kbd,
   height: calc(100vh - var(--topbar));
   overflow-y: auto;
   padding: 20px 12px;
-  border-right: 1px solid var(--rule);
 }
 
 .sidebar .brain-name {
@@ -363,6 +362,12 @@ kbd,
 .content {
   min-width: 0;
   padding: 28px var(--gutter) 64px;
+}
+
+/* The rule between side bar and content belongs to the content, which is as tall as the page: the side
+   bar is only as tall as the window (it stays in view), so a rule on it would stop there. */
+.body:not(.no-side) > .content {
+  border-left: 1px solid var(--rule);
 }
 
 .page {
@@ -795,9 +800,10 @@ pre.command .word {
   margin-top: 8px;
 }
 
-/* A keyboard shortcut list is no use without a keyboard: not offered on a touch-only device ("?" still
-   works when a keyboard is attached). */
-@media (hover: none) and (pointer: coarse) {
+/* A keyboard shortcut list is no use without a keyboard: not offered on a touch-only device — one with
+   no fine pointer at all ("?" still works when a keyboard is attached). A laptop with a touch screen
+   keeps it. */
+@media not (any-pointer: fine) {
   .account-menu button.keyboard-only,
   .door footer .keyboard-only {
     display: none;
@@ -1039,6 +1045,10 @@ dialog::backdrop {
     display: none;
   }
 
+  .body:not(.no-side) > .content {
+    border-left: 0;
+  }
+
   .rows-head {
     display: none;
   }
@@ -1122,35 +1132,21 @@ dialog::backdrop {
 }
 
 /* The proposals waiting for me, in the top bar: a data signal, so the accent marks it. */
-.to-review {
+.top-link {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
   min-height: 32px;
   margin-right: 8px;
-  padding: 0 12px;
-  border: 1px solid var(--rule);
-  border-radius: 16px;
-  color: var(--text);
-  font: 550 13px var(--sans);
+  padding: 0 10px;
+  color: var(--muted);
+  border-radius: 6px;
   text-decoration: none;
-  white-space: nowrap;
 }
 
-.to-review:hover {
-  border-color: var(--field-line);
-}
-
-.to-review .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-
-.to-review .short,
-.to-review .tiny {
-  display: none;
+.top-link:hover,
+.top-link[aria-current="page"] {
+  color: var(--text);
+  background: var(--surface);
 }
 
 /* A brain per card: flat, a rule between, the whole card opens the brain. */
@@ -1616,6 +1612,35 @@ select:disabled {
   border-top: 1px solid var(--rule);
 }
 
+/* A tip under the first steps: quieter than a step, no number, no status. A tip is never "done", so
+   the rule for done steps never meets it. */
+.step-tip {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-left: 2px solid var(--rule);
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: a tip is not a step; the rules of done steps never meet it */
+.step-tip h3 {
+  font: 550 14px var(--sans);
+}
+
+/* A one-time link, next to what made it. In a row it takes the whole width under the row. */
+.link-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.list > li > .link-card {
+  grid-column: 1 / -1;
+  padding: 12px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+}
+
 @media (max-width: 1023px) {
   .overview-grid,
   .people {
@@ -1624,17 +1649,9 @@ select:disabled {
 }
 
 @media (max-width: 767px) {
-  .to-review {
-    margin-right: 4px;
-    padding: 0 10px;
-  }
-
-  .to-review .long {
+  /* The account menu holds People on a narrow screen. */
+  .top-link {
     display: none;
-  }
-
-  .to-review .short {
-    display: inline;
   }
 
   select,
@@ -1663,33 +1680,6 @@ select:disabled {
 @media (max-width: 479px) {
   /* With the menu, the search, the count and the account in one bar, the logo stands for the name
      (it stays for screen readers), as on the narrowest phones: fonts differ by system. */
-  .topbar:has(.to-review) .brand .name,
-  .topbar:has(.to-review) .brand .slash {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  .topbar:has(.to-review) .brand {
-    flex: 0 0 auto;
-    padding: 0 8px;
-  }
-
-  .topbar:has(.to-review) .middle {
-    flex: 1 1 auto;
-    justify-content: flex-end;
-  }
-
-  .to-review .short {
-    display: none;
-  }
-
-  .to-review .tiny {
-    display: inline;
-  }
 
   .title-row .actions {
     width: 100%;

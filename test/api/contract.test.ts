@@ -35,7 +35,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     'brain.stats': ['pages', 'entries', 'uncompiled', 'conflicts', 'pendingProposals', 'lastActivityAt'],
   },
   'GET /v1/brains/{slug}/overview': {
-    '': ['stats', 'todaySessions', 'pending', 'health', 'firstSteps'],
+    '': ['cursor', 'stats', 'todaySessions', 'pending', 'health', 'firstSteps'],
     stats: ['pages', 'entries', 'uncompiled', 'conflicts', 'pendingProposals', 'lastActivityAt'],
     'todaySessions[]': [
       'id',

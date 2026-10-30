@@ -88,6 +88,9 @@ for (const theme of ['dark', 'light'] as const) {
 // shown, and their dialogs (create a brain, connect your agent, withdraw an invitation).
 for (const theme of ['dark', 'light'] as const) {
   test(`home, overview and people (PR18), ${theme}`, async ({ page, context, baseURL }) => {
+    // Six full axe audits in one walk: about 3 s alone, but past 30 s when eight workers share the
+    // machine (seen in --repeat-each runs). The budget, not the page, is what ran out.
+    test.slow()
     await scenario(context, baseURL as string, 'alone', {}, { mail: false })
     await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
     await page.goto('/')
@@ -121,7 +124,7 @@ for (const theme of ['dark', 'light'] as const) {
     await scenario(context, baseURL as string, 'signed-in')
     await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
     await page.goto('/')
-    await expect(page.getByRole('banner').getByRole('link', { name: /to review/ })).toBeVisible()
+    await expect(page.getByText('3 proposals to review')).toBeVisible()
     await audit(page, `${theme} home cards`)
     await page.goto('/b/growth')
     await expect(page.getByRole('region', { name: "Today's sessions" })).toBeVisible()

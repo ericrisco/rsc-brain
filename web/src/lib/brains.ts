@@ -46,3 +46,29 @@ export function ago(iso: string | null, now: Date = new Date()): string | null {
   if (days < 30) return `${days} days ago`
   return `${t.getUTCDate()} ${MONTHS[t.getUTCMonth()]} ${t.getUTCFullYear()}`
 }
+
+// The client of a session as a person says it (overview, «Today's sessions»): a known agent by its
+// name, a program by what it is, a browser as a browser — never a raw user agent.
+const AGENTS: Array<[RegExp, string]> = [
+  [/claude[\s_-]?code/i, 'Claude Code'],
+  [/codex/i, 'Codex'],
+  [/cursor/i, 'Cursor'],
+  [/gemini/i, 'Gemini CLI'],
+  [/opencode/i, 'OpenCode'],
+  [/windsurf/i, 'Windsurf'],
+  [/rsc[\s-]?factory/i, 'RSC Factory'],
+]
+const PROGRAMS =
+  /^(curl|wget|httpie|python|python-requests|python-urllib|aiohttp|httpx|axios|node|node-fetch|undici|go-http-client|okhttp|java|postmanruntime|insomnia|ruby|php|rust|reqwest)\b/i
+
+export function clientLabel(raw: string | null | undefined): string | null {
+  const v = (raw ?? '').trim()
+  if (!v) return null
+  if (v === 'web') return 'the web'
+  for (const [re, name] of AGENTS) if (re.test(v)) return name
+  if (PROGRAMS.test(v)) return 'an API client'
+  if (/^mozilla\//i.test(v)) return 'a browser'
+  // "Name/1.2 (details)": the name.
+  const name = (v.split('/')[0] ?? v).replace(/\s*\(.*$/, '').trim()
+  return name.length > 40 ? `${name.slice(0, 39)}…` : name || null
+}

@@ -2,7 +2,7 @@
 import { useState } from 'preact/hooks'
 import { T } from '../text.ts'
 
-export function CopyButton({ text, label }: { text: string; label: string }) {
+export function CopyButton({ text, label, id }: { text: string; label: string; id?: string }) {
   const [said, setSaid] = useState<string | null>(null)
   const copy = async () => {
     try {
@@ -14,7 +14,7 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
   }
   return (
     <span class="copy">
-      <button type="button" class="button" onClick={() => void copy()}>
+      <button type="button" class="button" id={id} onClick={() => void copy()}>
         {label}
       </button>
       <span role="status" class="meta">

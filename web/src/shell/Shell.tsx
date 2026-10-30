@@ -4,7 +4,6 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
-import { toReview } from '../lib/brains.ts'
 import { applyTheme, theme } from '../lib/theme.ts'
 import { brainsResource } from '../screens/Home.tsx'
 import type { Me } from '../session.ts'
@@ -139,11 +138,13 @@ function AccountMenu({ me }: { me: Me }) {
   )
 }
 
-// The proposals waiting for me, across my brains (spec B6: «el aviso de propuestas pendientes»). Asked
-// again every 30 seconds and when the tab comes back (plan §3.3); shown only when something waits.
-function ToReview() {
-  const r = brainsResource()
+// The brains and their numbers (the cards of home, what waits for review) are asked again every 30
+// seconds and when the tab comes back (plan §3.3). The top bar shows no count of proposals to review
+// yet: it would lead nowhere until the Proposals screen exists (PR21); the cards and the overview say
+// what waits.
+function useFreshBrains() {
   useEffect(() => {
+    const r = brainsResource()
     const again = () => {
       if (!document.hidden) void r.reload()
     }
@@ -154,18 +155,6 @@ function ToReview() {
       document.removeEventListener('visibilitychange', again)
     }
   }, [])
-  const brains = r.data.value?.brains
-  if (!brains) return null
-  const { count, href } = toReview(brains)
-  if (!count) return null
-  return (
-    <a class="to-review" href={href} aria-label={T.shell.toReview(count)}>
-      <span class="dot" aria-hidden="true" />
-      <span class="long">{T.shell.toReview(count)}</span>
-      <span class="short">{T.shell.toReviewShort(count)}</span>
-      <span class="tiny">{count}</span>
-    </a>
-  )
 }
 
 export function Shell({
@@ -179,6 +168,7 @@ export function Shell({
 }) {
   const [menu, setMenu] = useState(false)
   const { path } = useLocation()
+  useFreshBrains()
   useEffect(() => setMenu(false), [path])
   return (
     <div class="frame">
@@ -210,7 +200,16 @@ export function Shell({
           </button>
         </div>
         <div class="end">
-          <ToReview />
+          {me.account.canInvite ? (
+            <a
+              class="top-link"
+              href="/people"
+              aria-current={path === '/people' ? 'page' : undefined}
+              aria-keyshortcuts="g p"
+            >
+              {T.shell.people}
+            </a>
+          ) : null}
           <AccountMenu me={me} />
         </div>
       </header>
@@ -239,8 +238,8 @@ export function Shell({
         </Dialog>
       ) : null}
       {/* Keyed: the brain's menu appearing above them must not remount an open dialog. */}
-      <Keyboard key="keys" signedIn brain={brain?.slug ?? null} />
-      <HelpDialog key="help" signedIn inBrain={Boolean(brain)} />
+      <Keyboard key="keys" signedIn brain={brain?.slug ?? null} canInvite={me.account.canInvite} />
+      <HelpDialog key="help" signedIn inBrain={Boolean(brain)} canInvite={me.account.canInvite} />
       <SearchDialog key="search" />
       <ConnectDialog key="connect" />
       <CreateBrainDialog key="create" />

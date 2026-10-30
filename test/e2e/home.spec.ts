@@ -57,10 +57,12 @@ test('CA19: a new brain shows three first steps; an agent writing marks steps 1 
   await dialog.getByRole('button', { name: 'Create brain' }).click()
   await expect(page).toHaveURL(/\/b\/lifecycle$/)
   const steps = page.getByRole('region', { name: 'First steps' }).getByRole('listitem')
-  await expect(steps).toHaveCount(3)
+  await expect(steps).toHaveCount(2)
   await expect(steps.nth(0)).toContainText('To do')
   await expect(steps.nth(1)).toContainText('To do')
-  await expect(steps.nth(2)).toContainText('not in this version yet')
+  await expect(page.getByRole('region', { name: 'First steps' }).getByRole('note')).toContainText(
+    'not in this version yet',
+  )
   // The agent: a token of the administrator, used by a program that is not the web.
   const made = await page.request.post('/v1/me/tokens', {
     headers: WEB,
@@ -82,6 +84,77 @@ test('CA19: a new brain shows three first steps; an agent writing marks steps 1 
   await expect(page.getByRole('region', { name: "Today's sessions" }).getByRole('listitem')).toHaveCount(1)
 })
 
+// A new brain and a token for an agent that writes in it (a program, not the web).
+async function brainWithAgent(page: Page, name: string): Promise<{ slug: string; secret: string }> {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Create brain' }).first().click()
+  const dialog = page.getByRole('dialog', { name: 'Create a brain' })
+  await dialog.getByLabel('Name').fill(name)
+  await dialog.getByRole('button', { name: 'Create brain' }).click()
+  const slug = name.toLowerCase()
+  await expect(page).toHaveURL(new RegExp(`/b/${slug}$`))
+  const made = await page.request.post('/v1/me/tokens', {
+    headers: WEB,
+    data: { name: `e2e ${slug}`, perm: 'write', brains: [slug], days: 30 },
+  })
+  expect(made.status()).toBe(201)
+  return { slug, secret: ((await made.json()) as { token: { secret: string } }).token.secret }
+}
+
+async function hideTab(page: Page, hidden: boolean) {
+  await page.evaluate((h) => {
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => h })
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => (h ? 'hidden' : 'visible'),
+    })
+    document.dispatchEvent(new Event('visibilitychange'))
+  }, hidden)
+}
+
+test('L1: a tab hidden before the first event marks the steps within 3 s of being shown', async ({
+  page,
+  request,
+  baseURL,
+}) => {
+  await signedInAdmin(page, baseURL as string)
+  const { slug, secret } = await brainWithAgent(page, 'Hidden')
+  const steps = page.getByRole('region', { name: 'First steps' }).getByRole('listitem')
+  await expect(steps.nth(0)).toContainText('To do')
+  await hideTab(page, true)
+  const saved = await request.post(`/v1/brains/${slug}/entries`, {
+    headers: { authorization: `Bearer ${secret}` },
+    data: { type: 'learning', title: 'Written while hidden', content: 'Nobody was looking.' },
+  })
+  expect(saved.status()).toBe(201)
+  // Let the live feed deliver it while the tab is hidden.
+  await page.waitForTimeout(1500)
+  await hideTab(page, false)
+  await expect(steps.nth(0)).toContainText('Done', { timeout: 3_000 })
+  await expect(steps.nth(1)).toContainText('Done', { timeout: 3_000 })
+})
+
+test('L2: leaving a brain for home and coming back shows what the agent wrote meanwhile', async ({
+  page,
+  request,
+  baseURL,
+}) => {
+  await signedInAdmin(page, baseURL as string)
+  const { slug, secret } = await brainWithAgent(page, 'Revisit')
+  const steps = page.getByRole('region', { name: 'First steps' }).getByRole('listitem')
+  await expect(steps.nth(0)).toContainText('To do')
+  await page.getByRole('link', { name: '← All brains' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Your brains' })).toBeVisible()
+  const saved = await request.post(`/v1/brains/${slug}/entries`, {
+    headers: { authorization: `Bearer ${secret}` },
+    data: { type: 'learning', title: 'Written while away', content: 'The person was on home.' },
+  })
+  expect(saved.status()).toBe(201)
+  await page.getByRole('link', { name: 'Revisit' }).click()
+  await expect(steps.nth(0)).toContainText('Done', { timeout: 3_000 })
+  await expect(page.getByRole('region', { name: 'In numbers' })).toContainText('1 entry')
+})
+
 test('home: the card of the new brain carries its numbers and my role', async ({ page, baseURL }) => {
   await signedInAdmin(page, baseURL as string)
   const card = page.getByRole('listitem').filter({ has: page.getByRole('link', { name: 'Lifecycle' }) })
@@ -96,7 +169,8 @@ test('the first invitation from the web goes by email; the invitee joins; the pa
   baseURL,
 }) => {
   await signedInAdmin(page, baseURL as string)
-  await page.goto('/people')
+  // Inside the web, without reloading: People is shown again later from what it loaded now.
+  await page.getByRole('banner').getByRole('link', { name: 'People' }).click()
   const form = page.getByRole('form', { name: 'Invite people' })
   await form.getByLabel('Emails').fill('lena@example.test')
   await form.getByRole('checkbox', { name: 'Lifecycle' }).check()
@@ -124,11 +198,12 @@ test('the first invitation from the web goes by email; the invitee joins; the pa
   await expect(p.getByRole('link', { name: 'People' })).toHaveCount(0)
   await ctx.close()
 
-  await page.reload()
-  await expect(lena).toContainText('accepted')
-  await page.goto('/')
+  // Back to home and to People inside the web (no reload): both show that Lena joined.
+  await page.getByRole('banner').getByRole('link', { name: /home/ }).click()
   await expect(page.getByRole('link', { name: 'Lifecycle' })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Invite people' })).toHaveCount(0)
+  await page.getByRole('banner').getByRole('link', { name: 'People' }).click()
+  await expect(lena).toContainText('accepted')
 })
 
 test('the administration makes a reset link for a person, shown once', async ({ page, baseURL }) => {
@@ -141,7 +216,7 @@ test('the administration makes a reset link for a person, shown once', async ({ 
       hasText: 'lena@example.test',
     })
   await lena.getByRole('button', { name: 'Make a reset link' }).click()
-  const shown = page.getByRole('region', { name: 'Links to send' })
+  const shown = lena.getByRole('region', { name: /Reset link for Lena/ })
   await expect(shown).toContainText('/reset#token=')
   await shown.getByRole('button', { name: 'Done, I copied it' }).click()
   await expect(page.getByText('/reset#token=')).toHaveCount(0)

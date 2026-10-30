@@ -27,6 +27,15 @@ describe('keyboard shortcuts', () => {
     assert.equal(createKeymap(() => 0).handle(key('?')), 'help')
   })
 
+  it('"g" then "p" goes to People; the list says it is only for whoever may invite', () => {
+    const m = createKeymap(() => 0)
+    assert.equal(m.handle(key('g')), null)
+    assert.equal(m.handle(key('p')), 'go-people')
+    const people = SHORTCUTS.find((s) => s.id === 'go-people')
+    assert.equal(people?.invite, true)
+    assert.match(String(people?.control), /People/)
+  })
+
   it('"g" then a letter goes to a section, within a second and a half', () => {
     let now = 0
     const m = createKeymap(() => now)
@@ -56,6 +65,6 @@ describe('keyboard shortcuts', () => {
       assert.ok(!ids.has(s.id), `${s.id} twice`)
       ids.add(s.id)
     }
-    assert.deepEqual([...ids].sort(), ['go-home', 'go-overview', 'help', 'search'])
+    assert.deepEqual([...ids].sort(), ['go-home', 'go-overview', 'go-people', 'help', 'search'])
   })
 })

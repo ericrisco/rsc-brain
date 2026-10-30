@@ -506,7 +506,7 @@ export async function webCorrection(
   input: { title: string; content: string; appliesTo?: string; refs?: string[] },
 ): Promise<Receipt> {
   if (ctx.who.credential.kind !== 'web' || ctx.who.kind !== 'person') {
-    throw invalid('Only a person in the web writes corrections this way.', 'Use the Brain web.')
+    throw invalid('Only a person in the web writes corrections this way.', 'Use the rsc-brain web.')
   }
   return write(
     { ...ctx, db },
