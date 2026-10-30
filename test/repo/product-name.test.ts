@@ -136,6 +136,7 @@ describe('the product name', () => {
     assert.deepEqual(bareNames('a.ts', "const t = 'Add Brain for all your projects'"), [
       'Add Brain for all your projects',
     ])
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the source text of a template literal, on purpose
     assert.equal(bareNames('a.ts', 'const t = `Open Brain at ${url}`').length, 1)
     assert.equal(bareNames('a.tsx', '<p>Brain is ready</p>').length, 1)
     assert.equal(bareNames('a.md', 'Brain serves MCP at the address.').length, 1)

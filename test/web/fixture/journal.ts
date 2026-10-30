@@ -39,6 +39,13 @@ const NOT_YOURS = err(
   'Ask a curator of the brain (Eric), or write a new entry.',
 )
 
+const NOT_TO_DECIDE = err(
+  403,
+  'forbidden',
+  'Only the author of an entry or a curator of the brain can supersede it, or dismiss it when it is a correction.',
+  'Ask a curator of the brain (Eric), or mark that the two entries contradict each other.',
+)
+
 const ERIC: Named = { id: 'acc_eric', name: 'Eric' }
 const ANA: Named = { id: 'acc_ana', name: 'Ana' }
 const FACTORY: Named = { id: 'acc_factory', name: 'RSC Factory' }
@@ -106,6 +113,8 @@ type FxRelation = {
   reason: string
   createdBy: Named
   createdAt: string
+  // When a person decided on what an agent asked (it takes effect from then).
+  decidedAt?: string
 }
 export type Journal = {
   slug: string
@@ -432,6 +441,7 @@ const sessionView = (j: Journal, s: FxSession) => {
     author: s.author,
     entries: j.entries.filter((e) => e.sessionId === s.id && e.state === 'active' && e.type !== 'summary')
       .length,
+    forgotten: j.entries.filter((e) => e.sessionId === s.id && e.state === 'forgotten').length,
     summary: summary ? summary.content.slice(0, 300) : null,
   }
 }
@@ -540,6 +550,12 @@ const read = (e: FxEntry) => ({
   forgotten: e.forgotten,
 })
 
+// The session an entry is in, named by its purpose.
+const sessionRef = (j: Journal, id: string) => {
+  const s = j.sessions.find((x) => x.id === id)
+  return { id, purpose: s?.purpose ?? '', day: s?.day ?? null }
+}
+
 export function entriesOf(j: Journal, q: Q): Answer {
   const session = q.get('session')
   const list = j.entries
@@ -547,7 +563,15 @@ export function entriesOf(j: Journal, q: Q): Answer {
     .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1))
   const page = paged(list, q)
   if (isAnswer(page)) return page
-  return { status: 200, body: { items: page.items.map(plain), total: list.length, next: page.next } }
+  const open = new Set(openConflicts(j).flatMap((r) => [r.fromId, r.toId]))
+  return {
+    status: 200,
+    body: {
+      items: page.items.map((e) => ({ ...plain(e), conflict: open.has(e.id) })),
+      total: list.length,
+      next: page.next,
+    },
+  }
 }
 
 export function entryRead(j: Journal, e: FxEntry, curator: boolean, history: boolean): Answer {
@@ -564,12 +588,20 @@ export function entryRead(j: Journal, e: FxEntry, curator: boolean, history: boo
         status: r.status,
         direction: r.fromId === e.id ? 'out' : 'in',
         other: { id: o.id, title: hidden ? null : o.title, type: o.type, state: o.state },
-        reason: r.reason,
+        reason: hidden ? null : r.reason,
         by: r.createdBy,
         createdAt: r.createdAt,
       }
     })
-  return { status: 200, body: { entry: read(e), relations, ...(history ? { history: e.history } : {}) } }
+  return {
+    status: 200,
+    body: {
+      entry: read(e),
+      session: sessionRef(j, e.sessionId),
+      relations,
+      ...(history ? { history: e.history } : {}),
+    },
+  }
 }
 
 type Who = { role: string | null; me: Named; archived: boolean }
@@ -675,6 +707,14 @@ export function relate(j: Journal, w: Who, b: Record<string, unknown>): Answer {
   const from = j.entries.find((e) => e.id === b.from && e.state === 'active')
   const to = j.entries.find((e) => e.id === b.to && e.state === 'active')
   if (!from || !to) return NO_ENTRY
+  // Superseding an entry, or dismissing a correction: its author or a curator (the web is a person).
+  const decided =
+    kind === 'supersedes'
+      ? [to]
+      : kind === 'not_related'
+        ? [from, to].filter((x) => x.type === 'correction')
+        : []
+  if (!atLeast(w.role, 'curator') && decided.some((x) => x.author.id !== w.me.id)) return NOT_TO_DECIDE
   // The web is a person: what waited for one on this pair is settled.
   let confirmed: FxRelation | null = null
   if (kind !== 'contradicts') {
@@ -684,6 +724,7 @@ export function relate(j: Journal, w: Who, b: Record<string, unknown>): Answer {
       const same = !confirmed && r.fromId === from.id && r.toId === to.id && r.kind === kind
       if (same) confirmed = r
       r.status = same ? 'active' : 'rejected'
+      r.decidedAt = NOW
     }
   }
   if (kind === 'supersedes') {
@@ -711,7 +752,7 @@ export function relate(j: Journal, w: Who, b: Record<string, unknown>): Answer {
     createdAt: NOW,
   }
   if (!confirmed) j.relations.push(rel)
-  const { createdBy, ...r } = rel
+  const { createdBy, decidedAt: _d, ...r } = rel
   return { status: 201, body: { relation: { ...r, createdBy: createdBy.id } } }
 }
 
@@ -720,28 +761,31 @@ const settled = (j: Journal, r: FxRelation) =>
     (s) =>
       s.status === 'active' &&
       (s.kind === 'supersedes' || s.kind === 'not_related') &&
-      s.createdAt >= r.createdAt &&
+      (s.decidedAt ?? s.createdAt) >= r.createdAt &&
       ((s.fromId === r.fromId && s.toId === r.toId) || (s.fromId === r.toId && s.toId === r.fromId)),
   )
 
-export function conflictsOf(j: Journal, q: Q): Answer {
-  const open = j.relations.filter(
+// The open conflicts, as the server counts them (domain/relations.ts OPEN_CONFLICT).
+const active = (j: Journal, id: string) => j.entries.find((e) => e.id === id && e.state === 'active')
+const openConflicts = (j: Journal) =>
+  j.relations.filter(
     (r) =>
-      (r.kind === 'contradicts' && r.status === 'active' && !settled(j, r)) || r.status === 'pending_person',
+      ((r.kind === 'contradicts' && r.status === 'active' && !settled(j, r)) ||
+        r.status === 'pending_person') &&
+      active(j, r.fromId) &&
+      active(j, r.toId),
   )
-  const out = open.flatMap((r) => {
-    const from = j.entries.find((e) => e.id === r.fromId && e.state === 'active')
-    const to = j.entries.find((e) => e.id === r.toId && e.state === 'active')
-    if (!from || !to) return []
-    const { createdBy, ...rel } = r
-    return [
-      {
-        relation: { ...rel, createdBy: createdBy.id },
-        from: plain(from),
-        to: plain(to),
-        why: r.status === 'pending_person' ? 'waiting for a person' : 'contradicts',
-      },
-    ]
+
+export function conflictsOf(j: Journal, q: Q): Answer {
+  const side = (e: FxEntry) => ({ ...read(e), session: sessionRef(j, e.sessionId) })
+  const out = openConflicts(j).map((r) => {
+    const { createdBy, decidedAt: _d, ...rel } = r
+    return {
+      relation: { ...rel, createdBy: createdBy.id },
+      from: side(active(j, r.fromId) as FxEntry),
+      to: side(active(j, r.toId) as FxEntry),
+      why: r.status === 'pending_person' ? 'waiting for a person' : 'contradicts',
+    }
   })
   const limit = q.get('limit') ? Number(q.get('limit')) : undefined
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 200))
@@ -848,6 +892,28 @@ export function addCorrection(
       },
     },
   }
+}
+
+// The corrections in force about a page, under any of its addresses (GET a page's «corrections»).
+export function correctionsAbout(j: Journal, addresses: string[]) {
+  const refs = new Set(addresses.map((a) => `page:${a}`))
+  return j.entries
+    .filter(
+      (e) =>
+        e.type === 'correction' &&
+        e.state === 'active' &&
+        !e.supersededBy &&
+        (!e.expiresAt || e.expiresAt > NOW) &&
+        e.refs.some((r) => refs.has(r)),
+    )
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+    .map((e) => ({
+      id: e.id,
+      title: e.title,
+      appliesTo: e.appliesTo,
+      author: e.author,
+      createdAt: e.createdAt,
+    }))
 }
 
 export { NO_ENTRY, NO_SESSION }

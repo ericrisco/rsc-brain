@@ -29,6 +29,7 @@ describe('can()', () => {
       'entry.pin',
       'entry.purge',
       'relation.write',
+      'relation.decide',
       'correction.relay',
       'correction.write',
       'key.short',
@@ -85,6 +86,16 @@ describe('can()', () => {
       can(person(), 'entry.edit', { role: 'reader', isOwner: true, brainStatus: 'active' }).ok,
       false,
     )
+  })
+
+  it('superseding an entry or dismissing a correction in the web: its author or a curator', () => {
+    const d = (role: Role, isOwner: boolean, brainStatus: 'active' | 'archived' = 'active') =>
+      can(person(), 'relation.decide', { role, isOwner, brainStatus }).ok
+    assert.equal(d('contributor', false), false)
+    assert.equal(d('contributor', true), true)
+    assert.equal(d('curator', false), true)
+    assert.equal(d('reader', true), false)
+    assert.equal(d('curator', true, 'archived'), false)
   })
 
   it('pinning is for curators', () => {

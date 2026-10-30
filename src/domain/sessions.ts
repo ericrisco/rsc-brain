@@ -6,6 +6,7 @@ import { conflict, invalid, notFound } from '../core/errors.ts'
 import { newId } from '../core/ids.ts'
 import type { Db, Row } from '../db/db.ts'
 import { redact } from '../privacy/redact.ts'
+import { clientNow } from './clients.ts'
 import { allow, type Ctx, inBrain } from './context.ts'
 import { emit } from './events.ts'
 
@@ -40,6 +41,14 @@ export const sessionOf = (r: Row): Session => ({
   lastActivityAt: (r.last_activity_at as Date).toISOString(),
   closedAt: r.closed_at == null ? null : (r.closed_at as Date).toISOString(),
 })
+
+// A session's day as the database gives it (pg reads a date as local midnight) in ISO form, 2026-10-29.
+export function dayText(v: unknown): string | null {
+  if (v == null) return null
+  if (!(v instanceof Date)) return String(v)
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${v.getFullYear()}-${p(v.getMonth() + 1)}-${p(v.getDate())}`
+}
 
 export function dayIn(tz: string, at: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -133,10 +142,12 @@ export async function openSession(
       sessionRef = ctx.who.credential.ref
     }
     const now = ctx.clock()
+    // The client it is for, named now (that of the short key, when a service opens one's session).
+    const client = await clientNow(db, ctx.who, credentialId)
     const row = await db.one(
-      `INSERT INTO sessions (id, brain_id, account_id, credential_id, bound, purpose, ref, opened_at, last_activity_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING *`,
-      [newId('ses'), brain.id, ctx.who.accountId, credentialId, bound, purpose, sessionRef, now],
+      `INSERT INTO sessions (id, brain_id, account_id, credential_id, bound, purpose, ref, opened_at, last_activity_at, client)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9) RETURNING *`,
+      [newId('ses'), brain.id, ctx.who.accountId, credentialId, bound, purpose, sessionRef, now, client],
     )
     const s = sessionOf(row as Row)
     await emit(db, c, { brainId: brain.id, kind: 'session.opened', targetId: s.id, label: purpose || null })
@@ -167,11 +178,20 @@ export async function sessionFor(db: Db, ctx: Ctx, brainId: string, sessionId?: 
   const day = dayIn(ctx.tz ?? 'UTC', now)
   const ref = ctx.who.credential.kind === 'short' ? ctx.who.credential.ref : null
   const row = await db.one(
-    `INSERT INTO sessions (id, brain_id, account_id, credential_id, purpose, ref, day, opened_at, last_activity_at)
-     VALUES ($1, $2, $3, $4, 'implicit', $5, $6, $7, $7)
+    `INSERT INTO sessions (id, brain_id, account_id, credential_id, purpose, ref, day, opened_at, last_activity_at, client)
+     VALUES ($1, $2, $3, $4, 'implicit', $5, $6, $7, $7, $8)
      ON CONFLICT (credential_id, brain_id, day) WHERE day IS NOT NULL AND status = 'open'
      DO UPDATE SET last_activity_at = EXCLUDED.last_activity_at RETURNING id`,
-    [newId('ses'), brainId, ctx.who.accountId, ctx.who.credential.id, ref, day, now],
+    [
+      newId('ses'),
+      brainId,
+      ctx.who.accountId,
+      ctx.who.credential.id,
+      ref,
+      day,
+      now,
+      await clientNow(db, ctx.who),
+    ],
   )
   return String(row?.id)
 }

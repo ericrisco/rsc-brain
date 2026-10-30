@@ -3,6 +3,7 @@
 
 import { unauthorized } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
+import { clientOfKey } from '../domain/clients.ts'
 import type { Actor, CredentialKind, Role } from './can.ts'
 import { minRole } from './can.ts'
 import { hashSecret, KEY_PREFIX } from './secrets.ts'
@@ -33,6 +34,9 @@ export type Principal = {
   // The requests per minute this key may make: the installation's limit, read along with the key so a
   // change by the administration counts from the next request (spec B5).
   rateLimit: number
+  // The client making this request, as the journal names it (domain/clients.ts): the web, the agent of a
+  // short key, the app of a connection, or the program behind this request. Kept with what it writes.
+  client?: string | null
 }
 
 export const actorOf = (p: Principal): Actor => ({
@@ -123,7 +127,8 @@ export async function resolveKey(
   const r = await db.one(
     `SELECT c.*, a.kind AS a_kind, a.name AS a_name, a.email, a.is_admin, a.can_create_brains, a.can_invite,
             a.status, p.revoked_at AS p_revoked_at, p.expires_at AS p_expires_at, i.key_epoch, i.public_url, i.rate_limit,
-            g.revoked_at AS g_revoked_at, g.last_used_at AS g_last_used_at, g.expires_max AS g_expires_max
+            g.revoked_at AS g_revoked_at, g.last_used_at AS g_last_used_at, g.expires_max AS g_expires_max,
+            g.client_name AS g_client_name
        FROM credentials c JOIN accounts a ON a.id = c.account_id
        LEFT JOIN credentials p ON p.id = c.parent_id
        LEFT JOIN oauth_grants g ON g.id = c.grant_id
@@ -199,6 +204,12 @@ export async function resolveKey(
       parentId: r.parent_id == null ? null : String(r.parent_id),
     },
     rateLimit: Number(r.rate_limit),
+    client: clientOfKey({
+      kind: String(r.kind),
+      agent: r.agent,
+      clientName: r.g_client_name,
+      program: conn?.userAgent || r.last_client,
+    }),
   }
 }
 

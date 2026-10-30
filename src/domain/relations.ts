@@ -2,13 +2,22 @@
 // two entries contradict each other; clients and people say so. A person's correction is only
 // superseded or dismissed by a person, in the web: from any key it waits as a pending conflict (pack
 // rule 4), and the person's own word on that pair settles it — the same relation confirms the one that
-// waited, anything else turns it down.
+// waited, anything else turns it down. In the web, the entry superseded or the correction dismissed must
+// be the person's own, or the person a curator (the rule of forgetting).
 import { conflict, invalid, notFound } from '../core/errors.ts'
 import { newId } from '../core/ids.ts'
-import type { Row } from '../db/db.ts'
+import type { Db, Row } from '../db/db.ts'
 import { redact } from '../privacy/redact.ts'
 import { allow, type Ctx, inBrain, personInWeb } from './context.ts'
-import { type Entry, entryOf } from './entries.ts'
+import {
+  type Byline,
+  bylines,
+  type Entry,
+  entryOf,
+  type SessionRef,
+  sessionRefs,
+  withByline,
+} from './entries.ts'
 import { emit } from './events.ts'
 
 export const RELATION_KINDS = ['contradicts', 'supersedes', 'not_related'] as const
@@ -63,6 +72,24 @@ export async function relate(
       (r.kind === 'not_related' && (to.type === 'correction' || from.type === 'correction'))
     // Every key is an agent's; the person's own gesture is the web (spec B6).
     const person = personInWeb(ctx)
+    // A person decides about the entry superseded, or the correction dismissed, only as its author or a
+    // curator. An agent asking about a correction waits for a person instead (below).
+    if (person) {
+      const decided =
+        r.kind === 'supersedes'
+          ? [to]
+          : r.kind === 'not_related'
+            ? [from, to].filter((x) => x.type === 'correction')
+            : []
+      for (const x of decided) {
+        await allow(
+          c,
+          'relation.decide',
+          { role, brainStatus: brain.status, isOwner: x.author_id === ctx.who.accountId },
+          brain.id,
+        )
+      }
+    }
     const status = touchesCorrection && !person ? 'pending_person' : 'active'
     // A person settles what agents asked about this pair: the same relation is confirmed (it takes
     // effect below, as the one that waited), any other is turned down.
@@ -77,7 +104,13 @@ export async function relate(
       for (const x of waiting) {
         const same = !confirmed && x.from_id === r.from && x.to_id === r.to && x.kind === r.kind
         if (same) confirmed = x
-        await db.query('UPDATE relations SET status = $2 WHERE id = $1', [x.id, same ? 'active' : 'rejected'])
+        // Decided now: a relation confirmed takes effect from this moment, so it settles a contradiction
+        // recorded after the agent asked (the settle rule reads decided_at before created_at).
+        await db.query('UPDATE relations SET status = $2, decided_at = $3 WHERE id = $1', [
+          x.id,
+          same ? 'active' : 'rejected',
+          ctx.clock(),
+        ])
       }
     }
     if (r.kind === 'supersedes' && status === 'active') {
@@ -132,15 +165,44 @@ export async function relate(
   })
 }
 
+// A side of a conflict, as a person decides it: who wrote it and with what, and the session it is in.
+export type ConflictSide = Entry & Byline & { session: SessionRef }
+
 export type Conflict = {
   relation: Relation
-  from: Entry
-  to: Entry
+  from: ConflictSide
+  to: ConflictSide
   why: 'contradicts' | 'waiting for a person'
 }
 
-// Open conflicts: a `contradicts` not yet settled by a later `supersedes` or `not_related` on the same
-// pair, and anything an agent asked about a person's correction.
+// An open conflict over a relation `r`: a `contradicts` not settled by a later `supersedes` or
+// `not_related` on the same pair, or one waiting for a person; both entries still active. "Later" is when
+// the settling relation took effect: when a person decided on it if it waited for one, else when it was
+// made. The Conflicts list, the numbers of a brain and the badges of a session count the same ones.
+export const OPEN_CONFLICT = `
+  ((r.kind = 'contradicts' AND r.status = 'active'
+    AND NOT EXISTS (SELECT 1 FROM relations s
+                     WHERE s.brain_id = r.brain_id AND s.status = 'active'
+                       AND s.kind IN ('supersedes', 'not_related')
+                       AND coalesce(s.decided_at, s.created_at) >= r.created_at
+                       AND least(s.from_id, s.to_id) = least(r.from_id, r.to_id)
+                       AND greatest(s.from_id, s.to_id) = greatest(r.from_id, r.to_id)))
+   OR r.status = 'pending_person')
+  AND EXISTS (SELECT 1 FROM entries x WHERE x.id = r.from_id AND x.state = 'active')
+  AND EXISTS (SELECT 1 FROM entries x WHERE x.id = r.to_id AND x.state = 'active')`
+
+// Which of these entries have an open conflict.
+export async function inConflict(db: Db, ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set()
+  const rows = await db.query<{ id: string }>(
+    `SELECT unnest(ARRAY[r.from_id, r.to_id]) AS id FROM relations r
+      WHERE (r.from_id = ANY($1) OR r.to_id = ANY($1)) AND ${OPEN_CONFLICT}`,
+    [ids],
+  )
+  return new Set(rows.map((r) => r.id))
+}
+
+// Open conflicts (OPEN_CONFLICT), with each side's author, client and session.
 export async function conflicts(
   ctx: Ctx,
   slug: string,
@@ -148,39 +210,33 @@ export async function conflicts(
 ): Promise<{ conflicts: Conflict[]; total: number; next: string | null }> {
   const { brain } = await inBrain(ctx, { slug })
   const rows = await ctx.db.query(
-    `SELECT r.* FROM relations r
-      WHERE r.brain_id = $1
-        AND ((r.kind = 'contradicts' AND r.status = 'active'
-              AND NOT EXISTS (SELECT 1 FROM relations s
-                               WHERE s.brain_id = r.brain_id AND s.status = 'active'
-                                 AND s.kind IN ('supersedes', 'not_related') AND s.created_at >= r.created_at
-                                 AND least(s.from_id, s.to_id) = least(r.from_id, r.to_id)
-                                 AND greatest(s.from_id, s.to_id) = greatest(r.from_id, r.to_id)))
-             OR r.status = 'pending_person')
-      ORDER BY r.created_at, r.id`,
+    `SELECT r.* FROM relations r WHERE r.brain_id = $1 AND ${OPEN_CONFLICT} ORDER BY r.created_at, r.id`,
     [brain.id],
   )
-  const out: Conflict[] = []
-  for (const r of rows) {
-    const es = await ctx.db.query("SELECT * FROM entries WHERE id = ANY($1) AND state = 'active'", [
-      [r.from_id, r.to_id],
-    ])
-    const from = es.find((e) => e.id === r.from_id)
-    const to = es.find((e) => e.id === r.to_id)
-    if (!from || !to) continue
-    out.push({
-      relation: relationOf(r),
-      from: entryOf(from),
-      to: entryOf(to),
-      why: r.status === 'pending_person' ? 'waiting for a person' : 'contradicts',
-    })
-  }
   // By pages when asked (the web shows a few at a time); a whole list otherwise, as before.
   const start = o.offset ?? 0
-  const end = o.limit === undefined ? out.length : start + o.limit
+  const end = o.limit === undefined ? rows.length : start + o.limit
+  const page = rows.slice(start, end)
+  const ids = [...new Set(page.flatMap((r) => [String(r.from_id), String(r.to_id)]))]
+  const es = ids.length ? await ctx.db.query('SELECT * FROM entries WHERE id = ANY($1)', [ids]) : []
+  const by = await bylines(ctx.db, ids)
+  const sessions = await sessionRefs(
+    ctx.db,
+    es.map((e) => String(e.session_id)),
+  )
+  const side = (id: string): ConflictSide => {
+    const e = entryOf(es.find((x) => x.id === id) as Row)
+    return { ...withByline(e, by.get(id)), session: sessions.get(e.sessionId) as SessionRef }
+  }
+  const out: Conflict[] = page.map((r) => ({
+    relation: relationOf(r),
+    from: side(String(r.from_id)),
+    to: side(String(r.to_id)),
+    why: r.status === 'pending_person' ? 'waiting for a person' : 'contradicts',
+  }))
   return {
-    conflicts: out.slice(start, end),
-    total: out.length,
-    next: end < out.length ? String(end) : null,
+    conflicts: out,
+    total: rows.length,
+    next: end < rows.length ? String(end) : null,
   }
 }

@@ -2,11 +2,11 @@
 // total and gives a cursor for the next page. Forgotten and purged entries stay out of ordinary lists.
 import { denied, invalid, notFound } from '../core/errors.ts'
 import type { Row } from '../db/db.ts'
-import { CLIENT_SQL } from './clients.ts'
 import { type Ctx, inBrain } from './context.ts'
 import { type Byline, bylines, ENTRY_TYPES, type Entry, entryOf, withByline } from './entries.ts'
 import { lastSeq } from './events.ts'
-import { closeIdle, type Session, sessionOf } from './sessions.ts'
+import { inConflict } from './relations.ts'
+import { closeIdle, dayText, type Session, sessionOf } from './sessions.ts'
 
 export type Page<T> = { items: T[]; total: number; next: string | null }
 
@@ -46,7 +46,7 @@ export function limitOf(v: string | null | undefined): number {
 
 // The sessions of a brain as the journal shows them (spec B6 «Journal › Sessions», plan G12): newest
 // first, each with the client that wrote (the agent of a short key, the app of a connection, the program
-// that used a token last, or the web), its author, how many entries of work it holds (the summary aside),
+// behind a token when it opened, or the web), its author, how many entries of work it holds (the summary aside),
 // and its summary. Filters narrow both the page and its total.
 export type SessionFilter = {
   status?: string
@@ -67,28 +67,31 @@ export type SessionView = Session & {
   client: string | null
   author: { id: string; name: string }
   entries: number
+  // Its entries forgotten since: the count of entries drops by them, and the web says why.
+  forgotten: number
   summary: string | null
 }
 
 export const SESSION_STATUSES = ['open', 'closed', 'closed_no_summary'] as const
 const SUMMARY_CHARS = 300
 
-const CLIENT = CLIENT_SQL
+// The client that opened it, named then (domain/clients.ts).
+const CLIENT = 's.client'
 
 const SESSION_SELECT = `SELECT s.*, a.name AS author_name, ${CLIENT} AS client, se.content AS summary_text,
     (SELECT count(*)::int FROM entries e WHERE e.session_id = s.id AND e.state = 'active'
-        AND e.type <> 'summary') AS entry_count
+        AND e.type <> 'summary') AS entry_count,
+    (SELECT count(*)::int FROM entries e WHERE e.session_id = s.id AND e.state = 'forgotten') AS forgotten_count
    FROM sessions s JOIN accounts a ON a.id = s.account_id
-   LEFT JOIN credentials c ON c.id = s.credential_id
-   LEFT JOIN oauth_grants g ON g.id = c.grant_id
    LEFT JOIN entries se ON se.id = s.summary_entry_id AND se.state = 'active'`
 
 const sessionViewOf = (r: Row): SessionView => ({
   ...sessionOf(r),
-  day: r.day == null ? null : String(r.day),
+  day: dayText(r.day),
   client: r.client == null ? null : String(r.client),
   author: { id: String(r.account_id), name: String(r.author_name) },
   entries: Number(r.entry_count),
+  forgotten: Number(r.forgotten_count),
   summary: r.summary_text == null ? null : String(r.summary_text).slice(0, SUMMARY_CHARS),
 })
 
@@ -120,7 +123,8 @@ export async function listSessions(
   if (f.author !== undefined) add('s.account_id = ?', f.author)
   if (f.ref !== undefined)
     add(
-      `(s.ref ILIKE ? OR EXISTS (SELECT 1 FROM entries e WHERE e.session_id = s.id AND e.stamped_ref ILIKE ?))`,
+      `(s.ref ILIKE ? OR EXISTS (SELECT 1 FROM entries e WHERE e.session_id = s.id AND e.state = 'active'
+          AND e.stamped_ref ILIKE ?))`,
       likeOf(f.ref),
     )
   if (f.type !== undefined)
@@ -136,8 +140,7 @@ export async function listSessions(
   if (f.from !== undefined) add('s.last_activity_at >= ?', f.from)
   if (f.to !== undefined) add('s.opened_at <= ?', f.to)
   if (f.before !== undefined) add('s.opened_at < ?', f.before)
-  const FROM = `FROM sessions s LEFT JOIN credentials c ON c.id = s.credential_id
-    LEFT JOIN oauth_grants g ON g.id = c.grant_id WHERE ${where.join(' AND ')}`
+  const FROM = `FROM sessions s WHERE ${where.join(' AND ')}`
   const total = await ctx.db.one<{ n: number }>(`SELECT count(*)::int AS n ${FROM}`, params)
   const c = decode(f.cursor)
   const limit = f.limit ?? PAGE.default
@@ -164,8 +167,7 @@ export type SessionFacets = { clients: string[]; authors: Array<{ id: string; na
 
 async function facetsOf(ctx: Ctx, brainId: string): Promise<SessionFacets> {
   const clients = await ctx.db.query<{ client: string }>(
-    `SELECT DISTINCT ${CLIENT} AS client FROM sessions s LEFT JOIN credentials c ON c.id = s.credential_id
-       LEFT JOIN oauth_grants g ON g.id = c.grant_id WHERE s.brain_id = $1 AND ${CLIENT} IS NOT NULL
+    `SELECT DISTINCT ${CLIENT} AS client FROM sessions s WHERE s.brain_id = $1 AND ${CLIENT} IS NOT NULL
       ORDER BY 1 LIMIT 100`,
     [brainId],
   )
@@ -189,7 +191,12 @@ export async function sessionView(ctx: Ctx, id: string): Promise<SessionView> {
 
 export type EntryFilter = { ref?: string; type?: string; sessionId?: string; cursor?: string; limit?: number }
 
-export async function listEntries(ctx: Ctx, slug: string, f: EntryFilter): Promise<Page<Entry>> {
+// Each entry says whether an open conflict is about it (a badge in a session, spec B6).
+export async function listEntries(
+  ctx: Ctx,
+  slug: string,
+  f: EntryFilter,
+): Promise<Page<Entry & { conflict: boolean }>> {
   const { brain } = await inBrain(ctx, { slug })
   const where = ['brain_id = $1', "state = 'active'"]
   const params: unknown[] = [brain.id]
@@ -249,8 +256,12 @@ export async function listEntries(ctx: Ctx, slug: string, f: EntryFilter): Promi
       }
     })
   }
+  const open = await inConflict(
+    ctx.db,
+    items.map((e) => e.id),
+  )
   return {
-    items,
+    items: items.map((e) => ({ ...e, conflict: open.has(e.id) })),
     total: total?.n ?? 0,
     next: rows.length > limit && last ? encode(last.created_at as Date, String(last.id)) : null,
   }

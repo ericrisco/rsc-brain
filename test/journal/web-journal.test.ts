@@ -254,8 +254,15 @@ describe('the journal in the web', { skip: skipPg }, () => {
       ),
     )
     assert.match(await context(eric.key, 'agent=x'), /first five seconds/)
-    // A person confirms the same thing in the web: the waiting relation takes effect, no second one.
-    const confirmed = await w.callWeb(anaWeb, 'POST', '/v1/brains/yt/relations', {
+    // A person confirms the same thing in the web: the waiting relation takes effect, no second one. Ana
+    // may not (the correction is Eric's: its author or a curator decides); Eric may.
+    const notHers = await w.callWeb(anaWeb, 'POST', '/v1/brains/yt/relations', {
+      from: e,
+      to: c,
+      kind: 'supersedes',
+    })
+    assert.equal(notHers.status, 403, notHers.text)
+    const confirmed = await w.callWeb(ericWeb, 'POST', '/v1/brains/yt/relations', {
       from: e,
       to: c,
       kind: 'supersedes',

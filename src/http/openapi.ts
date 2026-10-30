@@ -145,7 +145,7 @@ const ENTRY_RELATION = obj({
     type: s('Its type.'),
     state: s('active, forgotten or purged.'),
   }),
-  reason: s('Why.'),
+  reason: nul(s('Why; null when the other entry’s title is hidden from you.')),
   by: NAMED,
   createdAt: s('When.', { format: 'date-time' }),
 })
@@ -157,11 +157,32 @@ const SESSION_VIEW = {
     client: nul(s('What wrote: web, the agent of a short key, the app of a connection, or a program.')),
     author: NAMED,
     entries: n('Its active entries, the summary aside.'),
+    forgotten: n('Its entries forgotten since (not counted in "entries").'),
     summary: nul(s('Its summary (the first 300 characters), once closed with one.')),
   },
-  required: [...(SESSION.required as string[]), 'day', 'client', 'author', 'entries', 'summary'],
+  required: [...(SESSION.required as string[]), 'day', 'client', 'author', 'entries', 'forgotten', 'summary'],
 }
-const ENTRY_LIST = obj({ items: list(ENTRY), total: n('How many.'), next: NEXT })
+const ENTRY_LIST = obj({
+  items: list({
+    ...ENTRY,
+    properties: { ...(ENTRY.properties as Schema), conflict: b('An open conflict is about it.') },
+    required: [...(ENTRY.required as string[]), 'conflict'],
+  }),
+  total: n('How many.'),
+  next: NEXT,
+})
+// The session an entry is in, named by its purpose (the session of a day has its day instead).
+const SESSION_REF = obj({
+  id: s('Session id.'),
+  purpose: s('What it was for; "implicit" for the session of a day.'),
+  day: nul(s('The day of the session a key gets by writing without opening one.', { format: 'date' })),
+})
+// A side of a conflict: the entry, who wrote it and with what, and its session.
+const CONFLICT_SIDE = {
+  ...ENTRY_READ,
+  properties: { ...(ENTRY_READ.properties as Schema), session: SESSION_REF },
+  required: [...ENTRY_READ.required, 'session'],
+}
 const ENTRY_LIST_READ = obj({ items: list(ENTRY_READ), total: n('How many.'), next: NEXT })
 const ENTRY_IN = obj(
   {
@@ -253,6 +274,13 @@ const SOURCE_VIEW = obj(
   },
   ['entryId', 'url', 'state'],
 )
+const PAGE_CORRECTION = obj({
+  id: s('The correction (an entry).'),
+  title: s('Its title.'),
+  appliesTo: nul(s('The agent it is for; null for every agent.')),
+  author: NAMED,
+  createdAt: s('When.', { format: 'date-time' }),
+})
 const PAGE_READING = obj(
   {
     page: WIKI_PAGE,
@@ -268,6 +296,7 @@ const PAGE_READING = obj(
         at: s('When.', { format: 'date-time' }),
       }),
     ),
+    corrections: list(PAGE_CORRECTION),
   },
   ['redirectedFrom', 'notice'],
 )
@@ -424,7 +453,19 @@ const HAND: Record<string, Op> = {
         a: FULL_REVISION,
         b: FULL_REVISION,
       },
-      ['page', 'redirectedFrom', 'notice', 'links', 'sources', 'lastChange', 'history', 'revision', 'a', 'b'],
+      [
+        'page',
+        'redirectedFrom',
+        'notice',
+        'links',
+        'sources',
+        'lastChange',
+        'corrections',
+        'history',
+        'revision',
+        'a',
+        'b',
+      ],
     ),
   },
   'PATCH /v1/brains/{slug}/pages/{address}': {
@@ -878,6 +919,7 @@ const HAND: Record<string, Op> = {
     reply: obj(
       {
         entry: ENTRY_READ,
+        session: SESSION_REF,
         relations: list(ENTRY_RELATION),
         history: list(
           obj({
@@ -971,7 +1013,7 @@ const HAND: Record<string, Op> = {
   },
   'POST /v1/brains/{slug}/relations': {
     summary:
-      'Relate two entries: contradicts, supersedes or not_related. From a key, touching a person’s correction waits for a person.',
+      'Relate two entries: contradicts, supersedes or not_related. From a key, touching a person’s correction waits for a person. In the web, superseding or dismissing a correction, or superseding someone else’s entry, is for that entry’s author or a curator.',
     status: 201,
     body: obj(
       {
@@ -991,8 +1033,8 @@ const HAND: Record<string, Op> = {
       conflicts: list(
         obj({
           relation: RELATION,
-          from: ENTRY,
-          to: ENTRY,
+          from: CONFLICT_SIDE,
+          to: CONFLICT_SIDE,
           why: s('contradicts, or waiting for a person.'),
         }),
       ),

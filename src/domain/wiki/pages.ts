@@ -146,6 +146,46 @@ export async function currentSources(db: Db, pageId: string): Promise<Source[]> 
   )
 }
 
+// The references a correction written in the web uses for these pages: "page:<address>" for every address
+// each has had (the current one and those it moved from).
+export async function pageRefs(db: Db, brainId: string, pageIds: string[]): Promise<string[]> {
+  if (pageIds.length === 0) return []
+  const rows = await db.query<{ address: string }>(
+    `SELECT address FROM page_addresses WHERE brain_id = $1 AND page_id = ANY($2)
+      UNION SELECT address FROM pages WHERE brain_id = $1 AND id = ANY($2)`,
+    [brainId, pageIds],
+  )
+  return rows.map((r) => `page:${r.address}`)
+}
+
+// The corrections in force about a page, newest first («Something wrong here?»): written in the web about
+// it under any of its addresses, not forgotten, superseded or expired.
+export type PageCorrection = {
+  id: string
+  title: string
+  appliesTo: string | null
+  author: { id: string; name: string }
+  createdAt: string
+}
+
+async function correctionsOf(ctx: Ctx, page: { id: string; brainId: string }): Promise<PageCorrection[]> {
+  const rows = await ctx.db.query(
+    `SELECT e.id, e.title, e.applies_to, e.created_at, a.id AS a_id, a.name AS a_name
+       FROM entries e JOIN accounts a ON a.id = e.author_id
+      WHERE e.brain_id = $1 AND e.type = 'correction' AND e.state = 'active' AND e.superseded_by IS NULL
+        AND (e.expires_at IS NULL OR e.expires_at > $2) AND e.refs && $3::text[]
+      ORDER BY e.created_at DESC, e.id LIMIT 20`,
+    [page.brainId, ctx.clock(), await pageRefs(ctx.db, page.brainId, [page.id])],
+  )
+  return rows.map((r) => ({
+    id: String(r.id),
+    title: String(r.title),
+    appliesTo: r.applies_to == null ? null : String(r.applies_to),
+    author: { id: String(r.a_id), name: String(r.a_name) },
+    createdAt: (r.created_at as Date).toISOString(),
+  }))
+}
+
 export type PageReading = {
   page: WikiPage
   redirectedFrom?: string
@@ -154,6 +194,7 @@ export type PageReading = {
   sources: SourceView[]
   // Who saved the revision the page is at (an edit that meets a newer revision names them).
   lastChange: { revision: number; authorId: string; authorName: string; at: string } | null
+  corrections: PageCorrection[]
 }
 
 async function lastChangeOf(db: Db, pageId: string, revision: number): Promise<PageReading['lastChange']> {
@@ -182,6 +223,7 @@ export async function getPage(ctx: Ctx, slug: string, address: string): Promise<
     links: await linksOf(ctx.db, page),
     sources: await sourcesOf(ctx.db, page.id),
     lastChange: await lastChangeOf(ctx.db, page.id, page.revision),
+    corrections: await correctionsOf(ctx, page),
   }
   if (page.address !== address) out.redirectedFrom = address
   if (page.status === 'retired') out.notice = 'retired: this page is kept for its history only.'

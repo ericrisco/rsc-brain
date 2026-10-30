@@ -93,7 +93,9 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     receipt: ['entryId', 'revision', 'at', 'deduplicated', 'repeatCount', 'redactions', 'similar'],
   },
   'GET /v1/entries/{id}': {
-    '': ['entry', 'relations'],
+    // Review of PR20: the session it is in, named by its purpose.
+    '': ['entry', 'relations', 'session'],
+    session: ['id', 'purpose', 'day'],
     entry: [
       'id',
       'brainId',
@@ -204,6 +206,8 @@ const SHAPES: Record<string, Record<string, string[]>> = {
       'openedAt',
       'lastActivityAt',
       'closedAt',
+      // Review of PR20: the entries of it forgotten since, so its count of entries never drops unexplained.
+      'forgotten',
     ],
     'items[].author': ['id', 'name'],
     facets: ['clients', 'authors'],
@@ -213,11 +217,35 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     'members[]': ['accountId', 'kind', 'name', 'email', 'role'],
   },
   'GET /v1/sessions/{id}': {
-    session: ['id', 'purpose', 'ref', 'status', 'day', 'client', 'author', 'entries', 'summary', 'openedAt'],
+    session: [
+      'id',
+      'purpose',
+      'ref',
+      'status',
+      'day',
+      'client',
+      'author',
+      'entries',
+      'forgotten',
+      'summary',
+      'openedAt',
+    ],
   },
   'GET /v1/brains/{slug}/entries': {
     '': ['items', 'total', 'next'],
-    'items[]': ['id', 'type', 'title', 'content', 'tags', 'state', 'pinned', 'revision', 'createdAt'],
+    'items[]': [
+      'id',
+      'type',
+      'title',
+      'content',
+      'tags',
+      'state',
+      'pinned',
+      'revision',
+      'createdAt',
+      // Review of PR20: an open conflict about it, for its badge in a session.
+      'conflict',
+    ],
   },
   'GET /v1/entries/{id} +history': {
     'history[]': [
@@ -251,7 +279,18 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     '': ['conflicts', 'total', 'next'],
     'conflicts[]': ['relation', 'from', 'to', 'why'],
     'conflicts[].relation': ['id', 'fromId', 'toId', 'kind', 'status', 'reason', 'createdBy', 'createdAt'],
-    'conflicts[].from': ['id', 'type', 'title', 'content', 'state', 'createdAt'],
+    'conflicts[].from': [
+      'id',
+      'type',
+      'title',
+      'content',
+      'state',
+      'createdAt',
+      'author',
+      'client',
+      'session',
+    ],
+    'conflicts[].from.session': ['id', 'purpose', 'day'],
   },
   'GET /v1/brains/{slug}/forgotten': {
     '': ['items', 'total', 'next'],
@@ -298,6 +337,8 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     'links.out[]': ['kind', 'address', 'pageId', 'title', 'state'],
     'sources[]': ['title'],
     lastChange: ['revision', 'authorId', 'authorName', 'at'],
+    // Review of PR20: the corrections in force about the page («Something wrong here?»).
+    'corrections[]': ['id', 'title', 'appliesTo', 'author', 'createdAt'],
   },
   'GET /v1/brains/{slug}/pages/{address} +history': {
     'history[]': [
@@ -621,6 +662,12 @@ describe('the v1 contract', { skip: skipPg }, () => {
     })
     assert.equal(edited.status, 200, edited.text)
     out['PATCH /v1/brains/{slug}/pages/{address}'] = edited.body
+    const corrected = await w.callWeb(web, 'POST', '/v1/brains/contract/corrections', {
+      title: 'Ten seconds at most',
+      content: 'Cut every intro to ten seconds.',
+      page: 'growth/intros',
+    })
+    assert.equal(corrected.status, 201, corrected.text)
     const get = async (path: string) => (await w.call(eric.key, 'GET', `/v1/brains/contract${path}`)).body
     out['GET /v1/brains/{slug}/wiki/pages'] = await get('/wiki/pages')
     out['GET /v1/brains/{slug}/wiki/map'] = await get('/wiki/map')

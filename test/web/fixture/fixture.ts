@@ -1238,6 +1238,8 @@ function inWiki(c: Ctx, run: (w: Wiki, curator: boolean) => Answer): Answer {
     w = freshWiki()
     c.s.wikis.set(slug, w)
   }
+  // A page lists the corrections about it from the brain's journal.
+  w.corrections = (addresses) => J.correctionsAbout(journalOf(c.s, slug), addresses)
   return run(w, b?.role === 'curator')
 }
 
