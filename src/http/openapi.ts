@@ -172,6 +172,46 @@ const HAND: Record<string, Op> = {
     summary: 'Recent sessions.',
     reply: obj({ items: list(SESSION), total: n('How many.'), next: NEXT }),
   },
+  'GET /v1/me/sessions': {
+    summary:
+      'The open sessions of this key, with their brain (API only: the reminder at the end of an agent session asks it).',
+    reply: obj({
+      items: list({
+        ...SESSION,
+        properties: { ...(SESSION.properties as Schema), brain: s('The slug of its brain.') },
+        required: [...(SESSION.required as string[]), 'brain'],
+      }),
+    }),
+  },
+  'GET /v1/connect': {
+    summary:
+      'The connection kit: per agent, the standard sign-in, a config block with a token placeholder (never a secret), the optional reminder and the check.',
+    query: {
+      agent: 'Only this agent: claude-code, codex, opencode, cursor or other.',
+      brain: 'Name this brain in the check and the start hook.',
+    },
+    reply: obj({
+      mcpUrl: s('The MCP address of this installation.'),
+      tokenEnv: s('The environment variable the config blocks read the token from.'),
+      tokenPlaceholder: s('The text in the blocks that the token replaces.'),
+      agents: list(
+        obj({
+          id: s('claude-code, codex, opencode, cursor or other.'),
+          name: s('Display name.'),
+          signIn: nul({
+            type: 'object',
+            description: 'Connecting with the standard sign-in (only the address).',
+          }),
+          token: { type: 'object', description: 'Connecting with a token: a note and config blocks.' },
+          reminder: nul({
+            type: 'object',
+            description: 'The optional reminder: hooks, or a prompt and instructions text.',
+          }),
+          check: s('How to check that it works.'),
+        }),
+      ),
+    }),
+  },
   'POST /v1/brains/{slug}/entries': {
     summary: 'Save an entry; returns its receipt.',
     status: 201,

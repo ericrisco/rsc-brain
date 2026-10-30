@@ -8,7 +8,7 @@ import {
   summarizeSession,
 } from '../../domain/entries.ts'
 import { limitOf, listEntries, listSessions } from '../../domain/listing.ts'
-import { endSession, openSession } from '../../domain/sessions.ts'
+import { endSession, openSession, openSessionsOfKey } from '../../domain/sessions.ts'
 import { compact, type Obj, obj, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
@@ -48,6 +48,9 @@ export const journalRoutes: Route[] = [
       compact({ cursor: q(r.query.get('cursor')), limit: limitOf(r.query.get('limit')) }),
     ),
   })),
+  // API only, not a tool: the reminder at the end of an agent's session asks it (spec B5 «El kit de
+  // conexión»). An agent knows its own sessions; a program outside the agent does not.
+  route('GET /v1/me/sessions', async (r) => ({ body: { items: await openSessionsOfKey(ctxOf(r)) } })),
   route('POST /v1/sessions/:id/summary', async (r) => {
     const b = obj(r.body)
     const receipt = await summarizeSession(

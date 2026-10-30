@@ -1,7 +1,7 @@
 // Sessions group the work of a client in a brain (spec B1 «Sesiones»). A client is the key it writes
 // with. Without an open session, entries go to the key's implicit session for the day; a service
 // can open the session of one of its short keys, and what that key writes lands there.
-import type { Principal } from '../auth/principal.ts'
+import { type Principal, roleIn } from '../auth/principal.ts'
 import { conflict, invalid, notFound } from '../core/errors.ts'
 import { newId } from '../core/ids.ts'
 import type { Db, Row } from '../db/db.ts'
@@ -215,3 +215,27 @@ export async function endSession(ctx: Ctx, id: string): Promise<Session> {
 }
 
 export { owns as ownsSession }
+
+// The open sessions behind the asking key, with the brain each is in (spec B5, the reminder at the end
+// of an agent's session: is there work without a summary?). A person's key sees all of that person's
+// open sessions: an agent connected with the standard sign-in writes with its own connection key, and
+// the reminder runs with a token. A service's key sees only its own (its agents work for others). Only
+// brains the key can still see count.
+export async function openSessionsOfKey(ctx: Ctx): Promise<Array<Session & { brain: string }>> {
+  await closeIdle(ctx.db, ctx.clock())
+  const person = ctx.who.kind === 'person'
+  const rows = await ctx.db.query(
+    `SELECT s.*, b.slug FROM sessions s JOIN brains b ON b.id = s.brain_id
+      WHERE ${person ? 's.account_id = $1' : 's.credential_id = $1'} AND s.status = 'open'
+      ORDER BY s.opened_at DESC, s.id DESC LIMIT 500`,
+    [person ? ctx.who.accountId : ctx.who.credential.id],
+  )
+  const out: Array<Session & { brain: string }> = []
+  // The brains the key cannot see are left out before the list is cut, so they never crowd it.
+  for (const r of rows) {
+    if (out.length >= 50) break
+    if (await roleIn(ctx.db, ctx.who, String(r.brain_id)))
+      out.push({ ...sessionOf(r), brain: String(r.slug) })
+  }
+  return out
+}
