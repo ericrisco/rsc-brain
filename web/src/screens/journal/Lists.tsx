@@ -1,12 +1,13 @@
 // The lists of the journal that ask for a decision (spec B6 «Journal», B1; T024). Conflicts: two entries
-// side by side and who stands — «A replaces B» either way, or «not related» — with a confirmation that
-// says the one replaced leaves the agents' context (CA11). Forgotten (curators): who forgot each entry and
+// side by side, each with who wrote it and its session, and «Keep this one» on each side, or «Not related»
+// — with a confirmation that says the one replaced leaves the agents' context (CA11). Only what the server
+// allows is offered: superseding an entry, or dismissing a correction, is for its author or a curator. Forgotten (curators): who forgot each entry and
 // why, and «Recover». To review: entries past their review date, and «Mark reviewed». Each comes by pages.
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { ApiError } from '../../api/client.ts'
 import { useFresh } from '../../api/fresh.ts'
 import { api } from '../../api/index.ts'
-import { entryPowers } from '../../lib/journal.ts'
+import { byline, conflictActions, entryPowers } from '../../lib/journal.ts'
 import { plainText } from '../../lib/markdown.ts'
 import { me, online } from '../../session.ts'
 import { T } from '../../text.ts'
@@ -16,7 +17,16 @@ import { Empty, ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
 import { TextArea } from '../../ui/TextArea.tsx'
 import type { BrainOne } from '../Brain.tsx'
 import { blockedNow, Said, useBrain, WikiHead } from '../wiki/common.tsx'
-import { EntryLine, entryHref, JournalNav, roleAtLeast, TypeTag, writable } from './common.tsx'
+import {
+  EntryBadges,
+  EntryLine,
+  entryHref,
+  JournalNav,
+  roleAtLeast,
+  SessionLink,
+  TypeTag,
+  writable,
+} from './common.tsx'
 import {
   type Conflict,
   conflictsResource,
@@ -198,16 +208,42 @@ function DecideDialog({
   )
 }
 
-function Side({ slug, label, e }: { slug: string; label: string; e: Conflict['from'] }) {
+// One side of a conflict: what it says, who wrote it with what, in which session, and «Keep this one»
+// when the person may keep it (the other one is then superseded).
+function Side({
+  slug,
+  label,
+  e,
+  onKeep,
+}: {
+  slug: string
+  label: string
+  e: Conflict['from']
+  onKeep: (() => void) | null
+}) {
+  const j = T.journal
   const text = plainText(e.content)
   return (
     <div class="side">
       <p class="meta">{label}</p>
       <p class="list-title">
         <TypeTag type={e.type} /> <a href={entryHref(slug, e.id)}>{e.title || e.id}</a>
+        <EntryBadges e={e} />
       </p>
       <p class="summary">{text.length > 220 ? `${text.slice(0, 219)}…` : text}</p>
-      <p class="meta mono">{T.dateTime(e.createdAt)}</p>
+      <p class="meta">
+        {byline(e)} · <span class="mono">{T.dateTime(e.createdAt)}</span>
+      </p>
+      <p class="meta">
+        {j.inSession} <SessionLink slug={slug} s={e.session} />
+      </p>
+      {onKeep ? (
+        <p class="actions">
+          <Button blocked={blockedNow(false)} aria-label={`${j.keepThis}: ${e.title}`} onClick={onKeep}>
+            {j.keepThis}
+          </Button>
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -241,6 +277,7 @@ export function JournalConflicts({ slug }: { slug: string }) {
   if (!brain) return gate
   const j = T.journal
   const may = roleAtLeast(brain, 'contributor') && writable(brain)
+  const who = { role: brain.role, me: me().data.value?.account.id ?? '', archived: !writable(brain) }
   return (
     <>
       <WikiHead title={j.conflicts} lead={j.conflictsLead}>
@@ -266,47 +303,59 @@ export function JournalConflicts({ slug }: { slug: string }) {
       ) : (
         <>
           <ul class="list conflicts">
-            {p.items.map((c) => (
-              <li key={c.relation.id} class="conflict-item">
-                <p class="why">
-                  {c.why === 'waiting for a person' ? j.waitingPerson(asked(c)) : j.contradiction}
-                  {c.relation.reason ? <span class="muted"> — {c.relation.reason}</span> : null}
-                </p>
-                <div class="pair">
-                  <Side slug={slug} label={j.sideA} e={c.from} />
-                  <Side slug={slug} label={j.sideB} e={c.to} />
-                </div>
-                {may ? (
-                  <p class="actions wrap">
-                    <Button
-                      blocked={blockedNow(false)}
-                      onClick={() =>
-                        setDecide({ conflict: c, from: c.from.id, to: c.to.id, kind: 'supersedes' })
+            {p.items.map((c) => {
+              const can = may
+                ? conflictActions(c, who)
+                : { keepFrom: false, keepTo: false, notRelated: false }
+              const none = may && !can.keepFrom && !can.keepTo && !can.notRelated
+              return (
+                <li key={c.relation.id} class="conflict-item">
+                  <h2 class="conflict-head">
+                    {c.why === 'waiting for a person' ? j.waitingPerson(asked(c)) : j.contradiction}
+                  </h2>
+                  {c.relation.reason ? <p class="muted small">{c.relation.reason}</p> : null}
+                  <div class="pair">
+                    <Side
+                      slug={slug}
+                      label={j.sideA}
+                      e={c.from}
+                      onKeep={
+                        can.keepFrom
+                          ? () => setDecide({ conflict: c, from: c.from.id, to: c.to.id, kind: 'supersedes' })
+                          : null
                       }
-                    >
-                      {j.winsOver(short(c.from.title), short(c.to.title))}
-                    </Button>
-                    <Button
-                      blocked={blockedNow(false)}
-                      onClick={() =>
-                        setDecide({ conflict: c, from: c.to.id, to: c.from.id, kind: 'supersedes' })
+                    />
+                    <Side
+                      slug={slug}
+                      label={j.sideB}
+                      e={c.to}
+                      onKeep={
+                        can.keepTo
+                          ? () => setDecide({ conflict: c, from: c.to.id, to: c.from.id, kind: 'supersedes' })
+                          : null
                       }
-                    >
-                      {j.winsOver(short(c.to.title), short(c.from.title))}
-                    </Button>
-                    <Button
-                      kind="quiet"
-                      blocked={blockedNow(false)}
-                      onClick={() =>
-                        setDecide({ conflict: c, from: c.from.id, to: c.to.id, kind: 'not_related' })
-                      }
-                    >
-                      {j.notRelatedBtn}
-                    </Button>
-                  </p>
-                ) : null}
-              </li>
-            ))}
+                    />
+                  </div>
+                  {can.notRelated ? (
+                    <p class="actions">
+                      <Button
+                        blocked={blockedNow(false)}
+                        onClick={() =>
+                          setDecide({ conflict: c, from: c.from.id, to: c.to.id, kind: 'not_related' })
+                        }
+                      >
+                        {j.notRelatedBtn}
+                      </Button>
+                    </p>
+                  ) : null}
+                  {none ? (
+                    <p class="muted small" data-state="not-yours">
+                      {j.notYoursToDecide(brain.name, curatorNames(slug))}
+                    </p>
+                  ) : null}
+                </li>
+              )
+            })}
           </ul>
           <More p={p} />
         </>

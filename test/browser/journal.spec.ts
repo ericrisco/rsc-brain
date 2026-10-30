@@ -245,8 +245,8 @@ test.describe('An entry', () => {
     await expect(d).toBeHidden()
     await expect(page.getByRole('status').filter({ hasText: 'Forgotten.' })).toBeVisible()
     await expect(page.locator('.page-main')).toContainText('Forgotten by Eric')
-    // «Forget…» is gone: the keyboard goes to the heading, not to the page's body.
-    await expect(page.getByRole('heading', { level: 1 })).toBeFocused()
+    // «Forget…» is gone: the keyboard goes to what happened (review of PR20), not to the page's body.
+    await expect(page.getByRole('status').filter({ hasText: 'Forgotten.' })).toBeFocused()
     await page.getByRole('button', { name: 'Recover' }).click()
     await expect(page.getByRole('status').filter({ hasText: 'Recovered' })).toBeVisible()
   })
@@ -342,7 +342,7 @@ test.describe('Add a correction', () => {
     await expect(page.getByLabel('Title')).toBeFocused()
     await page.getByLabel('Title').fill('The long intro loses viewers')
     await page.getByLabel('The correction').fill('Open with the question of the video; no greeting.')
-    await page.getByLabel('Applies to (optional)').fill('narrator')
+    await page.getByLabel('Only for one agent (optional)').fill('narrator')
     await page.getByRole('button', { name: 'Add correction' }).click()
     await expect(page).toHaveURL(/\/journal\/entries\/ent_fx_new/)
     await expect(page.getByRole('status').filter({ hasText: 'Correction added' })).toBeVisible()
@@ -399,9 +399,7 @@ test.describe('Conflicts, forgotten, to review', () => {
     await expect(page.locator('.conflict-item').filter({ hasText: 'An agent asked' })).toContainText(
       '“Greetings help the narrator” replaces “No greeting before the hook”',
     )
-    await first
-      .getByRole('button', { name: '“Short intros keep viewers” replaces “Thirty-second intros work best”' })
-      .click()
+    await first.getByRole('button', { name: 'Keep this one: Short intros keep viewers' }).click()
     const d = page.getByRole('dialog', { name: 'Decide this conflict?' })
     await expect(d).toContainText('leaves the agents’ context')
     await d.getByRole('button', { name: 'Decide' }).click()

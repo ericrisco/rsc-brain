@@ -125,7 +125,8 @@ export function renderMarkdown(body: string, o: { slug: string; links: readonly 
   return parser.render(body, { slug: o.slug, states, titles } satisfies Env)
 }
 
-// Markdown as plain words (a search snippet): no marks, links as their text, one line.
+// Markdown as plain words (a search snippet): no marks, links as their text, one line. An underscore is
+// a mark only at the edge of a word, as markdown reads it: past_due and stripe_invoice_id keep theirs.
 export function plainText(md: string): string {
   return md
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
@@ -133,7 +134,8 @@ export function plainText(md: string): string {
     .replace(/\[\[([^\]\n]+)\]\]/g, '$1')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^\s{0,3}(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s?)/gm, '')
-    .replace(/(\*\*|__|\*|_|`+|~~)/g, '')
+    .replace(/(\*\*|\*|`+|~~)/g, '')
+    .replace(/(^|[^\p{L}\p{N}_])_{1,2}|_{1,2}(?![\p{L}\p{N}_])/gu, '$1')
     .replace(/\s+/g, ' ')
     .trim()
 }

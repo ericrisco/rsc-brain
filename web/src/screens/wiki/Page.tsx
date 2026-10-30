@@ -323,6 +323,46 @@ function Head({ slug, reading, view }: { slug: string; reading: Reading; view: s
   )
 }
 
+// «Something wrong here?»: the corrections in force about this page (agents get them first when their work
+// is about it), and adding one for contributors and curators.
+function Wrong({ slug, brain, reading }: { slug: string; brain: BrainOne; reading: Reading }) {
+  const w = T.wiki
+  const open = reading.corrections ?? []
+  const may = ['contributor', 'curator'].includes(brain.role) && brain.status !== 'archived'
+  if (!may && open.length === 0) return null
+  return (
+    <section class="aside-block" aria-labelledby="wrong-title">
+      <h2 id="wrong-title" class="section-title">
+        {w.wrongTitle}
+      </h2>
+      {open.length ? (
+        <ul class="plain relations" aria-label={w.openCorrections}>
+          {open.map((c) => (
+            <li key={c.id}>
+              <a href={entryHref(slug, c.id)}>{c.title}</a>
+              <span class="meta">
+                {' '}
+                · {c.appliesTo ? w.correctionFor(c.appliesTo) : w.correctionForAll} · {c.author.name},{' '}
+                {T.date(c.createdAt)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {may ? (
+        <>
+          <p class="muted small">{w.wrongLead}</p>
+          <p>
+            <a class="button secondary" href={correctHref(slug, { page: reading.page.address })}>
+              {w.addCorrection}
+            </a>
+          </p>
+        </>
+      ) : null}
+    </section>
+  )
+}
+
 function ReadView({ slug, brain, reading }: { slug: string; brain: BrainOne; reading: Reading }) {
   const { page } = reading
   const { path, query, route } = useLocation()
@@ -368,19 +408,7 @@ function ReadView({ slug, brain, reading }: { slug: string; brain: BrainOne; rea
             names={w.kindsIn}
           />
         </section>
-        {['contributor', 'curator'].includes(brain.role) && brain.status !== 'archived' ? (
-          <section class="aside-block" aria-labelledby="wrong-title">
-            <h2 id="wrong-title" class="section-title">
-              {w.wrongTitle}
-            </h2>
-            <p class="muted small">{w.wrongLead}</p>
-            <p>
-              <a class="button secondary" href={correctHref(slug, { page: page.address })}>
-                {w.addCorrection}
-              </a>
-            </p>
-          </section>
-        ) : null}
+        <Wrong slug={slug} brain={brain} reading={reading} />
         <RecentHistory slug={slug} address={page.address} />
         {isCurator(brain) ? <Readers slug={slug} address={page.address} /> : null}
       </aside>

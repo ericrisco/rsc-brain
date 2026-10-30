@@ -1,8 +1,9 @@
 // The journal against the real server and PostgreSQL (plan T023–T024, PR20; local lane): an agent writes
 // entries, a contributor corrects their own one, a reader sees no action; a person adds a correction to the
 // page «Intros» and an agent's context for a task about intros carries it (CA12); a curator decides «A
-// replaces B» and the conflict leaves the list while B leaves the context (CA11); forgetting an entry with
-// a reason takes it out of the context, and a curator recovers it. Nothing is simulated but the people.
+// replaces B» («Keep this one» on A) and the conflict leaves the list while B leaves the context (CA11);
+// forgetting an entry with a reason takes it out of the context, and a curator recovers it. Nothing is
+// simulated but the people.
 import {
   type APIRequestContext,
   type Browser,
@@ -190,7 +191,7 @@ test('CA12: a person adds a correction to the page «Intros»; an agent on a tas
   await expect(page.getByText('Picked: Intros')).toBeVisible()
   await page.getByLabel('Title').fill('No greeting before the hook')
   await page.getByLabel('The correction').fill('Cut the greeting; a third of viewers leave before the hook.')
-  await page.getByLabel('Applies to (optional)').fill('narrator')
+  await page.getByLabel('Only for one agent (optional)').fill('narrator')
   await page.getByRole('button', { name: 'Add correction' }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Correction added' })).toBeVisible()
   await expect(page.locator('.page-main')).toContainText('the page style/intros')
@@ -219,9 +220,7 @@ test('CA11: «A replaces B» closes the conflict, and B leaves the context', asy
     .click()
   const item = page.locator('.conflict-item').filter({ hasText: 'Long intros build trust' })
   await expect(item).toContainText('Short intros keep viewers')
-  await item
-    .getByRole('button', { name: '“Short intros keep viewers” replaces “Long intros build trust”' })
-    .click()
+  await item.getByRole('button', { name: 'Keep this one: Short intros keep viewers' }).click()
   await page
     .getByRole('dialog', { name: 'Decide this conflict?' })
     .getByRole('button', { name: 'Decide' })

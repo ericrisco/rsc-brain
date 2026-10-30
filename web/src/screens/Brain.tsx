@@ -18,6 +18,7 @@ import { CopyButton } from '../ui/CopyButton.tsx'
 import { viewState } from '../ui/state.ts'
 import { ErrorState, Skeleton } from '../ui/states.tsx'
 import type { BrainRow, Stats } from './Home.tsx'
+import { conflictsHref, sessionHref, sessionsHref } from './journal/common.tsx'
 
 export type BrainOne = BrainRow & { description: string }
 
@@ -114,14 +115,16 @@ function FirstSteps({ slug, steps }: { slug: string; steps: Overview['firstSteps
   )
 }
 
-function Numbers({ stats }: { stats: Stats }) {
+// Each number that names work to do leads to it: what is not in the wiki yet to the sessions that hold
+// it, the conflicts to Conflicts, what waits for review to its list below.
+function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
   const o = T.overview
-  const items = [
+  const items: Array<readonly [string, string, string?]> = [
     o.pages(stats.pages),
     o.entries(stats.entries),
-    o.uncompiled(stats.uncompiled),
-    o.conflicts(stats.conflicts),
-    o.pending(stats.pendingProposals),
+    [...o.uncompiled(stats.uncompiled), `${sessionsHref(slug)}?uncompiled=1`],
+    [...o.conflicts(stats.conflicts), conflictsHref(slug)],
+    [...o.pending(stats.pendingProposals), '#waiting-title'],
   ]
   return (
     <section aria-labelledby="numbers-title">
@@ -129,9 +132,17 @@ function Numbers({ stats }: { stats: Stats }) {
         {o.numbers}
       </h2>
       <ul class="numbers">
-        {items.map(([n, label]) => (
+        {items.map(([n, label, href]) => (
           <li key={label}>
-            <strong>{n}</strong> {label}
+            {href ? (
+              <a href={href}>
+                <strong>{n}</strong> {label}
+              </a>
+            ) : (
+              <>
+                <strong>{n}</strong> {label}
+              </>
+            )}
           </li>
         ))}
       </ul>
@@ -139,7 +150,7 @@ function Numbers({ stats }: { stats: Stats }) {
   )
 }
 
-function Today({ sessions }: { sessions: Session[] }) {
+function Today({ slug, sessions }: { slug: string; sessions: Session[] }) {
   const o = T.overview
   return (
     <section aria-labelledby="today-title">
@@ -155,7 +166,9 @@ function Today({ sessions }: { sessions: Session[] }) {
         <ul class="list">
           {sessions.map((s) => (
             <li key={s.id}>
-              <p class="list-title">{s.purpose || <span class="muted">{o.untitled}</span>}</p>
+              <p class="list-title">
+                <a href={sessionHref(slug, s.id)}>{s.purpose || o.untitled}</a>
+              </p>
               <p class="meta">
                 {[clientLabel(s.client), s.who, o.entriesIn(s.entries)].filter(Boolean).join(' · ')}
                 {' · '}
@@ -316,9 +329,9 @@ export function Brain({ slug }: { slug: string }) {
       ) : (
         <div class="overview">
           {fresh ? <FirstSteps slug={b.slug} steps={o.firstSteps} /> : null}
-          <Numbers stats={o.stats} />
+          <Numbers slug={slug} stats={o.stats} />
           <div class="overview-grid">
-            <Today sessions={o.todaySessions} />
+            <Today slug={slug} sessions={o.todaySessions} />
             <div class="overview-side">
               <Waiting pending={o.pending} total={o.stats.pendingProposals} />
               <Health health={o.health} />

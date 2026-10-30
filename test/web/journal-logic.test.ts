@@ -7,15 +7,18 @@ import { describe, it } from 'node:test'
 import {
   aboutOf,
   byline,
+  conflictActions,
   dayOf,
   entryPowers,
   journalDraftKey,
+  mayDecide,
   mergeById,
   relateBody,
   relationWords,
   sessionLabel,
   sessionQuery,
 } from '../../web/src/lib/journal.ts'
+import { plainText } from '../../web/src/lib/markdown.ts'
 
 const eric = { id: 'acc_eric', name: 'Eric' }
 
@@ -209,5 +212,55 @@ describe('dates and drafts', () => {
     assert.match(k, /^journal\.[0-9a-f]{8}$/)
     assert.notEqual(k, journalDraftKey('acc_2', 'yt', 'entry:ent_code'))
     assert.notEqual(k, journalDraftKey('acc_1', 'yt', 'correction'))
+  })
+})
+
+// Review of PR20: what a person met using the journal.
+describe('review of PR20', () => {
+  it('a preview keeps underscores and dots inside words: identifiers read as written', () => {
+    for (const id of ['past_due', 'stripe_invoice_id', 'invoices.retry_at']) {
+      assert.equal(plainText(`The status is ${id} now.`), `The status is ${id} now.`)
+    }
+    // Emphasis around words still goes.
+    assert.equal(plainText('_really_ and __bold__ and *this*'), 'really and bold and this')
+  })
+
+  it('the session of a day reads its day, whether the day comes as a day or as an instant', () => {
+    for (const day of ['2026-10-29', '2026-10-29T00:00:00.000Z']) {
+      const label = sessionLabel({ purpose: 'implicit', day })
+      assert.doesNotMatch(label, /Invalid/, day)
+      assert.match(label, /29 Oct 2026/, day)
+    }
+    assert.equal(sessionLabel({ purpose: 'implicit', day: 'nonsense' }), 'Work without a session')
+  })
+
+  it('superseding an entry or dismissing a correction: its author or a curator, as the server decides', () => {
+    const contributor = { role: 'contributor', me: 'acc_ana', archived: false }
+    const curator = { role: 'curator', me: 'acc_eric', archived: false }
+    const mine = { authorId: 'acc_ana', type: 'learning' }
+    const bobs = { authorId: 'acc_bob', type: 'learning' }
+    const ericsCorrection = { authorId: 'acc_eric', type: 'correction' }
+    assert.equal(mayDecide(mine, contributor), true)
+    assert.equal(mayDecide(bobs, contributor), false)
+    assert.equal(mayDecide(bobs, curator), true)
+    assert.equal(mayDecide(mine, { ...contributor, archived: true }), false)
+    assert.equal(mayDecide(mine, { ...contributor, role: 'reader' }), false)
+    // A conflict between Ana's entry and Eric's correction, read by Ana: she may keep the correction (hers
+    // loses), not keep hers (his would be superseded), and not dismiss it (it is a correction not hers).
+    assert.deepEqual(conflictActions({ from: mine, to: ericsCorrection }, contributor), {
+      keepFrom: false,
+      keepTo: true,
+      notRelated: false,
+    })
+    assert.deepEqual(conflictActions({ from: mine, to: bobs }, contributor), {
+      keepFrom: false,
+      keepTo: true,
+      notRelated: true,
+    })
+    assert.deepEqual(conflictActions({ from: mine, to: ericsCorrection }, curator), {
+      keepFrom: true,
+      keepTo: true,
+      notRelated: true,
+    })
   })
 })

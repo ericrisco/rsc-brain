@@ -23,7 +23,7 @@ import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
 import { useBrain, useFilters, WikiHead } from '../wiki/common.tsx'
-import { JournalNav, sessionHref } from './common.tsx'
+import { JournalNav, sessionHref, sessionsQuery } from './common.tsx'
 import { type SessionList, type SessionView, sessionsResource } from './data.ts'
 
 const STATUSES = ['open', 'closed', 'closed_no_summary'] as const
@@ -192,19 +192,25 @@ export function JournalSessions({ slug }: { slug: string }) {
   const r = sessionsResource(slug, query)
   useFresh(r)
   const first = r.data.value
-  // Later pages, kept while the first page refreshes from the live feed.
+  // Later pages, until the first page is read again (a filter, or the live feed): what follows it moved,
+  // so the list starts again from the fresh first page, as Conflicts, Forgotten and To review do.
   const [more, setMore] = useState<SessionView[]>([])
   const [next, setNext] = useState<string | null | undefined>(undefined)
   const [loadingMore, setLoadingMore] = useState(false)
   const [moreError, setMoreError] = useState<ApiError | null>(null)
-  const asked = useRef('')
+  // Which first page later pages belong to: a page asked for an older one is dropped.
+  const asked = useRef(0)
   const qs = JSON.stringify(query)
   useEffect(() => {
-    asked.current = qs
+    asked.current += 1
     setMore([])
     setNext(undefined)
     setMoreError(null)
-  }, [qs])
+  }, [qs, first])
+  // The way back from a session or an entry keeps these filters.
+  useEffect(() => {
+    sessionsQuery.value = { ...sessionsQuery.value, [slug]: new URLSearchParams(query).toString() }
+  }, [slug, qs])
   useLive(brain && first ? slug : null, first?.liveFrom)
   if (!brain) return gate
   const j = T.journal
@@ -213,7 +219,7 @@ export function JournalSessions({ slug }: { slug: string }) {
   const nextPage = next === undefined ? first?.next : next
   const loadMore = async () => {
     if (!nextPage) return
-    const mine = qs
+    const mine = asked.current
     setLoadingMore(true)
     setMoreError(null)
     try {

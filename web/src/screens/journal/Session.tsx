@@ -1,6 +1,8 @@
 // One session of the journal (spec B6 «Journal › Sessions», B1 «Sesiones»; T023). Who: any member. Job:
 // read what one agent or person did in one stretch of work, in order. Done when: the person read its
-// summary and opened the entry they wanted. Its entries come by pages of 20, in the order they were written.
+// summary and opened the entry they wanted. Its entries come by pages of 20, in the order they were written,
+// each with its state in words; the entries forgotten since are counted, so the number never drops
+// unexplained (curators open them in Forgotten).
 import { useEffect, useRef, useState } from 'preact/hooks'
 import type { ApiError } from '../../api/client.ts'
 import { useFresh } from '../../api/fresh.ts'
@@ -13,14 +15,22 @@ import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
 import { useBrain } from '../wiki/common.tsx'
-import { EntryLine, entryHref, JournalNav, sessionsHref } from './common.tsx'
-import { type EntryPlain, type Listing, sessionResource } from './data.ts'
+import {
+  EntryLine,
+  entryHref,
+  forgottenHref,
+  JournalNav,
+  roleAtLeast,
+  sessionsBackHref,
+  sessionsHref,
+} from './common.tsx'
+import { type EntryListed, type Listing, sessionResource } from './data.ts'
 
 const PAGE = 20
 
 const entriesResource = (slug: string, id: string) =>
   resource(`brain:${slug}:journal:session-entries:${id}`, () =>
-    api.call<Listing<EntryPlain>>('entries', { path: { slug }, query: { session: id, limit: PAGE } }),
+    api.call<Listing<EntryListed>>('entries', { path: { slug }, query: { session: id, limit: PAGE } }),
   )
 
 export function JournalSession({ slug, id }: { slug: string; id: string }) {
@@ -29,7 +39,7 @@ export function JournalSession({ slug, id }: { slug: string; id: string }) {
   const es = entriesResource(slug, id)
   useFresh(r)
   useFresh(es)
-  const [more, setMore] = useState<EntryPlain[]>([])
+  const [more, setMore] = useState<EntryListed[]>([])
   const [next, setNext] = useState<string | null | undefined>(undefined)
   const [loading, setLoading] = useState(false)
   const [moreError, setMoreError] = useState<ApiError | null>(null)
@@ -69,7 +79,7 @@ export function JournalSession({ slug, id }: { slug: string; id: string }) {
     setLoading(true)
     setMoreError(null)
     try {
-      const page = await api.call<Listing<EntryPlain>>('entries', {
+      const page = await api.call<Listing<EntryListed>>('entries', {
         path: { slug },
         query: { session: id, cursor: nextPage, limit: PAGE },
       })
@@ -85,11 +95,14 @@ export function JournalSession({ slug, id }: { slug: string; id: string }) {
   return (
     <>
       <nav class="crumbs" aria-label={j.title}>
-        <a href={sessionsHref(slug)}>{j.sessionCrumb}</a>
+        <a href={sessionsBackHref(slug)}>{j.sessionCrumb}</a>
       </nav>
       <div class="title-row start">
         <h1 class="title">{sessionLabel(s)}</h1>
-        <span class={`tag${s.status === 'open' ? ' live' : ''}`}>{j.statuses[s.status] ?? s.status}</span>
+        {/* Open or closed; whether it closed with a summary is said once, under Summary. */}
+        <span class={`tag${s.status === 'open' ? ' live' : ''}`}>
+          {s.status === 'open' ? j.statuses.open : j.statuses.closed}
+        </span>
       </div>
       <JournalNav brain={brain} />
       <section aria-labelledby="session-facts">
@@ -99,7 +112,7 @@ export function JournalSession({ slug, id }: { slug: string; id: string }) {
         <dl class="facts">
           <dt>{j.wroteBy}</dt>
           <dd>{byline({ author: s.author, onBehalf: null, client: s.client, ref: null })}</dd>
-          <dt>{j.when}</dt>
+          <dt>{j.openedTerm}</dt>
           <dd class="mono">{T.dateTime(s.openedAt)}</dd>
           {s.ref ? (
             <>
@@ -108,10 +121,13 @@ export function JournalSession({ slug, id }: { slug: string; id: string }) {
             </>
           ) : null}
           <dt>{j.entriesTitle}</dt>
-          <dd>{j.entriesIn(s.entries)}</dd>
+          <dd>
+            {j.entriesIn(s.entries)}
+            {s.forgotten ? <span class="meta"> · {j.forgottenIn(s.forgotten)}</span> : null}
+          </dd>
         </dl>
       </section>
-      <section aria-labelledby="session-summary">
+      <section class="session-part" aria-labelledby="session-summary">
         <h2 id="session-summary" class="section-title">
           {j.summaryTitle}
         </h2>
@@ -128,10 +144,19 @@ export function JournalSession({ slug, id }: { slug: string; id: string }) {
           <p class="muted">{s.status === 'open' ? j.stillOpen : j.noSummary}</p>
         )}
       </section>
-      <section aria-labelledby="session-entries">
+      <section class="session-part" aria-labelledby="session-entries">
         <h2 id="session-entries" class="section-title">
           {j.entriesTitle}
         </h2>
+        {s.forgotten ? (
+          <p class="meta" data-state="forgotten-count">
+            {roleAtLeast(brain, 'curator') ? (
+              <a href={forgottenHref(slug)}>{j.forgottenSee(s.forgotten)}</a>
+            ) : (
+              `${j.forgottenIn(s.forgotten)} (${j.forgottenCuratorsOnly})`
+            )}
+          </p>
+        ) : null}
         {!first ? (
           es.error.value ? (
             <ErrorState error={es.error.value} onRetry={() => void es.reload()} focus={false} />

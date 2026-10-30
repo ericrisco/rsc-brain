@@ -55,6 +55,32 @@ export function entryPowers(
   }
 }
 
+// Superseding an entry, or dismissing it when it is a correction, decides about someone's word: its
+// author (contributor or more) or a curator, in an active brain (src/auth/can.ts relation.decide).
+export function mayDecide(
+  e: { authorId: string },
+  who: { role: string | null; me: string; archived: boolean },
+): boolean {
+  if (who.archived) return false
+  return atLeast(who.role, 'curator') || (e.authorId === who.me && atLeast(who.role, 'contributor'))
+}
+
+// What a person may decide on a conflict: keep one side (the other is superseded), or say they are not
+// related (each correction among them is dismissed).
+export function conflictActions(
+  c: { from: { authorId: string; type: string }; to: { authorId: string; type: string } },
+  who: { role: string | null; me: string; archived: boolean },
+): { keepFrom: boolean; keepTo: boolean; notRelated: boolean } {
+  return {
+    keepFrom: mayDecide(c.to, who),
+    keepTo: mayDecide(c.from, who),
+    notRelated:
+      [c.from, c.to].every((x) => x.type !== 'correction' || mayDecide(x, who)) &&
+      atLeast(who.role, 'contributor') &&
+      !who.archived,
+  }
+}
+
 // A correction written in the web names what it is about among its references.
 export function aboutOf(refs: string[]): { page: string | null; entry: string | null; rest: string[] } {
   let page: string | null = null
@@ -101,8 +127,15 @@ export function relateBody(choice: RelateChoice, here: string, other: string) {
 }
 
 // A session in a line: its purpose; the session a key gets by writing without opening one has none.
+// Its day may come as a day (2026-10-29) or as an instant; anything else is not shown as a date.
 export function sessionLabel(s: { purpose: string; day: string | null }): string {
-  if (s.day) return T.journal.implicitSession(T.date(`${s.day}T00:00:00.000Z`))
+  if (s.day) {
+    const day = /^\d{4}-\d{2}-\d{2}/.exec(s.day)?.[0]
+    const at = day ? new Date(`${day}T00:00:00.000Z`) : null
+    return at && !Number.isNaN(at.getTime())
+      ? T.journal.implicitSession(T.date(at.toISOString()))
+      : T.journal.implicitNoDay
+  }
   return s.purpose.trim() || T.journal.noPurpose
 }
 

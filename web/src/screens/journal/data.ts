@@ -14,6 +14,8 @@ export type SessionView = {
   client: string | null
   author: Named
   entries: number
+  // Its entries forgotten since (not in `entries`).
+  forgotten: number
   summary: string | null
   summaryEntryId: string | null
   openedAt: string
@@ -61,7 +63,7 @@ export type Relation = {
   status: string
   direction: 'out' | 'in'
   other: { id: string; title: string | null; type: string; state: string }
-  reason: string
+  reason: string | null
   by: Named
   createdAt: string
 }
@@ -74,11 +76,20 @@ export type Revision = {
   authorName: string
   createdAt: string
 }
-export type EntryReading = { entry: EntryRead; relations: Relation[]; history?: Revision[] }
+export type SessionRef = { id: string; purpose: string; day: string | null }
+export type EntryReading = {
+  entry: EntryRead
+  session: SessionRef
+  relations: Relation[]
+  history?: Revision[]
+}
+// An entry in a session's list: whether an open conflict is about it.
+export type EntryListed = EntryPlain & { conflict: boolean }
+export type ConflictSide = EntryRead & { session: SessionRef }
 export type Conflict = {
   relation: { id: string; fromId: string; toId: string; kind: string; status: string; reason: string }
-  from: EntryPlain
-  to: EntryPlain
+  from: ConflictSide
+  to: ConflictSide
   why: string
 }
 export type Listing<T> = { items: T[]; total: number; next: string | null }
@@ -137,6 +148,8 @@ export function curatorNames(slug: string): string {
 export function journalChanged(slug: string): void {
   invalidate(`brain:${slug}:journal`)
   invalidate(`brain:${slug}:overview`)
+  // A wiki page lists the corrections about it: one added, forgotten or superseded changes that list.
+  invalidate(`brain:${slug}:wiki:page:`)
   // Its numbers (the count of conflicts beside «Conflicts»).
   invalidate(`brain:${slug}:basic`)
   invalidate('brains')

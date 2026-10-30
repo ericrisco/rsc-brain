@@ -18,11 +18,13 @@ import {
   dayOf,
   entryPowers,
   journalDraftKey,
+  mayDecide,
   type RelateChoice,
   relateBody,
   relationWords,
 } from '../../lib/journal.ts'
 import { pageHref, plainText, renderMarkdown, safeHref } from '../../lib/markdown.ts'
+import { focusOnArrival } from '../../lib/screen.ts'
 import { me } from '../../session.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
@@ -32,7 +34,16 @@ import { TextArea } from '../../ui/TextArea.tsx'
 import type { BrainOne } from '../Brain.tsx'
 import { blockedNow, Said, useBrain } from '../wiki/common.tsx'
 import { comboOf, EntryList, useEntries } from '../wiki/Suggest.tsx'
-import { correctHref, entryHref, JournalNav, sessionHref, sessionsHref, TypeTag } from './common.tsx'
+import {
+  correctHref,
+  entryHref,
+  JournalNav,
+  SessionLink,
+  sessionHref,
+  sessionsBackHref,
+  sessionsHref,
+  TypeTag,
+} from './common.tsx'
 import {
   curatorNames,
   type EntryRead,
@@ -41,6 +52,7 @@ import {
   journalChanged,
   membersResource,
   type Relation,
+  type SessionRef,
 } from './data.ts'
 
 // What a screen of the journal says after an action, until the person goes elsewhere.
@@ -158,7 +170,7 @@ function Refs({ slug, refs }: { slug: string; refs: string[] }) {
   )
 }
 
-function Facts({ slug, e }: { slug: string; e: EntryRead }) {
+function Facts({ slug, e, session }: { slug: string; e: EntryRead; session: SessionRef }) {
   const j = T.journal
   return (
     <section class="aside-block" aria-labelledby="entry-facts">
@@ -189,7 +201,7 @@ function Facts({ slug, e }: { slug: string; e: EntryRead }) {
         ) : null}
         <dt>{j.in}</dt>
         <dd>
-          <a href={sessionHref(slug, e.sessionId)}>{j.session}</a>
+          <SessionLink slug={slug} s={session} />
         </dd>
         {e.reviewAfter ? (
           <>
@@ -269,14 +281,18 @@ function History({ reading }: { reading: EntryReading }) {
   )
 }
 
+// focus: the person just asked to edit, so the keyboard goes to the title (a draft brought back by a
+// reload leaves the keyboard where the screen put it).
 function CorrectForm({
   slug,
   e,
+  focus,
   onDone,
   onCancel,
 }: {
   slug: string
   e: EntryRead
+  focus: boolean
   onDone: (text: string) => void
   onCancel: () => void
 }) {
@@ -288,6 +304,9 @@ function CorrectForm({
   const [error, setError] = useState<ApiError | null>(null)
   const [theirs, setTheirs] = useState<{ title: string; content: string; revision: number } | null>(null)
   const dirty = mine.title !== e.title || mine.content !== e.content
+  useEffect(() => {
+    if (focus) focusOnArrival(document.getElementById('correct-entry-title'))
+  }, [])
   // What is typed goes to the draft at once, not after the next paint: a reload right after typing keeps it.
   const type = (next: Mine) => {
     setMine(next)
@@ -504,12 +523,14 @@ function RelateDialog({
   open,
   slug,
   e,
+  role,
   onClose,
   onDone,
 }: {
   open: boolean
   slug: string
   e: EntryRead
+  role: string
   onClose: () => void
   onDone: (text: string) => void
 }) {
@@ -522,6 +543,13 @@ function RelateDialog({
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<ApiError | null>(null)
   const look = useEntries(slug)
+  // Replacing this entry, or dismissing it when it is a correction, is for its author or a curator; the
+  // other entry's author is known once the server answers (a refusal says why and whom to ask).
+  const who = { role, me: accountId(), archived: false }
+  const mine = mayDecide(e, who)
+  const curator = role === 'curator'
+  const off = (c: RelateChoice) =>
+    !mine && (c === 'superseded' || (c === 'not_related' && e.type === 'correction'))
   const go = async () => {
     if (!other) {
       setProblem(j.otherNeeded)
@@ -564,11 +592,15 @@ function RelateDialog({
                 name="relate-how"
                 value={c}
                 checked={choice === c}
+                disabled={off(c)}
+                // The dialog opens on what it asks first, not on its Cancel.
+                autoFocus={choice === c}
                 onChange={() => setChoice(c)}
               />
               <span>{j.relateChoices[c]}</span>
             </label>
           ))}
+          {curator ? null : <p class="hint">{j.relateWho}</p>}
         </fieldset>
         <div class="field suggest-host">
           <label for="relate-other">{j.otherEntry}</label>
@@ -718,13 +750,14 @@ function Actions({
   slug: string
   brain: BrainOne
   e: EntryRead
-  onSaid: (text: string, tone?: 'ok' | 'error') => void
+  onSaid: (text: string, tone?: 'ok' | 'error', focus?: boolean) => void
 }) {
   const j = T.journal
   const { route } = useLocation()
   const p = entryPowers(e, { role: brain.role, me: accountId(), archived: brain.status === 'archived' })
   const store = useCorrectionDraft(slug, e.id)
   const [editing, setEditing] = useState(() => store.read() !== null)
+  const [asked, setAsked] = useState(false)
   const [forgetting, setForgetting] = useState(false)
   const [relating, setRelating] = useState(false)
   const [pending, setPending] = useState<string | null>(null)
@@ -735,7 +768,8 @@ function Actions({
     try {
       await api.call(name, { path: { id: e.id } })
       journalChanged(slug)
-      onSaid(said)
+      // Recovering takes its button away: the keyboard goes to what happened.
+      onSaid(said, 'ok', name === 'recoverEntry')
     } catch (x) {
       const err = x as ApiError
       onSaid(`${err.message} ${err.howToProceed}`, 'error')
@@ -770,7 +804,13 @@ function Actions({
       </h2>
       <p class="actions wrap">
         {p.correct && !editing ? (
-          <Button kind="primary" onClick={() => setEditing(true)}>
+          <Button
+            kind="primary"
+            onClick={() => {
+              setAsked(true)
+              setEditing(true)
+            }}
+          >
             {j.correct}
           </Button>
         ) : null}
@@ -799,6 +839,7 @@ function Actions({
             pending={pending === 'recoverEntry'}
             pendingLabel={j.recovering}
             blocked={blockedNow(false)}
+            aria-label={`${j.recover}: ${e.title}`}
             onClick={() => void act('recoverEntry', j.recovered)}
           >
             {j.recover}
@@ -815,6 +856,7 @@ function Actions({
         <CorrectForm
           slug={slug}
           e={e}
+          focus={asked}
           onCancel={() => setEditing(false)}
           onDone={(text) => {
             setEditing(false)
@@ -840,7 +882,7 @@ function Actions({
           onDone={() => {
             setForgetting(false)
             journalChanged(slug)
-            if (brain.role === 'curator') onSaid(j.forgottenNow)
+            if (brain.role === 'curator') onSaid(j.forgottenNow, 'ok', true)
             else {
               // Only curators read forgotten entries: the person goes back to the session it was in.
               const to = sessionHref(slug, e.sessionId)
@@ -855,6 +897,7 @@ function Actions({
           open={relating}
           slug={slug}
           e={e}
+          role={brain.role}
           onClose={() => setRelating(false)}
           onDone={(t) => {
             setRelating(false)
@@ -900,14 +943,15 @@ export function JournalEntry({ slug, id }: { slug: string; id: string }) {
     )
   }
   const e = reading.entry
+  const session = reading.session
   const notice = journalNotice.value?.path === path ? journalNotice.value.text : null
   const html = renderMarkdown(e.content, { slug, links: [] })
   return (
     <>
       <nav class="crumbs" aria-label={j.title}>
-        <a href={sessionsHref(slug)}>{j.sessionCrumb}</a>
+        <a href={sessionsBackHref(slug)}>{j.sessionCrumb}</a>
         <span aria-hidden="true"> / </span>
-        <a href={sessionHref(slug, e.sessionId)}>{j.session}</a>
+        <SessionLink slug={slug} s={session} />
       </nav>
       <div class="title-row start">
         <h1 class="title">{e.title || e.id}</h1>
@@ -920,7 +964,8 @@ export function JournalEntry({ slug, id }: { slug: string; id: string }) {
         {e.pinned ? <span class="tag">{j.pinnedTag}</span> : null} <span>{byline(e)}</span>{' '}
         <span class="mono">{T.date(e.createdAt)}</span>
       </p>
-      <JournalNav brain={brain} />
+      {/* Its own «Add a correction about this entry» is among its actions: one is enough. */}
+      <JournalNav brain={brain} correct={false} />
       <Said text={said?.text ?? notice} tone={said?.tone ?? 'ok'} />
       {r.error.value ? (
         <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />
@@ -944,10 +989,17 @@ export function JournalEntry({ slug, id }: { slug: string; id: string }) {
             slug={slug}
             brain={brain}
             e={e}
-            onSaid={(text, tone = 'ok') => {
+            onSaid={(text, tone = 'ok', focus = false) => {
               setSaid({ text, tone })
-              // The button pressed may be gone (Forget, Recover): the keyboard goes to the heading.
+              // Forget and Recover take their button away: the keyboard goes to what happened, which a
+              // screen reader reads. Otherwise only a button that is gone sends it to the heading.
               requestAnimationFrame(() => {
+                const said = document.querySelector<HTMLElement>('main .said')
+                if (focus && said) {
+                  if (!said.hasAttribute('tabindex')) said.setAttribute('tabindex', '-1')
+                  focusOnArrival(said)
+                  return
+                }
                 const a = document.activeElement
                 if (a && a !== document.body && a.isConnected) return
                 const h = document.querySelector<HTMLElement>('main h1')
@@ -959,7 +1011,7 @@ export function JournalEntry({ slug, id }: { slug: string; id: string }) {
           />
         </article>
         <aside class="page-aside" aria-label={j.entryFacts}>
-          <Facts slug={slug} e={e} />
+          <Facts slug={slug} e={e} session={session} />
           <Relations slug={slug} relations={reading.relations} />
           <History reading={reading} />
         </aside>

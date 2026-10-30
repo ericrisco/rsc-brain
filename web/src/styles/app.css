@@ -2380,3 +2380,15 @@ pre.version {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* A session: its facts, its summary and its entries, apart (review of PR20). */
+.session-part {
+  margin-top: 28px;
+}
+
+/* A conflict: its heading says what is at stake (review of PR20). */
+.conflict-head {
+  margin: 0 0 6px;
+  font: 600 15px / 1.4 var(--sans);
+  overflow-wrap: anywhere;
+}
