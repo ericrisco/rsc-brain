@@ -26,6 +26,7 @@ import {
 } from './router.ts'
 import { authRoutes } from './routes/auth.ts'
 import { brainRoutes } from './routes/brains.ts'
+import { connectRoutes } from './routes/connect.ts'
 import { decideRoutes } from './routes/decide.ts'
 import { eventRoutes } from './routes/events.ts'
 import { journalRoutes } from './routes/journal.ts'
@@ -70,6 +71,7 @@ export const ROUTES: Route[] = [
   ...peopleRoutes,
   ...oauthRoutes,
   ...eventRoutes,
+  ...connectRoutes,
 ]
 // The MCP endpoint calls the same routes a program would (spec B5 parity).
 ROUTES.push(...mcpRoutes(() => ROUTES))

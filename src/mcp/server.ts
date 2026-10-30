@@ -7,6 +7,7 @@ import { AppError, invalid } from '../core/errors.ts'
 import { installation } from '../domain/installation.ts'
 import { CUT_HOW, head, MAX_REPLY_CHARS } from '../http/bounds.ts'
 import { match, type PublicReq, type Reply, type Route } from '../http/router.ts'
+import { headerValue, NAMED_METHODS } from './headers.ts'
 import { INSTRUCTIONS, PROMPTS } from './instructions.ts'
 import { allowed, defaultBrain, TOOLS } from './tools.ts'
 
@@ -56,14 +57,6 @@ const failure = (id: unknown, e: RpcError) =>
 function idOf(body: unknown): string | number | null {
   const id = body && typeof body === 'object' ? (body as Msg).id : undefined
   return typeof id === 'string' || Number.isSafeInteger(id) ? (id as string | number) : null
-}
-
-// An encoded header value ("=?base64?...?=") is compared after decoding.
-function headerValue(v: string | string[] | undefined): string | undefined {
-  if (v === undefined) return undefined
-  const s = Array.isArray(v) ? (v[0] ?? '') : v
-  const m = /^=\?base64\?([A-Za-z0-9+/=]*)\?=$/.exec(s)
-  return m ? Buffer.from(m[1] as string, 'base64').toString('utf8') : s
 }
 
 // Browsers send Origin; a page on another site must not drive this endpoint (DNS rebinding).
@@ -175,7 +168,7 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
     const modern = typeof asked === 'string'
     try {
       // A name that is not text could not even be written into an error.
-      if ((m.method === 'tools/call' || m.method === 'prompts/get') && typeof params.name !== 'string') {
+      if (NAMED_METHODS.has(m.method) && typeof params.name !== 'string') {
         throw new RpcError(modern ? 400 : 200, -32602, '"name" must be text.')
       }
       if (modern) {
@@ -200,7 +193,7 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
             -32020,
             `Header mismatch: Mcp-Method is "${hm ?? ''}", the body says "${m.method}".`,
           )
-        if (m.method === 'tools/call' || m.method === 'prompts/get') {
+        if (NAMED_METHODS.has(m.method)) {
           const hn = headerValue(r.headers['mcp-name'])
           if (hn !== params.name)
             throw new RpcError(

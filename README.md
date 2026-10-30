@@ -78,6 +78,64 @@ works, never save secrets, close with a summary.
   and results.
 - Curators link repositories to their brain, so an agent finds it with `brain_resolve`.
 
+## Connect your agent
+
+`GET /v1/connect` (any key) gives, for Claude Code, Codex, OpenCode, Cursor and other agents:
+
+- **Standard sign-in:** only the MCP address (`<your installation>/mcp`); the agent opens the browser.
+  Claude Code: `claude mcp add --transport http rsc-brain <address> --scope user`, then `/mcp`.
+  Codex: `codex mcp add rsc-brain --url <address>`, then `codex mcp login rsc-brain`. OpenCode:
+  a `remote` server in `opencode.json`. Cursor: `{"url": …}` in `.cursor/mcp.json`.
+- **With a token:** a config block per agent. The files read the token from the environment
+  (`RSC_BRAIN_TOKEN`), so a shared `.mcp.json` never holds it: Claude Code `.mcp.json`
+  (`"Authorization": "Bearer ${RSC_BRAIN_TOKEN}"`), Codex `~/.codex/config.toml`
+  (`url` + `bearer_token_env_var = "RSC_BRAIN_TOKEN"`), OpenCode `opencode.json`
+  (`{env:RSC_BRAIN_TOKEN}`), Cursor `.cursor/mcp.json` (`${env:RSC_BRAIN_TOKEN}`). The kit only
+  carries a placeholder (`tokenPlaceholder`); the web fills it once, when you create the token there.
+- **The optional reminder:** for Claude Code, two hooks (below). Other agents get a text for their
+  instructions file (`AGENTS.md`) and the server's `close_session` prompt.
+- **The check:** ask your agent: *"What does this brain know about X?"*
+
+`?agent=codex` returns one agent; `?brain=<slug>` names the brain in the check and the start hook.
+
+### The bridge, for agents that only start local MCP programs
+
+```sh
+mkdir -p ~/.config/rsc-brain && (umask 077 && printf '%s\n' '<token>' > ~/.config/rsc-brain/token)
+rsc-brain bridge --url https://brain.example.com/mcp
+```
+
+As a local MCP server: `{"command": "rsc-brain", "args": ["bridge", "--url", "<address>", "--token-file",
+"~/.config/rsc-brain/token"]}`. The bridge reads one JSON-RPC message per line on stdin and sends each to
+`/mcp` with the token and the headers the server checks; answers go to stdout, notifications get none.
+It speaks to modern clients and to older ones that start with `initialize`. The token comes from
+`RSC_BRAIN_TOKEN`, `--token-file`, or `~/.config/rsc-brain/token`; there is no option to pass it on the
+command line, and it is never printed. Plain `http` is refused except to this machine. When Brain does
+not answer, the request gets a JSON-RPC error that says so and how to proceed; the bridge keeps running.
+
+### The Claude Code reminder
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "startup|resume|clear|compact",
+      "hooks": [{ "type": "command", "command": "rsc-brain hook session-start --url <address>", "timeout": 15 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "rsc-brain hook stop --url <address>", "timeout": 15 }] }]
+  }
+}
+```
+
+- `hook session-start` runs `git remote get-url origin` in the session's folder, asks Brain which brain
+  is linked to it (`/v1/resolve`), and adds that brain's context to the session. `--brain <slug>` is
+  used when no brain is linked to the repository.
+- `hook stop` asks `GET /v1/me/sessions` whether the token still has a brain session open (work saved
+  without a summary). If so, it asks Claude once, per brain session and Claude Code session, to close it
+  with `mem_session_summary`. It lets Claude stop when `stop_hook_active` is set.
+- Both need a token (as for the bridge) and fail open: with no token, a bad input or Brain down, they
+  print nothing and let the session go on.
+
+The `rsc-brain` command comes with this package: from a clone, `npm install && npm run build && npm link`.
+
 ## The API for programs
 
 Everything a tool does is also a `/v1` route, with the same keys and permissions. The description of

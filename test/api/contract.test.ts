@@ -55,6 +55,7 @@ const V1 = [
   'GET /v1/brains/{slug}/wiki/health',
   'GET /v1/brains/{slug}/wiki/log',
   'GET /v1/brains/{slug}/wiki/map',
+  'GET /v1/connect',
   'GET /v1/entries/{id}',
   'GET /v1/entries/{id}/around',
   'GET /v1/health',
@@ -62,6 +63,7 @@ const V1 = [
   'GET /v1/me',
   'GET /v1/me/apps',
   'GET /v1/me/notices',
+  'GET /v1/me/sessions',
   'GET /v1/me/tokens',
   'GET /v1/openapi.json',
   'GET /v1/proposals/{id}',
@@ -162,6 +164,13 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   },
   'GET /v1/brains/{slug}/trail': {
     '': ['items', 'next'],
+  },
+  'GET /v1/connect': {
+    '': ['mcpUrl', 'tokenEnv', 'tokenPlaceholder', 'agents'],
+    'agents[]': ['id', 'name', 'signIn', 'token', 'reminder', 'check'],
+  },
+  'GET /v1/me/sessions': {
+    'items[]': ['id', 'brainId', 'brain', 'status', 'openedAt', 'lastActivityAt'],
   },
 }
 
@@ -265,6 +274,8 @@ describe('the v1 contract', { skip: skipPg }, () => {
       'GET /v1/brains/{slug}/proposals': (await w.call(eric.key, 'GET', '/v1/brains/contract/proposals'))
         .body,
       'GET /v1/brains/{slug}/trail': (await w.call(eric.key, 'GET', '/v1/brains/contract/trail?ref=x')).body,
+      'GET /v1/connect': (await w.call(eric.key, 'GET', '/v1/connect')).body,
+      'GET /v1/me/sessions': (await w.call(eric.key, 'GET', '/v1/me/sessions')).body,
     }
     const paths = doc.paths as Record<string, Record<string, Json>>
     for (const [op, shape] of Object.entries(SHAPES)) {

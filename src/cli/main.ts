@@ -17,6 +17,9 @@ import { closeIdle } from '../domain/sessions.ts'
 import { foldTrail } from '../domain/trail.ts'
 import { createHandler } from '../http/app.ts'
 import { providersFromEnv } from '../meaning/providers.ts'
+import { runBridge } from './bridge.ts'
+import { sessionStart, stop } from './hooks.ts'
+import { mcpAddress, NO_TOKEN, readToken, UsageError } from './remote.ts'
 
 const HELP = `rsc-brain — self-hosted knowledge server for AI agents
 
@@ -30,6 +33,11 @@ Usage:
   rsc-brain admin reset-link --email E                print a single-use link to set a password
   rsc-brain service create --name N [--can-create-brains] [--can-invite]
                                                       create a service account and print its main key
+  rsc-brain bridge --url U [--token-file F]           MCP over stdio for local agents, carried to the
+                                                      installation at U; the token comes from
+                                                      RSC_BRAIN_TOKEN or a file (~/.config/rsc-brain/token)
+  rsc-brain hook session-start --url U [--brain B]    Claude Code hook: the brain's context at the start
+  rsc-brain hook stop --url U                         Claude Code hook: ask once for the session summary
   rsc-brain help                                      show this help
 
 Environment:
@@ -57,6 +65,8 @@ async function main(argv: string[]): Promise<number> {
     out(HELP)
     return 0
   }
+  if (cmd === 'bridge') return bridgeCommand([sub, ...rest].filter((x) => x !== undefined))
+  if (cmd === 'hook') return hookCommand(sub, rest)
   if (cmd === 'migrate') {
     return withDb(async (db) => {
       const applied = await migrate(db)
@@ -265,6 +275,63 @@ async function main(argv: string[]): Promise<number> {
   }
   process.stderr.write(`Unknown command "${argv.join(' ')}". Run "rsc-brain help" to see the commands.\n`)
   return 2
+}
+
+// The bridge: a wrong option or a missing token stops it before the agent sends anything.
+async function bridgeCommand(args: string[]): Promise<number> {
+  try {
+    const { values } = parseArgs({
+      args,
+      options: { url: { type: 'string' }, 'token-file': { type: 'string' } },
+      strict: true,
+    })
+    const url = mcpAddress(values.url)
+    const token = readToken(values['token-file'])
+    if (!token) throw new UsageError(NO_TOKEN)
+    return await runBridge({
+      url,
+      token,
+      input: process.stdin,
+      out: (line) => process.stdout.write(`${line}\n`),
+      log: (s) => process.stderr.write(s),
+    })
+  } catch (err) {
+    if (err instanceof UsageError) {
+      process.stderr.write(`${err.message}\n`)
+      return 2
+    }
+    if ((err as { code?: string }).code?.startsWith('ERR_PARSE_ARGS')) {
+      process.stderr.write(
+        `${(err as Error).message}. Usage: rsc-brain bridge --url <address> [--token-file <file>]; the token is read from RSC_BRAIN_TOKEN or a file, never from the command line.\n`,
+      )
+      return 2
+    }
+    throw err
+  }
+}
+
+// The hooks never hold up the agent: any failure exits 0 with nothing on stdout (a note on stderr).
+async function hookCommand(which: string | undefined, args: string[]): Promise<number> {
+  try {
+    const { values } = parseArgs({
+      args,
+      options: { url: { type: 'string' }, 'token-file': { type: 'string' }, brain: { type: 'string' } },
+      strict: true,
+    })
+    const url = mcpAddress(values.url)
+    const token = readToken(values['token-file'])
+    if (!token) throw new UsageError(NO_TOKEN)
+    const out = (s: string) => process.stdout.write(s)
+    if (which === 'session-start')
+      await sessionStart({ url, token, brain: values.brain, input: process.stdin, out })
+    else if (which === 'stop') await stop({ url, token, input: process.stdin, out })
+    else throw new UsageError('Use "rsc-brain hook session-start" or "rsc-brain hook stop".')
+  } catch (err) {
+    process.stderr.write(
+      `rsc-brain hook ${which ?? ''}: ${err instanceof Error ? err.message : String(err)}\n`,
+    )
+  }
+  return 0
 }
 
 main(process.argv.slice(2)).then(
