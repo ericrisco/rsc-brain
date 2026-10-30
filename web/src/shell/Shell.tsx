@@ -5,11 +5,14 @@ import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import { applyTheme, theme } from '../lib/theme.ts'
+import { brainsResource } from '../screens/Home.tsx'
 import type { Me } from '../session.ts'
 import { T } from '../text.ts'
 import { Brand } from '../ui/Brand.tsx'
 import { Dialog } from '../ui/Dialog.tsx'
 import { OfflineStrip } from '../ui/states.tsx'
+import { ConnectDialog } from './ConnectDialog.tsx'
+import { CreateBrainDialog } from './CreateBrainDialog.tsx'
 import { HelpDialog } from './HelpDialog.tsx'
 import { Keyboard } from './Keyboard.tsx'
 import { helpOpen, searchOpen } from './keys.ts'
@@ -97,6 +100,11 @@ function AccountMenu({ me }: { me: Me }) {
             <p>{name}</p>
             {me.account.email ? <p class="meta">{me.account.email}</p> : null}
           </div>
+          {me.account.canInvite ? (
+            <a href="/people" onClick={() => setOpen(false)}>
+              <span>{T.shell.people}</span>
+            </a>
+          ) : null}
           <button
             type="button"
             class="keyboard-only"
@@ -130,6 +138,25 @@ function AccountMenu({ me }: { me: Me }) {
   )
 }
 
+// The brains and their numbers (the cards of home, what waits for review) are asked again every 30
+// seconds and when the tab comes back (plan §3.3). The top bar shows no count of proposals to review
+// yet: it would lead nowhere until the Proposals screen exists (PR21); the cards and the overview say
+// what waits.
+function useFreshBrains() {
+  useEffect(() => {
+    const r = brainsResource()
+    const again = () => {
+      if (!document.hidden) void r.reload()
+    }
+    const every = setInterval(again, 30_000)
+    document.addEventListener('visibilitychange', again)
+    return () => {
+      clearInterval(every)
+      document.removeEventListener('visibilitychange', again)
+    }
+  }, [])
+}
+
 export function Shell({
   me,
   brain,
@@ -141,6 +168,7 @@ export function Shell({
 }) {
   const [menu, setMenu] = useState(false)
   const { path } = useLocation()
+  useFreshBrains()
   useEffect(() => setMenu(false), [path])
   return (
     <div class="frame">
@@ -172,6 +200,16 @@ export function Shell({
           </button>
         </div>
         <div class="end">
+          {me.account.canInvite ? (
+            <a
+              class="top-link"
+              href="/people"
+              aria-current={path === '/people' ? 'page' : undefined}
+              aria-keyshortcuts="g p"
+            >
+              {T.shell.people}
+            </a>
+          ) : null}
           <AccountMenu me={me} />
         </div>
       </header>
@@ -200,9 +238,11 @@ export function Shell({
         </Dialog>
       ) : null}
       {/* Keyed: the brain's menu appearing above them must not remount an open dialog. */}
-      <Keyboard key="keys" signedIn brain={brain?.slug ?? null} />
-      <HelpDialog key="help" signedIn inBrain={Boolean(brain)} />
+      <Keyboard key="keys" signedIn brain={brain?.slug ?? null} canInvite={me.account.canInvite} />
+      <HelpDialog key="help" signedIn inBrain={Boolean(brain)} canInvite={me.account.canInvite} />
       <SearchDialog key="search" />
+      <ConnectDialog key="connect" />
+      <CreateBrainDialog key="create" />
     </div>
   )
 }

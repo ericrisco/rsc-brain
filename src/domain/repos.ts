@@ -106,7 +106,7 @@ async function workedIn(ctx: Ctx, slug: string) {
 }
 
 const HOW_TO_LINK =
-  'A curator can link this repository to a brain in the Brain web (the brain’s settings, Repositories); until then, name the brain in each call.'
+  'A curator can link this repository to a brain in the rsc-brain web (the brain’s settings, Repositories); until then, name the brain in each call.'
 
 // Which brain is this repository's: the brains linked to the first address that has any the key can
 // see. One is the answer; several are listed for the agent to choose. A folder on the agent's machine
@@ -121,7 +121,7 @@ export async function resolveRepo(ctx: Ctx, repos: unknown) {
   }
   if (list.every((x) => /^(\/|~|[a-z]:\\|\.)/i.test(String(x).trim()))) {
     throw invalid(
-      'That is a folder on your machine; Brain can only match repository addresses.',
+      'That is a folder on your machine; rsc-brain can only match repository addresses.',
       'Run "git remote get-url origin" in that folder and pass its output.',
     )
   }

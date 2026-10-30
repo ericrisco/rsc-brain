@@ -182,7 +182,7 @@ describe('the fixture API', () => {
     const short = await call('POST', '/v1/setup', {
       scenario: s.id,
       body: {
-        name: 'Risco Brain',
+        name: 'rsc-brain',
         publicUrl: 'http://localhost',
         admin: { name: 'Eric', email: 'e@example.test', password: 'short' },
       },
@@ -191,14 +191,14 @@ describe('the fixture API', () => {
     const done = await call('POST', '/v1/setup', {
       scenario: s.id,
       body: {
-        name: 'Risco Brain',
+        name: 'rsc-brain',
         publicUrl: 'http://localhost',
         admin: { name: 'Eric', email: 'e@example.test', password: fx.password },
       },
     })
     assert.equal(done.status, 201)
     assert.deepEqual((await call('GET', '/v1/branding', { scenario: s.id })).body, {
-      name: 'Risco Brain',
+      name: 'rsc-brain',
       logo: null,
       setupRequired: false,
       canSendMail: true,
@@ -325,6 +325,138 @@ describe('the fixture API', () => {
     const t0 = Date.now()
     assert.equal((await call('GET', '/v1/brains', { scenario: s.id, cookie })).status, 200)
     assert.ok(Date.now() - t0 >= 25, 'loading waits before answering')
+  })
+
+  it('home and overview: brains with their numbers, a new brain and its first steps (G5, G7, G8)', async () => {
+    const s = fx.scenario('signed-in')
+    const cookie = s.cookie
+    const me = (await call('GET', '/v1/me', { scenario: s.id, cookie })).body as {
+      account: { canCreateBrains: boolean; canInvite: boolean }
+    }
+    assert.deepEqual([me.account.canCreateBrains, me.account.canInvite], [true, true])
+    const list = (await call('GET', '/v1/brains', { scenario: s.id, cookie })).body as {
+      brains: Array<{ slug: string; stats: { pendingProposals: number } }>
+    }
+    assert.equal(list.brains.find((b) => b.slug === 'growth')?.stats.pendingProposals, 3)
+    const growth = await call('GET', '/v1/brains/growth/overview', { scenario: s.id, cookie })
+    assert.equal((growth.body as { todaySessions: unknown[] }).todaySessions.length, 3)
+    const made = await call('POST', '/v1/brains', {
+      scenario: s.id,
+      cookie,
+      body: { slug: 'onboarding', name: 'Onboarding', purpose: 'First days.' },
+    })
+    assert.equal(made.status, 201)
+    const again = await call('POST', '/v1/brains', { scenario: s.id, cookie, body: { slug: 'onboarding' } })
+    assert.equal((again.body as { error: { code: string } }).error.code, 'brain_exists')
+    const bad = await call('POST', '/v1/brains', { scenario: s.id, cookie, body: { slug: 'Not ok' } })
+    assert.equal(bad.status, 400)
+    const fresh = await call('GET', '/v1/brains/onboarding/overview', { scenario: s.id, cookie })
+    assert.deepEqual((fresh.body as { firstSteps: unknown }).firstSteps, {
+      agentConnected: false,
+      firstEntry: false,
+      imported: false,
+    })
+    assert.equal((await call('GET', '/v1/brains/nowhere/overview', { scenario: s.id, cookie })).status, 404)
+  })
+
+  it('inviting people and making a reset link: the administration may, a member may not', async () => {
+    const s = fx.scenario('signed-in')
+    const cookie = s.cookie
+    const made = await call('POST', '/v1/invitations', {
+      scenario: s.id,
+      cookie,
+      body: { emails: ['zoe@example.test'], brains: [{ slug: 'growth', role: 'reader' }] },
+    })
+    assert.equal(made.status, 201)
+    const inv = (made.body as { invitations: Array<{ id: string; link: string; mailed: boolean }> })
+      .invitations[0]
+    assert.match(inv?.link ?? '', /\/invite#token=/)
+    const taken = await call('POST', '/v1/invitations', {
+      scenario: s.id,
+      cookie,
+      body: { emails: ['ana@example.test'] },
+    })
+    assert.equal((taken.body as { error: { code: string } }).error.code, 'email_taken')
+    const listed = await call('GET', '/v1/invitations', { scenario: s.id, cookie })
+    assert.ok((listed.body as { invitations: unknown[] }).invitations.length >= 2)
+    assert.equal(
+      (await call('POST', `/v1/invitations/${inv?.id}/resend`, { scenario: s.id, cookie, body: {} })).status,
+      200,
+    )
+    assert.equal((await call('DELETE', `/v1/invitations/${inv?.id}`, { scenario: s.id, cookie })).status, 200)
+    const closed = await call('POST', `/v1/invitations/${inv?.id}/resend`, {
+      scenario: s.id,
+      cookie,
+      body: {},
+    })
+    assert.equal((closed.body as { error: { code: string } }).error.code, 'invitation_closed')
+    assert.equal(
+      (await call('POST', '/v1/invitations/inv_nope/resend', { scenario: s.id, cookie, body: {} })).status,
+      404,
+    )
+    assert.equal((await call('GET', '/v1/admin/accounts', { scenario: s.id, cookie })).status, 200)
+    assert.equal((await call('GET', '/v1/admin/brains', { scenario: s.id, cookie })).status, 200)
+    const link = await call('POST', '/v1/admin/accounts/acc_ana/reset-link', {
+      scenario: s.id,
+      cookie,
+      body: {},
+    })
+    assert.equal(link.status, 201)
+    const token = await call('POST', '/v1/me/tokens', {
+      scenario: s.id,
+      cookie,
+      body: { name: 'Codex', perm: 'write', brains: ['growth'], days: 90 },
+    })
+    assert.equal(token.status, 201)
+    assert.match(String((token.body as { token: { secret: string } }).token.secret), /^rscb_/)
+    const member = fx.scenario('member')
+    const ana = 'rscb_session=fx.acc_ana'
+    assert.equal((await call('GET', '/v1/invitations', { scenario: member.id, cookie: ana })).status, 403)
+    assert.equal((await call('GET', '/v1/admin/accounts', { scenario: member.id, cookie: ana })).status, 403)
+    assert.equal(
+      (
+        await call('POST', '/v1/admin/accounts/acc_eric/reset-link', {
+          scenario: member.id,
+          cookie: ana,
+          body: {},
+        })
+      ).status,
+      403,
+    )
+  })
+
+  it('streams the live events of a brain, and an emitted entry marks its first steps', async () => {
+    const s = fx.scenario('signed-in')
+    const cookie = s.cookie
+    await call('POST', '/v1/brains', { scenario: s.id, cookie, body: { slug: 'live-one' } })
+    const ctrl = new AbortController()
+    const res = await fetch(`${fx.url}/v1/brains/live-one/events`, {
+      headers: { 'x-fixture-scenario': s.id, cookie },
+      signal: ctrl.signal,
+    })
+    assert.equal(res.status, 200)
+    assert.match(res.headers.get('content-type') ?? '', /text\/event-stream/)
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader()
+    await reader.read()
+    await fetch(`${fx.url}/__fixture/scenarios/${s.id}/emit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brain: 'live-one', kind: 'entry.saved' }),
+    })
+    const chunk = new TextDecoder().decode((await reader.read()).value)
+    assert.match(chunk, /"kind":"entry.saved"/)
+    ctrl.abort()
+    const steps = await call('GET', '/v1/brains/live-one/overview', { scenario: s.id, cookie })
+    assert.deepEqual((steps.body as { firstSteps: unknown }).firstSteps, {
+      agentConnected: true,
+      firstEntry: true,
+      imported: false,
+    })
+    assert.equal(
+      (await fetch(`${fx.url}/v1/brains/live-one/events`, { headers: { 'x-fixture-scenario': s.id } }))
+        .status,
+      401,
+    )
   })
 
   it('every operation the fixture answers was checked against the description', () => {

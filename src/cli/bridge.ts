@@ -49,7 +49,7 @@ export async function runBridge(o: {
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
     } catch (err) {
-      const why = `Cannot reach RSC Brain at ${o.url.origin} (${reason(err)}).`
+      const why = `Cannot reach rsc-brain at ${o.url.origin} (${reason(err)}).`
       if (notification) o.log(`${why}\n`)
       else
         o.out(
@@ -73,7 +73,7 @@ export async function runBridge(o: {
         errorLine(
           msg.id,
           -32603,
-          `RSC Brain answered HTTP ${res.status} without a JSON-RPC message. How to proceed: check that --url is the MCP address of the installation (it ends in /mcp); if it is, try again later.`,
+          `rsc-brain answered HTTP ${res.status} without a JSON-RPC message. How to proceed: check that --url is the MCP address of the installation (it ends in /mcp); if it is, try again later.`,
         ),
       )
       return

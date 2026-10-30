@@ -5,12 +5,20 @@ import { useLocation } from 'preact-iso'
 import { createKeymap } from '../lib/shortcuts.ts'
 import { helpOpen, isTyping, searchOpen } from './keys.ts'
 
-export function Keyboard({ signedIn, brain }: { signedIn: boolean; brain: string | null }) {
+export function Keyboard({
+  signedIn,
+  brain,
+  canInvite = false,
+}: {
+  signedIn: boolean
+  brain: string | null
+  canInvite?: boolean
+}) {
   const { route } = useLocation()
   // Read when a key is pressed, not when the listener was set: the brain arrives with its data, and a
   // shortcut pressed the moment its side bar shows must already know it.
-  const now = useRef({ signedIn, brain, route })
-  now.current = { signedIn, brain, route }
+  const now = useRef({ signedIn, brain, route, canInvite })
+  now.current = { signedIn, brain, route, canInvite }
   // Before the paint, not after: once the shell shows, its shortcuts already listen.
   useLayoutEffect(() => {
     const map = createKeymap(() => Date.now())
@@ -35,7 +43,7 @@ export function Keyboard({ signedIn, brain }: { signedIn: boolean; brain: string
         typing: isTyping(e.target),
       })
       if (!id) return
-      const { signedIn, brain, route } = now.current
+      const { signedIn, brain, route, canInvite } = now.current
       if (id === 'help') {
         e.preventDefault()
         helpOpen.value = true
@@ -45,6 +53,8 @@ export function Keyboard({ signedIn, brain }: { signedIn: boolean; brain: string
         searchOpen.value = true
       } else if (id === 'go-home' && signedIn) {
         route('/')
+      } else if (id === 'go-people' && signedIn && canInvite) {
+        route('/people')
       } else if (id === 'go-overview' && signedIn && brain) {
         route(`/b/${encodeURIComponent(brain)}`)
       }

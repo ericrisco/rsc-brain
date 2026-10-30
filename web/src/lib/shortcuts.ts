@@ -2,13 +2,15 @@
 // control that does the same: a shortcut is a faster route, never the only one. The keymap is a small
 // state machine, kept free of the DOM so it is tested on its own.
 export type Shortcut = {
-  id: 'search' | 'help' | 'go-home' | 'go-overview'
+  id: 'search' | 'help' | 'go-home' | 'go-overview' | 'go-people'
   keys: string[]
   label: string
   // The visible control that does the same, as the person sees it.
   control: string
   // Only inside a brain.
   inBrain?: true
+  // Only for whoever may invite people.
+  invite?: true
 }
 
 export const SHORTCUTS: Shortcut[] = [
@@ -21,6 +23,13 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'help', keys: ['?'], label: 'Show this list', control: '"Keyboard shortcuts" in the account menu' },
   { id: 'go-home', keys: ['g', 'h'], label: 'Go home', control: 'The brand at the top left' },
   {
+    id: 'go-people',
+    keys: ['g', 'p'],
+    label: 'Go to People',
+    control: '"People" in the header or the account menu',
+    invite: true,
+  },
+  {
     id: 'go-overview',
     keys: ['g', 'o'],
     label: 'Go to the overview of this brain',
@@ -32,7 +41,7 @@ export const SHORTCUTS: Shortcut[] = [
 export type KeyLike = { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; typing: boolean }
 
 const SEQUENCE_MS = 1500
-const GO: Record<string, Shortcut['id']> = { h: 'go-home', o: 'go-overview' }
+const GO: Record<string, Shortcut['id']> = { h: 'go-home', o: 'go-overview', p: 'go-people' }
 
 export function createKeymap(now: () => number) {
   let leader: number | null = null

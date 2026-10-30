@@ -14,7 +14,7 @@ export type Config = {
 export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const databaseUrl = env.RSC_BRAIN_DATABASE_URL
   if (!databaseUrl) {
-    throw new Error('RSC_BRAIN_DATABASE_URL is not set. Point it at the PostgreSQL database for RSC Brain.')
+    throw new Error('RSC_BRAIN_DATABASE_URL is not set. Point it at the PostgreSQL database for rsc-brain.')
   }
   const port = Number(env.RSC_BRAIN_PORT ?? 8090)
   if (!Number.isInteger(port) || port < 1 || port > 65_535) {

@@ -62,10 +62,10 @@ export function readToken(file: string | undefined): string | null {
 function checked(t: string): string {
   if ([...t].some((c) => c.charCodeAt(0) <= 0x20 || c.charCodeAt(0) === 0x7f || /\s/.test(c))) {
     throw new UsageError(
-      'The token has a space or a line break inside. Copy it again from the Brain web, as one line.',
+      'The token has a space or a line break inside. Copy it again from the rsc-brain web, as one line.',
     )
   }
   return t
 }
 
-export const NO_TOKEN = `No token. Set ${TOKEN_ENV}, or keep it in ${TOKEN_FILE} (or pass --token-file). Create a token in the Brain web, under your profile.`
+export const NO_TOKEN = `No token. Set ${TOKEN_ENV}, or keep it in ${TOKEN_FILE} (or pass --token-file). Create a token in the rsc-brain web, under your profile.`

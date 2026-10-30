@@ -2,6 +2,7 @@
 // and to call the API the way a client does.
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { hashSecret, newSecret } from '../../src/auth/secrets.ts'
 import type { Clock } from '../../src/core/clock.ts'
 import { migrate } from '../../src/db/migrate.ts'
 import { createAccount, type NewAccount } from '../../src/domain/accounts.ts'
@@ -31,6 +32,13 @@ export type World = TestDb & {
     o?: { perm?: 'read' | 'write'; brainIds?: string[]; days?: number },
   ): Promise<string>
   member(brainSlug: string, accountId: string, role: 'curator' | 'contributor' | 'reader'): Promise<void>
+  // The key of a connection made with the standard sign-in (an "app" key), for these brains, without
+  // going through the consent screens.
+  app(
+    accountId: string,
+    brainIds: string[],
+    o?: { perm?: 'read' | 'write'; client?: string },
+  ): Promise<string>
   call(key: string | null, method: string, path: string, body?: unknown): Promise<Call>
   // A person in the web: a session cookie (spec B2), and a call that presents it like the web does.
   web(personId: string): Promise<string>
@@ -124,6 +132,54 @@ export async function world(
       const id = await createAccount(t.db, w.clock, { kind: 'service', name, canCreateBrains: true, ...o })
       const k = await mintMainKey(t.db, w.clock, { accountId: id, name: 'main' })
       return { id, key: k.secret }
+    },
+    async app(accountId: string, brainIds: string[], o: { perm?: 'read' | 'write'; client?: string } = {}) {
+      n += 1
+      const now = w.clock()
+      const client = o.client ?? 'Claude Code'
+      const clientId = `https://client${n}.example.com/meta.json`
+      await t.db.query(
+        "INSERT INTO oauth_clients (client_id, kind, name, redirect_uris, created_at) VALUES ($1, 'cimd', $2, $3, $4)",
+        [clientId, client, ['http://127.0.0.1/cb'], now],
+      )
+      const grantId = `app_test${n}`
+      await t.db.query(
+        `INSERT INTO oauth_grants (id, client_id, client_name, redirect_host, account_id, brain_ids, perm,
+           refresh_hash, epoch, created_at, last_used_at, expires_max)
+         VALUES ($1, $2, $3, '127.0.0.1', $4, $5, $6, $7, (SELECT key_epoch FROM installation WHERE id = 1),
+           $8, $8, $9)`,
+        [
+          grantId,
+          clientId,
+          client,
+          accountId,
+          brainIds,
+          o.perm ?? 'write',
+          hashSecret(newSecret()),
+          now,
+          new Date(now.getTime() + 90 * 86_400_000),
+        ],
+      )
+      const secret = newSecret()
+      await t.db.query(
+        `INSERT INTO credentials (id, account_id, kind, name, secret_hash, last4, perm, all_brains, brain_ids,
+           grant_id, created_at, expires_at, epoch)
+         VALUES ($1, $2, 'app', $3, $4, $5, $6, false, $7, $8, $9, $10,
+           (SELECT key_epoch FROM installation WHERE id = 1))`,
+        [
+          `crd_app_test${n}`,
+          accountId,
+          client,
+          hashSecret(secret),
+          secret.slice(-4),
+          o.perm ?? 'write',
+          brainIds,
+          grantId,
+          now,
+          new Date(now.getTime() + 3_600_000),
+        ],
+      )
+      return secret
     },
     async member(slug: string, accountId: string, role: 'curator' | 'contributor' | 'reader') {
       const b = await t.db.one<{ id: string }>('SELECT id FROM brains WHERE slug = $1', [slug])

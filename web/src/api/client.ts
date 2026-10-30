@@ -69,7 +69,7 @@ function errorOf(status: number, text: string): ApiError {
   return new ApiError(
     status,
     'bad_answer',
-    `Brain answered with an unexpected reply (HTTP ${status}).`,
+    `rsc-brain answered with an unexpected reply (HTTP ${status}).`,
     'Try again in a moment; if it keeps failing, tell an administrator.',
   )
 }
@@ -98,7 +98,7 @@ export function createClient(o: {
         throw new ApiError(
           0,
           'offline',
-          'Brain could not be reached.',
+          'rsc-brain could not be reached.',
           'Check your connection and try again.',
         )
       }

@@ -95,7 +95,7 @@ export async function sessionStart(o: {
       linked = true
     } else if (!o.brain && typeof r.message === 'string') {
       const options = ((r.brains ?? r.candidates ?? []) as Json[]).map((b) => `"${String(b.slug)}"`)
-      note = `RSC Brain: ${String(r.message ?? '')} ${String(r.howToProceed ?? '')}${
+      note = `rsc-brain: ${String(r.message ?? '')} ${String(r.howToProceed ?? '')}${
         options.length ? ` Brains you can use: ${options.join(', ')}.` : ''
       }`
     }
@@ -106,7 +106,7 @@ export async function sessionStart(o: {
   let text: string
   if (slug) {
     const c = await api(base, o.token, 'GET', `/v1/brains/${encodeURIComponent(slug)}/context?max=9000`)
-    const head = `RSC Brain: this session works in the brain "${slug}"${
+    const head = `rsc-brain: this session works in the brain "${slug}"${
       linked ? ' (linked to this repository)' : ''
     }. Name it as "brain" in your calls, open a session with mem_session_start, and close it with mem_session_summary.\n\n`
     text = cut(head + String(c.text ?? ''), MAX_CONTEXT)
@@ -203,7 +203,7 @@ export async function stop(o: {
   }
   const list = unasked.map((s) => `session "${String(s.id)}" in the brain "${String(s.brain)}"`).join('; ')
   const reason =
-    `Before you finish: your RSC Brain work has no summary yet (${list}). ` +
+    `Before you finish: your rsc-brain work has no summary yet (${list}). ` +
     'Call mem_session_summary with that session and a short summary: goal, done, discovered, decided, pending. ' +
     'If nothing in it is worth keeping, call mem_session_end instead. ' +
     'If the work is not finished, say so, carry on, and summarise when it is: this is asked once. ' +

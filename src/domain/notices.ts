@@ -35,7 +35,7 @@ export async function notify(
       await send(db, clock, outbox, n.mailKind ?? 'notice', {
         to: a.email,
         subject: n.subject,
-        text: `${n.text}\n\nOpen Brain to see it: ${base}/\n`,
+        text: `${n.text}\n\nOpen rsc-brain to see it: ${base}/\n`,
       })
     }
   }
@@ -117,7 +117,7 @@ export async function remindExpiringTokens(
   for (const r of rows) {
     const sent = await send(db, clock, outbox, 'token_expiry', {
       to: String(r.email),
-      subject: `Your Brain token "${r.name}" ends soon`,
+      subject: `Your rsc-brain token "${r.name}" ends soon`,
       text: [
         `Your token "${r.name}" ends on ${(r.expires_at as Date).toISOString().slice(0, 10)}.`,
         'Agents that use it will stop working then.',

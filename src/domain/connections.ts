@@ -178,7 +178,7 @@ export async function clientOf(
       now.getTime() - (row.fetched_at as Date).getTime() < CIMD_REFRESH_HOURS * 3_600_000
     if (!fresh) return fetchClient(db, now, clientId, policy)
   }
-  if (!row) throw bad('invalid_client', 'This client is not known to Brain.')
+  if (!row) throw bad('invalid_client', 'This client is not known to rsc-brain.')
   return {
     clientId: String(row.client_id),
     kind: row.kind as Client['kind'],
@@ -206,7 +206,7 @@ export async function registerClient(db: Db, clock: Clock, body: Record<string, 
   if (method !== undefined && method !== 'none') {
     throw bad(
       'invalid_client_metadata',
-      'Brain registers public clients only (token_endpoint_auth_method "none").',
+      'rsc-brain registers public clients only (token_endpoint_auth_method "none").',
     )
   }
   const name = clientName(body.client_name, 'Unnamed app')
@@ -282,7 +282,7 @@ export async function checkRequest(
   const iss = await issuer(db)
   const asked = typeof q.resource === 'string' ? q.resource.replace(/\/+$/, '') : ''
   if (asked !== resourceOf(iss) && asked !== iss) {
-    throw bad('invalid_target', `"resource" must be this Brain's MCP address, ${resourceOf(iss)}.`)
+    throw bad('invalid_target', `"resource" must be this installation's MCP address, ${resourceOf(iss)}.`)
   }
   return {
     ...base,

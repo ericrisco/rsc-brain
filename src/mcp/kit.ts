@@ -65,7 +65,7 @@ const tokenFile: Block = {
 // reminder is an invocable prompt plus this text).
 const INSTRUCTIONS_TEXT = (brain: string | null) =>
   [
-    '## RSC Brain',
+    '## rsc-brain',
     '',
     `- At the start of a task, call brain_resolve with the output of \`git remote get-url origin\`${brain ? ` (or use the brain "${brain}")` : ''}, then mem_context.`,
     '- Search with mem_search before you decide. Save decisions, discoveries and corrections with mem_save as you work.',
@@ -92,7 +92,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
     where: string,
   ): { kind: 'instructions'; note: string; prompt: string; blocks: Block[] } => ({
     kind: 'instructions',
-    note: 'This agent has no start and stop hooks for Brain. Add this text to its instructions file, and use the "close_session" prompt of the server ("Close my session") when you finish.',
+    note: 'This agent has no start and stop hooks for rsc-brain. Add this text to its instructions file, and use the "close_session" prompt of the server ("Close my session") when you finish.',
     prompt: 'close_session',
     blocks: [
       { title: 'Add to the instructions file', where, format: 'text', text: INSTRUCTIONS_TEXT(o.brain) },
@@ -111,7 +111,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
         note: 'Add the address, then run /mcp in Claude Code (or "claude mcp login rsc-brain") and accept in your browser.',
         blocks: [
           {
-            title: 'Add Brain for all your projects',
+            title: 'Add rsc-brain for all your projects',
             where: 'terminal',
             format: 'shell',
             text: `claude mcp add --transport http ${SERVER_NAME} ${url} --scope user`,
@@ -123,7 +123,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
         blocks: [
           exportToken,
           {
-            title: 'Add Brain to a project (the file can be shared: it holds no token)',
+            title: 'Add rsc-brain to a project (the file can be shared: it holds no token)',
             where: '.mcp.json',
             format: 'json',
             text: json({
@@ -136,7 +136,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
       },
       reminder: {
         kind: 'hooks',
-        note: `At the start of a session the hook brings the context of the brain linked to the repository; when Claude stops with a brain session still open, it asks once for the summary. The hooks need the rsc-brain command and a token (${TOKEN_ENV} or ${TOKEN_FILE}). They never block your work when Brain does not answer.`,
+        note: `At the start of a session the hook brings the context of the brain linked to the repository; when Claude stops with a brain session still open, it asks once for the summary. The hooks need the rsc-brain command and a token (${TOKEN_ENV} or ${TOKEN_FILE}). They never block your work when rsc-brain does not answer.`,
         blocks: [
           {
             title: 'Add to ~/.claude/settings.json (or .claude/settings.json in a project)',
@@ -177,7 +177,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
         note: 'Add the address, then sign in; your browser opens to accept.',
         blocks: [
           {
-            title: 'Add Brain and sign in',
+            title: 'Add rsc-brain and sign in',
             where: 'terminal',
             format: 'shell',
             text: `codex mcp add ${SERVER_NAME} --url ${url}\ncodex mcp login ${SERVER_NAME}`,
@@ -287,7 +287,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
       name: 'Other agents',
       signIn: null,
       token: {
-        note: `If your agent speaks MCP over HTTP, give it the address and the header "Authorization: Bearer <token>". If it only starts local MCP programs, use the bridge: it runs on your machine and connects to Brain with your token (from ${TOKEN_FILE} or ${TOKEN_ENV}).`,
+        note: `If your agent speaks MCP over HTTP, give it the address and the header "Authorization: Bearer <token>". If it only starts local MCP programs, use the bridge: it runs on your machine and connects to rsc-brain with your token (from ${TOKEN_FILE} or ${TOKEN_ENV}).`,
         blocks: [
           tokenFile,
           {

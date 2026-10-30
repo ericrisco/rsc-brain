@@ -4,8 +4,18 @@ import { T } from '../text.ts'
 import { Dialog } from '../ui/Dialog.tsx'
 import { helpOpen } from './keys.ts'
 
-export function HelpDialog({ signedIn, inBrain }: { signedIn: boolean; inBrain: boolean }) {
-  const shown = SHORTCUTS.filter((s) => (s.id === 'help' || signedIn) && (!s.inBrain || inBrain))
+export function HelpDialog({
+  signedIn,
+  inBrain,
+  canInvite = false,
+}: {
+  signedIn: boolean
+  inBrain: boolean
+  canInvite?: boolean
+}) {
+  const shown = SHORTCUTS.filter(
+    (s) => (s.id === 'help' || signedIn) && (!s.inBrain || inBrain) && (!s.invite || canInvite),
+  )
   return (
     <Dialog open={helpOpen.value} title={T.help.title} onClose={() => (helpOpen.value = false)}>
       <p class="muted">{T.help.lead}</p>

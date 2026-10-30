@@ -103,7 +103,7 @@ async function main(argv: string[]): Promise<number> {
       })
       server.listen(cfg.port, cfg.host, resolve)
     })
-    out(`RSC Brain listening on http://${cfg.host}:${cfg.port}\n`)
+    out(`rsc-brain listening on http://${cfg.host}:${cfg.port}\n`)
     // Sessions idle for 24 hours close themselves (spec B1); listings also sweep before they answer.
     // The trail older than 90 days folds into counters (spec B3).
     const sweep = setInterval(() => {
@@ -162,7 +162,7 @@ async function main(argv: string[]): Promise<number> {
         return 1
       }
       const made = await companionSetup(pool, systemClock, {
-        name: env.RSC_BRAIN_SETUP_NAME ?? 'RSC Brain',
+        name: env.RSC_BRAIN_SETUP_NAME ?? 'rsc-brain',
         publicUrl: env.RSC_BRAIN_SETUP_URL,
         admin: {
           name: env.RSC_BRAIN_ADMIN_NAME,

@@ -1,14 +1,18 @@
-// Home, the first version (spec B6 «Home: mis cerebros»; the cards with their numbers arrive with G7 in
-// PR18): the brains of the person, their role, and what each is for. Empty, it is never a dead end: an
-// administrator gets the next step (create a brain, invite people) with what works today; anyone else
-// learns who adds people to brains, with their email to give and a way to sign out. The command to connect
-// an agent comes from the server's connection kit (GET /v1/connect), built from the public address of
-// the installation, never from the address the browser happens to be on.
+// Home (spec B6 «Home: mis cerebros», T014). Who: anyone signed in. Job: see my brains at a glance and
+// open one; for whoever may, create one; for anyone, connect an agent. Done when: the brain is open, or
+// the next step is clear. A card per brain says what it is for, my role, its size, what waits for
+// review and when it last moved (G7). Empty, it is never a dead end: whoever may create brains gets the
+// first three steps with real actions; anyone else learns who adds people to brains. An administrator
+// still alone in the installation is offered to invite people until someone joins.
 import { Fragment } from 'preact'
 import { useEffect, useState } from 'preact/hooks'
+import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
-import { justJoined, justSetUp, type Me, me, online } from '../session.ts'
+import { ago } from '../lib/brains.ts'
+import { firstPersonAlone } from '../lib/people.ts'
+import { branding, justJoined, justSetUp, type Me, me, online } from '../session.ts'
+import { connectFor, createOpen } from '../shell/dialogs.ts'
 import { useSignOut } from '../shell/signOut.ts'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
@@ -16,10 +20,31 @@ import { CopyButton } from '../ui/CopyButton.tsx'
 import { viewState } from '../ui/state.ts'
 import { ErrorState, Skeleton } from '../ui/states.tsx'
 
-export type BrainRow = { slug: string; name: string; purpose: string; status: string; role: string }
+export type Stats = {
+  pages: number
+  entries: number
+  uncompiled: number
+  conflicts: number
+  pendingProposals: number
+  lastActivityAt: string | null
+}
+export type BrainRow = {
+  slug: string
+  name: string
+  purpose: string
+  status: string
+  role: string
+  stats: Stats
+  notifyProposals: boolean
+}
 
 export const brainsResource = () =>
   resource<{ brains: BrainRow[] }>('brains', () => api.call<{ brains: BrainRow[] }>('brains'))
+
+type Account = { id: string; kind: string; status: string }
+// Who else is in the installation (administration only): Home offers to invite until someone joins.
+export const accountsResource = () =>
+  resource<{ accounts: Account[] }>('admin:accounts', () => api.call<{ accounts: Account[] }>('accounts'))
 
 type Kit = {
   agents: Array<{ id: string; signIn: { note: string; blocks: Array<{ text: string }> } | null }>
@@ -44,7 +69,12 @@ function ConnectCommand() {
             ))}
           </code>
         </pre>
-        <CopyButton text={command} label={T.home.copyCommand} />
+        <div class="actions">
+          <CopyButton text={command} label={T.home.copyCommand} />
+          <Button kind="quiet" onClick={() => (connectFor.value = { brain: null })}>
+            {T.home.otherAgents}
+          </Button>
+        </div>
         <p class="how">{signIn.note}</p>
       </>
     )
@@ -59,21 +89,29 @@ function ConnectCommand() {
   return <Skeleton rows={1} />
 }
 
-function NextSteps() {
+function GetStarted({ who }: { who: Me }) {
   return (
-    <section class="state next" data-state="empty" aria-labelledby="next-title">
-      <h2 id="next-title">{T.home.nextTitle}</h2>
-      <p>{T.home.nextLead}</p>
+    <section class="state next" data-state="empty" aria-labelledby="start-title">
+      <h2 id="start-title">{T.home.startTitle}</h2>
+      <p>{T.home.startLead}</p>
       <ol class="steps">
         <li>
-          <p>{T.home.nextConnect}</p>
+          <p>{T.home.startCreate}</p>
+          <Button kind="primary" onClick={() => (createOpen.value = true)}>
+            {T.create.open}
+          </Button>
+        </li>
+        {who.account.canInvite ? (
+          <li>
+            <p>{T.home.startInvite(branding().data.value?.canSendMail !== false)}</p>
+            <a class="button" href="/people">
+              {T.home.invite}
+            </a>
+          </li>
+        ) : null}
+        <li>
+          <p>{T.home.startConnect}</p>
           <ConnectCommand />
-        </li>
-        <li>
-          <p>{T.home.nextCreate}</p>
-        </li>
-        <li>
-          <p>{T.home.nextInvite}</p>
         </li>
       </ol>
       <a href={T.home.readmeUrl} target="_blank" rel="noopener noreferrer">
@@ -108,11 +146,57 @@ function NotInAny({ who }: { who: Me }) {
   )
 }
 
+// Shown to an administrator while nobody else is in the installation.
+function InvitePanel() {
+  const r = accountsResource()
+  // Someone may have joined since this list was loaded.
+  useFresh(r)
+  const accounts = r.data.value?.accounts
+  if (!accounts || !firstPersonAlone(accounts)) return null
+  return (
+    <section class="callout" aria-label={T.home.inviteTitle}>
+      <div>
+        <h2>{T.home.inviteTitle}</h2>
+        <p class="muted">{T.home.inviteLead(branding().data.value?.canSendMail !== false)}</p>
+      </div>
+      <a class="button" href="/people">
+        {T.home.invite}
+      </a>
+    </section>
+  )
+}
+
+function Card({ b }: { b: BrainRow }) {
+  const waiting = b.stats.pendingProposals
+  const when = ago(b.stats.lastActivityAt)
+  return (
+    <li class={b.status === 'archived' ? 'archived' : undefined}>
+      <div class="card-head">
+        <a class="name" href={`/b/${encodeURIComponent(b.slug)}`}>
+          {b.name}
+        </a>
+        <span class="tag">{b.role}</span>
+        {b.status === 'archived' ? <span class="tag">{T.home.archived}</span> : null}
+      </div>
+      <p class="purpose">{b.purpose || <span class="muted">{T.brain.noPurpose}</span>}</p>
+      <p class="meta">{T.home.size(b.stats.pages, b.stats.entries)}</p>
+      <p class={waiting && b.role === 'curator' ? 'review' : 'meta'}>
+        {!waiting
+          ? T.home.nothingToReview
+          : b.role === 'curator'
+            ? T.home.toReview(waiting)
+            : T.home.waiting(waiting)}
+      </p>
+      <p class="meta">{when ? T.home.lastActivity(when) : T.home.noActivity}</p>
+    </li>
+  )
+}
+
 export function Home() {
   const r = brainsResource()
   const who = me().data.value
   const data = r.data.value
-  // "Brain is set up." is said once, on the first home after the setup.
+  // "rsc-brain is set up." is said once, on the first home after the setup.
   const [setUp] = useState(() => justSetUp.value)
   // "Welcome — you joined …" is said once, on the first home after accepting an invitation.
   const [joined] = useState(() => justJoined.value)
@@ -127,11 +211,22 @@ export function Home() {
     online: online.value,
     isEmpty: (d) => d.brains.length === 0,
   })
+  const canCreate = who?.account.canCreateBrains === true
   return (
     <>
       <div class="title-row">
-        <h1 class="title">{T.home.title}</h1>
-        {data?.brains.length ? <span class="meta">{T.home.count(data.brains.length)}</span> : null}
+        <div class="title-group">
+          <h1 class="title">{T.home.title}</h1>
+          {data?.brains.length ? <span class="meta">{T.home.count(data.brains.length)}</span> : null}
+        </div>
+        <div class="actions">
+          <Button onClick={() => (connectFor.value = { brain: null })}>{T.connect.open}</Button>
+          {canCreate && state === 'ready' ? (
+            <Button kind="primary" onClick={() => (createOpen.value = true)}>
+              {T.create.open}
+            </Button>
+          ) : null}
+        </div>
       </div>
       {setUp ? (
         <p class="alert ok" role="status">
@@ -151,29 +246,18 @@ export function Home() {
           <ErrorState error={r.error.value} onRetry={() => void r.reload()} />
         ) : null
       ) : null}
-      {state === 'empty' && who ? who.account.isAdmin ? <NextSteps /> : <NotInAny who={who} /> : null}
+      {state === 'empty' && who ? canCreate ? <GetStarted who={who} /> : <NotInAny who={who} /> : null}
       {state === 'ready' && data ? (
-        <section aria-label={T.home.title}>
-          <div class="rows-head" aria-hidden="true">
-            <span>Brain</span>
-            <span>{T.brain.purpose}</span>
-            <span>{T.home.role}</span>
-          </div>
-          <ul class="rows">
-            {data.brains.map((b) => (
-              <li key={b.slug}>
-                <a class="name" href={`/b/${encodeURIComponent(b.slug)}`}>
-                  {b.name}
-                </a>
-                <span class="purpose">{b.purpose || <span class="muted">{T.brain.noPurpose}</span>}</span>
-                <span class="role">
-                  {b.role}
-                  {b.status === 'archived' ? ` · ${T.home.archived}` : ''}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <>
+          {who?.account.isAdmin ? <InvitePanel /> : null}
+          <section aria-label={T.home.title}>
+            <ul class="cards">
+              {data.brains.map((b) => (
+                <Card key={b.slug} b={b} />
+              ))}
+            </ul>
+          </section>
+        </>
       ) : null}
     </>
   )

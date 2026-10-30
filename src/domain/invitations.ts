@@ -48,7 +48,7 @@ async function mailInvitation(
   outbox: Outbox | undefined,
   o: { email: string; link: string; by: string; grants: Grant[]; isAdmin: boolean },
 ): Promise<{ sent: boolean; error: string | null }> {
-  const inst = (await installation(db)).name || 'RSC Brain'
+  const inst = (await installation(db)).name || 'rsc-brain'
   const names = await brainNames(db, o.grants)
   const lines = o.grants
     .map((g) => names.get(g.brainId))

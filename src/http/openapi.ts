@@ -40,11 +40,32 @@ const BRAIN = obj({
   createdAt: s('When.', { format: 'date-time' }),
   updatedAt: s('When it last changed.', { format: 'date-time' }),
 })
+const STATS = obj({
+  pages: n('Wiki pages that are not retired.'),
+  entries: n('Active journal entries.'),
+  uncompiled: n('Active entries no proposal has gathered yet.'),
+  conflicts: n('Open contradictions between entries.'),
+  pendingProposals: n('Proposals waiting for a curator.'),
+  lastActivityAt: nul(s('The last write, session or proposal.', { format: 'date-time' })),
+})
 const BRAIN_ROLE = {
   ...BRAIN,
-  properties: { ...(BRAIN.properties as Schema), role: s('Your role through this key.') },
-  required: [...(BRAIN.required as string[]), 'role'],
+  properties: {
+    ...(BRAIN.properties as Schema),
+    role: s('Your role through this key.'),
+    stats: STATS,
+    notifyProposals: b('You get an email for each new proposal of this brain.'),
+  },
+  required: [...(BRAIN.required as string[]), 'role', 'stats', 'notifyProposals'],
 }
+const INVITED = obj({
+  id: s('Invitation id (inv_…).'),
+  email: s('Who it is for.'),
+  link: s('The single-use link (72 hours). Shown only in this answer: copy it now if it was not mailed.'),
+  expiresAt: s('Until when it works.', { format: 'date-time' }),
+  mailed: b('It went by email.'),
+  mailError: nul(s('Why the email did not go, if it did not.')),
+})
 const SESSION = obj({
   id: s('Session id (ses_…).'),
   brainId: s('Its brain.'),
@@ -162,7 +183,7 @@ const HAND: Record<string, Op> = {
     }),
   },
   'POST /v1/setup': {
-    summary: 'The first-time setup (the Brain web only): name, address and the first administrator.',
+    summary: 'The first-time setup (the rsc-brain web only): name, address and the first administrator.',
     status: 201,
     body: obj({
       name: s('The name of the installation.', { maxLength: 80 }),
@@ -177,7 +198,7 @@ const HAND: Record<string, Op> = {
     }),
   },
   'POST /v1/auth/login': {
-    summary: 'Sign in to the web (the Brain web only): sets the session cookie.',
+    summary: 'Sign in to the web (the rsc-brain web only): sets the session cookie.',
     body: obj(
       { email: s('Email.'), password: s('Password.'), code: s('The 6 digits of the authenticator app.') },
       ['code'],
@@ -220,7 +241,7 @@ const HAND: Record<string, Op> = {
     }),
   },
   'POST /v1/invitations/accept': {
-    summary: 'Accept an invitation (the Brain web only): your account, your roles and a web session.',
+    summary: 'Accept an invitation (the rsc-brain web only): your account, your roles and a web session.',
     status: 201,
     body: obj({ token: s('The token.'), name: s('Your name.'), password: s('12 to 200 characters.') }),
     reply: obj({
@@ -234,7 +255,7 @@ const HAND: Record<string, Op> = {
   'GET /v1/health': { summary: 'Whether the server answers.', reply: obj({ ok: b('Always true.') }) },
   'GET /v1/openapi.json': { summary: 'This description.', reply: { type: 'object' } },
   'GET /v1/me': {
-    summary: 'Who this key is.',
+    summary: 'Who this key is, what it may do, and the installation.',
     reply: obj({
       account: obj({
         id: s('Account id.'),
@@ -242,6 +263,15 @@ const HAND: Record<string, Op> = {
         name: s('Name.'),
         email: nul(s('Email.')),
         isAdmin: b('Administration rights travel with this key.'),
+        canCreateBrains: b('This key may create brains.'),
+        canInvite: b(
+          'This key may invite people (POST /v1/invitations): a web session of the administration, or of a curator when the installation allows curators to invite.',
+        ),
+        totp: nul(b('The account signs in with a second factor; null for any key but a web session.')),
+      }),
+      installation: obj({
+        name: s('The name of the installation.'),
+        factoryUrl: nul(s('The address of RSC Factory, when the administration set one.')),
       }),
       key: obj({
         id: s('Credential id.'),
@@ -251,6 +281,34 @@ const HAND: Record<string, Op> = {
         agent: nul(s('Agent of a short key.')),
       }),
     }),
+  },
+  'POST /v1/me/tokens': {
+    summary:
+      'Create a personal token (the rsc-brain web only): read or read + write, for some brains or all, for 30, 90 or 365 days. The secret is shown only in this answer.',
+    status: 201,
+    body: obj(
+      {
+        name: s('What it is for, such as "Claude Code laptop".'),
+        perm: s('read, or write (read + write).'),
+        brains: list(s('The name of a brain.'), 'The brains it reaches.'),
+        allBrains: b('Every brain you are a member of, including brains you join later.'),
+        days: n('30, 90 or 365 (90 by default).'),
+      },
+      ['brains', 'allBrains', 'days'],
+    ),
+    reply: obj(
+      {
+        token: obj({
+          id: s('Credential id.'),
+          secret: s('The token. Shown only here.'),
+          last4: s('Its last four characters, to recognise it later.'),
+          expiresAt: s('When it ends.', { format: 'date-time' }),
+        }),
+        message: s('A reminder that it is shown once.'),
+        note: s('Said when it reaches every brain.'),
+      },
+      ['note'],
+    ),
   },
   'GET /v1/brains': { summary: 'The brains this key can use.', reply: obj({ brains: list(BRAIN_ROLE) }) },
   'POST /v1/brains': {
@@ -269,6 +327,145 @@ const HAND: Record<string, Op> = {
     reply: obj({ brain: BRAIN }),
   },
   'GET /v1/brains/{slug}': { summary: 'One brain.', reply: obj({ brain: BRAIN_ROLE }) },
+  'GET /v1/brains/{slug}/overview': {
+    summary:
+      "A brain at a glance: its numbers, today's sessions, the newest pending proposals, health counts and the first steps of a new brain.",
+    reply: obj({
+      cursor: s(
+        'The id of the newest event this answer already shows. Follow the brain from here: GET /v1/brains/{slug}/events with Last-Event-ID set to it replays whatever came after.',
+      ),
+      stats: STATS,
+      todaySessions: list(
+        obj({
+          id: s('Session id.'),
+          who: s('The account that opened it.'),
+          client: nul(s('The agent or app of its key.')),
+          purpose: s('What it is for.'),
+          ref: nul(s('External reference.')),
+          status: s('open, closed or closed_no_summary.'),
+          entries: n('Entries written in it (its summary aside).'),
+          summary: nul(s('The start of its summary, once closed with one.')),
+          openedAt: s('When.', { format: 'date-time' }),
+          lastActivityAt: s('Last write.', { format: 'date-time' }),
+        }),
+        'Sessions active today in the time zone of the installation, newest first (at most 20).',
+      ),
+      pending: list(
+        obj({
+          id: s('Proposal id.'),
+          title: s('What it changes.'),
+          agent: nul(s('The agent that sent it.')),
+          opCount: n('Its operations.'),
+          old: b('Pending for a long time.'),
+          createdAt: s('When.', { format: 'date-time' }),
+        }),
+        'The newest pending proposals (at most 5).',
+      ),
+      health: obj({
+        orphans: n('Pages nothing links to.'),
+        broken: n('Links to pages that do not exist.'),
+        conflicts: n('Pages linked as contradicting.'),
+        stale: n('Old pages the journal keeps mentioning.'),
+        unavailableSources: n('Sources forgotten or purged.'),
+        long: n('Pages past the length threshold.'),
+        similarTitles: n('Pairs of almost equal titles.'),
+      }),
+      firstSteps: obj({
+        agentConnected: b('A key that is not a web session opened a session or proposed here.'),
+        firstEntry: b('The journal has an entry.'),
+        imported: b('A folder was imported (always false until importing exists).'),
+      }),
+    }),
+  },
+  'POST /v1/invitations': {
+    summary:
+      'Invite people by email (the rsc-brain web only): the administration anywhere; a curator, when allowed, to brains they curate.',
+    status: 201,
+    body: obj(
+      {
+        emails: list(s('An email.'), '1 to 50 emails.'),
+        brains: list(obj({ slug: s('Slug.'), role: s('curator, contributor or reader.') })),
+        isAdmin: b('Also an administrator (administration only).'),
+        canCreateBrains: b('May create brains (administration only).'),
+      },
+      ['brains', 'isAdmin', 'canCreateBrains'],
+    ),
+    reply: obj({ invitations: list(INVITED) }),
+  },
+  'GET /v1/invitations': {
+    summary: 'Invitations: all of them for the administration; a curator sees the ones they sent.',
+    reply: obj({
+      invitations: list(
+        obj({
+          id: s('Invitation id.'),
+          email: s('Who it is for.'),
+          status: s('pending, expired, used or revoked.', {
+            enum: ['pending', 'expired', 'used', 'revoked'],
+          }),
+          brains: list(obj({ slug: s('Slug.'), role: s('Role.') })),
+          isAdmin: b('It makes an administrator.'),
+          invitedBy: s('Who sent it.'),
+          createdAt: s('When.', { format: 'date-time' }),
+          expiresAt: s('Until when it works.', { format: 'date-time' }),
+        }),
+      ),
+    }),
+  },
+  'POST /v1/invitations/{id}/resend': {
+    summary: 'A new link for a pending invitation (the old one stops working), sent again.',
+    reply: obj({ invitation: INVITED }),
+  },
+  'DELETE /v1/invitations/{id}': {
+    summary: 'Withdraw an invitation that was not used.',
+    reply: obj({ revoked: s('The invitation id.') }),
+  },
+  'GET /v1/admin/accounts': {
+    summary: 'People and service accounts of the installation (administration).',
+    reply: obj({
+      accounts: list(
+        obj({
+          id: s('Account id.'),
+          kind: s('person or service.'),
+          name: s('Name.'),
+          email: nul(s('Email (people).')),
+          isAdmin: b('An administrator.'),
+          canCreateBrains: b('May create brains.'),
+          status: s('active or removed.'),
+          brains: n('Brains it is a member of.'),
+          lastSeenAt: nul(s('Last use of any of its keys.', { format: 'date-time' })),
+          createdAt: s('When.', { format: 'date-time' }),
+        }),
+      ),
+    }),
+  },
+  'POST /v1/admin/accounts/{id}/reset-link': {
+    summary:
+      'A password reset link for a person, to give by hand (the rsc-brain web only, administration). Works once, for 1 hour.',
+    status: 201,
+    reply: obj({
+      link: s('The single-use link. Shown only in this answer.'),
+      expiresAt: s('Until when it works.', { format: 'date-time' }),
+    }),
+  },
+  'GET /v1/admin/brains': {
+    summary: 'Every brain of the installation, without its content (administration).',
+    reply: obj({
+      brains: list(
+        obj({
+          slug: s('Slug.'),
+          name: s('Name.'),
+          status: s('active or archived.'),
+          members: n('How many members.'),
+          curators: list(obj({ id: s('Account id.'), name: s('Name.') })),
+          pendingCurator: nul({
+            ...obj({ email: s('Email invited as first curator.'), invitationId: nul(s('Its invitation.')) }),
+            type: ['object', 'null'],
+          }),
+          youAreMember: b('You are a member (only members read it).'),
+        }),
+      ),
+    }),
+  },
   'POST /v1/brains/{slug}/sessions': {
     summary: 'Open a session (a service: for one of its short keys, with forKey).',
     status: 201,
@@ -512,7 +709,7 @@ export function openapi(routes: Route[], serverUrl: string | null): Schema {
   return {
     openapi: '3.1.0',
     info: {
-      title: 'RSC Brain API',
+      title: 'rsc-brain API',
       version: '1',
       description:
         'The same operations as the MCP tools, with the same keys and permissions. Every refusal says what happened and how to proceed. Each key may make a limited number of requests per minute (429 with Retry-After beyond it). No answer passes 256000 characters: lists go by pages, and an answer that would pass the limit is cut and says so.',

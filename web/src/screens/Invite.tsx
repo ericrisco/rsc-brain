@@ -11,7 +11,7 @@ import { draft } from '../api/draft.ts'
 import { api } from '../api/index.ts'
 import { resetResources } from '../api/resource.ts'
 import { useLinkToken } from '../lib/linkToken.ts'
-import { type Joined, justJoined, me, online } from '../session.ts'
+import { branding, type Joined, justJoined, me, online } from '../session.ts'
 import { Door } from '../shell/Door.tsx'
 import { LinkProblem } from '../shell/LinkProblem.tsx'
 import { T } from '../text.ts'
@@ -88,10 +88,15 @@ function InvitationPage({
     </>
   )
   const signedIn = Boolean(who)
+  const mail = branding().data.value?.canSendMail !== false
   if (!token) {
     return (
       <Door signedIn={signedIn}>
-        <LinkProblem title={T.invite.invalidTitle} message={T.invite.noToken} how={T.invite.reload}>
+        <LinkProblem
+          title={T.invite.invalidTitle}
+          message={T.invite.noToken(mail)}
+          how={T.invite.reload(mail)}
+        >
           {forward}
         </LinkProblem>
       </Door>

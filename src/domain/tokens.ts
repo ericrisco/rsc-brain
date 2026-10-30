@@ -70,7 +70,7 @@ export async function createToken(
   )
   return {
     token: { id: k.id, secret: k.secret, last4: k.secret.slice(-4), expiresAt: k.expiresAt },
-    message: 'Copy it now: Brain shows it only this once.',
+    message: 'Copy it now: rsc-brain shows it only this once.',
     ...(all ? { note: ALL_BRAINS_NOTE } : {}),
   }
 }

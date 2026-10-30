@@ -3,7 +3,9 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { hashPassword } from '../../src/auth/password.ts'
+import { hashSecret, newSecret } from '../../src/auth/secrets.ts'
 import { stepOf, totpAt } from '../../src/auth/totp.ts'
+import { newReset } from '../../src/domain/login.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
 
@@ -138,6 +140,80 @@ describe('signing in', { skip: skipPg }, () => {
     const a = await w.raw('POST', '/v1/auth/reset', { body: { email: await emailOf(carl.id) } })
     const b = await w.raw('POST', '/v1/auth/reset', { body: { email: 'nobody@example.com' } })
     assert.deepEqual([a.status, a.body], [b.status, b.body])
+  })
+
+  // Only the newest reset link of an account works: making another one (by hand or by email) and changing
+  // the password both end every older link that was not used yet.
+  it('a newer reset link, or a new password, ends every older unused link of that account', async () => {
+    const dora = await w.person('Dora')
+    await setPassword(dora.id)
+    const adminWeb = await w.web(admin.id)
+    const make = async () =>
+      /token=([^&]+)$/.exec(
+        String((await w.callWeb(adminWeb, 'POST', `/v1/admin/accounts/${dora.id}/reset-link`)).body.link),
+      )?.[1] ?? ''
+    const look = async (token: string) =>
+      (await w.raw('POST', '/v1/auth/reset/look', { body: { token } })).status
+    const confirm = (token: string, password: string) =>
+      w.raw('POST', '/v1/auth/reset/confirm', { body: { token, password } })
+    const first = await make()
+    const second = await make()
+    assert.equal(await look(first), 400, 'a newer link ends the older one')
+    assert.equal(await look(second), 200)
+    assert.equal((await confirm(first, 'first link long password')).status, 400)
+    // A link by email ends the hand-made one too.
+    const third = await make()
+    w.mails.length = 0
+    await w.setUpMail()
+    await w.raw('POST', '/v1/auth/reset', { body: { email: await emailOf(dora.id) } })
+    const mail = await w.mailTo(await emailOf(dora.id))
+    assert.match(mail.text, /token=rscb_/)
+    assert.equal(await look(third), 400, 'the mailed link ends the hand-made one')
+    // A new password ends every link still waiting, even two that were alive together (a link made
+    // before this rule, or two made at the same instant).
+    const fourth = await make()
+    const older = newSecret()
+    await w.db.query(
+      'INSERT INTO password_resets (token_hash, account_id, created_by, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)',
+      [hashSecret(older), dora.id, admin.id, w.clock(), new Date(w.clock().getTime() + 3_600_000)],
+    )
+    assert.equal(await look(older), 200)
+    assert.equal((await confirm(fourth, 'second link long password')).status, 200)
+    assert.equal(await look(older), 400, 'a new password ends the older link')
+    assert.equal((await confirm(older, 'third link long password')).status, 400)
+  })
+
+  // An emailed request and a link made by hand at the same moment take turns on the same per-account
+  // lock: whichever comes second ends the first, so exactly one link works.
+  it('a link made by hand while an emailed one is being made: exactly one link works', async () => {
+    const eve = await w.person('Eve')
+    const adminWeb = await w.web(admin.id)
+    let release = () => {}
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    let made = () => {}
+    const holding = new Promise<void>((r) => {
+      made = r
+    })
+    // The emailed path, held between making its link and committing it.
+    const emailed = w.db.tx(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock(hashtext('rsc-brain reset ' || $1))", [eve.id])
+      await newReset(tx, eve.id, null, w.clock())
+      made()
+      await gate
+    })
+    await holding
+    const byHand = w.callWeb(adminWeb, 'POST', `/v1/admin/accounts/${eve.id}/reset-link`)
+    await new Promise((r) => setTimeout(r, 300))
+    release()
+    await emailed
+    assert.equal((await byHand).status, 201)
+    const live = await w.db.one<{ n: number }>(
+      'SELECT count(*)::int AS n FROM password_resets WHERE account_id = $1 AND used_at IS NULL',
+      [eve.id],
+    )
+    assert.equal(live?.n, 1)
   })
 
   // Spec B6 «Reset»: the page checks the link when it opens, so a used or expired one says so before the

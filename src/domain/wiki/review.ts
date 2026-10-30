@@ -22,7 +22,7 @@ export const webOnly = (ctx: Ctx): void => {
       403,
       'web_only',
       'Approval happens in the web.',
-      'Open the proposal in the Brain web. Agents and programs can propose, not approve or edit pages.',
+      'Open the proposal in the rsc-brain web. Agents and programs can propose, not approve or edit pages.',
     )
   }
 }

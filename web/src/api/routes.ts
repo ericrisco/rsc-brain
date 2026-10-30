@@ -16,9 +16,22 @@ export const ROUTE_TABLE = {
   inviteAccept: { route: 'POST /v1/invitations/accept', public: true },
   me: { route: 'GET /v1/me' },
   brains: { route: 'GET /v1/brains' },
+  createBrain: { route: 'POST /v1/brains' },
   brain: { route: 'GET /v1/brains/{slug}' },
+  overview: { route: 'GET /v1/brains/{slug}/overview' },
+  // Followed with EventSource (web/src/live/follow.ts), not through the client; listed so the table
+  // still covers every operation the web reaches.
+  events: { route: 'GET /v1/brains/{slug}/events' },
   search: { route: 'GET /v1/search' },
   connect: { route: 'GET /v1/connect' },
+  invitations: { route: 'GET /v1/invitations' },
+  invite: { route: 'POST /v1/invitations' },
+  inviteResend: { route: 'POST /v1/invitations/{id}/resend' },
+  inviteWithdraw: { route: 'DELETE /v1/invitations/{id}' },
+  accounts: { route: 'GET /v1/admin/accounts' },
+  resetLink: { route: 'POST /v1/admin/accounts/{id}/reset-link' },
+  allBrains: { route: 'GET /v1/admin/brains' },
+  createToken: { route: 'POST /v1/me/tokens' },
 } as const satisfies Record<string, Op>
 
 export type OpName = keyof typeof ROUTE_TABLE

@@ -44,7 +44,7 @@ describe('first-time setup', { skip: skipPg }, () => {
     ]) {
       const r = await w.raw('POST', '/v1/setup', {
         headers: WEB,
-        body: { name: 'Risco Brain', publicUrl, admin },
+        body: { name: 'rsc-brain', publicUrl, admin },
       })
       assert.deepEqual([r.status, r.body.error?.code], [400, 'invalid_request'], publicUrl)
     }
@@ -62,13 +62,13 @@ describe('first-time setup', { skip: skipPg }, () => {
     // From elsewhere, through the trusted proxy, over plain http: no password accepted.
     const viaHttp = await w.raw('POST', '/v1/setup', {
       headers: { ...WEB, 'x-forwarded-for': '203.0.113.7', 'x-forwarded-proto': 'http' },
-      body: { name: 'Risco Brain', publicUrl: 'http://brain.example.com', admin },
+      body: { name: 'rsc-brain', publicUrl: 'http://brain.example.com', admin },
     })
     assert.deepEqual([viaHttp.status, viaHttp.body.error?.code], [403, 'insecure_connection'])
     // A proxy Brain does not trust: not local, not encrypted.
     const untrusted = await w.raw('POST', '/v1/setup', {
       headers: { ...WEB, forwarded: 'for=203.0.113.7;proto=https' },
-      body: { name: 'Risco Brain', publicUrl: 'https://brain.example.com', admin },
+      body: { name: 'rsc-brain', publicUrl: 'https://brain.example.com', admin },
     })
     assert.equal(untrusted.status, 403)
     // Without the header of the web, a form on another site cannot run it.
@@ -82,18 +82,18 @@ describe('first-time setup', { skip: skipPg }, () => {
     // An address that grows past the limit once normalised is refused, not a 500.
     const long = await w.raw('POST', '/v1/setup', {
       headers: WEB,
-      body: { name: 'Risco Brain', publicUrl: `https://brain.example.com/${'é'.repeat(100)}`, admin },
+      body: { name: 'rsc-brain', publicUrl: `https://brain.example.com/${'é'.repeat(100)}`, admin },
     })
     assert.equal(long.status, 400, long.text)
     const notText = await w.raw('POST', '/v1/setup', {
       headers: WEB,
-      body: { name: 'Risco Brain', publicUrl: 'http://localhost', admin: { ...admin, name: {} } },
+      body: { name: 'rsc-brain', publicUrl: 'http://localhost', admin: { ...admin, name: {} } },
     })
     assert.equal(notText.status, 400)
     const weak = await w.raw('POST', '/v1/setup', {
       headers: WEB,
       body: {
-        name: 'Risco Brain',
+        name: 'rsc-brain',
         publicUrl: 'http://localhost:8090',
         admin: { ...admin, password: 'short' },
       },
@@ -101,7 +101,7 @@ describe('first-time setup', { skip: skipPg }, () => {
     assert.equal(weak.status, 400)
     const r = await w.raw('POST', '/v1/setup', {
       headers: { ...WEB, 'x-forwarded-for': '203.0.113.7', 'x-forwarded-proto': 'https' },
-      body: { name: 'Risco Brain', publicUrl: 'https://brain.example.com/', admin },
+      body: { name: 'rsc-brain', publicUrl: 'https://brain.example.com/', admin },
     })
     assert.equal(r.status, 201, r.text)
     assert.equal(r.body.publicUrl, 'https://brain.example.com')
@@ -133,7 +133,7 @@ describe('companion mode and the key epoch', { skip: skipPg }, () => {
 
   it('CA24: installed by Factory, no setup; the admin signs in and Factory has its service account', async () => {
     const out = await companionSetup(w.db, w.clock, {
-      name: 'Risco Brain',
+      name: 'rsc-brain',
       publicUrl: 'http://localhost:8090',
       admin: { name: 'Eric', email: 'eric@example.com', password: 'a long enough password' },
       serviceName: 'RSC Factory',

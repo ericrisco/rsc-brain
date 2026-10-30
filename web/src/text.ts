@@ -1,8 +1,11 @@
+const fmt = (n: number) => n.toLocaleString('en-US')
+const plural = (n: number, one: string, many = `${one}s`) => `${fmt(n)} ${n === 1 ? one : many}`
+
 // Every word of the web, in one place, so it can be translated later (spec B6 «Clarificaciones»: English
 // only in this version). Screens import from here; they do not hold sentences of their own.
 export const T = {
-  product: 'RSC Brain',
-  brandFallback: 'Brain',
+  product: 'rsc-brain',
+  brandFallback: 'rsc-brain',
   skip: 'Skip to content',
 
   shell: {
@@ -23,6 +26,9 @@ export const T = {
     brainNav: 'Sections of this brain',
     yourRole: (role: string) => `You are a ${role}`,
     overview: 'Overview',
+    people: 'People',
+    toReview: (n: number) => (n === 1 ? '1 proposal to review' : `${n} proposals to review`),
+    toReviewShort: (n: number) => `${n} to review`,
     allBrains: '← All brains',
     offline:
       'You are offline. What you see may be out of date; changes are off until the connection is back.',
@@ -45,7 +51,7 @@ export const T = {
     loading: 'Loading…',
     tryAgain: 'Try again',
     errorTitle: 'This did not load',
-    offlineTitle: 'Brain could not be reached',
+    offlineTitle: 'rsc-brain could not be reached',
     offlineLead: 'No answer came back: this device is offline, or the server is down.',
     forbiddenTitle: 'You cannot open this',
     signedOutTitle: 'Your session ended',
@@ -65,7 +71,7 @@ export const T = {
     submit: 'Sign in',
     submitting: 'Signing in…',
     forgot: 'Forgot your password?',
-    noAccount: 'No account? Brain is by invitation: ask an administrator for one.',
+    noAccount: 'No account? rsc-brain is by invitation: ask an administrator for one.',
     signedOut: 'Signed out.',
     sessionEnded: 'Your session ended. Sign in again.',
     codeTitle: 'Enter your code',
@@ -83,12 +89,12 @@ export const T = {
   },
 
   setup: {
-    title: 'Set up Brain',
+    title: 'Set up rsc-brain',
     lead: 'Three things and you are in: what this installation is called, where people open it, and your administrator account.',
     stepInstallation: 'This installation',
     stepAccount: 'Your administrator account',
     name: 'Name of this installation',
-    nameHint: 'People see it in the header and in invitation emails. For example "Risco Brain".',
+    nameHint: 'People see it in the header and in invitation emails. For example "Acme rsc-brain".',
     publicUrl: 'Address people open',
     publicUrlHint: 'The address of this page, as people will reach it. Links in emails use it.',
     adminName: 'Your name',
@@ -101,9 +107,9 @@ export const T = {
     submitting: 'Setting up…',
     insecureTitle: 'This connection is not safe for a password',
     insecureLead:
-      'You opened Brain over a connection that is neither encrypted nor on this machine, so it will not take a password.',
+      'You opened rsc-brain over a connection that is neither encrypted nor on this machine, so it will not take a password.',
     insecureHow:
-      'Open Brain on its local address (http://localhost:…) from the machine it runs on, or over HTTPS, and set it up there.',
+      'Open rsc-brain on its local address (http://localhost:…) from the machine it runs on, or over HTTPS, and set it up there.',
     // What to fix, next to each field (checked in the browser before sending).
     need: {
       name: 'Enter a name for this installation.',
@@ -118,7 +124,7 @@ export const T = {
       passwordShort: 'Use at least 12 characters; a few unrelated words make a good password.',
       passwordLong: 'Use 200 characters or fewer.',
     },
-    doneTitle: 'Brain is already set up',
+    doneTitle: 'rsc-brain is already set up',
     doneLead: 'The first-time setup runs once. Sign in with your account.',
     goSignIn: 'Go to sign in',
   },
@@ -137,9 +143,12 @@ export const T = {
     submit: 'Create my account',
     submitting: 'Creating your account…',
     invalidTitle: 'This invitation link does not work',
-    noToken: 'This address has no invitation in it. Open the link from your invitation email again.',
-    reload:
-      'For your safety the invitation is not kept in the address. If you reloaded, open the link from your email again.',
+    noToken: (mail: boolean) =>
+      mail
+        ? 'This address has no invitation in it. Open the link from your invitation email again.'
+        : 'This address has no invitation in it. Open the invitation link you were given again.',
+    reload: (mail: boolean) =>
+      `For your safety the invitation is not kept in the address, only in this tab until you accept. In a new tab, open ${mail ? 'the link from your email' : 'the link you were given'} again.`,
     askNew: 'Need a new link? Ask the person who invited you, or an administrator.',
     haveAccount: 'Already have an account?',
     usedTitle: 'This invitation is already used',
@@ -179,20 +188,23 @@ export const T = {
     emptyAsk: 'Ask the person who invited you, and give them the email of your account:',
     copyEmail: 'Copy my email',
     wrongAccount: 'Signed in with the wrong account?',
-    setUp: 'Brain is set up.',
+    setUp: 'rsc-brain is set up.',
     welcome: (brains: ReadonlyArray<{ name: string; role: string }>) => {
       if (!brains.length) return 'Welcome — your account is ready.'
       const parts = brains.map((b) => `${b.name} as ${b.role}`)
       const last = parts.pop() as string
       return `Welcome — you joined ${parts.length ? `${parts.join(', ')} and ${last}` : last}.`
     },
-    nextTitle: 'Next: create your first brain and invite people',
-    nextLead:
-      'Creating brains and inviting people from this web come in the next versions. Until then, your agent does it:',
-    nextConnect: 'Connect your agent to this installation. In Claude Code:',
-    nextCreate:
-      'Ask it to create a brain, for example: “Create a brain called Growth for what we learn about our audience.”',
-    nextInvite: 'Invite people through the API (POST /v1/invitations), with the same agent or a program.',
+    startTitle: 'Get started',
+    startLead:
+      'A brain holds what you and your agents learn about one subject. Three steps to the first one:',
+    startCreate: 'Create a brain for one subject: a product, a channel, a client.',
+    startInvite: (mail: boolean) =>
+      mail
+        ? 'Invite the people who work with you. Each gets an email with a link that works once.'
+        : 'Invite the people who work with you. You get a link for each, that works once, to send them yourself.',
+    startConnect: 'Connect your agent to this installation. In Claude Code:',
+    otherAgents: 'Other agents',
     copyCommand: 'Copy the command',
     readme: 'How it works, in the README',
     readmeUrl: 'https://github.com/ericrisco/rsc-brain#connect-your-agent',
@@ -200,17 +212,204 @@ export const T = {
     role: 'Role',
     archived: 'archived',
     open: (name: string) => `Open ${name}`,
+    size: (pages: number, entries: number) =>
+      `${plural(pages, 'page')} · ${plural(entries, 'entry', 'entries')}`,
+    toReview: (n: number) => (n === 1 ? '1 proposal to review' : `${n} proposals to review`),
+    waiting: (n: number) =>
+      n === 1 ? '1 proposal waiting for a curator' : `${n} proposals waiting for a curator`,
+    nothingToReview: 'Nothing to review',
+    lastActivity: (when: string) => `Last activity ${when}`,
+    noActivity: 'No activity yet',
+    inviteTitle: 'Invite people',
+    inviteLead: (mail: boolean) =>
+      mail
+        ? 'You are the only person here so far. Invite the people who work with you: each gets an email with a link that works once.'
+        : 'You are the only person here so far. Invite the people who work with you: you get a link for each, that works once, to send them yourself.',
+    invite: 'Invite people',
+  },
+
+  connect: {
+    title: 'Connect your agent',
+    open: 'Connect your agent',
+    agent: 'Your agent',
+    lead: 'Your agent reads and writes this installation over MCP. Add the address once; it asks you to accept in your browser.',
+    copy: 'Copy',
+    check: 'How to check that it works',
+    otherLead:
+      'Add this address to any agent that speaks MCP over HTTP. If it supports the standard sign-in, it opens your browser to accept.',
+    address: 'MCP address',
+    tokenTitle: 'Use a token instead',
+    tokenLead:
+      'For an agent that cannot open your browser to sign in: a personal token it sends as "Authorization: Bearer …". It reads and writes as you, for 90 days, and is shown once.',
+    createToken: 'Create a token',
+    creatingToken: 'Creating…',
+    tokenName: (agent: string) => `${agent} (from Connect your agent)`,
+    tokenFor: (brain: string | null) =>
+      brain ? `Token for the brain "${brain}"` : 'Token for all your brains',
+    tokenOnce: 'Shown only now: copy it into your agent.',
+    tokenUntil: (date: string) => `It works until ${date}.`,
+    copyToken: 'Copy the token',
+    tokenLater:
+      'Seeing and revoking your tokens comes with your profile page, in the next version of this web.',
+    forBrain: (slug: string) => `The check names the brain "${slug}".`,
+  },
+
+  create: {
+    title: 'Create a brain',
+    open: 'Create brain',
+    name: 'Name',
+    nameHint: 'What people see. For example "Onboarding emails".',
+    slug: 'Address',
+    slugHint: 'Lowercase letters, digits and hyphens. It goes in links and in what agents type.',
+    purpose: 'What it is for',
+    purposeHint: 'One sentence. Agents read it to decide what belongs here.',
+    submit: 'Create brain',
+    submitting: 'Creating…',
+    need: {
+      name: 'Enter a name.',
+      nameLong: 'Shorten the name to 80 characters or fewer.',
+      slug: 'Enter an address of 2 to 64 lowercase letters, digits and single hyphens.',
+      purposeLong: 'Shorten it to 1,000 characters or fewer.',
+    },
+    cancel: 'Cancel',
   },
 
   brain: {
     purpose: 'Purpose',
     noPurpose: 'No purpose written yet.',
-    sections: 'More sections of this brain arrive with the next versions of the web.',
-    soonTitle: 'What comes here',
-    soon: 'This page will hold the wiki of this brain, its journal and the sessions of its agents, with what waits for review.',
-    now: (name: string) =>
-      `For now, work with it through your agent: ask it what ${name} knows before you decide, and it saves what you learn.`,
     forbiddenFallback: 'Ask a curator of this brain to add you.',
+  },
+
+  overview: {
+    stepsTitle: 'First steps',
+    stepsLead: 'Each step marks itself when it happens.',
+    done: 'Done',
+    todo: 'To do',
+    step1: 'Connect your agent',
+    step1Lead:
+      'Add this installation to your coding agent; it takes one command. This step marks itself when your agent opens a session, searches, reads or saves in this brain.',
+    step2: 'Ask it to save its first entry',
+    step2Lead: 'Paste this to your agent:',
+    step2Ask: (slug: string) =>
+      `Save to the brain "${slug}" one thing worth remembering about this project, and keep saving what we learn as we work.`,
+    step3: 'Tip: bring in a documentation folder',
+    step3Lead:
+      'Importing a folder (a 02-DOCS folder or an Obsidian vault) is not in this version yet. Meanwhile your agent can do it: paste this to it.',
+    step3Ask: (slug: string) =>
+      `Read the documentation in ./docs and save to the brain "${slug}" each decision and fact worth keeping, one entry each.`,
+    copyAsk: 'Copy the request',
+    numbers: 'In numbers',
+    pages: (n: number) => [fmt(n), n === 1 ? 'page' : 'pages'] as const,
+    entries: (n: number) => [fmt(n), n === 1 ? 'entry' : 'entries'] as const,
+    uncompiled: (n: number) => [fmt(n), 'not in the wiki yet'] as const,
+    conflicts: (n: number) => [fmt(n), n === 1 ? 'conflict' : 'conflicts'] as const,
+    pending: (n: number) => [fmt(n), 'waiting for review'] as const,
+    today: "Today's sessions",
+    noToday: 'No sessions today.',
+    noTodayHow: 'Sessions appear here as soon as an agent works in this brain.',
+    untitled: 'No purpose given',
+    entriesIn: (n: number) => plural(n, 'entry', 'entries'),
+    status: { open: 'open', closed: 'closed', closed_no_summary: 'closed without summary' } as Record<
+      string,
+      string
+    >,
+    stillOpen: 'Still open: the summary comes when it closes.',
+    noSummary: 'Closed without a summary.',
+    waitingTitle: 'Waiting for review',
+    noneWaiting: 'Nothing waits for review.',
+    ops: (n: number) => plural(n, 'change'),
+    old: 'old',
+    by: (agent: string) => `from ${agent}`,
+    decideLater:
+      'Curators approve or return them in the Proposals screen, which arrives in the next version of this web.',
+    healthTitle: 'Health',
+    healthy: 'Nothing to fix.',
+    health: {
+      broken: (n: number) => plural(n, 'broken link'),
+      orphans: (n: number) => plural(n, 'orphan page'),
+      conflicts: (n: number) =>
+        n === 1 ? '1 pair of contradicting pages' : `${n} pairs of contradicting pages`,
+      stale: (n: number) => plural(n, 'stale page'),
+      unavailableSources: (n: number) =>
+        plural(n, 'source no longer available', 'sources no longer available'),
+      long: (n: number) => plural(n, 'page past the length limit', 'pages past the length limit'),
+      similarTitles: (n: number) => (n === 1 ? '1 pair of similar titles' : `${n} pairs of similar titles`),
+    } as Record<string, (n: number) => string>,
+  },
+
+  people: {
+    title: 'People',
+    nav: 'People',
+    lead: 'Invite the people who work with you. Each invitation is a link that works once, for 72 hours.',
+    cannot: 'Only the administration invites new people to this installation.',
+    cannotHow: 'Ask the administration, or add someone who already has an account to your brain.',
+    formTitle: 'Invite people',
+    emails: 'Emails',
+    emailsHint: 'One or more, separated by commas or new lines.',
+    brains: 'Brains they join',
+    brainsHint: 'Tick the brains they join, each with a role, or none: you can add them to brains later.',
+    brainsCurator: 'Choose at least one brain you curate.',
+    roleIn: (name: string) => `Role in ${name}`,
+    roles: { reader: 'reader', contributor: 'contributor', curator: 'curator' } as Record<string, string>,
+    noBrains: 'There are no brains yet: invite people now and add them to brains later.',
+    rights: 'Rights in this installation',
+    isAdmin: 'Also an administrator',
+    canCreate: 'Can create brains',
+    noMail: 'This installation cannot send email: you get a link to send them yourself.',
+    send: 'Send invitations',
+    create: (n: number) => (n > 1 ? 'Create invitation links' : 'Create invitation link'),
+    sending: 'Inviting…',
+    need: {
+      none: 'Enter at least one email.',
+      bad: (v: string) => `"${v}" is not an email. Give plain emails such as ana@example.com.`,
+      many: 'Invite at most 50 emails at a time.',
+    },
+    sent: (emails: string[]) =>
+      `${emails.length === 1 ? 'Invitation' : 'Invitations'} sent to ${emails.join(', ')}.`,
+    sentOne: (email: string) => `A new link went to ${email}.`,
+    linksTitle: 'Links to send',
+    linksLead:
+      'Copy each link and send it to its person yourself. Nobody can see it again once you close it.',
+    shownOnce: 'Shown only now.',
+    inviteFor: (email: string) => `Invitation for ${email}`,
+    resetFor: (name: string, email: string | null) => `Reset link for ${name}${email ? ` (${email})` : ''}`,
+    until: (date: string) => `It works once, until ${date}.`,
+    resetUntil: 'It works once, for 1 hour.',
+    mailFailed: (why: string) => `The email did not go: ${why}`,
+    copyLink: 'Copy link',
+    copied: 'Done, I copied it',
+    listTitle: 'Invitations',
+    noInvitations: 'No invitations yet.',
+    status: { pending: 'pending', expired: 'expired', used: 'accepted', revoked: 'withdrawn' } as Record<
+      string,
+      string
+    >,
+    asRole: (brain: string, role: string) => `${brain} as ${role}`,
+    noBrain: 'no brain yet',
+    admin: 'administrator',
+    invitedBy: (who: string) => `Invited by ${who}`,
+    invitedUntil: (who: string, until: string) => `Invited by ${who} · works until ${until}`,
+    invitedExpired: (who: string, on: string) => `Invited by ${who} · expired on ${on}`,
+    resend: 'New link',
+    resendFor: (email: string) => `New link for ${email}`,
+    withdraw: 'Withdraw',
+    withdrawFor: (email: string) => `Withdraw invitation for ${email}`,
+    withdrawn: 'Invitation withdrawn.',
+    linkReady: (who: string[]) =>
+      `${who.length === 1 ? `Link for ${who[0]} is ready` : `Links for ${who.join(', ')} are ready`}: copy it now, it is shown only once.`,
+    withdrawTitle: 'Withdraw the invitation?',
+    withdrawLead: (email: string) =>
+      `The link sent to ${email} stops working. You can invite them again later.`,
+    withdrawConfirm: 'Withdraw invitation',
+    cancel: 'Keep it',
+    peopleTitle: 'People in this installation',
+    you: 'you',
+    removed: 'removed',
+    inBrains: (n: number) => (n === 1 ? 'in 1 brain' : `in ${n} brains`),
+    seen: (when: string | null) => (when ? `last seen ${when}` : 'never signed in'),
+    reset: 'Make a reset link',
+    resetOf: (name: string) => `Make a reset link for ${name}`,
+    resetHow: 'For someone who cannot sign in: a link to choose a new password, to give them yourself.',
   },
 
   search: {
@@ -240,9 +439,17 @@ export const T = {
 
   notFound: {
     title: 'Nothing here',
-    lead: 'This address is not a page of the Brain web.',
+    lead: 'This address is not a page of the rsc-brain web.',
     home: 'Go home',
   },
+
+  date: (iso: string) =>
+    new Date(iso).toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }),
 
   dateTime: (iso: string) =>
     new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }) +
