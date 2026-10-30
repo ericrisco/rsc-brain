@@ -2,9 +2,9 @@
 // reset. With one: the shell around home and each brain. Until the first-time setup is done, everything
 // leads to it.
 
-import { useEffect } from 'preact/hooks'
+import { useEffect, useRef } from 'preact/hooks'
 import { LocationProvider, Route, Router, useLocation } from 'preact-iso'
-import { goTo } from './api/index.ts'
+import { api, goTo } from './api/index.ts'
 import { signInPath } from './lib/nav.ts'
 import { useScreenTitle } from './lib/screen.ts'
 import { Brain, brainResource } from './screens/Brain.tsx'
@@ -14,7 +14,7 @@ import { NotFound } from './screens/NotFound.tsx'
 import { Reset } from './screens/Reset.tsx'
 import { Setup } from './screens/Setup.tsx'
 import { SignIn } from './screens/SignIn.tsx'
-import { branding, installationName, isSignedOut, me } from './session.ts'
+import { branding, installationName, isSignedOut, type Me, me } from './session.ts'
 import { Door } from './shell/Door.tsx'
 import { type BrainNav, Shell } from './shell/Shell.tsx'
 import { ErrorState, Skeleton } from './ui/states.tsx'
@@ -48,6 +48,23 @@ function SignedIn() {
   useEffect(() => {
     if (isSignedOut(who.error.value)) route(signInPath(url), true)
   }, [who.error.value])
+  // Screens already loaded show what they hold without asking the server again; so on every move the
+  // session is checked (one small GET /v1/me), and one revoked meanwhile leads to sign-in at once,
+  // instead of after the next thing the person sends. Not on arrival: the first "who am I" does it.
+  const arrived = useRef(true)
+  useEffect(() => {
+    if (arrived.current) {
+      arrived.current = false
+      return
+    }
+    api.call<Me>('me').then(
+      (m) => {
+        who.data.value = m
+      },
+      // A 401 already led to sign-in (the client does it); offline or an error keeps the screen as it is.
+      () => {},
+    )
+  }, [path])
   const m = who.data.value
   if (!m) {
     if (who.error.value && !isSignedOut(who.error.value)) {

@@ -53,6 +53,8 @@ describe('people and keys', { skip: skipPg }, () => {
     )
     const ok = await accept(tokenOf(String(inv?.link)), 'Carla')
     assert.equal(ok.status, 201, ok.text)
+    // The answer says what the person joined, so the web can welcome them (spec B6 «Accept invitation»).
+    assert.deepEqual(ok.body.brains, [{ slug: 'yt', name: 'yt', role: 'contributor' }])
     const me = await w.raw('GET', '/v1/brains/yt', {
       headers: { cookie: `rscb_session=${sessionOf(ok.headers)}` },
     })

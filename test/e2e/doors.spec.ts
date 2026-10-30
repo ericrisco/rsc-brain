@@ -70,12 +70,15 @@ test('an invitation by email is accepted and opens a session', async ({ page, br
   await p.getByLabel('Choose a password').fill('a long passphrase for marta')
   await p.getByRole('button', { name: 'Create my account' }).click()
   await expect(p.getByRole('link', { name: 'Growth' })).toBeVisible()
+  // The welcome comes from the real accept answer: what she joined, with her role.
+  await expect(p.getByRole('status').filter({ hasText: /Welcome — you joined Growth as/ })).toBeVisible()
   const me = await p.request.get('/v1/me')
   expect(((await me.json()) as { account: { name: string } }).account.name).toBe('Marta')
-  // The link works once.
+  // The link works once; opened again while signed in, it says so and leads to her brains.
   await p.goto(link)
-  await expect(p.getByRole('heading', { level: 1, name: 'This invitation link does not work' })).toBeVisible()
+  await expect(p.getByRole('heading', { level: 1, name: 'This invitation is already used' })).toBeVisible()
   await expect(p.getByRole('alert')).toContainText('This invitation link is not valid')
+  await expect(p.getByRole('main').getByRole('link', { name: 'Go to your brains' })).toBeVisible()
   await marta.close()
 })
 

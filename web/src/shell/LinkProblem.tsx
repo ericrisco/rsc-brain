@@ -12,7 +12,7 @@ export function LinkProblem({
 }: {
   title: string
   message: string
-  how?: string
+  how?: string | undefined
   children: ComponentChildren
 }) {
   // It replaces a form the person was in: the keyboard goes to its title, unless it is elsewhere already.

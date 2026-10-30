@@ -1,11 +1,14 @@
 // Home, the first version (spec B6 «Home: mis cerebros»; the cards with their numbers arrive with G7 in
 // PR18): the brains of the person, their role, and what each is for. Empty, it is never a dead end: an
 // administrator gets the next step (create a brain, invite people) with what works today; anyone else
-// learns who adds people to brains, with their email to give and a way to sign out.
+// learns who adds people to brains, with their email to give and a way to sign out. The command to connect
+// an agent comes from the server's connection kit (GET /v1/connect), built from the public address of
+// the installation, never from the address the browser happens to be on.
+import { Fragment } from 'preact'
 import { useEffect, useState } from 'preact/hooks'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
-import { justSetUp, type Me, me, online } from '../session.ts'
+import { justJoined, justSetUp, type Me, me, online } from '../session.ts'
 import { useSignOut } from '../shell/signOut.ts'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
@@ -18,8 +21,45 @@ export type BrainRow = { slug: string; name: string; purpose: string; status: st
 export const brainsResource = () =>
   resource<{ brains: BrainRow[] }>('brains', () => api.call<{ brains: BrainRow[] }>('brains'))
 
+type Kit = {
+  agents: Array<{ id: string; signIn: { note: string; blocks: Array<{ text: string }> } | null }>
+}
+const kitResource = () =>
+  resource<Kit>('connect:claude-code', () => api.call<Kit>('connect', { query: { agent: 'claude-code' } }))
+
+function ConnectCommand() {
+  const r = kitResource()
+  const signIn = r.data.value?.agents.find((a) => a.id === 'claude-code')?.signIn
+  const command = signIn?.blocks[0]?.text
+  if (command && signIn) {
+    return (
+      <>
+        <pre class="command">
+          <code>
+            {command.split(' ').map((w, i) => (
+              <Fragment key={i}>
+                {i ? ' ' : ''}
+                <span class="word">{w}</span>
+              </Fragment>
+            ))}
+          </code>
+        </pre>
+        <CopyButton text={command} label={T.home.copyCommand} />
+        <p class="how">{signIn.note}</p>
+      </>
+    )
+  }
+  if (r.error.value) {
+    return (
+      <p class="how" role="alert">
+        {r.error.value.message} {r.error.value.howToProceed}
+      </p>
+    )
+  }
+  return <Skeleton rows={1} />
+}
+
 function NextSteps() {
-  const command = `claude mcp add --transport http rsc-brain ${location.origin}/mcp`
   return (
     <section class="state next" data-state="empty" aria-labelledby="next-title">
       <h2 id="next-title">{T.home.nextTitle}</h2>
@@ -27,10 +67,7 @@ function NextSteps() {
       <ol class="steps">
         <li>
           <p>{T.home.nextConnect}</p>
-          <pre class="command">
-            <code>{command}</code>
-          </pre>
-          <CopyButton text={command} label={T.home.copyCommand} />
+          <ConnectCommand />
         </li>
         <li>
           <p>{T.home.nextCreate}</p>
@@ -77,8 +114,11 @@ export function Home() {
   const data = r.data.value
   // "Brain is set up." is said once, on the first home after the setup.
   const [setUp] = useState(() => justSetUp.value)
+  // "Welcome — you joined …" is said once, on the first home after accepting an invitation.
+  const [joined] = useState(() => justJoined.value)
   useEffect(() => {
     justSetUp.value = false
+    justJoined.value = null
   }, [])
   const state = viewState({
     loading: r.loading.value,
@@ -97,6 +137,12 @@ export function Home() {
         <p class="alert ok" role="status">
           <span class="kind">{T.kind.done}</span>
           <span>{T.home.setUp}</span>
+        </p>
+      ) : null}
+      {joined ? (
+        <p class="alert ok" role="status">
+          <span class="kind">{T.kind.done}</span>
+          <span>{T.home.welcome(joined)}</span>
         </p>
       ) : null}
       {state === 'loading' ? <Skeleton rows={3} /> : null}

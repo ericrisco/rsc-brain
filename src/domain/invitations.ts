@@ -540,8 +540,17 @@ export async function acceptInvitation(
       outcome: 'ok',
       detail: `from ${conn.ip}`,
     })
-    return { id, email, isAdmin: Boolean(r.is_admin) }
+    // What the person joined, for the welcome of the web.
+    const brains = grants.flatMap((g) => {
+      const b = alive.get(g.brainId)
+      return b ? [{ slug: b.slug, name: b.name, role: g.role }] : []
+    })
+    return { id, email, isAdmin: Boolean(r.is_admin), brains }
   })
   const s = await mintWebSession(db, clock, { accountId: out.id })
-  return { session: s.secret, account: { id: out.id, name, email: out.email, isAdmin: out.isAdmin } }
+  return {
+    session: s.secret,
+    account: { id: out.id, name, email: out.email, isAdmin: out.isAdmin },
+    brains: out.brains,
+  }
 }

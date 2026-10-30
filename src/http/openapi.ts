@@ -195,6 +195,12 @@ const HAND: Record<string, Op> = {
     body: obj({ email: s('Email.') }),
     reply: obj({ message: s('What happens next.') }),
   },
+  'POST /v1/auth/reset/look': {
+    summary:
+      'Whether a reset link still works, without spending it (the token travels in the body). Names no account.',
+    body: obj({ token: s('The token after #token= in the link.') }),
+    reply: obj({ valid: b('True; a link that does not work is refused with link_invalid.') }),
+  },
   'POST /v1/auth/reset/confirm': {
     summary: 'Choose a new password with the token of a reset link.',
     body: obj({ token: s('The token after #token= in the link.'), password: s('12 to 200 characters.') }),
@@ -217,7 +223,13 @@ const HAND: Record<string, Op> = {
     summary: 'Accept an invitation (the Brain web only): your account, your roles and a web session.',
     status: 201,
     body: obj({ token: s('The token.'), name: s('Your name.'), password: s('12 to 200 characters.') }),
-    reply: obj({ account: ACCOUNT_SIGNED_IN }),
+    reply: obj({
+      account: ACCOUNT_SIGNED_IN,
+      brains: list(
+        obj({ slug: s('Slug.'), name: s('Name.'), role: s('reader, contributor or curator.') }),
+        'The brains you joined, with your role in each.',
+      ),
+    }),
   },
   'GET /v1/health': { summary: 'Whether the server answers.', reply: obj({ ok: b('Always true.') }) },
   'GET /v1/openapi.json': { summary: 'This description.', reply: { type: 'object' } },

@@ -1,6 +1,6 @@
 // The frame of the screens before a session: sign in, first run, invitation, reset. The installation's
 // name and logo on top, one panel in the middle. `brand={false}`: the logo is not a link (the first-time
-// setup, where there is nowhere else to go).
+// setup, where there is nowhere else to go). `signedIn`: the logo leads home, not to sign in.
 import type { ComponentChildren } from 'preact'
 import { T } from '../text.ts'
 import { Brand } from '../ui/Brand.tsx'
@@ -13,15 +13,17 @@ export function Door({
   children,
   wide,
   brand = true,
+  signedIn = false,
 }: {
   children: ComponentChildren
   wide?: boolean
   brand?: boolean
+  signedIn?: boolean
 }) {
   return (
     <div class="door">
       <header class="topbar">
-        <Brand href={brand ? '/sign-in' : null} />
+        <Brand href={brand ? (signedIn ? '/' : '/sign-in') : null} />
       </header>
       <main id="main">
         <OfflineStrip />

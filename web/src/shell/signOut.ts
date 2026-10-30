@@ -3,8 +3,7 @@
 import { useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import type { ApiError } from '../api/client.ts'
-import { api } from '../api/index.ts'
-import { resetResources } from '../api/resource.ts'
+import { api, forgetSession } from '../api/index.ts'
 import { justSignedOut } from '../session.ts'
 
 export function useSignOut() {
@@ -16,7 +15,8 @@ export function useSignOut() {
     setLeaving(true)
     setFailed(false)
     try {
-      await api.call('logout', { body: {} })
+      // Quiet: a session already over is not "a session that ended mid-use" (no "next", no notice).
+      await api.call('logout', { body: {}, quiet: true })
     } catch (e) {
       // A session the server no longer knows is signed out already.
       if ((e as ApiError).status !== 401) {
@@ -25,7 +25,7 @@ export function useSignOut() {
         return
       }
     }
-    resetResources()
+    forgetSession()
     justSignedOut.value = true
     route('/sign-in', true)
   }

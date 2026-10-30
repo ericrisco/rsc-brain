@@ -197,11 +197,10 @@ test.describe('reset a password', () => {
     await page.getByLabel('New password').fill('a new long passphrase')
     await page.getByRole('button', { name: 'Save the new password' }).click()
     await expect(page.getByRole('heading', { name: 'Your password is changed' })).toBeFocused()
-    // The same link again, opened anew from the email.
+    // The same link again, opened anew from the email: refused on arrival, before anyone types.
     await page.goto('/sign-in')
     await page.goto(`/reset#token=${RESET}`)
-    await page.getByLabel('New password').fill('another long passphrase')
-    await page.getByRole('button', { name: 'Save the new password' }).click()
     await expect(page.getByRole('alert')).toContainText('This reset link is not valid')
+    await expect(page.getByLabel('New password')).toHaveCount(0)
   })
 })

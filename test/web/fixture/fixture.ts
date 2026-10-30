@@ -10,6 +10,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { answerWeb, openWeb } from '../../../src/http/web.ts'
+import { AGENT_IDS, type AgentId, connectKit } from '../../../src/mcp/kit.ts'
 import { generate } from '../../../web/test/data/generate.ts'
 
 export const PASSWORD = 'correct horse battery staple'
@@ -49,6 +50,8 @@ type Scen = {
   // The installation can send email (reset links, invitations).
   mail: boolean
   name: string
+  // The address people open, as the setup gave it (the connection kit is built from it).
+  publicUrl: string
   accounts: Account[]
   sessions: Set<string>
   failures: Map<string, number>
@@ -146,6 +149,8 @@ function freshScenario(id: string, preset: Preset): Scen {
     insecure: preset === 'insecure',
     mail: true,
     name: preset === 'fresh' || preset === 'insecure' ? '' : 'Risco Brain',
+    // Never the address the browser is on: the web must show the installation's own.
+    publicUrl: preset === 'fresh' || preset === 'insecure' ? '' : 'https://brain.example.test',
     accounts: [
       {
         id: 'acc_eric',
@@ -257,6 +262,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       s.accounts.push(a)
       s.setupDone = true
       s.name = name
+      s.publicUrl = body.publicUrl.replace(/\/+$/, '')
       s.sessions.add(`fx.${a.id}`)
       return {
         status: 201,
@@ -338,6 +344,18 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       },
     }),
   },
+  'POST /v1/auth/reset/look': {
+    screen: 'reset',
+    run: ({ s, body }) =>
+      body.token === RESET_TOKEN && !s.resetUsed
+        ? { status: 200, body: { valid: true } }
+        : err(
+            400,
+            'link_invalid',
+            'This reset link is not valid: it expired, was already used, or is wrong.',
+            'Ask for a new one.',
+          ),
+  },
   'POST /v1/auth/reset/confirm': {
     run: ({ s, body }) => {
       if (typeof body.password !== 'string' || body.password.length < 12) return SHORT
@@ -409,7 +427,45 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       s.accounts.push(a)
       s.inviteUsed = true
       s.sessions.add(`fx.${a.id}`)
-      return { status: 201, body: { account: account(a) }, headers: { 'set-cookie': sessionCookie(a) } }
+      return {
+        status: 201,
+        body: {
+          account: account(a),
+          brains: [
+            { slug: 'growth', name: 'Growth', role: 'contributor' },
+            { slug: 'support', name: 'Support', role: 'reader' },
+          ],
+        },
+        headers: { 'set-cookie': sessionCookie(a) },
+      }
+    },
+  },
+  // The server's own kit, built from the installation's public address.
+  'GET /v1/connect': {
+    run: ({ s, query }) => {
+      const agent = query.get('agent') || undefined
+      if (agent !== undefined && !(AGENT_IDS as readonly string[]).includes(agent))
+        return err(
+          400,
+          'invalid_request',
+          `There is no kit for the agent "${agent}".`,
+          `Use one of: ${AGENT_IDS.join(', ')}.`,
+        )
+      if (!s.publicUrl)
+        return err(
+          400,
+          'invalid_request',
+          'This installation has no public address yet.',
+          'An administrator sets it in the settings of the installation.',
+        )
+      return {
+        status: 200,
+        body: connectKit({
+          mcpUrl: `${s.publicUrl}/mcp`,
+          brain: null,
+          ...(agent ? { agent: agent as AgentId } : {}),
+        }),
+      }
     },
   },
   'GET /v1/me': {
@@ -469,6 +525,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
 // Paths that need a session; the rest are public, as on the server.
 const PRIVATE = new Set([
   'POST /v1/auth/logout',
+  'GET /v1/connect',
   'GET /v1/me',
   'GET /v1/brains',
   'GET /v1/brains/{slug}',
@@ -519,7 +576,13 @@ async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
   }
 }
 
-export type ScenarioHandle = { id: string; cookie: string; set(screen: Screen, state: State): void }
+export type ScenarioHandle = {
+  id: string
+  cookie: string
+  set(screen: Screen, state: State): void
+  // Every session of the scenario ends, as when the server revokes them while the web is open.
+  endSessions(): void
+}
 export type Fixture = {
   url: string
   password: string
@@ -553,6 +616,7 @@ export async function startFixture(
       if (state === 'normal') s.states.delete(screen)
       else s.states.set(screen, state)
     },
+    endSessions: () => s.sessions.clear(),
   })
 
   const send = (res: ServerResponse, a: Answer) => {
@@ -586,6 +650,13 @@ export async function startFixture(
         if (!s) return send(res, { status: 404, body: {} })
         const b = await bodyOf(req)
         handle(s).set(b.screen as Screen, b.state as State)
+        return send(res, { status: 200, body: {} })
+      }
+      const ending = /^\/__fixture\/scenarios\/([\w]+)\/end-sessions$/.exec(url.pathname)
+      if (ending && method === 'POST') {
+        const s = scenarios.get(ending[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        handle(s).endSessions()
         return send(res, { status: 200, body: {} })
       }
       // For a person walking the fixture by hand: /__fixture/use?preset=fresh&next=/setup

@@ -59,8 +59,10 @@ test.describe('U2: invitation and reset links', () => {
     await page.evaluate((t) => {
       location.hash = `#token=${t}`
     }, INVITE)
-    await expect(page.getByRole('heading', { level: 1, name: 'Accept your invitation' })).toBeVisible()
-    // The keyboard is where the work is, as when the link opens a new page.
+    // The keyboard goes to the new title, so a screen reader announces the invitation; the first field is
+    // the next stop.
+    await expect(page.getByRole('heading', { level: 1, name: 'Accept your invitation' })).toBeFocused()
+    await page.keyboard.press('Tab')
     await expect(page.getByLabel('Your name')).toBeFocused()
     expect(await page.evaluate(() => location.href)).not.toContain(INVITE)
   })
@@ -90,13 +92,12 @@ test.describe('U2: invitation and reset links', () => {
     await page.getByLabel('New password').fill('a new long passphrase')
     await page.getByRole('button', { name: 'Save the new password' }).click()
     await expect(page.getByRole('heading', { name: 'Your password is changed' })).toBeVisible()
-    // The same link again: it is used.
+    // The same link again: it is used, and the page says so before anyone types.
     await page.evaluate((t) => {
       location.hash = `#token=${t}`
     }, RESET)
-    await page.getByLabel('New password').fill('another long passphrase')
-    await page.getByRole('button', { name: 'Save the new password' }).click()
     await expect(page.getByRole('heading', { level: 1, name: 'This reset link does not work' })).toBeFocused()
+    await expect(page.getByLabel('New password')).toHaveCount(0)
     // By keyboard: the way forward is the next stop.
     await page.keyboard.press('Tab')
     await expect(page.getByRole('link', { name: 'Ask for a new link' })).toBeFocused()

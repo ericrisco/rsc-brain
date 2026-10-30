@@ -1,7 +1,9 @@
 // Every screen names itself (spec B6, ux): the browser tab says "<level-one heading> · <installation>",
 // and moving to another screen puts the keyboard on its heading, so a screen reader announces where the
-// person landed and Tab goes on from the top of the new screen. The first screen of a visit keeps its
-// own focus (a form takes it on arrival), and so does a person who already moved on.
+// person landed and Tab goes on from the top of the new screen. A screen whose job is one field (sign
+// in: the email) marks it with data-start, and the keyboard goes there instead, as on a fresh load. The
+// first screen of a visit keeps its own focus (a form takes it on arrival), and so does a person who
+// already moved on.
 import { useEffect, useRef } from 'preact/hooks'
 
 const heading = () => document.querySelector<HTMLElement>('main h1')
@@ -35,6 +37,11 @@ export function useScreenTitle(path: string, installation: string): void {
     }
     const land = (): boolean => {
       if (moved()) return true
+      const start = document.querySelector<HTMLElement>('main [data-start]')
+      if (start) {
+        start.focus()
+        return true
+      }
       const h = heading()
       if (!h) return false
       if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex', '-1')

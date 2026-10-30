@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import type { ApiError } from '../api/client.ts'
-import { api } from '../api/index.ts'
+import { api, sessionEnded } from '../api/index.ts'
 import { resetResources } from '../api/resource.ts'
 import { safeNext } from '../lib/nav.ts'
 import { branding, installationName, justSignedOut, me, online } from '../session.ts'
@@ -32,8 +32,11 @@ export function SignIn() {
   const codeRef = useRef<HTMLInputElement>(null)
   // "Signed out." right after signing out; gone once the person does anything here.
   const [signedOut] = useState(() => justSignedOut.value)
+  // "Your session ended." when a session ended while the web was open; never on a plain visit.
+  const [ended] = useState(() => sessionEnded.value && !justSignedOut.value)
   useEffect(() => {
     justSignedOut.value = false
+    sessionEnded.value = false
   }, [])
 
   // Already signed in: straight on.
@@ -89,6 +92,12 @@ export function SignIn() {
                 <span>{T.signIn.signedOut}</span>
               </p>
             ) : null}
+            {ended && !error ? (
+              <p class="alert warn" role="status">
+                <span class="kind">{T.kind.signedOut}</span>
+                <span>{T.signIn.sessionEnded}</span>
+              </p>
+            ) : null}
             <FormAlert error={error} focus={error?.code !== 'bad_credentials'} />
             <Field
               label={T.signIn.email}
@@ -99,6 +108,7 @@ export function SignIn() {
               value={email}
               onValue={setEmail}
               autoFocus
+              data-start
             />
             <PasswordField
               label={T.signIn.password}

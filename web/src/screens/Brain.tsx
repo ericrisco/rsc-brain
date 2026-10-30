@@ -45,6 +45,11 @@ export function Brain({ slug }: { slug: string }) {
         <dt>Address</dt>
         <dd class="mono">{b.slug}</dd>
       </dl>
+      <section class="state next" aria-labelledby="brain-soon">
+        <h2 id="brain-soon">{T.brain.soonTitle}</h2>
+        <p>{T.brain.soon}</p>
+        <p class="how">{T.brain.now(b.name)}</p>
+      </section>
     </>
   )
 }

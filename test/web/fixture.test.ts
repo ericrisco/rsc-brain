@@ -224,6 +224,10 @@ describe('the fixture API', () => {
       body: { token: fx.inviteToken, name: 'Marta', password: fx.password },
     })
     assert.equal(accept.status, 201)
+    assert.deepEqual((accept.body as { brains: unknown }).brains, [
+      { slug: 'growth', name: 'Growth', role: 'contributor' },
+      { slug: 'support', name: 'Support', role: 'reader' },
+    ])
     assert.equal((await call('GET', '/v1/me', { scenario: s.id, cookie: cookieOf(accept) })).status, 200)
     assert.equal(
       (await call('POST', '/v1/invitations/look', { scenario: s.id, body: { token: fx.inviteToken } }))
@@ -238,6 +242,17 @@ describe('the fixture API', () => {
       (await call('POST', '/v1/auth/reset', { scenario: s.id, body: { email: 'x@example.test' } })).status,
       202,
     )
+    assert.deepEqual(
+      (await call('POST', '/v1/auth/reset/look', { scenario: s.id, body: { token: fx.resetToken } })).body,
+      { valid: true },
+    )
+    assert.equal(
+      (
+        (await call('POST', '/v1/auth/reset/look', { scenario: s.id, body: { token: 'nope-nope-nope' } }))
+          .body as { error: { code: string } }
+      ).error.code,
+      'link_invalid',
+    )
     const bad = await call('POST', '/v1/auth/reset/confirm', {
       scenario: s.id,
       body: { token: 'nope-nope-nope', password: fx.password },
@@ -251,7 +266,38 @@ describe('the fixture API', () => {
         })
       ).status,
       200,
+    ) // A used link no longer looks valid.
+    assert.equal(
+      (await call('POST', '/v1/auth/reset/look', { scenario: s.id, body: { token: fx.resetToken } })).status,
+      400,
     )
+  })
+
+  it('gives the connection kit for the public address of the installation, never the address asked on', async () => {
+    const s = fx.scenario('signed-in')
+    assert.equal((await call('GET', '/v1/connect?agent=claude-code', { scenario: s.id })).status, 401)
+    const kit = await call('GET', '/v1/connect?agent=claude-code', { scenario: s.id, cookie: s.cookie })
+    assert.equal(kit.status, 200)
+    const body = kit.body as {
+      mcpUrl: string
+      agents: Array<{ id: string; signIn: { blocks: Array<{ text: string }> } }>
+    }
+    assert.equal(body.mcpUrl, 'https://brain.example.test/mcp')
+    assert.deepEqual(
+      body.agents.map((a) => a.id),
+      ['claude-code'],
+    )
+    assert.match(
+      body.agents[0]?.signIn.blocks[0]?.text ?? '',
+      /claude mcp add .* https:\/\/brain\.example\.test\/mcp/,
+    )
+  })
+
+  it('ends every session of a scenario on demand (a session revoked while the web is open)', async () => {
+    const s = fx.scenario('signed-in')
+    assert.equal((await call('GET', '/v1/me', { scenario: s.id, cookie: s.cookie })).status, 200)
+    await s.endSessions()
+    assert.equal((await call('GET', '/v1/me', { scenario: s.id, cookie: s.cookie })).status, 401)
   })
 
   it('forces every state of plan §3.6, each still in the shape of v1', async () => {

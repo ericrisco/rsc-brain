@@ -594,6 +594,15 @@ legend .step {
   color: var(--accent);
 }
 
+/* A banner above a card is as wide as the card, not as the page. */
+.page:has(> .state.next) > .alert {
+  max-width: 720px;
+}
+
+.page:has(> .state:not(.next)) > .alert {
+  max-width: 640px;
+}
+
 .state {
   display: grid;
   gap: 8px;
@@ -716,6 +725,10 @@ legend .step {
   font-size: 13px;
 }
 
+.facts + .state {
+  margin-top: 28px;
+}
+
 /* The way forward when a brain list is empty, and copying a text. */
 
 .state.next {
@@ -758,6 +771,12 @@ pre.command {
 
 pre.command code {
   font: inherit;
+}
+
+/* A word of a command ("--scope") wraps whole; only a word wider than the box breaks inside. */
+pre.command .word {
+  display: inline-block;
+  max-width: 100%;
 }
 
 .copy {

@@ -82,10 +82,15 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     invitation: ['email', 'installation', 'brains', 'isAdmin', 'expiresAt'],
   },
   'POST /v1/invitations/accept': {
+    '': ['account', 'brains'],
     account: ['id', 'name', 'email', 'isAdmin'],
+    'brains[]': ['slug', 'name', 'role'],
   },
   'POST /v1/auth/reset': {
     '': ['message'],
+  },
+  'POST /v1/auth/reset/look': {
+    '': ['valid'],
   },
   'POST /v1/auth/reset/confirm': {
     '': ['reset'],
@@ -273,7 +278,12 @@ describe('the v1 contract', { skip: skipPg }, () => {
     out['POST /v1/auth/logout'] = (await w.callWeb(session, 'POST', '/v1/auth/logout', {})).body
     const admin = await withPassword('Admin', { isAdmin: true })
     const adminWeb = await w.web(admin.id)
-    const invited = await w.callWeb(adminWeb, 'POST', '/v1/invitations', { emails: ['iris@example.com'] })
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'doors', purpose: 'Where Iris lands.' })
+    await w.call(eric.key, 'POST', '/v1/brains/doors/members', { account: admin.id, role: 'curator' })
+    const invited = await w.callWeb(adminWeb, 'POST', '/v1/invitations', {
+      emails: ['iris@example.com'],
+      brains: [{ slug: 'doors', role: 'reader' }],
+    })
     assert.equal(invited.status, 201, invited.text)
     const invite = tokenOf((invited.body.invitations as Json[])[0]?.link)
     out['POST /v1/invitations/look'] = (
@@ -289,6 +299,9 @@ describe('the v1 contract', { skip: skipPg }, () => {
     assert.equal(asking.status, 202, asking.text)
     out['POST /v1/auth/reset'] = asking.body
     const link = await w.callWeb(adminWeb, 'POST', `/v1/admin/accounts/${lou.id}/reset-link`)
+    out['POST /v1/auth/reset/look'] = (
+      await w.raw('POST', '/v1/auth/reset/look', { body: { token: tokenOf(link.body.link) } })
+    ).body
     out['POST /v1/auth/reset/confirm'] = (
       await w.raw('POST', '/v1/auth/reset/confirm', {
         body: { token: tokenOf(link.body.link), password: 'another long passphrase' },
@@ -312,6 +325,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       'link_invalid',
       w.raw('POST', '/v1/auth/reset/confirm', { body: { token: 'nope', password: PW } }),
     )
+    await add('link_invalid', w.raw('POST', '/v1/auth/reset/look', { body: { token: 'nope-nope' } }))
     await add('unauthorized', w.raw('GET', '/v1/me'))
     await add('bad_credentials', login({ email: lou.email, password: 'not the password at all' }))
     await add('code_required', login({ email: mo.email, password: PW }))

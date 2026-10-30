@@ -13,7 +13,12 @@ export const CODE = '424242'
 export const INVITE = 'inv_fixture_good_token_0001'
 export const RESET = 'rst_fixture_good_token_0001'
 
-type Scenario = { id: string; state(screen: string, state: States[string]): Promise<void> }
+type Scenario = {
+  id: string
+  state(screen: string, state: States[string]): Promise<void>
+  // Every session ends on the server, while the web is open (the cookie stays in the browser).
+  endSessions(): Promise<void>
+}
 
 export async function scenario(
   context: BrowserContext,
@@ -41,6 +46,9 @@ export async function scenario(
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ screen, state }),
       })
+    },
+    endSessions: async () => {
+      await fetch(`${baseURL}/__fixture/scenarios/${id}/end-sessions`, { method: 'POST' })
     },
   }
 }

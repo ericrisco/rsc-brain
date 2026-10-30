@@ -36,7 +36,8 @@ export function errorView(e: ApiError, online = true): ErrorView {
     return {
       kind: 'offline',
       title: T.states.offlineTitle,
-      message: e.message,
+      // The title already says "could not be reached"; the message says why it may be.
+      message: e.code === 'offline' ? T.states.offlineLead : e.message,
       howToProceed: e.howToProceed,
       retry: true,
     }

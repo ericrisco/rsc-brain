@@ -80,6 +80,7 @@ export const V1 = [
   'POST /v1/auth/logout-everywhere',
   'POST /v1/auth/reset',
   'POST /v1/auth/reset/confirm',
+  'POST /v1/auth/reset/look',
   'POST /v1/brains',
   'POST /v1/brains/{slug}/archive',
   'POST /v1/brains/{slug}/corrections/relay',

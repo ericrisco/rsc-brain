@@ -38,6 +38,7 @@ export const T = {
     noAccess: 'No access',
     notSafe: 'Not safe',
     noLink: 'Link not valid',
+    signedOut: 'Signed out',
   },
 
   states: {
@@ -45,6 +46,7 @@ export const T = {
     tryAgain: 'Try again',
     errorTitle: 'This did not load',
     offlineTitle: 'Brain could not be reached',
+    offlineLead: 'No answer came back: this device is offline, or the server is down.',
     forbiddenTitle: 'You cannot open this',
     signedOutTitle: 'Your session ended',
     clearFilters: 'Clear filters',
@@ -65,6 +67,7 @@ export const T = {
     forgot: 'Forgot your password?',
     noAccount: 'No account? Brain is by invitation: ask an administrator for one.',
     signedOut: 'Signed out.',
+    sessionEnded: 'Your session ended. Sign in again.',
     codeTitle: 'Enter your code',
     codeLead: 'This account asks for the 6-digit code of its authenticator app.',
     code: 'Code from your authenticator app',
@@ -139,6 +142,10 @@ export const T = {
       'For your safety the invitation is not kept in the address. If you reloaded, open the link from your email again.',
     askNew: 'Need a new link? Ask the person who invited you, or an administrator.',
     haveAccount: 'Already have an account?',
+    usedTitle: 'This invitation is already used',
+    goHome: 'Go to your brains',
+    otherAccount: (current: string, invited: string) =>
+      `You are signed in as ${current}. Accepting signs ${current} out and continues as ${invited}.`,
     signIn: 'Sign in',
     role: { reader: 'reader', contributor: 'contributor', curator: 'curator' } as Record<string, string>,
   },
@@ -173,6 +180,12 @@ export const T = {
     copyEmail: 'Copy my email',
     wrongAccount: 'Signed in with the wrong account?',
     setUp: 'Brain is set up.',
+    welcome: (brains: ReadonlyArray<{ name: string; role: string }>) => {
+      if (!brains.length) return 'Welcome — your account is ready.'
+      const parts = brains.map((b) => `${b.name} as ${b.role}`)
+      const last = parts.pop() as string
+      return `Welcome — you joined ${parts.length ? `${parts.join(', ')} and ${last}` : last}.`
+    },
     nextTitle: 'Next: create your first brain and invite people',
     nextLead:
       'Creating brains and inviting people from this web come in the next versions. Until then, your agent does it:',
@@ -193,6 +206,10 @@ export const T = {
     purpose: 'Purpose',
     noPurpose: 'No purpose written yet.',
     sections: 'More sections of this brain arrive with the next versions of the web.',
+    soonTitle: 'What comes here',
+    soon: 'This page will hold the wiki of this brain, its journal and the sessions of its agents, with what waits for review.',
+    now: (name: string) =>
+      `For now, work with it through your agent: ask it what ${name} knows before you decide, and it saves what you learn.`,
     forbiddenFallback: 'Ask a curator of this brain to add you.',
   },
 

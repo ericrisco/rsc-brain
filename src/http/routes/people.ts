@@ -69,7 +69,11 @@ export const peopleRoutes: Route[] = [
       name: b.name,
       password: b.password,
     })
-    return { status: 201, body: { account: s.account }, headers: { 'set-cookie': cookie(s.session, r.conn) } }
+    return {
+      status: 201,
+      body: { account: s.account, brains: s.brains },
+      headers: { 'set-cookie': cookie(s.session, r.conn) },
+    }
   }),
 
   // Members of a brain.

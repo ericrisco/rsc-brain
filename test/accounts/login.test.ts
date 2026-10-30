@@ -140,6 +140,35 @@ describe('signing in', { skip: skipPg }, () => {
     assert.deepEqual([a.status, a.body], [b.status, b.body])
   })
 
+  // Spec B6 «Reset»: the page checks the link when it opens, so a used or expired one says so before the
+  // person types a new password. Checking does not spend the link and tells nothing about the account.
+  it('a reset link can be checked without spending it, and says nothing about whose it is', async () => {
+    const cora = await w.person('Cora')
+    await setPassword(cora.id)
+    const adminWeb = await w.web(admin.id)
+    const make = async () =>
+      /token=([^&]+)$/.exec(
+        String((await w.callWeb(adminWeb, 'POST', `/v1/admin/accounts/${cora.id}/reset-link`)).body.link),
+      )?.[1] ?? ''
+    const look = (token: unknown) => w.raw('POST', '/v1/auth/reset/look', { body: { token } })
+    const token = await make()
+    const good = await look(token)
+    assert.equal(good.status, 200, good.text)
+    assert.deepEqual(good.body, { valid: true })
+    assert.equal((await look(token)).status, 200, 'looking twice does not spend it')
+    const used = await w.raw('POST', '/v1/auth/reset/confirm', {
+      body: { token, password: 'a brand new long password' },
+    })
+    assert.equal(used.status, 200, used.text)
+    for (const bad of [token, 'rscb_not_a_real_token', '', 42, undefined]) {
+      const r = await look(bad)
+      assert.deepEqual([r.status, r.body.error?.code], [400, 'link_invalid'], `${String(bad)}: ${r.text}`)
+    }
+    const late = await make()
+    w.advance(61 * 60_000)
+    assert.equal((await look(late)).body.error?.code, 'link_invalid')
+  })
+
   it('second factor: set up with a first code, then asked at sign-in, a code works once', async () => {
     const dana = await w.person('Dana')
     await setPassword(dana.id)

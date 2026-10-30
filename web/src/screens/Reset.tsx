@@ -1,7 +1,9 @@
 // Reset a password (spec B4 «Recuperar contraseña»): ask for a link by email, then choose a new password
 // with the link's token ("#token=", taken out of the address at once). The answer to "send me a link" is
 // the same whether the email has an account or not. An installation that cannot send email says so at
-// once (ask an administrator for a link), which tells nothing about any account.
+// once (ask an administrator for a link), which tells nothing about any account. A link is checked when
+// the page opens (POST /v1/auth/reset/look, which does not spend it), so one that no longer works says so
+// before anyone types; the new password is checked in the browser first, next to its field.
 import { useEffect, useState } from 'preact/hooks'
 import type { ApiError } from '../api/client.ts'
 import { api } from '../api/index.ts'
@@ -16,7 +18,7 @@ import { focusFieldOf } from '../ui/fieldOf.ts'
 import { StepTitle } from '../ui/Heading.tsx'
 import { PasswordField } from '../ui/PasswordField.tsx'
 import { writeBlocked } from '../ui/state.ts'
-import { FormAlert } from '../ui/states.tsx'
+import { ErrorState, FormAlert, Skeleton } from '../ui/states.tsx'
 
 function Request() {
   const [email, setEmail] = useState('')
@@ -105,22 +107,55 @@ function NoMail() {
   )
 }
 
+// What to fix in a new password before sending it (the server checks the same).
+function passwordProblem(p: string): string | null {
+  const n = T.setup.need
+  if (!p) return n.password
+  if (p.length < 12) return n.passwordShort
+  if (p.length > 200) return n.passwordLong
+  return null
+}
+
 function Confirm({ token, spent, askNew }: { token: string; spent: () => void; askNew: () => void }) {
+  const [checked, setChecked] = useState(false)
+  const [lookError, setLookError] = useState<ApiError | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
   const [password, setPassword] = useState('')
   const [done, setDone] = useState(false)
   const [error, setError] = useState<ApiError | null>(null)
   const [onField, setOnField] = useState(false)
   const [pending, setPending] = useState(false)
-  // A link pasted into a tab already open mounts this form after the page loaded, when the browser no
-  // longer honours autofocus: the keyboard is put on the new password by hand, unless it is elsewhere.
+  const look = async () => {
+    setLookError(null)
+    try {
+      await api.call('resetLook', { body: { token } })
+      setChecked(true)
+    } catch (e) {
+      setLookError(e as ApiError)
+    }
+  }
+  useEffect(() => {
+    void look()
+  }, [])
+  // The form appears once the link is checked, after the page loaded, when the browser no longer
+  // honours autofocus: the keyboard is put on the new password by hand, unless it is elsewhere.
   useEffect(() => {
     const a = document.activeElement
-    if (!a || a === document.body)
+    if (checked && (!a || a === document.body))
       document.querySelector<HTMLInputElement>('form input[name="password"]')?.focus()
-  }, [])
+  }, [checked])
   const submit = async (e: Event) => {
     e.preventDefault()
     if (pending || !online.value) return
+    const p = passwordProblem(password)
+    setProblem(p)
+    if (p) {
+      setError(null)
+      const el = document.querySelector<HTMLInputElement>('form input[name="password"]')
+      el?.focus()
+      el?.select()
+      return
+    }
     setPending(true)
     setError(null)
     try {
@@ -134,9 +169,11 @@ function Confirm({ token, spent, askNew }: { token: string; spent: () => void; a
       setPending(false)
     }
   }
-  if (error?.code === 'link_invalid') {
+  const invalid =
+    error?.code === 'link_invalid' ? error : lookError?.code === 'link_invalid' ? lookError : null
+  if (invalid) {
     return (
-      <LinkProblem title={T.reset.invalidTitle} message={error.message}>
+      <LinkProblem title={T.reset.invalidTitle} message={invalid.message}>
         <a
           class="button primary"
           href="/reset"
@@ -151,6 +188,8 @@ function Confirm({ token, spent, askNew }: { token: string; spent: () => void; a
       </LinkProblem>
     )
   }
+  if (lookError) return <ErrorState error={lookError} onRetry={() => void look()} />
+  if (!checked) return <Skeleton rows={2} />
   if (done) {
     return (
       <>
@@ -181,7 +220,11 @@ function Confirm({ token, spent, askNew }: { token: string; spent: () => void; a
           minLength={12}
           maxLength={200}
           value={password}
-          onValue={setPassword}
+          onValue={(v) => {
+            setPassword(v)
+            if (problem) setProblem(null)
+          }}
+          problem={problem}
           autoFocus
         />
         <div class="actions">
