@@ -1074,3 +1074,35 @@ dialog::backdrop {
     margin-bottom: 10px;
   }
 }
+
+/* The narrowest phones: the bar keeps its controls; the installation name stays for screen readers
+   while the logo stands for it. Fonts differ by system, so the bar must not count on their width. */
+@media (max-width: 359px) {
+  .topbar .brand .name,
+  .topbar .brand .slash {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .topbar .brand {
+    flex: 0 0 auto;
+    padding: 0 8px;
+  }
+
+  .topbar .middle {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+  }
+
+  .searchbox {
+    padding: 0 10px;
+  }
+
+  .topbar .end {
+    padding: 0 8px 0 4px;
+  }
+}
