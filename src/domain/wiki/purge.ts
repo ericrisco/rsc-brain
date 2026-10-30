@@ -56,7 +56,7 @@ const TARGETS: Target[] = [
   {
     table: 'page_revisions',
     scope: 'page_id IN (SELECT id FROM pages WHERE brain_id = $1)',
-    text: { title: null, summary: null, body: null, note: null, purged_reason: null },
+    text: { title: null, summary: null, body: null, note: null, purged_reason: null, reason: null },
     arrays: ['tags'],
     json: ['sources'],
   },
@@ -81,7 +81,7 @@ const TARGETS: Target[] = [
     arrays: [],
     json: ['op'],
   },
-  { table: 'wiki_log', scope: 'brain_id = $1', text: { summary: 500 }, arrays: [], json: [] },
+  { table: 'wiki_log', scope: 'brain_id = $1', text: { summary: 500, reason: null }, arrays: [], json: [] },
   {
     table: 'wiki_settings',
     scope: 'brain_id = $1',
@@ -352,7 +352,7 @@ export async function purgePageRevisions(
       if (r.purged_at) continue
       await db.query(
         `UPDATE page_revisions SET title = '[purged]', summary = '', body = '', tags = '{}', sources = '[]', links = '[]',
-                note = NULL, purged_by = $3, purged_at = $4, purged_reason = $5
+                note = NULL, reason = NULL, purged_by = $3, purged_at = $4, purged_reason = $5
           WHERE page_id = $1 AND revision = $2`,
         [page.id, n, ctx.who.accountId, now, why],
       )

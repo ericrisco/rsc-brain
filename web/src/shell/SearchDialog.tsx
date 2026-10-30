@@ -1,8 +1,9 @@
 // ⌘K / Ctrl K, or the Search button: searches every brain the person can read (GET /v1/search, B3) and
-// shows what matched and where. Opening a result arrives with the wiki and journal screens (PR19, PR20).
+// shows what matched and where. A wiki page opens (PR19); a journal entry opens with the journal (PR20).
 import { useState } from 'preact/hooks'
 import type { ApiError } from '../api/client.ts'
 import { api } from '../api/index.ts'
+import { pageHref, plainText } from '../lib/markdown.ts'
 import { brainsResource } from '../screens/Home.tsx'
 import { online } from '../session.ts'
 import { T } from '../text.ts'
@@ -11,7 +12,15 @@ import { Dialog } from '../ui/Dialog.tsx'
 import { ErrorState } from '../ui/states.tsx'
 import { searchOpen } from './keys.ts'
 
-type Hit = { kind: string; id: string; brain: string; title: string; snippet: string; at: string }
+type Hit = {
+  kind: string
+  id: string
+  address?: string
+  brain: string
+  title: string
+  snippet: string
+  at: string
+}
 
 export function SearchDialog() {
   const [q, setQ] = useState('')
@@ -108,8 +117,18 @@ export function SearchDialog() {
                     {T.search.kind[h.kind] ?? h.kind} · <span class="mono">{h.brain}</span> ·{' '}
                     {T.dateTime(h.at)}
                   </span>
-                  <span class="rt">{h.title}</span>
-                  <span class="snippet">{h.snippet}</span>
+                  {h.kind === 'page' && h.address ? (
+                    <a
+                      class="rt"
+                      href={pageHref(h.brain, h.address)}
+                      onClick={() => (searchOpen.value = false)}
+                    >
+                      {h.title}
+                    </a>
+                  ) : (
+                    <span class="rt">{h.title}</span>
+                  )}
+                  <span class="snippet">{plainText(h.snippet)}</span>
                 </li>
               ))}
             </ul>

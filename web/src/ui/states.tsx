@@ -4,6 +4,7 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef } from 'preact/hooks'
 import type { ApiError } from '../api/client.ts'
+import { focusOnArrival } from '../lib/screen.ts'
 import { online } from '../session.ts'
 import { T } from '../text.ts'
 import { Button } from './Button.tsx'
@@ -24,11 +25,21 @@ export function Skeleton({ rows = 3, label = T.states.loading }: { rows?: number
 // The kind of a state, as a word in sentence case.
 const KIND = { error: T.kind.error, offline: T.kind.offline, forbidden: T.kind.noAccess } as const
 
-export function ErrorState({ error, onRetry }: { error: ApiError; onRetry?: () => void }) {
+// `focus`: off for a part of a screen that failed while the rest stands (the keyboard stays where it is;
+// the alert is still announced).
+export function ErrorState({
+  error,
+  onRetry,
+  focus = true,
+}: {
+  error: ApiError
+  onRetry?: () => void
+  focus?: boolean
+}) {
   const v = errorView(error, online.value)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
-    ref.current?.focus()
+    if (focus) focusOnArrival(ref.current)
   }, [])
   return (
     <div class={`state ${v.kind}`} role="alert" tabIndex={-1} ref={ref} data-state={v.kind}>

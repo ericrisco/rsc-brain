@@ -57,6 +57,19 @@ export function Keyboard({
         route('/people')
       } else if (id === 'go-overview' && signedIn && brain) {
         route(`/b/${encodeURIComponent(brain)}`)
+      } else if (id === 'go-wiki' && signedIn && brain) {
+        route(`/b/${encodeURIComponent(brain)}/wiki`)
+      } else if (id === 'go-decisions' && signedIn && brain) {
+        route(`/b/${encodeURIComponent(brain)}/wiki/decisions`)
+      } else if (id === 'go-log' && signedIn && brain) {
+        route(`/b/${encodeURIComponent(brain)}/wiki/log`)
+      } else if (id === 'edit' && signedIn) {
+        // What "Edit" above a page does; on a page that has no Edit (not a curator), nothing.
+        const edit = document.querySelector<HTMLAnchorElement>('main a[data-view="edit"]')
+        if (edit) {
+          e.preventDefault()
+          route(edit.getAttribute('href') ?? '')
+        }
       }
     }
     window.addEventListener('keydown', onKey)

@@ -414,6 +414,18 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     assert.deepEqual([p.page.title, p.page.body], ['Note [purged]', 'one pw=[purged]'])
   })
 
+  it('review: the purged revision loses its reason too, even one that does not hold the named text', async () => {
+    await create('pr/why', { body: 'one' })
+    await edit('pr/why', 1, { body: 'one SECRETR', reason: 'Lucía asked for it' })
+    const r = await purgeRev('pr/why', [2], ['SECRETR'])
+    assert.equal(r.status, 200, r.text)
+    const row = await w.db.one(
+      `SELECT r.reason FROM page_revisions r JOIN page_addresses a ON a.page_id = r.page_id
+        WHERE a.address = 'pr/why' AND r.revision = 2`,
+    )
+    assert.deepEqual(row, { reason: null })
+  })
+
   it('review: purging the current revision brings the page back to the last revision left, with its mentions', async () => {
     await create('pm/b')
     await create('pm/a', { body: 'See [[pm/b]].' })

@@ -10,7 +10,7 @@ test('"?" opens the list on every screen, signed in or not', async ({ page, cont
     await page.keyboard.press('?')
     const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
     await expect(help).toBeVisible()
-    await expect(help.locator('[data-shortcut]')).toHaveCount(path === '/' ? 4 : 5)
+    await expect(help.locator('[data-shortcut]')).toHaveCount(path === '/' ? 4 : 9)
     await page.keyboard.press('Escape')
     await expect(help).toBeHidden()
   }
@@ -94,6 +94,15 @@ test('each shortcut and its visible control do the same', async ({ page, context
   await page.locator('aside').getByRole('link', { name: 'Overview' }).click()
   await expect(page).toHaveURL(/\/b\/growth$/)
   await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
+
+  // go-wiki: "g w" and "Wiki" in the side bar (PR19).
+  await page.keyboard.press('g')
+  await page.keyboard.press('w')
+  await expect(page).toHaveURL(/\/b\/growth\/wiki$/)
+  await expect(page.getByRole('heading', { level: 1, name: 'Wiki' })).toBeVisible()
+  await page.goto('/b/growth')
+  await page.locator('aside').getByRole('link', { name: 'Wiki' }).click()
+  await expect(page).toHaveURL(/\/b\/growth\/wiki$/)
 })
 
 test('a letter typed in a field is text, not a shortcut', async ({ page, context, baseURL }) => {

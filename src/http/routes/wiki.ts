@@ -7,6 +7,8 @@ import { compilePack, getGuide, PACK } from '../../domain/wiki/compile.ts'
 import { wikiHealth } from '../../domain/wiki/health.ts'
 import {
   getPage,
+  historyOf,
+  listPages,
   pageHistory,
   pageRevision,
   wikiDecisions,
@@ -46,9 +48,12 @@ function whole(v: string | null, name: string, min: number, max: number): number
 }
 
 export const wikiRoutes: Route[] = [
-  route('GET /v1/brains/:slug/wiki/map', async (r) => ({
-    body: await wikiMap(ctxOf(r), r.params.slug as string),
-  })),
+  route('GET /v1/brains/:slug/wiki/map', async (r) => {
+    const status = q(r.query.get('status'))
+    if (status !== undefined && status !== 'all')
+      throw invalid('"status" is "all", or left out for current pages only.', 'Fix "status".')
+    return { body: await wikiMap(ctxOf(r), r.params.slug as string, { all: status === 'all' }) }
+  }),
   route('GET /v1/brains/:slug/wiki/decisions', async (r) => ({
     body: { decisions: await wikiDecisions(ctxOf(r), r.params.slug as string) },
   })),
@@ -56,7 +61,28 @@ export const wikiRoutes: Route[] = [
     body: await wikiLog(
       ctxOf(r),
       r.params.slug as string,
-      compact({ cursor: q(r.query.get('cursor')), limit: limitOf(r.query.get('limit')) }),
+      compact({
+        cursor: q(r.query.get('cursor')),
+        limit: limitOf(r.query.get('limit')),
+        kind: q(r.query.get('kind')),
+        page: q(r.query.get('page')),
+      }),
+    ),
+  })),
+  // The pages by pages, filtered (plan §3.5 G9, minimal form; PR19).
+  route('GET /v1/brains/:slug/wiki/pages', async (r) => ({
+    body: await listPages(
+      ctxOf(r),
+      r.params.slug as string,
+      compact({
+        q: q(r.query.get('q')),
+        prefix: q(r.query.get('prefix')),
+        type: q(r.query.get('type')),
+        status: q(r.query.get('status')),
+        tag: q(r.query.get('tag')),
+        cursor: q(r.query.get('cursor')),
+        limit: limitOf(r.query.get('limit')),
+      }),
     ),
   })),
   route('GET /v1/brains/:slug/wiki/health', async (r) => ({
@@ -100,6 +126,10 @@ export const wikiRoutes: Route[] = [
       await trackPageRead(ctxOf(r), slug, address)
       return { body: { history } }
     }
+    // The page and its history in one read (the web shows both on one visit: one read, not two).
+    const include = q(r.query.get('include'))
+    if (include !== undefined && include !== 'history')
+      throw invalid('"include" is "history", or left out.', 'Fix "include".')
     const ctx = ctxOf(r)
     const reading = await getPage(ctx, slug, address)
     await track(ctx.root ?? ctx.db, ctx, {
@@ -108,6 +138,8 @@ export const wikiRoutes: Route[] = [
       resultIds: [reading.page.id],
       label: reading.page.address,
     })
+    if (include === 'history')
+      return { body: { ...reading, history: await historyOf(ctx.db, reading.page.id) } }
     return { body: reading }
   }),
   route('POST /v1/brains/:slug/proposals', async (r) => {

@@ -48,6 +48,7 @@ export const V1 = [
   'GET /v1/brains/{slug}/wiki/health',
   'GET /v1/brains/{slug}/wiki/log',
   'GET /v1/brains/{slug}/wiki/map',
+  'GET /v1/brains/{slug}/wiki/pages',
   'GET /v1/branding',
   'GET /v1/branding/logo',
   'GET /v1/connect',
@@ -151,6 +152,10 @@ export const ERROR_STATUS: Record<string, number> = {
   no_logo: 404,
   no_such_route: 404,
   setup_done: 404,
+  // The wiki (PR19).
+  page_not_found: 404,
+  page_changed: 409,
+  revision_not_found: 404,
   too_many_attempts: 429,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,

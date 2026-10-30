@@ -143,6 +143,99 @@ export const EVENT = obj(
 )
 const PAGE = obj({ items: list({ type: 'object' }), next: NEXT })
 
+// The wiki as a person reads and edits it in the web (spec B2, B6 PR19).
+const PAGE_TYPE = s('topic, entity, decision, guide, agent, source or overview.', {
+  enum: ['topic', 'entity', 'decision', 'guide', 'agent', 'source', 'overview'],
+})
+const PAGE_STATUS = s('current, stale, superseded or retired.', {
+  enum: ['current', 'stale', 'superseded', 'retired'],
+})
+const WIKI_PAGE = obj({
+  id: s('Page id.'),
+  brainId: s('Its brain.'),
+  address: s('Its current address.'),
+  type: PAGE_TYPE,
+  title: s('Title.'),
+  summary: s('One sentence.'),
+  body: s('Markdown; [[address]] mentions another page.'),
+  tags: list(s('Tag.')),
+  status: PAGE_STATUS,
+  supersededBy: nul(s('The page that replaces it, when superseded.')),
+  revision: n('Its current revision: edit against it.'),
+  createdAt: s('When.', { format: 'date-time' }),
+  updatedAt: s('When it last changed.', { format: 'date-time' }),
+})
+const LINK_VIEW = obj({
+  kind: s('mentions, related, depends-on, contradicts, supersedes, part-of or example-of.'),
+  address: s('The other page.'),
+  pageId: nul(s('Its id; null when no page has that address (a broken link).')),
+  title: nul(s('Its title.')),
+  state: s('ok, broken, stale, retired or superseded.', {
+    enum: ['ok', 'broken', 'stale', 'retired', 'superseded'],
+  }),
+})
+const SOURCE_VIEW = obj(
+  {
+    entryId: s('A journal entry it comes from.'),
+    url: s('An external address it comes from.'),
+    title: nul(s('Title; null for an entry forgotten or purged since.')),
+    state: s('active, forgotten or purged (entries only).'),
+  },
+  ['entryId', 'url', 'state'],
+)
+const PAGE_READING = obj(
+  {
+    page: WIKI_PAGE,
+    redirectedFrom: s('The old address asked for.'),
+    notice: s('Why it should be read with care (retired, superseded).'),
+    links: obj({ out: list(LINK_VIEW), in: list(LINK_VIEW) }),
+    sources: list(SOURCE_VIEW),
+    lastChange: nul(
+      obj({
+        revision: n('The revision the page is at.'),
+        authorId: s('Who saved it.'),
+        authorName: s('Their name.'),
+        at: s('When.', { format: 'date-time' }),
+      }),
+    ),
+  },
+  ['redirectedFrom', 'notice'],
+)
+const REVISION_SUMMARY = {
+  revision: n('Its number.'),
+  address: s('The address it had.'),
+  title: s('The title it had.'),
+  status: PAGE_STATUS,
+  kind: s('proposal, direct, revert or purge.'),
+  change: s('What it changed: created, edited, linked, status, moved or restored.', {
+    enum: ['created', 'edited', 'linked', 'status', 'moved', 'restored'],
+  }),
+  restoredFrom: nul(n('The revision it restored.')),
+  reason: nul(s('Why: the curator’s reason, or the operation’s for a proposal.')),
+  authorId: s('Who made it.'),
+  authorName: s('Their name.'),
+  proposalId: nul(s('The proposal it came from.')),
+  corrected: b('A curator corrected the operation before approving.'),
+  baseReviewed: b('Approved on a base that had moved on, after review.'),
+  purged: nul({ type: 'object', description: 'Who purged its text, when and why.' }),
+  createdAt: s('When.', { format: 'date-time' }),
+}
+const FULL_REVISION = obj({
+  ...REVISION_SUMMARY,
+  type: PAGE_TYPE,
+  summary: s('Summary it had.'),
+  body: s('Body it had.'),
+  tags: list(s('Tag.')),
+  sources: list({ type: 'object' }, 'Its sources then.'),
+  links: list({ type: 'object' }, 'Its typed links then.'),
+})
+const CHANGED = obj({
+  revised: list(
+    obj({ pageId: s('Page.'), address: s('Its address now.'), revision: n('Its new revision.') }, []),
+  ),
+  page: nul(PAGE_READING),
+})
+
 const ACCOUNT_SIGNED_IN = obj({
   id: s('Account id.'),
   name: s('Name.'),
@@ -151,6 +244,143 @@ const ACCOUNT_SIGNED_IN = obj({
 })
 
 const HAND: Record<string, Op> = {
+  'GET /v1/brains/{slug}/wiki/pages': {
+    summary: 'The pages of a wiki by pages, in address order, with how many pages link in and out.',
+    query: {
+      q: 'Part of the address or the title.',
+      prefix: 'Only pages under this first part of the address.',
+      type: 'Only this page type.',
+      status: 'Only this status.',
+      tag: 'Only pages with this tag.',
+      cursor: 'The "next" of the previous page.',
+      limit: 'Pages per answer.',
+    },
+    reply: obj({
+      items: list(
+        obj({
+          address: s('Address.'),
+          title: s('Title.'),
+          type: PAGE_TYPE,
+          status: PAGE_STATUS,
+          tags: list(s('Tag.')),
+          in: n('Pages linking to it.'),
+          out: n('Pages it links to.'),
+          updatedAt: s('When it last changed.', { format: 'date-time' }),
+        }),
+      ),
+      next: NEXT,
+      total: n('Pages that match, on every page of the answer.'),
+    }),
+  },
+  'GET /v1/brains/{slug}/wiki/map': {
+    summary:
+      'The map: every current page by type and first part of its address, with its summary; status=all for every page whatever its status.',
+    query: { status: '"all" for every status; left out, current pages only.' },
+    reply: obj({
+      intro: s('The curators’ introduction.'),
+      groups: list(
+        obj({
+          type: PAGE_TYPE,
+          area: s('First part of the address.'),
+          pages: list(
+            obj({
+              address: s('Address.'),
+              title: s('Title.'),
+              summary: s('Summary.'),
+              tags: list(s('Tag.')),
+              status: PAGE_STATUS,
+            }),
+          ),
+        }),
+      ),
+      count: n('Pages on the map.'),
+    }),
+  },
+  'GET /v1/brains/{slug}/wiki/decisions': {
+    summary: 'The decision pages, newest first, with their status (retired ones left out).',
+    reply: obj({
+      decisions: list(
+        obj({
+          address: s('Address.'),
+          title: s('Title.'),
+          summary: s('Summary.'),
+          status: PAGE_STATUS,
+          createdAt: s('When it was decided.', { format: 'date-time' }),
+          updatedAt: s('When it last changed.', { format: 'date-time' }),
+        }),
+      ),
+    }),
+  },
+  'GET /v1/brains/{slug}/wiki/log': {
+    summary: 'One line per change applied to the wiki, newest first.',
+    query: {
+      kind: 'proposal, direct, revert or purge.',
+      page: 'Only lines that touched this address.',
+      cursor: 'The "next" of the previous page.',
+      limit: 'Lines per answer.',
+    },
+    reply: obj({
+      items: list(
+        obj({
+          id: s('Line id.'),
+          at: s('When.', { format: 'date-time' }),
+          actorId: s('Who.'),
+          actorName: s('Their name.'),
+          kind: s('proposal, direct, revert or purge.', { enum: ['proposal', 'direct', 'revert', 'purge'] }),
+          proposalId: nul(s('The proposal it applied.')),
+          summary: s('What changed.'),
+          reason: nul(s('Why: the curator’s reason, or the proposal’s.')),
+          pages: list(s('Address.')),
+        }),
+      ),
+      next: NEXT,
+      total: n('Lines that match.'),
+    }),
+  },
+  'GET /v1/brains/{slug}/pages/{address}': {
+    summary:
+      'A page by its address (an old address leads to it), with its links both ways and its sources; history=1 for its revisions, revision=N for one, compare=A,B for two.',
+    query: {
+      history: '1 for its revisions.',
+      revision: 'One revision.',
+      compare: 'Two revisions, e.g. 3,5.',
+      include: '"history" for the page and its revisions in one read.',
+    },
+    reply: obj(
+      {
+        ...(PAGE_READING.properties as Record<string, Schema>),
+        history: list(obj(REVISION_SUMMARY)),
+        revision: FULL_REVISION,
+        a: FULL_REVISION,
+        b: FULL_REVISION,
+      },
+      ['page', 'redirectedFrom', 'notice', 'links', 'sources', 'lastChange', 'history', 'revision', 'a', 'b'],
+    ),
+  },
+  'PATCH /v1/brains/{slug}/pages/{address}': {
+    summary:
+      'A curator edits a page by hand in the web, against the revision read (baseRevision). A page that moved on answers 409 page_changed with the current version in "current".',
+    body: obj(
+      {
+        baseRevision: n('The revision the edit was made on.'),
+        type: PAGE_TYPE,
+        title: s('Title.'),
+        summary: s('Summary.'),
+        body: s('Markdown body.'),
+        tags: list(s('Tag.')),
+        sources: list({ type: 'object' }, 'Its sources: {entryId} or {url, title}.'),
+        reason: s('Why.'),
+      },
+      ['type', 'title', 'summary', 'body', 'tags', 'sources', 'reason'],
+    ),
+    reply: CHANGED,
+  },
+  'POST /v1/brains/{slug}/wiki/changes': {
+    summary:
+      'A curator changes the wiki by hand in the web: one operation (create, edit, move, link, unlink, status, merge or revert), checked like a proposal.',
+    status: 201,
+    reply: CHANGED,
+  },
   'GET /v1/branding': {
     summary:
       'The name and logo of the installation, and whether the first-time setup is still to do (no key; answers before the setup).',

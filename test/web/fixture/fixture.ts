@@ -12,6 +12,21 @@ import { fileURLToPath } from 'node:url'
 import { answerWeb, openWeb } from '../../../src/http/web.ts'
 import { AGENT_IDS, type AgentId, connectKit } from '../../../src/mcp/kit.ts'
 import { generate } from '../../../web/test/data/generate.ts'
+import {
+  changeWiki,
+  decisionsOf,
+  ENTRIES,
+  editBehind,
+  editPage,
+  entryOf,
+  freshWiki,
+  listOf,
+  logOf,
+  mapOf,
+  readersOf,
+  readPage,
+  type Wiki,
+} from './wiki.ts'
 
 export const PASSWORD = 'correct horse battery staple'
 export const CODE = '424242'
@@ -31,6 +46,13 @@ export type Screen =
   | 'branding'
   | 'overview'
   | 'people'
+  | 'map'
+  | 'page'
+  | 'pages'
+  | 'decisions'
+  | 'log'
+  | 'trail'
+  | 'entry'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
 // alone: the administrator the setup made, the only person in the installation.
@@ -85,6 +107,8 @@ type Scen = {
   seq: number
   // Every event of the scenario, so a stream that comes back with Last-Event-ID gets what it missed.
   log: Array<{ seq: number; brain: string; frame: string }>
+  // The wiki of each brain, made when first read.
+  wikis: Map<string, Wiki>
 }
 
 type Answer = { status: number; body: unknown; headers?: Record<string, string> }
@@ -218,6 +242,8 @@ const MANY = Array.from({ length: 60 }, (_, i) =>
   ),
 )
 const WIKI = generate({ pages: 300, seed: 48291 })
+// A wiki with many pages a group, for the map's "much data" (each group shows a few, then opens whole).
+const BIG = generate({ pages: 2000, seed: 48291 })
 
 function freshScenario(id: string, preset: Preset): Scen {
   const s: Scen = {
@@ -292,6 +318,7 @@ function freshScenario(id: string, preset: Preset): Scen {
     streams: new Set(),
     seq: 100,
     log: [],
+    wikis: new Map(),
   }
   if (preset === 'alone') {
     s.accounts.push({
@@ -898,24 +925,110 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       }
     },
   },
+  'GET /v1/brains/{slug}/wiki/map': {
+    screen: 'map',
+    run: (c) =>
+      inWiki(c, (w) => {
+        const st = c.s.states.get('map')
+        if (st === 'empty') return { status: 200, body: { intro: '', groups: [], count: 0 } }
+        return {
+          status: 200,
+          body: mapOf(w, st === 'much-data' ? BIG.pages : [], c.query.get('status') === 'all'),
+        }
+      }),
+  },
+  'GET /v1/brains/{slug}/wiki/pages': {
+    screen: 'pages',
+    run: (c) =>
+      inWiki(c, (w) => listOf(w, c.s.states.get('pages') === 'much-data' ? WIKI.pages : [], c.query)),
+  },
+  'GET /v1/brains/{slug}/wiki/decisions': {
+    screen: 'decisions',
+    run: (c) =>
+      inWiki(c, (w) => {
+        const st = c.s.states.get('decisions')
+        if (st === 'empty') return { status: 200, body: { decisions: [] } }
+        return { status: 200, body: { decisions: decisionsOf(w, st === 'much-data' ? WIKI.pages : []) } }
+      }),
+  },
+  'GET /v1/brains/{slug}/wiki/log': {
+    screen: 'log',
+    run: (c) =>
+      inWiki(c, (w) => {
+        const st = c.s.states.get('log')
+        if (st === 'empty') return { status: 200, body: { items: [], next: null, total: 0 } }
+        return logOf(w, c.query, st === 'much-data')
+      }),
+  },
+  'GET /v1/brains/{slug}/pages/{address}': {
+    screen: 'page',
+    run: (c) => inWiki(c, (w) => readPage(w, c.params.address as string, c.query)),
+  },
+  'PATCH /v1/brains/{slug}/pages/{address}': {
+    run: (c) =>
+      inWiki(c, (w, curator) => editPage(w, c.who as Account, curator, c.params.address as string, c.body)),
+  },
+  'POST /v1/brains/{slug}/wiki/changes': {
+    run: (c) => inWiki(c, (w, curator) => changeWiki(w, c.who as Account, curator, c.body)),
+  },
+  'GET /v1/brains/{slug}/trail': {
+    screen: 'trail',
+    run: (c) =>
+      inWiki(c, (w, curator) =>
+        readersOf(w, c.query.get('page') ?? '', curator, { id: c.who?.id ?? '', name: c.who?.name ?? '' }),
+      ),
+  },
+  'GET /v1/entries/{id}': {
+    screen: 'entry',
+    run: ({ params }) => entryOf(params.id as string, 'growth'),
+  },
   'GET /v1/search': {
     screen: 'search',
     run: ({ s, query }) => {
       const st = s.states.get('search')
       const q = (query.get('q') ?? '').toLowerCase()
       const limit = Math.min(50, Number(query.get('limit') ?? 20) || 20)
+      // Journal entries only (a page's sources in the editor): by words of the title or the text, or the
+      // newest with no words.
+      if (query.get('in') === 'entries') {
+        const found = Object.entries(ENTRIES)
+          .filter(([, e]) => e.state === 'active')
+          .filter(([, e]) => !q || e.title.toLowerCase().includes(q) || e.content.toLowerCase().includes(q))
+          .slice(0, limit)
+          .map(([id, e], i) => ({
+            kind: 'entry',
+            id,
+            brain: query.get('brains') ?? 'growth',
+            title: e.title,
+            snippet: e.content,
+            at: `2026-10-${String(14 - i).padStart(2, '0')}T09:00:00.000Z`,
+          }))
+        return { status: 200, body: { items: found, next: null } }
+      }
+      // The pages of the hand-made wiki first (they open), then the seeded ones.
+      // A snippet is a piece of the body, markdown and all, as the server's.
+      const hand = freshWiki().pages.map((p) => {
+        const r = p.revs[p.revs.length - 1] as {
+          address: string
+          title: string
+          summary: string
+          body: string
+        }
+        return { address: r.address, title: r.title, summary: r.summary, snippet: r.body.slice(0, 160) }
+      })
       const hits =
         st === 'empty' || st === 'filtered-empty'
           ? []
-          : WIKI.pages
+          : [...hand, ...WIKI.pages]
               .filter((p) => q && (p.title.toLowerCase().includes(q) || p.summary.toLowerCase().includes(q)))
               .slice(0, limit)
               .map((p) => ({
                 kind: 'page',
-                id: p.address,
+                id: `pg_${p.address.replace(/\W/g, '_')}`,
+                address: p.address,
                 brain: 'growth',
                 title: p.title,
-                snippet: p.summary,
+                snippet: 'snippet' in p ? p.snippet : p.summary,
                 at: AT,
               }))
       return { status: 200, body: { items: hits, next: null } }
@@ -941,7 +1054,29 @@ const PRIVATE = new Set([
   'GET /v1/admin/accounts',
   'POST /v1/admin/accounts/{id}/reset-link',
   'GET /v1/admin/brains',
+  'GET /v1/brains/{slug}/wiki/map',
+  'GET /v1/brains/{slug}/wiki/pages',
+  'GET /v1/brains/{slug}/wiki/decisions',
+  'GET /v1/brains/{slug}/wiki/log',
+  'GET /v1/brains/{slug}/pages/{address}',
+  'PATCH /v1/brains/{slug}/pages/{address}',
+  'POST /v1/brains/{slug}/wiki/changes',
+  'GET /v1/brains/{slug}/trail',
+  'GET /v1/entries/{id}',
 ])
+
+// The wiki of a brain the person is in, made when first read; `curator`: may edit it by hand.
+function inWiki(c: Ctx, run: (w: Wiki, curator: boolean) => Answer): Answer {
+  const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+  const slug = b?.slug ?? 'growth'
+  if (c.params.slug !== undefined && !b) return NO_BRAIN
+  let w = c.s.wikis.get(slug)
+  if (!w) {
+    w = freshWiki()
+    c.s.wikis.set(slug, w)
+  }
+  return run(w, b?.role === 'curator')
+}
 
 // The brains a person of the scenario is in: the setup's administrator only in those it made.
 // Ana is not a curator anywhere: her roles are her own.
@@ -1034,14 +1169,15 @@ function match(method: string, path: string): { op: string; params: Record<strin
     const re = new RegExp(
       `^${template.replace(/\{(\w+)\}/g, (_, k: string) => {
         keys.push(k)
-        return '([^/]+)'
+        // A page address keeps its slashes.
+        return k === 'address' ? '(.+)' : '([^/]+)'
       })}$`,
     )
     const hit = re.exec(path)
     if (!hit) continue
     const params: Record<string, string> = {}
     keys.forEach((k, i) => {
-      params[k] = decodeURIComponent(hit[i + 1] ?? '')
+      params[k] = (hit[i + 1] ?? '').split('/').map(decodeURIComponent).join('/')
     })
     return { op, params }
   }
@@ -1199,6 +1335,25 @@ export async function startFixture(
         if (!s) return send(res, { status: 404, body: {} })
         const b = await bodyOf(req)
         emit(s, String(b.brain), String(b.kind ?? 'entry.saved'))
+        return send(res, { status: 200, body: {} })
+      }
+      // Another curator edits a page of the wiki meanwhile (an edit conflict, CA10).
+      const behind = /^\/__fixture\/scenarios\/([\w]+)\/wiki-edit$/.exec(url.pathname)
+      if (behind && method === 'POST') {
+        const s = scenarios.get(behind[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        const b = await bodyOf(req)
+        const brain = String(b.brain)
+        if (!s.wikis.has(brain)) s.wikis.set(brain, freshWiki())
+        editBehind(
+          s.wikis.get(brain) as Wiki,
+          String(b.address),
+          typeof b.body === 'string' ? b.body : undefined,
+          {
+            ...(Array.isArray(b.tags) ? { tags: b.tags as string[] } : {}),
+            ...(typeof b.to === 'string' ? { address: b.to } : {}),
+          },
+        )
         return send(res, { status: 200, body: {} })
       }
       // For a person walking the fixture by hand: /__fixture/use?preset=fresh&next=/setup

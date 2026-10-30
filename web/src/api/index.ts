@@ -2,6 +2,7 @@
 import { signal } from '@preact/signals'
 import { helpOpen, searchOpen } from '../shell/keys.ts'
 import { createClient } from './client.ts'
+import { clearDrafts } from './draft.ts'
 import { resetResources } from './resource.ts'
 
 // Where the app should go next; the router follows it (an expired session, from anywhere).
@@ -12,9 +13,10 @@ export const goTo = signal<{ to: string; replace: boolean } | null>(null)
 export const sessionEnded = signal(false)
 
 // What belonged to the session that is over: its data and the dialogs it had open (a search open when
-// the session ended must not open again after signing in).
+// the session ended must not open again after signing in), and what it typed and did not send.
 export function forgetSession(): void {
   resetResources()
+  if (typeof sessionStorage !== 'undefined') clearDrafts(sessionStorage)
   searchOpen.value = false
   helpOpen.value = false
 }

@@ -26,6 +26,8 @@ export type ApplyMeta = {
   kind: 'proposal' | 'direct' | 'revert'
   proposalId?: string
   summary: string
+  // Why, for a change by hand or a restore (a proposal keeps its reasons on itself and its operations).
+  reason?: string
 }
 export type Revised = { index?: number; pageId: string; address: string; revision: number }
 
@@ -141,8 +143,8 @@ export async function applyOps(
     )
     await db.query(
       `INSERT INTO page_revisions (page_id, revision, address, type, title, summary, body, tags, status, sources, links,
-         kind, author_id, credential_id, proposal_id, op_index, corrected, base_reviewed, note, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+         kind, author_id, credential_id, proposal_id, op_index, corrected, base_reviewed, note, created_at, reason)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
       [
         pageId,
         p.revision,
@@ -172,6 +174,7 @@ export async function applyOps(
         Boolean(it.baseReviewed),
         note ?? null,
         now,
+        meta.kind === 'proposal' ? null : it.op.reason,
       ],
     )
     revised.push({
@@ -418,7 +421,7 @@ export async function applyOps(
 
   const pages = [...touched]
   await db.query(
-    'INSERT INTO wiki_log (id, brain_id, at, actor_id, kind, proposal_id, summary, pages) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+    'INSERT INTO wiki_log (id, brain_id, at, actor_id, kind, proposal_id, summary, pages, reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
     [
       newId('wlg'),
       brainId,
@@ -428,6 +431,7 @@ export async function applyOps(
       meta.proposalId ?? null,
       meta.summary.slice(0, 500),
       pages,
+      meta.kind === 'proposal' ? null : (meta.reason ?? null),
     ],
   )
   await emit(db, ctx, {

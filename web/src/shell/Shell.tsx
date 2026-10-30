@@ -24,7 +24,18 @@ export type BrainNav = { slug: string; name: string; role: string }
 function BrainLinks({ brain }: { brain: BrainNav }) {
   const { path } = useLocation()
   const base = `/b/${encodeURIComponent(brain.slug)}`
-  const items = [{ href: base, label: T.shell.overview }]
+  const items = [
+    { href: base, label: T.shell.overview, here: path === base, keys: 'g o' },
+    // A page of the wiki is in the wiki.
+    {
+      href: `${base}/wiki`,
+      label: T.shell.wiki,
+      here: path === `${base}/wiki` ? true : path.startsWith(`${base}/pages/`) ? 'inside' : false,
+      keys: 'g w',
+    },
+    { href: `${base}/wiki/decisions`, label: T.shell.decisions, here: path === `${base}/wiki/decisions` },
+    { href: `${base}/wiki/log`, label: T.shell.log, here: path === `${base}/wiki/log` },
+  ]
   return (
     <nav class="nav" aria-label={T.shell.brainNav}>
       <a class="back" href="/">
@@ -33,7 +44,11 @@ function BrainLinks({ brain }: { brain: BrainNav }) {
       <ul>
         {items.map((i) => (
           <li key={i.href}>
-            <a href={i.href} aria-current={path === i.href ? 'page' : undefined}>
+            <a
+              href={i.href}
+              aria-current={i.here === 'inside' ? 'true' : i.here ? 'page' : undefined}
+              aria-keyshortcuts={'keys' in i ? i.keys : undefined}
+            >
               {i.label}
             </a>
           </li>

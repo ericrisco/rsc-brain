@@ -26,7 +26,9 @@ export async function freshDatabase(): Promise<TestDb> {
     await admin.end()
   }
   const url = withDatabase(PG_URL, name)
-  const db = openPool(url, { max: 25 })
+  // Small: the test files run side by side (one per processor), each with its own pool, and together they
+  // must stay well under PostgreSQL's max_connections (100 by default), with room for anything else.
+  const db = openPool(url, { max: 4 })
   return {
     url,
     db,
