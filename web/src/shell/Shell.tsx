@@ -4,8 +4,6 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
-import { api } from '../api/index.ts'
-import { resetResources } from '../api/resource.ts'
 import { applyTheme, theme } from '../lib/theme.ts'
 import type { Me } from '../session.ts'
 import { T } from '../text.ts'
@@ -16,6 +14,7 @@ import { HelpDialog } from './HelpDialog.tsx'
 import { Keyboard } from './Keyboard.tsx'
 import { helpOpen, searchOpen } from './keys.ts'
 import { SearchDialog } from './SearchDialog.tsx'
+import { useSignOut } from './signOut.ts'
 
 export type BrainNav = { slug: string; name: string; role: string }
 
@@ -53,10 +52,9 @@ function SideBar({ brain }: { brain: BrainNav }) {
 
 function AccountMenu({ me }: { me: Me }) {
   const [open, setOpen] = useState(false)
-  const [leaving, setLeaving] = useState(false)
+  const { signOut, leaving, failed } = useSignOut()
   const box = useRef<HTMLDivElement>(null)
   const button = useRef<HTMLButtonElement>(null)
-  const { route } = useLocation()
   useEffect(() => {
     if (!open) return
     const away = (e: Event) => {
@@ -76,16 +74,6 @@ function AccountMenu({ me }: { me: Me }) {
     }
   }, [open])
   const name = me.account.name
-  const signOut = async () => {
-    setLeaving(true)
-    try {
-      await api.call('logout', { body: {} })
-    } catch {
-      // Signed out or not, the web forgets the person and goes to sign-in.
-    }
-    resetResources()
-    route('/sign-in', true)
-  }
   return (
     <div class="account" ref={box}>
       <button
@@ -111,6 +99,7 @@ function AccountMenu({ me }: { me: Me }) {
           </div>
           <button
             type="button"
+            class="keyboard-only"
             onClick={() => {
               setOpen(false)
               helpOpen.value = true
@@ -130,6 +119,11 @@ function AccountMenu({ me }: { me: Me }) {
           <button type="button" onClick={() => void signOut()} aria-busy={leaving ? 'true' : undefined}>
             <span>{leaving ? T.shell.signingOut : T.shell.signOut}</span>
           </button>
+          {failed ? (
+            <p class="menu-alert" role="alert">
+              {T.shell.signOutFailed}
+            </p>
+          ) : null}
         </div>
       ) : null}
     </div>

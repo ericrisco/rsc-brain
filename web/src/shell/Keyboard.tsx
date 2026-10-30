@@ -1,13 +1,18 @@
 // Listens for the shortcuts of lib/shortcuts.ts and does what their visible controls do.
 
-import { useEffect } from 'preact/hooks'
+import { useLayoutEffect, useRef } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import { createKeymap } from '../lib/shortcuts.ts'
 import { helpOpen, isTyping, searchOpen } from './keys.ts'
 
 export function Keyboard({ signedIn, brain }: { signedIn: boolean; brain: string | null }) {
   const { route } = useLocation()
-  useEffect(() => {
+  // Read when a key is pressed, not when the listener was set: the brain arrives with its data, and a
+  // shortcut pressed the moment its side bar shows must already know it.
+  const now = useRef({ signedIn, brain, route })
+  now.current = { signedIn, brain, route }
+  // Before the paint, not after: once the shell shows, its shortcuts already listen.
+  useLayoutEffect(() => {
     const map = createKeymap(() => Date.now())
     const onKey = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.isComposing) return
@@ -30,6 +35,7 @@ export function Keyboard({ signedIn, brain }: { signedIn: boolean; brain: string
         typing: isTyping(e.target),
       })
       if (!id) return
+      const { signedIn, brain, route } = now.current
       if (id === 'help') {
         e.preventDefault()
         helpOpen.value = true
@@ -44,7 +50,11 @@ export function Keyboard({ signedIn, brain }: { signedIn: boolean; brain: string
       }
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [signedIn, brain, route])
+    document.documentElement.dataset.keys = 'on'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      delete document.documentElement.dataset.keys
+    }
+  }, [])
   return null
 }

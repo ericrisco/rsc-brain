@@ -143,6 +143,9 @@ const HAND: Record<string, Op> = {
         type: ['object', 'null'],
       }),
       setupRequired: b('The first-time setup is still to do: the web leads to it.'),
+      canSendMail: b(
+        'The installation can send email (reset links, invitations); without it an administrator makes reset links by hand.',
+      ),
     }),
   },
   'GET /v1/branding/logo': {

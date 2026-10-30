@@ -124,3 +124,27 @@ export const V1 = [
   'PUT /v1/brains/{slug}/notify',
   'PUT /v1/brains/{slug}/wiki/settings',
 ]
+
+// The status of every refusal the web's fixture gives, by its code: within v1 a code keeps its status.
+// The contract test (test/api/contract.test.ts, with PostgreSQL) provokes each one on the real server;
+// the fixture's validator (test/web/fixture/schema.ts, in CI) refuses an answer whose status differs, so
+// the fixture cannot drift from the server on statuses either.
+export const ERROR_STATUS: Record<string, number> = {
+  invalid_request: 400,
+  invitation_invalid: 400,
+  link_invalid: 400,
+  unauthorized: 401,
+  bad_credentials: 401,
+  code_required: 401,
+  bad_code: 401,
+  forbidden: 403,
+  csrf: 403,
+  insecure_connection: 403,
+  brain_not_found: 404,
+  no_logo: 404,
+  no_such_route: 404,
+  setup_done: 404,
+  too_many_attempts: 429,
+  // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
+  internal: 500,
+}

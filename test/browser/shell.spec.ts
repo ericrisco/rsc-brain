@@ -89,6 +89,35 @@ test('the account menu signs out, and the web forgets the person', async ({ page
   await expect(page).toHaveURL(/\/sign-in/)
 })
 
+// C2: a sign-out that did not happen is never shown as done: the person stays signed in and is told.
+for (const how of ['the server fails', 'the browser is offline'] as const) {
+  test(`when signing out fails (${how}), it says so and the person stays signed in`, async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(
+      context,
+      baseURL as string,
+      'signed-in',
+      how === 'the server fails' ? { 'sign-out': 'error' } : {},
+    )
+    await page.goto('/')
+    await expect(page.getByRole('link', { name: 'Growth' })).toBeVisible()
+    await page.getByRole('button', { name: /Account/ }).click()
+    if (how === 'the browser is offline') await context.setOffline(true)
+    await page.getByRole('button', { name: 'Sign out' }).click()
+    await expect(page.getByRole('alert')).toContainText(
+      "Couldn't sign out. Check your connection and try again.",
+    )
+    await expect(page).toHaveURL(/\/$/)
+    await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible()
+    await context.setOffline(false)
+    await page.reload()
+    await expect(page.getByRole('link', { name: 'Growth' })).toBeVisible()
+  })
+}
+
 test('the focus is always visible: a 2px outline in the accent', async ({ page, context, baseURL }) => {
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto('/')

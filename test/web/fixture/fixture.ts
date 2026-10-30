@@ -25,16 +25,29 @@ export type Screen =
   | 'setup'
   | 'me'
   | 'sign-in'
+  | 'sign-out'
   | 'reset'
   | 'branding'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
-export type Preset = 'signed-out' | 'signed-in' | 'fresh' | 'insecure'
+// member: signed in as a person who is not an administrator (Ana).
+export type Preset = 'signed-out' | 'signed-in' | 'member' | 'fresh' | 'insecure'
 
-type Account = { id: string; name: string; email: string; isAdmin: boolean; totp: boolean; password: string }
+// `alone`: in no brain (the administrator the setup creates).
+type Account = {
+  id: string
+  name: string
+  email: string
+  isAdmin: boolean
+  totp: boolean
+  password: string
+  alone?: boolean
+}
 type Scen = {
   id: string
   setupDone: boolean
   insecure: boolean
+  // The installation can send email (reset links, invitations).
+  mail: boolean
   name: string
   accounts: Account[]
   sessions: Set<string>
@@ -75,7 +88,7 @@ const INTERNAL = err(
   500,
   'internal',
   'Something went wrong on the server (reference fx000001).',
-  'Try again; if it keeps failing, give the reference to the administration.',
+  'Try again; if it keeps failing, give the reference to an administrator.',
 )
 const CSRF = err(
   403,
@@ -131,6 +144,7 @@ function freshScenario(id: string, preset: Preset): Scen {
     id,
     setupDone: preset !== 'fresh' && preset !== 'insecure',
     insecure: preset === 'insecure',
+    mail: true,
     name: preset === 'fresh' || preset === 'insecure' ? '' : 'Risco Brain',
     accounts: [
       {
@@ -157,6 +171,7 @@ function freshScenario(id: string, preset: Preset): Scen {
     states: new Map(),
   }
   if (preset === 'signed-in') s.sessions.add('fx.acc_eric')
+  if (preset === 'member') s.sessions.add('fx.acc_ana')
   return s
 }
 
@@ -167,7 +182,10 @@ const sessionCookie = (a: Account) => `rscb_session=fx.${a.id}; Path=/; HttpOnly
 const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   'GET /v1/branding': {
     screen: 'branding',
-    run: ({ s }) => ({ status: 200, body: { name: s.name, logo: null, setupRequired: !s.setupDone } }),
+    run: ({ s }) => ({
+      status: 200,
+      body: { name: s.name, logo: null, setupRequired: !s.setupDone, canSendMail: s.mail },
+    }),
   },
   'GET /v1/branding/logo': {
     run: () =>
@@ -234,6 +252,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         isAdmin: true,
         totp: false,
         password: admin.password,
+        alone: true,
       }
       s.accounts.push(a)
       s.setupDone = true
@@ -299,6 +318,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
     },
   },
   'POST /v1/auth/logout': {
+    screen: 'sign-out',
     run: ({ s, who }) => {
       if (who) s.sessions.delete(`fx.${who.id}`)
       return {
@@ -314,7 +334,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       status: 202,
       body: {
         message:
-          'If that email has an account, a reset link is on its way. No mail? Ask the administration for a link.',
+          'If that email has an account, a reset link is on its way. No mail? Ask an administrator for a link.',
       },
     }),
   },
@@ -340,7 +360,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           400,
           'invitation_invalid',
           'This invitation link is not valid: it expired, was already used, or was withdrawn.',
-          'Ask the administration to send a new one.',
+          'Ask an administrator to send a new one.',
         )
       return {
         status: 200,
@@ -367,7 +387,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           400,
           'invitation_invalid',
           'This invitation link is not valid: it expired, was already used, or was withdrawn.',
-          'Ask the administration to send a new one.',
+          'Ask an administrator to send a new one.',
         )
       const name = typeof body.name === 'string' ? body.name.trim() : ''
       if (!name || name.length > 80)
@@ -407,9 +427,9 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   },
   'GET /v1/brains': {
     screen: 'home',
-    run: ({ s }) => {
+    run: ({ s, who }) => {
       const st = s.states.get('home')
-      if (st === 'empty') return { status: 200, body: { brains: [] } }
+      if (st === 'empty' || who?.alone) return { status: 200, body: { brains: [] } }
       if (st === 'much-data') return { status: 200, body: { brains: [...BRAINS, ...MANY] } }
       return { status: 200, body: { brains: BRAINS } }
     },
@@ -557,6 +577,7 @@ export async function startFixture(
         const s = make((b.preset as Preset) ?? 'signed-out')
         for (const [screen, state] of Object.entries((b.states ?? {}) as Record<string, State>))
           s.states.set(screen as Screen, state)
+        if (b.mail === false) s.mail = false
         return send(res, { status: 201, body: { id: s.id } })
       }
       const control = /^\/__fixture\/scenarios\/([\w]+)\/state$/.exec(url.pathname)
@@ -570,6 +591,7 @@ export async function startFixture(
       // For a person walking the fixture by hand: /__fixture/use?preset=fresh&next=/setup
       if (url.pathname === '/__fixture/use') {
         const s = make((url.searchParams.get('preset') as Preset) ?? 'signed-in')
+        if (url.searchParams.get('mail') === 'off') s.mail = false
         const states = url.searchParams.getAll('state')
         for (const x of states) {
           const [screen, state] = x.split(':')

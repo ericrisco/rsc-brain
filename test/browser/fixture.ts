@@ -2,7 +2,7 @@
 // named in a header the fixture reads, so tests run in parallel without sharing anything.
 import { type BrowserContext, test as base, expect, type Page } from '@playwright/test'
 
-export type Preset = 'signed-out' | 'signed-in' | 'fresh' | 'insecure'
+export type Preset = 'signed-out' | 'signed-in' | 'member' | 'fresh' | 'insecure'
 export type States = Record<
   string,
   'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
@@ -20,18 +20,18 @@ export async function scenario(
   baseURL: string,
   preset: Preset,
   states: States = {},
+  o: { mail?: boolean } = {},
 ): Promise<Scenario> {
   const res = await fetch(`${baseURL}/__fixture/scenarios`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ preset, states }),
+    body: JSON.stringify({ preset, states, ...(o.mail === false ? { mail: false } : {}) }),
   })
   const { id } = (await res.json()) as { id: string }
   await context.setExtraHTTPHeaders({ 'x-fixture-scenario': id })
-  if (preset === 'signed-in') {
-    await context.addCookies([
-      { name: 'rscb_session', value: 'fx.acc_eric', url: baseURL, httpOnly: true, sameSite: 'Lax' },
-    ])
+  if (preset === 'signed-in' || preset === 'member') {
+    const value = preset === 'member' ? 'fx.acc_ana' : 'fx.acc_eric'
+    await context.addCookies([{ name: 'rscb_session', value, url: baseURL, httpOnly: true, sameSite: 'Lax' }])
   }
   return {
     id,

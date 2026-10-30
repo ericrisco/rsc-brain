@@ -9,6 +9,8 @@ export type Branding = {
   name: string
   logo: { url: string; updatedAt: string } | null
   setupRequired: boolean
+  // The installation can send email (reset links, invitations).
+  canSendMail: boolean
 }
 export type Me = {
   account: { id: string; kind: string; name: string; email: string | null; isAdmin: boolean }
@@ -18,6 +20,12 @@ export type Me = {
 export const branding = () => resource<Branding>('branding', () => api.call<Branding>('branding'))
 // Asked quietly: on the sign-in page a 401 is the expected answer, not a reason to move.
 export const me = () => resource<Me>('me', () => api.call<Me>('me', { quiet: true }))
+
+// Set by the first-time setup when it worked, so home can confirm it ("Brain is set up.").
+export const justSetUp = signal(false)
+
+// Set by "Sign out" when it worked, so the sign-in page can confirm it ("Signed out.").
+export const justSignedOut = signal(false)
 
 export const online = signal(typeof navigator === 'undefined' ? true : navigator.onLine)
 if (typeof window !== 'undefined') {

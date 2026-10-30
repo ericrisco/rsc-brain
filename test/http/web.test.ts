@@ -159,6 +159,25 @@ describe('the web next to the API', () => {
     }
   })
 
+  it('a reserved prefix is found after the path is normalised too: "/./v1/me" and the absolute form', async () => {
+    const web = openWeb(root)
+    for (const path of [
+      '/./v1/me',
+      '/x/../v1/me',
+      '//./v1/me',
+      'http://brain.example/v1/me',
+      'http://brain.example/mcp',
+    ]) {
+      assert.equal(answerWeb(web, 'GET', path, ''), 'pass', path)
+    }
+    // Over the wire: the API answers, in JSON, without the web's headers.
+    for (const path of ['/./v1/me', `http://127.0.0.1/v1/me`]) {
+      const res = await rawGet(path)
+      assert.match(res.type, /application\/json/, path)
+      assert.notEqual(res.status, 200, path)
+    }
+  })
+
   it('writes are never the web: a POST to a web path is the API answer', async () => {
     const res = await fetch(`${base}/brains`, { method: 'POST', body: '{}' })
     assert.equal(res.status, 404)

@@ -4,10 +4,16 @@
 // route table, so it cannot leave a route out, and it documents the pinned fields.
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
+import { hashPassword } from '../../src/auth/password.ts'
+import { stepOf, totpAt } from '../../src/auth/totp.ts'
 import { ROUTES } from '../../src/http/app.ts'
 import { skipPg } from '../helpers/pg.ts'
-import { type World, world } from '../helpers/world.ts'
-import { V1 } from './v1.ts'
+import { type Call, type World, world } from '../helpers/world.ts'
+import { ERROR_STATUS, V1 } from './v1.ts'
+
+const WEB = { 'x-requested-with': 'rsc-brain-web' }
+const PW = 'correct horse battery staple'
+const tokenOf = (link: unknown) => /#token=([A-Za-z0-9_-]+)/.exec(String(link))?.[1] ?? ''
 
 // The fields a program relies on in the main answers. `[]` marks the items of a list.
 const SHAPES: Record<string, Record<string, string[]>> = {
@@ -51,7 +57,38 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     'items[]': ['id', 'brainId', 'brain', 'status', 'openedAt', 'lastActivityAt'],
   },
   'GET /v1/branding': {
-    '': ['name', 'logo', 'setupRequired'],
+    '': ['name', 'logo', 'setupRequired', 'canSendMail'],
+  },
+  // The screens before a session (spec B6, PR17): the web's fixture answers them in CI, so the real
+  // server's answers are pinned here (plan risk 2: a fixture that drifts lets CI pass with the web broken).
+  'GET /v1/setup': {
+    '': ['done', 'connection', 'warning'],
+    connection: ['encrypted', 'local'],
+  },
+  'POST /v1/setup': {
+    '': ['done', 'publicUrl', 'warning', 'adminId'],
+  },
+  'POST /v1/auth/login': {
+    account: ['id', 'name', 'email', 'isAdmin'],
+  },
+  // The second step: signing in with the authenticator code answers the same.
+  'POST /v1/auth/login +code': {
+    account: ['id', 'name', 'email', 'isAdmin'],
+  },
+  'POST /v1/auth/logout': {
+    '': ['signedOut'],
+  },
+  'POST /v1/invitations/look': {
+    invitation: ['email', 'installation', 'brains', 'isAdmin', 'expiresAt'],
+  },
+  'POST /v1/invitations/accept': {
+    account: ['id', 'name', 'email', 'isAdmin'],
+  },
+  'POST /v1/auth/reset': {
+    '': ['message'],
+  },
+  'POST /v1/auth/reset/confirm': {
+    '': ['reset'],
   },
 }
 
@@ -83,14 +120,43 @@ function schemaAt(s: Schema, where: string): Schema {
 
 describe('the v1 contract', { skip: skipPg }, () => {
   let w: World
+  // An installation whose first-time setup is still to do.
+  let fresh: World
   let eric: { id: string; key: string }
   let doc: Json
 
   before(async () => {
     w = await world()
+    fresh = await world({ fresh: true })
     eric = await w.person('Eric')
   })
-  after(async () => w.close())
+  after(async () => {
+    await w.close()
+    await fresh.close()
+  })
+
+  const login = (body: Json, headers: Record<string, string> = WEB) =>
+    w.raw('POST', '/v1/auth/login', { headers, body })
+  const withPassword = async (name: string, o: { isAdmin?: boolean } = {}) => {
+    const p = await w.person(name, o)
+    await w.db.query('UPDATE accounts SET password_hash = $2 WHERE id = $1', [p.id, await hashPassword(PW)])
+    const email = String((await w.db.one('SELECT email FROM accounts WHERE id = $1', [p.id]))?.email)
+    return { ...p, email }
+  }
+  // A person whose sign-in asks for the authenticator code; `code()` gives the next unused one.
+  const withCode = async (name: string) => {
+    const p = await withPassword(name)
+    const web = await w.web(p.id)
+    const secret = String((await w.callWeb(web, 'POST', '/v1/me/totp')).body.secret)
+    await w.callWeb(web, 'POST', '/v1/me/totp/confirm', { code: totpAt(secret, stepOf(w.now)) })
+    return {
+      ...p,
+      code: () => {
+        w.advance(30_000)
+        return totpAt(secret, stepOf(w.now))
+      },
+    }
+  }
 
   it('the description is public JSON (OpenAPI 3.1) and needs no key: it holds no data', async () => {
     const r = await w.raw('GET', '/v1/openapi.json')
@@ -160,6 +226,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       'GET /v1/connect': (await w.call(eric.key, 'GET', '/v1/connect')).body,
       'GET /v1/me/sessions': (await w.call(eric.key, 'GET', '/v1/me/sessions')).body,
       'GET /v1/branding': (await w.call(null, 'GET', '/v1/branding')).body,
+      ...(await doors()),
     }
     const paths = doc.paths as Record<string, Record<string, Json>>
     for (const [op, shape] of Object.entries(SHAPES)) {
@@ -167,7 +234,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       const body = answers[op] as Json
       assert.equal(body.error, undefined, `${op}: ${JSON.stringify(body.error)}`)
       const responses = opOf(paths, path, method.toLowerCase()).responses as Json
-      const ok = (responses['200'] ?? responses['201']) as Json
+      const ok = (responses['200'] ?? responses['201'] ?? responses['202']) as Json
       const schema = ((ok.content as Json)['application/json'] as Json).schema as Schema
       for (const [where, fields] of Object.entries(shape)) {
         const got = fieldsAt(body, where)
@@ -178,6 +245,117 @@ describe('the v1 contract', { skip: skipPg }, () => {
         }
       }
     }
+  })
+
+  // The real answers of the screens before a session, in the order a person meets them.
+  async function doors(): Promise<Record<string, Json>> {
+    const out: Record<string, Json> = {}
+    const setupBody = {
+      name: 'Contract',
+      publicUrl: 'http://localhost',
+      admin: { name: 'Ada', email: 'ada@example.com', password: PW },
+    }
+    out['GET /v1/setup'] = (await fresh.raw('GET', '/v1/setup?publicUrl=http%3A%2F%2Flocalhost')).body
+    const setup = await fresh.raw('POST', '/v1/setup', { headers: WEB, body: setupBody })
+    assert.equal(setup.status, 201, setup.text)
+    out['POST /v1/setup'] = setup.body
+    const lou = await withPassword('Lou')
+    const signedIn = await login({ email: lou.email, password: PW })
+    assert.equal(signedIn.status, 200, signedIn.text)
+    out['POST /v1/auth/login'] = signedIn.body
+    const mo = await withCode('Mo')
+    const asked = await login({ email: mo.email, password: PW })
+    assert.equal(asked.body.error?.code, 'code_required', asked.text)
+    const coded = await login({ email: mo.email, password: PW, code: mo.code() })
+    assert.equal(coded.status, 200, coded.text)
+    out['POST /v1/auth/login +code'] = coded.body
+    const session = /rscb_session=([^;]+)/.exec(signedIn.headers.get('set-cookie') ?? '')?.[1] ?? ''
+    out['POST /v1/auth/logout'] = (await w.callWeb(session, 'POST', '/v1/auth/logout', {})).body
+    const admin = await withPassword('Admin', { isAdmin: true })
+    const adminWeb = await w.web(admin.id)
+    const invited = await w.callWeb(adminWeb, 'POST', '/v1/invitations', { emails: ['iris@example.com'] })
+    assert.equal(invited.status, 201, invited.text)
+    const invite = tokenOf((invited.body.invitations as Json[])[0]?.link)
+    out['POST /v1/invitations/look'] = (
+      await w.raw('POST', '/v1/invitations/look', { body: { token: invite } })
+    ).body
+    out['POST /v1/invitations/accept'] = (
+      await w.raw('POST', '/v1/invitations/accept', {
+        headers: WEB,
+        body: { token: invite, name: 'Iris', password: PW },
+      })
+    ).body
+    const asking = await w.raw('POST', '/v1/auth/reset', { body: { email: lou.email } })
+    assert.equal(asking.status, 202, asking.text)
+    out['POST /v1/auth/reset'] = asking.body
+    const link = await w.callWeb(adminWeb, 'POST', `/v1/admin/accounts/${lou.id}/reset-link`)
+    out['POST /v1/auth/reset/confirm'] = (
+      await w.raw('POST', '/v1/auth/reset/confirm', {
+        body: { token: tokenOf(link.body.link), password: 'another long passphrase' },
+      })
+    ).body
+    return out
+  }
+
+  it('every refusal the web meets keeps its status within v1 (ERROR_STATUS, which the fixture obeys)', async () => {
+    const lou = await withPassword('Louis')
+    const reader = await withPassword('Rita')
+    const mo = await withCode('Moira')
+    const got: Array<[string, Call]> = []
+    const add = async (code: string, r: Promise<Call>) => got.push([code, await r])
+    await add(
+      'invalid_request',
+      w.raw('POST', '/v1/auth/reset/confirm', { body: { token: 'x', password: 1 } }),
+    )
+    await add('invitation_invalid', w.raw('POST', '/v1/invitations/look', { body: { token: 'nope-nope' } }))
+    await add(
+      'link_invalid',
+      w.raw('POST', '/v1/auth/reset/confirm', { body: { token: 'nope', password: PW } }),
+    )
+    await add('unauthorized', w.raw('GET', '/v1/me'))
+    await add('bad_credentials', login({ email: lou.email, password: 'not the password at all' }))
+    await add('code_required', login({ email: mo.email, password: PW }))
+    await add('bad_code', login({ email: mo.email, password: PW, code: '000000' }))
+    await add(
+      'forbidden',
+      w.callWeb(await w.web(reader.id), 'POST', `/v1/admin/accounts/${lou.id}/reset-link`),
+    )
+    await add('csrf', login({ email: lou.email, password: PW }, {}))
+    await add(
+      'insecure_connection',
+      login(
+        { email: lou.email, password: PW },
+        { ...WEB, 'x-forwarded-for': '203.0.113.7', 'x-forwarded-proto': 'http' },
+      ),
+    )
+    await add('brain_not_found', w.call(eric.key, 'GET', '/v1/brains/nowhere'))
+    await add('no_logo', w.raw('GET', '/v1/branding/logo'))
+    await add('no_such_route', w.raw('GET', '/v1/nowhere'))
+    await add('setup_done', w.raw('GET', '/v1/setup'))
+    await add(
+      'setup_done',
+      w.raw('POST', '/v1/setup', {
+        headers: WEB,
+        body: {
+          name: 'Again',
+          publicUrl: 'http://localhost',
+          admin: { name: 'A', email: 'a@example.com', password: PW },
+        },
+      }),
+    )
+    // The brake: five failures in a row, then the sixth attempt is refused for a while.
+    for (let i = 0; i < 5; i++) await login({ email: 'brake@example.com', password: 'nope nope nope' })
+    await add('too_many_attempts', login({ email: 'brake@example.com', password: 'nope nope nope' }))
+    for (const [code, r] of got) {
+      assert.deepEqual([r.status, r.body.error?.code], [ERROR_STATUS[code], code], `${code}: ${r.text}`)
+    }
+    // Every code of the table was provoked here, but the one no request causes on purpose.
+    assert.deepEqual(
+      Object.keys(ERROR_STATUS)
+        .filter((c) => c !== 'internal' && !got.some(([g]) => g === c))
+        .sort(),
+      [],
+    )
   })
 
   it('CA18: every refusal keeps its shape: code, message, how to proceed', async () => {

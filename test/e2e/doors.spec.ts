@@ -31,7 +31,12 @@ test('first run from the web makes the administrator and signs them in', async (
   await page.getByLabel('Password', { exact: true }).fill(ADMIN.password)
   await page.getByRole('button', { name: 'Set up and sign in' }).click()
   await expect(page.getByRole('heading', { name: 'Your brains' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'You are not in any brain yet' })).toBeVisible()
+  // U1: the administrator sees it worked and the next step, with the agent command for this address.
+  await expect(page.getByRole('status').filter({ hasText: 'Brain is set up.' })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Next: create your first brain and invite people' }),
+  ).toBeVisible()
+  await expect(page.getByText(`${baseURL}/mcp`)).toBeVisible()
   await expect(page.locator('header')).toContainText('Risco Brain')
 })
 
@@ -69,6 +74,7 @@ test('an invitation by email is accepted and opens a session', async ({ page, br
   expect(((await me.json()) as { account: { name: string } }).account.name).toBe('Marta')
   // The link works once.
   await p.goto(link)
+  await expect(p.getByRole('heading', { level: 1, name: 'This invitation link does not work' })).toBeVisible()
   await expect(p.getByRole('alert')).toContainText('This invitation link is not valid')
   await marta.close()
 })
@@ -83,6 +89,7 @@ test('signing out ends the session; signing in again works', async ({ page }) =>
   await page.getByRole('button', { name: /Account/ }).click()
   await page.getByRole('button', { name: 'Sign out' }).click()
   await expect(page).toHaveURL(/\/sign-in$/)
+  await expect(page.getByRole('status').filter({ hasText: 'Signed out.' })).toBeVisible()
   expect((await page.request.get('/v1/me')).status()).toBe(401)
 })
 

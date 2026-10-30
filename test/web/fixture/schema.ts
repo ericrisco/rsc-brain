@@ -1,6 +1,10 @@
 // Checks an answer against the description of v1 (OpenAPI 3.1, as openapi() generates it): the status must
-// be the documented one, a refusal must be the error envelope, and every required field must be there
-// with its type. Extra fields are allowed (v1 may grow), as programs reading it must allow.
+// be the documented one, a refusal must be the error envelope with a code the server gives and the
+// status the server gives that code (ERROR_STATUS, pinned on the real server by the contract test), and
+// every required field must be there with its type. Extra fields are allowed (v1 may grow), as programs
+// reading it must allow.
+import { ERROR_STATUS } from '../../api/v1.ts'
+
 type S = Record<string, unknown>
 
 function resolve(doc: S, s: S): S {
@@ -36,7 +40,14 @@ function check(doc: S, schema: S, v: unknown, at: string, out: string[]): void {
 }
 
 // The problems of an answer, or [] when it fits the description of `method path`.
-export function validate(doc: S, method: string, path: string, status: number, body: unknown): string[] {
+export function validate(
+  doc: S,
+  method: string,
+  path: string,
+  status: number,
+  body: unknown,
+  errorStatus: Record<string, number> = ERROR_STATUS,
+): string[] {
   const paths = doc.paths as Record<string, Record<string, S>>
   // A literal path wins over a template ("/v1/invitations/look" over "/v1/invitations/{id}"), and the
   // template must have the method.
@@ -61,6 +72,13 @@ export function validate(doc: S, method: string, path: string, status: number, b
   } else {
     const content = (responses.default as S).content as Record<string, S>
     check(doc, content['application/json']?.schema as S, body, '', out)
+    const code = (body as { error?: { code?: unknown } } | null)?.error?.code
+    if (typeof code === 'string') {
+      const want = errorStatus[code]
+      if (want === undefined) out.push(`${method} ${path}: the server gives no refusal "${code}"`)
+      else if (want !== status)
+        out.push(`${method} ${path}: "${code}" answered ${status}, the server answers ${want}`)
+    }
   }
   return out
 }

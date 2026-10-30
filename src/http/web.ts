@@ -82,6 +82,15 @@ export function reserved(pathname: string): boolean {
   )
 }
 
+// The path as the API's router sees it (app.ts parses the request with the same base).
+function normalised(rawPath: string): string {
+  try {
+    return new URL(rawPath, 'http://localhost').pathname
+  } catch {
+    return rawPath
+  }
+}
+
 const notFound = (pathname: string): WebReply => ({
   status: 404,
   headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...SECURITY },
@@ -129,7 +138,9 @@ export function answerWeb(
 ): WebReply | 'pass' {
   if (method !== 'GET' && method !== 'HEAD') return 'pass'
   const pathname = rawPath.split('?')[0] ?? '/'
-  if (reserved(pathname)) return 'pass'
+  // The API routes on the WHATWG-normalised path ("/./v1/me", the absolute form "http://host/v1/me"),
+  // so the check runs on that one too: what the API would answer never turns into a web page.
+  if (reserved(pathname) || reserved(normalised(rawPath))) return 'pass'
   if (UNSAFE.test(pathname)) return notFound(pathname)
   if (web.kind === 'not-built') {
     return {

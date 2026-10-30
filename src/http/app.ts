@@ -387,7 +387,7 @@ export function createHandler(deps: AppDeps) {
         error: {
           code: 'internal',
           message: `Something went wrong on the server (reference ${id}).`,
-          howToProceed: 'Try again; if it keeps failing, give the reference to the administration.',
+          howToProceed: 'Try again; if it keeps failing, give the reference to an administrator.',
         },
       })
     }

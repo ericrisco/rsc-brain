@@ -99,7 +99,7 @@ export const authRoutes: Route[] = [
       status: 202,
       body: {
         message:
-          'If that email has an account, a reset link is on its way. No mail? Ask the administration for a link.',
+          'If that email has an account, a reset link is on its way. No mail? Ask an administrator for a link.',
       },
     }
   }),

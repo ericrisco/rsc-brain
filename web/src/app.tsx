@@ -6,6 +6,7 @@ import { useEffect } from 'preact/hooks'
 import { LocationProvider, Route, Router, useLocation } from 'preact-iso'
 import { goTo } from './api/index.ts'
 import { signInPath } from './lib/nav.ts'
+import { useScreenTitle } from './lib/screen.ts'
 import { Brain, brainResource } from './screens/Brain.tsx'
 import { Home } from './screens/Home.tsx'
 import { Invite } from './screens/Invite.tsx'
@@ -13,16 +14,23 @@ import { NotFound } from './screens/NotFound.tsx'
 import { Reset } from './screens/Reset.tsx'
 import { Setup } from './screens/Setup.tsx'
 import { SignIn } from './screens/SignIn.tsx'
-import { branding, isSignedOut, me } from './session.ts'
+import { branding, installationName, isSignedOut, me } from './session.ts'
 import { Door } from './shell/Door.tsx'
 import { type BrainNav, Shell } from './shell/Shell.tsx'
 import { ErrorState, Skeleton } from './ui/states.tsx'
 
 const DOORS = ['/sign-in', '/setup', '/invite', '/reset']
 
-function brainOf(path: string): string | null {
+// The brain an address is in; undefined when its name is not a valid escape (a broken link), which is
+// a page that does not exist, never a blank page.
+function brainOf(path: string): string | null | undefined {
   const m = /^\/b\/([^/]+)/.exec(path)
-  return m?.[1] ? decodeURIComponent(m[1]) : null
+  if (!m?.[1]) return null
+  try {
+    return decodeURIComponent(m[1])
+  } catch {
+    return undefined
+  }
 }
 
 function BrainPage({ slug }: { slug?: string }) {
@@ -35,6 +43,7 @@ function SignedIn() {
   const slug = brainOf(path)
   // The brain is asked for only once the person is known (a 401 there would race the one of /v1/me).
   const brain = slug && who.data.value ? brainResource(slug).data.value?.brain : undefined
+  const broken = slug === undefined
   const nav: BrainNav | null = brain ? { slug: brain.slug, name: brain.name, role: brain.role } : null
   useEffect(() => {
     if (isSignedOut(who.error.value)) route(signInPath(url), true)
@@ -56,11 +65,15 @@ function SignedIn() {
   }
   return (
     <Shell me={m} brain={nav}>
-      <Router>
-        <Route path="/" component={Home} />
-        <Route path="/b/:slug" component={BrainPage} />
-        <Route default component={NotFound} />
-      </Router>
+      {broken ? (
+        <NotFound />
+      ) : (
+        <Router>
+          <Route path="/" component={Home} />
+          <Route path="/b/:slug" component={BrainPage} />
+          <Route default component={NotFound} />
+        </Router>
+      )}
     </Shell>
   )
 }
@@ -68,6 +81,7 @@ function SignedIn() {
 function Routes() {
   const { path, route } = useLocation()
   const b = branding()
+  useScreenTitle(path, installationName(b.data.value))
   useEffect(() => {
     const g = goTo.value
     if (g) {

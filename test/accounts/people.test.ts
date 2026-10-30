@@ -99,7 +99,7 @@ describe('people and keys', { skip: skipPg }, () => {
     assert.equal(login.status, 200)
     const again = await accept(tokenOf(mail.text), 'Dani again')
     assert.deepEqual([again.status, again.body.error?.code], [400, 'invitation_invalid'])
-    assert.match(String(again.body.error?.howToProceed), /administration/)
+    assert.match(String(again.body.error?.howToProceed), /administrator/)
     // 72 hours later the other link no longer works.
     const late = await w.mailTo('late@example.com')
     w.advance(72 * 3_600_000 + 1000)

@@ -19,12 +19,25 @@ export const T = {
     theme: 'Theme',
     signOut: 'Sign out',
     signingOut: 'Signing out…',
+    signOutFailed: "Couldn't sign out. Check your connection and try again.",
     brainNav: 'Sections of this brain',
-    yourRole: (role: string) => `You are ${role}`,
+    yourRole: (role: string) => `You are a ${role}`,
     overview: 'Overview',
     allBrains: '← All brains',
     offline:
       'You are offline. What you see may be out of date; changes are off until the connection is back.',
+  },
+
+  // The kind of an alert or a state, as a word in sentence case.
+  kind: {
+    problem: 'Problem',
+    warning: 'Warning',
+    done: 'Done',
+    error: 'Error',
+    offline: 'Offline',
+    noAccess: 'No access',
+    notSafe: 'Not safe',
+    noLink: 'Link not valid',
   },
 
   states: {
@@ -50,7 +63,8 @@ export const T = {
     submit: 'Sign in',
     submitting: 'Signing in…',
     forgot: 'Forgot your password?',
-    noAccount: 'No account? Brain is by invitation: ask your administration for one.',
+    noAccount: 'No account? Brain is by invitation: ask an administrator for one.',
+    signedOut: 'Signed out.',
     codeTitle: 'Enter your code',
     codeLead: 'This account asks for the 6-digit code of its authenticator app.',
     code: 'Code from your authenticator app',
@@ -58,6 +72,11 @@ export const T = {
     codeSubmit: 'Verify and sign in',
     useAnother: 'Use another account',
     waitFor: (s: number) => `You can try again in ${s} s.`,
+  },
+
+  copy: {
+    done: 'Copied.',
+    failed: 'Could not copy: select the text and copy it.',
   },
 
   setup: {
@@ -82,6 +101,20 @@ export const T = {
       'You opened Brain over a connection that is neither encrypted nor on this machine, so it will not take a password.',
     insecureHow:
       'Open Brain on its local address (http://localhost:…) from the machine it runs on, or over HTTPS, and set it up there.',
+    // What to fix, next to each field (checked in the browser before sending).
+    need: {
+      name: 'Enter a name for this installation.',
+      nameLong: 'Shorten the name to 80 characters or fewer.',
+      publicUrl: 'Enter the address people open, such as https://brain.example.com.',
+      publicUrlBad: 'Enter a full address that starts with https:// or http://.',
+      adminName: 'Enter your name.',
+      adminNameLong: 'Shorten your name to 80 characters or fewer.',
+      adminEmail: 'Enter your email.',
+      adminEmailBad: 'Enter an email like name@example.com.',
+      password: 'Enter a password.',
+      passwordShort: 'Use at least 12 characters; a few unrelated words make a good password.',
+      passwordLong: 'Use 200 characters or fewer.',
+    },
     doneTitle: 'Brain is already set up',
     doneLead: 'The first-time setup runs once. Sign in with your account.',
     goSignIn: 'Go to sign in',
@@ -104,6 +137,9 @@ export const T = {
     noToken: 'This address has no invitation in it. Open the link from your invitation email again.',
     reload:
       'For your safety the invitation is not kept in the address. If you reloaded, open the link from your email again.',
+    askNew: 'Need a new link? Ask the person who invited you, or an administrator.',
+    haveAccount: 'Already have an account?',
+    signIn: 'Sign in',
     role: { reader: 'reader', contributor: 'contributor', curator: 'curator' } as Record<string, string>,
   },
 
@@ -123,12 +159,30 @@ export const T = {
     doneTitle: 'Your password is changed',
     doneLead: 'Sign in with the new password.',
     goSignIn: 'Sign in',
+    noMail: "This installation can't send email. Ask your administrator for a reset link.",
+    noMailHow: 'An administrator makes a link that works once, for 1 hour, and gives it to you.',
+    invalidTitle: 'This reset link does not work',
+    askNew: 'Ask for a new link',
   },
 
   home: {
     title: 'Your brains',
     emptyTitle: 'You are not in any brain yet',
-    emptyLead: 'A curator of a brain, or the administration, can add you to one.',
+    emptyLead: 'A curator of a brain, or an administrator, can add you to one.',
+    emptyAsk: 'Ask the person who invited you, and give them the email of your account:',
+    copyEmail: 'Copy my email',
+    wrongAccount: 'Signed in with the wrong account?',
+    setUp: 'Brain is set up.',
+    nextTitle: 'Next: create your first brain and invite people',
+    nextLead:
+      'Creating brains and inviting people from this web come in the next versions. Until then, your agent does it:',
+    nextConnect: 'Connect your agent to this installation. In Claude Code:',
+    nextCreate:
+      'Ask it to create a brain, for example: “Create a brain called Growth for what we learn about our audience.”',
+    nextInvite: 'Invite people through the API (POST /v1/invitations), with the same agent or a program.',
+    copyCommand: 'Copy the command',
+    readme: 'How it works, in the README',
+    readmeUrl: 'https://github.com/ericrisco/rsc-brain#connect-your-agent',
     count: (n: number) => (n === 1 ? '1 brain' : `${n} brains`),
     role: 'Role',
     archived: 'archived',
@@ -154,6 +208,8 @@ export const T = {
     kind: { entry: 'Journal entry', page: 'Wiki page' } as Record<string, string>,
     in: (brain: string) => `in ${brain}`,
     hint: 'Results open in their brain once the wiki and journal screens land; for now they show what matches and where.',
+    nothingTitle: 'There is nothing to search yet',
+    nothingLead: 'Search looks through the brains you are in, and you are not in any yet.',
   },
 
   help: {

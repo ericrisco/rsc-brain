@@ -70,7 +70,7 @@ function errorOf(status: number, text: string): ApiError {
     status,
     'bad_answer',
     `Brain answered with an unexpected reply (HTTP ${status}).`,
-    'Try again in a moment; if it keeps failing, tell the administration.',
+    'Try again in a moment; if it keeps failing, tell an administrator.',
   )
 }
 

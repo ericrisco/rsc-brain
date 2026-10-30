@@ -34,7 +34,10 @@ export function Dialog({
       ref={ref}
       class={cls}
       aria-labelledby={id}
-      onClose={onClose}
+      onClose={() => {
+        // The browser's "close" is queued: one that arrives after the dialog opened again is stale.
+        if (!ref.current?.open) onClose()
+      }}
       onClick={(e) => {
         // A click on the backdrop (the dialog itself, outside its content) closes it.
         if (e.target === ref.current) ref.current?.close()

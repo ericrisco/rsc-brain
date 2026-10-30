@@ -9,11 +9,12 @@ import type { ApiError } from '../api/client.ts'
 import { api } from '../api/index.ts'
 import { resetResources } from '../api/resource.ts'
 import { safeNext } from '../lib/nav.ts'
-import { branding, installationName, me, online } from '../session.ts'
+import { branding, installationName, justSignedOut, me, online } from '../session.ts'
 import { Door } from '../shell/Door.tsx'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
 import { Field } from '../ui/Field.tsx'
+import { PasswordField } from '../ui/PasswordField.tsx'
 import { writeBlocked } from '../ui/state.ts'
 import { FormAlert } from '../ui/states.tsx'
 
@@ -29,6 +30,11 @@ export function SignIn() {
   const [error, setError] = useState<ApiError | null>(null)
   const [pending, setPending] = useState(false)
   const codeRef = useRef<HTMLInputElement>(null)
+  // "Signed out." right after signing out; gone once the person does anything here.
+  const [signedOut] = useState(() => justSignedOut.value)
+  useEffect(() => {
+    justSignedOut.value = false
+  }, [])
 
   // Already signed in: straight on.
   useEffect(() => {
@@ -77,6 +83,12 @@ export function SignIn() {
             <p class="lead">{T.signIn.lead(name)}</p>
           </div>
           <form class="form" onSubmit={submit} noValidate>
+            {signedOut && !error ? (
+              <p class="alert ok" role="status">
+                <span class="kind">{T.kind.done}</span>
+                <span>{T.signIn.signedOut}</span>
+              </p>
+            ) : null}
             <FormAlert error={error} focus={error?.code !== 'bad_credentials'} />
             <Field
               label={T.signIn.email}
@@ -88,9 +100,8 @@ export function SignIn() {
               onValue={setEmail}
               autoFocus
             />
-            <Field
+            <PasswordField
               label={T.signIn.password}
-              type="password"
               name="password"
               autocomplete="current-password"
               required
@@ -133,12 +144,16 @@ export function SignIn() {
                 type="text"
                 inputMode="numeric"
                 autocomplete="one-time-code"
-                pattern="[0-9]{6}"
-                maxLength={6}
                 required
                 aria-describedby="signin-code-hint"
                 value={code}
-                onInput={(e) => setCode((e.currentTarget as HTMLInputElement).value.replace(/\D/g, ''))}
+                // A pasted "123 456" or "123-456" is the code: everything but digits goes, then six stay.
+                onInput={(e) => {
+                  const el = e.currentTarget as HTMLInputElement
+                  const digits = el.value.replace(/\D/g, '').slice(0, 6)
+                  el.value = digits
+                  setCode(digits)
+                }}
               />
             </div>
             <div class="actions">

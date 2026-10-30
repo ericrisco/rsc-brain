@@ -1,29 +1,22 @@
 // Reset a password (spec B4 «Recuperar contraseña»): ask for a link by email, then choose a new password
 // with the link's token ("#token=", taken out of the address at once). The answer to "send me a link" is
-// the same whether the email has an account or not.
-import { useState } from 'preact/hooks'
+// the same whether the email has an account or not. An installation that cannot send email says so at
+// once (ask an administrator for a link), which tells nothing about any account.
+import { useEffect, useState } from 'preact/hooks'
 import type { ApiError } from '../api/client.ts'
 import { api } from '../api/index.ts'
-import { tokenFromHash } from '../lib/nav.ts'
-import { online } from '../session.ts'
+import { useLinkToken } from '../lib/linkToken.ts'
+import { branding, online } from '../session.ts'
 import { Door } from '../shell/Door.tsx'
+import { LinkProblem } from '../shell/LinkProblem.tsx'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
 import { Field } from '../ui/Field.tsx'
 import { focusFieldOf } from '../ui/fieldOf.ts'
 import { StepTitle } from '../ui/Heading.tsx'
+import { PasswordField } from '../ui/PasswordField.tsx'
 import { writeBlocked } from '../ui/state.ts'
 import { FormAlert } from '../ui/states.tsx'
-
-let held: string | null = null
-function takeToken(): string | null {
-  const t = tokenFromHash(location.hash)
-  if (t) {
-    held = t
-    history.replaceState(history.state, '', location.pathname)
-  }
-  return held
-}
 
 function Request() {
   const [email, setEmail] = useState('')
@@ -92,12 +85,39 @@ function Request() {
   )
 }
 
-function Confirm({ token }: { token: string }) {
+function NoMail() {
+  return (
+    <>
+      <div>
+        <h1 class="title">{T.reset.requestTitle}</h1>
+      </div>
+      <div class="alert warn" data-state="no-mail">
+        <span class="kind">{T.kind.warning}</span>
+        <span>{T.reset.noMail}</span>
+        <span class="muted">{T.reset.noMailHow}</span>
+      </div>
+      <div class="actions">
+        <a class="button" href="/sign-in">
+          {T.reset.backToSignIn}
+        </a>
+      </div>
+    </>
+  )
+}
+
+function Confirm({ token, spent, askNew }: { token: string; spent: () => void; askNew: () => void }) {
   const [password, setPassword] = useState('')
   const [done, setDone] = useState(false)
   const [error, setError] = useState<ApiError | null>(null)
   const [onField, setOnField] = useState(false)
   const [pending, setPending] = useState(false)
+  // A link pasted into a tab already open mounts this form after the page loaded, when the browser no
+  // longer honours autofocus: the keyboard is put on the new password by hand, unless it is elsewhere.
+  useEffect(() => {
+    const a = document.activeElement
+    if (!a || a === document.body)
+      document.querySelector<HTMLInputElement>('form input[name="password"]')?.focus()
+  }, [])
   const submit = async (e: Event) => {
     e.preventDefault()
     if (pending || !online.value) return
@@ -105,7 +125,7 @@ function Confirm({ token }: { token: string }) {
     setError(null)
     try {
       await api.call('resetConfirm', { body: { token, password } })
-      held = null
+      spent()
       setDone(true)
     } catch (err) {
       setError(err as ApiError)
@@ -113,6 +133,23 @@ function Confirm({ token }: { token: string }) {
     } finally {
       setPending(false)
     }
+  }
+  if (error?.code === 'link_invalid') {
+    return (
+      <LinkProblem title={T.reset.invalidTitle} message={error.message}>
+        <a
+          class="button primary"
+          href="/reset"
+          onClick={(e) => {
+            e.preventDefault()
+            askNew()
+          }}
+        >
+          {T.reset.askNew}
+        </a>
+        <a href="/sign-in">{T.reset.backToSignIn}</a>
+      </LinkProblem>
+    )
   }
   if (done) {
     return (
@@ -135,10 +172,9 @@ function Confirm({ token }: { token: string }) {
       </div>
       <form class="form" onSubmit={submit} noValidate>
         <FormAlert error={error} focus={!onField} />
-        <Field
+        <PasswordField
           label={T.reset.password}
           hint={T.setup.passwordHint}
-          type="password"
           name="password"
           autocomplete="new-password"
           required
@@ -165,6 +201,14 @@ function Confirm({ token }: { token: string }) {
 }
 
 export function Reset() {
-  const [token] = useState(takeToken)
-  return <Door>{token ? <Confirm token={token} /> : <Request />}</Door>
+  const link = useLinkToken('reset')
+  const canSendMail = branding().data.value?.canSendMail
+  const body = link.token ? (
+    <Confirm key={link.visit} token={link.token} spent={link.spend} askNew={() => link.forget()} />
+  ) : canSendMail === false ? (
+    <NoMail />
+  ) : (
+    <Request key={link.visit} />
+  )
+  return <Door>{body}</Door>
 }

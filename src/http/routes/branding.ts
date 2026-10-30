@@ -3,15 +3,18 @@
 // before anyone has a key. They describe the installation and hold no data of any brain.
 import { AppError } from '../../core/errors.ts'
 import { installation, setupDone } from '../../domain/installation.ts'
+import { mailConfigured } from '../../mail/mail.ts'
 import { publicRoute, type Route } from '../router.ts'
 
 export const brandingRoutes: Route[] = [
   publicRoute(
     'GET /v1/branding',
     async (r) => {
-      const [i, done] = await Promise.all([installation(r.db), setupDone(r.db)])
-      // The logo is uploaded through G3 (plan T045); until then an installation has none.
-      return { body: { name: i.name, logo: null, setupRequired: !done } }
+      const [i, done, mail] = await Promise.all([installation(r.db), setupDone(r.db), mailConfigured(r.db)])
+      // The logo is uploaded through G3 (plan T045); until then an installation has none. Whether it can
+      // send email lets the reset page say to ask an administrator instead of promising a link; it says
+      // nothing about any account.
+      return { body: { name: i.name, logo: null, setupRequired: !done, canSendMail: mail } }
     },
     { beforeSetup: true },
   ),

@@ -22,14 +22,20 @@ describe('branding of the installation', { skip: skipPg }, () => {
   it('G1: before the setup, it answers without a key and says the setup is pending', async () => {
     const r = await fresh.raw('GET', '/v1/branding')
     assert.equal(r.status, 200, r.text)
-    assert.deepEqual(r.body, { name: '', logo: null, setupRequired: true })
+    assert.deepEqual(r.body, { name: '', logo: null, setupRequired: true, canSendMail: false })
     assert.equal(r.headers.get('cache-control'), 'no-store')
   })
 
   it('G1: once set up, it gives the name of the installation', async () => {
     const r = await ready.raw('GET', '/v1/branding')
     assert.equal(r.status, 200, r.text)
-    assert.deepEqual(r.body, { name: 'Test', logo: null, setupRequired: false })
+    assert.deepEqual(r.body, { name: 'Test', logo: null, setupRequired: false, canSendMail: false })
+  })
+
+  it('U3: says whether the installation can send email, so the reset page can say to ask an administrator', async () => {
+    await ready.setUpMail()
+    const r = await ready.raw('GET', '/v1/branding')
+    assert.equal(r.body.canSendMail, true, r.text)
   })
 
   it('G1: a key is not needed, and a bad one is not looked at', async () => {

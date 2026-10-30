@@ -21,6 +21,9 @@ export function Skeleton({ rows = 3, label = T.states.loading }: { rows?: number
   )
 }
 
+// The kind of a state, as a word in sentence case.
+const KIND = { error: T.kind.error, offline: T.kind.offline, forbidden: T.kind.noAccess } as const
+
 export function ErrorState({ error, onRetry }: { error: ApiError; onRetry?: () => void }) {
   const v = errorView(error, online.value)
   const ref = useRef<HTMLDivElement>(null)
@@ -29,7 +32,7 @@ export function ErrorState({ error, onRetry }: { error: ApiError; onRetry?: () =
   }, [])
   return (
     <div class={`state ${v.kind}`} role="alert" tabIndex={-1} ref={ref} data-state={v.kind}>
-      <span class="kind">{v.kind === 'forbidden' ? 'no access' : v.kind}</span>
+      <span class="kind">{KIND[v.kind]}</span>
       <h2>{v.title}</h2>
       <p>{v.message}</p>
       <p class="how">{v.howToProceed}</p>
@@ -66,7 +69,7 @@ export function OfflineStrip() {
   if (online.value) return null
   return (
     <div class="offline-strip" role="status" data-state="offline">
-      <strong>offline</strong>
+      <strong>{T.kind.offline}</strong>
       <span>{T.shell.offline}</span>
     </div>
   )
@@ -96,7 +99,9 @@ export function FormAlert({
       tabIndex={-1}
       ref={ref}
     >
-      <span class="kind">{tone === 'error' ? 'problem' : tone === 'warn' ? 'warning' : 'done'}</span>
+      <span class="kind">
+        {tone === 'error' ? T.kind.problem : tone === 'warn' ? T.kind.warning : T.kind.done}
+      </span>
       <span>{error.message}</span>
       {error.howToProceed ? <span class="muted">{error.howToProceed}</span> : null}
     </div>

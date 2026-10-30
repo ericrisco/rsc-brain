@@ -41,20 +41,44 @@ describe('the seeded data', () => {
 describe('the validator', () => {
   it('accepts what the description says and refuses what it does not', () => {
     assert.deepEqual(
-      validate(doc, 'GET', '/v1/branding', 200, { name: 'X', logo: null, setupRequired: false }),
+      validate(doc, 'GET', '/v1/branding', 200, {
+        name: 'X',
+        logo: null,
+        setupRequired: false,
+        canSendMail: true,
+      }),
       [],
     )
     assert.notDeepEqual(
-      validate(doc, 'GET', '/v1/branding', 200, { name: 1, logo: null, setupRequired: false }),
+      validate(doc, 'GET', '/v1/branding', 200, {
+        name: 1,
+        logo: null,
+        setupRequired: false,
+        canSendMail: true,
+      }),
       [],
     )
-    assert.notDeepEqual(validate(doc, 'GET', '/v1/branding', 200, { name: 'X', setupRequired: false }), [])
     assert.notDeepEqual(
-      validate(doc, 'GET', '/v1/branding', 201, { name: 'X', logo: null, setupRequired: false }),
+      validate(doc, 'GET', '/v1/branding', 200, { name: 'X', setupRequired: false, canSendMail: true }),
+      [],
+    )
+    assert.notDeepEqual(
+      validate(doc, 'GET', '/v1/branding', 201, {
+        name: 'X',
+        logo: null,
+        setupRequired: false,
+        canSendMail: true,
+      }),
       [],
     )
     assert.notDeepEqual(validate(doc, 'GET', '/v1/brains', 401, { error: { code: 'x', message: 'y' } }), [])
     assert.notDeepEqual(validate(doc, 'GET', '/v1/nowhere', 200, {}), [])
+    // A refusal keeps the status the server gives its code, and its code is one the server gives.
+    const refusal = (code: string) => ({ error: { code, message: 'm', howToProceed: 'h' } })
+    assert.deepEqual(validate(doc, 'GET', '/v1/brains/x', 404, refusal('brain_not_found')), [])
+    assert.notDeepEqual(validate(doc, 'GET', '/v1/brains/x', 403, refusal('brain_not_found')), [])
+    assert.notDeepEqual(validate(doc, 'POST', '/v1/auth/login', 400, refusal('bad_credentials')), [])
+    assert.notDeepEqual(validate(doc, 'POST', '/v1/auth/login', 400, refusal('made_up_code')), [])
   })
 })
 
@@ -177,6 +201,7 @@ describe('the fixture API', () => {
       name: 'Risco Brain',
       logo: null,
       setupRequired: false,
+      canSendMail: true,
     })
     assert.equal((await call('GET', '/v1/setup', { scenario: s.id })).status, 404)
     assert.equal((await call('GET', '/v1/branding/logo', { scenario: s.id })).status, 404)

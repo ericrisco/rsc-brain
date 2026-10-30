@@ -1,19 +1,22 @@
-// A labelled input with its hint and its problem, wired for screen readers.
+// A labelled input with its hint, its problem (what to fix: the field is invalid) or a note (a warning
+// that does not stop the form), wired for screen readers.
 import type { JSX } from 'preact'
 import { useId } from 'preact/hooks'
 
 type Props = Omit<JSX.InputHTMLAttributes<HTMLInputElement>, 'id' | 'value' | 'onInput'> & {
   label: string
   hint?: string
-  problem?: string | null
+  problem?: string | null | undefined
+  note?: string | null | undefined
   value: string
   onValue: (v: string) => void
   after?: JSX.Element
 }
 
-export function Field({ label, hint, problem, value, onValue, after, ...input }: Props) {
+export function Field({ label, hint, problem, note, value, onValue, after, ...input }: Props) {
   const id = useId()
-  const described = [hint ? `${id}-hint` : '', problem ? `${id}-problem` : ''].filter(Boolean).join(' ')
+  const said = problem || note
+  const described = [hint ? `${id}-hint` : '', said ? `${id}-problem` : ''].filter(Boolean).join(' ')
   return (
     <div class="field">
       <label for={id}>{label}</label>
@@ -34,9 +37,9 @@ export function Field({ label, hint, problem, value, onValue, after, ...input }:
         />
         {after}
       </div>
-      {problem ? (
-        <span id={`${id}-problem`} class="problem">
-          {problem}
+      {said ? (
+        <span id={`${id}-problem`} class={problem ? 'problem' : 'note'}>
+          {said}
         </span>
       ) : null}
     </div>

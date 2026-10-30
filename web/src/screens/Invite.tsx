@@ -8,13 +8,15 @@ import type { ApiError } from '../api/client.ts'
 import { draft } from '../api/draft.ts'
 import { api } from '../api/index.ts'
 import { resetResources } from '../api/resource.ts'
-import { tokenFromHash } from '../lib/nav.ts'
+import { useLinkToken } from '../lib/linkToken.ts'
 import { online } from '../session.ts'
 import { Door } from '../shell/Door.tsx'
+import { LinkProblem } from '../shell/LinkProblem.tsx'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
 import { Field } from '../ui/Field.tsx'
 import { focusFieldOf } from '../ui/fieldOf.ts'
+import { PasswordField } from '../ui/PasswordField.tsx'
 import { writeBlocked } from '../ui/state.ts'
 import { ErrorState, FormAlert, Skeleton } from '../ui/states.tsx'
 
@@ -26,20 +28,13 @@ type Invitation = {
   expiresAt: string
 }
 
-// The token of this visit: read once from "#token=", never written back to the address.
-let held: string | null = null
-function takeToken(): string | null {
-  const t = tokenFromHash(location.hash)
-  if (t) {
-    held = t
-    history.replaceState(history.state, '', location.pathname)
-  }
-  return held
+export function Invite() {
+  const link = useLinkToken('invite')
+  return <InvitationPage key={link.visit} token={link.token} spent={link.spend} />
 }
 
-export function Invite() {
+function InvitationPage({ token, spent }: { token: string | null; spent: () => void }) {
   const { route } = useLocation()
-  const [token] = useState(takeToken)
   const [inv, setInv] = useState<Invitation | null>(null)
   const [lookError, setLookError] = useState<ApiError | null>(null)
   const nameDraft = draft('invite.name', sessionStorage)
@@ -63,15 +58,20 @@ export function Invite() {
     void look()
   }, [])
 
+  const forward = (
+    <>
+      <span class="meta">{T.invite.haveAccount}</span>
+      <a class="button" href="/sign-in">
+        {T.invite.signIn}
+      </a>
+    </>
+  )
   if (!token) {
     return (
       <Door>
-        <div class="state forbidden" role="alert" data-state="forbidden">
-          <span class="kind">no invitation</span>
-          <h2>{T.invite.invalidTitle}</h2>
-          <p>{T.invite.noToken}</p>
-          <p class="how">{T.invite.reload}</p>
-        </div>
+        <LinkProblem title={T.invite.invalidTitle} message={T.invite.noToken} how={T.invite.reload}>
+          {forward}
+        </LinkProblem>
       </Door>
     )
   }
@@ -79,12 +79,9 @@ export function Invite() {
     return (
       <Door>
         {lookError.code === 'invitation_invalid' ? (
-          <div class="state forbidden" role="alert" data-state="forbidden">
-            <span class="kind">no invitation</span>
-            <h2>{T.invite.invalidTitle}</h2>
-            <p>{lookError.message}</p>
-            <p class="how">{lookError.howToProceed}</p>
-          </div>
+          <LinkProblem title={T.invite.invalidTitle} message={lookError.message} how={lookError.howToProceed}>
+            {forward}
+          </LinkProblem>
         ) : (
           <ErrorState error={lookError} onRetry={() => void look()} />
         )}
@@ -107,7 +104,7 @@ export function Invite() {
     try {
       await api.call('inviteAccept', { body: { token, name, password } })
       nameDraft.clear()
-      held = null
+      spent()
       resetResources()
       route('/', true)
     } catch (err) {
@@ -162,10 +159,9 @@ export function Invite() {
           }}
           autoFocus
         />
-        <Field
+        <PasswordField
           label={T.invite.password}
           hint={T.setup.passwordHint}
-          type="password"
           name="password"
           autocomplete="new-password"
           required

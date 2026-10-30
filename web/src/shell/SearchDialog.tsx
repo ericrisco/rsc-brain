@@ -3,6 +3,7 @@
 import { useState } from 'preact/hooks'
 import type { ApiError } from '../api/client.ts'
 import { api } from '../api/index.ts'
+import { brainsResource } from '../screens/Home.tsx'
 import { online } from '../session.ts'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
@@ -33,51 +34,61 @@ export function SearchDialog() {
       setPending(false)
     }
   }
+  // In no brain yet: nothing to search, and the dialog says so instead of offering a search that can
+  // only come back empty.
+  const none = searchOpen.value && brainsResource().data.value?.brains.length === 0
   return (
     <Dialog open={searchOpen.value} title={T.search.title} onClose={() => (searchOpen.value = false)}>
-      <search>
-        <form
-          class="form"
-          onSubmit={(e) => {
-            e.preventDefault()
-            void run()
-          }}
-        >
-          <div class="field">
-            <label for="search-q">{T.search.label}</label>
-            <div class="input-row">
-              <input
-                id="search-q"
-                type="search"
-                value={q}
-                autoFocus
-                autocomplete="off"
-                placeholder={T.search.placeholder}
-                onInput={(e) => setQ((e.currentTarget as HTMLInputElement).value)}
-                onKeyDown={(e) => {
-                  // Esc goes back (spec B6 «Search»), even with text in the field, which a search field
-                  // would otherwise only clear.
-                  if (e.key === 'Escape') {
-                    e.preventDefault()
-                    searchOpen.value = false
-                  }
-                }}
-              />
-              <Button
-                type="submit"
-                kind="primary"
-                pending={pending}
-                pendingLabel="…"
-                blocked={online.value ? null : T.states.writeOffline}
-              >
-                {T.search.submit}
-              </Button>
+      {none ? (
+        <div class="state" data-state="empty">
+          <h3>{T.search.nothingTitle}</h3>
+          <p class="how">{T.search.nothingLead}</p>
+        </div>
+      ) : (
+        <search>
+          <form
+            class="form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void run()
+            }}
+          >
+            <div class="field">
+              <label for="search-q">{T.search.label}</label>
+              <div class="input-row">
+                <input
+                  id="search-q"
+                  type="search"
+                  value={q}
+                  autoFocus
+                  autocomplete="off"
+                  placeholder={T.search.placeholder}
+                  onInput={(e) => setQ((e.currentTarget as HTMLInputElement).value)}
+                  onKeyDown={(e) => {
+                    // Esc goes back (spec B6 «Search»), even with text in the field, which a search field
+                    // would otherwise only clear.
+                    if (e.key === 'Escape') {
+                      e.preventDefault()
+                      searchOpen.value = false
+                    }
+                  }}
+                />
+                <Button
+                  type="submit"
+                  kind="primary"
+                  pending={pending}
+                  pendingLabel="…"
+                  blocked={online.value ? null : T.states.writeOffline}
+                >
+                  {T.search.submit}
+                </Button>
+              </div>
             </div>
-          </div>
-        </form>
-      </search>
-      {error ? <ErrorState error={error} onRetry={() => void run()} /> : null}
-      {hits && !error ? (
+          </form>
+        </search>
+      )}
+      {error && !none ? <ErrorState error={error} onRetry={() => void run()} /> : null}
+      {hits && !error && !none ? (
         <section aria-live="polite">
           {hits.length ? (
             <p class="meta">

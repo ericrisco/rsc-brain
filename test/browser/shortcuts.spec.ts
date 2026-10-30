@@ -42,6 +42,7 @@ test('each shortcut and its visible control do the same', async ({ page, context
   await page.keyboard.press('Escape')
 
   // search: ⌘K / Ctrl K and the Search button in the header.
+  await page.locator('html[data-keys="on"]').waitFor({ state: 'attached' })
   await page.keyboard.press('Control+k')
   await expect(page.getByRole('dialog', { name: 'Search' })).toBeVisible()
   await expect(page.getByLabel('Search all your brains')).toBeFocused()
@@ -52,6 +53,7 @@ test('each shortcut and its visible control do the same', async ({ page, context
   if (process.platform === 'darwin') {
     await page.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true })))
   } else {
+    await page.locator('html[data-keys="on"]').waitFor({ state: 'attached' })
     await page.keyboard.press('Meta+k')
   }
   await expect(page.getByRole('dialog', { name: 'Search' })).toBeVisible()
@@ -78,21 +80,27 @@ test('each shortcut and its visible control do the same', async ({ page, context
   await page.locator('header').getByRole('link', { name: /home/ }).click()
   await expect(page).toHaveURL(/\/$/)
 
-  // go-overview: "g o" and "Overview" in the side bar.
-  await page.goto('/b/growth')
-  await page.locator('aside').getByRole('link', { name: '← All brains' }).click()
-  await page.goto('/b/growth')
+  // go-overview: "g o" and "Overview" in the side bar, each from another page of the brain, so the
+  // address really changes (C4).
+  await page.goto('/b/growth/somewhere-else')
+  await expect(page.getByRole('heading', { name: 'Nothing here' })).toBeVisible()
+  await expect(page.locator('aside').getByRole('link', { name: 'Overview' })).toBeVisible()
   await page.keyboard.press('g')
   await page.keyboard.press('o')
   await expect(page).toHaveURL(/\/b\/growth$/)
+  await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
+  await page.goto('/b/growth/somewhere-else')
+  await expect(page.getByRole('heading', { name: 'Nothing here' })).toBeVisible()
   await page.locator('aside').getByRole('link', { name: 'Overview' }).click()
   await expect(page).toHaveURL(/\/b\/growth$/)
+  await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
 })
 
 test('a letter typed in a field is text, not a shortcut', async ({ page, context, baseURL }) => {
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto('/')
   await expect(page.getByRole('link', { name: 'Growth' })).toBeVisible()
+  await page.locator('html[data-keys="on"]').waitFor({ state: 'attached' })
   await page.keyboard.press('Control+k')
   await expect(page.getByLabel('Search all your brains')).toBeFocused()
   await page.keyboard.type('g h ?')

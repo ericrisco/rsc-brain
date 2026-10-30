@@ -4,14 +4,21 @@ import { branding, installationName } from '../session.ts'
 import { T } from '../text.ts'
 import { Mark } from './Mark.tsx'
 
-export function Brand({ href = '/' }: { href?: string }) {
+// `href` null: the name and logo only, not a link.
+export function Brand({ href = '/' }: { href?: string | null }) {
   const b = branding()
   const name = installationName(b.data.value)
   const logo = b.data.value?.logo
-  return (
-    <a class="brand" href={href}>
+  const inside = (
+    <>
       {logo ? <img src={logo.url} alt="" /> : <Mark />}
       <span class="name">{name}</span>
+    </>
+  )
+  if (href === null) return <span class="brand">{inside}</span>
+  return (
+    <a class="brand" href={href}>
+      {inside}
       {href === '/' ? <span class="sr-only">, {T.shell.home.toLowerCase()}</span> : null}
     </a>
   )

@@ -4,9 +4,11 @@ import AxeBuilder from '@axe-core/playwright'
 import type { Page } from '@playwright/test'
 import { expect, INVITE, RESET, scenario, test } from './fixture.ts'
 
+// WCAG A and AA, and the best-practice rules (a dialog without a name, a page without one main landmark
+// or level-one heading, content outside a landmark): serious and critical ones fail the test.
 async function audit(page: Page, where: string) {
   const r = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'])
     .analyze()
   const bad = r.violations
     .filter((v) => v.impact === 'serious' || v.impact === 'critical')
@@ -26,7 +28,7 @@ for (const theme of ['dark', 'light'] as const) {
       '/invite',
     ]) {
       await page.goto(path)
-      await expect(page.getByRole('heading', { level: 1 }).or(page.getByRole('alert'))).toBeVisible()
+      await expect(page.getByRole('heading', { level: 1 }).or(page.getByRole('alert')).first()).toBeVisible()
       await audit(page, `${theme} ${path}`)
     }
     await page.goto('/sign-in')
@@ -55,8 +57,28 @@ for (const theme of ['dark', 'light'] as const) {
     await expect(page.getByRole('heading', { name: 'Growth' })).toBeVisible()
     await audit(page, `${theme} brain`)
     await page.keyboard.press('?')
+    // Each dialog has its name, and is open before it is audited.
+    await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible()
     await audit(page, `${theme} help`)
     await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await page.locator('html[data-keys="on"]').waitFor({ state: 'attached' })
+    await page.keyboard.press('Control+k')
+    const search = page.getByRole('dialog', { name: 'Search' })
+    await expect(search).toBeVisible()
+    await audit(page, `${theme} search`)
+    await search.getByLabel('Search all your brains').fill('retention')
+    await search.getByLabel('Search all your brains').press('Enter')
+    await expect(search.getByText(/\d+ results/)).toBeVisible()
+    await audit(page, `${theme} search with results`)
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.getByRole('button', { name: 'Menu' }).click()
+    await expect(page.getByRole('dialog', { name: 'Growth' })).toBeVisible()
+    await audit(page, `${theme} brain menu`)
+    await page.keyboard.press('Escape')
+    await page.setViewportSize({ width: 1440, height: 900 })
     await page.getByRole('button', { name: /Account/ }).click()
     await audit(page, `${theme} account menu`)
   })

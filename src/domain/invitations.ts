@@ -449,7 +449,7 @@ const badInvitation = () =>
     400,
     'invitation_invalid',
     'This invitation link is not valid: it expired, was already used, or was withdrawn.',
-    'Ask the administration to send a new one.',
+    'Ask an administrator to send a new one.',
   )
 
 // What the invitation page shows before the person accepts.

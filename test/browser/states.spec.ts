@@ -1,6 +1,6 @@
 // Spec B6 «Estados en todas las pantallas» (CA14 for the screens of PR17): loading, empty, error with
 // "try again", no access with who to ask, a lot of data, offline, and a session that ended.
-import { expect, noSideScroll, scenario, test } from './fixture.ts'
+import { expect, noSideScroll, PASSWORD, scenario, test } from './fixture.ts'
 
 test.describe('home', () => {
   test('loading shows the shape of the list, then the brains', async ({ page, context, baseURL }) => {
@@ -13,11 +13,11 @@ test.describe('home', () => {
   })
 
   test('empty says who can give access', async ({ page, context, baseURL }) => {
-    await scenario(context, baseURL as string, 'signed-in', { home: 'empty' })
+    await scenario(context, baseURL as string, 'member', { home: 'empty' })
     await page.goto('/')
     await expect(page.getByRole('heading', { name: 'You are not in any brain yet' })).toBeVisible()
     await expect(
-      page.getByText('A curator of a brain, or the administration, can add you to one.'),
+      page.getByText('A curator of a brain, or an administrator, can add you to one.'),
     ).toBeVisible()
   })
 
@@ -26,7 +26,7 @@ test.describe('home', () => {
     await page.goto('/')
     const alert = page.getByRole('alert')
     await expect(alert).toContainText('Something went wrong on the server (reference fx000001).')
-    await expect(alert).toContainText('give the reference to the administration')
+    await expect(alert).toContainText('give the reference to an administrator')
     await s.state('home', 'normal')
     await alert.getByRole('button', { name: 'Try again' }).click()
     await expect(page.getByRole('link', { name: 'Growth' })).toBeVisible()
@@ -77,6 +77,42 @@ test.describe('the session', () => {
     await scenario(context, baseURL as string, 'signed-out')
     await page.goto('/b/support?x=1')
     await expect(page).toHaveURL(/\/sign-in\?next=%2Fb%2Fsupport%3Fx%3D1$/)
+  })
+
+  // C1: a session that ends while the web is open leads to the sign-in form, not to a loop between the
+  // sign-in page and the page (the cached "who am I" must not send the person straight back).
+  test('ending mid-use, a click leads to the sign-in form and, signed in again, to that page', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/')
+    await expect(page.getByRole('link', { name: 'Growth' })).toBeVisible()
+    await context.clearCookies()
+    await page.getByRole('link', { name: 'Growth' }).click()
+    await expect(page).toHaveURL(/\/sign-in\?next=%2Fb%2Fgrowth$/)
+    await expect(page.getByLabel('Email')).toBeVisible()
+    // Still there a moment later: no bounce back to the brain.
+    await page.waitForTimeout(500)
+    await expect(page).toHaveURL(/\/sign-in\?next=%2Fb%2Fgrowth$/)
+    await page.getByLabel('Email').fill('eric@example.test')
+    await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+    await expect(page).toHaveURL(/\/b\/growth$/)
+    await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
+  })
+
+  // C5: a broken escape in an address is a page that does not exist, never a blank page.
+  test('a malformed escape in a deep link says the page does not exist', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/b/%E0%A4%A')
+    await expect(page.getByRole('heading', { name: 'Nothing here' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Go home' })).toBeVisible()
   })
 
   test('an address that is not a page of the web says so and leads home', async ({

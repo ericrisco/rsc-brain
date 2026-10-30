@@ -113,7 +113,10 @@ test.describe('first run', () => {
     await page.getByLabel('Your email').fill('eric@example.test')
     await page.getByLabel('Password', { exact: true }).fill('too short')
     await page.getByRole('button', { name: 'Set up and sign in' }).click()
-    await expect(page.getByRole('alert')).toContainText('A password has 12 to 200 characters.')
+    // Checked in the browser first: the problem sits next to the field, which takes the keyboard.
+    await expect(page.getByLabel('Password', { exact: true })).toHaveAccessibleDescription(
+      /at least 12 characters/,
+    )
     await expect(page.getByLabel('Password', { exact: true })).toBeFocused()
     await expect(page.getByLabel('Your email')).toHaveValue('eric@example.test')
     await page.getByRole('button', { name: 'Show' }).click()
@@ -166,7 +169,7 @@ test.describe('accept an invitation', () => {
     await scenario(context, baseURL as string, 'signed-out')
     await page.goto('/invite#token=inv_not_a_real_token_000')
     await expect(page.getByRole('alert')).toContainText('This invitation link is not valid')
-    await expect(page.getByRole('alert')).toContainText('Ask the administration to send a new one.')
+    await expect(page.getByRole('alert')).toContainText('Ask an administrator to send a new one.')
   })
 
   test('without a token, it says to open the link from the email', async ({ page, context, baseURL }) => {
