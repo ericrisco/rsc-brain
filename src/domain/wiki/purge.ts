@@ -89,7 +89,7 @@ const TARGETS: Target[] = [
     arrays: [],
     json: [],
   },
-  { table: 'events', scope: 'brain_id = $1', text: { label: null }, arrays: [], json: [] },
+  { table: 'events', scope: 'brain_id = $1', text: { label: null, query: null }, arrays: [], json: [] },
   { table: 'trail', scope: 'brain_id = $1', text: { query: null }, arrays: [], json: [] },
 ]
 const MARK = '[purged]'

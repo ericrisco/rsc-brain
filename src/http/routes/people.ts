@@ -219,7 +219,13 @@ export const peopleRoutes: Route[] = [
   route('GET /v1/admin/settings', async (r) => ({ body: await getSettings(ctxOf(r)) })),
   route('PUT /v1/admin/settings', async (r) => {
     const b = obj(r.body)
-    return { body: await updateSettings(ctxOf(r), { name: b.name, curatorsInvite: b.curatorsInvite }) }
+    return {
+      body: await updateSettings(ctxOf(r), {
+        name: b.name,
+        curatorsInvite: b.curatorsInvite,
+        rateLimit: b.rateLimit,
+      }),
+    }
   }),
   route('GET /v1/admin/mail', async (r) => ({ body: await getMail(ctxOf(r)) })),
   route('PUT /v1/admin/mail', async (r) => ({ body: await setMail(ctxOf(r), obj(r.body)) })),

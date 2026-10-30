@@ -30,6 +30,9 @@ export type Principal = {
   canCreateBrains: boolean
   canInvite: boolean
   credential: Credential
+  // The requests per minute this key may make: the installation's limit, read along with the key so a
+  // change by the administration counts from the next request (spec B5).
+  rateLimit: number
 }
 
 export const actorOf = (p: Principal): Actor => ({
@@ -119,7 +122,7 @@ export async function resolveKey(
   if (!secret) throw NO_KEY()
   const r = await db.one(
     `SELECT c.*, a.kind AS a_kind, a.name AS a_name, a.email, a.is_admin, a.can_create_brains, a.can_invite,
-            a.status, p.revoked_at AS p_revoked_at, p.expires_at AS p_expires_at, i.key_epoch, i.public_url,
+            a.status, p.revoked_at AS p_revoked_at, p.expires_at AS p_expires_at, i.key_epoch, i.public_url, i.rate_limit,
             g.revoked_at AS g_revoked_at, g.last_used_at AS g_last_used_at, g.expires_max AS g_expires_max
        FROM credentials c JOIN accounts a ON a.id = c.account_id
        LEFT JOIN credentials p ON p.id = c.parent_id
@@ -195,6 +198,7 @@ export async function resolveKey(
       onBehalfId: r.on_behalf_id == null ? null : String(r.on_behalf_id),
       parentId: r.parent_id == null ? null : String(r.parent_id),
     },
+    rateLimit: Number(r.rate_limit),
   }
 }
 

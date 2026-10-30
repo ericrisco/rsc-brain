@@ -5,6 +5,7 @@
 import { bearer, resolveKey } from '../auth/principal.ts'
 import { AppError, invalid } from '../core/errors.ts'
 import { installation } from '../domain/installation.ts'
+import { CUT_HOW, head, MAX_REPLY_CHARS } from '../http/bounds.ts'
 import { match, type PublicReq, type Reply, type Route } from '../http/router.ts'
 import { INSTRUCTIONS, PROMPTS } from './instructions.ts'
 import { allowed, defaultBrain, TOOLS } from './tools.ts'
@@ -13,7 +14,9 @@ export const MODERN = '2026-07-28'
 // 2025-03-26 is not offered: it asks servers to take batches, which later revisions dropped.
 export const LEGACY = ['2025-11-25', '2025-06-18']
 export const SUPPORTED = [MODERN, ...LEGACY]
-export const MAX_REPLY_CHARS = 256_000
+// One limit for the API and the MCP endpoint.
+export { MAX_REPLY_CHARS }
+
 const SERVER_INFO = { name: 'rsc-brain', title: 'RSC Brain', version: '0.1.0' }
 const CAPABILITIES = { tools: { listChanged: false }, prompts: { listChanged: false } }
 
@@ -48,6 +51,12 @@ const failure = (id: unknown, e: RpcError) =>
     id: id ?? null,
     error: { code: e.code, message: e.message, ...(e.data ? { data: e.data } : {}) },
   })
+
+// The id of a request, when it is one a reply may carry (a string or a whole number).
+function idOf(body: unknown): string | number | null {
+  const id = body && typeof body === 'object' ? (body as Msg).id : undefined
+  return typeof id === 'string' || Number.isSafeInteger(id) ? (id as string | number) : null
+}
 
 // An encoded header value ("=?base64?...?=") is compared after decoding.
 function headerValue(v: string | string[] | undefined): string | undefined {
@@ -110,6 +119,26 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
       if (err instanceof AppError && err.status === 401) return unauthorized(r, err)
       throw err
     }
+    // The same limit as every other request of this key (spec B5), said in JSON-RPC.
+    try {
+      r.rate.take(who.credential.id, who.rateLimit)
+    } catch (err) {
+      if (!(err instanceof AppError)) throw err
+      const e = err.body()
+      return raw(
+        err.status,
+        {
+          jsonrpc: '2.0',
+          id: idOf(r.body),
+          error: {
+            code: -32029,
+            message: `${e.code}: ${e.message} How to proceed: ${e.howToProceed}`,
+            data: e,
+          },
+        },
+        err.headers ?? {},
+      )
+    }
     const m = r.body as Msg
     if (
       !m ||
@@ -127,6 +156,17 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
     // A request id is a string or a whole number (MCP narrows JSON-RPC here).
     if (!notification && !(typeof m.id === 'string' || Number.isSafeInteger(m.id))) {
       return failure(null, new RpcError(400, -32600, 'A request "id" is a string or a whole number.'))
+    }
+    // The reply carries the id back, within the limit of every answer: an id has room, not all of it.
+    if (!notification && JSON.stringify(m.id).length > MAX_ID_CHARS) {
+      return failure(
+        null,
+        new RpcError(
+          400,
+          -32600,
+          `A request "id" has at most ${MAX_ID_CHARS} characters; use a shorter one.`,
+        ),
+      )
     }
     if (notification) return { status: 202, body: '', headers: { 'content-type': 'text/plain' } }
     const params = (m.params && typeof m.params === 'object' ? m.params : {}) as Json
@@ -185,7 +225,9 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
           })
         }
       }
-      const result = await dispatch(r, who, m.method, params, modern, routes)
+      // The reply carries the request id back: its room comes out of the limit too.
+      const idChars = JSON.stringify(m.id).length
+      const result = await dispatch(r, who, m.method, params, modern, routes, idChars)
       return rpc(200, {
         jsonrpc: '2.0',
         id: m.id,
@@ -213,6 +255,7 @@ function route(spec: string): Route {
   const [method, path] = spec.split(' ') as [string, string]
   return {
     method,
+    path,
     pattern: new RegExp(`^${path.replace(/\//g, '\\/')}$`),
     keys: [],
     handler: () => Promise.reject(new Error('the MCP endpoint runs through `public`')),
@@ -228,6 +271,7 @@ async function dispatch(
   params: Json,
   modern: boolean,
   routes: () => Route[],
+  idChars: number,
 ): Promise<Json> {
   switch (method) {
     case 'initialize': {
@@ -261,7 +305,7 @@ async function dispatch(
         })),
       }
     case 'tools/call':
-      return callTool(r, who, params, modern, routes)
+      return callTool(r, who, params, modern, routes, idChars)
     case 'prompts/list':
       return {
         prompts: PROMPTS.map((p) => ({
@@ -297,6 +341,7 @@ async function callTool(
   params: Json,
   modern: boolean,
   routes: () => Route[],
+  idChars: number,
 ): Promise<Json> {
   const tool = TOOLS.find((t) => t.name === params.name)
   if (!tool) {
@@ -327,23 +372,7 @@ async function callTool(
     }
     const reply = await found.route.handler({ ...r, params: found.params, query, body: call.body, who })
     const body = reply.body as Json
-    let text = JSON.stringify(body)
-    // The result goes as text and as structured content: both together stay within the limit.
-    let structured: unknown = text.length <= MAX_REPLY_CHARS / 2 ? body : undefined
-    if (text.length > MAX_REPLY_CHARS) {
-      let cut = text.slice(0, MAX_REPLY_CHARS)
-      // Never half a character: a high surrogate at the cut goes too.
-      if (/[\ud800-\udbff]$/.test(cut)) cut = cut.slice(0, -1)
-      text = `${cut}\n[cut at ${MAX_REPLY_CHARS} characters: ask for less, with a smaller limit, a filter or the next page]`
-      structured = undefined
-    }
-    return {
-      content: [{ type: 'text', text }],
-      ...(structured && typeof structured === 'object' && !Array.isArray(structured)
-        ? { structuredContent: structured }
-        : {}),
-      isError: false,
-    }
+    return toolResult(body, idChars)
   } catch (err) {
     if (err instanceof AppError) {
       const e = err.body()
@@ -352,4 +381,32 @@ async function callTool(
     }
     throw err
   }
+}
+
+// Room for the rest of the JSON-RPC answer (jsonrpc, resultType, isError), besides the request id,
+// which the client chooses and so is counted as it is (`idChars`, its length written as JSON).
+const ENVELOPE = 1_000
+export const MAX_ID_CHARS = 10_000
+
+// The result goes as text and, when it fits too, as structured content. What counts is the size once
+// written as JSON (quotes and line breaks in the text are escaped), so the whole answer stays within
+// the limit of the API (spec B5 «Respuestas acotadas»).
+export function toolResult(body: Json, idChars = 0): Json {
+  const full = JSON.stringify(body)
+  const sent = (text: string, structured?: Json) =>
+    JSON.stringify({ content: [{ type: 'text', text }], structuredContent: structured }).length +
+    ENVELOPE +
+    idChars
+  if (!Array.isArray(body) && sent(full, body) <= MAX_REPLY_CHARS) {
+    return { content: [{ type: 'text', text: full }], structuredContent: body, isError: false }
+  }
+  if (sent(full) <= MAX_REPLY_CHARS) return { content: [{ type: 'text', text: full }], isError: false }
+  const note = `\n[cut at ${MAX_REPLY_CHARS} characters. ${CUT_HOW}]`
+  let keep = MAX_REPLY_CHARS - note.length - ENVELOPE - idChars
+  let text = `${head(full, keep)}${note}`
+  while (sent(text) > MAX_REPLY_CHARS) {
+    keep -= sent(text) - MAX_REPLY_CHARS
+    text = `${head(full, keep)}${note}`
+  }
+  return { content: [{ type: 'text', text }], isError: false }
 }

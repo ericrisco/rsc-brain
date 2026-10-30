@@ -693,7 +693,12 @@ export async function getEntry(
   const entry = entryOf(row)
   // A purged entry's mark is shown, but its id never goes back into the trail (CA13).
   if (row.state !== 'purged') {
-    await track(ctx.root ?? ctx.db, ctx, { brainId: entry.brainId, kind: 'read', resultIds: [entry.id] })
+    await track(ctx.root ?? ctx.db, ctx, {
+      brainId: entry.brainId,
+      kind: 'read',
+      resultIds: [entry.id],
+      label: entry.title,
+    })
   }
   if (!o.history || row.state === 'purged') return { entry }
   const revs = await ctx.db.query('SELECT * FROM entry_revisions WHERE entry_id = $1 ORDER BY revision', [id])

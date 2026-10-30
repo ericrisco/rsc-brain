@@ -9,6 +9,10 @@ import { createAccount } from './accounts.ts'
 import { audit } from './audit.ts'
 import { mintMainKey, mintWebSession } from './keys.ts'
 
+// The requests per minute each key may make, unless the administration sets another (spec B5).
+export const DEFAULT_RATE_LIMIT = 600
+export const MAX_RATE_LIMIT = 100_000
+
 export type ConnFacts = { encrypted: boolean; local: boolean; ip: string; userAgent: string }
 
 export async function setupDone(db: Db): Promise<boolean> {
@@ -20,12 +24,15 @@ export async function setupDone(db: Db): Promise<boolean> {
 
 export async function installation(
   db: Db,
-): Promise<{ name: string; publicUrl: string | null; curatorsInvite: boolean }> {
-  const r = await db.one('SELECT name, public_url, curators_invite FROM installation WHERE id = 1')
+): Promise<{ name: string; publicUrl: string | null; curatorsInvite: boolean; rateLimit: number }> {
+  const r = await db.one(
+    'SELECT name, public_url, curators_invite, rate_limit FROM installation WHERE id = 1',
+  )
   return {
     name: String(r?.name ?? ''),
     publicUrl: r?.public_url == null ? null : String(r.public_url),
     curatorsInvite: Boolean(r?.curators_invite),
+    rateLimit: Number(r?.rate_limit ?? DEFAULT_RATE_LIMIT),
   }
 }
 

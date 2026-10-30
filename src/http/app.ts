@@ -6,15 +6,28 @@ import { bearer, resolveKey, sessionCookie } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
-import { setupDone } from '../domain/installation.ts'
+import { installation, setupDone } from '../domain/installation.ts'
 import type { Outbox } from '../mail/mail.ts'
 import { mcpRoutes } from '../mcp/server.ts'
 import type { Providers } from '../meaning/providers.ts'
 import type { FetchPolicy } from '../oauth/fetch.ts'
-import { type Conn, match, type Route, WEB_HEADER } from './router.ts'
+import { boundJson } from './bounds.ts'
+import { EVENT_TIMINGS, type EventTimings, eventHub } from './hub.ts'
+import { openapi } from './openapi.ts'
+import { rateLimiter } from './ratelimit.ts'
+import {
+  type Conn,
+  match,
+  publicRoute,
+  type Reply,
+  type Route,
+  type StreamOut,
+  WEB_HEADER,
+} from './router.ts'
 import { authRoutes } from './routes/auth.ts'
 import { brainRoutes } from './routes/brains.ts'
 import { decideRoutes } from './routes/decide.ts'
+import { eventRoutes } from './routes/events.ts'
 import { journalRoutes } from './routes/journal.ts'
 import { keyRoutes } from './routes/keys.ts'
 import { meaningRoutes } from './routes/meaning.ts'
@@ -41,6 +54,8 @@ export type AppDeps = {
   mailTransport?: Outbox['transport']
   // Only tests set this: client documents served from this machine over http.
   fetchPolicy?: FetchPolicy
+  // The rhythm of the event streams; tests make it fast.
+  events?: Partial<EventTimings>
 }
 
 export const ROUTES: Route[] = [
@@ -54,9 +69,16 @@ export const ROUTES: Route[] = [
   ...meaningRoutes,
   ...peopleRoutes,
   ...oauthRoutes,
+  ...eventRoutes,
 ]
 // The MCP endpoint calls the same routes a program would (spec B5 parity).
 ROUTES.push(...mcpRoutes(() => ROUTES))
+// The description of the API, generated from this table; it holds no data, so it needs no key.
+ROUTES.push(
+  publicRoute('GET /v1/openapi.json', async (r) => ({
+    body: openapi(ROUTES, (await installation(r.db)).publicUrl),
+  })),
+)
 
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
@@ -157,21 +179,78 @@ function send(
   headers: Record<string, string | string[]> = {},
 ): void {
   const raw = typeof body === 'string' && headers['content-type'] !== undefined
-  const text = raw ? (body as string) : JSON.stringify(body)
+  const bounded = raw ? { text: body as string, cut: false } : boundJson(JSON.stringify(body))
+  const text = bounded.text
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     ...headers,
+    ...(bounded.cut ? { 'x-brain-cut': 'true' } : {}),
     'content-length': Buffer.byteLength(text),
   })
   res.end(text)
+}
+
+// An event stream: the headers go at once, then whatever the route writes, until it ends or the client
+// leaves. A failure after the headers can only close the stream.
+async function stream(
+  res: ServerResponse,
+  run: NonNullable<Reply['stream']>,
+  log: (line: string) => void,
+  bufferBytes: number,
+): Promise<void> {
+  res.writeHead(200, {
+    'content-type': 'text/event-stream; charset=utf-8',
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    'x-accel-buffering': 'no',
+    connection: 'keep-alive',
+  })
+  res.flushHeaders()
+  const closed = () => res.destroyed || res.writableEnded
+  const out: StreamOut = {
+    // A client that stops reading is let go before what waits for it grows without end.
+    write: (text) => {
+      if (closed()) return
+      res.write(text)
+      if (res.writableLength > bufferBytes) res.destroy()
+    },
+    end: () => {
+      if (!closed()) res.end()
+    },
+    closed,
+    onClose: (f) => {
+      res.on('close', f)
+    },
+    drained: () =>
+      new Promise<void>((resolve) => {
+        if (closed() || !res.writableNeedDrain) return resolve()
+        const done = () => {
+          res.off('drain', done)
+          res.off('close', done)
+          resolve()
+        }
+        res.on('drain', done)
+        res.on('close', done)
+      }),
+  }
+  try {
+    await run(out)
+  } catch (err) {
+    log(`event stream: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
+  } finally {
+    out.end()
+  }
 }
 
 export function createHandler(deps: AppDeps) {
   const routes = deps.routes ?? ROUTES
   const log = deps.log ?? ((line: string) => process.stderr.write(`${line}\n`))
   const trusted = deps.trustedProxies ?? []
+  const rate = rateLimiter(deps.clock)
+  const timings = { ...EVENT_TIMINGS, ...(deps.events ?? {}) }
+  const hub = eventHub(deps.db, timings, log)
   // Once the first-time setup is done it stays done: no need to ask the database again.
   let ready = false
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -230,6 +309,9 @@ export function createHandler(deps: AppDeps) {
         fetchPolicy: deps.fetchPolicy ?? {},
         conn,
         cookie,
+        rate,
+        hub,
+        timings,
       }
       if (found.route.public) {
         // A page that a browser posts to checks its own origin; JSON callers send no cookie here.
@@ -247,8 +329,10 @@ export function createHandler(deps: AppDeps) {
         )
       }
       const who = await resolveKey(deps.db, key ?? cookie, deps.clock(), key ? 'bearer' : 'cookie', conn)
+      rate.take(who.credential.id, who.rateLimit)
       const body = await readBody(req)
       const reply = await found.route.handler({ ...base, body, who })
+      if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)
       send(res, reply.status ?? 200, reply.body, reply.headers)
     } catch (err) {
       // The standard sign-in's endpoints answer in the standard's shape, even for a malformed request.

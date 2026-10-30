@@ -122,6 +122,10 @@ async function main(argv: string[]): Promise<number> {
           () => process.exit(1),
         )
       })
+      // Requests under way get two seconds to finish; event streams never finish on their own, so what
+      // is still open then is closed (their clients reconnect with the last event id).
+      server.closeIdleConnections()
+      setTimeout(() => server.closeAllConnections(), 2000).unref()
     }
     process.once('SIGTERM', stop)
     process.once('SIGINT', stop)

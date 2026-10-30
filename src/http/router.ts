@@ -7,6 +7,8 @@ import type { Db } from '../db/db.ts'
 import type { Outbox } from '../mail/mail.ts'
 import type { Providers } from '../meaning/providers.ts'
 import type { FetchPolicy } from '../oauth/fetch.ts'
+import type { EventHub, EventTimings } from './hub.ts'
+import type { RateLimiter } from './ratelimit.ts'
 
 // How a request arrived (spec B4): over TLS or not, from this machine or not, from where and with which
 // client. A request through a proxy counts as local only if nothing says it came from elsewhere, and
@@ -32,12 +34,35 @@ export type PublicReq = {
   conn: Conn
   // The web session cookie, when one came, for public pages that also serve a signed-in person.
   cookie: string | null
+  // The requests per minute of each key (spec B5); a public route that takes a key (the MCP endpoint)
+  // counts it here too.
+  rate: RateLimiter
+  // The live feed of events, and its rhythm (spec B5 «Flujo de eventos»).
+  hub: EventHub
+  timings: EventTimings
 }
 export type Req = PublicReq & { who: Principal }
-export type Reply = { status?: number; body: unknown; headers?: Record<string, string | string[]> }
+// A stream the server keeps writing to (Server-Sent Events) until the client leaves or `end` is called.
+export type StreamOut = {
+  write(text: string): void
+  end(): void
+  closed(): boolean
+  onClose(f: () => void): void
+  // Settles once the client has taken what was written (or left): a sender with a lot to send waits.
+  drained(): Promise<void>
+}
+export type Reply = {
+  status?: number
+  body: unknown
+  headers?: Record<string, string | string[]>
+  // Instead of a body: an event stream; the promise settles when the stream is over.
+  stream?: (out: StreamOut) => Promise<void>
+}
 export type Handler = (r: Req) => Promise<Reply>
 export type Route = {
   method: string
+  // The path as written ("/v1/brains/:slug/pages/*address"), for the description of the API.
+  path: string
   pattern: RegExp
   keys: string[]
   handler: Handler
@@ -71,7 +96,7 @@ export function route(spec: string, handler: Handler): Route {
       return '([^/]+)'
     })
     .join('/')
-  return { method, pattern: new RegExp(`^${source}$`), keys, handler }
+  return { method, path, pattern: new RegExp(`^${source}$`), keys, handler }
 }
 
 export function match(
