@@ -5,6 +5,7 @@ import { after, before, describe, it } from 'node:test'
 import { hashPassword } from '../../src/auth/password.ts'
 import { hashSecret, newSecret } from '../../src/auth/secrets.ts'
 import { stepOf, totpAt } from '../../src/auth/totp.ts'
+import { newReset } from '../../src/domain/login.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
 
@@ -180,6 +181,39 @@ describe('signing in', { skip: skipPg }, () => {
     assert.equal((await confirm(fourth, 'second link long password')).status, 200)
     assert.equal(await look(older), 400, 'a new password ends the older link')
     assert.equal((await confirm(older, 'third link long password')).status, 400)
+  })
+
+  // An emailed request and a link made by hand at the same moment take turns on the same per-account
+  // lock: whichever comes second ends the first, so exactly one link works.
+  it('a link made by hand while an emailed one is being made: exactly one link works', async () => {
+    const eve = await w.person('Eve')
+    const adminWeb = await w.web(admin.id)
+    let release = () => {}
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    let made = () => {}
+    const holding = new Promise<void>((r) => {
+      made = r
+    })
+    // The emailed path, held between making its link and committing it.
+    const emailed = w.db.tx(async (tx) => {
+      await tx.query("SELECT pg_advisory_xact_lock(hashtext('rsc-brain reset ' || $1))", [eve.id])
+      await newReset(tx, eve.id, null, w.clock())
+      made()
+      await gate
+    })
+    await holding
+    const byHand = w.callWeb(adminWeb, 'POST', `/v1/admin/accounts/${eve.id}/reset-link`)
+    await new Promise((r) => setTimeout(r, 300))
+    release()
+    await emailed
+    assert.equal((await byHand).status, 201)
+    const live = await w.db.one<{ n: number }>(
+      'SELECT count(*)::int AS n FROM password_resets WHERE account_id = $1 AND used_at IS NULL',
+      [eve.id],
+    )
+    assert.equal(live?.n, 1)
   })
 
   // Spec B6 «Reset»: the page checks the link when it opens, so a used or expired one says so before the

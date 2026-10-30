@@ -157,7 +157,7 @@ const clientOf = (r: Row): string | null => {
 
 // G8: the overview of one brain.
 export async function brainOverview(ctx: Ctx, slug: string) {
-  const { brain } = await inBrain(ctx, { slug })
+  const { brain, role } = await inBrain(ctx, { slug })
   const db = ctx.db
   const tz = ctx.tz ?? 'UTC'
   const now = ctx.clock()
@@ -186,6 +186,15 @@ export async function brainOverview(ctx: Ctx, slug: string) {
       ORDER BY p.created_at DESC, p.id DESC LIMIT $2`,
     [brain.id, PENDING_SHOWN],
   )
+  // Pack rule 7: someone who is not a curator never learns about other people's searches and reads, so
+  // only the trail rows they may see count (the same rows the trail answers them: their own keys).
+  // Sessions and proposals count for everyone; the overview already shows them.
+  const mine =
+    role === 'curator'
+      ? null
+      : ctx.who.credential.kind === 'short'
+        ? { sql: 't.credential_id = $2', id: ctx.who.credential.id }
+        : { sql: 't.account_id = $2', id: ctx.who.accountId }
   const steps = await db.one<{ agent: boolean; entry: boolean }>(
     // An agent connected: a key that is not a web session did something in this brain — opened a
     // session, saved, proposed, or only read (a search, a read or asking for context: the trail of B3).
@@ -194,9 +203,9 @@ export async function brainOverview(ctx: Ctx, slug: string) {
          OR EXISTS (SELECT 1 FROM proposals p JOIN credentials c ON c.id = p.credential_id
                      WHERE p.brain_id = $1 AND c.kind <> 'web')
          OR EXISTS (SELECT 1 FROM trail t JOIN credentials c ON c.id = t.credential_id
-                     WHERE t.brain_id = $1 AND c.kind <> 'web') AS agent,
+                     WHERE t.brain_id = $1 AND c.kind <> 'web'${mine ? ` AND ${mine.sql}` : ''}) AS agent,
             EXISTS (SELECT 1 FROM entries e WHERE e.brain_id = $1) AS entry`,
-    [brain.id],
+    mine ? [brain.id, mine.id] : [brain.id],
   )
   const h = await wikiHealth(ctx, slug)
   return {

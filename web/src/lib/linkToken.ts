@@ -1,9 +1,13 @@
 // The token of an invitation or reset link, read from "#token=" and taken out of the address at once
 // (never in the server's logs, never in a URL of the history). Kept in memory for the visit, so a screen
-// that mounts again still has it, and in this tab's own history entry (history.state, which the browser
-// keeps for a reload of the same tab and never sends anywhere), so a reload does not lose the
-// invitation; never in storage. Using the link clears both. A link pasted again in the same tab
-// (hashchange) is read anew.
+// that mounts again still has it, and in this tab's own history entry (history.state), so a reload does
+// not lose the invitation; never in localStorage or sessionStorage, and never sent anywhere. Note:
+// history.state belongs to the entry, so the browser may keep it on disk with the session and bring it
+// back with that entry (restoring the session after a restart, or going Back to the page). Using the link
+// clears it, and so does abandoning it here. It is not cleared on pagehide: a reload fires pagehide too
+// and cannot be told apart, so clearing there would lose the invitation on every reload. The link is
+// single-use and expires on the server, which bounds what a restored entry can do. A link pasted
+// again in the same tab (hashchange) is read anew.
 import { useEffect, useState } from 'preact/hooks'
 import { tokenFromHash } from './nav.ts'
 

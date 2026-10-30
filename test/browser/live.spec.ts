@@ -91,3 +91,45 @@ test('P6: no counter in the top bar while the Proposals screen does not exist', 
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.getByRole('banner').locator('.to-review')).toHaveCount(0)
 })
+
+test('L5: step 1 marks itself after an agent only asked for context, which sends no event', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await page.clock.install()
+  const s = await scenario(context, baseURL as string, 'alone')
+  const items = await newBrain(page)
+  // The agent's first call is for context: no event reaches the open overview.
+  await s.emit('onboarding', 'context')
+  await page.waitForTimeout(200)
+  await expect(items.nth(0)).toContainText('To do')
+  // While step 1 waits, the overview is asked again every 5 seconds.
+  await page.clock.fastForward(5_000)
+  await expect(items.nth(0)).toContainText('Done', { timeout: 3_000 })
+  // Once done, it is not asked again. A request already on its way when the step turned may still land:
+  // let it, then count.
+  await page.waitForTimeout(500)
+  let asked = 0
+  page.on('request', (r) => {
+    if (r.url().endsWith('/overview')) asked += 1
+  })
+  await page.clock.fastForward(15_000)
+  await page.waitForTimeout(200)
+  expect(asked).toBe(0)
+})
+
+test('L6: a hidden tab does not ask for the overview while step 1 waits', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await page.clock.install()
+  const s = await scenario(context, baseURL as string, 'alone')
+  const items = await newBrain(page)
+  await tab(page, true)
+  await s.emit('onboarding', 'context')
+  await page.clock.fastForward(15_000)
+  await page.waitForTimeout(200)
+  await expect(items.nth(0)).toContainText('To do')
+})

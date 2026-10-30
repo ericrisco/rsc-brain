@@ -1073,6 +1073,11 @@ async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
 function emit(s: Scen, slug: string, kind: string): void {
   const b = s.brains.find((x) => x.slug === slug)
   const life = s.life.get(slug) ?? { entries: 0, agent: false }
+  // An agent asked for context: step 1 is done, but the brain says nothing (no event, as the server).
+  if (kind === 'context') {
+    s.life.set(slug, { ...life, agent: true })
+    return
+  }
   if (kind === 'proposal.submitted' && b)
     b.stats = { ...b.stats, pendingProposals: b.stats.pendingProposals + 1 }
   if (kind === 'entry.saved' || kind === 'session.opened') {

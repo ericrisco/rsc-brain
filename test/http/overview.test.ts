@@ -424,6 +424,22 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
       assert.equal((await steps('searched')).agentConnected, true)
     })
 
+    // Pack rule 7: someone who is not a curator never learns about other people's searches and reads.
+    it("only reads the viewer may see mark it: a reader does not learn of another member's search", async () => {
+      await fresh('peers')
+      await w.member('peers', ana.id, 'reader')
+      await w.member('peers', bo.id, 'contributor')
+      const seenBy = async (web: string) =>
+        ((await w.callWeb(web, 'GET', '/v1/brains/peers/overview')).body.firstSteps as Json).agentConnected
+      const found = await w.call(bo.key, 'GET', '/v1/search?q=anything&brains=peers')
+      assert.equal(found.status, 200, found.text)
+      assert.equal(await seenBy(anaWeb), false, "a reader does not see Bo's agent searching")
+      assert.equal(await seenBy(ericWeb), true, 'a curator sees every read')
+      const read = await w.call(ana.key, 'GET', '/v1/brains/peers/context')
+      assert.equal(read.status, 200, read.text)
+      assert.equal(await seenBy(anaWeb), true, "the reader's own agent marks it for her")
+    })
+
     it('a person reading in the web does not mark it', async () => {
       await fresh('web-reads')
       const asked = await w.callWeb(ericWeb, 'GET', '/v1/brains/web-reads/context')

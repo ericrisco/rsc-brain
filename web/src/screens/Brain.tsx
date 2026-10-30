@@ -4,7 +4,7 @@
 // mark themselves from the live feed of the brain, without reloading. A brain the person cannot read
 // answers like one that does not exist, and says who to ask (constitution Brain P4, general P6).
 import type { ComponentChildren } from 'preact'
-import { useRef } from 'preact/hooks'
+import { useEffect, useRef } from 'preact/hooks'
 import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
@@ -244,6 +244,33 @@ function Health({ health }: { health: Record<string, number> }) {
   )
 }
 
+// Step 1 also counts an agent asking for context, and that call sends no event: while the step waits and
+// the tab is visible, the overview is asked again every few seconds. It stops once the step is done, when
+// the tab is hidden (shown again, the live feed asks anyway) and when the screen goes.
+export const STEP1_EVERY = 5_000
+
+function useWaitForAgent(ov: { reload(): Promise<unknown> }, waiting: boolean, every = STEP1_EVERY): void {
+  useEffect(() => {
+    if (!waiting) return
+    let timer: ReturnType<typeof setInterval> | null = null
+    const stop = () => {
+      if (timer) clearInterval(timer)
+      timer = null
+    }
+    const start = () => {
+      if (timer || document.hidden) return
+      timer = setInterval(() => void ov.reload(), every)
+    }
+    const seen = () => (document.hidden ? stop() : start())
+    start()
+    document.addEventListener('visibilitychange', seen)
+    return () => {
+      document.removeEventListener('visibilitychange', seen)
+      stop()
+    }
+  }, [ov, waiting, every])
+}
+
 export function Brain({ slug }: { slug: string }) {
   const r = brainResource(slug)
   const ov = overviewResource(slug)
@@ -257,6 +284,7 @@ export function Brain({ slug }: { slug: string }) {
     cursor,
     ov.data.value ? !ov.data.value.firstSteps.agentConnected : false,
   )
+  useWaitForAgent(ov, ov.data.value ? !ov.data.value.firstSteps.agentConnected : false)
   // A new brain shows its first steps; once shown they stay for this visit, so a step that marks itself
   // is seen being marked (CA19), and go once the brain works.
   const stepsShown = useRef<string | null>(null)

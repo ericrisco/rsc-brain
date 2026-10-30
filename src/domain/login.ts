@@ -263,13 +263,22 @@ export const endResets = (db: Db, accountId: string, now: Date) =>
     now,
   ])
 
+// Links for one account take turns on one lock, whoever makes them (email, the administration, the CLI):
+// ending the older links and adding the new one happen together, so exactly one link works.
+export const lockResets = (db: Db, accountId: string) =>
+  db.query("SELECT pg_advisory_xact_lock(hashtext('rsc-brain reset ' || $1))", [accountId])
+
 export async function newReset(db: Db, accountId: string, by: string | null, now: Date): Promise<string> {
   const token = newSecret()
-  await endResets(db, accountId, now)
-  await db.query(
-    'INSERT INTO password_resets (token_hash, account_id, created_by, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)',
-    [hashSecret(token), accountId, by, now, new Date(now.getTime() + RESET_MINUTES * 60_000)],
-  )
+  // Inside a caller's transaction this reuses it (and its lock); otherwise it is its own.
+  await db.tx(async (tx) => {
+    await lockResets(tx, accountId)
+    await endResets(tx, accountId, now)
+    await tx.query(
+      'INSERT INTO password_resets (token_hash, account_id, created_by, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)',
+      [hashSecret(token), accountId, by, now, new Date(now.getTime() + RESET_MINUTES * 60_000)],
+    )
+  })
   return token
 }
 
@@ -310,7 +319,7 @@ export async function requestReset(
   void (async () => {
     // Requests for one account take turns, so requests sent at once cannot pass the cap together.
     const token = await db.tx(async (tx) => {
-      await tx.query("SELECT pg_advisory_xact_lock(hashtext('rsc-brain reset ' || $1))", [id])
+      await lockResets(tx, id)
       const recent = await tx.one<{ n: number }>(
         "SELECT count(*)::int AS n FROM password_resets WHERE account_id = $1 AND created_by IS NULL AND created_at > $2::timestamptz - interval '1 hour'",
         [id, now],
