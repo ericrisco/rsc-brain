@@ -1,4 +1,6 @@
+import { invalid } from '../../core/errors.ts'
 import {
+  addCorrection,
   type EntryInput,
   getEntry,
   LIMITS,
@@ -7,9 +9,9 @@ import {
   suggestTopic,
   summarizeSession,
 } from '../../domain/entries.ts'
-import { limitOf, listEntries, listSessions } from '../../domain/listing.ts'
+import { limitOf, listEntries, listSessions, sessionView } from '../../domain/listing.ts'
 import { endSession, openSession, openSessionsOfKey } from '../../domain/sessions.ts'
-import { compact, type Obj, obj, reqStr, str, strList } from '../input.ts'
+import { compact, day, flag, type Obj, obj, reqStr, str, strList, upTo } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
@@ -41,12 +43,35 @@ export const journalRoutes: Route[] = [
     )
     return { status: 201, body: { session: s } }
   }),
-  route('GET /v1/brains/:slug/sessions', async (r) => ({
-    body: await listSessions(
-      ctxOf(r),
-      r.params.slug as string,
-      compact({ cursor: q(r.query.get('cursor')), limit: limitOf(r.query.get('limit')) }),
-    ),
+  // Filters (spec B6 «Journal › Sessions», plan G12); dates are UTC days or ISO instants.
+  route('GET /v1/brains/:slug/sessions', async (r) => {
+    const uncompiled = r.query.get('uncompiled')
+    if (uncompiled !== null && uncompiled !== '' && !['1', 'true', '0', 'false'].includes(uncompiled))
+      throw invalid(
+        '"uncompiled" is 1 or 0.',
+        'Send uncompiled=1 for sessions with entries still to compile.',
+      )
+    return {
+      body: await listSessions(
+        ctxOf(r),
+        r.params.slug as string,
+        compact({
+          status: q(r.query.get('status')),
+          client: q(r.query.get('client')),
+          author: q(r.query.get('author')),
+          ref: q(r.query.get('ref')),
+          type: q(r.query.get('type')),
+          from: day(r.query.get('from'), 'from'),
+          ...upTo(day(r.query.get('to'), 'to'), r.query.get('to')),
+          uncompiled: flag(uncompiled) || undefined,
+          cursor: q(r.query.get('cursor')),
+          limit: limitOf(r.query.get('limit')),
+        }),
+      ),
+    }
+  }),
+  route('GET /v1/sessions/:id', async (r) => ({
+    body: { session: await sessionView(ctxOf(r), r.params.id as string) },
   })),
   // API only, not a tool: the reminder at the end of an agent's session asks it (spec B5 «El kit de
   // conexión»). An agent knows its own sessions; a program outside the agent does not.
@@ -78,6 +103,23 @@ export const journalRoutes: Route[] = [
       onBehalf: reqStr(b, 'onBehalf', 200),
       ...entryFields(b),
     })
+    return { status: 201, body: { receipt } }
+  }),
+  // A person's correction, from the web (spec B6 «Add a correction»); keys are refused (spec B1).
+  route('POST /v1/brains/:slug/corrections', async (r) => {
+    const b = obj(r.body)
+    const receipt = await addCorrection(
+      ctxOf(r),
+      r.params.slug as string,
+      compact({
+        title: reqStr(b, 'title'),
+        content: reqStr(b, 'content'),
+        appliesTo: str(b, 'appliesTo'),
+        page: str(b, 'page', { max: 200 }),
+        entry: str(b, 'entry', { max: 40 }),
+        requestKey: str(b, 'requestKey'),
+      }),
+    )
     return { status: 201, body: { receipt } }
   }),
   route('POST /v1/brains/:slug/topics/suggest', async (r) => ({

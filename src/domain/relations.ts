@@ -1,11 +1,13 @@
 // Relations between entries (spec B1 «Contradicciones y relaciones»). The server never decides that
 // two entries contradict each other; clients and people say so. A person's correction is only
-// superseded or dismissed by a person: from any key it waits as a pending conflict (pack rule 4).
+// superseded or dismissed by a person, in the web: from any key it waits as a pending conflict (pack
+// rule 4), and the person's own word on that pair settles it — the same relation confirms the one that
+// waited, anything else turns it down.
 import { conflict, invalid, notFound } from '../core/errors.ts'
 import { newId } from '../core/ids.ts'
 import type { Row } from '../db/db.ts'
 import { redact } from '../privacy/redact.ts'
-import { allow, type Ctx, inBrain } from './context.ts'
+import { allow, type Ctx, inBrain, personInWeb } from './context.ts'
 import { type Entry, entryOf } from './entries.ts'
 import { emit } from './events.ts'
 
@@ -60,7 +62,24 @@ export async function relate(
       (r.kind === 'supersedes' && to.type === 'correction') ||
       (r.kind === 'not_related' && (to.type === 'correction' || from.type === 'correction'))
     // Every key is an agent's; the person's own gesture is the web (spec B6).
-    const status = touchesCorrection ? 'pending_person' : 'active'
+    const person = personInWeb(ctx)
+    const status = touchesCorrection && !person ? 'pending_person' : 'active'
+    // A person settles what agents asked about this pair: the same relation is confirmed (it takes
+    // effect below, as the one that waited), any other is turned down.
+    let confirmed: Row | null = null
+    if (person && r.kind !== 'contradicts') {
+      const waiting = await db.query(
+        `SELECT * FROM relations WHERE brain_id = $1 AND status = 'pending_person'
+            AND least(from_id, to_id) = least($2, $3) AND greatest(from_id, to_id) = greatest($2, $3)
+          ORDER BY created_at FOR UPDATE`,
+        [brain.id, r.from, r.to],
+      )
+      for (const x of waiting) {
+        const same = !confirmed && x.from_id === r.from && x.to_id === r.to && x.kind === r.kind
+        if (same) confirmed = x
+        await db.query('UPDATE relations SET status = $2 WHERE id = $1', [x.id, same ? 'active' : 'rejected'])
+      }
+    }
     if (r.kind === 'supersedes' && status === 'active') {
       // `to` loses to `from`; if `from` already loses, through any chain, to `to`, that closes a loop.
       // One supersede at a time per brain, so two at once cannot each close half of a loop.
@@ -85,22 +104,24 @@ export async function relate(
         ctx.clock(),
       ])
     }
-    const row = await db.one(
-      `INSERT INTO relations (id, brain_id, from_id, to_id, kind, status, reason, created_by, credential_id, created_at)
+    const row = confirmed
+      ? await db.one('SELECT * FROM relations WHERE id = $1', [confirmed.id])
+      : await db.one(
+          `INSERT INTO relations (id, brain_id, from_id, to_id, kind, status, reason, created_by, credential_id, created_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-      [
-        newId('rel'),
-        brain.id,
-        r.from,
-        r.to,
-        r.kind,
-        status,
-        reason,
-        ctx.who.accountId,
-        ctx.who.credential.id,
-        ctx.clock(),
-      ],
-    )
+          [
+            newId('rel'),
+            brain.id,
+            r.from,
+            r.to,
+            r.kind,
+            status,
+            reason,
+            ctx.who.accountId,
+            ctx.who.credential.id,
+            ctx.clock(),
+          ],
+        )
     await emit(db, c, {
       brainId: brain.id,
       kind: 'entry.changed',
@@ -120,7 +141,11 @@ export type Conflict = {
 
 // Open conflicts: a `contradicts` not yet settled by a later `supersedes` or `not_related` on the same
 // pair, and anything an agent asked about a person's correction.
-export async function conflicts(ctx: Ctx, slug: string): Promise<Conflict[]> {
+export async function conflicts(
+  ctx: Ctx,
+  slug: string,
+  o: { limit?: number; offset?: number } = {},
+): Promise<{ conflicts: Conflict[]; total: number; next: string | null }> {
   const { brain } = await inBrain(ctx, { slug })
   const rows = await ctx.db.query(
     `SELECT r.* FROM relations r
@@ -132,7 +157,7 @@ export async function conflicts(ctx: Ctx, slug: string): Promise<Conflict[]> {
                                  AND least(s.from_id, s.to_id) = least(r.from_id, r.to_id)
                                  AND greatest(s.from_id, s.to_id) = greatest(r.from_id, r.to_id)))
              OR r.status = 'pending_person')
-      ORDER BY r.created_at`,
+      ORDER BY r.created_at, r.id`,
     [brain.id],
   )
   const out: Conflict[] = []
@@ -150,5 +175,12 @@ export async function conflicts(ctx: Ctx, slug: string): Promise<Conflict[]> {
       why: r.status === 'pending_person' ? 'waiting for a person' : 'contradicts',
     })
   }
-  return out
+  // By pages when asked (the web shows a few at a time); a whole list otherwise, as before.
+  const start = o.offset ?? 0
+  const end = o.limit === undefined ? out.length : start + o.limit
+  return {
+    conflicts: out.slice(start, end),
+    total: out.length,
+    next: end < out.length ? String(end) : null,
+  }
 }

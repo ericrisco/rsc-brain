@@ -3,6 +3,8 @@ import type { JSX } from 'preact'
 import { useId } from 'preact/hooks'
 
 type Props = Omit<JSX.TextareaHTMLAttributes<HTMLTextAreaElement>, 'id' | 'value' | 'onInput'> & {
+  // A known id, when a form puts the keyboard on this field by name.
+  id?: string
   label: string
   hint?: string
   problem?: string | null | undefined
@@ -10,8 +12,9 @@ type Props = Omit<JSX.TextareaHTMLAttributes<HTMLTextAreaElement>, 'id' | 'value
   onValue: (v: string) => void
 }
 
-export function TextArea({ label, hint, problem, value, onValue, ...input }: Props) {
-  const id = useId()
+export function TextArea({ id: given, label, hint, problem, value, onValue, ...input }: Props) {
+  const auto = useId()
+  const id = given ?? auto
   const described = [hint ? `${id}-hint` : '', problem ? `${id}-problem` : ''].filter(Boolean).join(' ')
   return (
     <div class="field">

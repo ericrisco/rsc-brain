@@ -17,6 +17,7 @@ import { Dialog } from '../../ui/Dialog.tsx'
 import { viewState } from '../../ui/state.ts'
 import { ErrorState, Skeleton } from '../../ui/states.tsx'
 import type { BrainOne } from '../Brain.tsx'
+import { correctHref, entryHref } from '../journal/common.tsx'
 import { isCurator, mapHref, pageHref, Said, StatusTag, TypeTag, useBrain } from './common.tsx'
 import { entryResource, type LinkView, pageResource, type Reading, readersResource } from './data.ts'
 import { PageEdit, UnsavedEdit, wikiNotice } from './Edit.tsx'
@@ -116,7 +117,7 @@ function LinkGroups({
   )
 }
 
-function Sources({ slug, reading }: { slug: string; reading: Reading }) {
+function Sources({ slug, reading, curator }: { slug: string; reading: Reading; curator: boolean }) {
   const w = T.wiki
   const { path, url, route } = useLocation()
   const open = (id: string) => {
@@ -127,7 +128,6 @@ function Sources({ slug, reading }: { slug: string; reading: Reading }) {
     opened = true
     route(`${path}?${q.toString()}`)
   }
-  void slug
   return (
     <section class="aside-block" aria-labelledby="sources-title">
       <h2 id="sources-title" class="section-title">
@@ -151,7 +151,13 @@ function Sources({ slug, reading }: { slug: string; reading: Reading }) {
                   </button>
                 ) : (
                   <span>
-                    <span class="mono">{s.entryId}</span>{' '}
+                    {s.state === 'forgotten' && curator ? (
+                      <a href={entryHref(slug, s.entryId)} class="mono">
+                        {s.entryId}
+                      </a>
+                    ) : (
+                      <span class="mono">{s.entryId}</span>
+                    )}{' '}
                     <span class="tag warn">
                       {s.state === 'forgotten' ? w.sourceForgotten : w.sourcePurged}
                     </span>
@@ -177,7 +183,7 @@ function Sources({ slug, reading }: { slug: string; reading: Reading }) {
 let opened = false
 
 // The entry a source points at, beside the page (a modal side panel: the page stays where it was).
-function SourcePanel({ id, onClose }: { id: string; onClose: () => void }) {
+function SourcePanel({ slug, id, onClose }: { slug: string; id: string; onClose: () => void }) {
   // Gone by any way (Back too): the step it added is taken back already.
   useEffect(
     () => () => {
@@ -202,6 +208,9 @@ function SourcePanel({ id, onClose }: { id: string; onClose: () => void }) {
             {w.entryFrom(e.type, T.date(e.createdAt))} · <span class="mono">{e.id}</span>
           </p>
           <p class="entry-text">{e.content}</p>
+          <p>
+            <a href={entryHref(slug, e.id)}>{w.openInJournal}</a>
+          </p>
           {e.tags.length ? (
             <p class="meta">
               {e.tags.map((t) => (
@@ -339,7 +348,7 @@ function ReadView({ slug, brain, reading }: { slug: string; brain: BrainOne; rea
         ) : null}
       </article>
       <aside class="page-aside" aria-label={w.aside}>
-        <Sources slug={slug} reading={reading} />
+        <Sources slug={slug} reading={reading} curator={brain.role === 'curator'} />
         <section class="aside-block" aria-labelledby="links-title">
           <h2 id="links-title" class="section-title">
             {w.links}
@@ -359,12 +368,26 @@ function ReadView({ slug, brain, reading }: { slug: string; brain: BrainOne; rea
             names={w.kindsIn}
           />
         </section>
+        {['contributor', 'curator'].includes(brain.role) && brain.status !== 'archived' ? (
+          <section class="aside-block" aria-labelledby="wrong-title">
+            <h2 id="wrong-title" class="section-title">
+              {w.wrongTitle}
+            </h2>
+            <p class="muted small">{w.wrongLead}</p>
+            <p>
+              <a class="button secondary" href={correctHref(slug, { page: page.address })}>
+                {w.addCorrection}
+              </a>
+            </p>
+          </section>
+        ) : null}
         <RecentHistory slug={slug} address={page.address} />
         {isCurator(brain) ? <Readers slug={slug} address={page.address} /> : null}
       </aside>
       {source ? (
         <SourcePanel
           key={source}
+          slug={slug}
           id={source}
           onClose={() => {
             if (opened) {

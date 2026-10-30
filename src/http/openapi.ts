@@ -88,11 +88,81 @@ const ENTRY = obj({
   topic: nul(s('Topic key, for what evolves.')),
   title: s('Title.'),
   content: s('The entry, already redacted.'),
+  appliesTo: nul(s('The agent, account or label it applies to.')),
+  tags: list(s('A tag.')),
+  refs: list(
+    s('A file, link or id; a correction written in the web names "page:<address>" or "entry:<id>".'),
+  ),
+  authorId: s('The account that wrote it.'),
+  onBehalfId: nul(s('The person a service relayed it for.')),
+  ref: nul(s('The external reference stamped by the short key that wrote it.')),
   revision: n('Its revision, for corrections against it.'),
+  repeatCount: n('How many times it was saved.'),
+  pinned: b('Always in the start context (curators pin).'),
+  reviewAfter: nul(s('After this, it is to review.', { format: 'date-time' })),
+  expiresAt: nul(s('After this, it leaves the default context.', { format: 'date-time' })),
   state: s('active, forgotten or purged.'),
+  supersededBy: nul(s('The entry that supersedes it.')),
+  compiled: b('A wiki proposal gathered it.'),
   createdAt: s('When.', { format: 'date-time' }),
   updatedAt: s('When it last changed.', { format: 'date-time' }),
 })
+const NAMED = obj({ id: s('Account id.'), name: s('Name.') })
+// An entry as a person reads it (the journal in the web, B6 PR20): who wrote it and with what, and, for a
+// forgotten one (only curators see it), who forgot it, when and why.
+const BYLINE = {
+  author: NAMED,
+  onBehalf: nul({ ...NAMED, description: 'The person a service relayed it for.' }),
+  client: nul(s('What wrote it: web, the agent of a short key, the app of a connection, or a program.')),
+  forgotten: nul({
+    ...obj({ by: NAMED, reason: s('Why.'), at: s('When.', { format: 'date-time' }) }),
+    description: 'Who forgot it, why and when; null unless forgotten.',
+  }),
+}
+const ENTRY_READ = {
+  ...ENTRY,
+  properties: { ...(ENTRY.properties as Schema), ...BYLINE },
+  required: [...(ENTRY.required as string[]), ...Object.keys(BYLINE)],
+}
+const RELATION = obj({
+  id: s('Relation id (rel_…).'),
+  fromId: s('The entry that contradicts, supersedes or is not related.'),
+  toId: s('The other entry.'),
+  kind: s('contradicts, supersedes or not_related.'),
+  status: s('active; pending_person while a person has to confirm what an agent asked; rejected.'),
+  reason: s('Why.'),
+  createdBy: s('Who.'),
+  createdAt: s('When.', { format: 'date-time' }),
+})
+const ENTRY_RELATION = obj({
+  id: s('Relation id.'),
+  kind: s('contradicts, supersedes or not_related.'),
+  status: s('active, pending_person or rejected.'),
+  direction: s('out: this entry is its "from"; in: its "to".', { enum: ['out', 'in'] }),
+  other: obj({
+    id: s('The other entry.'),
+    title: nul(s('Its title; null when purged, or forgotten and you are not a curator.')),
+    type: s('Its type.'),
+    state: s('active, forgotten or purged.'),
+  }),
+  reason: s('Why.'),
+  by: NAMED,
+  createdAt: s('When.', { format: 'date-time' }),
+})
+const SESSION_VIEW = {
+  ...SESSION,
+  properties: {
+    ...(SESSION.properties as Schema),
+    day: nul(s('The day of the session a key gets by writing without opening one.', { format: 'date' })),
+    client: nul(s('What wrote: web, the agent of a short key, the app of a connection, or a program.')),
+    author: NAMED,
+    entries: n('Its active entries, the summary aside.'),
+    summary: nul(s('Its summary (the first 300 characters), once closed with one.')),
+  },
+  required: [...(SESSION.required as string[]), 'day', 'client', 'author', 'entries', 'summary'],
+}
+const ENTRY_LIST = obj({ items: list(ENTRY), total: n('How many.'), next: NEXT })
+const ENTRY_LIST_READ = obj({ items: list(ENTRY_READ), total: n('How many.'), next: NEXT })
 const ENTRY_IN = obj(
   {
     type: s('decision, learning, attempt, preference, fact, step, summary or note.'),
@@ -705,9 +775,56 @@ const HAND: Record<string, Op> = {
     ),
     reply: obj({ session: SESSION }),
   },
+  'GET /v1/brains/{slug}/members': {
+    summary: 'The members of a brain with their roles, and who wrote here and is no longer a member.',
+    reply: obj({
+      members: list(
+        obj(
+          {
+            accountId: s('Account id.'),
+            kind: s('person or service.'),
+            name: s('Name.'),
+            email: nul(s('Their email, for curators only.')),
+            role: s('reader, contributor or curator.'),
+            notifyProposals: b('Your own choice of mail for new proposals (only on your line).'),
+          },
+          ['notifyProposals'],
+        ),
+      ),
+      former: list(obj({ accountId: s('Account id.'), name: s('Name.'), label: s('former member') })),
+      pendingCurator: {
+        description: 'The email invited as first curator (curators), or whether there is one.',
+      },
+    }),
+  },
   'GET /v1/brains/{slug}/sessions': {
-    summary: 'Recent sessions.',
-    reply: obj({ items: list(SESSION), total: n('How many.'), next: NEXT }),
+    summary: 'Sessions of a brain, newest first, with their client, author, entries and summary; filtered.',
+    query: {
+      status: 'open, closed or closed_no_summary.',
+      client: 'The client, as the "clients" of facets name them.',
+      author: 'An account id.',
+      ref: 'Part of an external reference (the session’s, or one stamped on its entries).',
+      type: 'Sessions with an entry of this type.',
+      from: 'Active on or after this day (or ISO instant).',
+      to: 'Opened on or before this day (or ISO instant).',
+      uncompiled: '1 for sessions with entries no proposal has gathered yet.',
+      cursor: 'The "next" of the previous page.',
+      limit: 'At most this many (1–200).',
+    },
+    reply: obj(
+      {
+        items: list(SESSION_VIEW),
+        total: n('How many match the filters.'),
+        next: NEXT,
+        liveFrom: s('The newest event already in this answer: follow the live events from here.'),
+        facets: obj({ clients: list(s('A client.')), authors: list(NAMED) }),
+      },
+      ['facets'],
+    ),
+  },
+  'GET /v1/sessions/{id}': {
+    summary: 'One session, with its client, author, entries and summary.',
+    reply: obj({ session: SESSION_VIEW }),
   },
   'GET /v1/me/sessions': {
     summary:
@@ -756,9 +873,147 @@ const HAND: Record<string, Op> = {
     reply: obj({ receipt: RECEIPT }),
   },
   'GET /v1/entries/{id}': {
-    summary: 'One entry (history=1 for its revisions).',
+    summary: 'One entry with who wrote it and its relations (history=1 for its revisions).',
     query: { history: '1 for its revisions.' },
-    reply: obj({ entry: ENTRY, history: list({ type: 'object' }) }, ['history']),
+    reply: obj(
+      {
+        entry: ENTRY_READ,
+        relations: list(ENTRY_RELATION),
+        history: list(
+          obj({
+            revision: n('Its number.'),
+            type: s('Type.'),
+            title: s('Title.'),
+            content: s('Content.'),
+            appliesTo: nul(s('Who it applies to.')),
+            tags: list(s('A tag.')),
+            refs: list(s('A reference.')),
+            authorId: s('Who wrote it.'),
+            authorName: s('Their name.'),
+            createdAt: s('When.', { format: 'date-time' }),
+          }),
+        ),
+      },
+      ['history'],
+    ),
+  },
+  'GET /v1/brains/{slug}/entries': {
+    summary: 'Entries of a brain in order, by session, type or stamped reference.',
+    query: {
+      session: 'A session id.',
+      type: 'An entry type.',
+      ref: 'An external reference stamped by a short key.',
+      cursor: 'The "next" of the previous page.',
+      limit: 'At most this many (1–200).',
+    },
+    reply: ENTRY_LIST,
+  },
+  'POST /v1/brains/{slug}/corrections': {
+    summary:
+      'A person’s correction, written in the web (contributor or more), about a page or an entry; keys are refused.',
+    status: 201,
+    body: obj(
+      {
+        title: s('A short title.'),
+        content: s('The correction.', { maxLength: 32000 }),
+        appliesTo: s('The agent, account or label it applies to.'),
+        page: s('The address of the page it is about.'),
+        entry: s('The id of the entry it is about.'),
+        requestKey: s('Repeating the request with the same key returns the same receipt.'),
+      },
+      ['appliesTo', 'page', 'entry', 'requestKey'],
+    ),
+    reply: obj({ receipt: RECEIPT }),
+  },
+  'PATCH /v1/entries/{id}': {
+    summary: 'Change an entry (its author or a curator), against the revision you read.',
+    body: obj(
+      {
+        baseRevision: n('The revision you read; another one gives entry_changed with "current".'),
+        type: s('Type (never into or out of correction).'),
+        title: s('Title.'),
+        content: s('Content.'),
+        appliesTo: nul(s('Who it applies to.')),
+        tags: list(s('A tag.')),
+        refs: list(s('A reference.')),
+      },
+      ['type', 'title', 'content', 'appliesTo', 'tags', 'refs'],
+    ),
+    reply: obj({ entry: ENTRY }),
+  },
+  'POST /v1/entries/{id}/forget': {
+    summary: 'Forget an entry (its author or a curator), saying why; curators can recover it.',
+    body: obj({ reason: s('Why, 1 to 500 characters.') }),
+    reply: obj({ entry: ENTRY }),
+  },
+  'POST /v1/entries/{id}/recover': {
+    summary: 'Recover a forgotten entry (curators).',
+    reply: obj({ entry: ENTRY }),
+  },
+  'POST /v1/entries/{id}/pin': {
+    summary: 'Pin an entry: always in the start context (curators).',
+    reply: obj({ entry: ENTRY }),
+  },
+  'POST /v1/entries/{id}/unpin': {
+    summary: 'Unpin an entry (curators).',
+    reply: obj({ entry: ENTRY }),
+  },
+  'POST /v1/entries/{id}/schedule': {
+    summary: 'Set or clear the review-after and expiry dates (its author or a curator).',
+    body: obj(
+      {
+        reviewAfter: nul(s('A day or instant; null clears it.')),
+        expiresAt: nul(s('A day or instant; null clears it.')),
+      },
+      ['reviewAfter', 'expiresAt'],
+    ),
+    reply: obj({ entry: ENTRY }),
+  },
+  'POST /v1/brains/{slug}/relations': {
+    summary:
+      'Relate two entries: contradicts, supersedes or not_related. From a key, touching a person’s correction waits for a person.',
+    status: 201,
+    body: obj(
+      {
+        from: s('An entry id.'),
+        to: s('Another entry id.'),
+        kind: s('contradicts, supersedes or not_related.'),
+        reason: s('Why.'),
+      },
+      ['reason'],
+    ),
+    reply: obj({ relation: RELATION }),
+  },
+  'GET /v1/brains/{slug}/conflicts': {
+    summary: 'Open contradictions, and what waits for a person; by pages with limit and offset.',
+    query: { limit: 'At most this many (1–200); all without it.', offset: 'The "next" of the page before.' },
+    reply: obj({
+      conflicts: list(
+        obj({
+          relation: RELATION,
+          from: ENTRY,
+          to: ENTRY,
+          why: s('contradicts, or waiting for a person.'),
+        }),
+      ),
+      total: n('How many are open.'),
+      next: nul(s('The offset of the next page; null on the last.')),
+    }),
+  },
+  'GET /v1/brains/{slug}/forgotten': {
+    summary: 'Forgotten entries, with who forgot them and why (curators).',
+    query: { cursor: 'The "next" of the previous page.', limit: 'At most this many (1–200).' },
+    reply: ENTRY_LIST_READ,
+  },
+  'GET /v1/brains/{slug}/to-review': {
+    summary: 'Entries past their review-after date.',
+    query: { cursor: 'The "next" of the previous page.', limit: 'At most this many (1–200).' },
+    reply: ENTRY_LIST_READ,
+  },
+  'GET /v1/brains/{slug}/uncompiled': {
+    summary: 'Entries no wiki proposal has gathered yet.',
+    query: { cursor: 'The "next" of the previous page.', limit: 'At most this many (1–200).' },
+    reply: ENTRY_LIST_READ,
   },
   'GET /v1/search': {
     summary: 'Search entries and pages of the brains this key can read.',

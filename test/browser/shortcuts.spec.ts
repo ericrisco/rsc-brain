@@ -10,7 +10,7 @@ test('"?" opens the list on every screen, signed in or not', async ({ page, cont
     await page.keyboard.press('?')
     const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
     await expect(help).toBeVisible()
-    await expect(help.locator('[data-shortcut]')).toHaveCount(path === '/' ? 4 : 9)
+    await expect(help.locator('[data-shortcut]')).toHaveCount(path === '/' ? 4 : 10)
     await page.keyboard.press('Escape')
     await expect(help).toBeHidden()
   }
@@ -103,6 +103,15 @@ test('each shortcut and its visible control do the same', async ({ page, context
   await page.goto('/b/growth')
   await page.locator('aside').getByRole('link', { name: 'Wiki' }).click()
   await expect(page).toHaveURL(/\/b\/growth\/wiki$/)
+
+  // go-journal: "g j" and "Journal" in the side bar (PR20).
+  await page.keyboard.press('g')
+  await page.keyboard.press('j')
+  await expect(page).toHaveURL(/\/b\/growth\/journal$/)
+  await expect(page.getByRole('heading', { level: 1, name: 'Sessions' })).toBeVisible()
+  await page.goto('/b/growth')
+  await page.locator('aside').getByRole('link', { name: 'Journal' }).click()
+  await expect(page).toHaveURL(/\/b\/growth\/journal$/)
 })
 
 test('a letter typed in a field is text, not a shortcut', async ({ page, context, baseURL }) => {

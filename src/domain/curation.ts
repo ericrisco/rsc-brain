@@ -1,13 +1,14 @@
 // Changing what is already in the journal (spec B1 «Corregir, olvidar y purgar», «Fijar, revisar y
-// caducar»). Edits go against the revision the caller saw. Corrections — a person's words — are not
-// changed or forgotten through the API: that is done by a person, in the web (pack rule 4).
+// caducar»). Edits go against the revision the caller saw. Corrections — a person's words — are changed
+// or forgotten only by a person in the web, never with a key (pack rule 4); and no edit turns an entry
+// into a correction or a correction into something else.
 import { createHash } from 'node:crypto'
 import { conflict, invalid, notFound } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
 import { normalize, redact, redactAll } from '../privacy/redact.ts'
 import { audit } from './audit.ts'
 import { addMember } from './brains.ts'
-import { allow, type Ctx, type InBrain, inBrain, ok } from './context.ts'
+import { allow, type Ctx, type InBrain, inBrain, ok, personInWeb } from './context.ts'
 import { type Entry, entryOf, fitsOnceRedacted, validate } from './entries.ts'
 import { emit } from './events.ts'
 import { lockMeaning } from './meaning.ts'
@@ -51,7 +52,13 @@ export async function editEntry(ctx: Ctx, id: string, e: EntryEdit): Promise<Ent
       { role: at.role, isOwner: isOwner(ctx, row), brainStatus: at.brain.status },
       at.brain.id,
     )
-    if (row.type === 'correction' || e.type === 'correction') throw PERSONS_ONLY()
+    if (row.type === 'correction' && !personInWeb(ctx)) throw PERSONS_ONLY()
+    if (e.type !== undefined && (e.type === 'correction') !== (row.type === 'correction')) {
+      throw invalid(
+        'An entry does not become a correction, nor a correction another type, by editing it.',
+        'Write a new correction in the web, or a new entry of the other type.',
+      )
+    }
     if (row.state !== 'active') {
       throw conflict(
         'entry_forgotten',
@@ -125,7 +132,7 @@ export async function forgetEntry(ctx: Ctx, id: string, reason: string): Promise
       { role: at.role, isOwner: isOwner(ctx, row), brainStatus: at.brain.status },
       at.brain.id,
     )
-    if (row.type === 'correction') throw PERSONS_ONLY()
+    if (row.type === 'correction' && !personInWeb(ctx)) throw PERSONS_ONLY()
     if (row.state === 'forgotten') return entryOf(row)
     const out = await db.one(
       `UPDATE entries SET state = 'forgotten', forgotten_by = $2, forgotten_reason = $3, forgotten_at = $4, updated_at = $4
@@ -142,7 +149,7 @@ export async function recoverEntry(ctx: Ctx, id: string): Promise<Entry> {
     const c = { ...ctx, db }
     const { row, at } = await load(ctx, db, id)
     await allow(c, 'entry.pin', { role: at.role, brainStatus: at.brain.status }, at.brain.id)
-    if (row.type === 'correction') throw PERSONS_ONLY()
+    if (row.type === 'correction' && !personInWeb(ctx)) throw PERSONS_ONLY()
     if (row.state === 'active') return entryOf(row)
     if (row.topic != null) {
       // The same lock a save to this topic takes: two recoveries, or a recovery and a save, in turn.
@@ -214,7 +221,7 @@ export async function scheduleEntry(
       at.brain.id,
     )
     // An expiry date takes a correction out of the context: the same as forgetting it.
-    if (row.type === 'correction') throw PERSONS_ONLY()
+    if (row.type === 'correction' && !personInWeb(ctx)) throw PERSONS_ONLY()
     const out = await db.one(
       `UPDATE entries SET review_after = CASE WHEN $2 THEN $3::timestamptz ELSE review_after END,
               expires_at = CASE WHEN $4 THEN $5::timestamptz ELSE expires_at END, updated_at = $6

@@ -93,7 +93,39 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     receipt: ['entryId', 'revision', 'at', 'deduplicated', 'repeatCount', 'redactions', 'similar'],
   },
   'GET /v1/entries/{id}': {
-    entry: ['id', 'brainId', 'type', 'title', 'content', 'revision', 'state', 'createdAt'],
+    '': ['entry', 'relations'],
+    entry: [
+      'id',
+      'brainId',
+      'sessionId',
+      'type',
+      'topic',
+      'title',
+      'content',
+      'appliesTo',
+      'tags',
+      'refs',
+      'authorId',
+      'ref',
+      'revision',
+      'repeatCount',
+      'pinned',
+      'reviewAfter',
+      'expiresAt',
+      'state',
+      'supersededBy',
+      'compiled',
+      'createdAt',
+      'updatedAt',
+      // The journal in the web (spec B6, PR20): who wrote it and with what, and who forgot it.
+      'author',
+      'onBehalf',
+      'client',
+      'forgotten',
+    ],
+    'entry.author': ['id', 'name'],
+    'relations[]': ['id', 'kind', 'status', 'direction', 'other', 'reason', 'by', 'createdAt'],
+    'relations[].other': ['id', 'title', 'type', 'state'],
   },
   'GET /v1/search': {
     '': ['items', 'next'],
@@ -153,6 +185,82 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   },
   'POST /v1/auth/reset/confirm': {
     '': ['reset'],
+  },
+  // The journal in the web (spec B6, PR20; plan G12): the fixture answers these in CI.
+  'GET /v1/brains/{slug}/sessions': {
+    // facets come with the first page only (not required by the description), and are pinned below.
+    '': ['items', 'total', 'next', 'liveFrom'],
+    'items[]': [
+      'id',
+      'brainId',
+      'purpose',
+      'ref',
+      'status',
+      'day',
+      'client',
+      'author',
+      'entries',
+      'summary',
+      'openedAt',
+      'lastActivityAt',
+      'closedAt',
+    ],
+    'items[].author': ['id', 'name'],
+    facets: ['clients', 'authors'],
+  },
+  'GET /v1/brains/{slug}/members': {
+    '': ['members', 'former', 'pendingCurator'],
+    'members[]': ['accountId', 'kind', 'name', 'email', 'role'],
+  },
+  'GET /v1/sessions/{id}': {
+    session: ['id', 'purpose', 'ref', 'status', 'day', 'client', 'author', 'entries', 'summary', 'openedAt'],
+  },
+  'GET /v1/brains/{slug}/entries': {
+    '': ['items', 'total', 'next'],
+    'items[]': ['id', 'type', 'title', 'content', 'tags', 'state', 'pinned', 'revision', 'createdAt'],
+  },
+  'GET /v1/entries/{id} +history': {
+    'history[]': [
+      'revision',
+      'type',
+      'title',
+      'content',
+      'appliesTo',
+      'tags',
+      'refs',
+      'authorId',
+      'authorName',
+      'createdAt',
+    ],
+  },
+  'POST /v1/brains/{slug}/corrections': {
+    receipt: ['entryId', 'revision', 'at', 'deduplicated', 'repeatCount', 'redactions', 'similar'],
+  },
+  'PATCH /v1/entries/{id}': {
+    entry: ['id', 'type', 'title', 'content', 'revision', 'state', 'updatedAt'],
+  },
+  'POST /v1/entries/{id}/forget': { entry: ['id', 'state', 'revision'] },
+  'POST /v1/entries/{id}/recover': { entry: ['id', 'state', 'revision'] },
+  'POST /v1/entries/{id}/pin': { entry: ['id', 'pinned'] },
+  'POST /v1/entries/{id}/unpin': { entry: ['id', 'pinned'] },
+  'POST /v1/entries/{id}/schedule': { entry: ['id', 'reviewAfter', 'expiresAt'] },
+  'POST /v1/brains/{slug}/relations': {
+    relation: ['id', 'fromId', 'toId', 'kind', 'status', 'reason', 'createdBy', 'createdAt'],
+  },
+  'GET /v1/brains/{slug}/conflicts': {
+    '': ['conflicts', 'total', 'next'],
+    'conflicts[]': ['relation', 'from', 'to', 'why'],
+    'conflicts[].relation': ['id', 'fromId', 'toId', 'kind', 'status', 'reason', 'createdBy', 'createdAt'],
+    'conflicts[].from': ['id', 'type', 'title', 'content', 'state', 'createdAt'],
+  },
+  'GET /v1/brains/{slug}/forgotten': {
+    '': ['items', 'total', 'next'],
+    'items[]': ['id', 'type', 'title', 'content', 'state', 'author', 'forgotten'],
+    'items[].forgotten': ['by', 'reason', 'at'],
+  },
+  'GET /v1/brains/{slug}/to-review': {
+    '': ['items', 'total', 'next'],
+    'items[]': ['id', 'type', 'title', 'content', 'reviewAfter', 'author'],
   },
   // The wiki in the web (spec B6, PR19): the fixture answers these in CI, so the real answers are pinned.
   'GET /v1/brains/{slug}/wiki/pages': {
@@ -386,6 +494,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       ...(await doors()),
       ...(await people()),
       ...(await wiki(entryId)),
+      ...(await journal()),
     }
     const paths = doc.paths as Record<string, Record<string, Json>>
     for (const [op, shape] of Object.entries(SHAPES)) {
@@ -523,6 +632,74 @@ describe('the v1 contract', { skip: skipPg }, () => {
     return out
   }
 
+  // The journal as the web works it (PR20): sessions, one session, entries, an entry with its relations
+  // and history, a person's correction, the curator's actions, a contradiction and the curator's lists.
+  async function journal(): Promise<Record<string, Json>> {
+    const out: Record<string, Json> = {}
+    const web = await w.web(eric.id)
+    const save = async (title: string, content: string) =>
+      String(
+        (
+          (
+            await w.call(eric.key, 'POST', '/v1/brains/contract/entries', {
+              type: 'learning',
+              title,
+              content,
+            })
+          ).body.receipt as Json
+        ).entryId,
+      )
+    const a = await save('Thirty seconds', 'Intros of thirty seconds.')
+    const b = await save('Ten seconds', 'Intros of ten seconds.')
+    const get = async (path: string) => (await w.call(eric.key, 'GET', path)).body
+    const sessions = await get('/v1/brains/contract/sessions')
+    out['GET /v1/brains/{slug}/sessions'] = sessions
+    out['GET /v1/brains/{slug}/members'] = await get('/v1/brains/contract/members')
+    const sessionId = String(((sessions.items as Json[])[0] as Json).id)
+    out['GET /v1/sessions/{id}'] = await get(`/v1/sessions/${sessionId}`)
+    out['GET /v1/brains/{slug}/entries'] = await get(`/v1/brains/contract/entries?session=${sessionId}`)
+    const related = await w.callWeb(web, 'POST', '/v1/brains/contract/relations', {
+      from: b,
+      to: a,
+      kind: 'contradicts',
+      reason: 'Different numbers.',
+    })
+    assert.equal(related.status, 201, related.text)
+    out['POST /v1/brains/{slug}/relations'] = related.body
+    out['GET /v1/brains/{slug}/conflicts'] = await get('/v1/brains/contract/conflicts')
+    out['GET /v1/entries/{id}'] = await get(`/v1/entries/${a}`)
+    const edited = await w.callWeb(web, 'PATCH', `/v1/entries/${a}`, {
+      baseRevision: 1,
+      content: 'Thirty, tested.',
+    })
+    assert.equal(edited.status, 200, edited.text)
+    out['PATCH /v1/entries/{id}'] = edited.body
+    out['GET /v1/entries/{id} +history'] = await get(`/v1/entries/${a}?history=1`)
+    const corrected = await w.callWeb(web, 'POST', '/v1/brains/contract/corrections', {
+      title: 'Ten is right',
+      content: 'Ten seconds, every time.',
+      entry: a,
+    })
+    assert.equal(corrected.status, 201, corrected.text)
+    out['POST /v1/brains/{slug}/corrections'] = corrected.body
+    const act = async (op: string, path: string, body?: Json) => {
+      const r = await w.callWeb(web, 'POST', path, body)
+      assert.equal(r.status, 200, `${op}: ${r.text}`)
+      out[op] = r.body
+    }
+    await act('POST /v1/entries/{id}/pin', `/v1/entries/${b}/pin`)
+    await act('POST /v1/entries/{id}/unpin', `/v1/entries/${b}/unpin`)
+    w.advance(1000)
+    await act('POST /v1/entries/{id}/schedule', `/v1/entries/${b}/schedule`, {
+      reviewAfter: new Date(w.now.getTime() - 60_000).toISOString(),
+    })
+    out['GET /v1/brains/{slug}/to-review'] = await get('/v1/brains/contract/to-review')
+    await act('POST /v1/entries/{id}/forget', `/v1/entries/${b}/forget`, { reason: 'Wrong.' })
+    out['GET /v1/brains/{slug}/forgotten'] = await get('/v1/brains/contract/forgotten')
+    await act('POST /v1/entries/{id}/recover', `/v1/entries/${b}/recover`)
+    return out
+  }
+
   it('every refusal the web meets keeps its status within v1 (ERROR_STATUS, which the fixture obeys)', async () => {
     const lou = await withPassword('Louis')
     const reader = await withPassword('Rita')
@@ -606,6 +783,34 @@ describe('the v1 contract', { skip: skipPg }, () => {
         baseRevision: 1,
         body: 'Three.',
       }),
+    )
+    // The journal (PR20): an edit on a moved revision, a forgotten entry pinned, a topic taken while one
+    // waited forgotten, and a supersede that closes a loop.
+    const saved = async (body: Json) =>
+      String(
+        ((await w.call(eric.key, 'POST', '/v1/brains/contract/entries', body)).body.receipt as Json).entryId,
+      )
+    const e1 = await saved({ type: 'note', title: 'One', content: 'Contract one.' })
+    await w.callWeb(ericWeb, 'PATCH', `/v1/entries/${e1}`, {
+      baseRevision: 1,
+      content: 'Contract one, again.',
+    })
+    await add(
+      'entry_changed',
+      w.callWeb(ericWeb, 'PATCH', `/v1/entries/${e1}`, { baseRevision: 1, content: 'x' }),
+    )
+    await w.callWeb(ericWeb, 'POST', `/v1/entries/${e1}/forget`, { reason: 'Contract.' })
+    await add('entry_forgotten', w.callWeb(ericWeb, 'POST', `/v1/entries/${e1}/pin`))
+    const t1 = await saved({ type: 'note', title: 'Topic', content: 'First.', topic: 'contract/topic' })
+    await w.callWeb(ericWeb, 'POST', `/v1/entries/${t1}/forget`, { reason: 'Contract.' })
+    await saved({ type: 'note', title: 'Topic', content: 'Second.', topic: 'contract/topic' })
+    await add('topic_taken', w.callWeb(ericWeb, 'POST', `/v1/entries/${t1}/recover`))
+    const x = await saved({ type: 'note', title: 'X', content: 'Contract x.' })
+    const y = await saved({ type: 'note', title: 'Y', content: 'Contract y.' })
+    await w.callWeb(ericWeb, 'POST', '/v1/brains/contract/relations', { from: x, to: y, kind: 'supersedes' })
+    await add(
+      'relation_cycle',
+      w.callWeb(ericWeb, 'POST', '/v1/brains/contract/relations', { from: y, to: x, kind: 'supersedes' }),
     )
     await add('no_logo', w.raw('GET', '/v1/branding/logo'))
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))

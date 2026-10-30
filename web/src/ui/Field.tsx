@@ -4,6 +4,8 @@ import type { JSX } from 'preact'
 import { useId } from 'preact/hooks'
 
 type Props = Omit<JSX.InputHTMLAttributes<HTMLInputElement>, 'id' | 'value' | 'onInput'> & {
+  // A known id, when a form puts the keyboard on this field by name.
+  id?: string
   label: string
   hint?: string
   problem?: string | null | undefined
@@ -13,8 +15,9 @@ type Props = Omit<JSX.InputHTMLAttributes<HTMLInputElement>, 'id' | 'value' | 'o
   after?: JSX.Element
 }
 
-export function Field({ label, hint, problem, note, value, onValue, after, ...input }: Props) {
-  const id = useId()
+export function Field({ id: given, label, hint, problem, note, value, onValue, after, ...input }: Props) {
+  const auto = useId()
+  const id = given ?? auto
   const said = problem || note
   const described = [hint ? `${id}-hint` : '', said ? `${id}-problem` : ''].filter(Boolean).join(' ')
   return (

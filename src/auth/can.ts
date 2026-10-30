@@ -27,6 +27,7 @@ export type Action =
   | 'entry.purge'
   | 'relation.write'
   | 'correction.relay'
+  | 'correction.write'
   | 'key.short'
   | 'wiki.propose'
   | 'wiki.decide'
@@ -123,6 +124,18 @@ export function can(actor: Actor, action: Action, f: Facts = {}): Decision {
         )
       }
       return OK
+    }
+    // A person's correction, written by that person in the web (spec B1: every key is an agent's).
+    case 'correction.write': {
+      if (actor.kind !== 'person' || actor.credential.kind !== 'web') {
+        return no(
+          'Corrections are a person’s word, written by that person in the web; agents cannot write them.',
+          'Save it as a "learning" or "preference" entry instead, or ask a person to add the correction in the rsc-brain web.',
+        )
+      }
+      const r = needRole(f.role, 'contributor')
+      if (!r.ok) return r
+      return f.brainStatus === 'archived' ? ARCHIVED : OK
     }
     case 'key.short':
       if (actor.kind === 'service' && actor.credential.kind === 'main') return OK

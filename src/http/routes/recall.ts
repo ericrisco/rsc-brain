@@ -19,7 +19,7 @@ import {
 } from '../../domain/search.ts'
 import { CONTEXT, startContext } from '../../domain/startup.ts'
 import { readTrail } from '../../domain/trail.ts'
-import { compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
+import { compact, day, flag, int, type Obj, obj, reqStr, str, strList, upTo } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
@@ -40,36 +40,6 @@ function list(v: string | null): string[] | undefined {
     .filter(Boolean)
   if (items.length > 50) throw invalid('A list has at most 50 values.', 'Ask for fewer.')
   return items.length > 0 ? items : undefined
-}
-
-// "to" a day includes the whole day: up to the next midnight, not included.
-const upTo = (d: Date | undefined, v: string | null) =>
-  d === undefined ? {} : v?.length === 10 ? { before: new Date(d.getTime() + 86_400_000) } : { to: d }
-
-const flag = (v: string | null) => v === '1' || v === 'true'
-
-// A date filter (UTC): a day ("2026-10-29") or a full ISO instant, between years 1 and 9999. A day
-// that does not exist ("2026-02-31") is refused, not rolled over.
-const DAY = /^(\d{4})-(\d{2})-(\d{2})(T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2}))?$/
-function day(v: string | null, field: string): Date | undefined {
-  if (v === null || v === '') return undefined
-  const m = DAY.exec(v)
-  const d = new Date(v)
-  const [y, mo, da] = [Number(m?.[1]), Number(m?.[2]), Number(m?.[3])]
-  // The real year: 29 February exists only in leap years.
-  const real = new Date(Date.UTC(2000, 0, 1))
-  real.setUTCFullYear(y, mo - 1, da)
-  if (
-    !m ||
-    Number.isNaN(d.getTime()) ||
-    y < 1 ||
-    real.getUTCMonth() !== mo - 1 ||
-    real.getUTCDate() !== da ||
-    d.getUTCFullYear() < 1 ||
-    d.getUTCFullYear() > 9999
-  )
-    throw invalid(`"${field}" is not a date.`, 'Send a day like 2026-10-29, or an ISO instant.')
-  return d
 }
 
 export const recallRoutes: Route[] = [
@@ -129,9 +99,20 @@ export const recallRoutes: Route[] = [
     })
     return { status: 201, body: { relation: rel } }
   }),
-  route('GET /v1/brains/:slug/conflicts', async (r) => ({
-    body: { conflicts: await conflicts(ctxOf(r), r.params.slug as string) },
-  })),
+  // Every open conflict; with "limit" (and "offset", the "next" of the page before), by pages.
+  route('GET /v1/brains/:slug/conflicts', async (r) => {
+    const limit = r.query.get('limit')
+    const offset = r.query.get('offset') ? Number(r.query.get('offset')) : 0
+    if (!Number.isInteger(offset) || offset < 0)
+      throw invalid('"offset" is the "next" value of the previous page.', 'Use it unchanged.')
+    return {
+      body: await conflicts(
+        ctxOf(r),
+        r.params.slug as string,
+        compact({ limit: limit === null || limit === '' ? undefined : limitOf(limit), offset }),
+      ),
+    }
+  }),
   ...(['forgotten', 'to-review', 'uncompiled'] as View[]).map((view) =>
     route(`GET /v1/brains/:slug/${view}`, async (r) => ({
       body: await listView(

@@ -17,6 +17,19 @@ export type Resource<T> = {
 
 const cache = new Map<string, Resource<unknown>>()
 
+// Resources made and not yet looked at by a screen: their first load is the fresh one.
+const unseen = new WeakSet<Resource<unknown>>()
+
+// Whether a screen showing `r` should ask for it again: not the first screen to look at a resource just
+// made (its own load is fresh, however fast it came back), and not while a load is on its way.
+export function wantsFresh(r: Resource<unknown>): boolean {
+  if (unseen.has(r)) {
+    unseen.delete(r)
+    return false
+  }
+  return !r.loading.value
+}
+
 const asApiError = (e: unknown) =>
   e instanceof ApiError
     ? e
@@ -51,6 +64,7 @@ export function resource<T>(key: string, loader: () => Promise<T>): Resource<T> 
     settled: () => inFlight,
   }
   cache.set(key, r as Resource<unknown>)
+  unseen.add(r as Resource<unknown>)
   void r.reload()
   return r
 }

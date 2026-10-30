@@ -71,6 +71,7 @@ describe('keyboard shortcuts', () => {
       'edit',
       'go-decisions',
       'go-home',
+      'go-journal',
       'go-log',
       'go-overview',
       'go-people',
@@ -88,5 +89,12 @@ describe('keyboard shortcuts', () => {
     assert.equal(m.handle(key('d')), 'go-decisions')
     assert.equal(m.handle(key('g')), null)
     assert.equal(m.handle(key('l')), 'go-log')
+  })
+
+  it('"g" then "j" goes to the journal (PR20)', () => {
+    const m = createKeymap(() => 0)
+    assert.equal(m.handle(key('g')), null)
+    assert.equal(m.handle(key('j')), 'go-journal')
+    assert.equal(m.handle(key('j')), null)
   })
 })

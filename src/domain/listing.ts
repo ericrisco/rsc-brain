@@ -2,8 +2,10 @@
 // total and gives a cursor for the next page. Forgotten and purged entries stay out of ordinary lists.
 import { denied, invalid, notFound } from '../core/errors.ts'
 import type { Row } from '../db/db.ts'
+import { CLIENT_SQL } from './clients.ts'
 import { type Ctx, inBrain } from './context.ts'
-import { type Entry, entryOf } from './entries.ts'
+import { type Byline, bylines, ENTRY_TYPES, type Entry, entryOf, withByline } from './entries.ts'
+import { lastSeq } from './events.ts'
 import { closeIdle, type Session, sessionOf } from './sessions.ts'
 
 export type Page<T> = { items: T[]; total: number; next: string | null }
@@ -42,31 +44,147 @@ export function limitOf(v: string | null | undefined): number {
   return n
 }
 
+// The sessions of a brain as the journal shows them (spec B6 «Journal › Sessions», plan G12): newest
+// first, each with the client that wrote (the agent of a short key, the app of a connection, the program
+// that used a token last, or the web), its author, how many entries of work it holds (the summary aside),
+// and its summary. Filters narrow both the page and its total.
+export type SessionFilter = {
+  status?: string
+  client?: string
+  author?: string
+  ref?: string
+  type?: string
+  from?: Date
+  to?: Date
+  before?: Date
+  uncompiled?: boolean
+  cursor?: string
+  limit?: number
+}
+
+export type SessionView = Session & {
+  day: string | null
+  client: string | null
+  author: { id: string; name: string }
+  entries: number
+  summary: string | null
+}
+
+export const SESSION_STATUSES = ['open', 'closed', 'closed_no_summary'] as const
+const SUMMARY_CHARS = 300
+
+const CLIENT = CLIENT_SQL
+
+const SESSION_SELECT = `SELECT s.*, a.name AS author_name, ${CLIENT} AS client, se.content AS summary_text,
+    (SELECT count(*)::int FROM entries e WHERE e.session_id = s.id AND e.state = 'active'
+        AND e.type <> 'summary') AS entry_count
+   FROM sessions s JOIN accounts a ON a.id = s.account_id
+   LEFT JOIN credentials c ON c.id = s.credential_id
+   LEFT JOIN oauth_grants g ON g.id = c.grant_id
+   LEFT JOIN entries se ON se.id = s.summary_entry_id AND se.state = 'active'`
+
+const sessionViewOf = (r: Row): SessionView => ({
+  ...sessionOf(r),
+  day: r.day == null ? null : String(r.day),
+  client: r.client == null ? null : String(r.client),
+  author: { id: String(r.account_id), name: String(r.author_name) },
+  entries: Number(r.entry_count),
+  summary: r.summary_text == null ? null : String(r.summary_text).slice(0, SUMMARY_CHARS),
+})
+
+// A part of a reference, as typed: % and _ match themselves.
+const likeOf = (v: string) => `%${v.replace(/[\\%_]/g, (m) => `\\${m}`)}%`
+
 export async function listSessions(
   ctx: Ctx,
   slug: string,
-  o: { cursor?: string; limit?: number },
-): Promise<Page<Session>> {
+  f: SessionFilter,
+): Promise<Page<SessionView> & { liveFrom: string; facets?: SessionFacets }> {
   const { brain } = await inBrain(ctx, { slug })
+  if (f.status !== undefined && !(SESSION_STATUSES as readonly string[]).includes(f.status))
+    throw invalid(`Unknown status "${f.status}".`, `Use one of: ${SESSION_STATUSES.join(', ')}.`)
+  if (f.type !== undefined && !(ENTRY_TYPES as readonly string[]).includes(f.type))
+    throw invalid(`Unknown entry type "${f.type}".`, `Use one of: ${ENTRY_TYPES.join(', ')}.`)
   await closeIdle(ctx.db, ctx.clock())
-  const c = decode(o.cursor)
-  const limit = o.limit ?? PAGE.default
+  // Read first: every event numbered up to here is already in what follows, so a live stream resumed
+  // from this id misses nothing.
+  const liveFrom = String(await lastSeq(ctx.db))
+  const where = ['s.brain_id = $1']
+  const params: unknown[] = [brain.id]
+  const add = (sql: string, v: unknown) => {
+    params.push(v)
+    where.push(sql.replaceAll('?', `$${params.length}`))
+  }
+  if (f.status !== undefined) add('s.status = ?', f.status)
+  if (f.client !== undefined) add(`${CLIENT} = ?`, f.client)
+  if (f.author !== undefined) add('s.account_id = ?', f.author)
+  if (f.ref !== undefined)
+    add(
+      `(s.ref ILIKE ? OR EXISTS (SELECT 1 FROM entries e WHERE e.session_id = s.id AND e.stamped_ref ILIKE ?))`,
+      likeOf(f.ref),
+    )
+  if (f.type !== undefined)
+    add(
+      "EXISTS (SELECT 1 FROM entries e WHERE e.session_id = s.id AND e.state = 'active' AND e.type = ?)",
+      f.type,
+    )
+  if (f.uncompiled)
+    where.push(
+      "EXISTS (SELECT 1 FROM entries e WHERE e.session_id = s.id AND e.state = 'active' AND NOT e.compiled AND e.type <> 'summary')",
+    )
+  // Dates: a session counts on every day it was active, from its opening to its last write.
+  if (f.from !== undefined) add('s.last_activity_at >= ?', f.from)
+  if (f.to !== undefined) add('s.opened_at <= ?', f.to)
+  if (f.before !== undefined) add('s.opened_at < ?', f.before)
+  const FROM = `FROM sessions s LEFT JOIN credentials c ON c.id = s.credential_id
+    LEFT JOIN oauth_grants g ON g.id = c.grant_id WHERE ${where.join(' AND ')}`
+  const total = await ctx.db.one<{ n: number }>(`SELECT count(*)::int AS n ${FROM}`, params)
+  const c = decode(f.cursor)
+  const limit = f.limit ?? PAGE.default
+  const n = params.length
   const rows = await ctx.db.query(
-    `SELECT * FROM sessions WHERE brain_id = $1 AND ($2::timestamptz IS NULL OR (opened_at, id) < ($2, $3))
-      ORDER BY opened_at DESC, id DESC LIMIT $4`,
-    [brain.id, c?.at ?? null, c?.id ?? '', limit + 1],
-  )
-  const total = await ctx.db.one<{ n: number }>(
-    'SELECT count(*)::int AS n FROM sessions WHERE brain_id = $1',
-    [brain.id],
+    `${SESSION_SELECT} WHERE ${where.join(' AND ')}
+        AND ($${n + 1}::timestamptz IS NULL OR (s.opened_at, s.id) < ($${n + 1}, $${n + 2}))
+      ORDER BY s.opened_at DESC, s.id DESC LIMIT $${n + 3}`,
+    [...params, c?.at ?? null, c?.id ?? '', limit + 1],
   )
   const page = rows.slice(0, limit)
   const last = page.at(-1)
   return {
-    items: page.map(sessionOf),
+    items: page.map(sessionViewOf),
     total: total?.n ?? 0,
     next: rows.length > limit && last ? encode(last.opened_at as Date, String(last.id)) : null,
+    liveFrom,
+    // What the filters can pick from, with the first page: nobody types an id.
+    ...(f.cursor ? {} : { facets: await facetsOf(ctx, brain.id) }),
   }
+}
+
+export type SessionFacets = { clients: string[]; authors: Array<{ id: string; name: string }> }
+
+async function facetsOf(ctx: Ctx, brainId: string): Promise<SessionFacets> {
+  const clients = await ctx.db.query<{ client: string }>(
+    `SELECT DISTINCT ${CLIENT} AS client FROM sessions s LEFT JOIN credentials c ON c.id = s.credential_id
+       LEFT JOIN oauth_grants g ON g.id = c.grant_id WHERE s.brain_id = $1 AND ${CLIENT} IS NOT NULL
+      ORDER BY 1 LIMIT 100`,
+    [brainId],
+  )
+  const authors = await ctx.db.query<{ id: string; name: string }>(
+    `SELECT DISTINCT a.id, a.name FROM sessions s JOIN accounts a ON a.id = s.account_id
+      WHERE s.brain_id = $1 ORDER BY a.name, a.id LIMIT 100`,
+    [brainId],
+  )
+  return { clients: clients.map((r) => r.client), authors: authors.map((r) => ({ id: r.id, name: r.name })) }
+}
+
+// One session, with the fields of the list; one in a brain the caller cannot read does not exist.
+export async function sessionView(ctx: Ctx, id: string): Promise<SessionView> {
+  const row = await ctx.db.one(`${SESSION_SELECT} WHERE s.id = $1`, [id])
+  if (!row) throw notFound('session')
+  await inBrain(ctx, { id: String(row.brain_id) }).catch(() => {
+    throw notFound('session')
+  })
+  return sessionViewOf(row)
 }
 
 export type EntryFilter = { ref?: string; type?: string; sessionId?: string; cursor?: string; limit?: number }
@@ -146,7 +264,7 @@ export async function listView(
   slug: string,
   view: View,
   o: { limit?: number; cursor?: string } = {},
-): Promise<Page<Entry>> {
+): Promise<Page<Entry & Byline>> {
   const { brain, role } = await inBrain(ctx, { slug })
   const limit = o.limit ?? PAGE.default
   const c = decode(o.cursor)
@@ -175,8 +293,13 @@ export async function listView(
   )
   const page = rows.slice(0, limit)
   const last = page.at(-1)
+  // Who wrote each, and for the forgotten ones who forgot it and why (only curators see this list).
+  const by = await bylines(
+    ctx.db,
+    page.map((r) => String(r.id)),
+  )
   return {
-    items: page.map(entryOf),
+    items: page.map((r) => withByline(entryOf(r), by.get(String(r.id)))),
     total: total?.n ?? 0,
     next: rows.length > limit && last ? encode(last.created_at as Date, String(last.id)) : null,
   }

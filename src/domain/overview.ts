@@ -150,9 +150,11 @@ export const TODAY_SESSIONS = 20
 export const PENDING_SHOWN = 5
 const SUMMARY_CHARS = 300
 
+// The web for a person's web session (never its browser's user agent), as CLIENT_SQL names it.
 const clientOf = (r: Row): string | null => {
+  if (r.ckind === 'web') return 'web'
   for (const v of [r.agent, r.client_name, r.last_client]) if (typeof v === 'string' && v) return v
-  return r.ckind === 'web' ? 'web' : null
+  return null
 }
 
 // G8: the overview of one brain.

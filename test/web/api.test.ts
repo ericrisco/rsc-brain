@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { ApiError, createClient, type Transport } from '../../web/src/api/client.ts'
 import { draft } from '../../web/src/api/draft.ts'
-import { invalidate, resetResources, resource } from '../../web/src/api/resource.ts'
+import { invalidate, resetResources, resource, wantsFresh } from '../../web/src/api/resource.ts'
 import { ROUTE_TABLE } from '../../web/src/api/routes.ts'
 import { safeNext, signInPath } from '../../web/src/lib/nav.ts'
 import { V1 } from '../api/v1.ts'
@@ -215,6 +215,19 @@ describe('resources', () => {
     assert.equal(a.stale.value, false)
     invalidate('other')
     assert.equal(n, 2)
+  })
+
+  it('a screen that just made a resource does not ask again, even once its first answer is in', async () => {
+    resetResources()
+    let n = 0
+    const r = resource('page', async () => ({ n: ++n }))
+    await r.settled()
+    // The first screen to look: the load it started is the fresh one (a fast answer must not count twice).
+    assert.equal(wantsFresh(r), false)
+    // Any later screen showing it again asks for a fresh one.
+    assert.equal(wantsFresh(r), true)
+    r.loading.value = true
+    assert.equal(wantsFresh(r), false, 'not while one is on its way')
   })
 
   it('keep the last data on error, and say so', async () => {

@@ -63,6 +63,8 @@ export function Keyboard({
         route(`/b/${encodeURIComponent(brain)}/wiki/decisions`)
       } else if (id === 'go-log' && signedIn && brain) {
         route(`/b/${encodeURIComponent(brain)}/wiki/log`)
+      } else if (id === 'go-journal' && signedIn && brain) {
+        route(`/b/${encodeURIComponent(brain)}/journal`)
       } else if (id === 'edit' && signedIn) {
         // What "Edit" above a page does; on a page that has no Edit (not a curator), nothing.
         const edit = document.querySelector<HTMLAnchorElement>('main a[data-view="edit"]')
