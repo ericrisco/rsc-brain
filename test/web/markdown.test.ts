@@ -76,9 +76,12 @@ describe('a page body', () => {
     const html = md('Read [[audience/intros]] and [[audience/intros|the intros page]].')
     assert.match(
       html,
-      /<a href="\/b\/growth\/pages\/audience\/intros" class="wikilink">audience\/intros<\/a>/,
+      /<a href="\/b\/growth\/pages\/audience\/intros" class="wikilink" title="audience\/intros">audience\/intros<\/a>/,
     )
-    assert.match(html, /<a href="\/b\/growth\/pages\/audience\/intros" class="wikilink">the intros page<\/a>/)
+    assert.match(
+      html,
+      /<a href="\/b\/growth\/pages\/audience\/intros" class="wikilink" title="audience\/intros">the intros page<\/a>/,
+    )
   })
 
   it('a mention of a page that does not exist looks different and says so in words', () => {

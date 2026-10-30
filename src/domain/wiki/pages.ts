@@ -68,11 +68,15 @@ export type LinkView = {
   address: string
   pageId: string | null
   title: string | null
-  state: 'ok' | 'broken' | 'retired' | 'superseded'
+  state: 'ok' | 'broken' | 'stale' | 'retired' | 'superseded'
 }
 
 const stateOf = (status: unknown): LinkView['state'] =>
-  status == null ? 'broken' : status === 'retired' ? 'retired' : status === 'superseded' ? 'superseded' : 'ok'
+  status == null
+    ? 'broken'
+    : status === 'retired' || status === 'superseded' || status === 'stale'
+      ? status
+      : 'ok'
 
 export async function linksOf(db: Db, page: { id: string; brainId: string }) {
   const out = await db.query(
@@ -148,6 +152,24 @@ export type PageReading = {
   notice?: string
   links: { out: LinkView[]; in: LinkView[] }
   sources: SourceView[]
+  // Who saved the revision the page is at (an edit that meets a newer revision names them).
+  lastChange: { revision: number; authorId: string; authorName: string; at: string } | null
+}
+
+async function lastChangeOf(db: Db, pageId: string, revision: number): Promise<PageReading['lastChange']> {
+  const r = await db.one(
+    `SELECT r.revision, r.author_id, a.name, r.created_at FROM page_revisions r
+       LEFT JOIN accounts a ON a.id = r.author_id WHERE r.page_id = $1 AND r.revision = $2`,
+    [pageId, revision],
+  )
+  return r
+    ? {
+        revision: Number(r.revision),
+        authorId: String(r.author_id),
+        authorName: r.name == null ? '' : String(r.name),
+        at: (r.created_at as Date).toISOString(),
+      }
+    : null
 }
 
 export async function getPage(ctx: Ctx, slug: string, address: string): Promise<PageReading> {
@@ -159,6 +181,7 @@ export async function getPage(ctx: Ctx, slug: string, address: string): Promise<
     page,
     links: await linksOf(ctx.db, page),
     sources: await sourcesOf(ctx.db, page.id),
+    lastChange: await lastChangeOf(ctx.db, page.id, page.revision),
   }
   if (page.address !== address) out.redirectedFrom = address
   if (page.status === 'retired') out.notice = 'retired: this page is kept for its history only.'
@@ -175,6 +198,9 @@ export type RevisionSummary = {
   title: string
   status: PageStatus
   kind: 'proposal' | 'direct' | 'revert' | 'purge'
+  change: RevisionChange
+  restoredFrom: number | null
+  reason: string | null
   authorId: string
   // Who made it, by name, for a person reading the history (spec B6 «Wiki › Page»).
   authorName: string
@@ -185,12 +211,31 @@ export type RevisionSummary = {
   createdAt: string
 }
 
+// What kind of change made a revision, from the revision before it (spec B6 «Wiki › Page», review of
+// PR19): one operation leaves one revision, so a new address is a move, a new status a status change,
+// other typed links a link or an unlink, and anything else an edit.
+export type RevisionChange = 'created' | 'edited' | 'linked' | 'status' | 'moved' | 'restored'
+
+function changeOf(r: Row): RevisionChange {
+  if (r.kind === 'revert') return 'restored'
+  if (r.prev_revision == null) return 'created'
+  if (r.address !== r.prev_address) return 'moved'
+  if (r.status !== r.prev_status) return 'status'
+  if (JSON.stringify(r.links ?? []) !== JSON.stringify(r.prev_links ?? [])) return 'linked'
+  return 'edited'
+}
+
 const revisionSummary = (r: Row): RevisionSummary => ({
   revision: Number(r.revision),
   address: String(r.address),
   title: r.purged_at ? '[purged]' : String(r.title),
   status: r.status as PageStatus,
   kind: r.kind as RevisionSummary['kind'],
+  change: changeOf(r),
+  restoredFrom:
+    r.kind === 'revert' ? Number(/back to revision (\d+)/.exec(String(r.note ?? ''))?.[1]) || null : null,
+  // The curator's reason for a change by hand or a restore; the operation's for a proposal.
+  reason: r.purged_at || r.why == null ? null : String(r.why),
   authorId: String(r.author_id),
   authorName: r.author_name == null ? '' : String(r.author_name),
   proposalId: r.proposal_id == null ? null : String(r.proposal_id),
@@ -202,13 +247,24 @@ const revisionSummary = (r: Row): RevisionSummary => ({
   createdAt: (r.created_at as Date).toISOString(),
 })
 
+// Every revision of a page with its author's name, its reason and the revision before it (to say what
+// kind of change it was).
+const REVISIONS = `SELECT r.*, a.name AS author_name, coalesce(r.reason, o.op ->> 'reason') AS why,
+         lag(r.revision) OVER w AS prev_revision, lag(r.address) OVER w AS prev_address,
+         lag(r.status) OVER w AS prev_status, lag(r.links) OVER w AS prev_links
+    FROM page_revisions r
+    LEFT JOIN accounts a ON a.id = r.author_id
+    LEFT JOIN proposal_ops o ON o.proposal_id = r.proposal_id AND o.idx = r.op_index
+   WHERE r.page_id = $1
+  WINDOW w AS (ORDER BY r.revision)`
+
 export async function pageHistory(ctx: Ctx, slug: string, address: string): Promise<RevisionSummary[]> {
   const { page } = await getPage(ctx, slug, address)
-  const rows = await ctx.db.query(
-    `SELECT r.*, a.name AS author_name FROM page_revisions r LEFT JOIN accounts a ON a.id = r.author_id
-      WHERE r.page_id = $1 ORDER BY r.revision`,
-    [page.id],
-  )
+  return historyOf(ctx.db, page.id)
+}
+
+export async function historyOf(db: Db, pageId: string): Promise<RevisionSummary[]> {
+  const rows = await db.query(`${REVISIONS} ORDER BY r.revision`, [pageId])
   return rows.map(revisionSummary)
 }
 
@@ -238,11 +294,7 @@ export async function pageRevision(
   n: number,
 ): Promise<FullRevision> {
   const { page } = await getPage(ctx, slug, address)
-  const r = await ctx.db.one(
-    `SELECT r.*, a.name AS author_name FROM page_revisions r LEFT JOIN accounts a ON a.id = r.author_id
-      WHERE r.page_id = $1 AND r.revision = $2`,
-    [page.id, n],
-  )
+  const r = await ctx.db.one(`SELECT * FROM (${REVISIONS}) x WHERE x.revision = $2`, [page.id, n])
   if (!r) {
     throw new AppError(
       404,
@@ -257,19 +309,23 @@ export async function pageRevision(
 export type MapGroup = {
   type: PageType
   area: string
-  pages: { address: string; title: string; summary: string; tags: string[] }[]
+  pages: { address: string; title: string; summary: string; tags: string[]; status: PageStatus }[]
 }
 
-// The map: every current page, grouped by type and by the first part of its address, with its summary.
+// The map: every current page, grouped by type and by the first part of its address, with its summary
+// (B2). `all`: every page whatever its status, each saying it (the web's map, which filters by status).
 export async function wikiMap(
   ctx: Ctx,
   slug: string,
+  o: { all?: boolean } = {},
 ): Promise<{ intro: string; groups: MapGroup[]; count: number }> {
   const { brain } = await inBrain(ctx, { slug })
   const s = await settingsOf(ctx.db, brain.id)
   const rows = await ctx.db.query(
-    "SELECT address, type, title, summary, tags FROM pages WHERE brain_id = $1 AND status = 'current' ORDER BY type, split_part(address, '/', 1), address",
-    [brain.id],
+    `SELECT address, type, title, summary, tags, status FROM pages
+      WHERE brain_id = $1 AND ($2 OR status = 'current')
+      ORDER BY type, split_part(address, '/', 1), address`,
+    [brain.id, Boolean(o.all)],
   )
   const groups: MapGroup[] = []
   for (const r of rows) {
@@ -284,6 +340,7 @@ export async function wikiMap(
       title: String(r.title),
       summary: String(r.summary),
       tags: (r.tags as string[]) ?? [],
+      status: r.status as PageStatus,
     })
   }
   return { intro: s.mapIntro, groups, count: rows.length }
@@ -315,6 +372,8 @@ export type LogLine = {
   kind: LogKind
   proposalId: string | null
   summary: string
+  // Why: the curator's for a change by hand, the proposal's for an approval.
+  reason: string | null
   pages: string[]
 }
 
@@ -334,7 +393,8 @@ export async function wikiLog(
   const limit = o.limit ?? PAGE.default
   const only = `($2::text IS NULL OR l.kind = $2) AND ($3::text IS NULL OR $3 = ANY(l.pages))`
   const rows = await ctx.db.query(
-    `SELECT l.*, a.name AS actor_name FROM wiki_log l LEFT JOIN accounts a ON a.id = l.actor_id
+    `SELECT l.*, a.name AS actor_name, coalesce(l.reason, pr.reason) AS why
+       FROM wiki_log l LEFT JOIN accounts a ON a.id = l.actor_id LEFT JOIN proposals pr ON pr.id = l.proposal_id
       WHERE l.brain_id = $1 AND ${only}
         AND ($4::timestamptz IS NULL OR (l.at, l.id) < ($4, $5))
       ORDER BY l.at DESC, l.id DESC LIMIT $6`,
@@ -355,6 +415,7 @@ export async function wikiLog(
       kind: r.kind as LogLine['kind'],
       proposalId: r.proposal_id == null ? null : String(r.proposal_id),
       summary: String(r.summary),
+      reason: r.why == null || r.kind === 'purge' ? null : String(r.why),
       pages: (r.pages as string[]) ?? [],
     })),
     total: total?.n ?? 0,

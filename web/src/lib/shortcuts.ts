@@ -2,7 +2,16 @@
 // control that does the same: a shortcut is a faster route, never the only one. The keymap is a small
 // state machine, kept free of the DOM so it is tested on its own.
 export type Shortcut = {
-  id: 'search' | 'help' | 'go-home' | 'go-overview' | 'go-wiki' | 'go-people'
+  id:
+    | 'search'
+    | 'help'
+    | 'go-home'
+    | 'go-overview'
+    | 'go-wiki'
+    | 'go-decisions'
+    | 'go-log'
+    | 'go-people'
+    | 'edit'
   keys: string[]
   label: string
   // The visible control that does the same, as the person sees it.
@@ -43,12 +52,40 @@ export const SHORTCUTS: Shortcut[] = [
     control: '"Wiki" in the side bar',
     inBrain: true,
   },
+  {
+    id: 'go-decisions',
+    keys: ['g', 'd'],
+    label: 'Go to the decisions of this brain',
+    control: '"Decisions" in the side bar',
+    inBrain: true,
+  },
+  {
+    id: 'go-log',
+    keys: ['g', 'l'],
+    label: 'Go to the log of this brain’s wiki',
+    control: '"Log" in the side bar',
+    inBrain: true,
+  },
+  {
+    id: 'edit',
+    keys: ['e'],
+    label: 'Edit the wiki page you are reading (curators)',
+    control: '"Edit" above the page',
+    inBrain: true,
+  },
 ]
 
 export type KeyLike = { key: string; metaKey: boolean; ctrlKey: boolean; altKey: boolean; typing: boolean }
 
 const SEQUENCE_MS = 1500
-const GO: Record<string, Shortcut['id']> = { h: 'go-home', o: 'go-overview', w: 'go-wiki', p: 'go-people' }
+const GO: Record<string, Shortcut['id']> = {
+  h: 'go-home',
+  o: 'go-overview',
+  w: 'go-wiki',
+  d: 'go-decisions',
+  l: 'go-log',
+  p: 'go-people',
+}
 
 export function createKeymap(now: () => number) {
   let leader: number | null = null
@@ -69,6 +106,7 @@ export function createKeymap(now: () => number) {
       }
       leader = k === 'g' ? now() : null
       if (e.key === '?') return 'help'
+      if (k === 'e' && e.key === 'e') return 'edit'
       return null
     },
   }

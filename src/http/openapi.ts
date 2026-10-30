@@ -170,7 +170,9 @@ const LINK_VIEW = obj({
   address: s('The other page.'),
   pageId: nul(s('Its id; null when no page has that address (a broken link).')),
   title: nul(s('Its title.')),
-  state: s('ok, broken, retired or superseded.', { enum: ['ok', 'broken', 'retired', 'superseded'] }),
+  state: s('ok, broken, stale, retired or superseded.', {
+    enum: ['ok', 'broken', 'stale', 'retired', 'superseded'],
+  }),
 })
 const SOURCE_VIEW = obj(
   {
@@ -188,6 +190,14 @@ const PAGE_READING = obj(
     notice: s('Why it should be read with care (retired, superseded).'),
     links: obj({ out: list(LINK_VIEW), in: list(LINK_VIEW) }),
     sources: list(SOURCE_VIEW),
+    lastChange: nul(
+      obj({
+        revision: n('The revision the page is at.'),
+        authorId: s('Who saved it.'),
+        authorName: s('Their name.'),
+        at: s('When.', { format: 'date-time' }),
+      }),
+    ),
   },
   ['redirectedFrom', 'notice'],
 )
@@ -197,6 +207,11 @@ const REVISION_SUMMARY = {
   title: s('The title it had.'),
   status: PAGE_STATUS,
   kind: s('proposal, direct, revert or purge.'),
+  change: s('What it changed: created, edited, linked, status, moved or restored.', {
+    enum: ['created', 'edited', 'linked', 'status', 'moved', 'restored'],
+  }),
+  restoredFrom: nul(n('The revision it restored.')),
+  reason: nul(s('Why: the curator’s reason, or the operation’s for a proposal.')),
   authorId: s('Who made it.'),
   authorName: s('Their name.'),
   proposalId: nul(s('The proposal it came from.')),
@@ -258,7 +273,9 @@ const HAND: Record<string, Op> = {
     }),
   },
   'GET /v1/brains/{slug}/wiki/map': {
-    summary: 'The map: every current page by type and first part of its address, with its summary.',
+    summary:
+      'The map: every current page by type and first part of its address, with its summary; status=all for every page whatever its status.',
+    query: { status: '"all" for every status; left out, current pages only.' },
     reply: obj({
       intro: s('The curators’ introduction.'),
       groups: list(
@@ -271,6 +288,7 @@ const HAND: Record<string, Op> = {
               title: s('Title.'),
               summary: s('Summary.'),
               tags: list(s('Tag.')),
+              status: PAGE_STATUS,
             }),
           ),
         }),
@@ -311,6 +329,7 @@ const HAND: Record<string, Op> = {
           kind: s('proposal, direct, revert or purge.', { enum: ['proposal', 'direct', 'revert', 'purge'] }),
           proposalId: nul(s('The proposal it applied.')),
           summary: s('What changed.'),
+          reason: nul(s('Why: the curator’s reason, or the proposal’s.')),
           pages: list(s('Address.')),
         }),
       ),
@@ -325,6 +344,7 @@ const HAND: Record<string, Op> = {
       history: '1 for its revisions.',
       revision: 'One revision.',
       compare: 'Two revisions, e.g. 3,5.',
+      include: '"history" for the page and its revisions in one read.',
     },
     reply: obj(
       {
@@ -334,7 +354,7 @@ const HAND: Record<string, Op> = {
         a: FULL_REVISION,
         b: FULL_REVISION,
       },
-      ['page', 'redirectedFrom', 'notice', 'links', 'sources', 'history', 'revision', 'a', 'b'],
+      ['page', 'redirectedFrom', 'notice', 'links', 'sources', 'lastChange', 'history', 'revision', 'a', 'b'],
     ),
   },
   'PATCH /v1/brains/{slug}/pages/{address}': {

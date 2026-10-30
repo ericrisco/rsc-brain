@@ -2,7 +2,7 @@
 // the wiki, when and by whom. Done when: the person found the change and opened its page. Newest first, by
 // pages of 50 («Show more»); filtered on the server by kind of change and by page, the filters in the
 // address.
-import { useEffect, useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import type { ApiError } from '../../api/client.ts'
 import { api } from '../../api/index.ts'
 import { online } from '../../session.ts'
@@ -24,6 +24,8 @@ export function WikiLog({ slug }: { slug: string }) {
   const [error, setError] = useState<ApiError | null>(null)
   const [more, setMore] = useState(false)
   const [tries, setTries] = useState(0)
+  // Which question the lines answer: a «Show more» that comes back after the filters changed is dropped.
+  const asked = useRef(0)
   const ask = (cursor?: string) =>
     api.call<Listing<LogLine>>('wikiLog', {
       path: { slug },
@@ -32,6 +34,7 @@ export function WikiLog({ slug }: { slug: string }) {
   useEffect(() => {
     if (!brain) return
     let live = true
+    asked.current += 1
     setError(null)
     // New filters: what is shown no longer answers them; the skeleton shows until the new lines come.
     setLines(null)
@@ -53,14 +56,16 @@ export function WikiLog({ slug }: { slug: string }) {
   const w = T.wiki
   const loadMore = async () => {
     if (!next) return
+    const mine = asked.current
     setMore(true)
     try {
       const r = await ask(next)
-      setLines([...(lines ?? []), ...r.items])
+      if (mine !== asked.current) return
+      setLines((now) => [...(now ?? []), ...r.items])
       setNext(r.next)
       setTotal(r.total)
     } catch (e) {
-      setError(e as ApiError)
+      if (mine === asked.current) setError(e as ApiError)
     } finally {
       setMore(false)
     }
@@ -130,6 +135,7 @@ export function WikiLog({ slug }: { slug: string }) {
             {lines.map((l) => (
               <li key={l.id}>
                 <p class="list-title">{l.summary}</p>
+                {l.reason ? <p class="why">{w.why(l.reason)}</p> : null}
                 <p class="meta">
                   <span class="mono">{T.dateTime(l.at)}</span> · {w.by(l.actorName)}
                   {l.pages.length ? ' · ' : null}

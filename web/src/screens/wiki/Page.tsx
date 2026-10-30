@@ -10,7 +10,7 @@ import { useEffect } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import { useFresh } from '../../api/fresh.ts'
 import { renderMarkdown } from '../../lib/markdown.ts'
-import { groupLinks } from '../../lib/wiki.ts'
+import { groupLinks, groupReaders } from '../../lib/wiki.ts'
 import { online } from '../../session.ts'
 import { T } from '../../text.ts'
 import { Dialog } from '../../ui/Dialog.tsx'
@@ -19,7 +19,7 @@ import { ErrorState, Skeleton } from '../../ui/states.tsx'
 import type { BrainOne } from '../Brain.tsx'
 import { isCurator, mapHref, pageHref, Said, StatusTag, TypeTag, useBrain } from './common.tsx'
 import { entryResource, type LinkView, pageResource, type Reading, readersResource } from './data.ts'
-import { PageEdit, wikiNotice } from './Edit.tsx'
+import { PageEdit, UnsavedEdit, wikiNotice } from './Edit.tsx'
 import { History, RecentHistory } from './History.tsx'
 
 function NoPage({ slug, address }: { slug: string; address: string }) {
@@ -122,6 +122,9 @@ function Sources({ slug, reading }: { slug: string; reading: Reading }) {
   const open = (id: string) => {
     const q = new URLSearchParams(url.split('?')[1] ?? '')
     q.set('source', id)
+    // Opening a source adds a step to the history, which closing it takes back (Back then leaves the page,
+    // as the person expects; it never just reopens the panel).
+    opened = true
     route(`${path}?${q.toString()}`)
   }
   void slug
@@ -169,8 +172,19 @@ function Sources({ slug, reading }: { slug: string; reading: Reading }) {
   )
 }
 
+// Whether the open source panel was opened from this page (a step in the history to take back on close),
+// or came with the address (a link or a reload: closing replaces the address instead).
+let opened = false
+
 // The entry a source points at, beside the page (a modal side panel: the page stays where it was).
 function SourcePanel({ id, onClose }: { id: string; onClose: () => void }) {
+  // Gone by any way (Back too): the step it added is taken back already.
+  useEffect(
+    () => () => {
+      opened = false
+    },
+    [],
+  )
   const r = entryResource(id)
   const e = r.data.value?.entry
   const w = T.wiki
@@ -222,13 +236,14 @@ function Readers({ slug, address }: { slug: string; address: string }) {
           <p class="muted small">{w.noReaders}</p>
         ) : (
           <ul class="plain readers">
-            {[...d.items].reverse().map((x) => (
-              <li key={x.id}>
-                <span>{x.account.name}</span> <span class="meta">{w.readKinds[x.kind] ?? x.kind}</span>
-                {x.credential.name && x.credential.kind !== 'web' ? (
-                  <span class="meta"> {w.viaClient(x.credential.name)}</span>
-                ) : null}
-                <span class="meta mono"> {T.dateTime(x.at)}</span>
+            {groupReaders(d.items).map((x) => (
+              <li key={x.key}>
+                <span>{x.name}</span>
+                {x.via ? <span class="meta"> {w.viaClient(x.via)}</span> : null}
+                <span class="meta">
+                  {' '}
+                  · {w.readTimes(x.count)} · {w.lastRead(T.dateTime(x.last))}
+                </span>
               </li>
             ))}
             {d.older ? <li class="meta">{w.older(d.older.reads + d.older.contexts)}</li> : null}
@@ -264,7 +279,7 @@ function Tabs({
   return (
     <nav class="tabs" aria-label={w.view}>
       {items.map((i) => (
-        <a key={i.v} href={i.href} aria-current={view === i.v ? 'page' : undefined}>
+        <a key={i.v} href={i.href} data-view={i.v} aria-current={view === i.v ? 'page' : undefined}>
           {i.label}
         </a>
       ))}
@@ -352,10 +367,15 @@ function ReadView({ slug, brain, reading }: { slug: string; brain: BrainOne; rea
           key={source}
           id={source}
           onClose={() => {
-            const q = new URLSearchParams(query)
-            q.delete('source')
-            const qs = q.toString()
-            route(qs ? `${path}?${qs}` : path, true)
+            if (opened) {
+              opened = false
+              history.back()
+            } else {
+              const q = new URLSearchParams(query)
+              q.delete('source')
+              const qs = q.toString()
+              route(qs ? `${path}?${qs}` : path, true)
+            }
             // The keyboard goes back to the source that opened the panel.
             requestAnimationFrame(() =>
               document.querySelector<HTMLElement>(`[data-source="${CSS.escape(source)}"]`)?.focus(),
@@ -367,6 +387,12 @@ function ReadView({ slug, brain, reading }: { slug: string; brain: BrainOne; rea
   )
 }
 
+// The screen a page's address is shown on: the same one when an old address led to its new one, so what
+// the person was doing there (typing in its editor) is not taken down by the move.
+export const sameScreen = new Map<string, string>()
+export const screenKey = (slug: string, address: string) =>
+  sameScreen.get(`${slug}/${address}`) ?? `${slug}/${address}`
+
 export function WikiPage({ slug, address }: { slug: string; address: string }) {
   const { brain, gate } = useBrain(slug)
   const r = pageResource(slug, address)
@@ -376,9 +402,14 @@ export function WikiPage({ slug, address }: { slug: string; address: string }) {
   // An old address leads here: the address bar shows where the page lives now.
   const moved = reading && reading.page.address !== address ? reading.page.address : null
   useEffect(() => {
-    if (moved) {
+    if (moved && reading) {
       const qs = new URLSearchParams(query).toString()
       const at = pageHref(slug, moved)
+      // The page is known already: under its new address it shows at once, and an editor being typed in
+      // stays as it is (it is not taken down while the page loads again).
+      const there = pageResource(slug, moved)
+      if (!there.data.value) there.data.value = reading
+      sameScreen.set(`${slug}/${moved}`, sameScreen.get(`${slug}/${address}`) ?? `${slug}/${address}`)
       // The old address keeps working; the page says it moved.
       if (wikiNotice.value?.path !== at) wikiNotice.value = { path: at, text: T.wiki.movedFrom(address) }
       route(`${at}${qs ? `?${qs}` : ''}`, true)
@@ -404,6 +435,7 @@ export function WikiPage({ slug, address }: { slug: string; address: string }) {
       <Head slug={slug} reading={reading} view={view} />
       <Tabs slug={slug} address={reading.page.address} view={view} curator={curator} />
       <Said text={wikiNotice.value?.path === path ? wikiNotice.value.text : null} />
+      {curator && view !== 'edit' ? <UnsavedEdit slug={slug} reading={reading} /> : null}
       {view === 'history' ? (
         <History slug={slug} brain={brain} reading={reading} />
       ) : view === 'edit' ? (

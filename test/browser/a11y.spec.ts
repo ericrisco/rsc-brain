@@ -179,9 +179,7 @@ for (const theme of ['dark', 'light'] as const) {
     })
     await body.press('Escape')
     await page.getByRole('button', { name: 'Save changes' }).click()
-    await expect(
-      page.getByRole('region', { name: 'Someone saved this page while you edited it' }),
-    ).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Eva saved revision 4 while you edited' })).toBeVisible()
     await audit(page, `${theme} edit conflict`)
     await page.goto('/b/growth/wiki/decisions')
     await expect(page.getByRole('link', { name: 'Annual plans' })).toBeVisible()

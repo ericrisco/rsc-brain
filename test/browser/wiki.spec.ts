@@ -25,8 +25,10 @@ test.describe('the map', () => {
     const retention = page.getByRole('link', { name: 'Retention', exact: true })
     await expect(retention).toBeVisible()
     await expect(page.getByText('What keeps viewers watching.')).toBeVisible()
-    // Superseded and retired pages are not on the map.
-    await expect(page.getByRole('link', { name: 'Old intros' })).toHaveCount(0)
+    // Superseded and retired pages are on the map too (review of PR19), and say so in words.
+    await expect(page.getByRole('listitem').filter({ hasText: 'Old intros' }).locator('.tag')).toHaveText(
+      'Superseded',
+    )
     await retention.click()
     await expect(page).toHaveURL(new RegExp(`${RETENTION}$`))
     await expect(page.getByRole('heading', { level: 1, name: 'Retention' })).toBeFocused()
@@ -137,7 +139,7 @@ test.describe('a page', () => {
     const broken = body.getByRole('link', { name: /drafts\/hooks-that-work/ })
     await expect(broken).toContainText('(no page yet)')
     await expect(broken).toHaveClass(/broken/)
-    await expect(body.getByRole('link', { name: /legal\/consent-2024/ })).toContainText('(retired)')
+    await expect(body.getByRole('link', { name: /Consent in 2024/ })).toContainText('(retired)')
   })
 
   test('links from and to it, grouped by kind, each saying the state of the other page', async ({
@@ -293,9 +295,9 @@ test.describe('the history of a page', () => {
     await expect(page).toHaveURL(new RegExp(`${RETENTION}\\?view=history$`))
     const list = page.getByRole('region', { name: 'Revisions' })
     await expect(list.getByRole('listitem')).toHaveCount(3)
-    await expect(list.getByRole('listitem').nth(0)).toContainText('Revision 3 · edit by hand by Eric')
-    await expect(list.getByRole('listitem').nth(1)).toContainText('Revision 2 · edit by hand by Ana')
-    await expect(list.getByRole('listitem').nth(2)).toContainText('Revision 1 · approved proposal by Eric')
+    await expect(list.getByRole('listitem').nth(0)).toContainText('Revision 3 · edited by Eric')
+    await expect(list.getByRole('listitem').nth(1)).toContainText('Revision 2 · edited by Ana')
+    await expect(list.getByRole('listitem').nth(2)).toContainText('Revision 1 · created by Eric')
   })
 
   test('the differences between any two revisions, word by word, kept in the address', async ({
@@ -342,7 +344,7 @@ test.describe('the history of a page', () => {
       page.getByRole('status').filter({ hasText: 'Restored revision 1 as revision 4.' }),
     ).toBeVisible()
     await expect(list.getByRole('listitem')).toHaveCount(4)
-    await expect(list.getByRole('listitem').nth(0)).toContainText('Revision 4 · restored by Eric')
+    await expect(list.getByRole('listitem').nth(0)).toContainText('Revision 4 · restored revision 1 by Eric')
     await expect(page.locator('.page-meta')).toContainText('Revision 4')
   })
 
@@ -413,13 +415,16 @@ test.describe('editing a page', () => {
     await body.fill(`${'A line.\n'.repeat(14)}See [[aud`)
     await expect(list).toBeInViewport()
     await body.fill('Short intros win. See [[aud')
-    await body.press('ArrowDown')
+    // The first page found is chosen already: Enter takes it.
     await body.press('Enter')
     await expect(body).toHaveValue('Short intros win. See [[audience/intros]]')
     await expect(list).toHaveCount(0)
     await page.getByRole('button', { name: 'Preview' }).click()
     const preview = page.locator('.preview.prose')
-    await expect(preview.getByRole('link', { name: 'audience/intros' })).toBeVisible()
+    await expect(preview.getByRole('link', { name: 'Writing intros' })).toHaveAttribute(
+      'title',
+      'audience/intros',
+    )
     await page.getByRole('button', { name: 'Write' }).click()
     await page.getByLabel('Summary').fill('Short intros keep viewers.')
     await page.getByRole('button', { name: 'Save changes' }).click()
@@ -449,10 +454,10 @@ test.describe('editing a page', () => {
       }),
     })
     await page.getByRole('button', { name: 'Save changes' }).click()
-    const conflict = page.getByRole('region', { name: 'Someone saved this page while you edited it' })
+    const conflict = page.getByRole('region', { name: 'Eva saved revision 4 while you edited' })
     await expect(conflict).toBeVisible()
     await expect(conflict).toContainText('It is at revision 4 now. Nothing of yours was saved')
-    const theirs = conflict.getByRole('region', { name: 'What changed meanwhile' })
+    const theirs = conflict.getByRole('region', { name: 'What Eva changed' })
     await expect(theirs.locator('ins').filter({ hasText: 'Eva' })).not.toHaveCount(0)
     await expect(conflict.getByLabel('Your text')).toHaveValue('My careful rewrite of the retention page.')
     await expect(bodyField(page)).toHaveValue('My careful rewrite of the retention page.')
@@ -462,7 +467,8 @@ test.describe('editing a page', () => {
     await expect(bodyField(page)).toHaveValue('My careful rewrite of the retention page.')
     await page.getByRole('button', { name: 'Save changes' }).click()
     await expect(conflict).toBeVisible()
-    await conflict.getByRole('button', { name: 'Save mine over theirs' }).click()
+    await conflict.getByRole('radio', { name: 'Keep mine' }).check()
+    await conflict.getByRole('button', { name: 'Save this result' }).click()
     await expect(page.getByRole('status').filter({ hasText: 'Saved as revision 5.' })).toBeVisible()
     await expect(page.locator('.prose')).toContainText('My careful rewrite')
   })
@@ -481,7 +487,7 @@ test.describe('editing a page', () => {
       body: JSON.stringify({ brain: 'growth', address: 'audience/retention', body: 'Theirs.' }),
     })
     await page.getByRole('button', { name: 'Save changes' }).click()
-    const conflict = page.getByRole('region', { name: 'Someone saved this page while you edited it' })
+    const conflict = page.getByRole('region', { name: 'Eva saved revision 4 while you edited' })
     await conflict.getByRole('button', { name: 'Start again from theirs' }).click()
     await expect(bodyField(page)).toHaveValue('Theirs.')
     await expect(page.getByLabel('Your text')).toHaveValue('Mine.')
@@ -568,18 +574,17 @@ test.describe('editing a page', () => {
     await expect(
       page.getByRole('status').filter({ hasText: 'Removed the link: Example of product/pricing.' }),
     ).toBeVisible()
-    // The content form moved on to the new revision: saving it does not conflict.
+    // The form moved on to the new revision: saving it does not conflict. Status and address are part
+    // of the same Save (review of PR19).
     await page.getByLabel('Summary').fill('Still what keeps viewers.')
-    const status = page.getByRole('region', { name: 'Status and address' })
+    const status = page.getByRole('group', { name: 'Status and address' })
     await status.getByLabel('Status').selectOption('stale')
-    await status.getByRole('button', { name: 'Change status' }).click()
-    await expect(page.getByRole('status').filter({ hasText: 'The page is stale now.' })).toBeVisible()
     await page.getByRole('button', { name: 'Save changes' }).click()
-    await expect(page.getByRole('status').filter({ hasText: /Saved as revision \d+\./ })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: 'The page is stale now.' })).toBeVisible()
     await page.goto(EDIT)
-    await status.getByLabel('Address').fill('audience/what-keeps-viewers')
-    await status.getByRole('button', { name: 'Move page' }).click()
-    await expect(page).toHaveURL(/\/pages\/audience\/what-keeps-viewers\?view=edit$/)
+    await status.getByLabel('Address', { exact: true }).fill('audience/what-keeps-viewers')
+    await page.getByRole('button', { name: 'Save changes' }).click()
+    await expect(page).toHaveURL(/\/pages\/audience\/what-keeps-viewers$/)
     await expect(
       page.getByRole('status').filter({ hasText: 'The page lives at audience/what-keeps-viewers now' }),
     ).toBeVisible()
@@ -749,8 +754,8 @@ test('saving mine over theirs keeps what only they changed', async ({ page, cont
     body: JSON.stringify({ brain: 'growth', address: 'audience/retention', body: 'Eva rewrote the body.' }),
   })
   await page.getByRole('button', { name: 'Save changes' }).click()
-  const conflict = page.getByRole('region', { name: 'Someone saved this page while you edited it' })
-  await conflict.getByRole('button', { name: 'Save mine over theirs' }).click()
+  const conflict = page.getByRole('region', { name: 'Eva saved revision 4 while you edited' })
+  await conflict.getByRole('button', { name: 'Save this result' }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Saved as revision 5.' })).toBeVisible()
   await expect(page.getByRole('heading', { level: 1, name: 'Retention, by Eric' })).toBeVisible()
   await expect(page.locator('.prose')).toContainText('Eva rewrote the body.')

@@ -3,7 +3,7 @@
 import { useState } from 'preact/hooks'
 import type { ApiError } from '../api/client.ts'
 import { api } from '../api/index.ts'
-import { pageHref } from '../lib/markdown.ts'
+import { pageHref, plainText } from '../lib/markdown.ts'
 import { brainsResource } from '../screens/Home.tsx'
 import { online } from '../session.ts'
 import { T } from '../text.ts'
@@ -128,7 +128,7 @@ export function SearchDialog() {
                   ) : (
                     <span class="rt">{h.title}</span>
                   )}
-                  <span class="snippet">{h.snippet}</span>
+                  <span class="snippet">{plainText(h.snippet)}</span>
                 </li>
               ))}
             </ul>

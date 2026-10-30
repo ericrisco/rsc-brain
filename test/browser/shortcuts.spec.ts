@@ -10,7 +10,7 @@ test('"?" opens the list on every screen, signed in or not', async ({ page, cont
     await page.keyboard.press('?')
     const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' })
     await expect(help).toBeVisible()
-    await expect(help.locator('[data-shortcut]')).toHaveCount(path === '/' ? 4 : 6)
+    await expect(help.locator('[data-shortcut]')).toHaveCount(path === '/' ? 4 : 9)
     await page.keyboard.press('Escape')
     await expect(help).toBeHidden()
   }

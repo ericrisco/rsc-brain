@@ -2124,6 +2124,98 @@ h2.section-title:focus {
   margin-top: 16px;
 }
 
+/* Review of PR19: the reason of a change, the body's differences by line, the status inside the one
+   form, and the choices of a conflict with both versions and the result. */
+.why {
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.body-diff {
+  display: grid;
+  gap: 2px;
+  white-space: normal;
+}
+
+.diff-line {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-line > ins,
+.diff-line > del {
+  display: block;
+}
+
+.status-edit {
+  padding-top: 8px;
+}
+
+/* An empty line added or removed: its background says so; an underline under nothing reads as a stray mark. */
+.diff ins.blank,
+.diff del.blank {
+  text-decoration: none;
+}
+
+.choice {
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--field-line);
+  border-radius: var(--radius);
+}
+
+.choice legend {
+  padding: 0 4px;
+  color: var(--text);
+}
+
+.radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin-right: 16px;
+  cursor: pointer;
+}
+
+.radio input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.versions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px 16px;
+}
+
+.versions h4,
+.result-part h4 {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font: 550 12px / 1.4 var(--sans);
+}
+
+pre.version {
+  max-height: 320px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--ground);
+  font: 13px / 1.55 var(--sans);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.result-part + .result-part {
+  margin-top: 12px;
+}
+
 @media (max-width: 767px) {
   .edit-form .field-row {
     grid-template-columns: minmax(0, 1fr);

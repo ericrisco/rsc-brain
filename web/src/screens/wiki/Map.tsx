@@ -1,15 +1,16 @@
 // The map of a wiki (spec B6 «Wiki › Map», B2 «Mapa»; T017). Who: any member. Job: see what the wiki holds
-// and open a page. Done when: the person opens the page they want. The map lists every current page by
-// type and first part of its address, with its summary; filters by type, tag and words live in the
-// address. With many pages each group shows a few and opens whole (never everything at once).
+// and open a page. Done when: the person opens the page they want. The map lists every page by type and
+// first part of its address, with its summary and, when it is not current, its status in words (review
+// of PR19: a stale or retired page must be findable too); filters by status (all by default), type, tag
+// and words live in the address. With many pages each group shows a few and opens whole.
 import { useState } from 'preact/hooks'
 import { useFresh } from '../../api/fresh.ts'
-import { filterMap, type MapGroup, mapTags, mapTypes, PAGE_TYPES } from '../../lib/wiki.ts'
+import { filterMap, type MapGroup, mapTags, mapTypes, PAGE_STATUSES, PAGE_TYPES } from '../../lib/wiki.ts'
 import { online } from '../../session.ts'
 import { T } from '../../text.ts'
 import { viewState } from '../../ui/state.ts'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
-import { pageHref, useBrain, useFilters, WikiHead } from './common.tsx'
+import { pageHref, StatusTag, useBrain, useFilters, WikiHead } from './common.tsx'
 import { mapResource } from './data.ts'
 
 const FEW = 12
@@ -29,6 +30,12 @@ function Group({ slug, group }: { slug: string; group: MapGroup }) {
           <li key={p.address}>
             <p class="list-title">
               <a href={pageHref(slug, p.address)}>{p.title}</a>
+              {p.status && p.status !== 'current' ? (
+                <>
+                  {' '}
+                  <StatusTag status={p.status} />
+                </>
+              ) : null}
             </p>
             <p class="meta mono">{p.address}</p>
             {p.summary ? <p class="summary">{p.summary}</p> : null}
@@ -53,7 +60,7 @@ export function WikiMap({ slug }: { slug: string }) {
   const { brain, gate } = useBrain(slug)
   const r = mapResource(slug)
   useFresh(r)
-  const f = useFilters(['q', 'type', 'tag'] as const)
+  const f = useFilters(['q', 'status', 'type', 'tag'] as const)
   if (!brain) return gate
   const w = T.wiki
   const data = r.data.value
@@ -92,6 +99,21 @@ export function WikiMap({ slug }: { slug: string }) {
               </span>
             </div>
             <div class="field">
+              <label for="map-status">{w.status}</label>
+              <select
+                id="map-status"
+                value={f.values.status}
+                onChange={(e) => f.set({ status: (e.currentTarget as HTMLSelectElement).value })}
+              >
+                <option value="">{w.anyStatus}</option>
+                {PAGE_STATUSES.map((t) => (
+                  <option key={t} value={t}>
+                    {w.statuses[t]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div class="field">
               <label for="map-type">{w.type}</label>
               <select
                 id="map-type"
@@ -106,21 +128,24 @@ export function WikiMap({ slug }: { slug: string }) {
                 ))}
               </select>
             </div>
-            <div class="field">
-              <label for="map-tag">{w.tag}</label>
-              <select
-                id="map-tag"
-                value={f.values.tag}
-                onChange={(e) => f.set({ tag: (e.currentTarget as HTMLSelectElement).value })}
-              >
-                <option value="">{w.anyTag}</option>
-                {mapTags(data.groups).map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {/* No tag in this wiki: no tag filter (it could only offer «All tags»). */}
+            {mapTags(data.groups).length ? (
+              <div class="field">
+                <label for="map-tag">{w.tag}</label>
+                <select
+                  id="map-tag"
+                  value={f.values.tag}
+                  onChange={(e) => f.set({ tag: (e.currentTarget as HTMLSelectElement).value })}
+                >
+                  <option value="">{w.anyTag}</option>
+                  {mapTags(data.groups).map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
           </form>
         </search>
       ) : null}

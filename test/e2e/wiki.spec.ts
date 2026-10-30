@@ -165,7 +165,7 @@ test('history: revisions 1 to 3 compared word by word; a curator restores revisi
   await expect(diff.locator('ins').filter({ hasText: 'greeting' })).not.toHaveCount(0)
   const list = page.getByRole('region', { name: 'Revisions' })
   await expect(list.getByRole('listitem')).toHaveCount(3)
-  await expect(list.getByRole('listitem').nth(0)).toContainText('Revision 3 · edit by hand by Eric')
+  await expect(list.getByRole('listitem').nth(0)).toContainText('Revision 3 · edited by Eric')
   await list.getByRole('button', { name: 'Restore revision 1' }).click()
   await page
     .getByRole('dialog', { name: 'Restore revision 1?' })
@@ -227,13 +227,10 @@ test('CA10: two curators edit the same page; the second keeps their text and see
   await expect(e.getByRole('status').filter({ hasText: 'Saved as revision 5.' })).toBeVisible()
   await body(page).fill('Eric: the hook goes first, then the intro.')
   await page.getByRole('button', { name: 'Save changes' }).click()
-  const conflict = page.getByRole('region', { name: 'Someone saved this page while you edited it' })
+  const conflict = page.getByRole('region', { name: 'Eva saved revision 5 while you edited' })
   await expect(conflict).toContainText('It is at revision 5 now. Nothing of yours was saved')
   await expect(
-    conflict
-      .getByRole('region', { name: 'What changed meanwhile' })
-      .locator('ins')
-      .filter({ hasText: 'Eva' }),
+    conflict.getByRole('region', { name: 'What Eva changed' }).locator('ins').filter({ hasText: 'Eva' }),
   ).not.toHaveCount(0)
   await expect(conflict.getByLabel('Your text')).toHaveValue('Eric: the hook goes first, then the intro.')
   // Nothing is lost on a reload either.
@@ -251,8 +248,8 @@ test('CA10: two curators edit the same page; the second keeps their text and see
   // The history names both curators.
   await page.goto(`${PAGE}?view=history`)
   const list = page.getByRole('region', { name: 'Revisions' })
-  await expect(list.getByRole('listitem').nth(0)).toContainText('Revision 6 · edit by hand by Eric')
-  await expect(list.getByRole('listitem').nth(1)).toContainText('Revision 5 · edit by hand by Eva')
+  await expect(list.getByRole('listitem').nth(0)).toContainText('Revision 6 · edited by Eric')
+  await expect(list.getByRole('listitem').nth(1)).toContainText('Revision 5 · edited by Eva')
   await eva.close()
 })
 
@@ -267,4 +264,93 @@ test('the `[[` autocomplete reads the pages of the real wiki (G9)', async ({ pag
   await body.press('ArrowDown')
   await body.press('Enter')
   await expect(body).toHaveValue('See [[audience/intros]]')
+})
+
+// Review of PR19, on the real server: one visit is one read; Enter in a source field adds the source,
+// found by its words; one Save sends the status with the rest and the history and the log say what it
+// was and why; the map shows a stale page; two curators who both add a paragraph keep both.
+test('one visit to a page is one read in «Who read this»', async ({ page, baseURL }) => {
+  await signedInAdmin(page, baseURL as string)
+  const reads = async () => {
+    const r = await page.request.get(`/v1/brains/${SLUG}/trail?page=audience/retention&limit=200`)
+    return ((await r.json()) as { items: { kind: string }[] }).items.filter((l) => l.kind === 'read').length
+  }
+  const before = await reads()
+  await page.goto(PAGE)
+  await expect(page.getByRole('region', { name: 'Recent changes' }).getByRole('listitem')).not.toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Who read this' }).getByRole('listitem')).not.toHaveCount(0)
+  await page.waitForTimeout(500)
+  expect(await reads()).toBe(before + 1)
+  // Grouped: one line for Eric, however many times he read it.
+  await expect(
+    page.getByRole('region', { name: 'Who read this' }).getByRole('listitem').filter({ hasText: /^Eric/ }),
+  ).toHaveCount(1)
+})
+
+test('one Save: a source found by its words with Enter, a status with ⌘ Enter; history and log say why', async ({
+  page,
+  baseURL,
+}) => {
+  await signedInAdmin(page, baseURL as string)
+  await page.goto(`/b/${SLUG}/pages/audience/intros?view=edit`)
+  const sources = page.getByRole('group', { name: 'Sources' })
+  const entry = sources.getByLabel('Journal entry')
+  await entry.fill('question')
+  await expect(
+    page
+      .getByRole('listbox', { name: 'Journal entries' })
+      .getByRole('option', { name: /The hook goes first/ }),
+  ).toBeVisible()
+  await entry.press('Enter')
+  await expect(sources.getByRole('listitem').filter({ hasText: 'The hook goes first' })).toBeVisible()
+  await expect(page).toHaveURL(/\?view=edit$/)
+  await page.getByLabel('Status', { exact: true }).selectOption('stale')
+  await page.getByLabel('Why (shown in the log)').fill('Needs the October numbers.')
+  await page.getByLabel('Body', { exact: true }).press('ControlOrMeta+Enter')
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Saved as revision 3. The page is stale now.' }),
+  ).toBeVisible()
+  await expect(
+    page.getByRole('region', { name: 'Sources' }).getByRole('button', { name: 'The hook goes first' }),
+  ).toBeVisible()
+  await page.goto(`/b/${SLUG}/pages/audience/intros?view=history`)
+  const list = page.getByRole('region', { name: 'Revisions' })
+  await expect(list.getByRole('listitem').nth(0)).toContainText('Revision 3 · status → stale by Eric')
+  await expect(list.getByRole('listitem').nth(0)).toContainText('Why: Needs the October numbers.')
+  await expect(list.getByRole('listitem').nth(1)).toContainText('Revision 2 · edited by Eric')
+  await page.goto(`/b/${SLUG}/wiki/log?kind=direct`)
+  const line = page.getByRole('list', { name: 'Changes' }).getByRole('listitem').first()
+  await expect(line).toContainText('Direct status → stale: audience/intros')
+  await expect(line).toContainText('Why: Needs the October numbers.')
+  // The map shows it, stale, and filters by status.
+  await page.goto(`/b/${SLUG}/wiki?status=stale`)
+  await expect(page.getByRole('listitem').filter({ hasText: 'Writing intros' }).locator('.tag')).toHaveText(
+    'Stale',
+  )
+})
+
+test('M4: two curators each add a paragraph; keeping both keeps both', async ({ page, browser, baseURL }) => {
+  await signedInAdmin(page, baseURL as string)
+  const ana = await person(browser, page, 'Ana', 'curator')
+  const a = await ana.newPage()
+  const body = (p: Page) => p.getByLabel('Body', { exact: true })
+  await page.goto(`${PAGE}?view=edit`)
+  await a.goto(`${PAGE}?view=edit`)
+  const start = await body(page).inputValue()
+  await expect(body(a)).toHaveValue(start)
+  await body(a).fill(`${start}\n\nAna: thumbnails matter.`)
+  await a.getByRole('button', { name: 'Save changes' }).click()
+  await expect(a.getByRole('status').filter({ hasText: /Saved as revision \d+\./ })).toBeVisible()
+  await body(page).fill(`${start}\n\nEric: the end screen matters.`)
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  const conflict = page.getByRole('region', { name: /^Ana saved revision \d+ while you edited$/ })
+  await expect(conflict.getByRole('radio', { name: 'Keep both' })).toBeChecked()
+  const result = conflict.locator('[data-part="result-body"]')
+  await expect(result).toContainText('Ana: thumbnails matter.')
+  await expect(result).toContainText('Eric: the end screen matters.')
+  await conflict.getByRole('button', { name: 'Save this result' }).click()
+  await expect(page.getByRole('status').filter({ hasText: /Saved as revision \d+\./ })).toBeVisible()
+  await expect(page.locator('.prose')).toContainText('Ana: thumbnails matter.')
+  await expect(page.locator('.prose')).toContainText('Eric: the end screen matters.')
+  await ana.close()
 })

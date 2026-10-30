@@ -180,11 +180,11 @@ describe('an edit', () => {
 
 describe('the draft of an edit', () => {
   it('has a key made from the page, never from words that would look like a secret', () => {
-    const k = draftKeyOf('claude-code', 'infra/token-rotation')
+    const k = draftKeyOf('acc_eric', 'claude-code', 'infra/token-rotation')
     assert.doesNotMatch(k, /password|code|token|secret/i)
-    assert.equal(k, draftKeyOf('claude-code', 'infra/token-rotation'))
-    assert.notEqual(k, draftKeyOf('claude-code', 'infra/token-rotations'))
-    assert.notEqual(k, draftKeyOf('other', 'infra/token-rotation'))
+    assert.equal(k, draftKeyOf('acc_eric', 'claude-code', 'infra/token-rotation'))
+    assert.notEqual(k, draftKeyOf('acc_eric', 'claude-code', 'infra/token-rotations'))
+    assert.notEqual(k, draftKeyOf('acc_eric', 'other', 'infra/token-rotation'))
   })
 })
 

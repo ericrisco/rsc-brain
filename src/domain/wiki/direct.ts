@@ -45,10 +45,16 @@ export async function directChange(
         throw err
       }
     }
-    const verb = op.op === 'revert' ? `Back to revision ${op.toRevision}` : `Direct ${op.op}`
+    const verb =
+      op.op === 'revert'
+        ? `Back to revision ${op.toRevision}`
+        : op.op === 'status'
+          ? `Direct status → ${op.status}`
+          : `Direct ${op.op}`
     const { revised } = await applyOps(c, db, brain.id, [{ op }], {
       kind: op.op === 'revert' ? 'revert' : 'direct',
       summary: `${verb}: ${op.address}`,
+      reason: op.reason,
     })
     const last = revised.at(-1)
     return { revised, address: last?.address ?? null }

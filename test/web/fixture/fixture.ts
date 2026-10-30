@@ -15,6 +15,7 @@ import { generate } from '../../../web/test/data/generate.ts'
 import {
   changeWiki,
   decisionsOf,
+  ENTRIES,
   editBehind,
   editPage,
   entryOf,
@@ -930,7 +931,10 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       inWiki(c, (w) => {
         const st = c.s.states.get('map')
         if (st === 'empty') return { status: 200, body: { intro: '', groups: [], count: 0 } }
-        return { status: 200, body: mapOf(w, st === 'much-data' ? BIG.pages : []) }
+        return {
+          status: 200,
+          body: mapOf(w, st === 'much-data' ? BIG.pages : [], c.query.get('status') === 'all'),
+        }
       }),
   },
   'GET /v1/brains/{slug}/wiki/pages': {
@@ -984,12 +988,34 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       const st = s.states.get('search')
       const q = (query.get('q') ?? '').toLowerCase()
       const limit = Math.min(50, Number(query.get('limit') ?? 20) || 20)
+      // Journal entries only (a page's sources in the editor): by words of the title or the text, or the
+      // newest with no words.
+      if (query.get('in') === 'entries') {
+        const found = Object.entries(ENTRIES)
+          .filter(([, e]) => e.state === 'active')
+          .filter(([, e]) => !q || e.title.toLowerCase().includes(q) || e.content.toLowerCase().includes(q))
+          .slice(0, limit)
+          .map(([id, e], i) => ({
+            kind: 'entry',
+            id,
+            brain: query.get('brains') ?? 'growth',
+            title: e.title,
+            snippet: e.content,
+            at: `2026-10-${String(14 - i).padStart(2, '0')}T09:00:00.000Z`,
+          }))
+        return { status: 200, body: { items: found, next: null } }
+      }
       // The pages of the hand-made wiki first (they open), then the seeded ones.
-      const hand = mapOf(freshWiki(), []).groups.flatMap((g) => g.pages) as Array<{
-        address: string
-        title: string
-        summary: string
-      }>
+      // A snippet is a piece of the body, markdown and all, as the server's.
+      const hand = freshWiki().pages.map((p) => {
+        const r = p.revs[p.revs.length - 1] as {
+          address: string
+          title: string
+          summary: string
+          body: string
+        }
+        return { address: r.address, title: r.title, summary: r.summary, snippet: r.body.slice(0, 160) }
+      })
       const hits =
         st === 'empty' || st === 'filtered-empty'
           ? []
@@ -1002,7 +1028,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
                 address: p.address,
                 brain: 'growth',
                 title: p.title,
-                snippet: p.summary,
+                snippet: 'snippet' in p ? p.snippet : p.summary,
                 at: AT,
               }))
       return { status: 200, body: { items: hits, next: null } }
@@ -1319,7 +1345,15 @@ export async function startFixture(
         const b = await bodyOf(req)
         const brain = String(b.brain)
         if (!s.wikis.has(brain)) s.wikis.set(brain, freshWiki())
-        editBehind(s.wikis.get(brain) as Wiki, String(b.address), String(b.body))
+        editBehind(
+          s.wikis.get(brain) as Wiki,
+          String(b.address),
+          typeof b.body === 'string' ? b.body : undefined,
+          {
+            ...(Array.isArray(b.tags) ? { tags: b.tags as string[] } : {}),
+            ...(typeof b.to === 'string' ? { address: b.to } : {}),
+          },
+        )
         return send(res, { status: 200, body: {} })
       }
       // For a person walking the fixture by hand: /__fixture/use?preset=fresh&next=/setup

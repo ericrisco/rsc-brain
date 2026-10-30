@@ -67,6 +67,26 @@ describe('keyboard shortcuts', () => {
       assert.ok(!ids.has(s.id), `${s.id} twice`)
       ids.add(s.id)
     }
-    assert.deepEqual([...ids].sort(), ['go-home', 'go-overview', 'go-people', 'go-wiki', 'help', 'search'])
+    assert.deepEqual([...ids].sort(), [
+      'edit',
+      'go-decisions',
+      'go-home',
+      'go-log',
+      'go-overview',
+      'go-people',
+      'go-wiki',
+      'help',
+      'search',
+    ])
+  })
+
+  it('"e" edits the page; "g" then "d" or "l" goes to the decisions or the log (review of PR19)', () => {
+    const m = createKeymap(() => 0)
+    assert.equal(m.handle(key('e')), 'edit')
+    assert.equal(m.handle(key('e', { typing: true })), null)
+    assert.equal(m.handle(key('g')), null)
+    assert.equal(m.handle(key('d')), 'go-decisions')
+    assert.equal(m.handle(key('g')), null)
+    assert.equal(m.handle(key('l')), 'go-log')
   })
 })

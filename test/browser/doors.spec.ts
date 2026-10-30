@@ -25,26 +25,6 @@ test.describe('sign in', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
   })
 
-  test('a late move between screens never takes the keyboard from a field the person is typing in', async ({
-    page,
-    context,
-    baseURL,
-  }) => {
-    await scenario(context, baseURL as string, 'signed-out')
-    await page.goto('/sign-in')
-    await page.getByLabel('Email').fill('eric@example.test')
-    await page.getByLabel('Password').focus()
-    // A redirect that lands after the person started typing (a slow first answer, say).
-    await page.evaluate(() => {
-      history.replaceState(null, '', '/sign-in?next=%2F')
-      dispatchEvent(new PopStateEvent('popstate'))
-    })
-    await page.waitForTimeout(300)
-    await page.keyboard.type(PASSWORD)
-    await expect(page.getByLabel('Email')).toHaveValue('eric@example.test')
-    await expect(page.getByLabel('Password')).toHaveValue(PASSWORD)
-  })
-
   test('asks for the authenticator code when the account has one', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-out')
     await page.goto('/sign-in')
@@ -251,5 +231,72 @@ test.describe('reset a password', () => {
     await page.goto(`/reset#token=${RESET}`)
     await expect(page.getByRole('alert')).toContainText('This reset link is not valid')
     await expect(page.getByLabel('New password')).toHaveCount(0)
+  })
+})
+
+// Review of PR19 (C4): what arrives late never takes the keyboard from a field the person is in. Each test
+// fails with its rule taken out: an error that shows while a filter is being chosen (focusOnArrival), and a
+// page that turns out to have moved while its editor is being typed in (the field rule of a move between
+// screens, lib/screen.ts).
+test.describe('the keyboard stays where the person is', () => {
+  test('an error that arrives while choosing a filter leaves the filter focused', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.route('**/v1/brains/growth/wiki/log?*kind=direct*', (route) =>
+      route.fulfill({
+        status: 500,
+        json: { error: { code: 'internal', message: 'Something went wrong.', howToProceed: 'Try again.' } },
+      }),
+    )
+    await page.goto('/b/growth/wiki/log')
+    await expect(page.getByRole('list', { name: 'Changes' })).toBeVisible()
+    const kind = page.getByLabel('Kind of change')
+    await kind.focus()
+    await kind.selectOption('direct')
+    await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible()
+    await expect(kind).toBeFocused()
+  })
+
+  test('a page found moved while its editor is typed in keeps the typing', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/b/growth/pages/audience/retention?view=edit')
+    await expect(page.getByLabel('Body', { exact: true })).toBeVisible()
+    await page
+      .getByRole('navigation', { name: 'Where this page is' })
+      .getByRole('link', { name: 'Wiki' })
+      .click()
+    await expect(page.getByRole('heading', { level: 1, name: 'Wiki' })).toBeVisible()
+    // Another curator moves the page; this browser still holds it at its old address.
+    await fetch(`${baseURL}/__fixture/scenarios/${s.id}/wiki-edit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brain: 'growth', address: 'audience/retention', to: 'audience/kept' }),
+    })
+    let release = () => {}
+    const held = new Promise<void>((r) => {
+      release = r
+    })
+    await page.route('**/v1/brains/growth/pages/audience/retention?include=history', async (route) => {
+      await held
+      await route.fallback()
+    })
+    // Back to the editor: what this browser holds shows at once, and is asked for again.
+    await page.goBack()
+    const body = page.getByLabel('Body', { exact: true })
+    await body.focus()
+    await body.fill('First words. ')
+    release()
+    await expect(page).toHaveURL(/\/pages\/audience\/kept\?view=edit$/)
+    await page.waitForTimeout(300)
+    await page.keyboard.type('More words.')
+    await expect(body).toHaveValue('First words. More words.')
+    await expect(body).toBeFocused()
   })
 })

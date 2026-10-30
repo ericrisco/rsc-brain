@@ -20,6 +20,9 @@ type Rev = {
   sources: Src[]
   links: Typed[]
   kind: 'proposal' | 'direct' | 'revert'
+  change: 'created' | 'edited' | 'linked' | 'status' | 'moved' | 'restored'
+  restoredFrom: number | null
+  reason: string | null
   authorId: string
   authorName: string
   proposalId: string | null
@@ -40,6 +43,7 @@ type Line = {
   kind: 'proposal' | 'direct' | 'revert' | 'purge'
   proposalId: string | null
   summary: string
+  reason: string | null
   pages: string[]
 }
 export type Wiki = { pages: FxPage[]; log: Line[]; seq: number }
@@ -111,6 +115,9 @@ function page(
       sources: o.sources ?? [],
       links: o.links ?? [],
       kind: i === 0 ? 'proposal' : 'direct',
+      change: i === 0 ? 'created' : 'edited',
+      restoredFrom: null,
+      reason: i === 0 ? `What the journal says about ${title.toLowerCase()}.` : 'Tightened the wording.',
       authorId: i % 2 ? 'acc_ana' : 'acc_eric',
       authorName: i % 2 ? 'Ana' : 'Eric',
       proposalId: i === 0 ? `prp_fx_${id}` : null,
@@ -137,7 +144,7 @@ export function freshWiki(): Wiki {
       ],
     }),
     page('pg_intros', 'audience/intros', 'guide', 'Writing intros', 'How to open a video in ten seconds.', {
-      body: 'Open with the question. Then [[audience/retention]] explains why.',
+      body: 'Open with the question. Then [[audience/retention]] explains why. Check it each [[guides/weekly-review]].',
       tags: ['q4'],
       sources: [{ entryId: 'ent_fx_intros' }],
     }),
@@ -190,6 +197,7 @@ export function freshWiki(): Wiki {
       kind: r.kind,
       proposalId: r.proposalId,
       summary: r.kind === 'proposal' ? `Approved: ${r.title}` : `Direct edit: ${r.address}`,
+      reason: r.reason,
       pages: [r.address],
     })),
   )
@@ -213,10 +221,10 @@ export const pageNotFound = (address: string) =>
     'Check the address in the map (GET /v1/brains/:slug/wiki/map), or propose the page.',
   )
 
-function stateOf(p: FxPage | undefined): 'ok' | 'broken' | 'retired' | 'superseded' {
+function stateOf(p: FxPage | undefined): 'ok' | 'broken' | 'stale' | 'retired' | 'superseded' {
   if (!p) return 'broken'
   const s = last(p).status
-  return s === 'retired' ? 'retired' : s === 'superseded' ? 'superseded' : 'ok'
+  return s === 'retired' || s === 'superseded' || s === 'stale' ? s : 'ok'
 }
 const mentionsOf = (body: string) =>
   [...body.matchAll(/\[\[([a-z0-9/-]+)(?:\|[^\]\n]*)?\]\]/g)].map((m) => m[1] as string)
@@ -274,6 +282,7 @@ function reading(w: Wiki, p: FxPage, asked?: string) {
     ...(asked && asked !== r.address ? { redirectedFrom: asked } : {}),
     ...(r.status === 'retired' ? { notice: 'retired: this page is kept for its history only.' } : {}),
     ...(r.status === 'superseded' && sup ? { notice: `superseded by "${addressOf(sup)}".` } : {}),
+    lastChange: { revision: r.revision, authorId: r.authorId, authorName: r.authorName, at: r.createdAt },
     links: { out: linksOut(w, p), in: linksIn },
     sources: r.sources.map((s) =>
       'entryId' in s
@@ -293,6 +302,9 @@ const summaryOf = (r: Rev) => ({
   title: r.title,
   status: r.status,
   kind: r.kind,
+  change: r.change,
+  restoredFrom: r.restoredFrom,
+  reason: r.reason,
   authorId: r.authorId,
   authorName: r.authorName,
   proposalId: r.proposalId,
@@ -311,7 +323,15 @@ const fullOf = (r: Rev) => ({
   links: r.links,
 })
 
-function revise(w: Wiki, p: FxPage, who: Who, change: Partial<Rev>, kind: Rev['kind'], summary: string) {
+function revise(
+  w: Wiki,
+  p: FxPage,
+  who: Who,
+  change: Partial<Rev>,
+  kind: Rev['kind'],
+  summary: string,
+  why: { change: Rev['change']; reason: string | null; restoredFrom?: number },
+) {
   const r = last(p)
   w.seq += 1
   const at = `2026-10-29T${String(10 + Math.floor(w.seq / 60)).padStart(2, '0')}:${String(w.seq % 60).padStart(2, '0')}:00.000Z`
@@ -320,6 +340,9 @@ function revise(w: Wiki, p: FxPage, who: Who, change: Partial<Rev>, kind: Rev['k
     ...change,
     revision: r.revision + 1,
     kind,
+    change: why.change,
+    restoredFrom: why.restoredFrom ?? null,
+    reason: why.reason,
     authorId: who.id,
     authorName: who.name,
     proposalId: null,
@@ -334,15 +357,34 @@ function revise(w: Wiki, p: FxPage, who: Who, change: Partial<Rev>, kind: Rev['k
     kind,
     proposalId: null,
     summary,
+    reason: why.reason,
     pages: [next.address],
   })
   return { pageId: p.id, address: next.address, revision: next.revision }
 }
 
 // Another curator edits a page while a test looks at it (a control route of the tests).
-export function editBehind(w: Wiki, address: string, body: string): void {
+export function editBehind(
+  w: Wiki,
+  address: string,
+  body: string | undefined,
+  more: Partial<Rev> = {},
+): void {
   const p = find(w, address)
-  if (p) revise(w, p, { id: 'acc_eva', name: 'Eva' }, { body }, 'direct', `Direct edit: ${address}`)
+  if (p && more.address) p.addresses.push(more.address)
+  if (p)
+    revise(
+      w,
+      p,
+      { id: 'acc_eva', name: 'Eva' },
+      { ...(body === undefined ? {} : { body }), ...more },
+      'direct',
+      `Direct edit: ${address}`,
+      {
+        change: 'edited',
+        reason: 'Eva fixed the numbers.',
+      },
+    )
 }
 
 type Q = URLSearchParams
@@ -368,13 +410,19 @@ export function readPage(w: Wiki, address: string, query: Q): Answer {
     return { status: 200, body: { a: fullOf(ra), b: fullOf(rb) } }
   }
   if (query.get('history') === '1') return { status: 200, body: { history: p.revs.map(summaryOf) } }
+  const include = query.get('include')
+  if (include && include !== 'history')
+    return err(400, 'invalid_request', '"include" is "history", or left out.', 'Fix "include".')
+  if (include === 'history')
+    return { status: 200, body: { ...reading(w, p, address), history: p.revs.map(summaryOf) } }
   return { status: 200, body: reading(w, p, address) }
 }
 
-export function mapOf(w: Wiki, extra: GenPage[]) {
+export function mapOf(w: Wiki, extra: GenPage[], every = false) {
+  const shown = (status: string) => every || status === 'current'
   const all = [
-    ...w.pages.filter((p) => last(p).status === 'current').map((p) => ({ ...last(p), tags: last(p).tags })),
-    ...extra.filter((g) => g.status === 'current').map((g) => ({ ...g, body: '' })),
+    ...w.pages.filter((p) => shown(last(p).status)).map((p) => ({ ...last(p), tags: last(p).tags })),
+    ...extra.filter((g) => shown(g.status)).map((g) => ({ ...g, body: '' })),
   ].sort((a, b) =>
     a.type !== b.type
       ? a.type < b.type
@@ -396,7 +444,7 @@ export function mapOf(w: Wiki, extra: GenPage[]) {
       g = { type: r.type, area, pages: [] }
       groups.push(g)
     }
-    g.pages.push({ address: r.address, title: r.title, summary: r.summary, tags: r.tags })
+    g.pages.push({ address: r.address, title: r.title, summary: r.summary, tags: r.tags, status: r.status })
   }
   return {
     intro: 'The audience, the product and how we decide. Start with the overview pages.',
@@ -490,6 +538,7 @@ export function logOf(w: Wiki, q: Q, many: boolean): Answer {
         kind: 'proposal' as const,
         proposalId: `prp_many_${i}`,
         summary: `Approved: change ${120 - i}`,
+        reason: null,
         pages: ['audience/retention'],
       }))
     : []
@@ -517,6 +566,12 @@ export function readersOf(w: Wiki, address: string, curator: boolean, me: Who): 
     ? [
         {
           at: '2026-10-29T09:10:00.000Z',
+          who: { id: 'acc_ana', name: 'Ana' },
+          client: 'Claude Code',
+          kind: 'read',
+        },
+        {
+          at: '2026-10-29T09:30:00.000Z',
           who: { id: 'acc_ana', name: 'Ana' },
           client: 'Claude Code',
           kind: 'read',
@@ -609,7 +664,16 @@ export function editPage(
     if (typeof b[k] === 'string') change[k] = b[k]
   if (Array.isArray(b.tags)) change.tags = b.tags as string[]
   if (Array.isArray(b.sources)) change.sources = b.sources as Src[]
-  return { status: 200, body: changed(w, revise(w, p, who, change, 'direct', `Direct edit: ${r.address}`)) }
+  return {
+    status: 200,
+    body: changed(
+      w,
+      revise(w, p, who, change, 'direct', `Direct edit: ${r.address}`, {
+        change: 'edited',
+        reason: typeof b.reason === 'string' ? b.reason : null,
+      }),
+    ),
+  }
 }
 
 const bad = (message: string) =>
@@ -643,7 +707,13 @@ export function changeWiki(w: Wiki, who: Who, curator: boolean, b: Record<string
           : r.links.filter((l) => !(l.kind === b.kind && l.to === to))
       return {
         status: 201,
-        body: changed(w, revise(w, p, who, { links }, 'direct', `Direct ${b.op}: ${r.address}`)),
+        body: changed(
+          w,
+          revise(w, p, who, { links }, 'direct', `Direct ${b.op}: ${r.address}`, {
+            change: 'linked',
+            reason: typeof b.reason === 'string' ? b.reason : null,
+          }),
+        ),
       }
     }
     case 'status': {
@@ -655,7 +725,15 @@ export function changeWiki(w: Wiki, who: Who, curator: boolean, b: Record<string
         status: 201,
         body: changed(
           w,
-          revise(w, p, who, { status: String(b.status) }, 'direct', `Direct status: ${r.address}`),
+          revise(
+            w,
+            p,
+            who,
+            { status: String(b.status) },
+            'direct',
+            `Direct status → ${String(b.status)}: ${r.address}`,
+            { change: 'status', reason: typeof b.reason === 'string' ? b.reason : null },
+          ),
         ),
       }
     }
@@ -669,7 +747,13 @@ export function changeWiki(w: Wiki, who: Who, curator: boolean, b: Record<string
       p.addresses.push(to)
       return {
         status: 201,
-        body: changed(w, revise(w, p, who, { address: to }, 'direct', `Direct move: ${r.address}`)),
+        body: changed(
+          w,
+          revise(w, p, who, { address: to }, 'direct', `Direct move: ${r.address}`, {
+            change: 'moved',
+            reason: typeof b.reason === 'string' ? b.reason : null,
+          }),
+        ),
       }
     }
     case 'revert': {
@@ -687,6 +771,11 @@ export function changeWiki(w: Wiki, who: Who, curator: boolean, b: Record<string
             { title, summary, body, tags, sources, links, type, status },
             'revert',
             `Back to revision ${back.revision}: ${r.address}`,
+            {
+              change: 'restored',
+              reason: typeof b.reason === 'string' ? b.reason : null,
+              restoredFrom: back.revision,
+            },
           ),
         ),
       }

@@ -6,7 +6,7 @@ import { useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import type { ApiError } from '../../api/client.ts'
 import { api } from '../../api/index.ts'
-import { pickPair, type Segment, wordDiff } from '../../lib/wiki.ts'
+import { bodyDiff, changeLabel, pickPair, type Segment, sourceKey, wordDiff } from '../../lib/wiki.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
 import { Dialog } from '../../ui/Dialog.tsx'
@@ -17,17 +17,26 @@ import {
   type Changed,
   compareResource,
   type FullRevision,
-  historyResource,
+  pageResource,
   type Reading,
   type RevisionSummary,
   wikiChanged,
 } from './data.ts'
 
+// «Revision 4 · status → stale by Ana»: what the change was, from the change itself.
 const line = (r: RevisionSummary) =>
-  T.wiki.revisionBy(r.revision, T.wiki.revisionKinds[r.kind] ?? r.kind, r.authorName)
+  T.wiki.revisionBy(
+    r.revision,
+    r.change ? changeLabel(r) : (T.wiki.revisionKinds[r.kind] ?? r.kind),
+    r.authorName,
+  )
+
+function Why({ r }: { r: RevisionSummary }) {
+  return r.reason ? <p class="why">{T.wiki.why(r.reason)}</p> : null
+}
 
 export function RecentHistory({ slug, address }: { slug: string; address: string }) {
-  const r = historyResource(slug, address)
+  const r = pageResource(slug, address)
   const w = T.wiki
   const list = r.data.value?.history
   return (
@@ -44,6 +53,7 @@ export function RecentHistory({ slug, address }: { slug: string; address: string
               .map((x) => (
                 <li key={x.revision}>
                   <span>{line(x)}</span> <span class="meta">{T.date(x.createdAt)}</span>
+                  <Why r={x} />
                 </li>
               ))}
           </ul>
@@ -60,10 +70,11 @@ export function RecentHistory({ slug, address }: { slug: string; address: string
   )
 }
 
-function Words({ segments }: { segments: Segment[] }) {
+function Words({ segments, as = 'p' }: { segments: Segment[]; as?: 'p' | 'span' }) {
   const w = T.wiki
+  const Tag = as
   return (
-    <p class="diff">
+    <Tag class="diff">
       {segments.map((s, i) =>
         s.kind === 'added' ? (
           <ins key={i}>
@@ -79,25 +90,127 @@ function Words({ segments }: { segments: Segment[] }) {
           <span key={i}>{s.text}</span>
         ),
       )}
-    </p>
+    </Tag>
   )
 }
+
+// The body, line by line: a line mostly rewritten shows old and new whole; a few words changed, those.
+export function BodyDiff({ a, b }: { a: string; b: string }) {
+  const w = T.wiki
+  return (
+    <div class="diff body-diff">
+      {bodyDiff(a, b).map((l, i) =>
+        l.kind === 'changed' ? (
+          <p key={i} class="diff-line changed">
+            <Words segments={l.words} as="span" />
+          </p>
+        ) : l.kind === 'same' ? (
+          <p key={i} class="diff-line">
+            {l.text || '\u00a0'}
+          </p>
+        ) : l.kind === 'added' ? (
+          <p key={i} class="diff-line">
+            <ins class={l.text ? undefined : 'blank'}>
+              <span class="sr-only">{w.added}:</span>
+              {l.text || '\u00a0'}
+            </ins>
+          </p>
+        ) : (
+          <p key={i} class="diff-line">
+            <del class={l.text ? undefined : 'blank'}>
+              <span class="sr-only">{w.removed}:</span>
+              {l.text || '\u00a0'}
+            </del>
+          </p>
+        ),
+      )}
+    </div>
+  )
+}
+
+// A list part (sources, links): what was added and what was removed.
+export function ListDiff({ a, b }: { a: string[]; b: string[] }) {
+  const w = T.wiki
+  const gone = a.filter((x) => !b.includes(x))
+  const come = b.filter((x) => !a.includes(x))
+  return (
+    <ul class="plain diff">
+      {gone.map((x) => (
+        <li key={`-${x}`}>
+          <del>
+            <span class="sr-only">{w.removed}:</span>
+            {x}
+          </del>
+        </li>
+      ))}
+      {come.map((x) => (
+        <li key={`+${x}`}>
+          <ins>
+            <span class="sr-only">{w.added}:</span>
+            {x}
+          </ins>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+const sourceText = (s: FullRevision['sources'][number]) =>
+  'entryId' in s ? s.entryId : s.title ? `${s.title} (${s.url})` : s.url
+const linkText = (l: { kind: string; to: string }) => `${T.wiki.kinds[l.kind] ?? l.kind} ${l.to}`
 
 function Differences({ slug, address, a, b }: { slug: string; address: string; a: number; b: number }) {
   const r = compareResource(slug, address, a, b)
   const w = T.wiki
   const d = r.data.value
   const id = `diff-${a}-${b}`
-  const parts = (x: FullRevision, y: FullRevision) =>
-    (
+  // Each part on its own: the words of title and summary, the status and type, the tags, the sources and
+  // typed links as items added or removed, and the body by line.
+  const parts = (x: FullRevision, y: FullRevision) => {
+    const text = (
       [
         ['title', x.title, y.title],
         ['summary', x.summary, y.summary],
         ['status', w.statuses[x.status] ?? x.status, w.statuses[y.status] ?? y.status],
+        ['type', w.types[x.type] ?? x.type, w.types[y.type] ?? y.type],
         ['tags', x.tags.join(', '), y.tags.join(', ')],
-        ['body', x.body, y.body],
       ] as const
     ).filter(([, p, q]) => p !== q)
+    const lists = (
+      [
+        [
+          'sources',
+          x.sources.map(sourceText),
+          y.sources.map(sourceText),
+          x.sources.map(sourceKey).join(),
+          y.sources.map(sourceKey).join(),
+        ],
+        ['links', x.links.map(linkText), y.links.map(linkText), '', ''],
+      ] as const
+    ).filter(([, p, q, kp, kq]) => p.join('\n') !== q.join('\n') || kp !== kq)
+    return [
+      ...text.map(([part, p, q]) => (
+        <div key={part} class="diff-part">
+          <h3>{w.parts[part]}</h3>
+          <Words segments={wordDiff(p, q)} />
+        </div>
+      )),
+      ...lists.map(([part, p, q]) => (
+        <div key={part} class="diff-part">
+          <h3>{w.parts[part]}</h3>
+          <ListDiff a={[...p]} b={[...q]} />
+        </div>
+      )),
+      ...(x.body === y.body
+        ? []
+        : [
+            <div key="body" class="diff-part">
+              <h3>{w.parts.body}</h3>
+              <BodyDiff a={x.body} b={y.body} />
+            </div>,
+          ]),
+    ]
+  }
   return (
     <section class="differences" aria-labelledby={id}>
       <h2 id={id} class="section-title">
@@ -107,12 +220,7 @@ function Differences({ slug, address, a, b }: { slug: string; address: string; a
         parts(d.a, d.b).length === 0 ? (
           <p class="muted">{w.noChange}</p>
         ) : (
-          parts(d.a, d.b).map(([part, p, q]) => (
-            <div key={part} class="diff-part">
-              <h3>{w.parts[part]}</h3>
-              <Words segments={wordDiff(p, q)} />
-            </div>
-          ))
+          parts(d.a, d.b)
         )
       ) : r.error.value ? (
         <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />
@@ -227,7 +335,7 @@ function Restore({
 
 export function History({ slug, brain, reading }: { slug: string; brain: BrainOne; reading: Reading }) {
   const address = reading.page.address
-  const r = historyResource(slug, address)
+  const r = pageResource(slug, address)
   const { query } = useLocation()
   const [asking, setAsking] = useState<number | null>(null)
   const [said, setSaid] = useState<string | null>(null)
@@ -261,6 +369,7 @@ export function History({ slug, brain, reading }: { slug: string; brain: BrainOn
                   {T.dateTime(x.createdAt)}
                   {x.address !== address ? <span class="mono"> · {x.address}</span> : null}
                 </p>
+                <Why r={x} />
               </div>
               {curator && x.revision !== latest ? (
                 <p class="actions">

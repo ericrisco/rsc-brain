@@ -162,14 +162,14 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   'GET /v1/brains/{slug}/wiki/map': {
     '': ['intro', 'groups', 'count'],
     'groups[]': ['type', 'area', 'pages'],
-    'groups[].pages[]': ['address', 'title', 'summary', 'tags'],
+    'groups[].pages[]': ['address', 'title', 'summary', 'tags', 'status'],
   },
   'GET /v1/brains/{slug}/wiki/decisions': {
     'decisions[]': ['address', 'title', 'summary', 'status', 'createdAt', 'updatedAt'],
   },
   'GET /v1/brains/{slug}/wiki/log': {
     '': ['items', 'next', 'total'],
-    'items[]': ['id', 'at', 'actorId', 'actorName', 'kind', 'proposalId', 'summary', 'pages'],
+    'items[]': ['id', 'at', 'actorId', 'actorName', 'kind', 'proposalId', 'summary', 'reason', 'pages'],
   },
   'GET /v1/brains/{slug}/pages/{address}': {
     page: [
@@ -189,9 +189,22 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     links: ['out', 'in'],
     'links.out[]': ['kind', 'address', 'pageId', 'title', 'state'],
     'sources[]': ['title'],
+    lastChange: ['revision', 'authorId', 'authorName', 'at'],
   },
   'GET /v1/brains/{slug}/pages/{address} +history': {
-    'history[]': ['revision', 'address', 'title', 'status', 'kind', 'authorId', 'authorName', 'createdAt'],
+    'history[]': [
+      'revision',
+      'address',
+      'title',
+      'status',
+      'kind',
+      'change',
+      'restoredFrom',
+      'reason',
+      'authorId',
+      'authorName',
+      'createdAt',
+    ],
   },
   'GET /v1/brains/{slug}/pages/{address} +compare': {
     a: ['revision', 'title', 'summary', 'body', 'tags', 'sources', 'links', 'authorName', 'createdAt'],

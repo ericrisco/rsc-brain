@@ -26,6 +26,7 @@ export type LinkView = {
   title: string | null
   state: MentionState
 }
+export type LastChange = { revision: number; authorId: string; authorName: string; at: string }
 export type SourceView =
   | { entryId: string; title: string | null; state: 'active' | 'forgotten' | 'purged' }
   | { url: string; title: string | null }
@@ -35,6 +36,9 @@ export type Reading = {
   notice?: string
   links: { out: LinkView[]; in: LinkView[] }
   sources: SourceView[]
+  lastChange?: LastChange | null
+  // Its revisions, read with the page (one read of the page per visit, not two).
+  history?: RevisionSummary[]
 }
 export type RevisionSummary = {
   revision: number
@@ -42,6 +46,9 @@ export type RevisionSummary = {
   title: string
   status: string
   kind: string
+  change?: string
+  restoredFrom?: number | null
+  reason?: string | null
   authorId: string
   authorName: string
   createdAt: string
@@ -70,6 +77,7 @@ export type LogLine = {
   kind: string
   proposalId: string | null
   summary: string
+  reason?: string | null
   pages: string[]
 }
 export type Listing<T> = { items: T[]; next: string | null; total: number }
@@ -96,18 +104,26 @@ export type Changed = {
 
 const key = (slug: string, rest: string) => `brain:${slug}:wiki:${rest}`
 
+// Every page whatever its status (the web's map filters by status; B2's map lists current pages only).
 export const mapResource = (slug: string) =>
   resource(key(slug, 'map'), () =>
-    api.call<{ intro: string; groups: MapGroup[]; count: number }>('wikiMap', { path: { slug } }),
+    api.call<{ intro: string; groups: MapGroup[]; count: number }>('wikiMap', {
+      path: { slug },
+      query: { status: 'all' },
+    }),
   )
 
+// The page with its history: one request, so one visit is one read in «Who read this».
 export const pageResource = (slug: string, address: string) =>
-  resource(key(slug, `page:${address}`), () => api.call<Reading>('page', { path: { slug, address } }))
-
-export const historyResource = (slug: string, address: string) =>
-  resource(key(slug, `history:${address}`), () =>
-    api.call<{ history: RevisionSummary[] }>('page', { path: { slug, address }, query: { history: 1 } }),
+  resource(key(slug, `page:${address}`), () =>
+    api.call<Reading>('page', { path: { slug, address }, query: { include: 'history' } }),
   )
+
+// The page as a change left it, at once (its history follows when the page is read again).
+export function pageChanged(slug: string, reading: Reading): void {
+  const r = pageResource(slug, reading.page.address)
+  r.data.value = { ...reading, history: r.data.value?.history ?? [] }
+}
 
 export const compareResource = (slug: string, address: string, a: number, b: number) =>
   resource(key(slug, `compare:${address}:${a},${b}`), () =>

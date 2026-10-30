@@ -18,7 +18,7 @@ import { SignIn } from './screens/SignIn.tsx'
 import { WikiDecisions } from './screens/wiki/Decisions.tsx'
 import { WikiLog } from './screens/wiki/Log.tsx'
 import { WikiMap } from './screens/wiki/Map.tsx'
-import { WikiPage } from './screens/wiki/Page.tsx'
+import { screenKey, WikiPage } from './screens/wiki/Page.tsx'
 import { branding, installationName, isSignedOut, type Me, me } from './session.ts'
 import { Door } from './shell/Door.tsx'
 import { type BrainNav, Shell } from './shell/Shell.tsx'
@@ -64,7 +64,7 @@ function LogPage({ slug }: { slug?: string }) {
   return <WikiLog key={slug} slug={slug ?? ''} />
 }
 function PagePage({ slug, address }: { slug?: string; address?: string }) {
-  return <WikiPage key={`${slug}/${address}`} slug={slug ?? ''} address={address ?? ''} />
+  return <WikiPage key={screenKey(slug ?? '', address ?? '')} slug={slug ?? ''} address={address ?? ''} />
 }
 
 function SignedIn() {

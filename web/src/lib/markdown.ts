@@ -10,8 +10,8 @@ import MarkdownIt from 'markdown-it'
 export const ADDRESS = /^[a-z0-9]+(-[a-z0-9]+)*(\/[a-z0-9]+(-[a-z0-9]+)*)*$/
 export const isAddress = (a: string) => a.length <= 200 && ADDRESS.test(a)
 
-export type MentionState = 'ok' | 'broken' | 'retired' | 'superseded'
-export type LinkLike = { kind: string; address: string; state: MentionState }
+export type MentionState = 'ok' | 'broken' | 'stale' | 'retired' | 'superseded'
+export type LinkLike = { kind: string; address: string; state: MentionState; title?: string | null }
 
 // Where a link may lead. Anything else (javascript:, data:, a protocol-relative "//host", a bare word)
 // is dropped and its text stays.
@@ -29,11 +29,12 @@ export const pageHref = (slug: string, address: string) =>
 
 const NOTE: Record<Exclude<MentionState, 'ok'>, string> = {
   broken: 'no page yet',
+  stale: 'stale',
   retired: 'retired',
   superseded: 'superseded',
 }
 
-type Env = { slug: string; states: Map<string, MentionState> }
+type Env = { slug: string; states: Map<string, MentionState>; titles: Map<string, string> }
 type Parser = InstanceType<typeof MarkdownIt>
 
 function build(): Parser {
@@ -54,7 +55,7 @@ function build(): Parser {
     if (!isAddress(address)) return false
     if (!silent) {
       const t = state.push('wikilink', 'a', 0)
-      t.meta = { address, text: (bar < 0 ? '' : inner.slice(bar + 1).trim()) || address }
+      t.meta = { address, text: bar < 0 ? '' : inner.slice(bar + 1).trim() }
     }
     state.pos = end + 2
     return true
@@ -67,7 +68,9 @@ function build(): Parser {
     const state = env.states.get(address) ?? 'ok'
     const cls = state === 'ok' ? 'wikilink' : `wikilink ${state}`
     const note = state === 'ok' ? '' : `<span class="link-note"> (${NOTE[state]})</span>`
-    return `<a href="${esc(pageHref(env.slug, address))}" class="${cls}">${esc(text)}${note}</a>`
+    // The page's title reads better than its address; the address shows on hover.
+    const shown = text || env.titles.get(address) || address
+    return `<a href="${esc(pageHref(env.slug, address))}" class="${cls}" title="${esc(address)}">${esc(shown)}${note}</a>`
   }
 
   // A link whose address was refused keeps its words and loses its link.
@@ -113,6 +116,24 @@ let parser: Parser | null = null
 export function renderMarkdown(body: string, o: { slug: string; links: readonly LinkLike[] }): string {
   parser ??= build()
   const states = new Map<string, MentionState>()
-  for (const l of o.links) if (l.kind === 'mentions') states.set(l.address, l.state)
-  return parser.render(body, { slug: o.slug, states } satisfies Env)
+  const titles = new Map<string, string>()
+  for (const l of o.links) {
+    if (l.kind !== 'mentions') continue
+    states.set(l.address, l.state)
+    if (l.title) titles.set(l.address, l.title)
+  }
+  return parser.render(body, { slug: o.slug, states, titles } satisfies Env)
+}
+
+// Markdown as plain words (a search snippet): no marks, links as their text, one line.
+export function plainText(md: string): string {
+  return md
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[\[([^\]|\n]+)\|([^\]\n]*)\]\]/g, '$2')
+    .replace(/\[\[([^\]\n]+)\]\]/g, '$1')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s?)/gm, '')
+    .replace(/(\*\*|__|\*|_|`+|~~)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }

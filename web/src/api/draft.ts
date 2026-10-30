@@ -34,3 +34,20 @@ export function draft(key: string, store: DraftStore) {
     },
   }
 }
+
+// Every draft of the tab goes when its session does (signing out, or a session that ended): what one
+// person typed is never shown to whoever signs in next on the same tab.
+export function clearDrafts(
+  store: DraftStore & { readonly length: number; key(i: number): string | null },
+): void {
+  try {
+    const keys: string[] = []
+    for (let i = 0; i < store.length; i++) {
+      const k = store.key(i)
+      if (k?.startsWith('rscb.draft.')) keys.push(k)
+    }
+    for (const k of keys) store.removeItem(k)
+  } catch {
+    // Storage blocked: there is nothing kept to clear.
+  }
+}
