@@ -1,0 +1,250 @@
+// Every word of the web, in one place, so it can be translated later (spec B6 «Clarificaciones»: English
+// only in this version). Screens import from here; they do not hold sentences of their own.
+export const T = {
+  product: 'RSC Brain',
+  brandFallback: 'Brain',
+  skip: 'Skip to content',
+
+  shell: {
+    home: 'Home',
+    search: 'Search',
+    searchHint: 'Search your brains',
+    menu: 'Menu',
+    closeMenu: 'Close menu',
+    account: 'Account',
+    signedInAs: 'Signed in as',
+    shortcuts: 'Keyboard shortcuts',
+    themeDark: 'Dark theme',
+    themeLight: 'Light theme',
+    theme: 'Theme',
+    signOut: 'Sign out',
+    signingOut: 'Signing out…',
+    signOutFailed: "Couldn't sign out. Check your connection and try again.",
+    brainNav: 'Sections of this brain',
+    yourRole: (role: string) => `You are a ${role}`,
+    overview: 'Overview',
+    allBrains: '← All brains',
+    offline:
+      'You are offline. What you see may be out of date; changes are off until the connection is back.',
+  },
+
+  // The kind of an alert or a state, as a word in sentence case.
+  kind: {
+    problem: 'Problem',
+    warning: 'Warning',
+    done: 'Done',
+    error: 'Error',
+    offline: 'Offline',
+    noAccess: 'No access',
+    notSafe: 'Not safe',
+    noLink: 'Link not valid',
+    signedOut: 'Signed out',
+  },
+
+  states: {
+    loading: 'Loading…',
+    tryAgain: 'Try again',
+    errorTitle: 'This did not load',
+    offlineTitle: 'Brain could not be reached',
+    offlineLead: 'No answer came back: this device is offline, or the server is down.',
+    forbiddenTitle: 'You cannot open this',
+    signedOutTitle: 'Your session ended',
+    clearFilters: 'Clear filters',
+    filteredEmpty: 'No results for these filters.',
+    pending: 'Sending…',
+    writeOffline: 'You are offline: this cannot be sent until the connection is back.',
+    writePending: 'Sending is in progress.',
+    keptTyped: 'What you typed is kept.',
+  },
+
+  signIn: {
+    title: 'Sign in',
+    lead: (name: string) => `Sign in to ${name}.`,
+    email: 'Email',
+    password: 'Password',
+    submit: 'Sign in',
+    submitting: 'Signing in…',
+    forgot: 'Forgot your password?',
+    noAccount: 'No account? Brain is by invitation: ask an administrator for one.',
+    signedOut: 'Signed out.',
+    sessionEnded: 'Your session ended. Sign in again.',
+    codeTitle: 'Enter your code',
+    codeLead: 'This account asks for the 6-digit code of its authenticator app.',
+    code: 'Code from your authenticator app',
+    codeHint: '6 digits',
+    codeSubmit: 'Verify and sign in',
+    useAnother: 'Use another account',
+    waitFor: (s: number) => `You can try again in ${s} s.`,
+  },
+
+  copy: {
+    done: 'Copied.',
+    failed: 'Could not copy: select the text and copy it.',
+  },
+
+  setup: {
+    title: 'Set up Brain',
+    lead: 'Three things and you are in: what this installation is called, where people open it, and your administrator account.',
+    stepInstallation: 'This installation',
+    stepAccount: 'Your administrator account',
+    name: 'Name of this installation',
+    nameHint: 'People see it in the header and in invitation emails. For example "Risco Brain".',
+    publicUrl: 'Address people open',
+    publicUrlHint: 'The address of this page, as people will reach it. Links in emails use it.',
+    adminName: 'Your name',
+    adminEmail: 'Your email',
+    password: 'Password',
+    passwordHint: '12 to 200 characters. A few unrelated words make a good one.',
+    show: 'Show',
+    hide: 'Hide',
+    submit: 'Set up and sign in',
+    submitting: 'Setting up…',
+    insecureTitle: 'This connection is not safe for a password',
+    insecureLead:
+      'You opened Brain over a connection that is neither encrypted nor on this machine, so it will not take a password.',
+    insecureHow:
+      'Open Brain on its local address (http://localhost:…) from the machine it runs on, or over HTTPS, and set it up there.',
+    // What to fix, next to each field (checked in the browser before sending).
+    need: {
+      name: 'Enter a name for this installation.',
+      nameLong: 'Shorten the name to 80 characters or fewer.',
+      publicUrl: 'Enter the address people open, such as https://brain.example.com.',
+      publicUrlBad: 'Enter a full address that starts with https:// or http://.',
+      adminName: 'Enter your name.',
+      adminNameLong: 'Shorten your name to 80 characters or fewer.',
+      adminEmail: 'Enter your email.',
+      adminEmailBad: 'Enter an email like name@example.com.',
+      password: 'Enter a password.',
+      passwordShort: 'Use at least 12 characters; a few unrelated words make a good password.',
+      passwordLong: 'Use 200 characters or fewer.',
+    },
+    doneTitle: 'Brain is already set up',
+    doneLead: 'The first-time setup runs once. Sign in with your account.',
+    goSignIn: 'Go to sign in',
+  },
+
+  invite: {
+    title: 'Accept your invitation',
+    lead: (installation: string) => `You are invited to ${installation}.`,
+    for: 'For',
+    brains: 'You will join',
+    noBrains: 'No brain yet: an administrator or curator adds you to one.',
+    admin: 'You will also administer this installation.',
+    expires: (date: string) => `This invitation works until ${date}.`,
+    name: 'Your name',
+    nameHint: 'Others see it next to what you approve and write.',
+    password: 'Choose a password',
+    submit: 'Create my account',
+    submitting: 'Creating your account…',
+    invalidTitle: 'This invitation link does not work',
+    noToken: 'This address has no invitation in it. Open the link from your invitation email again.',
+    reload:
+      'For your safety the invitation is not kept in the address. If you reloaded, open the link from your email again.',
+    askNew: 'Need a new link? Ask the person who invited you, or an administrator.',
+    haveAccount: 'Already have an account?',
+    usedTitle: 'This invitation is already used',
+    goHome: 'Go to your brains',
+    otherAccount: (current: string, invited: string) =>
+      `You are signed in as ${current}. Accepting signs ${current} out and continues as ${invited}.`,
+    signIn: 'Sign in',
+    role: { reader: 'reader', contributor: 'contributor', curator: 'curator' } as Record<string, string>,
+  },
+
+  reset: {
+    requestTitle: 'Reset your password',
+    requestLead: 'We send a link to the email of your account. It works once, for 1 hour.',
+    email: 'Email',
+    requestSubmit: 'Send the link',
+    requesting: 'Sending…',
+    sentTitle: 'Check your email',
+    backToSignIn: 'Back to sign in',
+    confirmTitle: 'Choose a new password',
+    confirmLead: 'Saving it signs your account out of every browser; then you sign in with the new one.',
+    password: 'New password',
+    confirmSubmit: 'Save the new password',
+    confirming: 'Saving…',
+    doneTitle: 'Your password is changed',
+    doneLead: 'Sign in with the new password.',
+    goSignIn: 'Sign in',
+    noMail: "This installation can't send email. Ask your administrator for a reset link.",
+    noMailHow: 'An administrator makes a link that works once, for 1 hour, and gives it to you.',
+    invalidTitle: 'This reset link does not work',
+    askNew: 'Ask for a new link',
+  },
+
+  home: {
+    title: 'Your brains',
+    emptyTitle: 'You are not in any brain yet',
+    emptyLead: 'A curator of a brain, or an administrator, can add you to one.',
+    emptyAsk: 'Ask the person who invited you, and give them the email of your account:',
+    copyEmail: 'Copy my email',
+    wrongAccount: 'Signed in with the wrong account?',
+    setUp: 'Brain is set up.',
+    welcome: (brains: ReadonlyArray<{ name: string; role: string }>) => {
+      if (!brains.length) return 'Welcome — your account is ready.'
+      const parts = brains.map((b) => `${b.name} as ${b.role}`)
+      const last = parts.pop() as string
+      return `Welcome — you joined ${parts.length ? `${parts.join(', ')} and ${last}` : last}.`
+    },
+    nextTitle: 'Next: create your first brain and invite people',
+    nextLead:
+      'Creating brains and inviting people from this web come in the next versions. Until then, your agent does it:',
+    nextConnect: 'Connect your agent to this installation. In Claude Code:',
+    nextCreate:
+      'Ask it to create a brain, for example: “Create a brain called Growth for what we learn about our audience.”',
+    nextInvite: 'Invite people through the API (POST /v1/invitations), with the same agent or a program.',
+    copyCommand: 'Copy the command',
+    readme: 'How it works, in the README',
+    readmeUrl: 'https://github.com/ericrisco/rsc-brain#connect-your-agent',
+    count: (n: number) => (n === 1 ? '1 brain' : `${n} brains`),
+    role: 'Role',
+    archived: 'archived',
+    open: (name: string) => `Open ${name}`,
+  },
+
+  brain: {
+    purpose: 'Purpose',
+    noPurpose: 'No purpose written yet.',
+    sections: 'More sections of this brain arrive with the next versions of the web.',
+    soonTitle: 'What comes here',
+    soon: 'This page will hold the wiki of this brain, its journal and the sessions of its agents, with what waits for review.',
+    now: (name: string) =>
+      `For now, work with it through your agent: ask it what ${name} knows before you decide, and it saves what you learn.`,
+    forbiddenFallback: 'Ask a curator of this brain to add you.',
+  },
+
+  search: {
+    title: 'Search',
+    label: 'Search all your brains',
+    placeholder: 'What are you looking for?',
+    submit: 'Search',
+    close: 'Close',
+    none: (q: string) => `Nothing found for "${q}".`,
+    noneHow: 'Try other words, or fewer of them.',
+    results: (n: number) => (n === 1 ? '1 result' : `${n} results`),
+    kind: { entry: 'Journal entry', page: 'Wiki page' } as Record<string, string>,
+    in: (brain: string) => `in ${brain}`,
+    hint: 'Results open in their brain once the wiki and journal screens land; for now they show what matches and where.',
+    nothingTitle: 'There is nothing to search yet',
+    nothingLead: 'Search looks through the brains you are in, and you are not in any yet.',
+  },
+
+  help: {
+    title: 'Keyboard shortcuts',
+    lead: 'Every shortcut has a visible control that does the same.',
+    close: 'Close',
+    key: 'Keys',
+    does: 'What it does',
+    control: 'Same as',
+  },
+
+  notFound: {
+    title: 'Nothing here',
+    lead: 'This address is not a page of the Brain web.',
+    home: 'Go home',
+  },
+
+  dateTime: (iso: string) =>
+    new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }) +
+    ' UTC',
+} as const

@@ -1,0 +1,53 @@
+/* The visual system of DESIGN.md (direction true-black-flat, seed 48291, palette and type kept from the
+   RSC identity). Elevation is lightness alone; the accent marks selection, data and confirmation, never a
+   button, a tab or the navigation. Dark is the default; light is a choice of the person. */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: oklch(0.165 0.012 260);
+  --surface: oklch(0.205 0.013 260);
+  --raised: oklch(0.25 0.012 260);
+  --text: oklch(0.96 0.004 95);
+  --muted: oklch(0.76 0.008 260);
+  --accent: oklch(0.8 0.17 156);
+  --rule: oklch(0.27 0.012 260);
+  --field-line: oklch(0.56 0.01 260);
+  --nav: oklch(0.74 0.008 260);
+  --primary-bg: oklch(0.96 0.004 95);
+  --primary-fg: oklch(0.165 0.012 260);
+  --danger: oklch(0.76 0.15 25);
+  --warning: oklch(0.85 0.13 85);
+  --positive: var(--accent);
+  --scrim: oklch(0.1 0.01 260 / 0.72);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ground: oklch(0.975 0.004 95);
+  --surface: oklch(0.995 0.002 95);
+  --raised: oklch(0.935 0.005 260);
+  --text: oklch(0.2 0.012 260);
+  --muted: oklch(0.44 0.01 260);
+  --accent: oklch(0.5 0.13 156);
+  --rule: oklch(0.9 0.006 260);
+  --field-line: oklch(0.56 0.01 260);
+  --nav: oklch(0.42 0.01 260);
+  --primary-bg: oklch(0.2 0.012 260);
+  --primary-fg: oklch(0.985 0.003 95);
+  --danger: oklch(0.5 0.19 25);
+  --warning: oklch(0.5 0.12 70);
+  --positive: var(--accent);
+  --scrim: oklch(0.2 0.01 260 / 0.4);
+}
+
+:root {
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sidebar: 216px;
+  --topbar: 64px;
+  --gutter: 28px;
+  --gap: 16px;
+  --radius: 8px;
+  --control: 36px;
+  --field: 40px;
+}

@@ -1,0 +1,45 @@
+// Plan B6 §0 «Dependencias»: versions pinned exactly (no ^ or ~), and what is distributed — the server's
+// dependencies and the libraries bundled into the web — under MIT, ISC, BSD or Apache-2.0 (MIT-0 is MIT
+// without the notice). Development tools (Playwright, axe, Vite) are not distributed.
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { describe, it } from 'node:test'
+
+const ROOT = new URL('../../', import.meta.url)
+const pkg = JSON.parse(readFileSync(new URL('package.json', ROOT), 'utf8')) as Record<
+  string,
+  Record<string, string>
+>
+const lock = JSON.parse(readFileSync(new URL('package-lock.json', ROOT), 'utf8')) as {
+  packages: Record<string, { license?: string; dev?: boolean; version?: string }>
+}
+
+const PERMISSIVE = /^(MIT|MIT-0|ISC|0BSD|BSD-2-Clause|BSD-3-Clause|Apache-2\.0)$/
+
+export function shippedProblems(packages: typeof lock.packages): string[] {
+  return Object.entries(packages)
+    .filter(([path, p]) => path !== '' && !p.dev)
+    .filter(([, p]) => !PERMISSIVE.test(p.license ?? ''))
+    .map(([path, p]) => `${path.replace(/^.*node_modules\//, '')}@${p.version}: ${p.license ?? 'no licence'}`)
+}
+
+describe('dependencies', () => {
+  it('are pinned to exact versions', () => {
+    for (const field of ['dependencies', 'devDependencies']) {
+      for (const [name, v] of Object.entries(pkg[field] ?? {}))
+        assert.match(v, /^\d+\.\d+\.\d+$/, `${name}@${v}`)
+    }
+  })
+
+  it('that are distributed carry a permissive licence', () => {
+    assert.deepEqual(shippedProblems(lock.packages), [])
+  })
+
+  it('a copyleft licence among them is caught', () => {
+    assert.deepEqual(
+      shippedProblems({ '': {}, 'node_modules/x': { license: 'GPL-3.0', version: '1.0.0' } }),
+      ['x@1.0.0: GPL-3.0'],
+    )
+    assert.deepEqual(shippedProblems({ 'node_modules/y': { license: 'MPL-2.0', dev: true } }), [])
+  })
+})

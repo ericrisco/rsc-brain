@@ -354,6 +354,18 @@ const badLink = () =>
     'Ask for a new one.',
   )
 
+// Whether a reset link still works, before the person types a new password (spec B6 «Reset»). It does
+// not spend the link and names no account: the answer is the same for every link that works.
+export async function lookReset(db: Db, clock: Clock, token: unknown): Promise<{ valid: true }> {
+  if (typeof token !== 'string' || !token) throw badLink()
+  const r = await db.one<Row>(
+    'SELECT 1 FROM password_resets WHERE token_hash = $1 AND used_at IS NULL AND expires_at > $2',
+    [hashSecret(token), clock()],
+  )
+  if (!r) throw badLink()
+  return { valid: true }
+}
+
 // A new password from a reset link: the link works once, and every web session of the person ends.
 export async function confirmReset(
   db: Db,

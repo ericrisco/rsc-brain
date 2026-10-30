@@ -51,6 +51,21 @@ const sameText = (a: string, b: string) => {
   return x.length === y.length && timingSafeEqual(x, y)
 }
 
+// The tokens of DESIGN.md (spec B6): dark first, the brand's graphite and terminal green, system fonts,
+// elevation by lightness, the main action inverted. Nothing is loaded from elsewhere.
+export const PAGE_STYLE = `:root{color-scheme:dark light;--bg:oklch(0.165 0.012 260);--card:oklch(0.205 0.013 260);--raised:oklch(0.25 0.012 260);--fg:oklch(0.96 0.004 95);--muted:oklch(0.76 0.008 260);--accent:oklch(0.8 0.17 156);--line:oklch(0.56 0.01 260);--rule:oklch(0.27 0.012 260);--warn:oklch(0.85 0.13 85);--error:oklch(0.76 0.15 25)}
+@media (prefers-color-scheme:light){:root{--bg:oklch(0.975 0.004 95);--card:oklch(0.995 0.002 95);--raised:oklch(0.935 0.005 260);--fg:oklch(0.2 0.012 260);--muted:oklch(0.44 0.01 260);--accent:oklch(0.5 0.13 156);--rule:oklch(0.9 0.006 260);--warn:oklch(0.5 0.12 70);--error:oklch(0.5 0.19 25)}}
+*{box-sizing:border-box}input{accent-color:var(--accent)}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow-wrap:anywhere}
+main{max-width:30rem;margin:8vh auto;padding:0 16px}.card{background:var(--card);border-radius:12px;padding:28px}
+h1{font:550 23px/1.2 ui-monospace,"SF Mono",Menlo,Consolas,monospace;letter-spacing:-.035em;margin:0 0 8px}p{margin:8px 0}.muted{color:var(--muted);font-size:12px}
+label{display:block;margin:14px 0 4px;font-weight:550;font-size:13px}input[type=email],input[type=password],input[type=text]{width:100%;height:40px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:inherit;font:inherit}
+fieldset{border:0;border-top:1px solid var(--rule);margin:14px 0;padding:10px 0 0}legend{font:550 13px ui-monospace,Menlo,monospace;color:var(--muted);padding:0 8px 0 0}
+.opt{display:flex;gap:8px;align-items:baseline;margin:6px 0;font-weight:400;font-size:14px}.warn{background:var(--raised);border-left:3px solid var(--warn);border-radius:8px;padding:10px 12px;font-size:13px;margin:12px 0}
+.domain{font-family:ui-monospace,Menlo,monospace;font-weight:700}.row{display:flex;flex-wrap:wrap;gap:12px;margin-top:20px}
+button{min-height:36px;padding:0 18px;border-radius:18px;border:1px solid var(--line);font:inherit;font-weight:550;cursor:pointer;background:transparent;color:inherit}
+button.primary{background:var(--fg);border-color:var(--fg);color:var(--bg)}button:disabled{opacity:.55;cursor:not-allowed}button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.error{color:var(--error);font-weight:550}`
+
 function page(
   title: string,
   body: string,
@@ -59,19 +74,7 @@ function page(
 ): Reply {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(title)} · RSC Brain</title><style>
-:root{color-scheme:light dark;--fg:#1b1d1f;--muted:#5d6166;--bg:#f6f5f1;--card:#fff;--line:#dcd9d2;--accent:#1f5f4a;--warn:#8a4b00;--warnbg:#fff4e0}
-@media (prefers-color-scheme:dark){:root{--fg:#ecebe7;--muted:#a3a7ab;--bg:#141516;--card:#1d1f21;--line:#33363a;--accent:#7cc4a6;--warn:#f2b46a;--warnbg:#2b2214}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:30rem;margin:8vh auto;padding:0 16px}.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:24px}
-h1{font-size:1.35rem;margin:0 0 4px}p{margin:8px 0}.muted{color:var(--muted);font-size:.9rem}
-label{display:block;margin:14px 0 4px;font-weight:600;font-size:.9rem}input[type=email],input[type=password],input[type=text]{width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:transparent;color:inherit;font:inherit}
-fieldset{border:1px solid var(--line);border-radius:8px;margin:14px 0;padding:8px 12px}legend{font-weight:600;font-size:.9rem;padding:0 4px}
-.opt{display:flex;gap:8px;align-items:baseline;margin:6px 0;font-weight:400}.warn{background:var(--warnbg);color:var(--warn);border-radius:8px;padding:10px 12px;font-size:.9rem;margin:12px 0}
-.domain{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:700}.row{display:flex;gap:10px;margin-top:18px}
-button{flex:1;padding:11px;border-radius:8px;border:1px solid var(--line);font:inherit;font-weight:600;cursor:pointer;background:transparent;color:inherit}
-button.primary{background:var(--accent);border-color:var(--accent);color:var(--bg)}button:focus-visible,input:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
-.error{color:#b3261e;font-weight:600}@media (prefers-color-scheme:dark){.error{color:#ff8a80}}
-</style></head><body><main><div class="card">${body}</div><p class="muted">RSC Brain</p></main></body></html>`
+${PAGE_STYLE}</style></head><body><main><div class="card">${body}</div><p class="muted">RSC Brain</p></main></body></html>`
   return { status, body: html, headers: { ...PAGE_HEADERS, ...headers } }
 }
 

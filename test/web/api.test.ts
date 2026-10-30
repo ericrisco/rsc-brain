@@ -1,0 +1,240 @@
+// Plan §3.2 (T004): the one door of the web to the network. Every route it calls is an operation of v1
+// (spec B6: no private routes, constitution Brain P4); writes carry the anti-CSRF header of B4; a refusal
+// arrives as { status, code, message, howToProceed }; a lost session leads to sign-in and back, only to
+// an address inside the web.
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+import { ApiError, createClient, type Transport } from '../../web/src/api/client.ts'
+import { draft } from '../../web/src/api/draft.ts'
+import { invalidate, resetResources, resource } from '../../web/src/api/resource.ts'
+import { ROUTE_TABLE } from '../../web/src/api/routes.ts'
+import { safeNext, signInPath } from '../../web/src/lib/nav.ts'
+import { V1 } from '../api/v1.ts'
+
+type Seen = {
+  url: string
+  method: string
+  headers: Record<string, string>
+  body?: string
+  credentials?: string
+}
+
+function fake(answer: (s: Seen) => { status: number; body?: unknown; text?: string } | Error) {
+  const seen: Seen[] = []
+  const transport: Transport = async (url, init) => {
+    const s: Seen = { url, method: init.method, headers: init.headers, credentials: init.credentials }
+    if (init.body !== undefined) s.body = init.body
+    seen.push(s)
+    const a = answer(s)
+    if (a instanceof Error) throw a
+    const text = a.text ?? (a.body === undefined ? '' : JSON.stringify(a.body))
+    return { status: a.status, text: async () => text }
+  }
+  return { seen, transport }
+}
+
+const ERR = (code: string) => ({ error: { code, message: `${code} happened.`, howToProceed: `Do ${code}.` } })
+
+describe('the route table of the web', () => {
+  it('holds only operations of v1', () => {
+    const pinned = new Set(V1)
+    for (const [name, op] of Object.entries(ROUTE_TABLE)) {
+      assert.ok(pinned.has(op.route), `${name}: ${op.route} is not an operation of v1`)
+    }
+  })
+})
+
+describe('the API client', () => {
+  it('reads send the session cookie of this origin and no anti-CSRF header', async () => {
+    const f = fake(() => ({ status: 200, body: { brains: [] } }))
+    const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })
+    assert.deepEqual(await api.call('brains'), { brains: [] })
+    assert.equal(f.seen[0]?.url, '/v1/brains')
+    assert.equal(f.seen[0]?.method, 'GET')
+    assert.equal(f.seen[0]?.credentials, 'same-origin')
+    assert.equal(f.seen[0]?.headers['x-requested-with'], undefined)
+  })
+
+  it('writes carry X-Requested-With: rsc-brain-web and a JSON body', async () => {
+    const f = fake(() => ({ status: 200, body: { account: { id: 'acc_1' } } }))
+    const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })
+    await api.call('login', { body: { email: 'a@example.test', password: 'p' } })
+    assert.equal(f.seen[0]?.method, 'POST')
+    assert.equal(f.seen[0]?.headers['x-requested-with'], 'rsc-brain-web')
+    assert.equal(f.seen[0]?.headers['content-type'], 'application/json')
+    assert.deepEqual(JSON.parse(f.seen[0]?.body ?? ''), { email: 'a@example.test', password: 'p' })
+  })
+
+  it('fills path parameters (encoded) and the query', async () => {
+    const f = fake(() => ({ status: 200, body: {} }))
+    const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })
+    await api.call('brain', { path: { slug: 'a b/c' } })
+    await api.call('search', { query: { q: 'retention & intros', brains: undefined } })
+    assert.equal(f.seen[0]?.url, '/v1/brains/a%20b%2Fc')
+    assert.equal(f.seen[1]?.url, '/v1/search?q=retention+%26+intros')
+  })
+
+  it('a refusal becomes an ApiError with what happened and how to proceed', async () => {
+    const f = fake(() => ({ status: 409, body: ERR('changed') }))
+    const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })
+    const err = await api.call('brains').catch((e: unknown) => e)
+    assert.ok(err instanceof ApiError)
+    assert.deepEqual(
+      { status: err.status, code: err.code, message: err.message, howToProceed: err.howToProceed },
+      { status: 409, code: 'changed', message: 'changed happened.', howToProceed: 'Do changed.' },
+    )
+  })
+
+  it('a reply that is not the envelope still says what to do', async () => {
+    const f = fake(() => ({ status: 502, text: '<html>bad gateway</html>' }))
+    const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })
+    const err = (await api.call('brains').catch((e: unknown) => e)) as ApiError
+    assert.equal(err.status, 502)
+    assert.equal(err.code, 'bad_answer')
+    assert.ok(err.howToProceed)
+  })
+
+  it('no network is an "offline" ApiError, not a crash', async () => {
+    const f = fake(() => new TypeError('Failed to fetch'))
+    const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })
+    const err = (await api.call('brains').catch((e: unknown) => e)) as ApiError
+    assert.equal(err.status, 0)
+    assert.equal(err.code, 'offline')
+    assert.match(err.howToProceed, /connection/i)
+  })
+
+  it('a 401 on a private operation signs the person out and returns them where they were', async () => {
+    const f = fake(() => ({ status: 401, body: ERR('unauthorized') }))
+    const out: string[] = []
+    const api = createClient({
+      transport: f.transport,
+      onSignedOut: (to) => out.push(to),
+      here: () => '/b/acme/wiki?type=decision',
+    })
+    await api.call('brains').catch(() => {})
+    assert.deepEqual(out, ['/sign-in?next=%2Fb%2Facme%2Fwiki%3Ftype%3Ddecision'])
+  })
+
+  it('a 401 on a public operation (a wrong password) does not', async () => {
+    const f = fake(() => ({ status: 401, body: ERR('bad_credentials') }))
+    const out: string[] = []
+    const api = createClient({
+      transport: f.transport,
+      onSignedOut: (to) => out.push(to),
+      here: () => '/sign-in',
+    })
+    const err = (await api.call('login', { body: {} }).catch((e: unknown) => e)) as ApiError
+    assert.equal(err.code, 'bad_credentials')
+    assert.deepEqual(out, [])
+  })
+
+  it('a quiet call (who am I, at start) reports 401 without moving the person', async () => {
+    const f = fake(() => ({ status: 401, body: ERR('unauthorized') }))
+    const out: string[] = []
+    const api = createClient({
+      transport: f.transport,
+      onSignedOut: (to) => out.push(to),
+      here: () => '/b/x',
+    })
+    await api.call('me', { quiet: true }).catch(() => {})
+    assert.deepEqual(out, [])
+  })
+})
+
+describe('where sign-in returns to', () => {
+  it('only an address inside the web', () => {
+    assert.equal(safeNext('/b/acme'), '/b/acme')
+    assert.equal(safeNext('/b/acme?x=1#y'), '/b/acme?x=1#y')
+    for (const bad of [
+      '//evil.example',
+      'https://evil.example',
+      '/\\evil.example',
+      'javascript:alert(1)',
+      '',
+      null,
+      '/sign-in?next=/x',
+      ' /b',
+      '/b\nx',
+    ]) {
+      assert.equal(safeNext(bad), '/', String(bad))
+    }
+  })
+
+  it('a sign-in address carries the next address only when it is safe', () => {
+    assert.equal(signInPath('/b/acme'), '/sign-in?next=%2Fb%2Facme')
+    assert.equal(signInPath('/'), '/sign-in')
+    assert.equal(signInPath('//evil.example'), '/sign-in')
+  })
+})
+
+describe('resources', () => {
+  it('load once, are shared by key, and reload when invalidated', async () => {
+    resetResources()
+    let n = 0
+    const load = async () => {
+      n += 1
+      return { n }
+    }
+    const a = resource('brains', load)
+    const b = resource('brains', load)
+    assert.equal(a, b)
+    assert.equal(a.loading.value, true)
+    await a.settled()
+    assert.deepEqual(a.data.value, { n: 1 })
+    assert.equal(a.loading.value, false)
+    invalidate('brain')
+    assert.equal(a.stale.value, true)
+    await a.settled()
+    assert.deepEqual(a.data.value, { n: 2 })
+    assert.equal(a.stale.value, false)
+    invalidate('other')
+    assert.equal(n, 2)
+  })
+
+  it('keep the last data on error, and say so', async () => {
+    resetResources()
+    let fail = false
+    const r = resource('me', async () => {
+      if (fail) throw new ApiError(500, 'internal', 'Broken.', 'Try again.')
+      return { ok: 1 }
+    })
+    await r.settled()
+    fail = true
+    await r.reload()
+    assert.deepEqual(r.data.value, { ok: 1 })
+    assert.equal(r.error.value?.code, 'internal')
+    fail = false
+    await r.reload()
+    assert.equal(r.error.value, undefined)
+  })
+})
+
+describe('drafts', () => {
+  const memory = () => {
+    const m = new Map<string, string>()
+    return {
+      getItem: (k: string) => m.get(k) ?? null,
+      setItem: (k: string, v: string) => void m.set(k, v),
+      removeItem: (k: string) => void m.delete(k),
+      m,
+    }
+  }
+
+  it('keep what was typed until it is sent', () => {
+    const s = memory()
+    const d = draft('invite.name', s)
+    assert.equal(d.get(), '')
+    d.set('Ana')
+    assert.equal(draft('invite.name', s).get(), 'Ana')
+    d.clear()
+    assert.equal(draft('invite.name', s).get(), '')
+  })
+
+  it('never hold a password, a code or a token', () => {
+    const s = memory()
+    for (const key of ['signin.password', 'signin.code', 'reset.token', 'profile.tokenSecret', 'x.secret']) {
+      assert.throws(() => draft(key, s), /never/, key)
+    }
+    assert.equal(s.m.size, 0)
+  })
+})

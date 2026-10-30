@@ -2,6 +2,7 @@
 // Refusals carry { error: { code, message, howToProceed } }; an unexpected failure reveals nothing.
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { TLSSocket } from 'node:tls'
+import { fileURLToPath } from 'node:url'
 import { bearer, resolveKey, sessionCookie } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
@@ -26,6 +27,7 @@ import {
 } from './router.ts'
 import { authRoutes } from './routes/auth.ts'
 import { brainRoutes } from './routes/brains.ts'
+import { brandingRoutes } from './routes/branding.ts'
 import { connectRoutes } from './routes/connect.ts'
 import { decideRoutes } from './routes/decide.ts'
 import { eventRoutes } from './routes/events.ts'
@@ -36,6 +38,7 @@ import { oauthRoutes } from './routes/oauth.ts'
 import { peopleRoutes } from './routes/people.ts'
 import { recallRoutes } from './routes/recall.ts'
 import { wikiRoutes } from './routes/wiki.ts'
+import { answerWeb, openWeb } from './web.ts'
 
 export const MAX_BODY = 1_048_576
 export { WEB_HEADER } from './router.ts'
@@ -57,7 +60,12 @@ export type AppDeps = {
   fetchPolicy?: FetchPolicy
   // The rhythm of the event streams; tests make it fast.
   events?: Partial<EventTimings>
+  // The folder of the built web (dist/web next to the server); false serves no web at all.
+  web?: string | false
 }
+
+// Where the build puts the web: dist/web, next to dist/http where this module lands.
+export const WEB_ROOT = fileURLToPath(new URL('../web/', import.meta.url))
 
 export const ROUTES: Route[] = [
   ...authRoutes,
@@ -72,6 +80,7 @@ export const ROUTES: Route[] = [
   ...oauthRoutes,
   ...eventRoutes,
   ...connectRoutes,
+  ...brandingRoutes,
 ]
 // The MCP endpoint calls the same routes a program would (spec B5 parity).
 ROUTES.push(...mcpRoutes(() => ROUTES))
@@ -253,6 +262,7 @@ export function createHandler(deps: AppDeps) {
   const rate = rateLimiter(deps.clock)
   const timings = { ...EVENT_TIMINGS, ...(deps.events ?? {}) }
   const hub = eventHub(deps.db, timings, log)
+  const web = deps.web === false ? null : openWeb(deps.web ?? WEB_ROOT)
   // Once the first-time setup is done it stays done: no need to ask the database again.
   let ready = false
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -261,6 +271,16 @@ export function createHandler(deps: AppDeps) {
       const method = req.method ?? 'GET'
       if (url.pathname === '/v1/health' && (method === 'GET' || method === 'HEAD'))
         return send(res, 200, { ok: true })
+      // The web answers before the first-time setup (it is what runs the setup) and never on the API's
+      // prefixes (spec B6, plan §3.1).
+      if (web) {
+        const page = answerWeb(web, method, req.url ?? '/', String(req.headers['accept-encoding'] ?? ''))
+        if (page !== 'pass') {
+          res.writeHead(page.status, { ...page.headers, 'content-length': Buffer.byteLength(page.body) })
+          res.end(method === 'HEAD' ? undefined : page.body)
+          return
+        }
+      }
       let found: ReturnType<typeof match>
       try {
         found = match(routes, method, url.pathname)
@@ -367,7 +387,7 @@ export function createHandler(deps: AppDeps) {
         error: {
           code: 'internal',
           message: `Something went wrong on the server (reference ${id}).`,
-          howToProceed: 'Try again; if it keeps failing, give the reference to the administration.',
+          howToProceed: 'Try again; if it keeps failing, give the reference to an administrator.',
         },
       })
     }
