@@ -73,8 +73,8 @@ function page(
   headers: Record<string, string | string[]> = {},
 ): Reply {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · RSC Brain</title><style>
-${PAGE_STYLE}</style></head><body><main><div class="card">${body}</div><p class="muted">RSC Brain</p></main></body></html>`
+<title>${esc(title)} · rsc-brain</title><style>
+${PAGE_STYLE}</style></head><body><main><div class="card">${body}</div><p class="muted">rsc-brain</p></main></body></html>`
   return { status, body: html, headers: { ...PAGE_HEADERS, ...headers } }
 }
 
@@ -374,6 +374,6 @@ async function protectedResource(r: PublicReq): Promise<Reply> {
     authorization_servers: [iss],
     scopes_supported: ['brain:read', 'brain:write'],
     bearer_methods_supported: ['header'],
-    resource_name: 'RSC Brain',
+    resource_name: 'rsc-brain',
   })
 }

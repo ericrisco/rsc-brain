@@ -36,7 +36,7 @@ test.describe('home', () => {
     await scenario(context, baseURL as string, 'signed-in', { home: 'much-data' })
     await page.goto('/')
     await expect(page.getByText('63 brains')).toBeVisible()
-    await expect(page.locator('.rows li')).toHaveCount(63)
+    await expect(page.locator('.cards > li')).toHaveCount(63)
     await noSideScroll(page)
   })
 

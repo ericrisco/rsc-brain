@@ -4,12 +4,16 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
+import { toReview } from '../lib/brains.ts'
 import { applyTheme, theme } from '../lib/theme.ts'
+import { brainsResource } from '../screens/Home.tsx'
 import type { Me } from '../session.ts'
 import { T } from '../text.ts'
 import { Brand } from '../ui/Brand.tsx'
 import { Dialog } from '../ui/Dialog.tsx'
 import { OfflineStrip } from '../ui/states.tsx'
+import { ConnectDialog } from './ConnectDialog.tsx'
+import { CreateBrainDialog } from './CreateBrainDialog.tsx'
 import { HelpDialog } from './HelpDialog.tsx'
 import { Keyboard } from './Keyboard.tsx'
 import { helpOpen, searchOpen } from './keys.ts'
@@ -97,6 +101,11 @@ function AccountMenu({ me }: { me: Me }) {
             <p>{name}</p>
             {me.account.email ? <p class="meta">{me.account.email}</p> : null}
           </div>
+          {me.account.canInvite ? (
+            <a href="/people" onClick={() => setOpen(false)}>
+              <span>{T.shell.people}</span>
+            </a>
+          ) : null}
           <button
             type="button"
             class="keyboard-only"
@@ -127,6 +136,35 @@ function AccountMenu({ me }: { me: Me }) {
         </div>
       ) : null}
     </div>
+  )
+}
+
+// The proposals waiting for me, across my brains (spec B6: «el aviso de propuestas pendientes»). Asked
+// again every 30 seconds and when the tab comes back (plan §3.3); shown only when something waits.
+function ToReview() {
+  const r = brainsResource()
+  useEffect(() => {
+    const again = () => {
+      if (!document.hidden) void r.reload()
+    }
+    const every = setInterval(again, 30_000)
+    document.addEventListener('visibilitychange', again)
+    return () => {
+      clearInterval(every)
+      document.removeEventListener('visibilitychange', again)
+    }
+  }, [])
+  const brains = r.data.value?.brains
+  if (!brains) return null
+  const { count, href } = toReview(brains)
+  if (!count) return null
+  return (
+    <a class="to-review" href={href} aria-label={T.shell.toReview(count)}>
+      <span class="dot" aria-hidden="true" />
+      <span class="long">{T.shell.toReview(count)}</span>
+      <span class="short">{T.shell.toReviewShort(count)}</span>
+      <span class="tiny">{count}</span>
+    </a>
   )
 }
 
@@ -172,6 +210,7 @@ export function Shell({
           </button>
         </div>
         <div class="end">
+          <ToReview />
           <AccountMenu me={me} />
         </div>
       </header>
@@ -203,6 +242,8 @@ export function Shell({
       <Keyboard key="keys" signedIn brain={brain?.slug ?? null} />
       <HelpDialog key="help" signedIn inBrain={Boolean(brain)} />
       <SearchDialog key="search" />
+      <ConnectDialog key="connect" />
+      <CreateBrainDialog key="create" />
     </div>
   )
 }

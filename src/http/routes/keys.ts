@@ -1,24 +1,11 @@
 import { MAX_SHORT_MINUTES, mintShortKey, revokeKey } from '../../domain/keys.ts'
+import { whoAmI } from '../../domain/overview.ts'
 import { compact, int, obj, oneOf, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
 export const keyRoutes: Route[] = [
-  route('GET /v1/me', async (r) => {
-    const w = r.who
-    return {
-      body: {
-        account: { id: w.accountId, kind: w.kind, name: w.name, email: w.email, isAdmin: w.isAdmin },
-        key: {
-          id: w.credential.id,
-          kind: w.credential.kind,
-          perm: w.credential.perm,
-          ref: w.credential.ref,
-          agent: w.credential.agent,
-        },
-      },
-    }
-  }),
+  route('GET /v1/me', async (r) => ({ body: await whoAmI(ctxOf(r)) })),
   route('POST /v1/keys/short', async (r) => {
     const b = obj(r.body)
     const req = {

@@ -423,7 +423,7 @@ export async function startTotp(ctx: Ctx, secret: string | undefined, code?: unk
     ctx.who.accountId,
     seal(secret, s),
   ])
-  const name = (await installation(ctx.db)).name || 'RSC Brain'
+  const name = (await installation(ctx.db)).name || 'rsc-brain'
   return { secret: s, otpauthUrl: otpauthUrl(s, ctx.who.email ?? ctx.who.name, name) }
 }
 

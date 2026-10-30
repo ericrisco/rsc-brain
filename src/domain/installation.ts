@@ -112,7 +112,7 @@ const text = (v: unknown, field: string): string => {
 function nameOf(v: unknown): string {
   const n = typeof v === 'string' ? v.trim() : ''
   if (!n || n.length > 80)
-    throw invalid('The installation needs a name of 1 to 80 characters.', 'For example "Risco Brain".')
+    throw invalid('The installation needs a name of 1 to 80 characters.', 'For example "Acme rsc-brain".')
   return n
 }
 

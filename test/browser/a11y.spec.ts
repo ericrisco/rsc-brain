@@ -43,7 +43,7 @@ for (const theme of ['dark', 'light'] as const) {
     await scenario(context, baseURL as string, 'fresh')
     await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
     await page.goto('/setup')
-    await expect(page.getByRole('heading', { name: 'Set up Brain' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Set up rsc-brain' })).toBeVisible()
     await audit(page, `${theme} setup`)
   })
 
@@ -81,6 +81,51 @@ for (const theme of ['dark', 'light'] as const) {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.getByRole('button', { name: /Account/ }).click()
     await audit(page, `${theme} account menu`)
+  })
+}
+
+// The screens of PR18: home empty with its first steps, the overview of a new brain, people with a link
+// shown, and their dialogs (create a brain, connect your agent, withdraw an invitation).
+for (const theme of ['dark', 'light'] as const) {
+  test(`home, overview and people (PR18), ${theme}`, async ({ page, context, baseURL }) => {
+    await scenario(context, baseURL as string, 'alone', {}, { mail: false })
+    await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: 'Get started' })).toBeVisible()
+    await audit(page, `${theme} home get started`)
+    await page.getByRole('button', { name: 'Create brain' }).first().click()
+    await expect(page.getByRole('dialog', { name: 'Create a brain' })).toBeVisible()
+    await audit(page, `${theme} create brain`)
+    await page.getByLabel('Name').fill('Onboarding')
+    await page.getByRole('dialog').getByRole('button', { name: 'Create brain' }).click()
+    await expect(page.getByRole('region', { name: 'First steps' })).toBeVisible()
+    await audit(page, `${theme} overview first steps`)
+    await page
+      .getByRole('region', { name: 'First steps' })
+      .getByRole('button', { name: 'Connect your agent' })
+      .click()
+    await expect(page.getByRole('dialog', { name: 'Connect your agent' })).toBeVisible()
+    await audit(page, `${theme} connect`)
+    await page.keyboard.press('Escape')
+    await page.goto('/people')
+    await page.getByLabel('Emails').fill('zoe@example.test')
+    await page.getByRole('button', { name: 'Create invitation link' }).click()
+    await expect(page.getByRole('region', { name: 'Links to send' })).toBeVisible()
+    await audit(page, `${theme} people with a link`)
+    await page.getByRole('button', { name: 'Withdraw' }).first().click()
+    await expect(page.getByRole('dialog', { name: 'Withdraw the invitation?' })).toBeVisible()
+    await audit(page, `${theme} withdraw`)
+  })
+
+  test(`home with brains and the overview at work, ${theme}`, async ({ page, context, baseURL }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
+    await page.goto('/')
+    await expect(page.getByRole('banner').getByRole('link', { name: /to review/ })).toBeVisible()
+    await audit(page, `${theme} home cards`)
+    await page.goto('/b/growth')
+    await expect(page.getByRole('region', { name: "Today's sessions" })).toBeVisible()
+    await audit(page, `${theme} overview`)
   })
 }
 

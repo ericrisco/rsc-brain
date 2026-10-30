@@ -29,11 +29,15 @@ export type Screen =
   | 'sign-out'
   | 'reset'
   | 'branding'
+  | 'overview'
+  | 'people'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
-export type Preset = 'signed-out' | 'signed-in' | 'member' | 'fresh' | 'insecure'
+// alone: the administrator the setup made, the only person in the installation.
+export type Preset = 'signed-out' | 'signed-in' | 'member' | 'fresh' | 'insecure' | 'alone'
 
-// `alone`: in no brain (the administrator the setup creates).
+// `alone`: in no brain, and the only person it sees in the installation (the administrator the setup
+// creates). `canCreate`: may create brains without administering.
 type Account = {
   id: string
   name: string
@@ -42,7 +46,22 @@ type Account = {
   totp: boolean
   password: string
   alone?: boolean
+  canCreate?: boolean
+  joined?: boolean
 }
+type Brain = ReturnType<typeof brain>
+type Invitation = {
+  id: string
+  email: string
+  status: 'pending' | 'expired' | 'used' | 'revoked'
+  brains: Array<{ slug: string; role: string }>
+  isAdmin: boolean
+  invitedBy: string
+  createdAt: string
+  expiresAt: string
+}
+// What has happened in a brain of the scenario (the overview's first steps, its numbers).
+type Life = { entries: number; agent: boolean }
 type Scen = {
   id: string
   setupDone: boolean
@@ -58,6 +77,12 @@ type Scen = {
   inviteUsed: boolean
   resetUsed: boolean
   states: Map<Screen, State>
+  brains: Brain[]
+  life: Map<string, Life>
+  invitations: Invitation[]
+  // Live event streams open in this scenario, by brain.
+  streams: Set<{ brain: string; res: ServerResponse }>
+  seq: number
 }
 
 type Answer = { status: number; body: unknown; headers?: Record<string, string> }
@@ -106,7 +131,31 @@ const SHORT = err(
   'Choose a longer one; a few unrelated words make a good password.',
 )
 
-function brain(slug: string, name: string, purpose: string, role: string, status = 'active') {
+type Stats = {
+  pages: number
+  entries: number
+  uncompiled: number
+  conflicts: number
+  pendingProposals: number
+  lastActivityAt: string | null
+}
+const ZERO: Stats = {
+  pages: 0,
+  entries: 0,
+  uncompiled: 0,
+  conflicts: 0,
+  pendingProposals: 0,
+  lastActivityAt: null,
+}
+
+function brain(
+  slug: string,
+  name: string,
+  purpose: string,
+  role: string,
+  status = 'active',
+  stats: Partial<Stats> = {},
+) {
   return {
     id: `brn_${slug.replace(/-/g, '')}`,
     slug,
@@ -114,22 +163,46 @@ function brain(slug: string, name: string, purpose: string, role: string, status
     description: '',
     purpose,
     status,
-    pendingCuratorEmail: null,
+    pendingCuratorEmail: null as string | null,
     createdAt: AT,
     updatedAt: AT,
     role,
+    stats: { ...ZERO, ...stats },
+    notifyProposals: false,
   }
 }
 
-const BRAINS = [
-  brain('growth', 'Growth', 'What we learn about audience, retention and intros.', 'curator'),
-  brain('support', 'Support', 'How customers get unstuck, and what keeps breaking.', 'contributor'),
+const RECENT = '2026-10-29T09:12:00.000Z'
+const BRAINS = () => [
+  brain('growth', 'Growth', 'What we learn about audience, retention and intros.', 'curator', 'active', {
+    pages: 300,
+    entries: 1284,
+    uncompiled: 37,
+    conflicts: 2,
+    pendingProposals: 3,
+    lastActivityAt: RECENT,
+  }),
+  brain(
+    'support',
+    'Support',
+    'How customers get unstuck, and what keeps breaking.',
+    'contributor',
+    'active',
+    {
+      pages: 42,
+      entries: 310,
+      uncompiled: 5,
+      pendingProposals: 1,
+      lastActivityAt: '2026-10-27T16:40:00.000Z',
+    },
+  ),
   brain(
     'legal-archive',
     'Legal archive',
     'Contracts and consent decisions, kept for reference.',
     'reader',
     'archived',
+    { pages: 18, entries: 96, lastActivityAt: '2026-08-02T10:00:00.000Z' },
   ),
 ]
 const MANY = Array.from({ length: 60 }, (_, i) =>
@@ -138,6 +211,8 @@ const MANY = Array.from({ length: 60 }, (_, i) =>
     `Team ${i + 1}`,
     `Notes of team ${i + 1}.`,
     i % 3 === 0 ? 'curator' : 'reader',
+    'active',
+    { pages: i * 3, entries: i * 11, pendingProposals: i % 7 === 0 ? 1 : 0 },
   ),
 )
 const WIKI = generate({ pages: 300, seed: 48291 })
@@ -148,7 +223,7 @@ function freshScenario(id: string, preset: Preset): Scen {
     setupDone: preset !== 'fresh' && preset !== 'insecure',
     insecure: preset === 'insecure',
     mail: true,
-    name: preset === 'fresh' || preset === 'insecure' ? '' : 'Risco Brain',
+    name: preset === 'fresh' || preset === 'insecure' ? '' : 'rsc-brain',
     // Never the address the browser is on: the web must show the installation's own.
     publicUrl: preset === 'fresh' || preset === 'insecure' ? '' : 'https://brain.example.test',
     accounts: [
@@ -174,6 +249,48 @@ function freshScenario(id: string, preset: Preset): Scen {
     inviteUsed: false,
     resetUsed: false,
     states: new Map(),
+    brains: BRAINS(),
+    life: new Map([
+      ['growth', { entries: 1284, agent: true }],
+      ['support', { entries: 310, agent: true }],
+      ['legal-archive', { entries: 96, agent: true }],
+    ]),
+    invitations: [
+      {
+        id: 'inv_pending_bo',
+        email: 'bo@example.test',
+        status: 'pending',
+        brains: [{ slug: 'growth', role: 'reader' }],
+        isAdmin: false,
+        invitedBy: 'Eric',
+        createdAt: '2026-10-28T10:00:00.000Z',
+        expiresAt: '2026-10-31T10:00:00.000Z',
+      },
+      {
+        id: 'inv_used_ana',
+        email: 'ana@example.test',
+        status: 'used',
+        brains: [{ slug: 'support', role: 'contributor' }],
+        isAdmin: false,
+        invitedBy: 'Eric',
+        createdAt: '2026-10-20T10:00:00.000Z',
+        expiresAt: '2026-10-23T10:00:00.000Z',
+      },
+    ],
+    streams: new Set(),
+    seq: 100,
+  }
+  if (preset === 'alone') {
+    s.accounts.push({
+      id: 'acc_admin',
+      name: 'Eric',
+      email: 'admin@example.test',
+      isAdmin: true,
+      totp: false,
+      password: PASSWORD,
+      alone: true,
+    })
+    s.sessions.add('fx.acc_admin')
   }
   if (preset === 'signed-in') s.sessions.add('fx.acc_eric')
   if (preset === 'member') s.sessions.add('fx.acc_ana')
@@ -239,7 +356,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           400,
           'invalid_request',
           'The installation needs a name of 1 to 80 characters.',
-          'For example "Risco Brain".',
+          'For example "Acme rsc-brain".',
         )
       if (typeof body.publicUrl !== 'string' || !/^https?:\/\/[^\s#?]+$/.test(body.publicUrl))
         return err(
@@ -462,7 +579,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         status: 200,
         body: connectKit({
           mcpUrl: `${s.publicUrl}/mcp`,
-          brain: null,
+          brain: query.get('brain') || null,
           ...(agent ? { agent: agent as AgentId } : {}),
         }),
       }
@@ -470,13 +587,20 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   },
   'GET /v1/me': {
     screen: 'me',
-    run: ({ who }) =>
+    run: ({ s, who }) =>
       who
         ? {
             status: 200,
             body: {
-              account: { ...account(who), kind: 'person' },
+              account: {
+                ...account(who),
+                kind: 'person',
+                canCreateBrains: who.isAdmin || Boolean(who.canCreate),
+                canInvite: who.isAdmin,
+                totp: who.totp,
+              },
               key: { id: `crd_web_${who.id}`, kind: 'web', perm: 'write', ref: null, agent: null },
+              installation: { name: s.name, factoryUrl: null },
             },
           }
         : UNAUTHORIZED,
@@ -485,16 +609,250 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
     screen: 'home',
     run: ({ s, who }) => {
       const st = s.states.get('home')
-      if (st === 'empty' || who?.alone) return { status: 200, body: { brains: [] } }
-      if (st === 'much-data') return { status: 200, body: { brains: [...BRAINS, ...MANY] } }
-      return { status: 200, body: { brains: BRAINS } }
+      const mine = brainsOf(s, who)
+      if (st === 'empty') return { status: 200, body: { brains: [] } }
+      if (st === 'much-data') return { status: 200, body: { brains: [...mine, ...MANY] } }
+      return { status: 200, body: { brains: mine } }
+    },
+  },
+  'POST /v1/brains': {
+    run: ({ s, who, body }) => {
+      if (!who?.isAdmin && !who?.canCreate)
+        return err(
+          403,
+          'forbidden',
+          'You are not allowed to create brains.',
+          'Ask the administration of this installation for the "can create brains" permission.',
+        )
+      const slug = typeof body.slug === 'string' ? body.slug.trim() : ''
+      if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) || slug.length < 2 || slug.length > 64)
+        return err(
+          400,
+          'invalid_request',
+          'A brain name (slug) is 2 to 64 lowercase letters, digits and single hyphens.',
+          'Use something like "youtube-channel".',
+        )
+      if ([...s.brains, ...MANY].some((b) => b.slug === slug))
+        return err(409, 'brain_exists', `A brain named "${slug}" already exists.`, 'Choose another name.')
+      const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : slug
+      const purpose = typeof body.purpose === 'string' ? body.purpose.trim() : ''
+      const made = brain(slug, name, purpose, 'curator')
+      s.brains.push(made)
+      s.life.set(slug, { entries: 0, agent: false })
+      if (who.alone) who.joined = true
+      const { role: _role, stats: _stats, notifyProposals: _n, ...plain } = made
+      return { status: 201, body: { brain: plain } }
     },
   },
   'GET /v1/brains/{slug}': {
     screen: 'brain',
-    run: ({ params }) => {
-      const b = [...BRAINS, ...MANY].find((x) => x.slug === params.slug)
+    run: ({ s, who, params }) => {
+      const b = [...brainsOf(s, who), ...MANY].find((x) => x.slug === params.slug)
       return b ? { status: 200, body: { brain: b } } : NO_BRAIN
+    },
+  },
+  'GET /v1/brains/{slug}/overview': {
+    screen: 'overview',
+    run: ({ s, who, params }) => {
+      const b = [...brainsOf(s, who), ...MANY].find((x) => x.slug === params.slug)
+      if (!b) return NO_BRAIN
+      const st = s.states.get('overview')
+      const life =
+        st === 'empty' ? { entries: 0, agent: false } : (s.life.get(b.slug) ?? { entries: 0, agent: false })
+      const fresh = life.entries === 0
+      return {
+        status: 200,
+        body: {
+          stats: fresh && st === 'empty' ? ZERO : b.stats,
+          todaySessions: fresh || st === 'empty' ? [] : sessionsOf(b.slug, st === 'much-data' ? 20 : 3),
+          pending: fresh ? [] : pendingOf(b.slug, Math.min(5, b.stats.pendingProposals)),
+          health: fresh
+            ? {
+                orphans: 0,
+                broken: 0,
+                conflicts: 0,
+                stale: 0,
+                unavailableSources: 0,
+                long: 0,
+                similarTitles: 0,
+              }
+            : b.slug === 'growth'
+              ? {
+                  orphans: 4,
+                  broken: 3,
+                  conflicts: 2,
+                  stale: 1,
+                  unavailableSources: 0,
+                  long: 0,
+                  similarTitles: 1,
+                }
+              : {
+                  orphans: 0,
+                  broken: 0,
+                  conflicts: 0,
+                  stale: 0,
+                  unavailableSources: 0,
+                  long: 0,
+                  similarTitles: 0,
+                },
+          firstSteps: { agentConnected: life.agent, firstEntry: life.entries > 0, imported: false },
+        },
+      }
+    },
+  },
+  'GET /v1/invitations': {
+    screen: 'people',
+    run: ({ s, who }) => {
+      if (!who?.isAdmin) return ONLY_ADMIN_INVITES
+      const list = s.states.get('people') === 'empty' ? [] : s.invitations
+      return { status: 200, body: { invitations: list } }
+    },
+  },
+  'POST /v1/invitations': {
+    run: ({ s, who, body }) => {
+      if (!who?.isAdmin) return ONLY_ADMIN_INVITES
+      const raw = Array.isArray(body.emails) ? body.emails : [body.emails]
+      if (raw.length === 0 || raw.length > 50)
+        return err(400, 'invalid_request', 'Invite 1 to 50 emails at a time.', 'Send "emails" as a list.')
+      const brains = Array.isArray(body.brains) ? (body.brains as Array<{ slug: string; role: string }>) : []
+      for (const g of brains) if (!s.brains.some((b) => b.slug === g.slug)) return NO_BRAIN
+      const out = []
+      for (const v of raw) {
+        const email = String(v).trim().toLowerCase()
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+          return err(
+            400,
+            'invalid_request',
+            `"${String(v).slice(0, 80)}" is not an email.`,
+            'Give plain emails such as ana@example.com.',
+          )
+        if (s.accounts.some((a) => a.email === email))
+          return err(
+            409,
+            'email_taken',
+            `${email} already has an account.`,
+            'Add that person to the brain as a member instead.',
+          )
+        const id = `inv_${randomBytes(4).toString('hex')}`
+        const inv: Invitation = {
+          id,
+          email,
+          status: 'pending',
+          brains: brains.map((g) => ({ slug: g.slug, role: g.role })),
+          isAdmin: body.isAdmin === true,
+          invitedBy: who.name,
+          createdAt: AT,
+          expiresAt: '2026-11-01T10:00:00.000Z',
+        }
+        s.invitations = [inv, ...s.invitations.filter((x) => !(x.email === email && x.status === 'pending'))]
+        out.push(invited(s, inv))
+      }
+      return { status: 201, body: { invitations: out } }
+    },
+  },
+  'POST /v1/invitations/{id}/resend': {
+    run: ({ s, who, params }) => {
+      if (!who?.isAdmin) return ONLY_ADMIN_INVITES
+      const inv = s.invitations.find((x) => x.id === params.id)
+      if (!inv)
+        return err(
+          404,
+          'not_found',
+          'No invitation with that id is available to you.',
+          'Check the invitation id.',
+        )
+      if (inv.status === 'used' || inv.status === 'revoked')
+        return err(
+          409,
+          'invitation_closed',
+          'This invitation was already used or withdrawn.',
+          'Invite the email again if it still needs access.',
+        )
+      inv.status = 'pending'
+      inv.expiresAt = '2026-11-01T10:00:00.000Z'
+      return { status: 200, body: { invitation: invited(s, inv) } }
+    },
+  },
+  'DELETE /v1/invitations/{id}': {
+    run: ({ s, who, params }) => {
+      if (!who?.isAdmin) return ONLY_ADMIN_INVITES
+      const inv = s.invitations.find((x) => x.id === params.id)
+      if (!inv)
+        return err(
+          404,
+          'not_found',
+          'No invitation with that id is available to you.',
+          'Check the invitation id.',
+        )
+      if (inv.status === 'used')
+        return err(
+          409,
+          'invitation_closed',
+          'This invitation was already used.',
+          'Remove the person, or change their roles.',
+        )
+      inv.status = 'revoked'
+      return { status: 200, body: { revoked: inv.id } }
+    },
+  },
+  'GET /v1/admin/accounts': {
+    screen: 'people',
+    run: ({ s, who }) => {
+      if (!who?.isAdmin) return ADMIN_ONLY
+      const seen = who.alone ? s.accounts.filter((a) => a === who || a.joined) : s.accounts
+      return {
+        status: 200,
+        body: {
+          accounts: seen.map((a) => ({
+            id: a.id,
+            kind: 'person',
+            name: a.name,
+            email: a.email,
+            isAdmin: a.isAdmin,
+            canCreateBrains: a.isAdmin || Boolean(a.canCreate),
+            canInvite: false,
+            status: 'active',
+            secondFactor: a.totp,
+            brains: a.alone
+              ? s.brains.filter((b) => s.life.has(b.slug) && !BRAINS().some((x) => x.slug === b.slug)).length
+              : 3,
+            lastSeenAt: a === who ? AT : a.id === 'acc_ana' ? '2026-10-28T08:00:00.000Z' : null,
+            createdAt: '2026-10-01T10:00:00.000Z',
+          })),
+        },
+      }
+    },
+  },
+  'POST /v1/admin/accounts/{id}/reset-link': {
+    run: ({ s, who, params, web }) => {
+      if (!web) return CSRF
+      if (!who?.isAdmin)
+        return err(403, 'forbidden', 'Only the administration makes reset links.', 'Ask the administration.')
+      if (!s.accounts.some((a) => a.id === params.id))
+        return err(404, 'not_found', 'No account with that id is available to you.', 'Check the account id.')
+      return {
+        status: 201,
+        body: { link: `${s.publicUrl}/reset#token=${RESET_TOKEN}`, expiresAt: '2026-10-29T11:00:00.000Z' },
+      }
+    },
+  },
+  'GET /v1/admin/brains': {
+    run: ({ s, who }) => {
+      if (!who?.isAdmin) return ADMIN_ONLY
+      return {
+        status: 200,
+        body: {
+          brains: s.brains.map((b) => ({
+            slug: b.slug,
+            name: b.name,
+            status: b.status,
+            members: 3,
+            curators: [{ id: 'acc_eric', name: 'Eric' }],
+            pendingCurator: null,
+            youAreMember: true,
+          })),
+        },
+      }
     },
   },
   'GET /v1/search': {
@@ -528,9 +886,101 @@ const PRIVATE = new Set([
   'GET /v1/connect',
   'GET /v1/me',
   'GET /v1/brains',
+  'POST /v1/brains',
   'GET /v1/brains/{slug}',
+  'GET /v1/brains/{slug}/overview',
   'GET /v1/search',
+  'GET /v1/invitations',
+  'POST /v1/invitations',
+  'POST /v1/invitations/{id}/resend',
+  'DELETE /v1/invitations/{id}',
+  'GET /v1/admin/accounts',
+  'POST /v1/admin/accounts/{id}/reset-link',
+  'GET /v1/admin/brains',
 ])
+
+// The brains a person of the scenario is in: the setup's administrator only in those it made.
+// Ana is not a curator anywhere: her roles are her own.
+const ANA_ROLES: Record<string, string> = {
+  growth: 'contributor',
+  support: 'reader',
+  'legal-archive': 'reader',
+}
+function brainsOf(s: Scen, who: Account | null): Brain[] {
+  if (who?.alone) return s.brains.filter((b) => !BRAINS().some((x) => x.slug === b.slug))
+  if (who?.id === 'acc_ana') return s.brains.map((b) => ({ ...b, role: ANA_ROLES[b.slug] ?? b.role }))
+  return s.brains
+}
+
+const CLIENTS = ['Claude Code', 'Codex', 'RSC Factory', 'Cursor']
+function sessionsOf(slug: string, n: number) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `ses_${slug.replace(/-/g, '')}${String(i + 1).padStart(3, '0')}`,
+    who: i % 2 ? 'Ana' : 'Eric',
+    client: CLIENTS[i % CLIENTS.length] ?? null,
+    purpose:
+      ['Review the intros of October', 'Fix the onboarding emails', 'Weekly retention notes'][i % 3] ?? '',
+    ref: i % 3 === 2 ? `r_${slug.slice(0, 3)}${i}` : null,
+    status: i === 0 ? 'open' : i % 4 === 3 ? 'closed_no_summary' : 'closed',
+    entries: (i * 7) % 13,
+    summary:
+      i === 0 || i % 4 === 3
+        ? null
+        : 'Short intros keep viewers past 30 seconds; the long ones lose a third of them before the hook.',
+    openedAt: '2026-10-29T08:00:00.000Z',
+    lastActivityAt: '2026-10-29T09:12:00.000Z',
+  }))
+}
+function pendingOf(slug: string, n: number) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `prp_${slug.replace(/-/g, '')}${i + 1}`,
+    brainId: `brn_${slug.replace(/-/g, '')}`,
+    title:
+      ['Intros: keep them under 10 seconds', 'Merge the two retention pages', 'New page: hooks that work'][
+        i % 3
+      ] ?? '',
+    reason: 'The journal says so.',
+    authorId: 'acc_eric',
+    agent: 'Claude Code',
+    status: 'pending',
+    old: i === 2,
+    supersedes: null,
+    supersededBy: null,
+    collected: [],
+    comment: null,
+    decidedBy: null,
+    decidedAt: null,
+    lastError: null,
+    createdAt: '2026-10-28T10:00:00.000Z',
+    purged: false,
+    opCount: i + 1,
+  }))
+}
+
+// The answer of a new invitation: the link travels in it once; with mail off it was not sent.
+function invited(s: Scen, inv: Invitation) {
+  return {
+    id: inv.id,
+    email: inv.email,
+    link: `${s.publicUrl}/invite#token=${INVITE_TOKEN}`,
+    expiresAt: inv.expiresAt,
+    mailed: s.mail,
+    mailError: s.mail ? null : 'This installation has no mail set up.',
+  }
+}
+
+const ONLY_ADMIN_INVITES = err(
+  403,
+  'forbidden',
+  'Only the administration invites new people to this installation.',
+  'Ask the administration, or add someone who already has an account to your brain.',
+)
+const ADMIN_ONLY = err(
+  403,
+  'forbidden',
+  'Only the administration of this installation does this.',
+  'Ask an administrator.',
+)
 
 function match(method: string, path: string): { op: string; params: Record<string, string> } | null {
   for (const op of Object.keys(OPS)) {
@@ -574,6 +1024,37 @@ async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
   } catch {
     return {}
   }
+}
+
+function emit(s: Scen, slug: string, kind: string): void {
+  const b = s.brains.find((x) => x.slug === slug)
+  const life = s.life.get(slug) ?? { entries: 0, agent: false }
+  if (kind === 'entry.saved' || kind === 'session.opened') {
+    life.agent = true
+    if (kind === 'entry.saved') life.entries += 1
+    s.life.set(slug, life)
+    if (b) {
+      b.stats = {
+        ...b.stats,
+        entries: kind === 'entry.saved' ? b.stats.entries + 1 : b.stats.entries,
+        uncompiled: kind === 'entry.saved' ? b.stats.uncompiled + 1 : b.stats.uncompiled,
+        lastActivityAt: AT,
+      }
+    }
+  }
+  s.seq += 1
+  const event = {
+    id: String(s.seq),
+    at: AT,
+    brain: slug,
+    kind,
+    who: { id: 'acc_eric', name: 'Eric' },
+    key: { id: 'crd_agent', ref: null },
+    target: { id: 'ent_fixture', label: 'First thing the agent learnt' },
+    query: null,
+  }
+  for (const st of s.streams)
+    if (st.brain === slug) st.res.write(`id: ${s.seq}\ndata: ${JSON.stringify(event)}\n\n`)
 }
 
 export type ScenarioHandle = {
@@ -659,6 +1140,15 @@ export async function startFixture(
         handle(s).endSessions()
         return send(res, { status: 200, body: {} })
       }
+      // An event in a brain, as an agent's write makes it: the brain changes and open streams hear it.
+      const emitting = /^\/__fixture\/scenarios\/([\w]+)\/emit$/.exec(url.pathname)
+      if (emitting && method === 'POST') {
+        const s = scenarios.get(emitting[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        const b = await bodyOf(req)
+        emit(s, String(b.brain), String(b.kind ?? 'entry.saved'))
+        return send(res, { status: 200, body: {} })
+      }
       // For a person walking the fixture by hand: /__fixture/use?preset=fresh&next=/setup
       if (url.pathname === '/__fixture/use') {
         const s = make((url.searchParams.get('preset') as Preset) ?? 'signed-in')
@@ -684,6 +1174,25 @@ export async function startFixture(
 
       const sid = String(req.headers['x-fixture-scenario'] ?? c.fixture_scenario ?? '')
       const s = scenarios.get(sid) ?? fallback
+      // The live events of a brain (Server-Sent Events), never JSON: answered here, as the server does.
+      const live = /^\/v1\/brains\/([^/]+)\/events$/.exec(url.pathname)
+      if (live && method === 'GET') {
+        const session = c.rscb_session && s.sessions.has(c.rscb_session) ? c.rscb_session : null
+        const who = session ? (s.accounts.find((a) => `fx.${a.id}` === session) ?? null) : null
+        if (!who) return send(res, UNAUTHORIZED)
+        const slug = decodeURIComponent(live[1] as string)
+        if (![...brainsOf(s, who), ...MANY].some((b) => b.slug === slug)) return send(res, NO_BRAIN)
+        res.writeHead(200, {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-store',
+          'x-content-type-options': 'nosniff',
+        })
+        res.write(': following\n\n')
+        const stream = { brain: slug, res }
+        s.streams.add(stream)
+        req.on('close', () => s.streams.delete(stream))
+        return
+      }
       const m = match(method, url.pathname)
       if (!m) {
         if (web) {
@@ -741,6 +1250,7 @@ export async function startFixture(
     scenario: (preset = 'signed-out') => handle(make(preset)),
     close: () =>
       new Promise<void>((r) => {
+        for (const sc of scenarios.values()) for (const st of sc.streams) st.res.end()
         server.closeAllConnections()
         server.close(() => r())
       }),

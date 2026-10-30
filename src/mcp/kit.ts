@@ -65,7 +65,7 @@ const tokenFile: Block = {
 // reminder is an invocable prompt plus this text).
 const INSTRUCTIONS_TEXT = (brain: string | null) =>
   [
-    '## RSC Brain',
+    '## rsc-brain',
     '',
     `- At the start of a task, call brain_resolve with the output of \`git remote get-url origin\`${brain ? ` (or use the brain "${brain}")` : ''}, then mem_context.`,
     '- Search with mem_search before you decide. Save decisions, discoveries and corrections with mem_save as you work.',

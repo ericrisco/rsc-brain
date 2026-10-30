@@ -4,6 +4,7 @@ import { signal } from '@preact/signals'
 import type { ApiError } from './api/client.ts'
 import { api } from './api/index.ts'
 import { resource } from './api/resource.ts'
+import { T } from './text.ts'
 
 export type Branding = {
   name: string
@@ -13,8 +14,19 @@ export type Branding = {
   canSendMail: boolean
 }
 export type Me = {
-  account: { id: string; kind: string; name: string; email: string | null; isAdmin: boolean }
+  account: {
+    id: string
+    kind: string
+    name: string
+    email: string | null
+    isAdmin: boolean
+    // What this session may do (GET /v1/me, G5): the web offers only what the server allows.
+    canCreateBrains: boolean
+    canInvite: boolean
+    totp: boolean
+  }
   key: { id: string; kind: string; perm: string }
+  installation: { name: string; factoryUrl: string | null }
 }
 
 export const branding = () => resource<Branding>('branding', () => api.call<Branding>('branding'))
@@ -44,5 +56,5 @@ if (typeof window !== 'undefined') {
 export const isSignedOut = (e: ApiError | undefined) => e?.status === 401
 
 export function installationName(b: Branding | undefined): string {
-  return b?.name?.trim() || 'Brain'
+  return b?.name?.trim() || T.brandFallback
 }

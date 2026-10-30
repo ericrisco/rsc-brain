@@ -457,7 +457,7 @@ export async function setMail(
     secure: input.secure === true,
     user: user as string | null,
     password,
-    from: { name: fromName || (await installation(ctx.db)).name || 'RSC Brain', address: fromAddress },
+    from: { name: fromName || (await installation(ctx.db)).name || 'rsc-brain', address: fromAddress },
   }
   await storeMail(ctx.db, s)
   await ok(ctx, 'settings.mail', null, 'mail', `${host}:${port} from ${fromAddress}`)
@@ -476,7 +476,7 @@ export async function testMail(ctx: Ctx, to?: unknown) {
   adminOnly(ctx)
   const addr = to === undefined ? ctx.who.email : emailOf(to)
   if (!addr || !EMAIL.test(addr)) throw invalid('"to" is an email.', 'Leave it out to use yours.')
-  const name = (await installation(ctx.db)).name || 'RSC Brain'
+  const name = (await installation(ctx.db)).name || 'rsc-brain'
   const r = await send(ctx.db, ctx.clock, ctx.mail, 'test', {
     to: addr,
     subject: `Test mail from ${name}`,

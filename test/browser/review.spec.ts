@@ -13,9 +13,7 @@ test.describe('R1: the first steps point at the installation, not at the browser
   }) => {
     await scenario(context, baseURL as string, 'signed-in', { home: 'empty' })
     await page.goto('/')
-    await expect(
-      page.getByRole('heading', { name: 'Next: create your first brain and invite people' }),
-    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Get started' })).toBeVisible()
     const command = page.locator('pre.command')
     await expect(command).toHaveText(
       'claude mcp add --transport http rsc-brain https://brain.example.test/mcp --scope user',
@@ -257,7 +255,7 @@ test.describe('R6: the small things', () => {
     await scenario(context, baseURL as string, 'fresh')
     await page.goto('/setup')
     await page.evaluate(() => localStorage.setItem('rscb.theme', 'light'))
-    await page.getByLabel('Name of this installation').fill('Risco Brain')
+    await page.getByLabel('Name of this installation').fill('rsc-brain')
     await page.getByLabel('Your name').fill('Eric')
     await page.getByLabel('Your email').fill('eric@example.test')
     await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
@@ -282,11 +280,16 @@ test.describe('R6: the small things', () => {
     await context.setOffline(false)
   })
 
-  test('a brain page says what it will hold and what to do now', async ({ page, context, baseURL }) => {
+  // PR18 replaced the placeholder of PR17 with the overview: what the brain holds and what happens today.
+  test('a brain page is its overview: what it holds and what happens today', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/b/growth')
     await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
-    await expect(page.getByRole('main')).toContainText('This page will hold')
-    await expect(page.getByRole('main')).toContainText('For now')
+    await expect(page.getByRole('region', { name: 'In numbers' })).toBeVisible()
+    await expect(page.getByRole('region', { name: "Today's sessions" })).toBeVisible()
   })
 })

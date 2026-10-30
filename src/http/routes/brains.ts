@@ -1,5 +1,6 @@
-import { createBrain, deleteBrain, getBrain, listBrains, setArchived } from '../../domain/brains.ts'
+import { createBrain, deleteBrain, setArchived } from '../../domain/brains.ts'
 import type { Ctx } from '../../domain/context.ts'
+import { brainOverview, getBrainWithStats, listBrainsWithStats } from '../../domain/overview.ts'
 import { linkRepo, listRepos, resolveRepo, unlinkRepo } from '../../domain/repos.ts'
 import { compact, obj, reqStr, str } from '../input.ts'
 import { type Req, type Route, route } from '../router.ts'
@@ -15,7 +16,7 @@ export const ctxOf = (r: Req): Ctx => ({
 })
 
 export const brainRoutes: Route[] = [
-  route('GET /v1/brains', async (r) => ({ body: { brains: await listBrains(ctxOf(r)) } })),
+  route('GET /v1/brains', async (r) => ({ body: { brains: await listBrainsWithStats(ctxOf(r)) } })),
   route('POST /v1/brains', async (r) => {
     const b = obj(r.body)
     const input = {
@@ -28,7 +29,10 @@ export const brainRoutes: Route[] = [
     return { status: 201, body: { brain: await createBrain(ctxOf(r), compact(input)) } }
   }),
   route('GET /v1/brains/:slug', async (r) => ({
-    body: { brain: await getBrain(ctxOf(r), r.params.slug as string) },
+    body: { brain: await getBrainWithStats(ctxOf(r), r.params.slug as string) },
+  })),
+  route('GET /v1/brains/:slug/overview', async (r) => ({
+    body: await brainOverview(ctxOf(r), r.params.slug as string),
   })),
   route('POST /v1/brains/:slug/archive', async (r) => ({
     body: { brain: await setArchived(ctxOf(r), r.params.slug as string, true) },

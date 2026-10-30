@@ -1,7 +1,7 @@
 // The protocol that travels with the server (spec B5): what an agent reads when it connects, under
 // 2 000 characters, and the two guides a person can invoke.
 
-export const INSTRUCTIONS = `RSC Brain is a shared memory for you and the people you work with. Use it like this:
+export const INSTRUCTIONS = `rsc-brain is a shared memory for you and the people you work with. Use it like this:
 
 1. Start: if you work in a repository, call brain_resolve with its remote (git remote get-url origin), then mem_context for that brain. Read it before you plan.
 2. Search before you decide: mem_search. The brain knows things you do not: past decisions, failed attempts, the person's preferences.

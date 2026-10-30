@@ -18,7 +18,7 @@ export const SUPPORTED = [MODERN, ...LEGACY]
 // One limit for the API and the MCP endpoint.
 export { MAX_REPLY_CHARS }
 
-const SERVER_INFO = { name: 'rsc-brain', title: 'RSC Brain', version: '0.1.0' }
+const SERVER_INFO = { name: 'rsc-brain', title: 'rsc-brain', version: '0.1.0' }
 const CAPABILITIES = { tools: { listChanged: false }, prompts: { listChanged: false } }
 
 type Msg = { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: Record<string, unknown> }

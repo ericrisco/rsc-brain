@@ -11,6 +11,7 @@ import { Brain, brainResource } from './screens/Brain.tsx'
 import { Home } from './screens/Home.tsx'
 import { Invite } from './screens/Invite.tsx'
 import { NotFound } from './screens/NotFound.tsx'
+import { People } from './screens/People.tsx'
 import { Reset } from './screens/Reset.tsx'
 import { Setup } from './screens/Setup.tsx'
 import { SignIn } from './screens/SignIn.tsx'
@@ -88,6 +89,7 @@ function SignedIn() {
         <Router>
           <Route path="/" component={Home} />
           <Route path="/b/:slug" component={BrainPage} />
+          <Route path="/people" component={People} />
           <Route default component={NotFound} />
         </Router>
       )}

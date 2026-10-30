@@ -1,4 +1,4 @@
-# RSC Brain
+# rsc-brain
 
 A self-hosted knowledge server for AI agents and the people who work with them.
 

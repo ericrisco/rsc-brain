@@ -18,14 +18,73 @@ const tokenOf = (link: unknown) => /#token=([A-Za-z0-9_-]+)/.exec(String(link))?
 // The fields a program relies on in the main answers. `[]` marks the items of a list.
 const SHAPES: Record<string, Record<string, string[]>> = {
   'GET /v1/me': {
-    account: ['id', 'kind', 'name', 'email', 'isAdmin'],
+    account: ['id', 'kind', 'name', 'email', 'isAdmin', 'canCreateBrains', 'canInvite', 'totp'],
     key: ['id', 'kind', 'perm', 'ref', 'agent'],
+    installation: ['name', 'factoryUrl'],
   },
   'POST /v1/brains': {
     brain: ['id', 'slug', 'name', 'description', 'purpose', 'status', 'createdAt', 'updatedAt'],
   },
   'GET /v1/brains': {
-    'brains[]': ['id', 'slug', 'name', 'purpose', 'status', 'role'],
+    'brains[]': ['id', 'slug', 'name', 'purpose', 'status', 'role', 'stats', 'notifyProposals'],
+    'brains[].stats': ['pages', 'entries', 'uncompiled', 'conflicts', 'pendingProposals', 'lastActivityAt'],
+  },
+  // Home and the overview of a brain (spec B6, PR18: G5, G7, G8).
+  'GET /v1/brains/{slug}': {
+    brain: ['id', 'slug', 'name', 'purpose', 'status', 'role', 'stats', 'notifyProposals'],
+    'brain.stats': ['pages', 'entries', 'uncompiled', 'conflicts', 'pendingProposals', 'lastActivityAt'],
+  },
+  'GET /v1/brains/{slug}/overview': {
+    '': ['stats', 'todaySessions', 'pending', 'health', 'firstSteps'],
+    stats: ['pages', 'entries', 'uncompiled', 'conflicts', 'pendingProposals', 'lastActivityAt'],
+    'todaySessions[]': [
+      'id',
+      'who',
+      'client',
+      'purpose',
+      'ref',
+      'status',
+      'entries',
+      'summary',
+      'openedAt',
+      'lastActivityAt',
+    ],
+    'pending[]': ['id', 'title', 'agent', 'opCount', 'old', 'createdAt'],
+    health: ['orphans', 'broken', 'conflicts', 'stale', 'unavailableSources', 'long', 'similarTitles'],
+    firstSteps: ['agentConnected', 'firstEntry', 'imported'],
+  },
+  // Inviting people and making reset links from the web (spec B4 through B6, PR18).
+  'POST /v1/invitations': {
+    'invitations[]': ['id', 'email', 'link', 'expiresAt', 'mailed', 'mailError'],
+  },
+  'GET /v1/invitations': {
+    'invitations[]': ['id', 'email', 'status', 'brains', 'isAdmin', 'invitedBy', 'createdAt', 'expiresAt'],
+  },
+  'POST /v1/invitations/{id}/resend': {
+    invitation: ['id', 'email', 'link', 'expiresAt', 'mailed', 'mailError'],
+  },
+  'DELETE /v1/invitations/{id}': {
+    '': ['revoked'],
+  },
+  'GET /v1/admin/accounts': {
+    'accounts[]': [
+      'id',
+      'kind',
+      'name',
+      'email',
+      'isAdmin',
+      'canCreateBrains',
+      'status',
+      'brains',
+      'lastSeenAt',
+      'createdAt',
+    ],
+  },
+  'POST /v1/admin/accounts/{id}/reset-link': {
+    '': ['link', 'expiresAt'],
+  },
+  'GET /v1/admin/brains': {
+    'brains[]': ['slug', 'name', 'status', 'members', 'curators', 'pendingCurator', 'youAreMember'],
   },
   'POST /v1/brains/{slug}/sessions': {
     session: ['id', 'brainId', 'purpose', 'ref', 'status', 'openedAt', 'closedAt'],
@@ -100,13 +159,18 @@ const SHAPES: Record<string, Record<string, string[]>> = {
 type Json = Record<string, unknown>
 type Schema = { type?: string; properties?: Record<string, Schema>; required?: string[]; items?: Schema }
 
+// `where` walks down: "brains[].stats" is the stats of the first brain.
 function fieldsAt(body: Json, where: string): Json {
   if (where === '') return body
-  const list = where.endsWith('[]')
-  const v = body[list ? where.slice(0, -2) : where]
-  const one = list ? (v as Json[])[0] : v
-  assert.ok(one && typeof one === 'object', `no "${where}" in ${JSON.stringify(body).slice(0, 300)}`)
-  return one as Json
+  let at: Json = body
+  for (const part of where.split('.')) {
+    const list = part.endsWith('[]')
+    const v = at[list ? part.slice(0, -2) : part]
+    const one = list ? (v as Json[])[0] : v
+    assert.ok(one && typeof one === 'object', `no "${where}" in ${JSON.stringify(body).slice(0, 300)}`)
+    at = one as Json
+  }
+  return at
 }
 
 function opOf(paths: Record<string, Record<string, Json>>, path: string, method: string): Json {
@@ -117,10 +181,14 @@ function opOf(paths: Record<string, Record<string, Json>>, path: string, method:
 
 function schemaAt(s: Schema, where: string): Schema {
   if (where === '') return s
-  const list = where.endsWith('[]')
-  const p = s.properties?.[list ? where.slice(0, -2) : where]
-  assert.ok(p, `the description has no "${where}"`)
-  return (list ? p.items : p) as Schema
+  let at = s
+  for (const part of where.split('.')) {
+    const list = part.endsWith('[]')
+    const p = at.properties?.[list ? part.slice(0, -2) : part]
+    assert.ok(p, `the description has no "${where}"`)
+    at = (list ? p.items : p) as Schema
+  }
+  return at
 }
 
 describe('the v1 contract', { skip: skipPg }, () => {
@@ -169,7 +237,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
     assert.match(r.headers.get('content-type') ?? '', /application\/json/)
     doc = r.body
     assert.equal(doc.openapi, '3.1.0')
-    assert.equal((doc.info as Json).title, 'RSC Brain API')
+    assert.equal((doc.info as Json).title, 'rsc-brain API')
     assert.equal((doc.servers as Json[])[0]?.url, 'http://localhost')
   })
 
@@ -216,10 +284,29 @@ describe('the v1 contract', { skip: skipPg }, () => {
       content: 'We measure retention before anything else.',
     })
     const entryId = (saved.body.receipt as Json).entryId as string
+    const proposed = await w.call(eric.key, 'POST', '/v1/brains/contract/proposals', {
+      title: 'Retention',
+      reason: 'The journal says so.',
+      ops: [
+        {
+          op: 'create',
+          address: 'growth/retention',
+          type: 'topic',
+          title: 'Retention',
+          summary: 'Retention first.',
+          body: 'We measure retention before anything else.',
+          sources: [{ entryId }],
+          reason: 'One decision.',
+        },
+      ],
+    })
+    assert.equal(proposed.status, 201, proposed.text)
     const answers: Record<string, Json> = {
       'GET /v1/me': (await w.call(eric.key, 'GET', '/v1/me')).body,
       'POST /v1/brains': brain.body,
       'GET /v1/brains': (await w.call(eric.key, 'GET', '/v1/brains')).body,
+      'GET /v1/brains/{slug}': (await w.call(eric.key, 'GET', '/v1/brains/contract')).body,
+      'GET /v1/brains/{slug}/overview': (await w.call(eric.key, 'GET', '/v1/brains/contract/overview')).body,
       'POST /v1/brains/{slug}/sessions': session.body,
       'POST /v1/brains/{slug}/entries': saved.body,
       'GET /v1/entries/{id}': (await w.call(eric.key, 'GET', `/v1/entries/${entryId}`)).body,
@@ -232,6 +319,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       'GET /v1/me/sessions': (await w.call(eric.key, 'GET', '/v1/me/sessions')).body,
       'GET /v1/branding': (await w.call(null, 'GET', '/v1/branding')).body,
       ...(await doors()),
+      ...(await people()),
     }
     const paths = doc.paths as Record<string, Record<string, Json>>
     for (const [op, shape] of Object.entries(SHAPES)) {
@@ -310,6 +398,31 @@ describe('the v1 contract', { skip: skipPg }, () => {
     return out
   }
 
+  // The administration invites and makes reset links from the web (PR18).
+  async function people(): Promise<Record<string, Json>> {
+    const out: Record<string, Json> = {}
+    const admin = await withPassword('Admina', { isAdmin: true })
+    const web = await w.web(admin.id)
+    const made = await w.callWeb(web, 'POST', '/v1/invitations', {
+      emails: ['people-contract@example.com'],
+      brains: [{ slug: 'contract', role: 'reader' }],
+    })
+    assert.equal(made.status, 201, made.text)
+    out['POST /v1/invitations'] = made.body
+    out['GET /v1/invitations'] = (await w.callWeb(web, 'GET', '/v1/invitations')).body
+    const id = String((made.body.invitations as Json[])[0]?.id)
+    out['POST /v1/invitations/{id}/resend'] = (
+      await w.callWeb(web, 'POST', `/v1/invitations/${id}/resend`)
+    ).body
+    out['DELETE /v1/invitations/{id}'] = (await w.callWeb(web, 'DELETE', `/v1/invitations/${id}`)).body
+    out['GET /v1/admin/accounts'] = (await w.callWeb(web, 'GET', '/v1/admin/accounts')).body
+    const link = await w.callWeb(web, 'POST', `/v1/admin/accounts/${eric.id}/reset-link`)
+    assert.equal(link.status, 201, link.text)
+    out['POST /v1/admin/accounts/{id}/reset-link'] = link.body
+    out['GET /v1/admin/brains'] = (await w.callWeb(web, 'GET', '/v1/admin/brains')).body
+    return out
+  }
+
   it('every refusal the web meets keeps its status within v1 (ERROR_STATUS, which the fixture obeys)', async () => {
     const lou = await withPassword('Louis')
     const reader = await withPassword('Rita')
@@ -343,6 +456,30 @@ describe('the v1 contract', { skip: skipPg }, () => {
       ),
     )
     await add('brain_not_found', w.call(eric.key, 'GET', '/v1/brains/nowhere'))
+    await add('brain_not_found', w.call(eric.key, 'GET', '/v1/brains/nowhere/overview'))
+    // Creating a brain and inviting people from the web (PR18).
+    await add('brain_exists', w.call(eric.key, 'POST', '/v1/brains', { slug: 'contract' }))
+    const boss = await withPassword('Boss', { isAdmin: true })
+    const bossWeb = await w.web(boss.id)
+    await add('email_taken', w.callWeb(bossWeb, 'POST', '/v1/invitations', { emails: [lou.email] }))
+    await add('not_found', w.callWeb(bossWeb, 'POST', '/v1/invitations/inv_nope/resend'))
+    const once = await w.callWeb(bossWeb, 'POST', '/v1/invitations', { emails: ['once@example.com'] })
+    const onceId = String((once.body.invitations as Json[])[0]?.id)
+    await w.callWeb(bossWeb, 'DELETE', `/v1/invitations/${onceId}`)
+    await add('invitation_closed', w.callWeb(bossWeb, 'POST', `/v1/invitations/${onceId}/resend`))
+    // A curator, once the installation allows it, cannot take over an invitation still open.
+    await w.callWeb(bossWeb, 'PUT', '/v1/admin/settings', { curatorsInvite: true })
+    const cura = await withPassword('Cura')
+    await w.member('contract', cura.id, 'curator')
+    await w.callWeb(bossWeb, 'POST', '/v1/invitations', { emails: ['open@example.com'] })
+    await add(
+      'invitation_open',
+      w.callWeb(await w.web(cura.id), 'POST', '/v1/invitations', {
+        emails: ['open@example.com'],
+        brains: [{ slug: 'contract', role: 'reader' }],
+      }),
+    )
+    await w.callWeb(bossWeb, 'PUT', '/v1/admin/settings', { curatorsInvite: false })
     await add('no_logo', w.raw('GET', '/v1/branding/logo'))
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))
     await add('setup_done', w.raw('GET', '/v1/setup'))

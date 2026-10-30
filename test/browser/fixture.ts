@@ -2,7 +2,8 @@
 // named in a header the fixture reads, so tests run in parallel without sharing anything.
 import { type BrowserContext, test as base, expect, type Page } from '@playwright/test'
 
-export type Preset = 'signed-out' | 'signed-in' | 'member' | 'fresh' | 'insecure'
+// alone: the administrator the setup made, the only person in the installation.
+export type Preset = 'signed-out' | 'signed-in' | 'member' | 'fresh' | 'insecure' | 'alone'
 export type States = Record<
   string,
   'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
@@ -18,6 +19,8 @@ type Scenario = {
   state(screen: string, state: States[string]): Promise<void>
   // Every session ends on the server, while the web is open (the cookie stays in the browser).
   endSessions(): Promise<void>
+  // An event in a brain, as an agent's write makes it (the open live streams hear it).
+  emit(brain: string, kind?: string): Promise<void>
 }
 
 export async function scenario(
@@ -34,8 +37,8 @@ export async function scenario(
   })
   const { id } = (await res.json()) as { id: string }
   await context.setExtraHTTPHeaders({ 'x-fixture-scenario': id })
-  if (preset === 'signed-in' || preset === 'member') {
-    const value = preset === 'member' ? 'fx.acc_ana' : 'fx.acc_eric'
+  if (preset === 'signed-in' || preset === 'member' || preset === 'alone') {
+    const value = preset === 'member' ? 'fx.acc_ana' : preset === 'alone' ? 'fx.acc_admin' : 'fx.acc_eric'
     await context.addCookies([{ name: 'rscb_session', value, url: baseURL, httpOnly: true, sameSite: 'Lax' }])
   }
   return {
@@ -49,6 +52,13 @@ export async function scenario(
     },
     endSessions: async () => {
       await fetch(`${baseURL}/__fixture/scenarios/${id}/end-sessions`, { method: 'POST' })
+    },
+    emit: async (brain, kind = 'entry.saved') => {
+      await fetch(`${baseURL}/__fixture/scenarios/${id}/emit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ brain, kind }),
+      })
     },
   }
 }

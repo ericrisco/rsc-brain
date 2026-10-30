@@ -24,7 +24,7 @@ async function mailLink(request: APIRequestContext, to: string, kind: 'invite' |
 test('first run from the web makes the administrator and signs them in', async ({ page, baseURL }) => {
   await page.goto('/')
   await expect(page).toHaveURL(/\/setup$/)
-  await page.getByLabel('Name of this installation').fill('Risco Brain')
+  await page.getByLabel('Name of this installation').fill('rsc-brain')
   await page.getByLabel('Address people open').fill(baseURL as string)
   await page.getByLabel('Your name').fill(ADMIN.name)
   await page.getByLabel('Your email').fill(ADMIN.email)
@@ -33,11 +33,9 @@ test('first run from the web makes the administrator and signs them in', async (
   await expect(page.getByRole('heading', { name: 'Your brains' })).toBeVisible()
   // U1: the administrator sees it worked and the next step, with the agent command for this address.
   await expect(page.getByRole('status').filter({ hasText: 'Brain is set up.' })).toBeVisible()
-  await expect(
-    page.getByRole('heading', { name: 'Next: create your first brain and invite people' }),
-  ).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Get started' })).toBeVisible()
   await expect(page.getByText(`${baseURL}/mcp`)).toBeVisible()
-  await expect(page.locator('header')).toContainText('Risco Brain')
+  await expect(page.locator('header')).toContainText('rsc-brain')
 })
 
 test('an invitation by email is accepted and opens a session', async ({ page, browser }) => {
