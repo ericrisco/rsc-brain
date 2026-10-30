@@ -613,6 +613,38 @@ describe('the connection kit', { skip: skipPg }, () => {
       assert.ok(r.stdout.includes(sid), r.stdout || r.stderr)
     })
 
+    it('stop: two windows of one person: each is only asked about what its own conversation opened', async () => {
+      const p = await w.person('Twowin')
+      await w.member('alpha', p.id, 'contributor')
+      await w.call(eric.key, 'POST', '/v1/brains', { slug: 'gamma-kit' })
+      await w.member('gamma-kit', p.id, 'contributor')
+      const token = await w.token(p.id)
+      const env = { RSC_BRAIN_TOKEN: token, RSC_BRAIN_STATE_DIR: stateDir }
+      // Window B is already working when window A begins.
+      const b = await w.call(token, 'POST', '/v1/brains/alpha/sessions', { purpose: 'window B' })
+      const bid = (b.body.session as Json).id as string
+      const began = await run(['hook', 'session-start', '--url', mcpUrl, '--brain', 'alpha'], {
+        stdin: JSON.stringify({
+          hook_event_name: 'SessionStart',
+          source: 'startup',
+          cwd: repo,
+          session_id: 'win-a',
+        }),
+        env,
+      })
+      assert.equal(began.code, 0, began.stderr)
+      const a = await w.call(token, 'POST', '/v1/brains/alpha/sessions', { purpose: 'window A' })
+      const aid = (a.body.session as Json).id as string
+      // Another brain, opened meanwhile by some other agent of the person.
+      const g = await w.call(token, 'POST', '/v1/brains/gamma-kit/sessions', { purpose: 'elsewhere' })
+      const gid = (g.body.session as Json).id as string
+      const r = await stop({ RSC_BRAIN_TOKEN: token }, { session_id: 'win-a', stop_hook_active: false })
+      const reason = (JSON.parse(r.stdout) as { reason: string }).reason
+      assert.ok(reason.includes(aid), reason)
+      assert.ok(!reason.includes(bid), "window B's session is not window A's to close")
+      assert.ok(!reason.includes(gid), 'nor one in another brain')
+    })
+
     it('stop: what was saved without opening a session (the day session) also asks for a summary', async () => {
       const token = await w.token(eric.id)
       await w.call(token, 'POST', '/v1/brains/alpha/entries', {

@@ -5,6 +5,7 @@
 //
 // Config files read the token from the environment (RSC_BRAIN_TOKEN), so a file shared in a
 // repository never holds it; only the line that sets the variable carries the placeholder.
+import { AppError } from '../core/errors.ts'
 import { SAFE_URL } from '../core/urls.ts'
 
 export const TOKEN_ENV = 'RSC_BRAIN_TOKEN'
@@ -74,7 +75,14 @@ const INSTRUCTIONS_TEXT = (brain: string | null) =>
 export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: AgentId }): Kit {
   // Never a character a shell would read: the address goes into commands people paste and into hooks
   // that run on every session. The installation refuses such an address; this is the second lock.
-  if (!SAFE_URL.test(o.mcpUrl)) throw new Error('The public address holds characters a shell would read.')
+  if (!SAFE_URL.test(o.mcpUrl)) {
+    throw new AppError(
+      409,
+      'unsafe_public_address',
+      'The public address of this installation holds characters a shell would read, so no kit is given for it.',
+      'Give the installation a plain address (letters, digits and . - _ ~ / :), for example a domain name.',
+    )
+  }
   const url = o.mcpUrl
   const check = `Ask your agent: "What does this brain know about X?"${
     o.brain ? ` It should answer from the brain "${o.brain}".` : ''

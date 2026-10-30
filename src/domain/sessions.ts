@@ -227,11 +227,13 @@ export async function openSessionsOfKey(ctx: Ctx): Promise<Array<Session & { bra
   const rows = await ctx.db.query(
     `SELECT s.*, b.slug FROM sessions s JOIN brains b ON b.id = s.brain_id
       WHERE ${person ? 's.account_id = $1' : 's.credential_id = $1'} AND s.status = 'open'
-      ORDER BY s.opened_at DESC, s.id DESC LIMIT 50`,
+      ORDER BY s.opened_at DESC, s.id DESC LIMIT 500`,
     [person ? ctx.who.accountId : ctx.who.credential.id],
   )
   const out: Array<Session & { brain: string }> = []
+  // The brains the key cannot see are left out before the list is cut, so they never crowd it.
   for (const r of rows) {
+    if (out.length >= 50) break
     if (await roleIn(ctx.db, ctx.who, String(r.brain_id)))
       out.push({ ...sessionOf(r), brain: String(r.slug) })
   }

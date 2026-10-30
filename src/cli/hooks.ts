@@ -15,7 +15,7 @@
 // so the agent's work is never held up by the brain.
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -101,6 +101,8 @@ export async function sessionStart(o: {
     }
   }
   slug ??= o.brain ?? null
+  const claude = typeof input.session_id === 'string' ? input.session_id : ''
+  await remember(base, o.token, claude, slug)
   let text: string
   if (slug) {
     const c = await api(base, o.token, 'GET', `/v1/brains/${encodeURIComponent(slug)}/context?max=9000`)
@@ -116,6 +118,20 @@ export async function sessionStart(o: {
   )
 }
 
+// Notes what this Claude Code session began with, for the stop reminder. Best effort: without it, the
+// reminder looks at every open session of the person.
+async function remember(base: string, token: string, claude: string, brain: string | null) {
+  const dir = ownDir()
+  if (!dir || !claude) return
+  try {
+    const r = await api(base, token, 'GET', '/v1/me/sessions')
+    const before = ((Array.isArray(r.items) ? r.items : []) as Json[]).map((x) => String(x.id))
+    writeFileSync(startFile(dir, claude), JSON.stringify({ brain, before } satisfies StartRecord), {
+      mode: 0o600,
+    })
+  } catch {}
+}
+
 // Where the stop hook remembers that it already asked (so it asks once per brain session in each
 // Claude Code session, even if the agent does not close it).
 function stateDir(): string {
@@ -127,6 +143,40 @@ function stateDir(): string {
   return join(tmpdir(), `rsc-brain-${who}`)
 }
 
+// The state folder, when it is ours to write in: a folder another user made first (a shared /tmp), or
+// a link, is not. Then the hooks keep no state: the reminder may repeat, and stop_hook_active still
+// keeps it from looping.
+function ownDir(): string | null {
+  const dir = stateDir()
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    const st = lstatSync(dir)
+    return st.isDirectory() && !st.isSymbolicLink() && (!process.getuid || st.uid === process.getuid())
+      ? dir
+      : null
+  } catch {
+    return null
+  }
+}
+
+const hash = (s: string) => createHash('sha256').update(s).digest('hex')
+
+// What a Claude Code session found when it began: its brain, and the sessions already open then (other
+// windows, other agents of the same person). The stop reminder only asks about what this conversation
+// opened, in its brain: never another agent's live session.
+type StartRecord = { brain: string | null; before: string[] }
+const startFile = (dir: string, claude: string) => join(dir, `start-${hash(claude)}.json`)
+
+function readStart(claude: string): StartRecord | null {
+  const dir = stateDir()
+  try {
+    const r = JSON.parse(readFileSync(startFile(dir, claude), 'utf8')) as StartRecord
+    return Array.isArray(r.before) ? r : null
+  } catch {
+    return null
+  }
+}
+
 export async function stop(o: {
   url: URL
   token: string
@@ -136,31 +186,27 @@ export async function stop(o: {
   const input = await readInput(o.input)
   if (!input || input.stop_hook_active === true) return
   const r = await api(apiBase(o.url), o.token, 'GET', '/v1/me/sessions')
-  const open = (Array.isArray(r.items) ? r.items : []) as Json[]
   const claude = typeof input.session_id === 'string' ? input.session_id : ''
+  const start = readStart(claude)
+  const open = ((Array.isArray(r.items) ? r.items : []) as Json[]).filter(
+    (s) => !start || (!start.before.includes(String(s.id)) && (!start.brain || s.brain === start.brain)),
+  )
   const dir = stateDir()
-  const mark = (id: unknown) =>
-    join(
-      dir,
-      createHash('sha256')
-        .update(`${claude}\n${String(id)}`)
-        .digest('hex'),
-    )
+  const mark = (id: unknown) => join(dir, hash(`${claude}\n${String(id)}`))
   const unasked = open.filter((s) => !existsSync(mark(s.id)))
   if (unasked.length === 0) return
-  try {
-    mkdirSync(dir, { recursive: true, mode: 0o700 })
-    // A folder another user made first (a shared /tmp), or a link, is not ours to write in: then the
-    // reminder may repeat, and stop_hook_active still keeps it from looping.
-    const st = lstatSync(dir)
-    const mine = st.isDirectory() && !st.isSymbolicLink() && (!process.getuid || st.uid === process.getuid())
-    if (mine) for (const s of unasked) writeFileSync(mark(s.id), '', { mode: 0o600 })
-  } catch {}
+  const own = ownDir()
+  if (own) {
+    try {
+      for (const s of unasked) writeFileSync(mark(s.id), '', { mode: 0o600 })
+    } catch {}
+  }
   const list = unasked.map((s) => `session "${String(s.id)}" in the brain "${String(s.brain)}"`).join('; ')
   const reason =
     `Before you finish: your RSC Brain work has no summary yet (${list}). ` +
     'Call mem_session_summary with that session and a short summary: goal, done, discovered, decided, pending. ' +
     'If nothing in it is worth keeping, call mem_session_end instead. ' +
-    'If the work is not finished, say so, carry on, and summarise when it is: this is asked once.'
+    'If the work is not finished, say so, carry on, and summarise when it is: this is asked once. ' +
+    'Only close sessions this conversation worked in.'
   o.out(`${JSON.stringify({ decision: 'block', reason })}\n`)
 }
