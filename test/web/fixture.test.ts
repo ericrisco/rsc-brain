@@ -806,7 +806,8 @@ describe('the fixture API', () => {
     assert.equal(g.mode, 'pages')
     assert.ok(g.nodes.some((n) => n[0] === 'audience/retention'))
     assert.ok(g.nodes.every((n) => n[3] !== 'retired'))
-    assert.equal((await hand('/v1/brains/growth/wiki/graph?prefix=a/b')).status, 400)
+    assert.equal((await hand('/v1/brains/growth/wiki/graph?prefix=a//b')).status, 400)
+    assert.equal((await hand('/v1/brains/growth/wiki/graph?sort=title')).status, 400)
 
     const s300 = getIn(await seededScenario(300))
     const all = generate({ pages: 300, seed: 48291 }).pages
@@ -821,6 +822,12 @@ describe('the fixture API', () => {
     assert.equal(rest.items.length, 100)
     assert.ok((await s300('/v1/brains/growth/wiki/pages?linkKind=contradicts')).status === 200)
     assert.equal((await s300('/v1/brains/growth/wiki/pages?sort=size')).status, 400)
+    assert.equal((await s300('/v1/brains/growth/wiki/pages?sort=-status')).status, 200)
+    const drawn = (await s300('/v1/brains/growth/wiki/pages?status=current,stale,superseded&limit=200'))
+      .body as Listing
+    assert.equal(drawn.total, g300.total)
+    const filtered = (await s300('/v1/brains/growth/wiki/graph?type=decision')).body as Graph
+    assert.ok(filtered.nodes.every((n) => n[2] === 'decision'))
     assert.equal((await s300(`/v1/brains/growth/pages/${all[0]?.address}`)).status, 200)
 
     const s5000 = getIn(await seededScenario(5000))
@@ -831,6 +838,9 @@ describe('the fixture API', () => {
     assert.equal(one.mode, 'pages')
     assert.equal(one.total, g5000.groups[0]?.count)
     assert.equal(((await s5000('/v1/brains/growth/wiki/pages')).body as Listing).total, 5000)
+    const byType = (await s5000('/v1/brains/growth/wiki/graph?type=decision')).body as Graph
+    assert.equal(byType.mode, 'groups')
+    assert.ok(byType.total < g5000.total)
   })
 
   it('every operation the fixture answers was checked against the description', () => {

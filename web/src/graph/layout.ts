@@ -11,6 +11,8 @@ export const LAYOUT = {
   charge: -30,
   linkDistance: 30,
   centre: 0.04,
+  // How strongly a page is pulled to the middle of its area.
+  areaPull: 0.12,
   // Barnes–Hut: a cell this small seen from this far counts as one body.
   theta2: 0.81,
   distanceMin2: 1,
@@ -23,6 +25,8 @@ export type LayoutInput = {
   seed: number
   // How heavy each node is (a group of many pages pushes harder); 1 by default.
   weights?: Float32Array
+  // The area each node is in (−1: none): a weak pull keeps an area's pages together.
+  area?: Int32Array
 }
 
 export type Layout = {
@@ -290,6 +294,31 @@ export function createLayout(input: LayoutInput): Layout {
     }
   }
 
+  // Each page drifts toward the middle of its area (where the area's pages are now).
+  const sumX = new Map<number, number>()
+  const sumY = new Map<number, number>()
+  const count = new Map<number, number>()
+  function areas(area: Int32Array) {
+    sumX.clear()
+    sumY.clear()
+    count.clear()
+    for (let i = 0; i < n; i++) {
+      const a = area[i] as number
+      if (a < 0) continue
+      sumX.set(a, (sumX.get(a) ?? 0) + (x[i] as number))
+      sumY.set(a, (sumY.get(a) ?? 0) + (y[i] as number))
+      count.set(a, (count.get(a) ?? 0) + 1)
+    }
+    for (let i = 0; i < n; i++) {
+      const a = area[i] as number
+      const c = count.get(a)
+      if (a < 0 || !c || c < 2) continue
+      const k = LAYOUT.areaPull * alpha
+      vx[i] = (vx[i] as number) + ((sumX.get(a) as number) / c - (x[i] as number)) * k
+      vy[i] = (vy[i] as number) + ((sumY.get(a) as number) / c - (y[i] as number)) * k
+    }
+  }
+
   const layout: Layout = {
     tick() {
       if (layout.done()) return
@@ -297,6 +326,7 @@ export function createLayout(input: LayoutInput): Layout {
       ticks += 1
       links()
       charge()
+      if (input.area) areas(input.area)
       for (let i = 0; i < n; i++) {
         vx[i] = ((vx[i] as number) - (x[i] as number) * LAYOUT.centre * alpha) * LAYOUT.velocityKeep
         vy[i] = ((vy[i] as number) - (y[i] as number) * LAYOUT.centre * alpha) * LAYOUT.velocityKeep
@@ -323,4 +353,78 @@ export function createLayout(input: LayoutInput): Layout {
     },
   }
   return layout
+}
+
+// Where a node goes when the forces are done: laid out by them (`free`), parked in rows under the picture
+// (`orphan`: a page with no link, which would only stretch it), or on a rim around it (`rim`: a group a page
+// of an opened group links with, on the side of those pages).
+export const ROLE = { free: 0, orphan: 1, rim: 2 } as const
+
+export function arrange(xy: Float32Array, role: Uint8Array, edges: Uint32Array): void {
+  const n = role.length
+  let x0 = Number.POSITIVE_INFINITY
+  let y0 = Number.POSITIVE_INFINITY
+  let x1 = Number.NEGATIVE_INFINITY
+  let y1 = Number.NEGATIVE_INFINITY
+  let free = 0
+  for (let i = 0; i < n; i++) {
+    if (role[i] !== ROLE.free) continue
+    free += 1
+    const x = xy[2 * i] as number
+    const y = xy[2 * i + 1] as number
+    if (x < x0) x0 = x
+    if (x > x1) x1 = x
+    if (y < y0) y0 = y
+    if (y > y1) y1 = y
+  }
+  if (free === 0) {
+    x0 = 0
+    x1 = 0
+    y0 = 0
+    y1 = 0
+  }
+  const cx = (x0 + x1) / 2
+  const cy = (y0 + y1) / 2
+  let reach = 0
+  for (let i = 0; i < n; i++)
+    if (role[i] === ROLE.free)
+      reach = Math.max(reach, Math.hypot((xy[2 * i] as number) - cx, (xy[2 * i + 1] as number) - cy))
+  // Rows of pages without links, under the picture, as wide as it (at least 8 a row).
+  const gap = 24
+  const perRow = Math.max(8, Math.floor((x1 - x0) / gap) + 1)
+  let k = 0
+  for (let i = 0; i < n; i++) {
+    if (role[i] !== ROLE.orphan) continue
+    xy[2 * i] = x0 + (k % perRow) * gap
+    xy[2 * i + 1] = (free ? y1 : 0) + 3 * gap + Math.floor(k / perRow) * gap
+    k += 1
+  }
+  // The rim: each group where its pages point, then spread evenly in that order.
+  const rim: { i: number; angle: number }[] = []
+  for (let i = 0; i < n; i++) {
+    if (role[i] !== ROLE.rim) continue
+    let sx = 0
+    let sy = 0
+    for (let e = 0; e < edges.length; e += 2) {
+      const a = edges[e] as number
+      const b = edges[e + 1] as number
+      const other = a === i ? b : b === i ? a : -1
+      if (other < 0 || role[other] !== ROLE.free) continue
+      sx += (xy[2 * other] as number) - cx
+      sy += (xy[2 * other + 1] as number) - cy
+    }
+    rim.push({ i, angle: sx === 0 && sy === 0 ? rim.length : Math.atan2(sy, sx) })
+  }
+  if (!rim.length) return
+  rim.sort((a, b) => a.angle - b.angle)
+  const radius = reach + 80
+  const step = (Math.PI * 2) / rim.length
+  // Spread no closer than one step, keeping each as near its own direction as the others allow.
+  let last = Number.NEGATIVE_INFINITY
+  for (const r of rim) {
+    const angle = rim.length === 1 ? r.angle : Math.max(r.angle, last + Math.min(step, 0.5))
+    last = angle
+    xy[2 * r.i] = cx + radius * Math.cos(angle)
+    xy[2 * r.i + 1] = cy + radius * Math.sin(angle)
+  }
 }

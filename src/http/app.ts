@@ -199,19 +199,22 @@ function send(
   status: number,
   body: unknown,
   headers: Record<string, string | string[]> = {},
-  gzip = false,
+  // The route compresses big answers (`compress`); whether this client takes gzip.
+  compress: { route: boolean; accepts: boolean } = { route: false, accepts: false },
 ): void {
   const raw = typeof body === 'string' && headers['content-type'] !== undefined
   const bounded = raw ? { text: body as string, cut: false } : boundJson(JSON.stringify(body))
   const text = bounded.text
-  const zipped = gzip && Buffer.byteLength(text) > COMPRESS_FROM ? gzipSync(text) : null
+  const zipped =
+    compress.route && compress.accepts && Buffer.byteLength(text) > COMPRESS_FROM ? gzipSync(text) : null
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     ...headers,
     ...(bounded.cut ? { 'x-brain-cut': 'true' } : {}),
-    ...(gzip ? { vary: 'Accept-Encoding' } : {}),
+    // A cache keeps the plain and the gzipped answer apart, whichever this client got.
+    ...(compress.route ? { vary: 'Accept-Encoding' } : {}),
     ...(zipped ? { 'content-encoding': 'gzip' } : {}),
     'content-length': zipped ? zipped.length : Buffer.byteLength(text),
   })
@@ -370,13 +373,10 @@ export function createHandler(deps: AppDeps) {
       const body = await readBody(req)
       const reply = await found.route.handler({ ...base, body, who })
       if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)
-      send(
-        res,
-        reply.status ?? 200,
-        reply.body,
-        reply.headers,
-        Boolean(reply.compress) && acceptsGzip(req.headers['accept-encoding']),
-      )
+      send(res, reply.status ?? 200, reply.body, reply.headers, {
+        route: Boolean(reply.compress),
+        accepts: acceptsGzip(req.headers['accept-encoding']),
+      })
     } catch (err) {
       // The standard sign-in's endpoints answer in the standard's shape, even for a malformed request.
       if (

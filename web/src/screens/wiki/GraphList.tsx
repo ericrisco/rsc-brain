@@ -1,15 +1,16 @@
-// The list beside the graph (spec B6 «Graph»: «alternativa en lista, obligatoria»; T033). Every page of the
-// wiki with its type, status and links in and out, sorted by any column and filtered as the graph is, by
-// pages of 50 (G9: the list stays whole whatever the size of the wiki). What the graph does, it does by
-// keyboard: inspect, open the page, focus at one or two hops (a table of the page and its neighbours), and,
-// in a wiki drawn by groups, a table of the groups to open one by one.
+// The list beside the graph (spec B6 «Graph»: «alternativa en lista, obligatoria»; T033). The pages of the wiki
+// with their type, status and links in and out, sorted by any column and filtered exactly as the graph is (by
+// default the pages the graph draws: retired ones only with the Retired status), by pages of 50 (G9: the list
+// stays whole whatever the size of the wiki). What the graph does, it does by keyboard: inspect, open the page,
+// focus at one or two hops (a table of the page and its neighbours, under the same filters), and, in a wiki
+// drawn by groups, a table of the groups to open one by one.
 import { useState } from 'preact/hooks'
 import { type Filters, keyOf, linksOf, type Model } from '../../graph/model.ts'
 import { T } from '../../text.ts'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
 import { pageHref, StatusTag } from './common.tsx'
 import { type PageRow, pagesResource } from './data.ts'
-import type { Target } from './Graph.tsx'
+import { DRAWN, type Target } from './Graph.tsx'
 
 const PER = 50
 const COLUMNS = ['title', 'address', 'type', 'status', 'in', 'out', 'updatedAt'] as const
@@ -19,8 +20,11 @@ export function GraphList({
   slug,
   model,
   filters,
+  visible,
+  counts,
   group,
   sort,
+  emptyWiki,
   focus,
   setSort,
   onInspect,
@@ -31,8 +35,11 @@ export function GraphList({
   slug: string
   model: Model
   filters: Filters
+  visible: Uint8Array | null
+  counts: Map<string, number> | undefined
   group: string
   sort: string
+  emptyWiki: boolean
   focus: { index: number; hood: Map<number, number> } | null
   setSort: (sort: string) => void
   onInspect: (t: Target) => void
@@ -40,12 +47,13 @@ export function GraphList({
   onOpenGroup: (prefix: string) => void
   selected: string | null
 }) {
+  if (emptyWiki) return <Empty title={T.graph.noPagesYet}>{<p>{T.graph.emptyLead}</p>}</Empty>
   return (
     <div class="graph-list">
-      {model.mode === 'groups' && !group ? (
+      {model.mode === 'groups' ? (
         <GroupsTable
           model={model}
-          type={filters.type}
+          counts={counts}
           onInspect={onInspect}
           onOpenGroup={onOpenGroup}
           selected={selected}
@@ -56,6 +64,7 @@ export function GraphList({
           slug={slug}
           model={model}
           focus={focus}
+          visible={visible}
           onInspect={onInspect}
           onFocus={onFocus}
           selected={selected}
@@ -78,21 +87,23 @@ export function GraphList({
 
 function GroupsTable({
   model,
-  type,
+  counts,
   onInspect,
   onOpenGroup,
   selected,
 }: {
   model: Model
-  type: string
+  counts: Map<string, number> | undefined
   onInspect: (t: Target) => void
   onOpenGroup: (prefix: string) => void
   selected: string | null
 }) {
   const g = T.graph
-  const rows = model.items.flatMap((it, i) =>
-    it.kind === 'group' && (!type || (it.types[type] ?? 0) > 0) ? [{ it, i }] : [],
-  )
+  const rows = model.items.flatMap((it, i) => {
+    if (it.kind !== 'group') return []
+    const n = counts ? (counts.get(it.prefix) ?? 0) : it.count
+    return n > 0 ? [{ it, i, n }] : []
+  })
   return (
     <div class="table-wrap" data-scroll-x>
       <table class="data-table">
@@ -111,24 +122,24 @@ function GroupsTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ it, i }) => {
-            const links = linksOf(model, i).reduce((n, l) => n + l.count, 0)
+          {rows.map(({ it, i, n }) => {
+            const links = linksOf(model, i).reduce((s, l) => s + l.count, 0)
             return (
               <tr key={it.prefix} aria-current={selected === keyOf(it) ? 'true' : undefined}>
                 <th scope="row" class="mono">
                   {it.prefix}
                 </th>
-                <td class="num">{it.count.toLocaleString('en-US')}</td>
+                <td class="num">{n.toLocaleString('en-US')}</td>
                 <td>
                   {Object.entries(it.types)
-                    .map(([t, n]) => `${T.wiki.typesPlural[t] ?? t} ${n}`)
+                    .map(([t, c]) => `${T.wiki.typesPlural[t] ?? t} ${c}`)
                     .join(', ')}
                 </td>
                 <td class="num">{links.toLocaleString('en-US')}</td>
                 <td class="row-actions">
                   <button
                     type="button"
-                    class="button quiet small"
+                    class="button small"
                     aria-label={g.openGroupName(it.prefix)}
                     onClick={() => onOpenGroup(it.prefix)}
                   >
@@ -156,6 +167,7 @@ function FocusTable({
   slug,
   model,
   focus,
+  visible,
   onInspect,
   onFocus,
   selected,
@@ -163,6 +175,7 @@ function FocusTable({
   slug: string
   model: Model
   focus: { index: number; hood: Map<number, number> }
+  visible: Uint8Array | null
   onInspect: (t: Target) => void
   onFocus: (address: string, hops: 1 | 2) => void
   selected: string | null
@@ -170,14 +183,24 @@ function FocusTable({
   const g = T.graph
   const centre = model.items[focus.index]
   if (centre?.kind !== 'page') return null
-  // How each neighbour is linked with the page in focus (one hop), by kind and way.
+  const name = (i: number) => {
+    const it = model.items[i]
+    return it?.kind === 'page' ? it.title : (it?.prefix ?? '')
+  }
+  // How each neighbour is linked with the page in focus: "Caching → mentions → Research overview".
   const direct = new Map<number, string[]>()
-  for (const l of linksOf(model, focus.index))
-    direct.set(l.index, [
-      ...(direct.get(l.index) ?? []),
-      `${g.linkKinds[l.kind ?? 'group'] ?? l.kind} (${g.way[l.way]})`,
-    ])
-  const rows = [...focus.hood].sort((a, b) => a[1] - b[1] || a[0] - b[0])
+  for (const l of linksOf(model, focus.index)) {
+    const kind = g.linkKinds[l.kind ?? 'group'] ?? l.kind
+    const line =
+      l.way === 'in'
+        ? `${name(l.index)} ${g.arrow} ${kind} ${g.arrow} ${centre.title}`
+        : `${centre.title} ${g.arrow} ${kind} ${g.arrow} ${name(l.index)}`
+    direct.set(l.index, [...(direct.get(l.index) ?? []), line])
+  }
+  // The same filters as the graph: a neighbour they hide is not listed either.
+  const rows = [...focus.hood]
+    .filter(([i]) => i === focus.index || !visible || visible[i])
+    .sort((a, b) => a[1] - b[1] || a[0] - b[0])
   return (
     <div class="table-wrap" data-scroll-x>
       <table class="data-table">
@@ -209,7 +232,7 @@ function FocusTable({
                   <td>{g.col.group}</td>
                   <td>—</td>
                   <td class="num">{hops}</td>
-                  <td>{direct.get(i)?.join(', ') ?? '—'}</td>
+                  <td>{direct.get(i)?.join('; ') ?? '—'}</td>
                   <td class="row-actions">
                     <button
                       type="button"
@@ -233,7 +256,7 @@ function FocusTable({
                   <StatusTag status={it.status} />
                 </td>
                 <td class="num">{g.hop(hops)}</td>
-                <td>{hops === 0 ? '—' : (direct.get(i)?.join(', ') ?? '—')}</td>
+                <td>{hops === 0 ? '—' : (direct.get(i)?.join('; ') ?? '—')}</td>
                 <td class="row-actions">
                   <button
                     type="button"
@@ -246,7 +269,8 @@ function FocusTable({
                   {hops > 0 ? (
                     <button
                       type="button"
-                      class="button quiet small"
+                      class="button small"
+                      data-focus-for={it.address}
                       aria-label={g.focusName(it.title)}
                       onClick={() => onFocus(it.address, 1)}
                     >
@@ -283,7 +307,8 @@ function PagesTable({
   selected: string | null
 }) {
   const g = T.graph
-  const query = { ...filters, prefix: group, sort }
+  // The pages the graph draws, unless a status says otherwise (Retired shows the retired ones).
+  const query = { ...filters, status: filters.status || DRAWN, prefix: group, sort }
   const qkey = JSON.stringify(query)
   // The cursors of the pages already passed, to go back; a new query starts again from the first page.
   const [kept, setKept] = useState<{ key: string; cursors: string[] }>({ key: qkey, cursors: [] })
@@ -317,6 +342,7 @@ function PagesTable({
     )
   }
   const from = trail.length * PER
+  const filtering = Boolean(filters.q || filters.type || filters.status || filters.tag || filters.linkKind)
   return (
     <>
       <div class="table-wrap" data-scroll-x>
@@ -362,7 +388,8 @@ function PagesTable({
                   {p.status !== 'retired' ? (
                     <button
                       type="button"
-                      class="button quiet small"
+                      class="button small"
+                      data-focus-for={p.address}
                       aria-label={g.focusName(p.title)}
                       onClick={() => onFocus(p.address, 1)}
                     >
@@ -377,7 +404,7 @@ function PagesTable({
       </div>
       {!data && r.loading.value ? <Skeleton rows={5} /> : null}
       {!data && r.error.value ? <ErrorState error={r.error.value} onRetry={() => void r.reload()} /> : null}
-      {data && data.items.length === 0 ? <Empty title={g.noRows} /> : null}
+      {data && data.items.length === 0 ? <Empty title={filtering ? g.noRows : g.noPagesYet} /> : null}
       {data && (trail.length > 0 || data.next) ? (
         <nav class="pager" aria-label={g.pagesTable}>
           <button

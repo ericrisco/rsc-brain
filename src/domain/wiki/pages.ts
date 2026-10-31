@@ -5,15 +5,8 @@ import { AppError, invalid } from '../../core/errors.ts'
 import type { Db, Row } from '../../db/db.ts'
 import { type Ctx, inBrain } from '../context.ts'
 import { decode, encode, PAGE, type Page as PageOf } from '../listing.ts'
-import {
-  LINK_KINDS,
-  type LinkKind,
-  PAGE_STATUSES,
-  PAGE_TYPES,
-  type PageStatus,
-  type PageType,
-  type Source,
-} from './model.ts'
+import { checkFilters } from './graph.ts'
+import type { LinkKind, PageStatus, PageType, Source } from './model.ts'
 
 export const pageNotFound = (address: string) =>
   new AppError(
@@ -533,13 +526,12 @@ const SORTS = {
   address: 'p.address COLLATE "C"',
   title: 'p.title COLLATE "C"',
   type: 'p.type',
+  status: 'p.status',
   in: 'in_n',
   out: 'out_n',
   updatedAt: 'p.updated_at',
 } as const
 export const PAGE_SORTS = Object.keys(SORTS) as (keyof typeof SORTS)[]
-// The link kinds a page may have (a mention by [[address]], then the typed ones), as the graph names them.
-const LIST_KINDS = ['mentions', ...LINK_KINDS] as const
 
 // The cursor of the list: in address order, the last address given (the next page starts after it); in
 // any other order, how many came before ("#" and the number: no address starts with "#").
@@ -553,21 +545,17 @@ function cursorFrom(cursor: string): { after: string } | { offset: number } {
 }
 const likeText = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`)
 
-// The pages of a wiki by pages, with the number of pages linking in and out (spec B6 «Graph», plan §3.5 G9):
-// the list beside the graph and the `[[` autocomplete of the editor. Every status is listed; the filters
-// narrow it (a link kind: pages with a link of that kind, either way). In address order unless `sort` says
-// otherwise. The counts are worked out once for the whole brain, not once a row.
+// The pages of a wiki by pages, with how many pages link in and out (spec B6 «Graph», plan §3.5 G9): the list
+// beside the graph and the `[[` autocomplete of the editor. Every status unless `status` (one or more) says
+// otherwise; the other filters are the graph's (a link kind: pages with a link of that kind, either way). The
+// counts are the graph's too: links between pages that exist and are not retired, worked out once for the
+// brain (never once a row). In address order unless `sort` says otherwise.
 export async function listPages(
   ctx: Ctx,
   slug: string,
   o: PageListQuery = {},
 ): Promise<PageOf<PageListItem>> {
-  if (o.type !== undefined && !(PAGE_TYPES as readonly string[]).includes(o.type))
-    throw invalid(`"type" is one of: ${PAGE_TYPES.join(', ')}.`, 'Fix "type".')
-  if (o.status !== undefined && !(PAGE_STATUSES as readonly string[]).includes(o.status))
-    throw invalid(`"status" is one of: ${PAGE_STATUSES.join(', ')}.`, 'Fix "status".')
-  if (o.linkKind !== undefined && !(LIST_KINDS as readonly string[]).includes(o.linkKind))
-    throw invalid(`"linkKind" is one of: ${LIST_KINDS.join(', ')}.`, 'Fix "linkKind".')
+  checkFilters(o)
   const desc = o.sort?.startsWith('-') ?? false
   const column = (o.sort === undefined ? 'address' : o.sort.replace(/^-/, '')) as keyof typeof SORTS
   if (!(PAGE_SORTS as string[]).includes(column))
@@ -575,14 +563,6 @@ export async function listPages(
       `"sort" is one of: ${PAGE_SORTS.join(', ')}, with "-" before it for the other way.`,
       'Fix "sort".',
     )
-  for (const [k, v] of [
-    ['q', o.q],
-    ['prefix', o.prefix],
-    ['tag', o.tag],
-  ] as const) {
-    if (v !== undefined && v.length > 200)
-      throw invalid(`"${k}" has at most 200 characters.`, `Shorten "${k}".`)
-  }
   const { brain } = await inBrain(ctx, { slug })
   const limit = o.limit ?? PAGE.default
   const params: unknown[] = [brain.id]
@@ -598,20 +578,25 @@ export async function listPages(
   if (o.prefix !== undefined)
     where.push(`(p.address = ${p(o.prefix)} OR p.address LIKE ${p(`${likeText(o.prefix)}/%`)})`)
   if (o.type !== undefined) where.push(`p.type = ${p(o.type)}`)
-  if (o.status !== undefined) where.push(`p.status = ${p(o.status)}`)
+  if (o.status !== undefined) where.push(`p.status = ANY(${p(o.status.split(','))}::text[])`)
   if (o.tag !== undefined) where.push(`${p(o.tag)} = ANY(p.tags)`)
-  if (o.linkKind !== undefined)
+  if (o.linkKind !== undefined) {
+    // A semi-join on the set of pages with such a link (a hash, not a scan of the links for every page).
+    const k = p(o.linkKind)
     where.push(
-      `EXISTS (SELECT 1 FROM l WHERE l.kind = ${p(o.linkKind)} AND (l.from_page = p.id OR l.to_id = p.id)
-                AND l.to_id IS DISTINCT FROM l.from_page)`,
+      `p.id IN (SELECT from_page FROM l WHERE kind = ${k} UNION SELECT to_id FROM l WHERE kind = ${k})`,
     )
+  }
   const filtered = where.join(' AND ')
-  // Every link of the brain with the page it leads to (a mention through any address that page had).
-  const links = `WITH l AS (
-      SELECT l.from_page, coalesce(l.to_page, a.page_id) AS to_id, l.to_address, l.kind
+  // Every link of the brain between two pages that exist and are not retired (a mention through any address
+  // the page it leads to ever had), once per kind: what the graph draws.
+  const links = `WITH l AS MATERIALIZED (
+      SELECT DISTINCT l.from_page, t.id AS to_id, l.kind
         FROM page_links l
+        JOIN pages f ON f.id = l.from_page AND f.status <> 'retired'
         LEFT JOIN page_addresses a ON l.to_page IS NULL AND a.brain_id = l.brain_id AND a.address = l.to_address
-       WHERE l.brain_id = $1)`
+        JOIN pages t ON t.id = coalesce(l.to_page, a.page_id) AND t.status <> 'retired'
+       WHERE l.brain_id = $1 AND t.id <> l.from_page)`
   const total = await ctx.db.one<{ n: number }>(
     `${links} SELECT count(*)::int AS n FROM pages p WHERE ${filtered}`,
     [...params],
@@ -628,10 +613,8 @@ export async function listPages(
     column === 'address' ? `p.address COLLATE "C" ${dir}` : `${SORTS[column]} ${dir}, p.address COLLATE "C"`
   const rows = await ctx.db.query(
     `${links},
-     o AS (SELECT from_page AS id, count(DISTINCT coalesce(to_id, to_address))::int AS n
-             FROM l WHERE to_id IS DISTINCT FROM from_page GROUP BY from_page),
-     i AS (SELECT to_id AS id, count(DISTINCT from_page)::int AS n
-             FROM l WHERE to_id IS NOT NULL AND to_id <> from_page GROUP BY to_id)
+     o AS (SELECT from_page AS id, count(DISTINCT to_id)::int AS n FROM l GROUP BY from_page),
+     i AS (SELECT to_id AS id, count(DISTINCT from_page)::int AS n FROM l GROUP BY to_id)
      SELECT p.address, p.title, p.type, p.status, p.tags, p.updated_at,
             coalesce(o.n, 0) AS out_n, coalesce(i.n, 0) AS in_n
        FROM pages p LEFT JOIN o ON o.id = p.id LEFT JOIN i ON i.id = p.id

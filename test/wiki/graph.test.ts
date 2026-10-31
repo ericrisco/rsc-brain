@@ -133,7 +133,7 @@ describe('the graph of a wiki (G10) and its list (G9)', { skip: skipPg }, () => 
     // pricing links with audience twice (depends-on retention, mentions intros).
     assert.deepEqual(g.across, [[1, 'audience', 2]])
     assert.deepEqual(g.groups, [{ prefix: 'audience', count: 2, types: { guide: 1, topic: 1 } }])
-    const bad = await w.call(eric.key, 'GET', '/v1/brains/gr/wiki/graph?prefix=a/b')
+    const bad = await w.call(eric.key, 'GET', '/v1/brains/gr/wiki/graph?prefix=a//b')
     assert.equal(bad.status, 400)
     assert.equal(bad.body.error?.code, 'invalid_request')
   })
@@ -172,6 +172,76 @@ describe('the graph of a wiki (G10) and its list (G9)', { skip: skipPg }, () => 
     assert.equal((await list('?linkKind=contradicts')).total, 0)
     const bad = await w.call(eric.key, 'GET', '/v1/brains/gr/wiki/pages?linkKind=likes')
     assert.equal(bad.status, 400)
+  })
+
+  it('the list sorts by status, and shows several statuses at once (the graph screen hides retired pages)', async () => {
+    const byStatus = await list('?sort=status')
+    assert.deepEqual(
+      byStatus.items.map((i) => i.status),
+      ['current', 'current', 'current', 'retired', 'superseded'],
+    )
+    const drawn = await list('?status=current,stale,superseded')
+    assert.equal(drawn.total, 4)
+    assert.ok(drawn.items.every((i) => i.status !== 'retired'))
+    const bad = await w.call(eric.key, 'GET', '/v1/brains/gr/wiki/pages?status=current,gone')
+    assert.equal(bad.status, 400)
+  })
+
+  it('counts links in and out only between pages that exist and are not retired, as the graph draws them', async () => {
+    const at = async (address: string) =>
+      (await list(`?q=${encodeURIComponent(address)}`)).items.find((i) => i.address === address)
+    // retention mentions intros and an address with no page: one link out.
+    assert.equal((await at('audience/retention'))?.out, 1)
+    // retention is linked by pricing and mentioned by the retired "gone": one link in.
+    assert.equal((await at('audience/retention'))?.in, 1)
+    // old-pricing links only to the retired "gone".
+    assert.equal((await at('product/old-pricing'))?.out, 0)
+  })
+
+  it('a cursor of one order is refused in another', async () => {
+    const byAddress = await list('?limit=2')
+    const r = await w.call(eric.key, 'GET', `/v1/brains/gr/wiki/pages?sort=title&cursor=${byAddress.next}`)
+    assert.equal(r.status, 400)
+    const byTitle = await list('?sort=title&limit=2')
+    const back = await w.call(eric.key, 'GET', `/v1/brains/gr/wiki/pages?cursor=${byTitle.next}`)
+    assert.equal(back.status, 400)
+  })
+
+  it('the graph takes the filters of the list, and refuses what the list refuses', async () => {
+    const g = await graph('?type=decision')
+    assert.deepEqual(addresses(g), ['product/old-pricing', 'product/pricing'])
+    for (const q of ['?linkKind=likes', '?type=page', '?status=gone', '?sort=title'])
+      assert.equal((await w.call(eric.key, 'GET', `/v1/brains/gr/wiki/graph${q}`)).status, 400, q)
+    // A group can be more than one part deep.
+    assert.equal((await graph('?prefix=audience/intros')).total, 1)
+  })
+
+  it('reads the links of its own brain only', async () => {
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'twin', purpose: 'Same addresses.' })
+    const twinWeb = web
+    for (const address of ['audience/retention', 'audience/intros', 'product/pricing'])
+      await w.callWeb(twinWeb, 'POST', '/v1/brains/twin/wiki/changes', {
+        reason: 'Seeding.',
+        op: 'create',
+        address,
+        type: 'topic',
+        title: address,
+        summary: '',
+        body: '',
+        tags: [],
+        sources: [],
+      })
+    const g = await graph('', eric.key, 'twin')
+    assert.equal(g.total, 3)
+    assert.deepEqual(g.edges, [])
+  })
+
+  it('says it varies by encoding, and never compresses for a client that does not accept it', async () => {
+    const key = { authorization: `Bearer ${eric.key}` }
+    const r = await w.raw('GET', '/v1/brains/gr/wiki/graph', {
+      headers: { ...key, 'accept-encoding': 'identity' },
+    })
+    assert.match(r.headers.get('vary') ?? '', /Accept-Encoding/i)
   })
 
   describe('above 2 000 pages', () => {
@@ -226,10 +296,48 @@ describe('the graph of a wiki (G10) and its list (G9)', { skip: skipPg }, () => 
       assert.equal(r.status, 200)
       assert.equal(r.headers.get('content-encoding'), 'gzip')
       assert.equal((r.body as unknown as Graph).mode, 'pages')
+      assert.match(r.headers.get('vary') ?? '', /Accept-Encoding/i)
       const small = await w.raw('GET', '/v1/brains/gr/wiki/graph', {
         headers: { authorization: `Bearer ${eric.key}`, 'accept-encoding': 'gzip' },
       })
       assert.equal(small.headers.get('content-encoding'), null)
+      // Big, but the client does not take gzip, or refuses it with q=0: plain JSON.
+      for (const accept of ['identity', 'gzip;q=0, br', 'deflate']) {
+        const plain = await w.raw('GET', '/v1/brains/big/wiki/graph?prefix=area3', {
+          headers: { authorization: `Bearer ${eric.key}`, 'accept-encoding': accept },
+        })
+        assert.equal(plain.headers.get('content-encoding'), null, accept)
+        assert.equal((plain.body as unknown as Graph).mode, 'pages', accept)
+      }
+    })
+
+    it('filters by link kind quickly on 5 000 pages', async () => {
+      await w.call(eric.key, 'POST', '/v1/brains', { slug: 'kinds', purpose: 'Many links.' })
+      const b = await w.db.one<{ id: string }>("SELECT id FROM brains WHERE slug = 'kinds'")
+      await w.db.query(
+        `INSERT INTO pages (id, brain_id, address, type, title, status, created_at, updated_at)
+         SELECT 'pg_k' || i, $1, 'area' || (i % 12) || '/page-' || i, 'topic', 'Page ' || i, 'current', now(), now()
+           FROM generate_series(0, 4999) i`,
+        [b?.id],
+      )
+      await w.db.query(
+        'INSERT INTO page_addresses SELECT brain_id, address, id, now() FROM pages WHERE brain_id = $1',
+        [b?.id],
+      )
+      await w.db.query(
+        `INSERT INTO page_links (brain_id, from_page, kind, to_page)
+         SELECT $1, 'pg_k' || i, CASE WHEN i % 7 = 0 THEN 'depends-on' ELSE 'related' END, 'pg_k' || ((i * 7 + 3) % 5000)
+           FROM generate_series(0, 4999) i WHERE (i * 7 + 3) % 5000 <> i`,
+        [b?.id],
+      )
+      await w.db.query('ANALYZE')
+      await list('?linkKind=depends-on&limit=200', 'kinds')
+      const t = performance.now()
+      const r = await list('?linkKind=depends-on&limit=200&sort=-in', 'kinds')
+      const ms = performance.now() - t
+      assert.ok(r.total > 1000)
+      // Measured: 1.2 s before the rewrite, ~30 ms after; the bound leaves room for a slow machine.
+      assert.ok(ms < 300, `${Math.round(ms)} ms`)
     })
 
     it('the list stays whole, by pages', async () => {

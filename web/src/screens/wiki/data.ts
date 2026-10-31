@@ -165,11 +165,13 @@ export const wikiChanged = (slug: string) => {
   invalidate(`brain:${slug}:overview`)
 }
 
-// The graph, whole or one group (G10).
-export const graphResource = (slug: string, group: string) =>
-  resource(key(slug, `graph:${group}`), () =>
-    api.call<Answer>('wikiGraph', { path: { slug }, query: { prefix: group || undefined } }),
+// The graph, whole or one group (G10); with filters, the counts of a graph drawn by groups.
+export const graphResource = (slug: string, group: string, filters: Record<string, string> = {}) => {
+  const f = Object.fromEntries(Object.entries(filters).filter(([, v]) => v))
+  return resource(key(slug, `graph:${group}:${JSON.stringify(f)}`), () =>
+    api.call<Answer>('wikiGraph', { path: { slug }, query: { prefix: group || undefined, ...f } }),
   )
+}
 
 // A page as the inspector of the graph shows it: summary and links (no history).
 export const peekResource = (slug: string, address: string) =>

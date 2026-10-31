@@ -4,15 +4,22 @@
 // linked page that lies that way; a click finds the page under the pointer; the view fits what is drawn.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { ROLE } from '../../web/src/graph/layout.ts'
 import {
   type Answer,
+  areas,
   fit,
   hit,
+  hubs,
   keyOf,
   linksOf,
+  mainCluster,
   modelOf,
   NO_FILTERS,
   neighbourhood,
+  RINGS,
+  radial,
+  roles,
   step,
   visibility,
 } from '../../web/src/graph/model.ts'
@@ -103,6 +110,31 @@ describe('the graph model', () => {
     assert.deepEqual(Array.from(m.count), [7])
   })
 
+  it('a group opened further: its own page beside the groups, linked to the group it links into', () => {
+    const m = modelOf({
+      ...base,
+      mode: 'groups',
+      prefix: 'a',
+      total: 5,
+      nodes: [['a', 'A', 'overview', 'current', []]],
+      across: [[0, 'a/x', 2]],
+      groups: [
+        { prefix: 'a/x', count: 3, types: { topic: 3 } },
+        { prefix: 'a/y', count: 1, types: { topic: 1 } },
+      ],
+      groupEdges: [['a/x', 'a/y', 1]],
+    })
+    assert.equal(m.pages, 1)
+    assert.deepEqual(
+      m.items.map((i) => i.kind),
+      ['page', 'group', 'group'],
+    )
+    assert.deepEqual(Array.from(m.edges), [0, 1, 1, 2])
+    const v = visibility(m, NO_FILTERS)
+    assert.deepEqual(Array.from(v.nodes), [1, 1, 1])
+    assert.equal(v.pages, 5)
+  })
+
   it('one group: its pages, and the groups they link with as items after them', () => {
     const m = modelOf(oneGroup)
     assert.equal(m.pages, 2)
@@ -124,7 +156,15 @@ describe('filters, the same as the list', () => {
     const v = visibility(m, NO_FILTERS)
     assert.equal(v.shown, 4)
     assert.deepEqual(Array.from(v.edges), [1, 1, 1])
-    assert.equal(v.partial, false)
+    assert.equal(v.pages, 4)
+  })
+  it('a link kind that does not exist filters nothing, the same as the list ignores it', () => {
+    const v = visibility(m, { ...NO_FILTERS, linkKind: 'likes' })
+    assert.equal(v.shown, 4)
+    assert.deepEqual(Array.from(v.edges), [1, 1, 1])
+  })
+  it('several statuses at once, comma separated, as the list asks for them', () => {
+    assert.deepEqual(shown({ status: 'stale,superseded' }), ['a/two', 'b/three'])
   })
   it('by type, status, tag and words in the title or the address', () => {
     assert.deepEqual(shown({ type: 'topic' }), ['a/one', 'b/three'])
@@ -142,14 +182,81 @@ describe('filters, the same as the list', () => {
     const v = visibility(m, { ...NO_FILTERS, type: 'topic' })
     assert.deepEqual(Array.from(v.edges), [0, 0, 1])
   })
-  it('groups filter by type only, and say the other filters wait for a group to open', () => {
+  it('groups show the counts the server gave for these filters, and hide a group left with none', () => {
     const g = modelOf(groups)
-    const byType = visibility(g, { ...NO_FILTERS, type: 'decision' })
-    assert.deepEqual(Array.from(byType.nodes), [1, 0])
-    assert.equal(byType.partial, false)
-    const byTag = visibility(g, { ...NO_FILTERS, tag: 'q4' })
-    assert.deepEqual(Array.from(byTag.nodes), [1, 1])
-    assert.equal(byTag.partial, true)
+    const v = visibility(g, { ...NO_FILTERS, tag: 'q4' }, new Map([['a', 3]]))
+    assert.deepEqual(Array.from(v.nodes), [1, 0])
+    assert.deepEqual(Array.from(v.edges), [0])
+    assert.equal(v.pages, 3)
+    assert.equal(visibility(g, NO_FILTERS).pages, 30)
+  })
+  it('in one group, a box of another group shows while a page drawn links to it; it is never a page', () => {
+    const one = modelOf(oneGroup)
+    const v = visibility(one, NO_FILTERS)
+    assert.deepEqual(Array.from(v.nodes), [1, 1, 1])
+    assert.equal(v.pages, 2)
+    const hidden = visibility(one, { ...NO_FILTERS, q: 'one' })
+    assert.deepEqual(Array.from(hidden.nodes), [1, 0, 0])
+    assert.equal(hidden.pages, 1)
+  })
+})
+
+describe('reading the picture', () => {
+  it('degree: how many items each links with; hubs are the most linked drawn ones', () => {
+    const m = modelOf(pages)
+    assert.deepEqual(Array.from(m.degree), [2, 2, 2, 0])
+    const all = new Uint8Array([1, 1, 1, 1])
+    assert.deepEqual(hubs(m, all, 2), [0, 1])
+    assert.deepEqual(hubs(m, new Uint8Array([0, 1, 1, 1]), 5), [1, 2])
+  })
+  it('roles: pages without links are parked, the boxes of other groups go on the rim', () => {
+    assert.deepEqual(Array.from(roles(modelOf(pages))), [ROLE.free, ROLE.free, ROLE.free, ROLE.orphan])
+    assert.deepEqual(Array.from(roles(modelOf(oneGroup))), [ROLE.free, ROLE.free, ROLE.rim])
+    assert.deepEqual(Array.from(roles(modelOf(groups))), [ROLE.free, ROLE.free])
+  })
+  it('areas: the next part of the address under the open group pulls pages together', () => {
+    const m = modelOf({
+      ...base,
+      mode: 'pages',
+      prefix: 'a',
+      total: 3,
+      nodes: [
+        ['a/x/1', '1', 'topic', 'current', []],
+        ['a/y/1', '2', 'topic', 'current', []],
+        ['a/x/2', '3', 'topic', 'current', []],
+      ],
+    })
+    const a = areas(m)
+    assert.equal(a[0], a[2])
+    assert.notEqual(a[0], a[1])
+  })
+  it('the main cluster is the biggest linked part of what is drawn: the view fits it', () => {
+    const m = modelOf({
+      ...pages,
+      edges: [
+        [0, 1, 1],
+        [1, 2, 1],
+      ],
+    })
+    const v = visibility(m, NO_FILTERS)
+    assert.deepEqual(Array.from(mainCluster(m, v.nodes, v.edges)), [1, 1, 1, 0])
+    // Nothing linked: everything drawn counts.
+    const lone = modelOf({ ...pages, edges: [] })
+    const w = visibility(lone, NO_FILTERS)
+    assert.deepEqual(Array.from(mainCluster(lone, w.nodes, w.edges)), [1, 1, 1, 1])
+  })
+  it('focus lays the page in the middle, one hop on a ring, two hops on a wider one', () => {
+    const m = modelOf(pages)
+    const hood = new Map([
+      [0, 0],
+      [1, 1],
+      [2, 2],
+    ])
+    const xy = radial(m, hood, 4)
+    const r = (i: number) => Math.hypot(xy[2 * i] as number, xy[2 * i + 1] as number)
+    assert.equal(r(0), 0)
+    assert.ok(Math.abs(r(1) - RINGS[0]) < 1e-3)
+    assert.ok(Math.abs(r(2) - RINGS[1]) < 1e-3)
   })
 })
 

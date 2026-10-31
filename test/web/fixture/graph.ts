@@ -44,23 +44,40 @@ export const merge = (a: GraphData, b: GraphData): GraphData => ({
   links: [...a.links, ...b.links],
 })
 
-// How many pages link into each page and how many pages (or missing addresses) each links to.
+// How many pages link into each page and how many each links to: only between pages that exist and are not
+// retired, as the graph draws them (and as the server counts).
 function counts(d: GraphData) {
-  const known = new Set(d.pages.map((p) => p.address))
+  const drawn = new Set(d.pages.filter((p) => p.status !== 'retired').map((p) => p.address))
   const into = new Map<string, Set<string>>()
   const out = new Map<string, Set<string>>()
   for (const l of d.links) {
-    if (l.from === l.to) continue
+    if (l.from === l.to || !drawn.has(l.from) || !drawn.has(l.to)) continue
     if (!out.has(l.from)) out.set(l.from, new Set())
     out.get(l.from)?.add(l.to)
-    if (!known.has(l.to)) continue
     if (!into.has(l.to)) into.set(l.to, new Set())
     into.get(l.to)?.add(l.from)
   }
   return { into, out }
 }
 
-const SORTS = ['address', 'title', 'type', 'in', 'out', 'updatedAt'] as const
+// The filters of the list and the graph, refused the same way as the server refuses them.
+function badFilters(q: Q): Answer | null {
+  const type = q.get('type')
+  const status = q.get('status')
+  const linkKind = q.get('linkKind')
+  if (type && !PAGE_TYPES.includes(type))
+    return invalid(`"type" is one of: ${PAGE_TYPES.join(', ')}.`, 'Fix "type".')
+  if (status && !status.split(',').every((x) => PAGE_STATUSES.includes(x)))
+    return invalid(
+      `"status" is one or more of: ${PAGE_STATUSES.join(', ')}, separated by commas.`,
+      'Fix "status".',
+    )
+  if (linkKind && !(GRAPH_KINDS as readonly string[]).includes(linkKind))
+    return invalid(`"linkKind" is one of: ${GRAPH_KINDS.join(', ')}.`, 'Fix "linkKind".')
+  return null
+}
+
+const SORTS = ['address', 'title', 'type', 'status', 'in', 'out', 'updatedAt'] as const
 const PAGE_TYPES = ['topic', 'entity', 'decision', 'guide', 'agent', 'source', 'overview']
 const PAGE_STATUSES = ['current', 'stale', 'superseded', 'retired']
 const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64url')
@@ -75,10 +92,8 @@ export function listPagesOf(d: GraphData, q: Q): Answer {
   const column = sort.replace(/^-/, '') as (typeof SORTS)[number]
   if (type && !PAGE_TYPES.includes(type))
     return invalid(`"type" is one of: ${PAGE_TYPES.join(', ')}.`, 'Fix "type".')
-  if (status && !PAGE_STATUSES.includes(status))
-    return invalid(`"status" is one of: ${PAGE_STATUSES.join(', ')}.`, 'Fix "status".')
-  if (linkKind && !(GRAPH_KINDS as readonly string[]).includes(linkKind))
-    return invalid(`"linkKind" is one of: ${GRAPH_KINDS.join(', ')}.`, 'Fix "linkKind".')
+  const bad = badFilters(q)
+  if (bad) return bad
   if (!SORTS.includes(column))
     return invalid(
       `"sort" is one of: ${SORTS.join(', ')}, with "-" before it for the other way.`,
@@ -88,10 +103,11 @@ export function listPagesOf(d: GraphData, q: Q): Answer {
   if (!Number.isInteger(limit) || limit < 1 || limit > 200)
     return invalid('"limit" must be between 1 and 200.', 'Ask for at most 200 per page.')
   const { into, out } = counts(d)
+  const drawn = new Set(d.pages.filter((p) => p.status !== 'retired').map((p) => p.address))
   const kinded = new Set<string>()
   if (linkKind)
     for (const l of d.links)
-      if (l.kind === linkKind && l.from !== l.to) {
+      if (l.kind === linkKind && l.from !== l.to && drawn.has(l.from) && drawn.has(l.to)) {
         kinded.add(l.from)
         kinded.add(l.to)
       }
@@ -103,7 +119,7 @@ export function listPagesOf(d: GraphData, q: Q): Answer {
       (p) =>
         (!words || p.address.includes(words) || p.title.toLowerCase().includes(words)) &&
         (!type || p.type === type) &&
-        (!status || p.status === status) &&
+        (!status || status.split(',').includes(p.status)) &&
         (!tag || p.tags.includes(tag)) &&
         (!prefix || p.address === prefix || p.address.startsWith(`${prefix}/`)) &&
         (!linkKind || kinded.has(p.address)),
@@ -147,16 +163,30 @@ export function listPagesOf(d: GraphData, q: Q): Answer {
 
 // G10, by the server's own rules.
 export function graphOf(d: GraphData, q: Q): Answer {
+  for (const k of q.keys())
+    if (!['prefix', 'q', 'type', 'status', 'tag', 'linkKind'].includes(k))
+      return invalid(
+        `"${k}" is not a parameter of the graph.`,
+        'Use prefix, q, type, status, tag or linkKind.',
+      )
   const prefix = q.get('prefix')
-  if (prefix !== null && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(prefix))
+  if (prefix !== null && !/^[a-z0-9]+(-[a-z0-9]+)*(\/[a-z0-9]+(-[a-z0-9]+)*)*$/.test(prefix))
     return invalid(
-      '"prefix" is the first part of an address: lowercase letters, digits and dashes.',
+      '"prefix" is the start of an address: one or more parts of lowercase letters, digits and dashes, split by "/".',
       'Fix "prefix".',
     )
+  const bad = badFilters(q)
+  if (bad) return bad
+  const filters = Object.fromEntries(
+    (['q', 'type', 'status', 'tag', 'linkKind'] as const).flatMap((k) =>
+      q.get(k) ? [[k, q.get(k) as string]] : [],
+    ),
+  )
   return {
     status: 200,
     body: graphView(d.pages, d.links, {
       maxChars: MAX_REPLY_CHARS,
+      filters,
       ...(prefix === null ? {} : { prefix }),
     }),
   }

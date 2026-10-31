@@ -37,26 +37,34 @@ test.describe('the graph under load (CPU ×4)', () => {
     await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
     await page.addInitScript(WATCH_LONG_TASKS)
     await slowCpu(page)
+    // The time to the settled picture (the layout done and painted), not to its first, unsettled frame.
     const times: number[] = []
     for (let i = 0; i < 5; i++) {
       await page.goto(GRAPH)
-      await expect(page.locator('canvas.graph-canvas[data-draws]')).toHaveCount(1, { timeout: 10_000 })
+      await settled(page)
       times.push(
-        await page.evaluate(() => performance.getEntriesByName('graph:ready')[0]?.startTime ?? Number.NaN),
+        await page.evaluate(() => performance.getEntriesByName('graph:settled')[0]?.startTime ?? Number.NaN),
       )
     }
     const median = [...times].sort((a, b) => a - b)[2] as number
     test.info().annotations.push({
-      type: 'CA5 graph:ready ms (CPU ×4)',
+      type: 'CA5 graph:settled ms (CPU ×4)',
       description: times.map(Math.round).join(', '),
     })
+    expect(times.every(Number.isFinite)).toBe(true)
     expect(median).toBeLessThan(3000)
-    await settled(page)
     test.info().annotations.push({ type: 'CA5 longest task ms', description: String(await longest(page)) })
+    // The list: the pages drawn, and the retired ones on asking: all 300.
     await page.getByRole('button', { name: 'List' }).click()
-    await expect(page.getByRole('table', { name: /Pages of the wiki/ }).getByRole('caption')).toContainText(
-      'of 300 pages',
-    )
+    const caption = page.getByRole('table', { name: /Pages of the wiki/ }).getByRole('caption')
+    await expect(caption).toContainText(/of (\d+) pages/)
+    const drawn = Number(/of (\d+) pages/.exec((await caption.textContent()) ?? '')?.[1])
+    const status = page.getByLabel('Status', { exact: true })
+    if (!(await status.isVisible())) await page.getByText(/^Filters/).click()
+    await status.selectOption('retired')
+    await expect(caption).not.toContainText(`of ${drawn} pages`)
+    const retired = Number(/of (\d+) pages?/.exec((await caption.textContent()) ?? '')?.[1])
+    expect(drawn + retired).toBe(300)
   })
 
   test('CA6: 5 000 pages come by groups, open one by one, and no task blocks the page 200 ms', async ({

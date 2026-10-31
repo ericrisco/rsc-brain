@@ -473,11 +473,12 @@ const HAND: Record<string, Op> = {
       q: 'Part of the address or the title.',
       prefix: 'Only pages under this first part of the address.',
       type: 'Only this page type.',
-      status: 'Only this status.',
+      status:
+        'Only these statuses: one or more of current, stale, superseded and retired, separated by commas.',
       tag: 'Only pages with this tag.',
       linkKind:
         'Only pages with a link of this kind, either way: mentions, related, depends-on, contradicts, supersedes, part-of or example-of.',
-      sort: 'address (the default), title, type, in, out or updatedAt; "-" before it for the other way.',
+      sort: 'address (the default), title, type, status, in, out or updatedAt; "-" before it for the other way.',
       cursor: 'The "next" of the previous page.',
       limit: 'Pages per answer.',
     },
@@ -500,8 +501,15 @@ const HAND: Record<string, Op> = {
   },
   'GET /v1/brains/{slug}/wiki/graph': {
     summary:
-      'The graph of a wiki: a node a page and an edge a link, retired pages left out. Up to 2 000 pages it comes whole; above that, as groups by the first part of the address; prefix opens one group. Sent gzipped when big and accepted.',
-    query: { prefix: 'Open this group: the pages whose address starts with it.' },
+      'The graph of a wiki: a node a page and an edge a link, retired pages left out. Up to 2 000 pages it comes whole; above that, as groups one part of the address deeper; prefix opens one group (a group above 2 000 opens by groups again). The filters narrow what is counted and drawn, never whether it comes as pages or groups. Sent gzipped when big and accepted.',
+    query: {
+      prefix: 'Open this group: the pages whose address starts with it (one or more parts).',
+      q: 'Only pages with these words in the title or the address.',
+      type: 'Only this page type.',
+      status: 'Only these statuses, separated by commas.',
+      tag: 'Only pages with this tag.',
+      linkKind: 'Only pages with a link of this kind, either way, and only those links.',
+    },
     reply: obj({
       mode: s(
         'pages (nodes and edges), groups (the wiki is too big: groups and the links between them) or too-big (this group cannot be drawn: use the list).',

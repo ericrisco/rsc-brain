@@ -4,7 +4,7 @@
 // most one view draws) to settle without the page noticing. The CPU times are bounds with a wide margin.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { createLayout, LAYOUT } from '../../web/src/graph/layout.ts'
+import { arrange, createLayout, LAYOUT, ROLE } from '../../web/src/graph/layout.ts'
 
 // A ring of clusters: each node linked to the next two in its cluster, clusters linked in a ring.
 function sample(n: number, cluster = 20) {
@@ -97,6 +97,48 @@ describe('the layout of the graph', () => {
     while (!l.done()) l.tick()
     const xy = l.positions()
     assert.ok(Math.hypot((xy[0] as number) - (xy[4] as number), (xy[1] as number) - (xy[5] as number)) > 40)
+  })
+
+  it('pages of the same area are pulled together', () => {
+    // Two areas of 40, linked at random across and within: the area keeps its pages near.
+    const n = 80
+    const pairs: number[] = []
+    for (let i = 0; i < n; i++) pairs.push(i, (i * 17 + 5) % n)
+    const area = new Int32Array(n).map((_, i) => (i < 40 ? 0 : 1))
+    const l = createLayout({ n, edges: new Uint32Array(pairs), seed: 3, area })
+    while (!l.done()) l.tick()
+    const xy = l.positions()
+    const d = (i: number, j: number) =>
+      Math.hypot(
+        (xy[2 * i] as number) - (xy[2 * j] as number),
+        (xy[2 * i + 1] as number) - (xy[2 * j + 1] as number),
+      )
+    let same = 0
+    let other = 0
+    for (let i = 0; i < n; i++)
+      for (let j = 0; j < n; j++) {
+        if ((area[i] as number) === (area[j] as number)) same += d(i, j)
+        else other += d(i, j)
+      }
+    assert.ok(same / (2 * 40 * 40) < (other / (2 * 40 * 40)) * 0.8, `same ${same} other ${other}`)
+  })
+
+  it('parks pages without links in rows under the cluster, and puts groups around it on a rim', () => {
+    // 0–3 linked in a square around the middle; 4–6 without links; 7 a group linked to 1 (on the right).
+    const xy = new Float32Array([-10, -10, 10, -10, 10, 10, -10, 10, 0, 0, 0, 0, 0, 0, 0, 0])
+    const role = new Uint8Array([0, 0, 0, 0, ROLE.orphan, ROLE.orphan, ROLE.orphan, ROLE.rim])
+    const edges = new Uint32Array([0, 1, 1, 2, 2, 3, 1, 7])
+    arrange(xy, role, edges)
+    const at = (i: number) => [xy[2 * i] as number, xy[2 * i + 1] as number] as const
+    for (const i of [4, 5, 6]) {
+      assert.ok(at(i)[1] > 10, `orphan ${i} below the cluster: ${at(i)}`)
+      assert.ok(at(i)[0] >= -10 && at(i)[0] <= 10 + 24 * 3)
+    }
+    assert.notDeepEqual(at(4), at(5))
+    assert.equal(at(4)[1], at(5)[1], 'in a row')
+    const [gx, gy] = at(7)
+    assert.ok(Math.hypot(gx, gy) > Math.hypot(10, 10) + 20, 'outside the cloud')
+    assert.ok(gx > 0, 'on the side of the page it links with')
   })
 
   it('runs in slices of a few milliseconds, so the worker can post frames between them', () => {

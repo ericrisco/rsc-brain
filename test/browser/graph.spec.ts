@@ -32,7 +32,7 @@ test.describe('the graph', () => {
     for (const key of ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp']) await page.keyboard.press(key)
     await expect(said).toHaveCount(1)
     await page.keyboard.press('Enter')
-    const inspector = page.getByRole('complementary', { name: /^Inspector / })
+    const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
     await expect(inspector).toBeVisible()
     await expect(inspector.getByRole('link', { name: 'Open page' })).toBeVisible()
     // The canvas keeps the keyboard: Escape closes the inspector from there.
@@ -51,8 +51,9 @@ test.describe('the graph', () => {
     await page.goto(GRAPH)
     await settled(page)
     await page.getByRole('button', { name: 'List' }).click()
+    await expect(page.getByRole('heading', { level: 1, name: 'Pages' })).toBeVisible()
     await page.getByRole('button', { name: 'Inspect Retention' }).click()
-    const inspector = page.getByRole('complementary', { name: /^Inspector / })
+    const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
     await expect(inspector.getByRole('heading', { level: 2, name: 'Retention' })).toBeFocused()
     await expect(inspector.getByText('What keeps viewers watching.')).toBeVisible()
     await inspector.getByRole('button', { name: 'Focus: 2 hops' }).click()
@@ -75,7 +76,7 @@ test.describe('the graph', () => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto(GRAPH)
     await settled(page)
-    const count = page.locator('.title-row .tag')
+    const count = page.locator('.graph-place-row .tag')
     const all = await count.textContent()
     await page.getByLabel('Type', { exact: true }).selectOption('decision')
     await expect(page).toHaveURL(/type=decision/)
@@ -100,12 +101,12 @@ test.describe('the graph', () => {
     await canvas.focus()
     await page.keyboard.press('Enter')
     const heading = page
-      .getByRole('complementary', { name: /^Inspector / })
+      .getByRole('complementary', { name: /^Inspector \S/ })
       .getByRole('heading', { level: 2 })
     const title = await heading.textContent()
     await page.keyboard.press('Escape')
     // The inspector gone, the canvas is wider and drawn again: then the place is read.
-    await expect(page.getByRole('complementary', { name: /^Inspector / })).toHaveCount(0)
+    await expect(page.getByRole('complementary', { name: /^Inspector \S/ })).toHaveCount(0)
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
     await expect(canvas).toHaveAttribute('data-active', /\d+,\d+/)
     const [x, y] = ((await canvas.getAttribute('data-active')) ?? '').split(',').map(Number)
@@ -116,7 +117,7 @@ test.describe('the graph', () => {
     await page.mouse.down()
     await page.mouse.move(120, 160, { steps: 4 })
     await page.mouse.up()
-    await expect(page.getByRole('complementary', { name: /^Inspector / })).toHaveCount(0)
+    await expect(page.getByRole('complementary', { name: /^Inspector \S/ })).toHaveCount(0)
   })
 })
 
@@ -129,7 +130,7 @@ test.describe('the list (CA5: everything the graph does, by keyboard)', () => {
     await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
     await page.goto(`${GRAPH}?view=list`)
     const table = page.getByRole('table', { name: /Pages of the wiki/ })
-    await expect(table.getByRole('caption')).toContainText('1–50 of 300 pages')
+    await expect(table.getByRole('caption')).toContainText('1–50 of 282 pages')
     await expect(table.locator('tbody tr')).toHaveCount(50)
     // Sort by links in, the most first: by keyboard.
     await table.getByRole('button', { name: 'Sort by Links in, ascending' }).focus()
@@ -146,19 +147,19 @@ test.describe('the list (CA5: everything the graph does, by keyboard)', () => {
     expect([...nums].sort((a, b) => b - a)).toEqual(nums)
     // The next page, and back.
     await page.getByRole('button', { name: 'Next' }).click()
-    await expect(table.getByRole('caption')).toContainText('51–100 of 300 pages')
+    await expect(table.getByRole('caption')).toContainText('51–100 of 282 pages')
     await page.getByRole('button', { name: 'Previous' }).click()
-    await expect(table.getByRole('caption')).toContainText('1–50 of 300 pages')
+    await expect(table.getByRole('caption')).toContainText('1–50 of 282 pages')
     // Filtered the same way as the graph.
     await page.getByLabel('Type', { exact: true }).selectOption('decision')
-    await expect(table.getByRole('caption')).not.toContainText('of 300 pages')
+    await expect(table.getByRole('caption')).not.toContainText('of 282 pages')
     for (const cell of await table.locator('tbody tr td:nth-of-type(2)').allTextContents())
       expect(cell).toBe('Decision')
     // Every action of the inspector is on the row: inspect, open the page, focus.
     const row = table.locator('tbody tr').first()
     await expect(row.getByRole('link')).toHaveAttribute('href', /\/b\/growth\/pages\//)
     await row.getByRole('button', { name: /^Inspect / }).click()
-    const inspector = page.getByRole('complementary', { name: /^Inspector / })
+    const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
     await expect(inspector.getByRole('link', { name: 'Open page' })).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(inspector).toHaveCount(0)
@@ -175,7 +176,7 @@ test.describe('the list (CA5: everything the graph does, by keyboard)', () => {
     const groups = page.getByRole('table', { name: 'Groups of the wiki' })
     await expect(groups.locator('tbody tr')).toHaveCount(12)
     await expect(page.getByRole('table', { name: /Pages of the wiki/ }).getByRole('caption')).toContainText(
-      'of 5,000 pages',
+      'of 4,728 pages',
     )
     const open = groups.getByRole('button', { name: /^Open group / }).first()
     const name = ((await open.getAttribute('aria-label')) ?? '').replace('Open group ', '')
@@ -224,7 +225,7 @@ test.describe('states', () => {
     await settled(page)
     await page.locator('canvas.graph-canvas').focus()
     await page.keyboard.press('Enter')
-    const inspector = page.getByRole('complementary', { name: /^Inspector / })
+    const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
     await inspector.getByRole('button', { name: 'Open group' }).click()
     await expect(page).toHaveURL(/group=/)
     await settled(page)

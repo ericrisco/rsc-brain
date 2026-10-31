@@ -152,10 +152,116 @@ describe('the graph of a wiki (G10)', () => {
     const whole = graphView(pages, [], { maxChars: 2000 })
     assert.equal(whole.mode, 'groups')
     assert.equal(whole.groups.length, 2)
+    // A group whose pages would not fit opens further, one part deeper (here a group a page).
     const one = graphView(pages, [], { maxChars: 2000, prefix: 'a0' })
-    assert.equal(one.mode, 'too-big')
-    assert.equal(one.total, 20)
-    assert.deepEqual([one.nodes, one.groups, one.across], [[], [], []])
+    assert.equal(one.mode, 'groups')
+    assert.equal(one.groups.length, 20)
+    const tiny = graphView(pages, [], { maxChars: 200, prefix: 'a0' })
+    assert.equal(tiny.mode, 'too-big')
+    assert.equal(tiny.total, 20)
+    assert.deepEqual([tiny.nodes, tiny.groups, tiny.across], [[], [], []])
+  })
+
+  it('a group above the limit opens by the next part of the address, its own page beside the groups', () => {
+    const pages = [
+      page('a'),
+      page('a/x/1'),
+      page('a/x/2'),
+      page('a/y/1', { type: 'decision' }),
+      page('a/y/2'),
+      page('a/z'),
+      page('b/q'),
+    ]
+    const links = [link('a', 'a/x/1'), link('a/x/1', 'a/y/1'), link('a/x/2', 'a/y/2'), link('a/z', 'b/q')]
+    const v = graphView(pages, links, { max: 3, prefix: 'a' })
+    assert.equal(v.mode, 'groups')
+    assert.equal(v.prefix, 'a')
+    assert.equal(v.total, 6)
+    assert.deepEqual(
+      v.groups.map((g) => [g.prefix, g.count]),
+      [
+        ['a/x', 2],
+        ['a/y', 2],
+        ['a/z', 1],
+      ],
+    )
+    // The page at "a" itself is not a group: it is drawn beside them, linked to the group it links into.
+    assert.deepEqual(
+      v.nodes.map((n) => n[0]),
+      ['a'],
+    )
+    assert.deepEqual(v.across, [[0, 'a/x', 1]])
+    assert.deepEqual(v.groupEdges, [['a/x', 'a/y', 2]])
+    // And one level down it opens as pages.
+    assert.equal(graphView(pages, links, { max: 3, prefix: 'a/x' }).mode, 'pages')
+  })
+
+  it('a link out of a nested group names the outer group the other page is in', () => {
+    const pages = [page('a/x/1'), page('a/y/1'), page('b/q')]
+    const links = [link('a/x/1', 'a/y/1'), link('a/x/1', 'b/q')]
+    const v = graphView(pages, links, { prefix: 'a/x' })
+    assert.deepEqual(v.across, [
+      [0, 'a/y', 1],
+      [0, 'b', 1],
+    ])
+    assert.deepEqual(
+      v.groups.map((g) => [g.prefix, g.count]),
+      [
+        ['a/y', 1],
+        ['b', 1],
+      ],
+    )
+  })
+
+  it('too big only when it cannot be split: more groups than the limit', () => {
+    const pages = Array.from({ length: 5 }, (_, i) => page(`a/p${i}`))
+    const v = graphView(pages, [], { max: 3, prefix: 'a' })
+    assert.equal(v.mode, 'too-big')
+    assert.equal(v.total, 5)
+  })
+
+  it('filters count in the groups: the mode is decided by all pages, the counts by the filtered ones', () => {
+    const pages = [
+      page('s/a', { type: 'decision', tags: ['q4'] }),
+      page('s/b'),
+      page('o/c', { type: 'decision' }),
+      page('o/d'),
+      page('o/e'),
+    ]
+    const links = [link('s/a', 'o/c', 'depends-on'), link('s/b', 'o/d')]
+    const v = graphView(pages, links, { max: 3, filters: { type: 'decision' } })
+    assert.equal(v.mode, 'groups')
+    assert.equal(v.total, 2)
+    assert.deepEqual(
+      v.groups.map((g) => [g.prefix, g.count]),
+      [
+        ['o', 1],
+        ['s', 1],
+      ],
+    )
+    assert.deepEqual(v.groupEdges, [['o', 's', 1]])
+    const byKind = graphView(pages, links, { max: 3, filters: { linkKind: 'depends-on' } })
+    assert.deepEqual(
+      byKind.groups.map((g) => [g.prefix, g.count]),
+      [
+        ['o', 1],
+        ['s', 1],
+      ],
+    )
+    const byTag = graphView(pages, links, { max: 3, filters: { tag: 'q4', q: 'S/A' } })
+    assert.deepEqual(
+      byTag.groups.map((g) => g.prefix),
+      ['s'],
+    )
+    const byStatus = graphView(pages, links, { max: 3, filters: { status: 'stale,superseded' } })
+    assert.equal(byStatus.total, 0)
+    // Under the limit the pages themselves are filtered.
+    const small = graphView(pages, links, { filters: { type: 'decision' } })
+    assert.deepEqual(
+      small.nodes.map((n) => n[0]),
+      ['o/c', 's/a'],
+    )
+    assert.deepEqual(small.edges, [[1, 0, GRAPH_KINDS.indexOf('depends-on')]])
   })
 
   it('works out 5 000 pages in a blink', () => {

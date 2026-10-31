@@ -90,14 +90,31 @@ export const wikiRoutes: Route[] = [
     ),
   })),
   // The graph, whole or one group (plan §3.5 G10).
-  route('GET /v1/brains/:slug/wiki/graph', async (r) => ({
-    body: await wikiGraph(
-      ctxOf(r),
-      r.params.slug as string,
-      compact({ prefix: q(r.query.get('prefix')), maxChars: MAX_REPLY_CHARS }),
-    ),
-    compress: true,
-  })),
+  route('GET /v1/brains/:slug/wiki/graph', async (r) => {
+    // The graph takes the list's filters only; anything else (a sort, a cursor) is a mistake worth saying.
+    for (const k of r.query.keys())
+      if (!['prefix', 'q', 'type', 'status', 'tag', 'linkKind'].includes(k))
+        throw invalid(
+          `"${k}" is not a parameter of the graph.`,
+          'Use prefix, q, type, status, tag or linkKind.',
+        )
+    return {
+      body: await wikiGraph(
+        ctxOf(r),
+        r.params.slug as string,
+        compact({
+          prefix: q(r.query.get('prefix')),
+          q: q(r.query.get('q')),
+          type: q(r.query.get('type')),
+          status: q(r.query.get('status')),
+          tag: q(r.query.get('tag')),
+          linkKind: q(r.query.get('linkKind')),
+          maxChars: MAX_REPLY_CHARS,
+        }),
+      ),
+      compress: true,
+    }
+  }),
   route('GET /v1/brains/:slug/wiki/health', async (r) => ({
     body: await wikiHealth(ctxOf(r), r.params.slug as string),
   })),
