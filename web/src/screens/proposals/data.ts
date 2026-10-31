@@ -61,9 +61,16 @@ export const inboxHref = (slug: string, status?: string) =>
   status && status !== 'pending' ? `${base(slug)}?status=${status}` : base(slug)
 export const proposalHref = (slug: string, id: string) => `${base(slug)}/${encodeURIComponent(id)}`
 
+// Pending ones oldest first: what has waited longest is reviewed first (the old ones lead). Decided ones
+// newest first: the last decisions are what a person looks for.
+export const orderOf = (status: Status) => (status === 'pending' ? 'oldest' : 'newest')
+
 export const inboxResource = (slug: string, status: Status) =>
   resource(`brain:${slug}:proposals:list:${status}`, () =>
-    api.call<InboxPage>('proposals', { path: { slug }, query: { status, limit: PAGE_SIZE } }),
+    api.call<InboxPage>('proposals', {
+      path: { slug },
+      query: { status, limit: PAGE_SIZE, order: orderOf(status) },
+    }),
   )
 
 export const reviewResource = (slug: string, id: string) =>

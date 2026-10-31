@@ -6,7 +6,13 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { ApiError, createClient, type Transport } from '../../web/src/api/client.ts'
 import { draft } from '../../web/src/api/draft.ts'
-import { invalidate, resetResources, resource, wantsFresh } from '../../web/src/api/resource.ts'
+import {
+  invalidate,
+  invalidateByEvent,
+  resetResources,
+  resource,
+  wantsFresh,
+} from '../../web/src/api/resource.ts'
 import { ROUTE_TABLE } from '../../web/src/api/routes.ts'
 import { safeNext, signInPath } from '../../web/src/lib/nav.ts'
 import { V1 } from '../api/v1.ts'
@@ -214,6 +220,19 @@ describe('resources', () => {
     assert.deepEqual(a.data.value, { n: 2 })
     assert.equal(a.stale.value, false)
     invalidate('other')
+    assert.equal(n, 2)
+  })
+
+  it('a change in the wiki reloads the proposals open on it (an old base shows at once, PR21 review)', async () => {
+    resetResources()
+    let n = 0
+    const r = resource('brain:growth:proposals:review:prp_1', async () => ({ n: ++n }))
+    await r.settled()
+    invalidateByEvent('wiki.changed', 'growth')
+    await r.settled()
+    assert.equal(n, 2)
+    invalidateByEvent('wiki.changed', 'other')
+    await r.settled()
     assert.equal(n, 2)
   })
 

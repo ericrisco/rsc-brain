@@ -34,9 +34,14 @@ export type ReviewOp = {
 
 // What the person chose on a proposal, kept in a draft until it is decided: the changes chosen, their own
 // versions of some (by operation number), the old bases reviewed, and the comment.
+// A person's version of a change: only the words they edited, and for an edit the revision of the page
+// they saw (the server lays it over the stored operation and checks that revision). Never tags, sources
+// or a copy of the page.
+export type Correction = { title?: string; summary?: string; body?: string; revision?: number }
+
 export type Choices = {
   selected: number[]
-  corrections: Record<number, Record<string, unknown>>
+  corrections: Record<number, Correction>
   baseReviewed: number[]
   comment: string
 }
@@ -255,4 +260,54 @@ export function inboxDraftKey(account: string, proposal: string): string {
     h = Math.imul(h, 0x01000193) >>> 0
   }
   return `inbox.${h.toString(16).padStart(8, '0')}`
+}
+
+// What the person changed in the edit form, against what the agent proposed, as a correction; null when
+// nothing differs.
+export function correctionOf(
+  o: Pick<ReviewOp, 'op' | 'before' | 'after'>,
+  form: Record<string, string>,
+): Correction | null {
+  const out: Correction = {}
+  for (const k of ['title', 'summary', 'body'] as const) {
+    const v = form[k]
+    if (v !== undefined && v !== String(o.after?.[k] ?? '')) out[k] = v
+  }
+  if (!Object.keys(out).length) return null
+  if (o.op.op === 'edit' && typeof o.before?.revision === 'number') out.revision = o.before.revision
+  return out
+}
+
+// A correction written on a revision the page has left: the person should look at it again.
+export function editIsOld(o: Pick<ReviewOp, 'index' | 'before'>, c: Choices): boolean {
+  const r = c.corrections[o.index]?.revision
+  return r !== undefined && o.before?.revision !== undefined && r !== o.before.revision
+}
+
+// What came along with a choice, or went with leaving one out, said politely.
+export function chooseNote(
+  before: number[],
+  after: number[],
+  i: number,
+  on: boolean,
+  ops: Pick<ReviewOp, 'index' | 'dependsOn'>[],
+): string | null {
+  const w = T.proposals
+  const n = (x: number) => x + 1
+  const list = (xs: number[]) => w.changesList(xs.map(n))
+  if (on) {
+    const more = after.filter((x) => x !== i && !before.includes(x))
+    return more.length ? w.alsoChose(list(more), n(i)) : null
+  }
+  const gone = before.filter((x) => x !== i && !after.includes(x))
+  void ops
+  return gone.length ? w.alsoLeftOut(list(gone), n(i)) : null
+}
+
+// `a` approves everything only when the person chose nothing and wrote nothing; otherwise it would drop
+// what they meant (it then says why and goes to the buttons).
+export function approveKeyHold(c: Choices): string | null {
+  if (c.selected.length) return T.proposals.holdChosen
+  if (c.comment.trim()) return T.proposals.holdComment
+  return null
 }

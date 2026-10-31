@@ -12,14 +12,19 @@ import type { ApiError } from '../../api/client.ts'
 import { draft } from '../../api/draft.ts'
 import { useFresh } from '../../api/fresh.ts'
 import { api } from '../../api/index.ts'
-import { invalidate } from '../../api/resource.ts'
+import { forget, invalidate } from '../../api/resource.ts'
 import {
   approveBody,
+  approveKeyHold,
   blockers,
   type Choices,
+  type Correction,
   choose,
+  chooseNote,
+  correctionOf,
   decidedNotice,
   editableParts,
+  editIsOld,
   groupsOf,
   inboxDraftKey,
   keepChoices,
@@ -40,9 +45,17 @@ import { Field } from '../../ui/Field.tsx'
 import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
 import { TextArea } from '../../ui/TextArea.tsx'
 import { entryHref } from '../journal/common.tsx'
-import { blockedNow, pageHref, useBrain, WikiHead } from '../wiki/common.tsx'
+import { blockedNow, logHref, pageHref, useBrain, WikiHead } from '../wiki/common.tsx'
 import { BodyDiff, BodyLines, ListDiff, Words } from '../wiki/History.tsx'
-import { type Decision, inboxHref, proposalsChanged, type Review, reviewResource } from './data.ts'
+import {
+  type Decision,
+  inboxHref,
+  inboxResource,
+  proposalHref,
+  proposalsChanged,
+  type Review,
+  reviewResource,
+} from './data.ts'
 import { DecidedLine, proposer, ReadOnlyLine } from './Inbox.tsx'
 
 const NONE: Choices = { selected: [], corrections: {}, baseReviewed: [], comment: '' }
@@ -166,7 +179,7 @@ function PageDiff({
 }
 
 // The page after the change, with the person's own version of the change laid over it.
-const mine = (after: PageState | null, correction: Record<string, unknown> | undefined): PageState => {
+const mine = (after: PageState | null, correction: Correction | undefined): PageState => {
   const out: PageState = { ...(after ?? {}) }
   if (correction) {
     for (const k of ['title', 'summary', 'body'] as const)
@@ -212,15 +225,47 @@ function Sources({ slug, op }: { slug: string; op: Op }) {
 type CardProps = {
   slug: string
   o: ReviewOp
+  // The change of this proposal that makes the page this one is about, if one does.
+  bornBy: number | null
   act: boolean
   choices: Choices
   several: boolean
   onChoose: (on: boolean) => void
   onBase: (on: boolean) => void
-  onCorrect: (c: Record<string, unknown> | null) => void
+  onCorrect: (c: Correction | null) => void
 }
 
-function Card({ slug, o, act, choices, several, onChoose, onBase, onCorrect }: CardProps) {
+const LONG = 700
+
+// A new page as it will read: its words as text (not a difference against nothing), a long text folded.
+function NewPage({ page }: { page: PageState }) {
+  const w = T.proposals
+  const body = page.body ?? ''
+  return (
+    <div class="op-new">
+      {page.title ? <p class="new-title">{page.title}</p> : null}
+      {page.summary ? <p class="muted">{page.summary}</p> : null}
+      <p class="meta">
+        {[T.wiki.types[page.type ?? ''] ?? page.type, (page.tags ?? []).join(', ')]
+          .filter(Boolean)
+          .join(' · ')}
+      </p>
+      {body.length > LONG ? (
+        <>
+          <p class="plain-body">{`${body.slice(0, LONG).trimEnd()}…`}</p>
+          <details class="whole">
+            <summary class="whole-summary">{w.wholeText}</summary>
+            <p class="plain-body">{body}</p>
+          </details>
+        </>
+      ) : (
+        <p class="plain-body">{body}</p>
+      )}
+    </div>
+  )
+}
+
+function Card({ slug, o, bornBy, act, choices, several, onChoose, onBase, onCorrect }: CardProps) {
   const w = T.proposals
   const n = o.index + 1
   const titleId = `op-${o.index}-title`
@@ -234,7 +279,7 @@ function Card({ slug, o, act, choices, several, onChoose, onBase, onCorrect }: C
   const editButton = useRef<HTMLButtonElement>(null)
   const back = useRef(false)
   useEffect(() => {
-    if (editing) body.current?.focus()
+    if (editing) (body.current ?? document.getElementById(`op-${o.index}-title-field`))?.focus()
     else if (back.current) {
       back.current = false
       editButton.current?.focus()
@@ -245,24 +290,36 @@ function Card({ slug, o, act, choices, several, onChoose, onBase, onCorrect }: C
     setEditing(true)
   }
   const reviewed = choices.baseReviewed.includes(o.index)
+  const choosable = act && pending && several
+  const title = (
+    <h3 id={titleId} class="op-title">
+      <span class="op-n">{w.changeN(n)}:</span> {opWords(o.op)}
+    </h3>
+  )
   return (
-    <article class={`op-card${o.stale && pending ? ' stale' : ''}`} aria-labelledby={titleId}>
-      <div class="op-head">
-        {act && pending && several ? (
-          <label class="choose">
-            <input
-              type="checkbox"
-              checked={choices.selected.includes(o.index)}
-              onChange={(e) => onChoose((e.currentTarget as HTMLInputElement).checked)}
-            />
-            <span class="sr-only">{w.choose(n)}</span>
-          </label>
-        ) : null}
-        <h3 id={titleId} class="op-title">
-          <span class="op-n">{w.changeN(n)}:</span> {opWords(o.op)}
-        </h3>
-      </div>
+    <article
+      id={`op-${o.index}`}
+      tabIndex={-1}
+      class={`op-card${o.stale && pending ? ' stale' : ''}`}
+      aria-labelledby={titleId}
+    >
+      {choosable ? (
+        // The whole head is the tap target of the choice (44 px at least).
+        <label class="op-head">
+          <input
+            type="checkbox"
+            data-letter-keys=""
+            aria-label={w.choose(n)}
+            checked={choices.selected.includes(o.index)}
+            onChange={(e) => onChoose((e.currentTarget as HTMLInputElement).checked)}
+          />
+          {title}
+        </label>
+      ) : (
+        <div class="op-head">{title}</div>
+      )}
       <p class="op-tags">
+        {o.op.op === 'create' ? <span class="tag">{w.newPageTag}</span> : null}
         {pending ? null : (
           <span class={`tag${o.status === 'returned' ? ' warn' : ''}`}>{w.opStatus[o.status]}</span>
         )}
@@ -271,6 +328,9 @@ function Card({ slug, o, act, choices, several, onChoose, onBase, onCorrect }: C
         {o.stale && pending ? <span class="tag warn">{w.stale}</span> : null}
         {reviewed && pending ? <span class="tag">{w.baseReviewedTag}</span> : null}
       </p>
+      {correction && pending && editIsOld(o, choices) ? (
+        <p class="note">{w.editOldAt(correction.revision ?? 0, o.before?.revision ?? 0)}</p>
+      ) : null}
       {o.op.reason ? <p class="op-reason">{T.wiki.why(o.op.reason)}</p> : null}
       {o.warnings.length ? (
         <ul class="plain op-warnings">
@@ -284,27 +344,31 @@ function Card({ slug, o, act, choices, several, onChoose, onBase, onCorrect }: C
       {o.stale && pending ? (
         <div class="three">
           <p class="note">{w.staleLead(o.stale.base?.revision ?? 0, o.stale.current.revision ?? 0)}</p>
-          <section class="version">
-            <h4>{w.sinceWritten(o.stale.base?.revision ?? 0, o.stale.current.revision ?? 0)}</h4>
+          <section class="version" aria-labelledby={`op-${o.index}-since`}>
+            <h4 id={`op-${o.index}-since`}>
+              {w.sinceWritten(o.stale.base?.revision ?? 0, o.stale.current.revision ?? 0)}
+            </h4>
             {o.stale.base ? (
               <PageDiff a={o.stale.base} b={o.stale.current} level={5} />
             ) : (
               <p class="muted">{w.baseGone}</p>
             )}
           </section>
-          <section class="version">
-            <h4>{w.proposedFromBase(o.stale.base?.revision ?? 0)}</h4>
+          <section class="version" aria-labelledby={`op-${o.index}-proposed`}>
+            <h4 id={`op-${o.index}-proposed`}>{w.proposedFromBase(o.stale.base?.revision ?? 0)}</h4>
             <PageDiff a={o.stale.base ?? o.stale.current} b={mine(o.stale.proposed, correction)} level={5} />
+          </section>
+          <section class="version will-be" aria-labelledby={`op-${o.index}-will`}>
+            <h4 id={`op-${o.index}-will`}>{w.willBe}</h4>
+            <p class="muted small">{w.willBeLead}</p>
+            <PageDiff a={o.stale.current} b={mine(o.stale.proposed, correction)} level={5} />
           </section>
           {act && needsBase(o, choices) ? <p class="muted small">{w.staleNeeds}</p> : null}
         </div>
       ) : o.op.op === 'create' ? (
-        <div class="op-diff">
-          <h4 class="sr-only">{w.newPage}</h4>
-          <PageDiff a={{}} b={shown} fresh />
-        </div>
+        <NewPage page={shown} />
       ) : o.before === null && pending ? (
-        <p class="muted">{w.pageGone}</p>
+        <p class="muted">{bornBy !== null ? w.bornBy(bornBy + 1) : w.pageGone}</p>
       ) : (
         <div class="op-diff">
           <PageDiff a={o.before ?? {}} b={shown} />
@@ -317,7 +381,7 @@ function Card({ slug, o, act, choices, several, onChoose, onBase, onCorrect }: C
           aria-label={w.editTitle(n)}
           onSubmit={(e) => {
             e.preventDefault()
-            onCorrect({ ...o.op, ...(correction ?? {}), ...form })
+            onCorrect(correctionOf(o, form))
             back.current = true
             setEditing(false)
           }}
@@ -329,6 +393,7 @@ function Card({ slug, o, act, choices, several, onChoose, onBase, onCorrect }: C
               value={form.title ?? ''}
               onValue={(v) => setForm({ ...form, title: v })}
               maxLength={200}
+              id={`op-${o.index}-title-field`}
             />
           ) : null}
           {parts.includes('summary') ? (
@@ -381,7 +446,7 @@ function Card({ slug, o, act, choices, several, onChoose, onBase, onCorrect }: C
           {o.stale ? (
             <button
               type="button"
-              class="button secondary"
+              class="button secondary wrap-button"
               aria-pressed={reviewed ? 'true' : 'false'}
               onClick={() => onBase(!reviewed)}
             >
@@ -394,8 +459,8 @@ function Card({ slug, o, act, choices, several, onChoose, onBase, onCorrect }: C
   )
 }
 
-// What a decision did, with a link to each page it changed.
-function Result({ slug, d }: { slug: string; d: Decision }) {
+// What a decision did, with a link to each page it changed, and the way on to the next one waiting.
+function Result({ slug, d, next }: { slug: string; d: Decision; next: string | null }) {
   const w = T.proposals
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => focusOnArrival(ref.current), [d])
@@ -418,14 +483,19 @@ function Result({ slug, d }: { slug: string; d: Decision }) {
         ) : (
           <p class="muted">{w.noPages}</p>
         )}
+        {next ? (
+          <p class="next-link">
+            <a href={proposalHref(slug, next)}>{w.nextPending}</a>
+          </p>
+        ) : null}
       </div>
     </div>
   )
 }
 
-function Problems({ error }: { error: ApiError | null }) {
+function Problems({ error, focus = true }: { error: ApiError | null; focus?: boolean }) {
   if (!error) return null
-  if (!error.problems.length) return <FormAlert error={error} />
+  if (!error.problems.length) return <FormAlert error={error} focus={focus} />
   return (
     <div class="alert" role="alert" tabIndex={-1}>
       <span class="kind">{T.kind.problem}</span>
@@ -439,26 +509,57 @@ function Problems({ error }: { error: ApiError | null }) {
   )
 }
 
+// The comment the person wrote and could not send (the proposal was decided meanwhile): kept on screen.
+function NotSent({ comment }: { comment: string }) {
+  if (!comment.trim()) return null
+  return <p class="muted not-sent">{T.proposals.notSent(comment.trim())}</p>
+}
+
+// A shortcut held back (`a` with a choice or a comment) says why where the person is: the keyboard
+// handler names it in an event on the button it moved to.
+export const HOLD_EVENT = 'rscb-shortcut-hold'
+
 export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
   const { brain, gate } = useBrain(slug)
   const r = reviewResource(slug, id)
   useFresh(r)
+  // Only the proposal on screen stays in the cache: a change in the wiki reloads it, and none other.
+  useEffect(() => () => forget(`brain:${slug}:proposals:review:${id}`), [slug, id])
+  const pendingList = inboxResource(slug, 'pending')
   const account = me().data.value?.account.id ?? ''
   const { choices, save, update, clear } = useChoices(account, id)
   const [busy, setBusy] = useState<'all' | 'some' | 'back' | null>(null)
   const [error, setError] = useState<ApiError | null>(null)
   const [said, setSaid] = useState<string | null>(null)
+  const [note, setNote] = useState<string | null>(null)
+  const [decidedMeanwhile, setDecidedMeanwhile] = useState(false)
+  const [focusOp, setFocusOp] = useState<number | null>(null)
   const [result, setResult] = useState<Decision | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   useLive(slug, undefined, false, (e) => {
     const n = decidedNotice(e, id, account)
     if (n) setNotice(n.text)
   })
+  useEffect(() => {
+    const hold = (e: Event) => setNote(String((e as CustomEvent).detail ?? ''))
+    document.addEventListener(HOLD_EVENT, hold)
+    return () => document.removeEventListener(HOLD_EVENT, hold)
+  }, [])
   const review = r.data.value
-  // A new version (it changed meanwhile): what still applies of the person's choices stays.
+  // A new version (it changed meanwhile): what still applies of the person's choices stays, worked out
+  // from the choices as they are now (an older render's would undo what was typed since).
   useEffect(() => {
     if (review) update((prev) => keepChoices(prev, review.ops))
   }, [review])
+  // After a 409 on an old base, the card that needs a look takes the keyboard once it shows as such.
+  useEffect(() => {
+    if (focusOp === null || !review) return
+    const card = document.getElementById(`op-${focusOp}`)
+    if (card && review.ops.find((o) => o.index === focusOp)?.stale) {
+      card.focus()
+      setFocusOp(null)
+    }
+  }, [review, focusOp])
   if (!brain) return gate
   const w = T.proposals
   if (!review) {
@@ -474,11 +575,18 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
   const several = pendingOps.length > 1
   const b = blockers(review.ops, choices)
   const groups = groupsOf(review.ops)
+  const chose = choices.selected.length > 0
+  const waiting = (pendingList.data.value?.items ?? []).filter((x) => x.id !== id && x.status === 'pending')
+  const backHref =
+    waiting.length || (pendingList.data.value?.total ?? 0) > 0 || p.status === 'pending'
+      ? inboxHref(slug)
+      : inboxHref(slug, p.status)
 
   const decide = async (how: 'all' | 'some' | 'back', current: Review) => {
     setBusy(how)
     setError(null)
     setSaid(null)
+    setNote(null)
     try {
       const d =
         how === 'back'
@@ -496,12 +604,24 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
     } catch (x) {
       const e = x as ApiError
       if (e.code === 'proposal_changed') {
-        setSaid(w.changedMeanwhile)
+        // The corrections stay, but they were written on what the person saw before.
+        setSaid(
+          Object.keys(choices.corrections).length ? `${w.changedMeanwhile} ${w.editOld}` : w.changedMeanwhile,
+        )
+        await r.reload()
+      } else if (e.code === 'stale_base') {
+        // A page moved on after the review: show it as an old base, keep everything, go to that card.
+        setError(e)
+        setFocusOp(e.problemOps[0] ?? null)
+        await r.reload()
+      } else if (e.code === 'already_decided') {
+        setDecidedMeanwhile(true)
+        invalidate(`brain:${slug}:basic`)
         await r.reload()
       } else {
         setError(e)
-        // Decided by someone else, or my role changed: the screen shows what is true now.
-        if (e.code === 'already_decided' || e.status === 403) {
+        // My role changed: the screen shows what I may do now.
+        if (e.status === 403) {
           invalidate(`brain:${slug}:basic`)
           void r.reload()
         }
@@ -510,12 +630,12 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
       setBusy(null)
     }
   }
-  const focusComment = () => document.getElementById('proposal-comment')?.focus()
+  const decided = decidedMeanwhile && p.status !== 'pending' && p.decidedByName && p.decidedAt
 
   return (
     <div class="proposal-view">
       <p class="back-link">
-        <a href={inboxHref(slug, p.status)}>{w.back}</a>
+        <a href={backHref}>{w.back}</a>
       </p>
       <WikiHead title={p.title}>
         <span class={`tag${p.status === 'pending' ? '' : ' warn'}`}>
@@ -531,19 +651,36 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
         {[proposer(p), w.sent(T.dateTime(p.createdAt)), w.changes(review.ops.length)].join(' · ')}
       </p>
       {notice ? (
-        <p class="alert warn" role="status">
+        <div class="alert warn" role="status">
           <span class="kind">{T.kind.warning}</span>
           <span>{notice}</span>
-        </p>
+          <NotSent comment={choices.comment} />
+        </div>
       ) : null}
-      {result ? <Result slug={slug} d={result} /> : null}
+      {decided ? (
+        <div class="alert warn" role="alert">
+          <span class="kind">{T.kind.warning}</span>
+          <span>
+            {w.decidedAlready(
+              w.statuses[p.status] ?? p.status,
+              p.decidedByName ?? '',
+              T.date(p.decidedAt ?? ''),
+            )}
+          </span>
+          <span>
+            {w.seeLog} <a href={logHref(slug)}>{w.brainLog}</a>.
+          </span>
+          <NotSent comment={choices.comment} />
+        </div>
+      ) : null}
+      {result ? <Result slug={slug} d={result} next={waiting[0]?.id ?? null} /> : null}
       {said ? (
         <p class="alert warn" role="status">
           <span class="kind">{T.kind.warning}</span>
           <span>{said}</span>
         </p>
       ) : null}
-      {p.decidedByName && !result ? (
+      {p.decidedByName && !result && !decided ? (
         <p class="meta decided-line">
           <DecidedLine p={p} />
         </p>
@@ -596,10 +733,22 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
                 key={i}
                 slug={slug}
                 o={o}
+                bornBy={
+                  review.ops.find(
+                    (x) =>
+                      x.index !== i &&
+                      ((x.op.op === 'create' && x.op.address === o.op.address) ||
+                        (x.op.op === 'move' && x.op.to === o.op.address)),
+                  )?.index ?? null
+                }
                 act={act}
                 choices={choices}
                 several={several}
-                onChoose={(on) => save({ ...choices, selected: choose(choices.selected, i, on, review.ops) })}
+                onChoose={(on) => {
+                  const next = choose(choices.selected, i, on, review.ops)
+                  setNote(chooseNote(choices.selected, next, i, on, review.ops))
+                  save({ ...choices, selected: next })
+                }}
                 onBase={(on) =>
                   save({
                     ...choices,
@@ -622,7 +771,7 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
           return (
             <fieldset key={gid} class="op-group" aria-describedby={`${gid}-why`}>
               <legend class="group-title">{w.together}</legend>
-              <p id={`${gid}-why`} class="muted small">
+              <p id={`${gid}-why`} class="muted small group-why">
                 {togetherWhy(g, review.ops)}
               </p>
               {cards}
@@ -646,23 +795,30 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
             onValue={(v) => save({ ...choices, comment: v })}
           />
           {several ? <p class="meta">{w.chosen(choices.selected.length, pendingOps.length)}</p> : null}
-          <div class="decide-actions">
-            <p class="decide-row">
-              <Button
-                kind="primary"
-                data-shortcut="approve"
-                aria-keyshortcuts="a"
-                pending={busy === 'all'}
-                pendingLabel={w.approving}
-                blocked={busy && busy !== 'all' ? blockedNow(true) : (blockedNow(false) ?? b.all)}
-                onClick={() => void decide('all', review)}
-              >
-                {w.approveAll}
-              </Button>
-            </p>
+          <p class="said ok" role="status">
+            {note}
+          </p>
+          <div class={`decide-actions${chose ? ' chose' : ''}`}>
+            {chose ? null : (
+              <p class="decide-row">
+                <Button
+                  kind={chose ? 'secondary' : 'primary'}
+                  data-shortcut="approve"
+                  data-hold={approveKeyHold(choices) ?? undefined}
+                  aria-keyshortcuts="a"
+                  pending={busy === 'all'}
+                  pendingLabel={w.approving}
+                  blocked={busy && busy !== 'all' ? blockedNow(true) : (blockedNow(false) ?? b.all)}
+                  onClick={() => void decide('all', review)}
+                >
+                  {chose ? w.approveAllIgnoring(pendingOps.length) : w.approveAll}
+                </Button>
+              </p>
+            )}
             {several ? (
               <p class="decide-row">
                 <Button
+                  kind={chose ? 'primary' : 'secondary'}
                   data-shortcut="approve-some"
                   data-needs={b.someNeedsComment ? 'proposal-comment' : undefined}
                   pending={busy === 'some'}
@@ -671,6 +827,22 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
                   onClick={() => void decide('some', review)}
                 >
                   {w.approveSome}
+                </Button>
+              </p>
+            ) : null}
+            {chose ? (
+              <p class="decide-row">
+                <Button
+                  kind={chose ? 'secondary' : 'primary'}
+                  data-shortcut="approve"
+                  data-hold={approveKeyHold(choices) ?? undefined}
+                  aria-keyshortcuts="a"
+                  pending={busy === 'all'}
+                  pendingLabel={w.approving}
+                  blocked={busy && busy !== 'all' ? blockedNow(true) : (blockedNow(false) ?? b.all)}
+                  onClick={() => void decide('all', review)}
+                >
+                  {chose ? w.approveAllIgnoring(pendingOps.length) : w.approveAll}
                 </Button>
               </p>
             ) : null}
@@ -683,13 +855,13 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
                 pending={busy === 'back'}
                 pendingLabel={w.returning}
                 blocked={busy && busy !== 'back' ? blockedNow(true) : (blockedNow(false) ?? b.back)}
-                onClick={() => (b.back ? focusComment() : void decide('back', review))}
+                onClick={() => void decide('back', review)}
               >
                 {w.returnAll}
               </Button>
             </p>
           </div>
-          <Problems error={error} />
+          <Problems error={error} focus={error?.code !== 'stale_base'} />
         </section>
       ) : error ? (
         <Problems error={error} />

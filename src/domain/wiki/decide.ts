@@ -105,6 +105,40 @@ async function teach(ctx: Ctx, brainId: string, row: Row, comment: string, retur
   })
 }
 
+// What a person may correct before approving (spec B2: «Edit de una operación»): the words of a new page,
+// of an edit and of a merge, and for an edit the revision they saw. Never tags or sources, never another
+// page: a correction is not a way to rewrite what the agent proposed into something else.
+const CORRECTABLE: Record<string, readonly string[]> = {
+  create: ['title', 'summary', 'body'],
+  edit: ['title', 'summary', 'body', 'revision'],
+  merge: ['body'],
+}
+function overlay(op: Op, raw: unknown, i: number, problems: Problem[]): Record<string, unknown> | null {
+  const allowed = CORRECTABLE[op.op] ?? []
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    problems.push({ op: i, message: 'A correction is an object of the fields you edited.' })
+    return null
+  }
+  const out: Record<string, unknown> = { ...op }
+  for (const [key, v] of Object.entries(raw)) {
+    if (!allowed.includes(key)) {
+      problems.push({
+        op: i,
+        message: allowed.length
+          ? `A correction of a ${op.op} changes only ${allowed.join(', ')}; not "${key}".`
+          : `A ${op.op} operation cannot be corrected; return it instead.`,
+      })
+    } else if (key === 'revision') {
+      if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 1)
+        problems.push({ op: i, message: '"revision" is the revision of the page you saw.' })
+      else out.baseRevision = v
+    } else if (typeof v !== 'string') {
+      problems.push({ op: i, message: `"${key}" is text.` })
+    } else out[key] = v
+  }
+  return out
+}
+
 export type Decision = { proposal: Proposal; ops: ProposalOp[]; applied: Revised[] }
 
 export type ApproveInput = {
@@ -138,8 +172,14 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
       const i = Number(k)
       if (!all.includes(i))
         throw invalid(`The proposal has no operation ${k}.`, 'Correct an existing operation.')
-      const op = readOp(raw, i, problems)
       const was = ops[i] as ProposalOp
+      // The fields the person edited, laid over the stored operation (a whole operation is still read,
+      // as before). Either way the result is checked like any operation, and an edit's base revision is
+      // the one the person saw: the base check below runs for corrected edits too.
+      const merged =
+        raw !== null && typeof raw === 'object' && 'op' in raw ? raw : overlay(was.op, raw, i, problems)
+      if (!merged) continue
+      const op = readOp(merged, i, problems)
       if (op && (op.op !== was.op.op || op.address !== was.op.address)) {
         problems.push({ op: i, message: 'A correction keeps the kind of operation and its page.' })
       } else if (op) {
@@ -182,7 +222,7 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     const reviewedBase = new Set(input.baseReviewed ?? [])
     for (const i of approve) {
       const o = plain[i] as Op
-      if (o.op !== 'edit' || o.baseRevision === undefined || corrected.has(i) || reviewedBase.has(i)) continue
+      if (o.op !== 'edit' || o.baseRevision === undefined || reviewedBase.has(i)) continue
       const p = await db.one(
         'SELECT p.revision FROM page_addresses a JOIN pages p ON p.id = a.page_id WHERE a.brain_id = $1 AND a.address = $2',
         [brainId, o.address],

@@ -18,6 +18,7 @@ import {
   type InboxPage,
   inboxHref,
   inboxResource,
+  orderOf,
   PAGE_SIZE,
   proposalHref,
   STATUSES,
@@ -95,7 +96,7 @@ export function ProposalsInbox({ slug }: { slug: string }) {
     (next) =>
       api.call<InboxPage>('proposals', {
         path: { slug },
-        query: { status, limit: PAGE_SIZE, cursor: next },
+        query: { status, limit: PAGE_SIZE, cursor: next, order: orderOf(status) },
       }),
     (x) => x.id,
   )

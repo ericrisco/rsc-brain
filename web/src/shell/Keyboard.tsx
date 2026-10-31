@@ -68,16 +68,19 @@ export function Keyboard({
       } else if (id === 'go-proposals' && signedIn && brain) {
         route(`/b/${encodeURIComponent(brain)}/proposals`)
       } else if ((id === 'approve' || id === 'return') && signedIn) {
-        // What "Approve all" or "Return" of the proposal on screen does; where it cannot be pressed yet,
-        // the keyboard goes to what is missing (the comment) or to the button, which says why.
+        // `a` does what «Approve all» does, but only when the person chose nothing and wrote nothing;
+        // otherwise it goes to the button and says why. `r` never sends: it goes to the comment it needs,
+        // or to «Return», which Enter presses.
         const b = document.querySelector<HTMLElement>(`main [data-shortcut="${id}"]`)
         if (b) {
           e.preventDefault()
-          if (b.getAttribute('aria-disabled') !== 'true') b.click()
-          else {
-            const needs = b.dataset.needs ? document.getElementById(b.dataset.needs) : null
-            ;(needs ?? b).focus()
-          }
+          const needs = b.dataset.needs ? document.getElementById(b.dataset.needs) : null
+          if (id === 'approve' && b.dataset.hold) {
+            b.focus()
+            document.dispatchEvent(new CustomEvent('rscb-shortcut-hold', { detail: b.dataset.hold }))
+          } else if (id === 'approve' && b.getAttribute('aria-disabled') !== 'true') b.click()
+          else if (b.getAttribute('aria-disabled') === 'true' && needs) needs.focus()
+          else b.focus()
         }
       } else if (id === 'edit' && signedIn) {
         // What "Edit" above a page does; on a page that has no Edit (not a curator), nothing.

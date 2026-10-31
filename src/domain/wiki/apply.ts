@@ -237,7 +237,6 @@ export async function applyOps(
         if (
           o.baseRevision !== undefined &&
           (startRevision.get(String(p.id)) ?? Number(p.revision)) !== o.baseRevision &&
-          !it.corrected &&
           !it.baseReviewed
         ) {
           fail(

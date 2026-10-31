@@ -160,4 +160,163 @@ describe('the proposals inbox of the web (PR21)', { skip: skipPg }, () => {
     const p = review.body.proposal as Named
     assert.deepEqual([p.status, p.authorName, p.decidedByName], ['approved', 'Factory', 'Eric'])
   })
+
+  // Corrections are the fields a person edited (title, summary, body) and the revision they saw, laid over
+  // the stored operation by the server; never a whole copy of the page (PR21 review).
+  const page = async (address: string, body: string) => {
+    const r = await w.callWeb(ericWeb, 'POST', '/v1/brains/inbox/wiki/changes', {
+      op: 'create',
+      address,
+      type: 'topic',
+      title: `Page ${address}`,
+      summary: 'A page.',
+      body,
+      reason: 'Seed.',
+    })
+    assert.equal(r.status, 201, r.text)
+  }
+  const editTitle = async (address: string, base: number) => {
+    const r = await w.call(factory.key, 'POST', '/v1/brains/inbox/proposals', {
+      title: `Retitle ${address}`,
+      ops: [{ op: 'edit', address, baseRevision: base, title: 'Agent title', reason: 'Clearer.' }],
+    })
+    assert.equal(r.status, 201, r.text)
+    return (r.body.proposal as { id: string }).id
+  }
+  const fp = async (id: string) =>
+    String((await w.callWeb(ericWeb, 'GET', `/v1/proposals/${id}/review`)).body.fingerprint)
+  const read = async (address: string) =>
+    (await w.call(eric.key, 'GET', `/v1/brains/inbox/pages/${address}`)).body.page as {
+      title: string
+      body: string
+      revision: number
+    }
+
+  it('a correction of the title only changes the title; a purged text never comes back', async () => {
+    await page('corr/purge', 'Call Jane Roe on Monday.')
+    await w.callWeb(ericWeb, 'PATCH', '/v1/brains/inbox/pages/corr/purge', {
+      baseRevision: 1,
+      title: 'Calls',
+    })
+    const id = await editTitle('corr/purge', 2)
+    const seen = await fp(id)
+    const admin = await w.person('Purger', { isAdmin: true })
+    const purged = await w.callWeb(await w.web(admin.id), 'POST', '/v1/brains/inbox/wiki/purge', {
+      address: 'corr/purge',
+      revision: 1,
+      text: ['Jane Roe'],
+      reason: 'personal data',
+    })
+    assert.equal(purged.status, 200, purged.text)
+    const now = await read('corr/purge')
+    const r = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
+      fingerprint: seen,
+      corrections: { 0: { title: 'Person title', revision: now.revision } },
+    })
+    assert.equal(r.status, 200, r.text)
+    const after = await read('corr/purge')
+    assert.equal(after.title, 'Person title')
+    assert.ok(!after.body.includes('Jane Roe'), after.body)
+  })
+
+  it('a correction written on a revision that moved on is refused (409 stale_base), never a silent revert', async () => {
+    await page('corr/race', 'First body.')
+    const id = await editTitle('corr/race', 1)
+    const seen = await fp(id)
+    // A colleague changes the body meanwhile.
+    const moved = await w.callWeb(ericWeb, 'PATCH', '/v1/brains/inbox/pages/corr/race', {
+      baseRevision: 1,
+      body: 'A colleague’s newer body.',
+    })
+    assert.equal(moved.status, 200, moved.text)
+    const partial = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
+      fingerprint: seen,
+      corrections: { 0: { title: 'Person title', revision: 1 } },
+    })
+    assert.deepEqual([partial.status, partial.body.error?.code], [409, 'stale_base'], partial.text)
+    // The whole operation sent back as a correction (the old way) is checked the same.
+    const whole = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
+      fingerprint: seen,
+      corrections: {
+        0: {
+          op: 'edit',
+          address: 'corr/race',
+          baseRevision: 1,
+          title: 'Person title',
+          body: 'First body.',
+          reason: 'r',
+        },
+      },
+    })
+    assert.deepEqual([whole.status, whole.body.error?.code], [409, 'stale_base'], whole.text)
+    assert.equal((await read('corr/race')).body, 'A colleague’s newer body.')
+    // Written on the revision now there, it applies, and only the title changes.
+    const ok = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
+      fingerprint: seen,
+      corrections: { 0: { title: 'Person title', revision: 2 } },
+    })
+    assert.equal(ok.status, 200, ok.text)
+    const p = await read('corr/race')
+    assert.deepEqual([p.title, p.body], ['Person title', 'A colleague’s newer body.'])
+  })
+
+  it('a correction carries only title, summary and body', async () => {
+    await page('corr/fields', 'Body.')
+    const id = await editTitle('corr/fields', 1)
+    for (const bad of [{ tags: ['x'] }, { sources: [] }, { title: 3 }, { address: 'elsewhere/x' }]) {
+      const r = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
+        fingerprint: await fp(id),
+        corrections: { 0: { ...bad, revision: 1 } },
+      })
+      assert.deepEqual([r.status, r.body.error?.code], [400, 'invalid_request'], JSON.stringify(bad))
+    }
+  })
+
+  it('order=oldest lists what waited longest first, by pages; another order is refused', async () => {
+    const ids: string[] = []
+    for (const a of ['order/a', 'order/b', 'order/c']) {
+      ids.push(await propose(a, `Order ${a}`))
+      w.advance(1000)
+    }
+    const seen: string[] = []
+    let cursor = ''
+    for (;;) {
+      const r = await w.callWeb(
+        ericWeb,
+        'GET',
+        `/v1/brains/inbox/proposals?order=oldest&limit=2${cursor ? `&cursor=${cursor}` : ''}`,
+      )
+      assert.equal(r.status, 200, r.text)
+      seen.push(...(r.body.items as Array<{ id: string }>).map((x) => x.id))
+      if (!r.body.next) break
+      cursor = String(r.body.next)
+    }
+    const mine = seen.filter((x) => ids.includes(x))
+    assert.deepEqual(mine, ids)
+    assert.equal(new Set(seen).size, seen.length, 'no proposal twice across pages')
+    const bad = await w.callWeb(ericWeb, 'GET', '/v1/brains/inbox/proposals?order=random')
+    assert.deepEqual([bad.status, bad.body.error?.code], [400, 'invalid_request'])
+  })
+
+  it('counts with mine=1 are of my proposals only; «old» starts past exactly 30 days', async () => {
+    const mine = await w.call(factory.key, 'GET', '/v1/brains/inbox/proposals?mine=1&status=all')
+    const all = await w.call(eric.key, 'GET', '/v1/brains/inbox/proposals?status=all')
+    const sum = (c: Record<string, number>) => Object.values(c).reduce((a, b) => a + b, 0)
+    assert.equal(sum(mine.body.counts as Record<string, number>), mine.body.total)
+    const ericOwn = await w.call(eric.key, 'GET', '/v1/brains/inbox/proposals?mine=1&status=all')
+    assert.equal(sum(ericOwn.body.counts as Record<string, number>), 0)
+    assert.ok(sum(all.body.counts as Record<string, number>) >= (mine.body.total as number))
+    const id = await editTitle('corr/fields', 1)
+    const oldOf = async () =>
+      (
+        (await w.call(eric.key, 'GET', '/v1/brains/inbox/proposals?limit=200')).body.items as Array<{
+          id: string
+          old: boolean
+        }>
+      ).find((x) => x.id === id)?.old
+    w.advance(30 * 24 * 60 * 60 * 1000)
+    assert.equal(await oldOf(), false, 'exactly 30 days is not old yet')
+    w.advance(1)
+    assert.equal(await oldOf(), true)
+  })
 })

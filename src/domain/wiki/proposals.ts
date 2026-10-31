@@ -542,7 +542,14 @@ const STATUSES: ProposalStatus[] = [
 export async function listProposals(
   ctx: Ctx,
   slug: string,
-  o: { status?: ProposalStatus | 'all'; cursor?: string; limit?: number; mine?: boolean },
+  o: {
+    status?: ProposalStatus | 'all'
+    cursor?: string
+    limit?: number
+    mine?: boolean
+    // oldest: what waited longest first (the inbox of the web reviews pending ones in that order).
+    order?: 'newest' | 'oldest'
+  },
 ): Promise<PageOf<InboxItem> & { counts?: Record<ProposalStatus, number> }> {
   const { brain } = await inBrain(ctx, { slug })
   const status = o.status ?? 'pending'
@@ -564,8 +571,8 @@ export async function listProposals(
             (SELECT name FROM accounts a WHERE a.id = p.author_id) AS author_name,
             (SELECT name FROM accounts a WHERE a.id = p.decided_by) AS decider_name
        FROM proposals p
-      WHERE p.brain_id = $1${filter} AND ($2::timestamptz IS NULL OR (p.created_at, p.id) < ($2, $3))
-      ORDER BY p.created_at DESC, p.id DESC LIMIT $4`,
+      WHERE p.brain_id = $1${filter} AND ($2::timestamptz IS NULL OR (p.created_at, p.id) ${o.order === 'oldest' ? '>' : '<'} ($2, $3))
+      ORDER BY p.created_at ${o.order === 'oldest' ? 'ASC, p.id ASC' : 'DESC, p.id DESC'} LIMIT $4`,
     params,
   )
   const totalArgs: unknown[] = [brain.id]

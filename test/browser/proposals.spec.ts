@@ -34,6 +34,9 @@ async function behind(
   })
 }
 
+// The keyboard leaves any field (a heading opened by a link is not focusable on a first load).
+const away = (page: Page) => page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+
 const card = (page: Page, n: number) => page.getByRole('article', { name: new RegExp(`^Change ${n}:`) })
 
 test.describe('the list', () => {
@@ -57,6 +60,8 @@ test.describe('the list', () => {
     )
     const items = page.getByRole('list', { name: 'Pending proposals' }).getByRole('listitem')
     await expect(items).toHaveCount(3)
+    // Oldest first: what has waited longest is reviewed first.
+    await expect(items.first()).toContainText('New page: hooks that work')
     const old = items.filter({ hasText: 'New page: hooks that work' })
     await expect(old).toContainText('old')
     await expect(old).toContainText('RSC Factory')
@@ -137,9 +142,13 @@ test.describe('a proposal', () => {
     await expect(group).toContainText('Change 2 needs change 1.')
     await expect(group.getByRole('article')).toHaveCount(2)
     await expect(card(page, 3)).toContainText('Move people/ana to people/ana-ruiz')
-    // Choosing change 2 brings change 1 (it needs it).
+    // Choosing change 2 brings change 1 (it needs it), and says so.
     await page.getByRole('checkbox', { name: 'Approve change 2' }).check()
     await expect(page.getByRole('checkbox', { name: 'Approve change 1' })).toBeChecked()
+    await expect(page.getByText('Also chose change 1, which change 2 needs.')).toBeVisible()
+    await page.getByRole('checkbox', { name: 'Approve change 1' }).uncheck()
+    await expect(page.getByRole('checkbox', { name: 'Approve change 2' })).not.toBeChecked()
+    await expect(page.getByText('Also left out change 2, which needs change 1.')).toBeVisible()
     await audit(page, 'proposal with a group')
 
     await page.goto(`${INBOX}/prp_growth3`)
@@ -154,18 +163,26 @@ test.describe('a proposal', () => {
     const all = page.getByRole('button', { name: 'Approve all' })
     await expect(all).toHaveAttribute('aria-disabled', 'true')
     await expect(page.getByText('Change 1 was written on an older version of its page')).toBeVisible()
-    await stale.getByRole('button', { name: 'Base reviewed' }).click()
-    await expect(stale.getByRole('button', { name: 'Base reviewed' })).toHaveAttribute('aria-pressed', 'true')
+    // What the page will be: the colleague's newer lines that approving drops show as removed.
+    const will = stale.getByRole('region', { name: 'What the page will be after approval' })
+    await expect(will.locator('del').filter({ hasText: 'Cut the greeting.' })).toBeVisible()
+    const replace = stale.getByRole('button', { name: 'I’ve checked — replace the newer changes' })
+    await replace.click()
+    await expect(replace).toHaveAttribute('aria-pressed', 'true')
     await expect(all).not.toHaveAttribute('aria-disabled', 'true')
     await audit(page, 'proposal with an old base')
     await all.click()
     const done = page.getByRole('status').filter({ hasText: 'Approved. These pages changed:' })
     await expect(done).toBeVisible()
+    await expect(page.getByRole('link', { name: '← All proposals' })).toHaveAttribute('href', INBOX)
     await expect(done.getByRole('link', { name: 'audience/retention' })).toHaveAttribute(
       'href',
       '/b/growth/pages/audience/retention',
     )
     await expect(page.getByRole('button', { name: 'Approve all' })).toHaveCount(0)
+    // On to the next one waiting.
+    await done.getByRole('link', { name: 'Next pending proposal →' }).click()
+    await expect(page).toHaveURL(/\/proposals\/prp_growth1$/)
   })
 
   test('CA2: at 375 px a curator approves two changes and returns the third with a comment', async ({
@@ -247,10 +264,19 @@ test.describe('a proposal', () => {
     await expect(comment).toHaveValue('a rare case')
     await expect(page.getByRole('heading', { level: 1, name: 'Merge the two retention pages' })).toBeVisible()
     await comment.fill('')
-    // On a checkbox (it takes no text) `r` is the shortcut: the keyboard goes to the comment.
+    // On a change's checkbox (it takes no text) `r` is the shortcut: the keyboard goes to the comment.
     await page.getByRole('checkbox', { name: 'Approve change 3' }).focus()
     await page.keyboard.press('r')
     await expect(comment).toBeFocused()
+    // With a comment, `r` goes to «Return» and never sends by itself: Enter or a click sends.
+    await comment.fill('Not now.')
+    await away(page)
+    await page.keyboard.press('r')
+    const back = page.getByRole('button', { name: 'Return', exact: true })
+    await expect(back).toBeFocused()
+    await page.waitForTimeout(200)
+    await expect(page.getByRole('status').filter({ hasText: 'Returned' })).toHaveCount(0)
+    await comment.fill('')
     // Tab reaches the choices and the buttons, each with a visible focus.
     await page.locator('main h1').focus()
     let reached = false
@@ -292,9 +318,12 @@ test.describe('a proposal', () => {
     await expect(card(page, 1)).toContainText('edited by you, not sent yet')
     const sent = page.waitForRequest((r) => r.url().endsWith('/approve'))
     await page.getByRole('button', { name: 'Approve all' }).click()
-    const body = (await sent).postDataJSON() as { corrections: Record<string, { body: string; op: string }> }
-    expect(body.corrections['0']?.body).toBe('The hook goes first. Short intros keep viewers.')
-    expect(body.corrections['0']?.op).toBe('edit')
+    const body = (await sent).postDataJSON() as { corrections: Record<string, unknown> }
+    // Only what the person edited, and the revision of the page they saw: never a copy of the page.
+    expect(body.corrections['0']).toEqual({
+      body: 'The hook goes first. Short intros keep viewers.',
+      revision: 3,
+    })
     await expect(page.getByRole('status').filter({ hasText: 'Approved.' })).toBeVisible()
   })
 })
@@ -312,6 +341,7 @@ test.describe('others meanwhile', () => {
     await behind(baseURL as string, s.id, 'changed', { id: 'prp_growth1' })
     await page.getByRole('button', { name: 'Approve selected & return the rest' }).click()
     await expect(page.getByText('The proposal changed while you were looking at it')).toBeVisible()
+    await expect(page.getByText('Your edit was written on an older version — check it.')).toHaveCount(0)
     await expect(page.getByText('(revised)')).toBeVisible()
     await expect(page.getByRole('checkbox', { name: 'Approve change 2' })).toBeChecked()
     await expect(page.getByLabel('Comment for the agent')).toHaveValue('Only the hooks page.')
@@ -337,6 +367,7 @@ test.describe('others meanwhile', () => {
     await expect(page.getByText('Approved by Eva just now. This proposal is read-only now.')).toBeVisible({
       timeout: 3_000,
     })
+    await expect(page.getByText('Your comment was not sent: “Kept while Eva decides.”')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Approve all' })).toHaveCount(0)
     await expect(page.getByRole('checkbox')).toHaveCount(0)
   })
@@ -352,9 +383,140 @@ test.describe('others meanwhile', () => {
       Object.defineProperty(window, 'EventSource', { value: undefined })
     })
     await page.goto(`${INBOX}/prp_growth2`)
+    await page.getByLabel('Comment for the agent').fill('My words for the agent.')
     await behind(baseURL as string, s.id, 'decided', { id: 'prp_growth2', by: 'Eva', status: 'returned' })
-    await page.getByRole('button', { name: 'Approve all' }).click()
-    await expect(page.getByText(/Already returned by Eva/)).toBeVisible()
+    await page.getByRole('button', { name: /^Approve all/ }).click()
+    await expect(page.getByText('Your comment was not sent: “My words for the agent.”')).toBeVisible()
+    await expect(page.getByText(/Returned by Eva on \d{1,2} \w{3} \d{4}/)).toBeVisible()
+    await expect(page.getByText(/T\d\d:\d\d/)).toHaveCount(0)
+    await expect(page.getByRole('link', { name: 'brain log' })).toHaveAttribute('href', '/b/growth/wiki/log')
     await expect(page.getByRole('button', { name: 'Approve all' })).toHaveCount(0)
   })
+})
+
+test.describe('the review of PR21', () => {
+  test('`a` never approves past a choice or a comment: it says why and goes to the buttons', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    let approved = 0
+    page.on('request', (r) => {
+      if (r.url().endsWith('/approve')) approved += 1
+    })
+    await page.goto(`${INBOX}/prp_growth1`)
+    await page.getByRole('checkbox', { name: 'Approve change 1' }).check()
+    // With a choice, «Approve selected» is the main button and «Approve all» says it ignores the choice.
+    const some = page.getByRole('button', { name: 'Approve selected & return the rest' })
+    await expect(some).toHaveClass(/primary/)
+    const all = page.getByRole('button', { name: 'Approve all 3 (ignore my selection)' })
+    await expect(all).toHaveClass(/secondary/)
+    await away(page)
+    await page.keyboard.press('a')
+    await expect(page.getByText('You chose some changes: “a” does not approve them all.')).toBeVisible()
+    await expect(all).toBeFocused()
+    await page.getByRole('checkbox', { name: 'Approve change 1' }).uncheck()
+    await page.getByLabel('Comment for the agent').fill('Half of it.')
+    await away(page)
+    await page.keyboard.press('a')
+    await expect(page.getByText('You wrote a comment: “a” does not approve it all.')).toBeVisible()
+    expect(approved).toBe(0)
+  })
+
+  test('a page that moved on after the review: 409 stale_base reloads, the stale card takes the keyboard', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await page.goto(`${INBOX}/prp_growth1`)
+    await page.getByLabel('Comment for the agent').fill('Kept through the reload.')
+    await fetch(`${baseURL}/__fixture/scenarios/${s.id}/wiki-edit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        brain: 'growth',
+        address: 'audience/intros',
+        body: 'A colleague’s newer intro.',
+      }),
+    })
+    await page.getByLabel('Comment for the agent').fill('')
+    await page.getByRole('button', { name: 'Approve all' }).click()
+    const stale = card(page, 1)
+    await expect(stale).toContainText('Written on an older version')
+    await expect(stale).toBeFocused()
+    await expect(
+      stale.getByRole('button', { name: 'I’ve checked — replace the newer changes' }),
+    ).toBeVisible()
+  })
+
+  test('an edit kept through a new version says to check it', async ({ page, context, baseURL }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await page.goto(`${INBOX}/prp_growth1`)
+    const first = card(page, 2)
+    await first.getByRole('button', { name: 'Edit', exact: true }).click()
+    await first.getByLabel('Title').fill('Hooks that hold')
+    await first.getByRole('button', { name: 'Use my version' }).click()
+    await behind(baseURL as string, s.id, 'changed', { id: 'prp_growth1' })
+    await page.getByRole('button', { name: 'Approve all' }).click()
+    await expect(page.getByText('Your edit was written on an older version — check it.')).toBeVisible()
+    await expect(card(page, 2)).toContainText('edited by you, not sent yet')
+  })
+
+  test('a blocked button takes the keyboard to what it needs; a new page reads as plain text', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.setViewportSize({ width: 375, height: 812 })
+    await page.goto(`${INBOX}/prp_growth1`)
+    // A person can press a button that says why it is off (Playwright waits for enabled ones: forced).
+    await page.getByRole('button', { name: 'Return', exact: true }).click({ force: true })
+    await expect(page.getByLabel('Comment for the agent')).toBeFocused()
+    const fresh = card(page, 2)
+    await expect(fresh.getByText('New page', { exact: true })).toBeVisible()
+    await expect(fresh.locator('ins')).toHaveCount(0)
+    await expect(fresh).toContainText('Start with the question of the video, before the greeting.')
+    // The whole head of a card is the tap target of its choice, 44 px at least.
+    const box = await fresh.locator('label.op-head').boundingBox()
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44)
+    await fresh.locator('label.op-head').click({ position: { x: (box?.width ?? 100) - 10, y: 10 } })
+    await expect(page.getByRole('checkbox', { name: 'Approve change 2' })).toBeChecked()
+  })
+
+  test('without a live feed, a decision still updates the counter and the inbox', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'EventSource', { value: undefined })
+    })
+    await page.goto(`${INBOX}/prp_growth2`)
+    await expect(page.getByRole('banner').getByRole('link', { name: /3 proposals to review/ })).toBeVisible()
+    await page.getByRole('button', { name: 'Approve all' }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Approved.' })).toBeVisible()
+    await expect(page.getByRole('banner').getByRole('link', { name: /2 proposals to review/ })).toBeVisible()
+    await page.getByRole('link', { name: '← All proposals' }).click()
+    await expect(page.getByRole('list', { name: 'Pending proposals' }).getByRole('listitem')).toHaveCount(2)
+  })
+})
+
+test('a checkbox outside a proposal still holds single-letter shortcuts back, as before', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth/journal')
+  await page.getByText('Filter the sessions').click()
+  const box = page.getByRole('checkbox').first()
+  await box.focus()
+  await page.keyboard.press('g')
+  await page.keyboard.press('w')
+  await page.waitForTimeout(200)
+  await expect(page).toHaveURL(/\/b\/growth\/journal$/)
 })

@@ -1216,6 +1216,7 @@ const HAND: Record<string, Op> = {
       mine: '1 for yours only.',
       cursor: 'The next page.',
       limit: 'How many (1–200).',
+      order: 'newest (the default) or oldest first.',
     },
     reply: INBOX,
   },
@@ -1232,7 +1233,11 @@ const HAND: Record<string, Op> = {
         fingerprint: s('The fingerprint of the review you saw.'),
         approve: list(n('Operation number.'), 'Approve only these; the rest goes back.'),
         comment: s('Why the rest goes back (needed when approving part).'),
-        corrections: { type: 'object', description: 'Operation number → the operation corrected.' },
+        corrections: {
+          type: 'object',
+          description:
+            'Operation number → the fields you edited (title, summary, body) and, for an edit, the revision of the page you saw; laid over the operation, checked like any. A whole operation is still accepted.',
+        },
         baseReviewed: list(n('Operation number.'), 'Old bases you reviewed.'),
       },
       ['approve', 'comment', 'corrections', 'baseReviewed'],

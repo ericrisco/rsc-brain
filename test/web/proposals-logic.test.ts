@@ -7,10 +7,14 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   approveBody,
+  approveKeyHold,
   blockers,
   type Choices,
   choose,
+  chooseNote,
+  correctionOf,
   decidedNotice,
+  editIsOld,
   groupsOf,
   inboxDraftKey,
   keepChoices,
@@ -76,7 +80,7 @@ describe('needsBase', () => {
     const stale = op(1, { stale: { base: null, current: {}, proposed: {} } })
     assert.equal(needsBase(stale, none), true)
     assert.equal(needsBase(stale, { ...none, baseReviewed: [1] }), false)
-    assert.equal(needsBase(stale, { ...none, corrections: { 1: { op: 'edit', address: 'a/p1' } } }), false)
+    assert.equal(needsBase(stale, { ...none, corrections: { 1: { body: 'mine' } } }), false)
     assert.equal(needsBase(op(0), none), false)
   })
 })
@@ -84,7 +88,7 @@ describe('needsBase', () => {
 describe('blockers', () => {
   const ops = [op(0), op(1), op(2, { stale: { base: null, current: {}, proposed: {} } })]
   it('approve all waits for every old base; it needs no comment', () => {
-    assert.match(blockers(ops, none).all ?? '', /Change 3 .*older version.*Base reviewed/)
+    assert.match(blockers(ops, none).all ?? '', /Change 3 .*older version.*confirm you checked it/)
     assert.equal(blockers(ops, { ...none, baseReviewed: [2] }).all, null)
   })
   it('approve selected needs a choice that is not everything, and a comment for the rest', () => {
@@ -114,10 +118,10 @@ describe('approveBody', () => {
     op(2),
   ]
   it('everything: only the fingerprint, and what was corrected or reviewed', () => {
-    const c = { ...none, baseReviewed: [1], corrections: { 0: { op: 'edit', address: 'a/x', body: 'mine' } } }
+    const c = { ...none, baseReviewed: [1], corrections: { 0: { body: 'mine', revision: 1 } } }
     assert.deepEqual(approveBody('fp1', ops, c, 'all'), {
       fingerprint: 'fp1',
-      corrections: { 0: { op: 'edit', address: 'a/x', body: 'mine' } },
+      corrections: { 0: { body: 'mine', revision: 1 } },
       baseReviewed: [1],
     })
     assert.deepEqual(approveBody('fp1', ops, none, 'all'), { fingerprint: 'fp1' })
@@ -127,7 +131,7 @@ describe('approveBody', () => {
       selected: [2, 0],
       comment: '  The second is wrong. ',
       baseReviewed: [1],
-      corrections: { 1: { op: 'create', address: 'a/p1' } },
+      corrections: { 1: { title: 'Mine' } },
     }
     assert.deepEqual(approveBody('fp2', ops, c, 'some'), {
       fingerprint: 'fp2',
@@ -212,5 +216,54 @@ describe('inboxDraftKey', () => {
     assert.match(a, /^inbox\.[0-9a-f]{8}$/)
     assert.notEqual(a, inboxDraftKey('acc_ana', 'prp_1'))
     assert.notEqual(a, inboxDraftKey('acc_eric', 'prp_2'))
+  })
+})
+
+describe('correctionOf', () => {
+  const edit = op(0, {
+    op: { op: 'edit', address: 'a/x', baseRevision: 2, title: 'Agent', body: 'Agent body.', reason: 'r' },
+    before: { revision: 3, title: 'Page', body: 'Page body.', summary: 'S.' },
+    after: { revision: 3, title: 'Agent', body: 'Agent body.', summary: 'S.' },
+  })
+  it('only the fields the person changed, and the revision of the page they saw', () => {
+    assert.deepEqual(correctionOf(edit, { title: 'Mine', body: 'Agent body.' }), {
+      title: 'Mine',
+      revision: 3,
+    })
+    assert.equal(correctionOf(edit, { title: 'Agent', body: 'Agent body.' }), null)
+  })
+  it('a new page has no revision to send', () => {
+    const create = op(1, {
+      op: { op: 'create', address: 'a/y', reason: 'r' },
+      after: { title: 'T', body: 'B' },
+    })
+    assert.deepEqual(correctionOf(create, { title: 'T', body: 'Mine' }), { body: 'Mine' })
+  })
+})
+
+describe('editIsOld', () => {
+  it('an edit written on another revision than the one now shown is to be checked', () => {
+    const o = op(0, { before: { revision: 4 } })
+    assert.equal(editIsOld(o, { ...none, corrections: { 0: { title: 'x', revision: 3 } } }), true)
+    assert.equal(editIsOld(o, { ...none, corrections: { 0: { title: 'x', revision: 4 } } }), false)
+    assert.equal(editIsOld(o, none), false)
+  })
+})
+
+describe('chooseNote', () => {
+  const ops = [op(0), op(1, { dependsOn: [0] }), op(2)]
+  it('says what came along or went with a choice', () => {
+    assert.equal(chooseNote([], [0, 1], 1, true, ops), 'Also chose change 1, which change 2 needs.')
+    assert.equal(chooseNote([0, 1], [], 0, false, ops), 'Also left out change 2, which needs change 1.')
+    assert.equal(chooseNote([], [2], 2, true, ops), null)
+  })
+})
+
+describe('approveKeyHold', () => {
+  it('`a` approves all only with nothing chosen and nothing written', () => {
+    assert.equal(approveKeyHold(none), null)
+    assert.match(approveKeyHold({ ...none, selected: [0] }) ?? '', /You chose some changes/)
+    assert.match(approveKeyHold({ ...none, comment: 'x' }) ?? '', /You wrote a comment/)
+    assert.equal(approveKeyHold({ ...none, comment: '   ' }), null)
   })
 })

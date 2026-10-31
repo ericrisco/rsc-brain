@@ -346,9 +346,10 @@ export function listOf(inbox: Inbox, query: URLSearchParams, empty: boolean): An
   }
   const limit = Math.min(200, Math.max(1, Number(query.get('limit') ?? 50) || 50))
   const all = empty ? [] : inbox.proposals
+  const oldest = query.get('order') === 'oldest'
   const matching = all
     .filter((p) => status === 'all' || p.status === status)
-    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0) * (oldest ? -1 : 1))
   const cursor = query.get('cursor')
   const from = cursor ? Number(cursor) : 0
   const page = matching.slice(from, from + limit)
@@ -569,9 +570,44 @@ export function approve(
         { problems: missing },
       ),
     }
-  const corrections = (body.corrections ?? {}) as Record<string, unknown>
+  // A correction is the fields the person edited and the revision they saw, laid over the operation, as
+  // the server does; an edit's base check then runs on the revision the correction was written on.
+  const raw = (body.corrections ?? {}) as Record<string, Record<string, unknown>>
+  const corrected = new Map<number, Op>()
+  for (const [k, c] of Object.entries(raw)) {
+    const x = p.ops[Number(k)]
+    const allowed =
+      x?.op.op === 'edit'
+        ? ['title', 'summary', 'body', 'revision']
+        : x?.op.op === 'create'
+          ? ['title', 'summary', 'body']
+          : x?.op.op === 'merge'
+            ? ['body']
+            : []
+    const bad = !x || !c || typeof c !== 'object' || Object.keys(c).some((key) => !allowed.includes(key))
+    if (bad)
+      return {
+        answer: err(
+          400,
+          'invalid_request',
+          'A correction has problems; nothing was applied.',
+          'Fix each one listed in "problems".',
+          {
+            problems: [
+              { op: Number(k), message: 'A correction changes only the title, the summary or the text.' },
+            ],
+          },
+        ),
+      }
+    const { revision, ...fields } = c
+    corrected.set(Number(k), {
+      ...x.op,
+      ...fields,
+      ...(typeof revision === 'number' ? { baseRevision: revision } : {}),
+    } as Op)
+  }
   for (const i of chosen) {
-    const o = p.ops[i]?.op as Op
+    const o = corrected.get(i) ?? (p.ops[i]?.op as Op)
     const before = pageState(wiki, o.address)
     const base = typeof o.baseRevision === 'number' ? o.baseRevision : undefined
     if (
@@ -579,7 +615,6 @@ export function approve(
       before &&
       base !== undefined &&
       base !== before.revision &&
-      !(String(i) in corrections) &&
       !(reviewed ?? []).includes(i)
     ) {
       return {
@@ -593,28 +628,13 @@ export function approve(
       }
     }
   }
-  for (const [k, raw] of Object.entries(corrections)) {
-    const x = p.ops[Number(k)]
-    const c = raw as Op
-    if (!x || !c || c.op !== x.op.op || c.address !== x.op.address)
-      return {
-        answer: err(
-          400,
-          'invalid_request',
-          'A correction has problems; nothing was applied.',
-          'Fix each one listed in "problems".',
-          {
-            problems: [{ op: Number(k), message: 'A correction keeps the kind of operation and its page.' }],
-          },
-        ),
-      }
-  }
   const applied: Array<{ index: number; pageId: string; address: string; revision: number }> = []
   p.ops.forEach((x, i) => {
     const ok = chosen.includes(i)
     x.status = ok ? 'approved' : 'returned'
-    if (ok && String(i) in corrections) {
-      x.op = corrections[String(i)] as Op
+    const c = corrected.get(i)
+    if (ok && c) {
+      x.op = c
       x.corrected = true
     }
     if (ok) {

@@ -2490,19 +2490,24 @@ pre.version {
   gap: 10px;
 }
 
-.op-head .choose {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 24px;
-  min-height: 24px;
+/* A change that can be chosen: its whole head is the label (a tap target of 44 px at least). */
+label.op-head {
+  min-height: 44px;
+  margin: -6px -8px 0;
+  padding: 6px 8px;
+  border-radius: var(--radius);
   cursor: pointer;
 }
 
-.op-head .choose input {
+label.op-head:hover {
+  background: var(--surface);
+}
+
+.op-head input {
+  flex: none;
   width: 18px;
   height: 18px;
-  margin: 0;
+  margin: 2px 0 0;
   accent-color: var(--accent);
 }
 
@@ -2583,7 +2588,42 @@ pre.version {
 }
 
 .group-title {
+  float: left;
+  width: 100%;
+  padding: 0;
   font: 550 13px / 1.4 var(--sans);
+}
+
+/* A legend floated: it sits inside the box, as the first line, at every width. */
+.group-why {
+  clear: both;
+}
+
+.op-new {
+  margin-top: 12px;
+}
+
+.new-title {
+  font-weight: 550;
+}
+
+.plain-body {
+  margin-top: 8px;
+  white-space: pre-wrap;
+}
+
+.whole-summary {
+  margin-top: 6px;
+  cursor: pointer;
+}
+
+.next-link {
+  margin-top: 8px;
+  font-weight: 550;
+}
+
+.not-sent {
+  font-style: italic;
 }
 
 .op-group .op-card {
@@ -2619,4 +2659,16 @@ pre.version {
 
 .result-pages {
   margin-top: 6px;
+}
+
+/* A button whose words may need two lines on a phone. */
+.wrap-button {
+  max-width: 100%;
+  height: auto;
+  min-height: 36px;
+  padding-block: 8px;
+  border-radius: var(--radius);
+  line-height: 1.35;
+  white-space: normal;
+  text-align: left;
 }
