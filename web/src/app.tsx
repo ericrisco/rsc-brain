@@ -23,6 +23,7 @@ import { Reset } from './screens/Reset.tsx'
 import { Setup } from './screens/Setup.tsx'
 import { SignIn } from './screens/SignIn.tsx'
 import { WikiDecisions } from './screens/wiki/Decisions.tsx'
+import { WikiGraph } from './screens/wiki/Graph.tsx'
 import { WikiLog } from './screens/wiki/Log.tsx'
 import { WikiMap } from './screens/wiki/Map.tsx'
 import { screenKey, WikiPage } from './screens/wiki/Page.tsx'
@@ -66,6 +67,9 @@ function MapPage({ slug }: { slug?: string }) {
 }
 function DecisionsPage({ slug }: { slug?: string }) {
   return <WikiDecisions key={slug} slug={slug ?? ''} />
+}
+function GraphPage({ slug }: { slug?: string }) {
+  return <WikiGraph key={slug} slug={slug ?? ''} />
 }
 function LogPage({ slug }: { slug?: string }) {
   return <WikiLog key={slug} slug={slug ?? ''} />
@@ -159,6 +163,7 @@ function SignedIn() {
           <Route path="/b/:slug/wiki" component={MapPage} />
           <Route path="/b/:slug/wiki/decisions" component={DecisionsPage} />
           <Route path="/b/:slug/wiki/log" component={LogPage} />
+          <Route path="/b/:slug/wiki/graph" component={GraphPage} />
           <Route path="/b/:slug/pages/:address+" component={PagePage} />
           <Route path="/b/:slug/journal" component={SessionsPage} />
           <Route path="/b/:slug/journal/sessions/:id" component={SessionPage} />

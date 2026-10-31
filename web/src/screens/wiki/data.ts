@@ -2,6 +2,7 @@
 // live feed's wiki.changed) reloads everything under `brain:<slug>:wiki`.
 import { api } from '../../api/index.ts'
 import { invalidate, resource } from '../../api/resource.ts'
+import type { Answer } from '../../graph/model.ts'
 import type { MentionState } from '../../lib/markdown.ts'
 import type { MapGroup, Source } from '../../lib/wiki.ts'
 
@@ -162,4 +163,33 @@ export const entryResource = (id: string) =>
 export const wikiChanged = (slug: string) => {
   invalidate(`brain:${slug}:wiki`)
   invalidate(`brain:${slug}:overview`)
+}
+
+// The graph, whole or one group (G10).
+export const graphResource = (slug: string, group: string) =>
+  resource(key(slug, `graph:${group}`), () =>
+    api.call<Answer>('wikiGraph', { path: { slug }, query: { prefix: group || undefined } }),
+  )
+
+// A page as the inspector of the graph shows it: summary and links (no history).
+export const peekResource = (slug: string, address: string) =>
+  resource(key(slug, `peek:${address}`), () => api.call<Reading>('page', { path: { slug, address } }))
+
+export type PageRow = {
+  address: string
+  title: string
+  type: string
+  status: string
+  tags: string[]
+  in: number
+  out: number
+  updatedAt: string
+}
+
+// The full list beside the graph (G9), by pages, filtered and sorted.
+export const pagesResource = (slug: string, query: Record<string, string>) => {
+  const q = Object.fromEntries(Object.entries(query).filter(([, v]) => v))
+  return resource(key(slug, `pages:${JSON.stringify(q)}`), () =>
+    api.call<Listing<PageRow>>('wikiPages', { path: { slug }, query: q }),
+  )
 }

@@ -11,7 +11,8 @@ import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { answerWeb, openWeb } from '../../../src/http/web.ts'
 import { AGENT_IDS, type AgentId, connectKit } from '../../../src/mcp/kit.ts'
-import { generate } from '../../../web/test/data/generate.ts'
+import { type GenPage, generate } from '../../../web/test/data/generate.ts'
+import * as G from './graph.ts'
 import * as J from './journal.ts'
 import * as P from './proposals.ts'
 import {
@@ -20,6 +21,7 @@ import {
   editBehind,
   editPage,
   freshWiki,
+  graphDataOf,
   listOf,
   logOf,
   mapOf,
@@ -49,6 +51,7 @@ export type Screen =
   | 'map'
   | 'page'
   | 'pages'
+  | 'graph'
   | 'decisions'
   | 'log'
   | 'trail'
@@ -122,6 +125,8 @@ type Scen = {
   journals: Map<string, J.Journal>
   // The proposals of each brain, made when first read ("<slug>#big" for the much-data state).
   inboxes: Map<string, P.Inbox>
+  // The wiki of every brain is a seeded one of this many pages (the graph's load tests, CA5 and CA6).
+  seeded?: 300 | 5000
 }
 
 type Answer = { status: number; body: unknown; headers?: Record<string, string> }
@@ -257,6 +262,19 @@ const MANY = Array.from({ length: 60 }, (_, i) =>
 const WIKI = generate({ pages: 300, seed: 48291 })
 // A wiki with many pages a group, for the map's "much data" (each group shows a few, then opens whole).
 const BIG = generate({ pages: 2000, seed: 48291 })
+// The seeded wikis of the graph (plan §4: the same data the real server is seeded with), made when first used.
+const SEEDED = new Map<number, G.GraphData>()
+function seededWiki(pages: 300 | 5000): G.GraphData {
+  let d = SEEDED.get(pages)
+  if (!d) {
+    d = G.seededData(pages === 300 ? WIKI : generate({ pages, seed: 48291 }))
+    SEEDED.set(pages, d)
+  }
+  return d
+}
+// What the graph and the list of a brain hold: its seeded wiki, or its hand-made one.
+const wikiData = (c: Ctx, w: Wiki, extra: GenPage[] = []) =>
+  c.s.seeded ? seededWiki(c.s.seeded) : graphDataOf(w, extra)
 
 function freshScenario(id: string, preset: Preset): Scen {
   const s: Scen = {
@@ -957,7 +975,21 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   'GET /v1/brains/{slug}/wiki/pages': {
     screen: 'pages',
     run: (c) =>
-      inWiki(c, (w) => listOf(w, c.s.states.get('pages') === 'much-data' ? WIKI.pages : [], c.query)),
+      inWiki(c, (w) => {
+        const st = c.s.states.get('pages')
+        if (st === 'empty') return { status: 200, body: { items: [], next: null, total: 0 } }
+        if (c.s.seeded) return G.listPagesOf(wikiData(c, w), c.query)
+        return listOf(w, st === 'much-data' ? WIKI.pages : [], c.query)
+      }),
+  },
+  'GET /v1/brains/{slug}/wiki/graph': {
+    screen: 'graph',
+    run: (c) =>
+      inWiki(c, (w) => {
+        const st = c.s.states.get('graph')
+        const d = st === 'empty' ? { pages: [], links: [] } : wikiData(c, w)
+        return G.graphOf(d, c.query)
+      }),
   },
   'GET /v1/brains/{slug}/wiki/decisions': {
     screen: 'decisions',
@@ -979,7 +1011,11 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   },
   'GET /v1/brains/{slug}/pages/{address}': {
     screen: 'page',
-    run: (c) => inWiki(c, (w) => readPage(w, c.params.address as string, c.query)),
+    run: (c) =>
+      inWiki(c, (w) => {
+        const seeded = c.s.seeded ? G.seededReading(wikiData(c, w), c.params.address as string) : null
+        return seeded ?? readPage(w, c.params.address as string, c.query)
+      }),
   },
   'PATCH /v1/brains/{slug}/pages/{address}': {
     run: (c) =>
@@ -1266,6 +1302,7 @@ const PRIVATE = new Set([
   'GET /v1/admin/brains',
   'GET /v1/brains/{slug}/wiki/map',
   'GET /v1/brains/{slug}/wiki/pages',
+  'GET /v1/brains/{slug}/wiki/graph',
   'GET /v1/brains/{slug}/wiki/decisions',
   'GET /v1/brains/{slug}/wiki/log',
   'GET /v1/brains/{slug}/pages/{address}',
@@ -1667,6 +1704,7 @@ export async function startFixture(
         for (const [screen, state] of Object.entries((b.states ?? {}) as Record<string, State>))
           s.states.set(screen as Screen, state)
         if (b.mail === false) s.mail = false
+        if (b.seeded === 300 || b.seeded === 5000) s.seeded = b.seeded
         return send(res, { status: 201, body: { id: s.id } })
       }
       const control = /^\/__fixture\/scenarios\/([\w]+)\/state$/.exec(url.pathname)
@@ -1769,6 +1807,8 @@ export async function startFixture(
       if (url.pathname === '/__fixture/use') {
         const s = make((url.searchParams.get('preset') as Preset) ?? 'signed-in')
         if (url.searchParams.get('mail') === 'off') s.mail = false
+        const seeded = Number(url.searchParams.get('seeded'))
+        if (seeded === 300 || seeded === 5000) s.seeded = seeded
         const states = url.searchParams.getAll('state')
         for (const x of states) {
           const [screen, state] = x.split(':')

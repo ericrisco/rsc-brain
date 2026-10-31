@@ -3,6 +3,7 @@
 // server makes them (a new revision, a log line, 409 page_changed with the current version). The 300 pages
 // of the seeded generator join the map and the list in the "much-data" state. Fictitious content.
 import type { GenPage } from '../../../web/test/data/generate.ts'
+import { type GraphData, listPagesOf } from './graph.ts'
 
 const AT = '2026-10-29T10:00:00.000Z'
 
@@ -489,56 +490,33 @@ export function mapOf(w: Wiki, extra: GenPage[], every = false) {
   }
 }
 
-export function listOf(w: Wiki, extra: GenPage[], q: Q): Answer {
-  const words = (q.get('q') ?? '').toLowerCase()
-  const rows = [
-    ...w.pages.map((p) => {
-      const r = last(p)
-      const out = linksOut(w, p)
-      const into = w.pages.filter((o) => o !== p && linksOut(w, o).some((l) => l.pageId === p.id)).length
-      return {
-        address: r.address,
-        title: r.title,
-        type: r.type,
-        status: r.status,
-        tags: r.tags,
-        in: into,
-        out: out.length,
-        updatedAt: r.createdAt,
-      }
-    }),
-    ...extra.map((g) => ({ ...g, in: 1, out: 2, updatedAt: AT })),
-  ]
-    .filter(
-      (r) =>
-        (!words || r.address.includes(words) || r.title.toLowerCase().includes(words)) &&
-        (!q.get('type') || r.type === q.get('type')) &&
-        (!q.get('status') || r.status === q.get('status')) &&
-        (!q.get('tag') || r.tags.includes(q.get('tag') as string)) &&
-        (!q.get('prefix') || r.address.startsWith(`${q.get('prefix')}/`)),
-    )
-    .sort((a, b) => (a.address < b.address ? -1 : 1))
-  const limit = Math.min(200, Number(q.get('limit') ?? 50) || 50)
-  const after = q.get('cursor') ? Buffer.from(q.get('cursor') as string, 'base64url').toString() : ''
-  const from = rows.filter((r) => r.address > after)
-  const items = from.slice(0, limit)
+// The hand-made wiki (and, in "much data", the seeded pages after it) in the shape the graph and the full
+// list work on: each page as it is now, each link with the address it leads to now.
+export function graphDataOf(w: Wiki, extra: GenPage[] = []): GraphData {
   return {
-    status: 200,
-    body: {
-      items: items.map(({ address, title, type, status, tags, in: i, out, updatedAt }) => ({
-        address,
-        title,
-        type,
-        status,
-        tags,
-        in: i,
-        out,
-        updatedAt,
-      })),
-      next: from.length > limit ? Buffer.from(items.at(-1)?.address ?? '').toString('base64url') : null,
-      total: rows.length,
-    },
+    pages: [
+      ...w.pages.map((p) => {
+        const r = last(p)
+        return {
+          address: r.address,
+          title: r.title,
+          type: r.type,
+          status: r.status,
+          tags: r.tags,
+          summary: r.summary,
+          updatedAt: r.createdAt,
+        }
+      }),
+      ...extra.map((g) => ({ ...g, updatedAt: AT })),
+    ],
+    links: w.pages.flatMap((p) =>
+      linksOut(w, p).map((l) => ({ from: addressOf(p), to: l.address, kind: l.kind })),
+    ),
   }
+}
+
+export function listOf(w: Wiki, extra: GenPage[], q: Q): Answer {
+  return listPagesOf(graphDataOf(w, extra), q)
 }
 
 export function decisionsOf(w: Wiki, extra: GenPage[]) {

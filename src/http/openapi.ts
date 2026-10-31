@@ -467,13 +467,17 @@ const ACCOUNT_SIGNED_IN = obj({
 
 const HAND: Record<string, Op> = {
   'GET /v1/brains/{slug}/wiki/pages': {
-    summary: 'The pages of a wiki by pages, in address order, with how many pages link in and out.',
+    summary:
+      'The pages of a wiki by pages, in address order or as sorted, with how many pages link in and out.',
     query: {
       q: 'Part of the address or the title.',
       prefix: 'Only pages under this first part of the address.',
       type: 'Only this page type.',
       status: 'Only this status.',
       tag: 'Only pages with this tag.',
+      linkKind:
+        'Only pages with a link of this kind, either way: mentions, related, depends-on, contradicts, supersedes, part-of or example-of.',
+      sort: 'address (the default), title, type, in, out or updatedAt; "-" before it for the other way.',
       cursor: 'The "next" of the previous page.',
       limit: 'Pages per answer.',
     },
@@ -492,6 +496,50 @@ const HAND: Record<string, Op> = {
       ),
       next: NEXT,
       total: n('Pages that match, on every page of the answer.'),
+    }),
+  },
+  'GET /v1/brains/{slug}/wiki/graph': {
+    summary:
+      'The graph of a wiki: a node a page and an edge a link, retired pages left out. Up to 2 000 pages it comes whole; above that, as groups by the first part of the address; prefix opens one group. Sent gzipped when big and accepted.',
+    query: { prefix: 'Open this group: the pages whose address starts with it.' },
+    reply: obj({
+      mode: s(
+        'pages (nodes and edges), groups (the wiki is too big: groups and the links between them) or too-big (this group cannot be drawn: use the list).',
+        {
+          enum: ['pages', 'groups', 'too-big'],
+        },
+      ),
+      prefix: nul(s('The group opened, or null for the whole wiki.')),
+      total: n('Pages this answer stands for, retired ones left out.'),
+      kinds: list(s('Link kind.'), 'The link kinds, in the order edges name them by index.'),
+      nodes: list(
+        { type: 'array', prefixItems: [s('Address.'), s('Title.'), PAGE_TYPE, PAGE_STATUS, list(s('Tag.'))] },
+        'Pages in address order: [address, title, type, status, tags].',
+      ),
+      edges: list(
+        { type: 'array', prefixItems: [n('From node.'), n('To node.'), n('Kind index.')] },
+        'Links between nodes: [from, to, kind] by index.',
+      ),
+      across: list(
+        { type: 'array', prefixItems: [n('Node.'), s('Other group.'), n('Links.')] },
+        'In one group: [node, other group, links both ways].',
+      ),
+      groups: list(
+        obj({
+          prefix: s('First part of the address.'),
+          count: n('Pages in it.'),
+          types: {
+            type: 'object',
+            description: 'Pages in it by type.',
+            additionalProperties: { type: 'integer' },
+          },
+        }),
+        'The groups of the wiki; in one group, the other groups its pages link with.',
+      ),
+      groupEdges: list(
+        { type: 'array', prefixItems: [s('Group.'), s('Group.'), n('Links.')] },
+        'Links between groups: [group, group, links both ways].',
+      ),
     }),
   },
   'GET /v1/brains/{slug}/wiki/map': {

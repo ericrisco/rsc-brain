@@ -48,6 +48,8 @@ export default defineConfig({
     sourcemap: false,
     target: 'es2022',
   },
+  // The graph's worker is a file of its own under /assets (CSP worker-src 'self'), an ES module.
+  worker: { format: 'es' },
   plugins: [precompress()],
   server: {
     port: 5173,

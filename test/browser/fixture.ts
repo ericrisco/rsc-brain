@@ -28,12 +28,18 @@ export async function scenario(
   baseURL: string,
   preset: Preset,
   states: States = {},
-  o: { mail?: boolean } = {},
+  // seeded: the brains' wiki is the seeded one of 300 or 5 000 pages (the graph, CA5 and CA6).
+  o: { mail?: boolean; seeded?: 300 | 5000 } = {},
 ): Promise<Scenario> {
   const res = await fetch(`${baseURL}/__fixture/scenarios`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ preset, states, ...(o.mail === false ? { mail: false } : {}) }),
+    body: JSON.stringify({
+      preset,
+      states,
+      ...(o.mail === false ? { mail: false } : {}),
+      ...(o.seeded ? { seeded: o.seeded } : {}),
+    }),
   })
   const { id } = (await res.json()) as { id: string }
   await context.setExtraHTTPHeaders({ 'x-fixture-scenario': id })

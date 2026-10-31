@@ -343,6 +343,14 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     '': ['items', 'next', 'total'],
     'items[]': ['address', 'title', 'type', 'status', 'tags', 'in', 'out', 'updatedAt'],
   },
+  // The graph (PR22): the fixture answers it in CI with the server's own graphView.
+  'GET /v1/brains/{slug}/wiki/graph': {
+    '': ['mode', 'prefix', 'total', 'kinds', 'nodes', 'edges', 'across', 'groups', 'groupEdges'],
+  },
+  'GET /v1/brains/{slug}/wiki/graph +prefix': {
+    '': ['mode', 'prefix', 'total', 'kinds', 'nodes', 'edges', 'across', 'groups', 'groupEdges'],
+    'groups[]': ['prefix', 'count', 'types'],
+  },
   'GET /v1/brains/{slug}/wiki/map': {
     '': ['intro', 'groups', 'count'],
     'groups[]': ['type', 'area', 'pages'],
@@ -706,8 +714,23 @@ describe('the v1 contract', { skip: skipPg }, () => {
       page: 'growth/intros',
     })
     assert.equal(corrected.status, 201, corrected.text)
+    // A page of another group that mentions intros: the graph of one group names the groups it links with.
+    const other = await w.callWeb(web, 'POST', '/v1/brains/contract/wiki/changes', {
+      op: 'create',
+      address: 'audience/hooks',
+      type: 'topic',
+      title: 'Hooks',
+      summary: 'The first seconds.',
+      body: 'Pairs with [[growth/intros]].',
+      tags: [],
+      sources: [],
+      reason: 'From the journal.',
+    })
+    assert.equal(other.status, 201, other.text)
     const get = async (path: string) => (await w.call(eric.key, 'GET', `/v1/brains/contract${path}`)).body
     out['GET /v1/brains/{slug}/wiki/pages'] = await get('/wiki/pages')
+    out['GET /v1/brains/{slug}/wiki/graph'] = await get('/wiki/graph')
+    out['GET /v1/brains/{slug}/wiki/graph +prefix'] = await get('/wiki/graph?prefix=growth')
     out['GET /v1/brains/{slug}/wiki/map'] = await get('/wiki/map')
     out['GET /v1/brains/{slug}/wiki/decisions'] = await get('/wiki/decisions')
     out['GET /v1/brains/{slug}/wiki/log'] = await get('/wiki/log')

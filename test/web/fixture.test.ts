@@ -779,6 +779,60 @@ describe('the fixture API', () => {
     assert.equal((await go('GET', `/v1/brains/growth/proposals?limit=20&cursor=${big.next}`)).status, 200)
   })
 
+  it('the graph and the full list (G9, G10): hand-made, 300 and 5 000 seeded pages, as the server answers', async () => {
+    type Graph = {
+      mode: string
+      total: number
+      nodes: Array<[string, string, string, string]>
+      groups: Array<{ prefix: string; count: number }>
+    }
+    type Listing = {
+      items: Array<{ address: string; in: number; status: string }>
+      next: string | null
+      total: number
+    }
+    const seededScenario = async (seeded?: number) => {
+      const r = await fetch(`${fx.url}/__fixture/scenarios`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ preset: 'signed-in', ...(seeded ? { seeded } : {}) }),
+      })
+      return ((await r.json()) as { id: string }).id
+    }
+    const getIn = (id: string) => async (path: string) =>
+      call('GET', path, { scenario: id, cookie: 'rscb_session=fx.acc_eric' })
+    const hand = getIn(await seededScenario())
+    const g = (await hand('/v1/brains/growth/wiki/graph')).body as Graph
+    assert.equal(g.mode, 'pages')
+    assert.ok(g.nodes.some((n) => n[0] === 'audience/retention'))
+    assert.ok(g.nodes.every((n) => n[3] !== 'retired'))
+    assert.equal((await hand('/v1/brains/growth/wiki/graph?prefix=a/b')).status, 400)
+
+    const s300 = getIn(await seededScenario(300))
+    const all = generate({ pages: 300, seed: 48291 }).pages
+    const g300 = (await s300('/v1/brains/growth/wiki/graph')).body as Graph
+    assert.equal(g300.mode, 'pages')
+    assert.equal(g300.total, all.filter((p) => p.status !== 'retired').length)
+    const byIn = (await s300('/v1/brains/growth/wiki/pages?sort=-in&limit=200')).body as Listing
+    assert.equal(byIn.total, 300)
+    assert.ok((byIn.items[0]?.in ?? 0) >= (byIn.items[199]?.in ?? 0))
+    const rest = (await s300(`/v1/brains/growth/wiki/pages?sort=-in&limit=200&cursor=${byIn.next}`))
+      .body as Listing
+    assert.equal(rest.items.length, 100)
+    assert.ok((await s300('/v1/brains/growth/wiki/pages?linkKind=contradicts')).status === 200)
+    assert.equal((await s300('/v1/brains/growth/wiki/pages?sort=size')).status, 400)
+    assert.equal((await s300(`/v1/brains/growth/pages/${all[0]?.address}`)).status, 200)
+
+    const s5000 = getIn(await seededScenario(5000))
+    const g5000 = (await s5000('/v1/brains/growth/wiki/graph')).body as Graph
+    assert.equal(g5000.mode, 'groups')
+    assert.equal(g5000.groups.length, 12)
+    const one = (await s5000(`/v1/brains/growth/wiki/graph?prefix=${g5000.groups[0]?.prefix}`)).body as Graph
+    assert.equal(one.mode, 'pages')
+    assert.equal(one.total, g5000.groups[0]?.count)
+    assert.equal(((await s5000('/v1/brains/growth/wiki/pages')).body as Listing).total, 5000)
+  })
+
   it('every operation the fixture answers was checked against the description', () => {
     assert.deepEqual(
       [...fx.operations].filter((op) => !seen.has(op)),

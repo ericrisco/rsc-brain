@@ -4,6 +4,7 @@ import { invalid } from '../../core/errors.ts'
 import { limitOf } from '../../domain/listing.ts'
 import { track, trackPageRead } from '../../domain/trail.ts'
 import { compilePack, getGuide, PACK } from '../../domain/wiki/compile.ts'
+import { wikiGraph } from '../../domain/wiki/graph.ts'
 import { wikiHealth } from '../../domain/wiki/health.ts'
 import {
   getPage,
@@ -22,6 +23,7 @@ import {
   submitProposal,
   withdrawProposal,
 } from '../../domain/wiki/proposals.ts'
+import { MAX_REPLY_CHARS } from '../bounds.ts'
 import { compact, obj, oneOf, reqStr, str } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
@@ -69,7 +71,7 @@ export const wikiRoutes: Route[] = [
       }),
     ),
   })),
-  // The pages by pages, filtered (plan §3.5 G9, minimal form; PR19).
+  // The pages by pages, filtered and sorted (plan §3.5 G9): the list beside the graph.
   route('GET /v1/brains/:slug/wiki/pages', async (r) => ({
     body: await listPages(
       ctxOf(r),
@@ -80,10 +82,21 @@ export const wikiRoutes: Route[] = [
         type: q(r.query.get('type')),
         status: q(r.query.get('status')),
         tag: q(r.query.get('tag')),
+        linkKind: q(r.query.get('linkKind')),
+        sort: q(r.query.get('sort')),
         cursor: q(r.query.get('cursor')),
         limit: limitOf(r.query.get('limit')),
       }),
     ),
+  })),
+  // The graph, whole or one group (plan §3.5 G10).
+  route('GET /v1/brains/:slug/wiki/graph', async (r) => ({
+    body: await wikiGraph(
+      ctxOf(r),
+      r.params.slug as string,
+      compact({ prefix: q(r.query.get('prefix')), maxChars: MAX_REPLY_CHARS }),
+    ),
+    compress: true,
   })),
   route('GET /v1/brains/:slug/wiki/health', async (r) => ({
     body: await wikiHealth(ctxOf(r), r.params.slug as string),

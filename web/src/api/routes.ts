@@ -35,6 +35,8 @@ export const ROUTE_TABLE = {
   // The wiki (PR19).
   wikiMap: { route: 'GET /v1/brains/{slug}/wiki/map' },
   wikiPages: { route: 'GET /v1/brains/{slug}/wiki/pages' },
+  // The graph (PR22).
+  wikiGraph: { route: 'GET /v1/brains/{slug}/wiki/graph' },
   wikiDecisions: { route: 'GET /v1/brains/{slug}/wiki/decisions' },
   wikiLog: { route: 'GET /v1/brains/{slug}/wiki/log' },
   page: { route: 'GET /v1/brains/{slug}/pages/{address}' },
