@@ -263,4 +263,32 @@ describe('review of PR20', () => {
       notRelated: true,
     })
   })
+
+  it('the author of a correction keeps it against what an agent asked; nothing asked, nothing offered', () => {
+    const eric = { role: 'contributor', me: 'acc_eric', archived: false }
+    const anas = { authorId: 'acc_ana', type: 'learning' }
+    const ericsCorrection = { authorId: 'acc_eric', type: 'correction' }
+    // An agent asked that Ana's entry supersede Eric's correction: it waits for a person.
+    const waiting = { kind: 'supersedes', status: 'pending_person' }
+    assert.deepEqual(conflictActions({ from: anas, to: ericsCorrection, relation: waiting }, eric), {
+      keepFrom: true,
+      keepTo: true,
+      notRelated: true,
+    })
+    // A plain contradiction: keeping his correction would supersede Ana's entry, which is not his.
+    const contra = { kind: 'contradicts', status: 'active' }
+    assert.deepEqual(conflictActions({ from: anas, to: ericsCorrection, relation: contra }, eric), {
+      keepFrom: true,
+      keepTo: false,
+      notRelated: true,
+    })
+  })
+
+  it('a code span reads as written in a preview', () => {
+    assert.equal(
+      plainText('Set `_id` and call `__init__`, not _this_.'),
+      'Set _id and call __init__, not this.',
+    )
+    assert.equal(plainText('Use ``a `b` _c_`` here'), 'Use a `b` _c_ here')
+  })
 })

@@ -1577,6 +1577,15 @@ export async function startFixture(
         if (e) J.editBehind(e, String(b.content))
         return send(res, { status: e ? 200 : 404, body: {} })
       }
+      // An agent's key asks for a relation about a person's correction: it waits for a person.
+      const agentRelate = /^\/__fixture\/scenarios\/([\w]+)\/agent-relate$/.exec(url.pathname)
+      if (agentRelate && method === 'POST') {
+        const s = scenarios.get(agentRelate[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        const b = await bodyOf(req)
+        J.agentAsks(journalOf(s, String(b.brain)), String(b.from), String(b.to), String(b.kind))
+        return send(res, { status: 200, body: {} })
+      }
       // For a person walking the fixture by hand: /__fixture/use?preset=fresh&next=/setup
       if (url.pathname === '/__fixture/use') {
         const s = make((url.searchParams.get('preset') as Preset) ?? 'signed-in')

@@ -294,4 +294,161 @@ describe('the journal after the review of PR20', { skip: skipPg }, () => {
     }
     assert.equal(ov.todaySessions[0]?.client, 'Client A/1.0', 'the overview and Sessions agree')
   })
+
+  // Second pass of the review.
+  it('the author of a correction answers what an agent asked about it by keeping it; with nothing asked, not', async () => {
+    await w.call(bob.key, 'POST', '/v1/brains', { slug: 'own', purpose: 'Own.' })
+    await w.member('own', eric.id, 'contributor')
+    await w.member('own', ana.id, 'contributor')
+    const ericOwn = await w.web(eric.id)
+    const c = await correct(ericOwn, { title: 'Short', content: 'Short intros.' }, 'own')
+    const a = await save(ana.key, { type: 'learning', title: 'Long', content: 'Long intros.' }, 'own')
+    const asked = await w.call(ana.key, 'POST', '/v1/brains/own/relations', {
+      from: a,
+      to: c,
+      kind: 'supersedes',
+    })
+    assert.equal((asked.body.relation as Relation).status, 'pending_person')
+    // Eric keeps his correction: Ana's entry is superseded, what she asked is turned down.
+    const kept = await relateWeb(ericOwn, { from: c, to: a, kind: 'supersedes' }, 'own')
+    assert.equal(kept.status, 201, kept.text)
+    assert.equal((kept.body.relation as Relation).status, 'active')
+    const row = await w.db.one<{ status: string }>('SELECT status FROM relations WHERE id = $1', [
+      (asked.body.relation as Relation).id,
+    ])
+    assert.equal(row?.status, 'rejected')
+    const lost = (await w.call(eric.key, 'GET', `/v1/entries/${a}`)).body.entry as {
+      supersededBy: string | null
+    }
+    assert.equal(lost.supersededBy, c)
+    // Nothing waits about this pair: superseding Ana's entry is still not his to decide.
+    const a2 = await save(ana.key, { type: 'learning', title: 'Longer', content: 'Longer intros.' }, 'own')
+    const refused = await relateWeb(ericOwn, { from: c, to: a2, kind: 'supersedes' }, 'own')
+    assert.equal(refused.status, 403, refused.text)
+    // Nor is an agent's request in the same direction as his an answer he may give about her entry.
+    const a3 = await save(ana.key, { type: 'learning', title: 'Longest', content: 'Longest intros.' }, 'own')
+    const c2 = await correct(ericOwn, { title: 'Shorter', content: 'Shorter intros.' }, 'own')
+    await w.call(ana.key, 'POST', '/v1/brains/own/relations', { from: c2, to: a3, kind: 'not_related' })
+    const other = await relateWeb(ericOwn, { from: c2, to: a3, kind: 'supersedes' }, 'own')
+    assert.equal(other.status, 403, other.text)
+  })
+
+  it('a person’s own correction marked not related to someone else’s ordinary entry: only the correction is theirs to dismiss', async () => {
+    const mine = await correct(anaWeb, { title: 'Thumbnails', content: 'Faces on thumbnails.' })
+    const bobs = await save(bob.key, { type: 'note', title: 'Bob thumbs', content: 'No faces.' })
+    for (const body of [
+      { from: mine, to: bobs, kind: 'not_related' },
+      { from: bobs, to: mine, kind: 'not_related' },
+    ]) {
+      const r = await relateWeb(anaWeb, body)
+      assert.equal(r.status, 201, `${JSON.stringify(body)}: ${r.text}`)
+    }
+    // Bob's ordinary entry is not dismissed by it: it stays in force.
+    const b = (await w.call(eric.key, 'GET', `/v1/entries/${bobs}`)).body.entry as {
+      supersededBy: string | null
+    }
+    assert.equal(b.supersededBy, null)
+  })
+
+  it('entries of a session say which have an open conflict, until it is settled', async () => {
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'flag', purpose: 'Flags.' })
+    const x = await save(eric.key, { type: 'learning', title: 'X', content: 'Ten.' }, 'flag')
+    const y = await save(eric.key, { type: 'learning', title: 'Y', content: 'Thirty.' }, 'flag')
+    const z = await save(eric.key, { type: 'learning', title: 'Z', content: 'Other.' }, 'flag')
+    await w.call(eric.key, 'POST', '/v1/brains/flag/relations', { from: x, to: y, kind: 'contradicts' })
+    const flags = async () =>
+      Object.fromEntries(
+        ((await w.call(eric.key, 'GET', '/v1/brains/flag/entries')).body.items as Json[]).map((e) => [
+          e.id,
+          e.conflict,
+        ]),
+      )
+    assert.deepEqual(await flags(), { [x]: true, [y]: true, [z]: false })
+    w.advance(1000)
+    const web = await w.web(eric.id)
+    await relateWeb(web, { from: x, to: y, kind: 'not_related' }, 'flag')
+    assert.deepEqual(await flags(), { [x]: false, [y]: false, [z]: false })
+  })
+
+  it('a session counts its forgotten entries, its summary aside', async () => {
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'gone', purpose: 'Gone.' })
+    const s = (await w.call(eric.key, 'POST', '/v1/brains/gone/sessions', { purpose: 'Work' })).body
+      .session as {
+      id: string
+    }
+    const e1 = await save(eric.key, { type: 'note', title: 'One', content: 'One.', sessionId: s.id }, 'gone')
+    await save(eric.key, { type: 'note', title: 'Two', content: 'Two.', sessionId: s.id }, 'gone')
+    const sum = await w.call(eric.key, 'POST', `/v1/sessions/${s.id}/summary`, { content: 'Done.' })
+    assert.equal(sum.status, 201, sum.text)
+    const web = await w.web(eric.id)
+    const counts = async () => {
+      const v = (await w.call(eric.key, 'GET', `/v1/sessions/${s.id}`)).body.session as Json
+      return [v.entries, v.forgotten]
+    }
+    assert.deepEqual(await counts(), [2, 0])
+    await w.callWeb(web, 'POST', `/v1/entries/${e1}/forget`, { reason: 'Wrong.' })
+    assert.deepEqual(await counts(), [1, 1])
+    await w.callWeb(web, 'POST', `/v1/entries/${(sum.body.receipt as Receipt).entryId}/forget`, {
+      reason: 'Old.',
+    })
+    assert.deepEqual(await counts(), [1, 1], 'a forgotten summary is not an entry of work')
+  })
+
+  it('a superseded correction leaves the page’s list of corrections', async () => {
+    const page = await w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/changes', {
+      op: 'create',
+      address: 'style/thumbs',
+      type: 'guide',
+      title: 'Thumbnails',
+      summary: 'How we make thumbnails.',
+      body: 'Faces, big text.',
+      reason: 'Seed.',
+    })
+    assert.equal(page.status, 201, page.text)
+    const corr = await correct(ericWeb, {
+      title: 'No big text',
+      content: 'Small text only.',
+      page: 'style/thumbs',
+    })
+    const ids = async () =>
+      ((await w.call(eric.key, 'GET', '/v1/brains/yt/pages/style/thumbs')).body.corrections as Json[]).map(
+        (c) => c.id,
+      )
+    assert.deepEqual(await ids(), [corr])
+    const newer = await save(eric.key, { type: 'decision', title: 'Medium text', content: 'Medium text.' })
+    const r = await relateWeb(ericWeb, { from: newer, to: corr, kind: 'supersedes' })
+    assert.equal(r.status, 201, r.text)
+    assert.deepEqual(await ids(), [])
+  })
+
+  it('revising a topic names the client that revised it', async () => {
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'top', purpose: 'Topics.' })
+    const token = await w.token(eric.id)
+    const as = (ua: string, body: Json) =>
+      w.raw('POST', '/v1/brains/top/entries', {
+        headers: { authorization: `Bearer ${token}`, 'user-agent': ua },
+        body,
+      })
+    const first = await as('Client A/1.0', {
+      type: 'fact',
+      topic: 'style/len',
+      title: 'Len',
+      content: 'Ten.',
+    })
+    assert.equal(first.status, 201, first.text)
+    const id = (first.body.receipt as Receipt).entryId
+    w.advance(5 * 60_000)
+    const again = await as('Client B/2.0', {
+      type: 'fact',
+      topic: 'style/len',
+      title: 'Len',
+      content: 'Twelve.',
+    })
+    assert.equal((again.body.receipt as Receipt).entryId, id)
+    const read = (await w.call(eric.key, 'GET', `/v1/entries/${id}`)).body.entry as {
+      client: string
+      revision: number
+    }
+    assert.deepEqual([read.revision, read.client], [2, 'Client B/2.0'])
+  })
 })

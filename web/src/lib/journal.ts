@@ -66,14 +66,20 @@ export function mayDecide(
 }
 
 // What a person may decide on a conflict: keep one side (the other is superseded), or say they are not
-// related (each correction among them is dismissed).
+// related (each correction among them is dismissed). Keeping `to` against what an agent asked (that `from`
+// supersedes it, waiting for a person) is an answer about `to`: its author may give it.
 export function conflictActions(
-  c: { from: { authorId: string; type: string }; to: { authorId: string; type: string } },
+  c: {
+    from: { authorId: string; type: string }
+    to: { authorId: string; type: string }
+    relation?: { kind: string; status: string }
+  },
   who: { role: string | null; me: string; archived: boolean },
 ): { keepFrom: boolean; keepTo: boolean; notRelated: boolean } {
+  const asked = c.relation?.kind === 'supersedes' && c.relation.status === 'pending_person'
   return {
     keepFrom: mayDecide(c.to, who),
-    keepTo: mayDecide(c.from, who),
+    keepTo: mayDecide(c.from, who) || (asked && mayDecide(c.to, who)),
     notRelated:
       [c.from, c.to].every((x) => x.type !== 'correction' || mayDecide(x, who)) &&
       atLeast(who.role, 'contributor') &&

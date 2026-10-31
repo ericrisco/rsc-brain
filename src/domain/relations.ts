@@ -73,11 +73,21 @@ export async function relate(
     // Every key is an agent's; the person's own gesture is the web (spec B6).
     const person = personInWeb(ctx)
     // A person decides about the entry superseded, or the correction dismissed, only as its author or a
-    // curator. An agent asking about a correction waits for a person instead (below).
+    // curator. An agent asking about a correction waits for a person instead (below). A person answering
+    // what waits about their own entry may keep it: when an agent asked that `to` supersedes `from`, the
+    // author of `from` (or a curator) records the opposite, and what waited is turned down. Dismissing is
+    // about corrections only: a correction not related to an ordinary entry asks only for the correction.
     if (person) {
+      const answering =
+        r.kind === 'supersedes' &&
+        (await db.one(
+          `SELECT 1 AS hit FROM relations WHERE brain_id = $1 AND status = 'pending_person'
+              AND kind = 'supersedes' AND from_id = $2 AND to_id = $3 LIMIT 1`,
+          [brain.id, to.id, from.id],
+        ))
       const decided =
         r.kind === 'supersedes'
-          ? [to]
+          ? [answering ? from : to]
           : r.kind === 'not_related'
             ? [from, to].filter((x) => x.type === 'correction')
             : []

@@ -196,6 +196,36 @@ test.describe('decisions only for who may take them', () => {
     await expect(d).toContainText('Only its author or a curator can replace an entry')
   })
 
+  test('the author of a correction keeps it against what an agent asked about it', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'member')
+    await page.goto(`${J}/correct`)
+    await page.getByLabel('Nothing in particular').check()
+    await page.getByLabel('Title').fill('Hooks in five seconds')
+    await page.getByLabel('The correction').fill('Put the hook in the first five seconds.')
+    await page.getByRole('button', { name: 'Add correction' }).click()
+    await expect(page.getByRole('heading', { level: 1, name: 'Hooks in five seconds' })).toBeVisible()
+    const mine = decodeURIComponent(page.url().split('/').pop() as string)
+    await fetch(`${baseURL}/__fixture/scenarios/${s.id}/agent-relate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brain: 'growth', from: 'ent_fx_intros', to: mine, kind: 'supersedes' }),
+    })
+    // Keeping hers supersedes Eric's entry: hers to answer only because the agent asked about hers.
+    await page.goto(`${J}/conflicts`)
+    const asked = page.locator('.conflict-item').filter({ hasText: 'Hooks in five seconds' })
+    await expect(asked).toContainText('An agent asked')
+    await asked.getByRole('button', { name: 'Keep this one: Hooks in five seconds' }).click()
+    const d = page.getByRole('dialog', { name: 'Decide this conflict?' })
+    await expect(d).toContainText('“Hooks in five seconds” stays.')
+    await d.getByRole('button', { name: 'Decide' }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Decided.' })).toBeVisible()
+    await expect(page.locator('.conflict-item').filter({ hasText: 'Hooks in five seconds' })).toHaveCount(0)
+  })
+
   test('a curator decides any of them, from either side', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto(`${J}/conflicts`)

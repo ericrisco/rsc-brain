@@ -126,9 +126,16 @@ export function renderMarkdown(body: string, o: { slug: string; links: readonly 
 }
 
 // Markdown as plain words (a search snippet): no marks, links as their text, one line. An underscore is
-// a mark only at the edge of a word, as markdown reads it: past_due and stripe_invoice_id keep theirs.
+// a mark only at the edge of a word, as markdown reads it: past_due and stripe_invoice_id keep theirs. The
+// text of a code span is kept as written (`_id`, `__init__`), without its backticks.
 export function plainText(md: string): string {
-  return md
+  const code: string[] = []
+  // Code spans are set aside first (a run of backticks closed by the same run), then put back verbatim.
+  const marked = md.replace(/(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/g, (_m, _ticks, inner: string) => {
+    code.push(inner.replace(/\n/g, ' ').replace(/^ (.*[^ ].*) $/, '$1'))
+    return `\uE000${code.length - 1}\uE000`
+  })
+  return marked
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[\[([^\]|\n]+)\|([^\]\n]*)\]\]/g, '$2')
     .replace(/\[\[([^\]\n]+)\]\]/g, '$1')
@@ -138,4 +145,5 @@ export function plainText(md: string): string {
     .replace(/(^|[^\p{L}\p{N}_])_{1,2}|_{1,2}(?![\p{L}\p{N}_])/gu, '$1')
     .replace(/\s+/g, ' ')
     .trim()
+    .replace(/\uE000(\d+)\uE000/g, (_m, n: string) => code[Number(n)] ?? '')
 }

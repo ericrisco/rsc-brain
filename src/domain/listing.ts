@@ -67,7 +67,8 @@ export type SessionView = Session & {
   client: string | null
   author: { id: string; name: string }
   entries: number
-  // Its entries forgotten since: the count of entries drops by them, and the web says why.
+  // Its entries forgotten since (the summary aside, as in `entries`): the count of entries drops by them,
+  // and the web says why.
   forgotten: number
   summary: string | null
 }
@@ -81,7 +82,8 @@ const CLIENT = 's.client'
 const SESSION_SELECT = `SELECT s.*, a.name AS author_name, ${CLIENT} AS client, se.content AS summary_text,
     (SELECT count(*)::int FROM entries e WHERE e.session_id = s.id AND e.state = 'active'
         AND e.type <> 'summary') AS entry_count,
-    (SELECT count(*)::int FROM entries e WHERE e.session_id = s.id AND e.state = 'forgotten') AS forgotten_count
+    (SELECT count(*)::int FROM entries e WHERE e.session_id = s.id AND e.state = 'forgotten'
+        AND e.type <> 'summary') AS forgotten_count
    FROM sessions s JOIN accounts a ON a.id = s.account_id
    LEFT JOIN entries se ON se.id = s.summary_entry_id AND se.state = 'active'`
 

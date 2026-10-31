@@ -707,10 +707,17 @@ export function relate(j: Journal, w: Who, b: Record<string, unknown>): Answer {
   const from = j.entries.find((e) => e.id === b.from && e.state === 'active')
   const to = j.entries.find((e) => e.id === b.to && e.state === 'active')
   if (!from || !to) return NO_ENTRY
-  // Superseding an entry, or dismissing a correction: its author or a curator (the web is a person).
+  // Superseding an entry, or dismissing a correction: its author or a curator (the web is a person). An
+  // answer to what an agent asked about one's own entry (the reverse supersede, waiting) is about that one.
+  const answering =
+    kind === 'supersedes' &&
+    j.relations.some(
+      (r) =>
+        r.status === 'pending_person' && r.kind === 'supersedes' && r.fromId === to.id && r.toId === from.id,
+    )
   const decided =
     kind === 'supersedes'
-      ? [to]
+      ? [answering ? from : to]
       : kind === 'not_related'
         ? [from, to].filter((x) => x.type === 'correction')
         : []
@@ -892,6 +899,20 @@ export function addCorrection(
       },
     },
   }
+}
+
+// An agent asks for a relation that waits for a person (a key touching a person's correction).
+export function agentAsks(j: Journal, from: string, to: string, kind: string): void {
+  j.relations.push({
+    id: `rel_fx_new${j.seq++}`,
+    fromId: from,
+    toId: to,
+    kind,
+    status: 'pending_person',
+    reason: '',
+    createdBy: FACTORY,
+    createdAt: NOW,
+  })
 }
 
 // The corrections in force about a page, under any of its addresses (GET a page's «corrections»).
