@@ -3,18 +3,19 @@
 // of opening (median of five loads). CA6: with 5 000 pages the graph comes by groups, three of them open one
 // after the other, a page is focused and the list shown, and no task of the page lasts 200 ms or more.
 // CA7: with reduced motion the worker sends one settled picture and nothing is drawn at rest.
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import type { Page } from '@playwright/test'
 import { expect, scenario, test } from './fixture.ts'
 
 const GRAPH = '/b/growth/wiki/graph'
 
-// Each measure is kept as a test note and, in GitHub CI, written to the run's summary (the dot reporter of
-// verify.sh does not print notes), so the number CI measured can be read, not only that it passed.
+// Each measure is kept as a test note and in test-results/measures.txt, which verify.sh prints after the
+// browser tests (its dot reporter prints no notes): the number CI measured can be read, not only that it
+// passed.
 function report(type: string, description: string) {
   test.info().annotations.push({ type, description })
-  const summary = process.env.GITHUB_STEP_SUMMARY
-  if (summary) appendFileSync(summary, `- ${type}: ${description}\n`)
+  mkdirSync('test-results', { recursive: true })
+  appendFileSync('test-results/measures.txt', `${type}: ${description}\n`)
 }
 const settled = (page: Page) =>
   expect(page.locator('canvas.graph-canvas[data-settled]')).toHaveCount(1, { timeout: 60_000 })
