@@ -3,10 +3,19 @@
 // of opening (median of five loads). CA6: with 5 000 pages the graph comes by groups, three of them open one
 // after the other, a page is focused and the list shown, and no task of the page lasts 200 ms or more.
 // CA7: with reduced motion the worker sends one settled picture and nothing is drawn at rest.
+import { appendFileSync } from 'node:fs'
 import type { Page } from '@playwright/test'
 import { expect, scenario, test } from './fixture.ts'
 
 const GRAPH = '/b/growth/wiki/graph'
+
+// Each measure is kept as a test note and, in GitHub CI, written to the run's summary (the dot reporter of
+// verify.sh does not print notes), so the number CI measured can be read, not only that it passed.
+function report(type: string, description: string) {
+  test.info().annotations.push({ type, description })
+  const summary = process.env.GITHUB_STEP_SUMMARY
+  if (summary) appendFileSync(summary, `- ${type}: ${description}\n`)
+}
 const settled = (page: Page) =>
   expect(page.locator('canvas.graph-canvas[data-settled]')).toHaveCount(1, { timeout: 60_000 })
 
@@ -47,13 +56,10 @@ test.describe('the graph under load (CPU ×4)', () => {
       )
     }
     const median = [...times].sort((a, b) => a - b)[2] as number
-    test.info().annotations.push({
-      type: 'CA5 graph:settled ms (CPU ×4)',
-      description: times.map(Math.round).join(', '),
-    })
+    report('CA5 graph:settled ms (CPU ×4)', times.map(Math.round).join(', '))
     expect(times.every(Number.isFinite)).toBe(true)
     expect(median).toBeLessThan(3000)
-    test.info().annotations.push({ type: 'CA5 longest task ms', description: String(await longest(page)) })
+    report('CA5 longest task ms (CPU ×4)', String(await longest(page)))
     // The list: the pages drawn, and the retired ones on asking: all 300.
     await page.getByRole('button', { name: 'List' }).click()
     const caption = page.getByRole('table', { name: /Pages of the wiki/ }).getByRole('caption')
@@ -100,7 +106,7 @@ test.describe('the graph under load (CPU ×4)', () => {
     await page.getByRole('button', { name: 'Graph', exact: true }).click()
     await settled(page)
     const max = await longest(page)
-    test.info().annotations.push({ type: 'CA6 longest task ms (CPU ×4)', description: String(max) })
+    report('CA6 longest task ms (CPU ×4)', String(max))
     expect(max).toBeLessThan(200)
   })
 })
