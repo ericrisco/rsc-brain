@@ -9,7 +9,7 @@ import { type Ctx, inBrain } from './context.ts'
 import { words } from './entries.ts'
 import { neighboursOf } from './search.ts'
 import { track } from './trail.ts'
-import { settingsOf } from './wiki/pages.ts'
+import { pageRefs, settingsOf } from './wiki/pages.ts'
 
 export const CONTEXT = { default: 32_000, min: 4_000, max: 128_000 }
 
@@ -113,13 +113,16 @@ export async function startContext(
     : []
 
   // Corrections in force that touch the caller: addressed to its agent or account, general ones, or
-  // about what the task is about (found by its words, or a source of a page about it).
+  // about what the task is about (found by its words, a source of a page about it, or written in the web
+  // about one of those pages: "page:<address>" among its references, under any address the page has had,
+  // so a correction follows its page when it moves).
   const corrections = await ctx.db.query(
     `${SELECT} WHERE e.brain_id = $1 AND ${VIGENT} AND e.type = 'correction'
        AND (e.applies_to IS NULL OR lower(e.applies_to) = lower($3) OR e.applies_to = $4 OR e.id = ANY($5)
-            OR e.id IN (SELECT s.entry_id FROM page_sources s WHERE s.page_id = ANY($6) AND s.entry_id IS NOT NULL))
+            OR e.id IN (SELECT s.entry_id FROM page_sources s WHERE s.page_id = ANY($6) AND s.entry_id IS NOT NULL)
+            OR e.refs && $7::text[])
      ORDER BY e.created_at DESC`,
-    [...p, agent, ctx.who.accountId, relevantIds, taskPageIds],
+    [...p, agent, ctx.who.accountId, relevantIds, taskPageIds, await pageRefs(ctx.db, brain.id, taskPageIds)],
   )
   const pinned = await ctx.db.query(
     `${SELECT} WHERE e.brain_id = $1 AND ${VIGENT} AND e.pinned ORDER BY e.updated_at DESC`,

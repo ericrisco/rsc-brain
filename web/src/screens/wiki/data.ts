@@ -30,6 +30,13 @@ export type LastChange = { revision: number; authorId: string; authorName: strin
 export type SourceView =
   | { entryId: string; title: string | null; state: 'active' | 'forgotten' | 'purged' }
   | { url: string; title: string | null }
+export type PageCorrection = {
+  id: string
+  title: string
+  appliesTo: string | null
+  author: { id: string; name: string }
+  createdAt: string
+}
 export type Reading = {
   page: WikiPage
   redirectedFrom?: string
@@ -37,6 +44,8 @@ export type Reading = {
   links: { out: LinkView[]; in: LinkView[] }
   sources: SourceView[]
   lastChange?: LastChange | null
+  // The corrections in force about it («Something wrong here?»).
+  corrections?: PageCorrection[]
   // Its revisions, read with the page (one read of the page per visit, not two).
   history?: RevisionSummary[]
 }

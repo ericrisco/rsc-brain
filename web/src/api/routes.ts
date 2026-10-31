@@ -42,6 +42,22 @@ export const ROUTE_TABLE = {
   wikiChange: { route: 'POST /v1/brains/{slug}/wiki/changes' },
   trail: { route: 'GET /v1/brains/{slug}/trail' },
   entry: { route: 'GET /v1/entries/{id}' },
+  // The journal (PR20).
+  members: { route: 'GET /v1/brains/{slug}/members' },
+  sessions: { route: 'GET /v1/brains/{slug}/sessions' },
+  session: { route: 'GET /v1/sessions/{id}' },
+  entries: { route: 'GET /v1/brains/{slug}/entries' },
+  editEntry: { route: 'PATCH /v1/entries/{id}' },
+  forgetEntry: { route: 'POST /v1/entries/{id}/forget' },
+  recoverEntry: { route: 'POST /v1/entries/{id}/recover' },
+  pinEntry: { route: 'POST /v1/entries/{id}/pin' },
+  unpinEntry: { route: 'POST /v1/entries/{id}/unpin' },
+  scheduleEntry: { route: 'POST /v1/entries/{id}/schedule' },
+  relate: { route: 'POST /v1/brains/{slug}/relations' },
+  conflicts: { route: 'GET /v1/brains/{slug}/conflicts' },
+  forgotten: { route: 'GET /v1/brains/{slug}/forgotten' },
+  toReview: { route: 'GET /v1/brains/{slug}/to-review' },
+  addCorrection: { route: 'POST /v1/brains/{slug}/corrections' },
 } as const satisfies Record<string, Op>
 
 export type OpName = keyof typeof ROUTE_TABLE

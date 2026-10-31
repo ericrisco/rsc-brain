@@ -1,10 +1,11 @@
 // ⌘K / Ctrl K, or the Search button: searches every brain the person can read (GET /v1/search, B3) and
-// shows what matched and where. A wiki page opens (PR19); a journal entry opens with the journal (PR20).
+// shows what matched and where. A wiki page opens in its brain, and so does a journal entry.
 import { useState } from 'preact/hooks'
 import type { ApiError } from '../api/client.ts'
 import { api } from '../api/index.ts'
 import { pageHref, plainText } from '../lib/markdown.ts'
 import { brainsResource } from '../screens/Home.tsx'
+import { entryHref } from '../screens/journal/common.tsx'
 import { online } from '../session.ts'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
@@ -124,6 +125,10 @@ export function SearchDialog() {
                       onClick={() => (searchOpen.value = false)}
                     >
                       {h.title}
+                    </a>
+                  ) : h.kind === 'entry' ? (
+                    <a class="rt" href={entryHref(h.brain, h.id)} onClick={() => (searchOpen.value = false)}>
+                      {h.title || h.id}
                     </a>
                   ) : (
                     <span class="rt">{h.title}</span>

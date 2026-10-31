@@ -65,6 +65,7 @@ export const V1 = [
   'GET /v1/proposals/{id}',
   'GET /v1/proposals/{id}/review',
   'GET /v1/search',
+  'GET /v1/sessions/{id}',
   'GET /v1/setup',
   'PATCH /v1/admin/accounts/{id}',
   'PATCH /v1/brains/{slug}/pages/{address}',
@@ -86,6 +87,7 @@ export const V1 = [
   'POST /v1/brains',
   'POST /v1/brains/{slug}/archive',
   'POST /v1/brains/{slug}/corrections/relay',
+  'POST /v1/brains/{slug}/corrections',
   'POST /v1/brains/{slug}/entries',
   'POST /v1/brains/{slug}/members',
   'POST /v1/brains/{slug}/proposals',
@@ -156,6 +158,12 @@ export const ERROR_STATUS: Record<string, number> = {
   page_not_found: 404,
   page_changed: 409,
   revision_not_found: 404,
+  // The journal (PR20): an entry edited on a revision that moved on, one forgotten meanwhile, a topic
+  // another entry holds now, and supersedes that would close a loop.
+  entry_changed: 409,
+  entry_forgotten: 409,
+  topic_taken: 409,
+  relation_cycle: 409,
   too_many_attempts: 429,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,

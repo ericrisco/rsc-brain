@@ -35,6 +35,13 @@ function BrainLinks({ brain }: { brain: BrainNav }) {
     },
     { href: `${base}/wiki/decisions`, label: T.shell.decisions, here: path === `${base}/wiki/decisions` },
     { href: `${base}/wiki/log`, label: T.shell.log, here: path === `${base}/wiki/log` },
+    // Every screen of the journal is in the journal.
+    {
+      href: `${base}/journal`,
+      label: T.shell.journal,
+      here: path === `${base}/journal` ? true : path.startsWith(`${base}/journal/`) ? 'inside' : false,
+      keys: 'g j',
+    },
   ]
   return (
     <nav class="nav" aria-label={T.shell.brainNav}>

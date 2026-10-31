@@ -26,7 +26,9 @@ export type Action =
   | 'entry.pin'
   | 'entry.purge'
   | 'relation.write'
+  | 'relation.decide'
   | 'correction.relay'
+  | 'correction.write'
   | 'key.short'
   | 'wiki.propose'
   | 'wiki.decide'
@@ -34,7 +36,7 @@ export type Action =
 export type Facts = {
   role?: Role | null // the actor's role in the brain, already narrowed by its key
   brainStatus?: 'active' | 'archived'
-  isOwner?: boolean // the actor wrote the entry
+  isOwner?: boolean // the actor wrote the entry (for relation.decide: the one superseded or dismissed)
   onBehalfRole?: Role | null // correction.relay: the role of the person the service speaks for
 }
 
@@ -97,6 +99,18 @@ export function can(actor: Actor, action: Action, f: Facts = {}): Decision {
         'Ask a curator of the brain, or write a new entry.',
       )
     }
+    // A person, in the web, superseding an entry or dismissing a correction decides about someone's word:
+    // the rule of forgetting — its author or a curator (spec B1; review of PR20). Saying two entries
+    // contradict each other stays open to every contributor.
+    case 'relation.decide': {
+      if (f.brainStatus === 'archived') return ARCHIVED
+      if (atLeast(f.role ?? null, 'curator')) return OK
+      if (f.isOwner && atLeast(f.role ?? null, 'contributor')) return OK
+      return no(
+        'Only the author of an entry or a curator of the brain can supersede it, or dismiss it when it is a correction.',
+        'Ask a curator of the brain, or mark that the two entries contradict each other.',
+      )
+    }
     case 'wiki.decide':
     case 'entry.pin': {
       const r = needRole(f.role, 'curator')
@@ -123,6 +137,18 @@ export function can(actor: Actor, action: Action, f: Facts = {}): Decision {
         )
       }
       return OK
+    }
+    // A person's correction, written by that person in the web (spec B1: every key is an agent's).
+    case 'correction.write': {
+      if (actor.kind !== 'person' || actor.credential.kind !== 'web') {
+        return no(
+          'Corrections are a person’s word, written by that person in the web; agents cannot write them.',
+          'Save it as a "learning" or "preference" entry instead, or ask a person to add the correction in the rsc-brain web.',
+        )
+      }
+      const r = needRole(f.role, 'contributor')
+      if (!r.ok) return r
+      return f.brainStatus === 'archived' ? ARCHIVED : OK
     }
     case 'key.short':
       if (actor.kind === 'service' && actor.credential.kind === 'main') return OK

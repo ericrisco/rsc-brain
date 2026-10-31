@@ -10,6 +10,7 @@ export type Shortcut = {
     | 'go-wiki'
     | 'go-decisions'
     | 'go-log'
+    | 'go-journal'
     | 'go-people'
     | 'edit'
   keys: string[]
@@ -67,6 +68,13 @@ export const SHORTCUTS: Shortcut[] = [
     inBrain: true,
   },
   {
+    id: 'go-journal',
+    keys: ['g', 'j'],
+    label: 'Go to the journal of this brain',
+    control: '"Journal" in the side bar',
+    inBrain: true,
+  },
+  {
     id: 'edit',
     keys: ['e'],
     label: 'Edit the wiki page you are reading (curators)',
@@ -84,6 +92,7 @@ const GO: Record<string, Shortcut['id']> = {
   w: 'go-wiki',
   d: 'go-decisions',
   l: 'go-log',
+  j: 'go-journal',
   p: 'go-people',
 }
 

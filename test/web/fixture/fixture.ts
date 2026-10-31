@@ -12,13 +12,12 @@ import { fileURLToPath } from 'node:url'
 import { answerWeb, openWeb } from '../../../src/http/web.ts'
 import { AGENT_IDS, type AgentId, connectKit } from '../../../src/mcp/kit.ts'
 import { generate } from '../../../web/test/data/generate.ts'
+import * as J from './journal.ts'
 import {
   changeWiki,
   decisionsOf,
-  ENTRIES,
   editBehind,
   editPage,
-  entryOf,
   freshWiki,
   listOf,
   logOf,
@@ -53,6 +52,13 @@ export type Screen =
   | 'log'
   | 'trail'
   | 'entry'
+  | 'sessions'
+  | 'session'
+  | 'entries'
+  | 'conflicts'
+  | 'forgotten'
+  | 'to-review'
+  | 'members'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
 // alone: the administrator the setup made, the only person in the installation.
@@ -109,6 +115,8 @@ type Scen = {
   log: Array<{ seq: number; brain: string; frame: string }>
   // The wiki of each brain, made when first read.
   wikis: Map<string, Wiki>
+  // The journal of each brain, made when first read ("<slug>#big" for the much-data state).
+  journals: Map<string, J.Journal>
 }
 
 type Answer = { status: number; body: unknown; headers?: Record<string, string> }
@@ -319,6 +327,7 @@ function freshScenario(id: string, preset: Preset): Scen {
     seq: 100,
     log: [],
     wikis: new Map(),
+    journals: new Map(),
   }
   if (preset === 'alone') {
     s.accounts.push({
@@ -980,7 +989,131 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   },
   'GET /v1/entries/{id}': {
     screen: 'entry',
-    run: ({ params }) => entryOf(params.id as string, 'growth'),
+    run: (c) =>
+      withEntry(c, (j, e, w) => J.entryRead(j, e, w.role === 'curator', c.query.get('history') === '1')),
+  },
+  'GET /v1/brains/{slug}/members': {
+    screen: 'members',
+    run: (c) =>
+      inJournal(c, 'members', (_j, w) => {
+        const roleOf = (id: string) =>
+          brainsOf(c.s, c.s.accounts.find((a) => a.id === id) ?? null).find((b) => b.slug === c.params.slug)
+            ?.role
+        const listed = c.s.accounts
+          .filter((a) => !a.alone && roleOf(a.id))
+          .map((a) => ({
+            accountId: a.id,
+            kind: 'person',
+            name: a.name,
+            email: w.role === 'curator' ? a.email : null,
+            role: roleOf(a.id) as string,
+          }))
+        // Every brain of the fixture has a curator: Eric, where his own role says otherwise.
+        const members = listed.some((m) => m.role === 'curator')
+          ? listed
+          : listed.map((m) => (m.accountId === 'acc_eric' ? { ...m, role: 'curator' } : m))
+        const order = ['curator', 'contributor', 'reader']
+        members.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role))
+        return {
+          status: 200,
+          body: { members, former: [], pendingCurator: w.role === 'curator' ? null : false },
+        }
+      }),
+  },
+  'GET /v1/brains/{slug}/sessions': {
+    screen: 'sessions',
+    run: (c) =>
+      inJournal(c, 'sessions', (j) => {
+        const st = c.s.states.get('sessions')
+        if (st === 'empty' || st === 'filtered-empty')
+          return {
+            status: 200,
+            body: {
+              items: [],
+              total: 0,
+              next: null,
+              liveFrom: String(c.s.seq),
+              ...(c.query.get('cursor') ? {} : { facets: { clients: [], authors: [] } }),
+            },
+          }
+        return J.sessionsOf(j, c.query, String(c.s.seq))
+      }),
+  },
+  'GET /v1/sessions/{id}': {
+    screen: 'session',
+    run: (c) => {
+      for (const j of journalsOf(c)) {
+        const a = J.sessionOf(j, c.params.id as string)
+        if (a) return a
+      }
+      return J.NO_SESSION
+    },
+  },
+  'GET /v1/brains/{slug}/entries': {
+    screen: 'entries',
+    run: (c) =>
+      inJournal(c, 'entries', (j) =>
+        c.s.states.get('entries') === 'empty'
+          ? { status: 200, body: { items: [], total: 0, next: null } }
+          : J.entriesOf(j, c.query),
+      ),
+  },
+  'PATCH /v1/entries/{id}': {
+    run: (c) => withEntry(c, (j, e, w) => J.editEntry(j, e, w, c.body)),
+  },
+  'POST /v1/entries/{id}/forget': {
+    run: (c) => withEntry(c, (_j, e, w) => J.forgetEntry(e, w, c.body)),
+  },
+  'POST /v1/entries/{id}/recover': {
+    run: (c) => withEntry(c, (_j, e, w) => J.recoverEntry(e, w)),
+  },
+  'POST /v1/entries/{id}/pin': {
+    run: (c) => withEntry(c, (_j, e, w) => J.pinEntry(e, w, true)),
+  },
+  'POST /v1/entries/{id}/unpin': {
+    run: (c) => withEntry(c, (_j, e, w) => J.pinEntry(e, w, false)),
+  },
+  'POST /v1/entries/{id}/schedule': {
+    run: (c) => withEntry(c, (_j, e, w) => J.scheduleEntry(e, w, c.body)),
+  },
+  'POST /v1/brains/{slug}/relations': {
+    run: (c) => inJournal(c, null, (j, w) => J.relate(j, w, c.body)),
+  },
+  'GET /v1/brains/{slug}/conflicts': {
+    screen: 'conflicts',
+    run: (c) =>
+      inJournal(c, 'conflicts', (j) =>
+        c.s.states.get('conflicts') === 'empty'
+          ? { status: 200, body: { conflicts: [], total: 0, next: null } }
+          : J.conflictsOf(j, c.query),
+      ),
+  },
+  'GET /v1/brains/{slug}/forgotten': {
+    screen: 'forgotten',
+    run: (c) =>
+      inJournal(c, 'forgotten', (j, w) =>
+        c.s.states.get('forgotten') === 'empty' && w.role === 'curator'
+          ? { status: 200, body: { items: [], total: 0, next: null } }
+          : J.forgottenOf(j, w, c.query),
+      ),
+  },
+  'GET /v1/brains/{slug}/to-review': {
+    screen: 'to-review',
+    run: (c) =>
+      inJournal(c, 'to-review', (j) =>
+        c.s.states.get('to-review') === 'empty'
+          ? { status: 200, body: { items: [], total: 0, next: null } }
+          : J.toReviewOf(j, c.query),
+      ),
+  },
+  'POST /v1/brains/{slug}/corrections': {
+    run: (c) =>
+      inJournal(c, null, (j, w) => {
+        const wiki = c.s.wikis.get(c.params.slug as string) ?? freshWiki()
+        return J.addCorrection(j, w, c.body, (a) =>
+          wiki.pages.some((p) => p.addresses.includes(a) && p.revs[p.revs.length - 1]?.status !== 'retired'),
+        )
+      }),
   },
   'GET /v1/search': {
     screen: 'search',
@@ -991,17 +1124,18 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       // Journal entries only (a page's sources in the editor): by words of the title or the text, or the
       // newest with no words.
       if (query.get('in') === 'entries') {
-        const found = Object.entries(ENTRIES)
-          .filter(([, e]) => e.state === 'active')
-          .filter(([, e]) => !q || e.title.toLowerCase().includes(q) || e.content.toLowerCase().includes(q))
+        const brain = query.get('brains') ?? 'growth'
+        const found = journalOf(s, brain)
+          .entries.filter((e) => e.state === 'active' && e.supersededBy === null)
+          .filter((e) => !q || e.title.toLowerCase().includes(q) || e.content.toLowerCase().includes(q))
           .slice(0, limit)
-          .map(([id, e], i) => ({
+          .map((e) => ({
             kind: 'entry',
-            id,
-            brain: query.get('brains') ?? 'growth',
+            id: e.id,
+            brain,
             title: e.title,
             snippet: e.content,
-            at: `2026-10-${String(14 - i).padStart(2, '0')}T09:00:00.000Z`,
+            at: e.createdAt,
           }))
         return { status: 200, body: { items: found, next: null } }
       }
@@ -1031,7 +1165,21 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
                 snippet: 'snippet' in p ? p.snippet : p.summary,
                 at: AT,
               }))
-      return { status: 200, body: { items: hits, next: null } }
+      // Journal entries of the first brain too, as the server mixes them in.
+      const entries =
+        st === 'empty' || st === 'filtered-empty' || !q
+          ? []
+          : journalOf(s, 'growth')
+              .entries.filter((e) => e.state === 'active' && e.title.toLowerCase().includes(q))
+              .map((e) => ({
+                kind: 'entry',
+                id: e.id,
+                brain: 'growth',
+                title: e.title,
+                snippet: e.content,
+                at: e.createdAt,
+              }))
+      return { status: 200, body: { items: [...hits, ...entries].slice(0, limit), next: null } }
     },
   },
 }
@@ -1063,6 +1211,21 @@ const PRIVATE = new Set([
   'POST /v1/brains/{slug}/wiki/changes',
   'GET /v1/brains/{slug}/trail',
   'GET /v1/entries/{id}',
+  'GET /v1/brains/{slug}/members',
+  'GET /v1/brains/{slug}/sessions',
+  'GET /v1/sessions/{id}',
+  'GET /v1/brains/{slug}/entries',
+  'PATCH /v1/entries/{id}',
+  'POST /v1/entries/{id}/forget',
+  'POST /v1/entries/{id}/recover',
+  'POST /v1/entries/{id}/pin',
+  'POST /v1/entries/{id}/unpin',
+  'POST /v1/entries/{id}/schedule',
+  'POST /v1/brains/{slug}/relations',
+  'GET /v1/brains/{slug}/conflicts',
+  'GET /v1/brains/{slug}/forgotten',
+  'GET /v1/brains/{slug}/to-review',
+  'POST /v1/brains/{slug}/corrections',
 ])
 
 // The wiki of a brain the person is in, made when first read; `curator`: may edit it by hand.
@@ -1075,7 +1238,55 @@ function inWiki(c: Ctx, run: (w: Wiki, curator: boolean) => Answer): Answer {
     w = freshWiki()
     c.s.wikis.set(slug, w)
   }
+  // A page lists the corrections about it from the brain's journal.
+  w.corrections = (addresses) => J.correctionsAbout(journalOf(c.s, slug), addresses)
   return run(w, b?.role === 'curator')
+}
+
+// The journal of a brain, made when first read.
+function journalOf(s: Scen, slug: string, big = false): J.Journal {
+  const key = big ? `${slug}#big` : slug
+  let j = s.journals.get(key)
+  if (!j) {
+    j = big ? J.bigJournal(slug) : J.freshJournal(slug)
+    s.journals.set(key, j)
+  }
+  return j
+}
+
+type JWho = { role: string | null; me: { id: string; name: string }; archived: boolean }
+const jwho = (c: Ctx, b: Brain): JWho => ({
+  role: b.role,
+  me: { id: c.who?.id ?? '', name: c.who?.name ?? '' },
+  archived: b.status === 'archived',
+})
+
+// The journal of a brain the person is in; `screen`: its much-data state reads the big journal.
+function inJournal(c: Ctx, screen: Screen | null, run: (j: J.Journal, w: JWho) => Answer): Answer {
+  const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+  if (!b) return NO_BRAIN
+  return run(journalOf(c.s, b.slug, screen !== null && c.s.states.get(screen) === 'much-data'), jwho(c, b))
+}
+
+// The journals of the brains the person is in (an entry or a session is found by its id alone).
+function journalsOf(c: Ctx): J.Journal[] {
+  return brainsOf(c.s, c.who).flatMap((b) => {
+    const big = c.s.journals.get(`${b.slug}#big`)
+    return [journalOf(c.s, b.slug), ...(big ? [big] : [])]
+  })
+}
+
+function withEntry(c: Ctx, run: (j: J.Journal, e: J.FxEntry, w: JWho) => Answer): Answer {
+  for (const b of brainsOf(c.s, c.who)) {
+    for (const j of [journalOf(c.s, b.slug), c.s.journals.get(`${b.slug}#big`)]) {
+      const e = j?.entries.find((x) => x.id === c.params.id)
+      if (j && e && e.state !== 'purged') {
+        if (e.state === 'forgotten' && b.role !== 'curator') return J.NO_ENTRY
+        return run(j, e, jwho(c, b))
+      }
+    }
+  }
+  return J.NO_ENTRY
 }
 
 // The brains a person of the scenario is in: the setup's administrator only in those it made.
@@ -1354,6 +1565,25 @@ export async function startFixture(
             ...(typeof b.to === 'string' ? { address: b.to } : {}),
           },
         )
+        return send(res, { status: 200, body: {} })
+      }
+      // Another person corrects a journal entry meanwhile (the conflict of an edit).
+      const entryBehind = /^\/__fixture\/scenarios\/([\w]+)\/entry-edit$/.exec(url.pathname)
+      if (entryBehind && method === 'POST') {
+        const s = scenarios.get(entryBehind[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        const b = await bodyOf(req)
+        const e = journalOf(s, String(b.brain)).entries.find((x) => x.id === b.id)
+        if (e) J.editBehind(e, String(b.content))
+        return send(res, { status: e ? 200 : 404, body: {} })
+      }
+      // An agent's key asks for a relation about a person's correction: it waits for a person.
+      const agentRelate = /^\/__fixture\/scenarios\/([\w]+)\/agent-relate$/.exec(url.pathname)
+      if (agentRelate && method === 'POST') {
+        const s = scenarios.get(agentRelate[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        const b = await bodyOf(req)
+        J.agentAsks(journalOf(s, String(b.brain)), String(b.from), String(b.to), String(b.kind))
         return send(res, { status: 200, body: {} })
       }
       // For a person walking the fixture by hand: /__fixture/use?preset=fresh&next=/setup

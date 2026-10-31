@@ -29,7 +29,9 @@ describe('can()', () => {
       'entry.pin',
       'entry.purge',
       'relation.write',
+      'relation.decide',
       'correction.relay',
+      'correction.write',
       'key.short',
     ]
     for (const a of actions) {
@@ -86,6 +88,16 @@ describe('can()', () => {
     )
   })
 
+  it('superseding an entry or dismissing a correction in the web: its author or a curator', () => {
+    const d = (role: Role, isOwner: boolean, brainStatus: 'active' | 'archived' = 'active') =>
+      can(person(), 'relation.decide', { role, isOwner, brainStatus }).ok
+    assert.equal(d('contributor', false), false)
+    assert.equal(d('contributor', true), true)
+    assert.equal(d('curator', false), true)
+    assert.equal(d('reader', true), false)
+    assert.equal(d('curator', true, 'archived'), false)
+  })
+
   it('pinning is for curators', () => {
     assert.equal(can(person(), 'entry.pin', { role: 'contributor', brainStatus: 'active' }).ok, false)
     assert.equal(can(person(), 'entry.pin', { role: 'curator', brainStatus: 'active' }).ok, true)
@@ -123,6 +135,25 @@ describe('can()', () => {
         .ok,
       false,
     )
+  })
+
+  it('a correction is written by a person in the web, contributor or more, in an active brain', () => {
+    const web = person({ credential: { kind: 'web', perm: 'write' } })
+    const ok = (a: Actor, role: Role | null, brainStatus: 'active' | 'archived' = 'active') =>
+      can(a, 'correction.write', { role, brainStatus }).ok
+    assert.equal(ok(web, 'contributor'), true)
+    assert.equal(ok(web, 'curator'), true)
+    assert.equal(ok(web, 'reader'), false)
+    assert.equal(ok(web, null), false)
+    assert.equal(ok(web, 'curator', 'archived'), false)
+    // Any key is an agent's: a person's token or connection, a service's main or short key.
+    for (const kind of ['token', 'app'] as const)
+      assert.equal(ok(person({ credential: { kind, perm: 'write' } }), 'curator'), false, kind)
+    assert.equal(ok(service(), 'curator'), false)
+    assert.equal(ok(service('short'), 'curator'), false)
+    const d = can(person(), 'correction.write', { role: 'curator', brainStatus: 'active' })
+    assert.equal(d.ok, false)
+    if (!d.ok) assert.match(d.howToProceed, /learning|preference/)
   })
 
   it('short keys: only a main key mints them, and they cannot create brains', () => {

@@ -94,3 +94,33 @@ export type Compact<T> = { [K in keyof T as undefined extends T[K] ? never : K]:
 export function compact<T extends object>(o: T): Compact<T> {
   return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as Compact<T>
 }
+
+// "to" a day includes the whole day: up to the next midnight, not included.
+export const upTo = (d: Date | undefined, v: string | null) =>
+  d === undefined ? {} : v?.length === 10 ? { before: new Date(d.getTime() + 86_400_000) } : { to: d }
+
+export const flag = (v: string | null) => v === '1' || v === 'true'
+
+// A date filter (UTC): a day ("2026-10-29") or a full ISO instant, between years 1 and 9999. A day
+// that does not exist ("2026-02-31") is refused, not rolled over.
+const DAY = /^(\d{4})-(\d{2})-(\d{2})(T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2}))?$/
+export function day(v: string | null, field: string): Date | undefined {
+  if (v === null || v === '') return undefined
+  const m = DAY.exec(v)
+  const d = new Date(v)
+  const [y, mo, da] = [Number(m?.[1]), Number(m?.[2]), Number(m?.[3])]
+  // The real year: 29 February exists only in leap years.
+  const real = new Date(Date.UTC(2000, 0, 1))
+  real.setUTCFullYear(y, mo - 1, da)
+  if (
+    !m ||
+    Number.isNaN(d.getTime()) ||
+    y < 1 ||
+    real.getUTCMonth() !== mo - 1 ||
+    real.getUTCDate() !== da ||
+    d.getUTCFullYear() < 1 ||
+    d.getUTCFullYear() > 9999
+  )
+    throw invalid(`"${field}" is not a date.`, 'Send a day like 2026-10-29, or an ISO instant.')
+  return d
+}

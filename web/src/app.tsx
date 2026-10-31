@@ -10,6 +10,11 @@ import { useScreenTitle } from './lib/screen.ts'
 import { Brain, brainResource } from './screens/Brain.tsx'
 import { Home } from './screens/Home.tsx'
 import { Invite } from './screens/Invite.tsx'
+import { JournalCorrect } from './screens/journal/Correct.tsx'
+import { JournalEntry } from './screens/journal/Entry.tsx'
+import { JournalConflicts, JournalForgotten, JournalToReview } from './screens/journal/Lists.tsx'
+import { JournalSession } from './screens/journal/Session.tsx'
+import { JournalSessions } from './screens/journal/Sessions.tsx'
 import { NotFound } from './screens/NotFound.tsx'
 import { People } from './screens/People.tsx'
 import { Reset } from './screens/Reset.tsx'
@@ -67,6 +72,28 @@ function PagePage({ slug, address }: { slug?: string; address?: string }) {
   return <WikiPage key={screenKey(slug ?? '', address ?? '')} slug={slug ?? ''} address={address ?? ''} />
 }
 
+function SessionsPage({ slug }: { slug?: string }) {
+  return <JournalSessions key={slug} slug={slug ?? ''} />
+}
+function SessionPage({ slug, id }: { slug?: string; id?: string }) {
+  return <JournalSession key={`${slug}/${id}`} slug={slug ?? ''} id={id ?? ''} />
+}
+function EntryPage({ slug, id }: { slug?: string; id?: string }) {
+  return <JournalEntry key={`${slug}/${id}`} slug={slug ?? ''} id={id ?? ''} />
+}
+function ConflictsPage({ slug }: { slug?: string }) {
+  return <JournalConflicts key={slug} slug={slug ?? ''} />
+}
+function ForgottenPage({ slug }: { slug?: string }) {
+  return <JournalForgotten key={slug} slug={slug ?? ''} />
+}
+function ToReviewPage({ slug }: { slug?: string }) {
+  return <JournalToReview key={slug} slug={slug ?? ''} />
+}
+function CorrectPage({ slug }: { slug?: string }) {
+  return <JournalCorrect key={slug} slug={slug ?? ''} />
+}
+
 function SignedIn() {
   const { path, url, route } = useLocation()
   const who = me()
@@ -122,6 +149,13 @@ function SignedIn() {
           <Route path="/b/:slug/wiki/decisions" component={DecisionsPage} />
           <Route path="/b/:slug/wiki/log" component={LogPage} />
           <Route path="/b/:slug/pages/:address+" component={PagePage} />
+          <Route path="/b/:slug/journal" component={SessionsPage} />
+          <Route path="/b/:slug/journal/sessions/:id" component={SessionPage} />
+          <Route path="/b/:slug/journal/entries/:id" component={EntryPage} />
+          <Route path="/b/:slug/journal/conflicts" component={ConflictsPage} />
+          <Route path="/b/:slug/journal/forgotten" component={ForgottenPage} />
+          <Route path="/b/:slug/journal/to-review" component={ToReviewPage} />
+          <Route path="/b/:slug/journal/correct" component={CorrectPage} />
           <Route path="/people" component={People} />
           <Route default component={NotFound} />
         </Router>

@@ -572,6 +572,105 @@ describe('the fixture API', () => {
     assert.match((no.body as { error: { howToProceed: string } }).error.howToProceed, /Eric/)
   })
 
+  it('answers the journal like the server: sessions, entries, corrections, actions and lists', async () => {
+    const s = fx.scenario('signed-in')
+    const cookie = 'rscb_session=fx.acc_eric'
+    const go = (method: string, path: string, body?: unknown) =>
+      call(method, path, { scenario: s.id, cookie, body })
+    const list = (await go('GET', '/v1/brains/growth/sessions')).body as {
+      items: Array<{ id: string; client: string }>
+      facets: { clients: string[] }
+    }
+    assert.ok(list.items.length >= 4)
+    assert.ok(list.facets.clients.includes('Claude Code'))
+    assert.equal(
+      ((await go('GET', '/v1/brains/growth/sessions?status=open&client=Codex')).body as { total: number })
+        .total,
+      1,
+    )
+    assert.equal((await go('GET', '/v1/brains/growth/sessions?status=done')).status, 400)
+    assert.equal((await go('GET', '/v1/sessions/ses_fx_1')).status, 200)
+    assert.equal((await go('GET', '/v1/sessions/ses_nope')).status, 404)
+    assert.equal((await go('GET', '/v1/brains/growth/entries?session=ses_fx_1&limit=20')).status, 200)
+    assert.equal((await go('GET', '/v1/brains/growth/members')).status, 200)
+    assert.equal((await go('GET', '/v1/entries/ent_fx_intros?history=1')).status, 200)
+    assert.equal((await go('GET', '/v1/entries/ent_fx_gone')).status, 200, 'a curator reads a forgotten one')
+    assert.equal((await go('GET', '/v1/entries/ent_nope')).status, 404)
+    const edited = await go('PATCH', '/v1/entries/ent_fx_hooks', {
+      baseRevision: 1,
+      content: 'The hook first.',
+    })
+    assert.equal(edited.status, 200)
+    const stale = await go('PATCH', '/v1/entries/ent_fx_hooks', { baseRevision: 1, content: 'x' })
+    assert.equal(stale.status, 409)
+    assert.equal((await go('POST', '/v1/entries/ent_fx_hooks/pin')).status, 200)
+    assert.equal((await go('POST', '/v1/entries/ent_fx_hooks/unpin')).status, 200)
+    assert.equal(
+      (await go('POST', '/v1/entries/ent_fx_hooks/schedule', { reviewAfter: '2026-11-30' })).status,
+      200,
+    )
+    assert.equal((await go('POST', '/v1/entries/ent_fx_plain/forget', { reason: '' })).status, 400)
+    assert.equal((await go('POST', '/v1/entries/ent_fx_plain/forget', { reason: 'Wrong.' })).status, 200)
+    assert.equal((await go('GET', '/v1/brains/growth/forgotten')).status, 200)
+    assert.equal((await go('POST', '/v1/entries/ent_fx_plain/recover')).status, 200)
+    assert.equal((await go('GET', '/v1/brains/growth/to-review')).status, 200)
+    const conflicts = (await go('GET', '/v1/brains/growth/conflicts?limit=1')).body as {
+      total: number
+      next: string
+    }
+    assert.equal(conflicts.total, 2)
+    assert.equal(conflicts.next, '1')
+    const rel = await go('POST', '/v1/brains/growth/relations', {
+      from: 'ent_fx_intros',
+      to: 'ent_fx_30s',
+      kind: 'supersedes',
+    })
+    assert.equal(rel.status, 201)
+    assert.equal(((await go('GET', '/v1/brains/growth/conflicts')).body as { total: number }).total, 1)
+    assert.equal(
+      (
+        await go('POST', '/v1/brains/growth/relations', {
+          from: 'ent_fx_30s',
+          to: 'ent_fx_intros',
+          kind: 'x',
+        })
+      ).status,
+      400,
+    )
+    const made = await go('POST', '/v1/brains/growth/corrections', {
+      title: 'Short',
+      content: 'Keep it short.',
+      page: 'audience/intros',
+    })
+    assert.equal(made.status, 201)
+    assert.equal(
+      (await go('POST', '/v1/brains/growth/corrections', { title: 'x', content: 'y', page: 'no/page' }))
+        .status,
+      404,
+    )
+    // Ana reads support: no forgotten list, and no correction.
+    const ana = 'rscb_session=fx.acc_ana'
+    const m = fx.scenario('member')
+    const asAna = (method: string, path: string, body?: unknown) =>
+      call(method, path, { scenario: m.id, cookie: ana, body })
+    assert.equal((await asAna('GET', '/v1/brains/support/forgotten')).status, 403)
+    assert.equal(
+      (await asAna('POST', '/v1/brains/support/corrections', { title: 'x', content: 'y' })).status,
+      403,
+    )
+    assert.equal((await asAna('GET', '/v1/entries/ent_fx_gone_support')).status, 404)
+    // Much data, by pages.
+    s.set('sessions', 'much-data')
+    const big = (await go('GET', '/v1/brains/growth/sessions')).body as {
+      items: unknown[]
+      total: number
+      next: string
+    }
+    assert.equal(big.items.length, 50)
+    assert.ok(big.total > 500)
+    assert.equal((await go('GET', `/v1/brains/growth/sessions?cursor=${big.next}`)).status, 200)
+  })
+
   it('every operation the fixture answers was checked against the description', () => {
     assert.deepEqual(
       [...fx.operations].filter((op) => !seen.has(op)),

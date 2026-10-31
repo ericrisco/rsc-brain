@@ -112,3 +112,8 @@ export async function ok(ctx: Ctx, action: string, brainId: string | null, targe
     detail: detail ?? '',
   })
 }
+
+// A person's own gesture: the person signed in to the web. Every key — a token, a connection, a service
+// key — is an agent's (spec B1: corrections are changed and settled by a person, in the web).
+export const personInWeb = (ctx: Ctx): boolean =>
+  ctx.who.kind === 'person' && ctx.who.credential.kind === 'web'

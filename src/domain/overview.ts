@@ -5,11 +5,12 @@
 // key's own list, so one the caller cannot read answers like one that does not exist (constitution P4).
 import { can } from '../auth/can.ts'
 import { actorOf } from '../auth/principal.ts'
-import type { Db, Row } from '../db/db.ts'
+import type { Db } from '../db/db.ts'
 import { type BrainListed, getBrain, listBrains } from './brains.ts'
 import { type Ctx, inBrain } from './context.ts'
 import { lastSeq } from './events.ts'
 import { installation } from './installation.ts'
+import { OPEN_CONFLICT } from './relations.ts'
 import { wikiHealth } from './wiki/health.ts'
 import { proposalOf } from './wiki/proposals.ts'
 
@@ -22,20 +23,6 @@ export type BrainStats = {
   lastActivityAt: string | null
 }
 export type BrainWithStats = BrainListed & { stats: BrainStats; notifyProposals: boolean }
-
-// An open conflict, as the Conflicts list counts it (domain/relations.ts): a `contradicts` not settled
-// by a later `supersedes` or `not_related` on the same pair, or one waiting for a person; both entries
-// still active.
-const OPEN_CONFLICT = `
-  ((r.kind = 'contradicts' AND r.status = 'active'
-    AND NOT EXISTS (SELECT 1 FROM relations s
-                     WHERE s.brain_id = r.brain_id AND s.status = 'active'
-                       AND s.kind IN ('supersedes', 'not_related') AND s.created_at >= r.created_at
-                       AND least(s.from_id, s.to_id) = least(r.from_id, r.to_id)
-                       AND greatest(s.from_id, s.to_id) = greatest(r.from_id, r.to_id)))
-   OR r.status = 'pending_person')
-  AND EXISTS (SELECT 1 FROM entries x WHERE x.id = r.from_id AND x.state = 'active')
-  AND EXISTS (SELECT 1 FROM entries x WHERE x.id = r.to_id AND x.state = 'active')`
 
 // The numbers of several brains, and the caller's own choice of mail, in one query.
 async function statsOf(
@@ -150,11 +137,6 @@ export const TODAY_SESSIONS = 20
 export const PENDING_SHOWN = 5
 const SUMMARY_CHARS = 300
 
-const clientOf = (r: Row): string | null => {
-  for (const v of [r.agent, r.client_name, r.last_client]) if (typeof v === 'string' && v) return v
-  return r.ckind === 'web' ? 'web' : null
-}
-
 // G8: the overview of one brain.
 export async function brainOverview(ctx: Ctx, slug: string) {
   const { brain, role } = await inBrain(ctx, { slug })
@@ -167,12 +149,10 @@ export async function brainOverview(ctx: Ctx, slug: string) {
   const stats = (await statsOf(db, [brain.id], ctx.who.accountId)).get(brain.id)?.stats ?? ZERO
   const sessions = await db.query(
     `SELECT s.id, s.purpose, s.day, s.ref, s.status, s.opened_at, s.last_activity_at, a.name AS who,
-            c.kind AS ckind, c.agent, c.last_client, g.client_name, se.content AS summary,
+            s.client, se.content AS summary,
             (SELECT count(*)::int FROM entries e WHERE e.session_id = s.id AND e.state = 'active'
                 AND e.type <> 'summary') AS entries
        FROM sessions s JOIN accounts a ON a.id = s.account_id
-       LEFT JOIN credentials c ON c.id = s.credential_id
-       LEFT JOIN oauth_grants g ON g.id = c.grant_id
        LEFT JOIN entries se ON se.id = s.summary_entry_id AND se.state = 'active'
       WHERE s.brain_id = $1
         AND s.last_activity_at >= (date_trunc('day', $2::timestamptz AT TIME ZONE $3) AT TIME ZONE $3)
@@ -214,7 +194,8 @@ export async function brainOverview(ctx: Ctx, slug: string) {
     todaySessions: sessions.map((r) => ({
       id: String(r.id),
       who: String(r.who),
-      client: clientOf(r),
+      // The client that opened it, named then, as Sessions shows it (domain/clients.ts).
+      client: r.client == null ? null : String(r.client),
       // The session of the day a key gets by writing without opening one has no purpose of its own.
       purpose: r.day == null ? String(r.purpose) : '',
       ref: r.ref == null ? null : String(r.ref),

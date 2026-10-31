@@ -46,7 +46,20 @@ type Line = {
   reason: string | null
   pages: string[]
 }
-export type Wiki = { pages: FxPage[]; log: Line[]; seq: number }
+export type PageCorrection = {
+  id: string
+  title: string
+  appliesTo: string | null
+  author: Who
+  createdAt: string
+}
+// corrections: the corrections in force about a page by its addresses (from the brain's journal).
+export type Wiki = {
+  pages: FxPage[]
+  log: Line[]
+  seq: number
+  corrections?: (addresses: string[]) => PageCorrection[]
+}
 export type Who = { id: string; name: string }
 
 export const ENTRIES: Record<string, { title: string; content: string; type: string; state: string }> = {
@@ -283,6 +296,7 @@ function reading(w: Wiki, p: FxPage, asked?: string) {
     ...(r.status === 'retired' ? { notice: 'retired: this page is kept for its history only.' } : {}),
     ...(r.status === 'superseded' && sup ? { notice: `superseded by "${addressOf(sup)}".` } : {}),
     lastChange: { revision: r.revision, authorId: r.authorId, authorName: r.authorName, at: r.createdAt },
+    corrections: w.corrections?.(p.addresses) ?? [],
     links: { out: linksOut(w, p), in: linksIn },
     sources: r.sources.map((s) =>
       'entryId' in s

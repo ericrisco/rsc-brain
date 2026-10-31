@@ -2249,3 +2249,146 @@ pre.version {
   border-radius: var(--radius);
   background: var(--raised);
 }
+
+/* The journal (PR20): its sections and «Add a correction» in one bar, the filters of Sessions folded on a
+   phone, two entries of a conflict side by side, the actions on an entry, and its relations and history. */
+.journal-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  margin: 8px 0 20px;
+}
+
+.journal-bar .tabs {
+  margin: 0;
+}
+
+.filter-box {
+  margin: 0 0 20px;
+  padding: 12px 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+.filter-box > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  cursor: pointer;
+  font-weight: 550;
+}
+
+.filter-box[open] > summary {
+  margin-bottom: 4px;
+}
+
+.filter-box .filters {
+  margin: 8px 0 0;
+}
+
+.check-line {
+  display: inline-flex;
+  flex: 1 1 100%;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.check-line input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin: 8px 0 12px;
+}
+
+.pair .side {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+
+.pair .side > * + * {
+  margin-top: 4px;
+}
+
+.conflict-item .actions .button {
+  max-width: 100%;
+  padding-block: 8px;
+  border-radius: var(--radius);
+  line-height: 1.35;
+  white-space: normal;
+  text-align: left;
+}
+
+.entry-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+}
+
+.row-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+}
+
+.row-fields .field {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.relations,
+.refs {
+  display: grid;
+  gap: 6px;
+}
+
+.relations,
+.refs,
+.summary-text {
+  overflow-wrap: anywhere;
+}
+
+.rev {
+  min-height: 24px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.correction-form {
+  max-width: 720px;
+}
+
+@media (max-width: 767px) {
+  .pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A session: its facts, its summary and its entries, apart (review of PR20). */
+.session-part {
+  margin-top: 28px;
+}
+
+/* A conflict: its heading says what is at stake (review of PR20). */
+.conflict-head {
+  margin: 0 0 6px;
+  font: 600 15px / 1.4 var(--sans);
+  overflow-wrap: anywhere;
+}

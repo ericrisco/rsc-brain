@@ -8,10 +8,12 @@ import { conflict, invalid, notFound } from '../core/errors.ts'
 import { newId } from '../core/ids.ts'
 import type { Db, Row } from '../db/db.ts'
 import { normalize, redactAll } from '../privacy/redact.ts'
+import { clientNow } from './clients.ts'
 import { allow, type Ctx, inBrain } from './context.ts'
 import { emit } from './events.ts'
-import { ownsSession, sessionFor, touch } from './sessions.ts'
+import { dayText, ownsSession, sessionFor, touch } from './sessions.ts'
 import { track } from './trail.ts'
+import { pageNotFound } from './wiki/pages.ts'
 
 export const ENTRY_TYPES = [
   'decision',
@@ -294,6 +296,8 @@ async function write(
     }
   }
   const sessionId = await sessionFor(db, c, brainId, o.sessionId)
+  // The client writing, named now: it stays with the entry whatever uses this key later.
+  const client = await clientNow(db, who)
   const stampedRef = who.credential.kind === 'short' ? who.credential.ref : null
   const normHash = sha(normalize(`${p.title}\n${p.content}`))
   const by = {
@@ -322,7 +326,7 @@ async function write(
     await db.query(
       `UPDATE entries SET type = $2, title = $3, content = $4, applies_to = $5, tags = $6, refs = $7,
               revision = $8, norm_hash = $9, review_after = $10, expires_at = $11, updated_at = $12,
-              session_id = $13, credential_id = $14, on_behalf_id = $15, stamped_ref = $16
+              session_id = $13, credential_id = $14, on_behalf_id = $15, stamped_ref = $16, client = $17
         WHERE id = $1`,
       [
         existingTopic.id,
@@ -341,6 +345,7 @@ async function write(
         who.credential.id,
         w.onBehalfId,
         stampedRef,
+        client,
       ],
     )
     await revisionRow(db, String(existingTopic.id), revision, p, by, now)
@@ -398,8 +403,8 @@ async function write(
       const id = newId('ent')
       await db.query(
         `INSERT INTO entries (id, brain_id, session_id, type, topic, title, content, applies_to, tags, refs, author_id,
-           credential_id, on_behalf_id, stamped_ref, norm_hash, review_after, expires_at, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18)`,
+           credential_id, on_behalf_id, stamped_ref, norm_hash, review_after, expires_at, created_at, updated_at, client)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$18,$19)`,
         [
           id,
           brainId,
@@ -419,6 +424,7 @@ async function write(
           p.reviewAfter,
           p.expiresAt,
           now,
+          client,
         ],
       )
       await revisionRow(db, id, 1, p, by, now)
@@ -516,6 +522,56 @@ export async function webCorrection(
     { onBehalfId: null },
     {},
   )
+}
+
+// A person's correction, written by that person in the web (spec B6 «Add a correction», B1): about a
+// page of the wiki or an entry of the journal, which it names in its references ("page:<address>",
+// "entry:<id>"), and optionally addressed to an agent. It enters the context of the agents it touches
+// (B3): the one it applies to, and any agent whose task is about its page or its words.
+export async function addCorrection(
+  ctx: Ctx,
+  slug: string,
+  input: {
+    title: string
+    content: string
+    appliesTo?: string
+    page?: string
+    entry?: string
+    requestKey?: string
+  },
+): Promise<Receipt> {
+  if (input.page !== undefined && input.entry !== undefined)
+    throw invalid('A correction is about one page or one entry, not both.', 'Send "page" or "entry".')
+  return ctx.db.tx(async (db) => {
+    const c = { ...ctx, db }
+    const { brain, role } = await inBrain(c, { slug }, 'share')
+    await allow(c, 'correction.write', { role, brainStatus: brain.status }, brain.id)
+    const refs: string[] = []
+    if (input.page !== undefined) {
+      const page = await db.one<{ address: string }>(
+        "SELECT address FROM pages WHERE brain_id = $1 AND address = $2 AND status <> 'retired'",
+        [brain.id, input.page.trim()],
+      )
+      if (!page) throw pageNotFound(input.page.trim())
+      refs.push(`page:${page.address}`)
+    }
+    if (input.entry !== undefined) {
+      const e = await db.one<{ id: string }>(
+        "SELECT id FROM entries WHERE id = $1 AND brain_id = $2 AND state = 'active'",
+        [input.entry.trim(), brain.id],
+      )
+      if (!e) throw notFound('entry')
+      refs.push(`entry:${e.id}`)
+    }
+    const p = prepare({
+      type: 'correction',
+      title: input.title,
+      content: input.content,
+      refs,
+      ...(input.appliesTo?.trim() ? { appliesTo: input.appliesTo.trim() } : {}),
+    })
+    return write(ctx, db, brain.id, p, { onBehalfId: null }, compactO(input))
+  })
 }
 
 // A person's correction, relayed by a service account with its main key (Factory's gate). The person
@@ -674,7 +730,117 @@ export type Revision = {
   tags: string[]
   refs: string[]
   authorId: string
+  authorName: string
   createdAt: string
+}
+
+type Named = { id: string; name: string }
+// Who wrote an entry and with what (the client named when it was written), for a person to read
+// («Claude Code of Eric»); and, for a forgotten
+// one (curators only see it), who forgot it, when and why.
+export type Byline = {
+  author: Named
+  onBehalf: Named | null
+  client: string | null
+  forgotten: { by: Named; reason: string; at: string } | null
+}
+
+export async function bylines(db: Db, ids: string[]): Promise<Map<string, Byline>> {
+  const out = new Map<string, Byline>()
+  if (ids.length === 0) return out
+  const rows = await db.query(
+    `SELECT e.id, e.state, e.forgotten_reason, e.forgotten_at, a.id AS a_id, a.name AS a_name,
+            o.id AS o_id, o.name AS o_name, f.id AS f_id, f.name AS f_name, e.client
+       FROM entries e JOIN accounts a ON a.id = e.author_id
+       LEFT JOIN accounts o ON o.id = e.on_behalf_id
+       LEFT JOIN accounts f ON f.id = e.forgotten_by
+      WHERE e.id = ANY($1)`,
+    [ids],
+  )
+  for (const r of rows) {
+    out.set(String(r.id), {
+      author: { id: String(r.a_id), name: String(r.a_name) },
+      onBehalf: r.o_id == null ? null : { id: String(r.o_id), name: String(r.o_name) },
+      client: r.client == null ? null : String(r.client),
+      forgotten:
+        r.state === 'forgotten' && r.f_id != null
+          ? {
+              by: { id: String(r.f_id), name: String(r.f_name) },
+              reason: String(r.forgotten_reason ?? ''),
+              at: (r.forgotten_at as Date).toISOString(),
+            }
+          : null,
+    })
+  }
+  return out
+}
+
+export const withByline = (e: Entry, b: Byline | undefined): Entry & Byline => ({
+  ...e,
+  author: b?.author ?? { id: e.authorId, name: '' },
+  onBehalf: b?.onBehalf ?? null,
+  client: b?.client ?? null,
+  forgotten: b?.forgotten ?? null,
+})
+
+// The session an entry is in, named for a person (its purpose; the session a key gets by writing without
+// opening one has its day instead).
+export type SessionRef = { id: string; purpose: string; day: string | null }
+
+export async function sessionRefs(db: Db, ids: string[]): Promise<Map<string, SessionRef>> {
+  const out = new Map<string, SessionRef>()
+  if (ids.length === 0) return out
+  const rows = await db.query('SELECT id, purpose, day FROM sessions WHERE id = ANY($1)', [[...new Set(ids)]])
+  for (const r of rows) {
+    out.set(String(r.id), {
+      id: String(r.id),
+      purpose: String(r.purpose),
+      day: dayText(r.day),
+    })
+  }
+  return out
+}
+
+// The relations of an entry, both ways, with the other entry's title — unless that one is purged, or
+// forgotten and the reader is not a curator (forgotten entries leave the ordinary journal, spec B1). Then
+// the reason goes too: it was written about the other entry and can repeat what it said.
+export type EntryRelation = {
+  id: string
+  kind: string
+  status: string
+  direction: 'out' | 'in'
+  other: { id: string; title: string | null; type: string; state: string }
+  reason: string | null
+  by: Named
+  createdAt: string
+}
+
+async function relationsOf(db: Db, id: string, curator: boolean): Promise<EntryRelation[]> {
+  const rows = await db.query(
+    `SELECT r.*, ac.name AS by_name, o.id AS o_id, o.title AS o_title, o.type AS o_type, o.state AS o_state
+       FROM relations r JOIN accounts ac ON ac.id = r.created_by
+       JOIN entries o ON o.id = CASE WHEN r.from_id = $1 THEN r.to_id ELSE r.from_id END
+      WHERE r.from_id = $1 OR r.to_id = $1 ORDER BY r.created_at, r.id LIMIT 200`,
+    [id],
+  )
+  return rows.map((r) => {
+    const hidden = r.o_state === 'purged' || (r.o_state === 'forgotten' && !curator)
+    return {
+      id: String(r.id),
+      kind: String(r.kind),
+      status: String(r.status),
+      direction: r.from_id === id ? 'out' : 'in',
+      other: {
+        id: String(r.o_id),
+        title: hidden ? null : String(r.o_title),
+        type: String(r.o_type),
+        state: String(r.o_state),
+      },
+      reason: hidden ? null : String(r.reason),
+      by: { id: String(r.created_by), name: String(r.by_name) },
+      createdAt: (r.created_at as Date).toISOString(),
+    }
+  })
 }
 
 // Reading one entry. A forgotten entry is visible only to curators; a purged one only shows the mark
@@ -683,14 +849,16 @@ export async function getEntry(
   ctx: Ctx,
   id: string,
   o: { history?: boolean } = {},
-): Promise<{ entry: Entry; history?: Revision[] }> {
+): Promise<{ entry: Entry & Byline; session: SessionRef; relations: EntryRelation[]; history?: Revision[] }> {
   const row = await ctx.db.one('SELECT * FROM entries WHERE id = $1', [id])
   if (!row) throw notFound('entry')
   const { role } = await inBrain(ctx, { id: String(row.brain_id) }).catch(() => {
     throw notFound('entry')
   })
   if (row.state === 'forgotten' && role !== 'curator') throw notFound('entry')
-  const entry = entryOf(row)
+  const entry = withByline(entryOf(row), (await bylines(ctx.db, [id])).get(id))
+  const relations = row.state === 'purged' ? [] : await relationsOf(ctx.db, id, role === 'curator')
+  const session = (await sessionRefs(ctx.db, [entry.sessionId])).get(entry.sessionId) as SessionRef
   // A purged entry's mark is shown, but its id never goes back into the trail (CA13).
   if (row.state !== 'purged') {
     await track(ctx.root ?? ctx.db, ctx, {
@@ -700,10 +868,16 @@ export async function getEntry(
       label: entry.title,
     })
   }
-  if (!o.history || row.state === 'purged') return { entry }
-  const revs = await ctx.db.query('SELECT * FROM entry_revisions WHERE entry_id = $1 ORDER BY revision', [id])
+  if (!o.history || row.state === 'purged') return { entry, session, relations }
+  const revs = await ctx.db.query(
+    `SELECT r.*, a.name AS author_name FROM entry_revisions r JOIN accounts a ON a.id = r.author_id
+      WHERE r.entry_id = $1 ORDER BY r.revision`,
+    [id],
+  )
   return {
     entry,
+    session,
+    relations,
     history: revs.map((r) => ({
       revision: Number(r.revision),
       type: String(r.type),
@@ -713,6 +887,7 @@ export async function getEntry(
       tags: (r.tags as string[]) ?? [],
       refs: (r.refs as string[]) ?? [],
       authorId: String(r.author_id),
+      authorName: String(r.author_name),
       createdAt: (r.created_at as Date).toISOString(),
     })),
   }
