@@ -4,6 +4,7 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
+import { toReview } from '../lib/brains.ts'
 import { applyTheme, theme } from '../lib/theme.ts'
 import { brainsResource } from '../screens/Home.tsx'
 import type { Me } from '../session.ts'
@@ -24,8 +25,19 @@ export type BrainNav = { slug: string; name: string; role: string }
 function BrainLinks({ brain }: { brain: BrainNav }) {
   const { path } = useLocation()
   const base = `/b/${encodeURIComponent(brain.slug)}`
+  // How many proposals wait in this brain, beside its section (from the brains and their numbers).
+  const waiting =
+    brainsResource().data.value?.brains.find((b) => b.slug === brain.slug)?.stats.pendingProposals ?? 0
   const items = [
     { href: base, label: T.shell.overview, here: path === base, keys: 'g o' },
+    // A proposal is in the proposals.
+    {
+      href: `${base}/proposals`,
+      label: T.shell.proposals,
+      here: path === `${base}/proposals` ? true : path.startsWith(`${base}/proposals/`) ? 'inside' : false,
+      keys: 'g r',
+      count: waiting,
+    },
     // A page of the wiki is in the wiki.
     {
       href: `${base}/wiki`,
@@ -57,6 +69,15 @@ function BrainLinks({ brain }: { brain: BrainNav }) {
               aria-keyshortcuts={'keys' in i ? i.keys : undefined}
             >
               {i.label}
+              {'count' in i && i.count ? (
+                <>
+                  {' '}
+                  <span class="nav-count">
+                    {i.count}
+                    <span class="sr-only"> {T.shell.pending}</span>
+                  </span>
+                </>
+              ) : null}
             </a>
           </li>
         ))}
@@ -160,10 +181,8 @@ function AccountMenu({ me }: { me: Me }) {
   )
 }
 
-// The brains and their numbers (the cards of home, what waits for review) are asked again every 30
-// seconds and when the tab comes back (plan §3.3). The top bar shows no count of proposals to review
-// yet: it would lead nowhere until the Proposals screen exists (PR21); the cards and the overview say
-// what waits.
+// The brains and their numbers (the cards of home, what waits for review, the counter of the top bar) are
+// asked again every 30 seconds and when the tab comes back (plan §3.3).
 function useFreshBrains() {
   useEffect(() => {
     const r = brainsResource()
@@ -177,6 +196,26 @@ function useFreshBrains() {
       document.removeEventListener('visibilitychange', again)
     }
   }, [])
+}
+
+// What waits for me to review, in the top bar: the proposals of the brains I curate; with one brain
+// waiting it leads to its inbox, with more to home, where each card says how many.
+function ToReview() {
+  const { path } = useLocation()
+  const brains = brainsResource().data.value?.brains
+  if (!brains) return null
+  const { count, href } = toReview(brains)
+  if (!count) return null
+  return (
+    <a class="top-link to-review" href={href} aria-current={path === href ? 'page' : undefined}>
+      <span class="to-review-n">{count}</span>
+      <span class="rest">
+        {' '}
+        <span class="wide-only">{count === 1 ? 'proposal' : 'proposals'} </span>
+        to review
+      </span>
+    </a>
+  )
 }
 
 export function Shell({
@@ -222,6 +261,7 @@ export function Shell({
           </button>
         </div>
         <div class="end">
+          <ToReview />
           {me.account.canInvite ? (
             <a
               class="top-link"

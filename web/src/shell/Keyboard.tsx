@@ -65,6 +65,20 @@ export function Keyboard({
         route(`/b/${encodeURIComponent(brain)}/wiki/log`)
       } else if (id === 'go-journal' && signedIn && brain) {
         route(`/b/${encodeURIComponent(brain)}/journal`)
+      } else if (id === 'go-proposals' && signedIn && brain) {
+        route(`/b/${encodeURIComponent(brain)}/proposals`)
+      } else if ((id === 'approve' || id === 'return') && signedIn) {
+        // What "Approve all" or "Return" of the proposal on screen does; where it cannot be pressed yet,
+        // the keyboard goes to what is missing (the comment) or to the button, which says why.
+        const b = document.querySelector<HTMLElement>(`main [data-shortcut="${id}"]`)
+        if (b) {
+          e.preventDefault()
+          if (b.getAttribute('aria-disabled') !== 'true') b.click()
+          else {
+            const needs = b.dataset.needs ? document.getElementById(b.dataset.needs) : null
+            ;(needs ?? b).focus()
+          }
+        }
       } else if (id === 'edit' && signedIn) {
         // What "Edit" above a page does; on a page that has no Edit (not a curator), nothing.
         const edit = document.querySelector<HTMLAnchorElement>('main a[data-view="edit"]')

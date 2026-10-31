@@ -139,6 +139,43 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   'GET /v1/brains/{slug}/proposals': {
     '': ['items', 'next'],
   },
+  // The inbox of the web (PR21): a page of proposals with who proposed and decided, and the count of each
+  // status on the first page; the review a person reads before deciding; what a decision answers.
+  'GET /v1/brains/{slug}/proposals +inbox': {
+    '': ['items', 'next', 'total'],
+    'items[]': [
+      'id',
+      'title',
+      'reason',
+      'status',
+      'old',
+      'agent',
+      'authorId',
+      'authorName',
+      'decidedBy',
+      'decidedByName',
+      'decidedAt',
+      'comment',
+      'createdAt',
+      'opCount',
+    ],
+    counts: ['pending', 'approved', 'partially_approved', 'returned', 'withdrawn', 'superseded'],
+  },
+  'GET /v1/proposals/{id}/review': {
+    '': ['proposal', 'fingerprint', 'ops', 'warnings', 'canDecide'],
+    proposal: ['id', 'title', 'reason', 'status', 'old', 'agent', 'authorName', 'decidedByName', 'collected'],
+    'ops[]': ['index', 'op', 'status', 'corrected', 'before', 'after', 'dependsOn', 'stale', 'warnings'],
+  },
+  'POST /v1/proposals/{id}/approve': {
+    '': ['proposal', 'ops', 'applied'],
+    proposal: ['id', 'status', 'decidedBy', 'decidedByName', 'decidedAt', 'comment'],
+    'ops[]': ['index', 'op', 'status'],
+    'applied[]': ['pageId', 'address', 'revision'],
+  },
+  'POST /v1/proposals/{id}/return': {
+    '': ['proposal', 'ops', 'applied'],
+    proposal: ['id', 'status', 'decidedBy', 'decidedByName', 'decidedAt', 'comment'],
+  },
   'GET /v1/brains/{slug}/trail': {
     '': ['items', 'next'],
   },
@@ -536,6 +573,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       ...(await people()),
       ...(await wiki(entryId)),
       ...(await journal()),
+      ...(await inbox(entryId)),
     }
     const paths = doc.paths as Record<string, Record<string, Json>>
     for (const [op, shape] of Object.entries(SHAPES)) {
@@ -747,6 +785,51 @@ describe('the v1 contract', { skip: skipPg }, () => {
     return out
   }
 
+  // The proposals inbox as the web works it (PR21): three changes, two approved and one returned with a
+  // comment; another proposal returned whole.
+  async function inbox(entryId: string): Promise<Record<string, Json>> {
+    const out: Record<string, Json> = {}
+    const web = await w.web(eric.id)
+    const create = (address: string) => ({
+      op: 'create',
+      address,
+      type: 'topic',
+      title: `Page ${address}`,
+      summary: 'A page.',
+      body: 'Text.',
+      sources: [{ entryId }],
+      reason: 'From the journal.',
+    })
+    const send = async (title: string, ops: Json[]) => {
+      const r = await w.call(eric.key, 'POST', '/v1/brains/contract/proposals', { title, ops })
+      assert.equal(r.status, 201, r.text)
+      return String((r.body.proposal as Json).id)
+    }
+    const three = await send('Three pages', [create('inbox/a'), create('inbox/b'), create('inbox/c')])
+    const whole = await send('Back whole', [create('inbox/d')])
+    out['GET /v1/brains/{slug}/proposals +inbox'] = (
+      await w.callWeb(web, 'GET', '/v1/brains/contract/proposals')
+    ).body
+    const review = await w.callWeb(web, 'GET', `/v1/proposals/${three}/review`)
+    assert.equal(review.status, 200, review.text)
+    out['GET /v1/proposals/{id}/review'] = review.body
+    const approved = await w.callWeb(web, 'POST', `/v1/proposals/${three}/approve`, {
+      fingerprint: review.body.fingerprint,
+      approve: [0, 1],
+      comment: 'The third page is not needed.',
+    })
+    assert.equal(approved.status, 200, approved.text)
+    out['POST /v1/proposals/{id}/approve'] = approved.body
+    const fp = (await w.callWeb(web, 'GET', `/v1/proposals/${whole}/review`)).body.fingerprint
+    const returned = await w.callWeb(web, 'POST', `/v1/proposals/${whole}/return`, {
+      fingerprint: fp,
+      comment: 'Not now.',
+    })
+    assert.equal(returned.status, 200, returned.text)
+    out['POST /v1/proposals/{id}/return'] = returned.body
+    return out
+  }
+
   it('every refusal the web meets keeps its status within v1 (ERROR_STATUS, which the fixture obeys)', async () => {
     const lou = await withPassword('Louis')
     const reader = await withPassword('Rita')
@@ -858,6 +941,71 @@ describe('the v1 contract', { skip: skipPg }, () => {
     await add(
       'relation_cycle',
       w.callWeb(ericWeb, 'POST', '/v1/brains/contract/relations', { from: y, to: x, kind: 'supersedes' }),
+    )
+    // The inbox (PR21): a key never decides; a proposal decided already, or changed since it was read; an
+    // edit written on a revision that moved on; part of a proposal approved without what it needs.
+    const created = await w.call(eric.key, 'POST', '/v1/brains/contract/entries', {
+      type: 'learning',
+      title: 'Inbox',
+      content: 'Inbox refusals.',
+    })
+    const inboxEntry = String((created.body.receipt as Json).entryId)
+    const page = (address: string) => ({
+      op: 'create',
+      address,
+      type: 'topic',
+      title: `Page ${address}`,
+      summary: 'A page.',
+      body: 'Text.',
+      sources: [{ entryId: inboxEntry }],
+      reason: 'Refusals.',
+    })
+    const propose = async (ops: Json[]) =>
+      String(
+        (
+          (await w.call(eric.key, 'POST', '/v1/brains/contract/proposals', { title: 'Refusals', ops })).body
+            .proposal as Json
+        ).id,
+      )
+    const seen = async (id: string) =>
+      String((await w.callWeb(ericWeb, 'GET', `/v1/proposals/${id}/review`)).body.fingerprint)
+    const decided = await propose([page('refusal/once')])
+    await add('web_only', w.call(eric.key, 'GET', `/v1/proposals/${decided}/review`))
+    const fpOnce = await seen(decided)
+    await w.callWeb(ericWeb, 'POST', `/v1/proposals/${decided}/approve`, { fingerprint: fpOnce })
+    await add(
+      'already_decided',
+      w.callWeb(ericWeb, 'POST', `/v1/proposals/${decided}/approve`, { fingerprint: fpOnce }),
+    )
+    const old = await propose([page('refusal/replaced')])
+    const fpOld = await seen(old)
+    await w.call(eric.key, 'POST', '/v1/brains/contract/proposals', {
+      title: 'Refusals, again',
+      supersedes: old,
+      ops: [page('refusal/replaced')],
+    })
+    await add(
+      'proposal_changed',
+      w.callWeb(ericWeb, 'POST', `/v1/proposals/${old}/approve`, { fingerprint: fpOld }),
+    )
+    const behind = await propose([
+      { op: 'edit', address: 'conflict/page', baseRevision: 1, body: 'Four.', reason: 'Old base.' },
+    ])
+    await add(
+      'stale_base',
+      w.callWeb(ericWeb, 'POST', `/v1/proposals/${behind}/approve`, { fingerprint: await seen(behind) }),
+    )
+    const chain = await propose([
+      page('refusal/moved'),
+      { op: 'move', address: 'refusal/moved', to: 'refusal/moved-on', reason: 'Rename.' },
+    ])
+    await add(
+      'missing_dependencies',
+      w.callWeb(ericWeb, 'POST', `/v1/proposals/${chain}/approve`, {
+        fingerprint: await seen(chain),
+        approve: [1],
+        comment: 'Only the move.',
+      }),
     )
     await add('no_logo', w.raw('GET', '/v1/branding/logo'))
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))

@@ -17,6 +17,8 @@ import { JournalSession } from './screens/journal/Session.tsx'
 import { JournalSessions } from './screens/journal/Sessions.tsx'
 import { NotFound } from './screens/NotFound.tsx'
 import { People } from './screens/People.tsx'
+import { ProposalsInbox } from './screens/proposals/Inbox.tsx'
+import { ProposalScreen } from './screens/proposals/Proposal.tsx'
 import { Reset } from './screens/Reset.tsx'
 import { Setup } from './screens/Setup.tsx'
 import { SignIn } from './screens/SignIn.tsx'
@@ -94,6 +96,13 @@ function CorrectPage({ slug }: { slug?: string }) {
   return <JournalCorrect key={slug} slug={slug ?? ''} />
 }
 
+function InboxPage({ slug }: { slug?: string }) {
+  return <ProposalsInbox key={slug} slug={slug ?? ''} />
+}
+function ProposalPage({ slug, id }: { slug?: string; id?: string }) {
+  return <ProposalScreen key={`${slug}/${id}`} slug={slug ?? ''} id={id ?? ''} />
+}
+
 function SignedIn() {
   const { path, url, route } = useLocation()
   const who = me()
@@ -145,6 +154,8 @@ function SignedIn() {
         <Router>
           <Route path="/" component={Home} />
           <Route path="/b/:slug" component={BrainPage} />
+          <Route path="/b/:slug/proposals" component={InboxPage} />
+          <Route path="/b/:slug/proposals/:id" component={ProposalPage} />
           <Route path="/b/:slug/wiki" component={MapPage} />
           <Route path="/b/:slug/wiki/decisions" component={DecisionsPage} />
           <Route path="/b/:slug/wiki/log" component={LogPage} />

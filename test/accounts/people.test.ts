@@ -527,7 +527,7 @@ describe('people and keys', { skip: skipPg }, () => {
     const email = String((await w.db.one('SELECT email FROM accounts WHERE id = $1', [mo.id]))?.email)
     const m = await w.mailTo(email)
     assert.match(m.text, /Bot proposed 1 change to the wiki of "notes"/)
-    assert.match(m.text, /\/brains\/notes\/proposals\/prp_/)
+    assert.match(m.text, /\/b\/notes\/proposals\/prp_/)
     assert.ok(!/Secret plan|Nobody should/.test(m.text + m.subject))
   })
 

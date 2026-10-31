@@ -9,14 +9,24 @@ import { invalidate, invalidateByEvent } from '../api/resource.ts'
 
 const newer = (a: string, b: string) => (Number(b) > Number(a) ? b : a)
 
+export type LiveEvent = { kind: string; who?: unknown; target?: unknown }
+
 // `looks`: a search or a read in the brain matters to the screen too (the first step «Connect your
 // agent» waits for any call of an agent, a read included); otherwise only changes do.
-export function useLive(slug: string | null, cursor?: string, looks = false): void {
+// `onEvent`: the screen hears each event too (who decided the proposal it shows).
+export function useLive(
+  slug: string | null,
+  cursor?: string,
+  looks = false,
+  onEvent?: (e: LiveEvent) => void,
+): void {
   // The newest cursor of the overview, read when the stream (re)opens.
   const latest = useRef(cursor ?? '')
   if (cursor) latest.current = newer(latest.current, cursor)
   const looking = useRef(looks)
   looking.current = looks
+  const hear = useRef(onEvent)
+  hear.current = onEvent
   useEffect(() => {
     if (!slug || typeof EventSource === 'undefined') return
     let es: EventSource | null = null
@@ -38,6 +48,7 @@ export function useLive(slug: string | null, cursor?: string, looks = false): vo
           if (looking.current && (e.kind === 'search' || e.kind === 'read'))
             invalidate(`brain:${slug}:overview`)
           else invalidateByEvent(e.kind, slug)
+          hear.current?.(e as LiveEvent)
         } catch {
           // Not an event of rsc-brain: nothing to update.
         }

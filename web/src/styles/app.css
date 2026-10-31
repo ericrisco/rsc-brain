@@ -1642,6 +1642,16 @@ select:disabled {
 }
 
 @media (max-width: 1023px) {
+  /* What waits for review, short: «3 to review» (the words stay for screen readers). */
+  .to-review .wide-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
   .overview-grid,
   .people {
     grid-template-columns: minmax(0, 1fr);
@@ -1649,9 +1659,15 @@ select:disabled {
 }
 
 @media (max-width: 767px) {
-  /* The account menu holds People on a narrow screen. */
+  /* The account menu holds People on a narrow screen; what waits for review stays, short. */
   .top-link {
     display: none;
+  }
+
+  .top-link.to-review {
+    display: inline-flex;
+    margin-right: 4px;
+    padding: 0 8px;
   }
 
   select,
@@ -1680,6 +1696,23 @@ select:disabled {
 @media (max-width: 479px) {
   /* With the menu, the search, the count and the account in one bar, the logo stands for the name
      (it stays for screen readers), as on the narrowest phones: fonts differ by system. */
+
+  /* What waits for review: its number alone, boxed so it reads as a count (the words stay for screen
+     readers, and the inbox it opens says them). */
+  .to-review .rest {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .top-link.to-review {
+    min-width: 32px;
+    justify-content: center;
+    border: 1px solid var(--accent);
+  }
 
   .title-row .actions {
     width: 100%;
@@ -2391,4 +2424,199 @@ pre.version {
   margin: 0 0 6px;
   font: 600 15px / 1.4 var(--sans);
   overflow-wrap: anywhere;
+}
+
+/* ── Proposals (PR21) ─────────────────────────────────────────────────── */
+
+/* The count beside a tab of the inbox. */
+.tab-count {
+  margin-left: 6px;
+}
+
+/* A proposal reads in one column, at a reading width. */
+.proposal-view {
+  max-width: 860px;
+}
+
+/* What waits for review, in the top bar: a data signal, so the accent marks its number. */
+.top-link.to-review {
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.to-review-n {
+  color: var(--accent);
+  font: 600 13px / 1 var(--mono);
+}
+
+.nav-count {
+  margin-left: auto;
+  color: var(--accent);
+  font: 600 12px / 1 var(--mono);
+}
+
+.back-link {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.decided-line {
+  margin-top: 4px;
+}
+
+.why,
+.changes,
+.decide {
+  margin-top: 28px;
+}
+
+/* One column at every width: a card per change, its words before and after one under the other. */
+.op-card {
+  min-width: 0;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+
+.op-card.stale {
+  border-left: 3px solid var(--warning);
+}
+
+.op-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.op-head .choose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.op-head .choose input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.op-title {
+  min-width: 0;
+  font: 550 15px / 1.4 var(--sans);
+}
+
+.op-n {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.op-tags:empty {
+  display: none;
+}
+
+.op-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.op-reason,
+.op-warnings {
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.op-diff,
+.three,
+.op-sources,
+.op-edit {
+  margin-top: 12px;
+}
+
+.op-card h4,
+.op-card h5 {
+  margin-bottom: 4px;
+  color: var(--muted);
+  font: 550 12px / 1.4 var(--sans);
+}
+
+.three .note {
+  color: var(--text);
+}
+
+.three .version {
+  margin-top: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--rule);
+}
+
+.three .version h5 {
+  margin-top: 8px;
+}
+
+.op-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.op-actions .button[aria-pressed="true"] {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.op-group {
+  min-width: 0;
+  margin: 16px 0 0;
+  border: 0;
+  padding: 12px 12px 14px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.group-title {
+  font: 550 13px / 1.4 var(--sans);
+}
+
+.op-group .op-card {
+  background: var(--ground);
+}
+
+.decide {
+  max-width: 720px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rule);
+}
+
+.decide-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.decide-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: scoped to the decision; it never competes with the earlier rule */
+.decide-actions .button {
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+}
+
+.result-pages {
+  margin-top: 6px;
 }

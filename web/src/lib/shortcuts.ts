@@ -12,7 +12,10 @@ export type Shortcut = {
     | 'go-log'
     | 'go-journal'
     | 'go-people'
+    | 'go-proposals'
     | 'edit'
+    | 'approve'
+    | 'return'
   keys: string[]
   label: string
   // The visible control that does the same, as the person sees it.
@@ -75,6 +78,27 @@ export const SHORTCUTS: Shortcut[] = [
     inBrain: true,
   },
   {
+    id: 'go-proposals',
+    keys: ['g', 'r'],
+    label: 'Go to the proposals to review in this brain',
+    control: '"Proposals" in the side bar',
+    inBrain: true,
+  },
+  {
+    id: 'approve',
+    keys: ['a'],
+    label: 'Approve all of the proposal you are reading (curators)',
+    control: 'The "Approve all" button of the proposal',
+    inBrain: true,
+  },
+  {
+    id: 'return',
+    keys: ['r'],
+    label: 'Return the proposal you are reading, with your comment (curators)',
+    control: 'The "Return" button of the proposal',
+    inBrain: true,
+  },
+  {
     id: 'edit',
     keys: ['e'],
     label: 'Edit the wiki page you are reading (curators)',
@@ -94,6 +118,7 @@ const GO: Record<string, Shortcut['id']> = {
   l: 'go-log',
   j: 'go-journal',
   p: 'go-people',
+  r: 'go-proposals',
 }
 
 export function createKeymap(now: () => number) {
@@ -116,6 +141,8 @@ export function createKeymap(now: () => number) {
       leader = k === 'g' ? now() : null
       if (e.key === '?') return 'help'
       if (k === 'e' && e.key === 'e') return 'edit'
+      if (k === 'a' && e.key === 'a') return 'approve'
+      if (k === 'r' && e.key === 'r') return 'return'
       return null
     },
   }

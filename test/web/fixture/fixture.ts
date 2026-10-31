@@ -13,6 +13,7 @@ import { answerWeb, openWeb } from '../../../src/http/web.ts'
 import { AGENT_IDS, type AgentId, connectKit } from '../../../src/mcp/kit.ts'
 import { generate } from '../../../web/test/data/generate.ts'
 import * as J from './journal.ts'
+import * as P from './proposals.ts'
 import {
   changeWiki,
   decisionsOf,
@@ -59,6 +60,8 @@ export type Screen =
   | 'forgotten'
   | 'to-review'
   | 'members'
+  | 'proposals'
+  | 'proposal'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
 // alone: the administrator the setup made, the only person in the installation.
@@ -117,6 +120,8 @@ type Scen = {
   wikis: Map<string, Wiki>
   // The journal of each brain, made when first read ("<slug>#big" for the much-data state).
   journals: Map<string, J.Journal>
+  // The proposals of each brain, made when first read ("<slug>#big" for the much-data state).
+  inboxes: Map<string, P.Inbox>
 }
 
 type Answer = { status: number; body: unknown; headers?: Record<string, string> }
@@ -328,6 +333,7 @@ function freshScenario(id: string, preset: Preset): Scen {
     log: [],
     wikis: new Map(),
     journals: new Map(),
+    inboxes: new Map(),
   }
   if (preset === 'alone') {
     s.accounts.push({
@@ -717,7 +723,9 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           cursor: String(s.seq),
           stats: fresh && st === 'empty' ? ZERO : b.stats,
           todaySessions: fresh || st === 'empty' ? [] : sessionsOf(b.slug, st === 'much-data' ? 20 : 3),
-          pending: fresh ? [] : pendingOf(b.slug, Math.min(5, b.stats.pendingProposals)),
+          pending: fresh
+            ? []
+            : (pendingIn(s, b.slug) ?? pendingOf(b.slug, Math.min(5, b.stats.pendingProposals))),
           health: fresh
             ? {
                 orphans: 0,
@@ -1115,6 +1123,60 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         )
       }),
   },
+  'GET /v1/brains/{slug}/proposals': {
+    screen: 'proposals',
+    run: (c) => {
+      const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+      if (!b) return NO_BRAIN
+      const st = c.s.states.get('proposals')
+      return P.listOf(inboxOf(c.s, b.slug, st === 'much-data'), c.query, st === 'empty')
+    },
+  },
+  'GET /v1/proposals/{id}/review': {
+    screen: 'proposal',
+    // A session of the fixture is always the web's (a program's key would get 403 web_only).
+    run: (c) =>
+      withProposal(c, (inbox, p, b) =>
+        P.reviewOf(inbox, p, wikiOf(c.s, b.slug), b.role === 'curator' && b.status === 'active'),
+      ),
+  },
+  'POST /v1/proposals/{id}/approve': {
+    run: (c) =>
+      withProposal(c, (inbox, p, b) =>
+        decision(
+          c,
+          b,
+          p,
+          P.approve(
+            p,
+            wikiOf(c.s, b.slug),
+            whoOf(c),
+            b.role === 'curator' && b.status === 'active',
+            c.body,
+            () => P.reviewOf(inbox, p, wikiOf(c.s, b.slug), true),
+            NOW(),
+          ),
+        ),
+      ),
+  },
+  'POST /v1/proposals/{id}/return': {
+    run: (c) =>
+      withProposal(c, (inbox, p, b) =>
+        decision(
+          c,
+          b,
+          p,
+          P.giveBack(
+            p,
+            whoOf(c),
+            b.role === 'curator' && b.status === 'active',
+            c.body,
+            () => P.reviewOf(inbox, p, wikiOf(c.s, b.slug), true),
+            NOW(),
+          ),
+        ),
+      ),
+  },
   'GET /v1/search': {
     screen: 'search',
     run: ({ s, query }) => {
@@ -1226,7 +1288,85 @@ const PRIVATE = new Set([
   'GET /v1/brains/{slug}/forgotten',
   'GET /v1/brains/{slug}/to-review',
   'POST /v1/brains/{slug}/corrections',
+  'GET /v1/brains/{slug}/proposals',
+  'GET /v1/proposals/{id}/review',
+  'POST /v1/proposals/{id}/approve',
+  'POST /v1/proposals/{id}/return',
 ])
+
+const NOW = () => new Date().toISOString()
+const whoOf = (c: Ctx) => ({ id: c.who?.id ?? '', name: c.who?.name ?? '' })
+
+function wikiOf(s: Scen, slug: string): Wiki {
+  let w = s.wikis.get(slug)
+  if (!w) {
+    w = freshWiki()
+    s.wikis.set(slug, w)
+  }
+  return w
+}
+
+// The proposals of a brain, made when first read.
+function inboxOf(s: Scen, slug: string, big = false): P.Inbox {
+  const key = big ? `${slug}#big` : slug
+  let i = s.inboxes.get(key)
+  if (!i) {
+    i = big ? P.bigInbox(slug) : P.freshInbox(slug)
+    s.inboxes.set(key, i)
+  }
+  return i
+}
+
+// The newest pending proposals of a brain whose inbox the fixture holds, as the overview lists them.
+function pendingIn(s: Scen, slug: string) {
+  const inbox = inboxOf(s, slug)
+  if (!inbox.proposals.length) return null
+  return inbox.proposals
+    .filter((p) => p.status === 'pending')
+    .slice(0, 5)
+    .map((p) => ({
+      id: p.id,
+      brainId: `brn_${slug.replace(/-/g, '')}`,
+      title: p.title,
+      reason: p.reason,
+      authorId: p.author.id,
+      agent: p.agent,
+      status: p.status,
+      old: p.old,
+      supersedes: p.supersedes,
+      supersededBy: p.supersededBy,
+      collected: p.collected,
+      comment: null,
+      decidedBy: null,
+      decidedAt: null,
+      lastError: null,
+      createdAt: p.createdAt,
+      purged: false,
+      opCount: p.ops.length,
+    }))
+}
+
+// A proposal of a brain the person is in, by its id alone (also among the many of "much data").
+function withProposal(c: Ctx, run: (i: P.Inbox, p: P.FxProposal, b: Brain) => Answer): Answer {
+  for (const b of brainsOf(c.s, c.who)) {
+    for (const i of [inboxOf(c.s, b.slug), c.s.inboxes.get(`${b.slug}#big`)]) {
+      const p = i?.proposals.find((x) => x.id === c.params.id)
+      if (i && p) return run(i, p, b)
+    }
+  }
+  return P.NO_PROPOSAL
+}
+
+// A decision taken: the brain's count of what waits goes down and its live stream hears who decided.
+function decision(c: Ctx, b: Brain, p: P.FxProposal, d: P.Decided): Answer {
+  if (d.event) {
+    const brain = c.s.brains.find((x) => x.slug === b.slug)
+    if (brain)
+      brain.stats = { ...brain.stats, pendingProposals: Math.max(0, brain.stats.pendingProposals - 1) }
+    emit(c.s, b.slug, 'proposal.decided', { who: d.event.who, target: { id: p.id, label: d.event.status } })
+  }
+  return d.answer
+}
 
 // The wiki of a brain the person is in, made when first read; `curator`: may edit it by hand.
 function inWiki(c: Ctx, run: (w: Wiki, curator: boolean) => Answer): Answer {
@@ -1417,7 +1557,12 @@ async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
   }
 }
 
-function emit(s: Scen, slug: string, kind: string): void {
+function emit(
+  s: Scen,
+  slug: string,
+  kind: string,
+  o: { who?: { id: string; name: string }; target?: { id: string; label: string } } = {},
+): void {
   const b = s.brains.find((x) => x.slug === slug)
   const life = s.life.get(slug) ?? { entries: 0, agent: false }
   // An agent asked for context: step 1 is done, but the brain says nothing (no event, as the server).
@@ -1446,9 +1591,9 @@ function emit(s: Scen, slug: string, kind: string): void {
     at: AT,
     brain: slug,
     kind,
-    who: { id: 'acc_eric', name: 'Eric' },
+    who: o.who ?? { id: 'acc_eric', name: 'Eric' },
     key: { id: 'crd_agent', ref: null },
-    target: { id: 'ent_fixture', label: 'First thing the agent learnt' },
+    target: o.target ?? { id: 'ent_fixture', label: 'First thing the agent learnt' },
     query: null,
   }
   const frame = `id: ${s.seq}\ndata: ${JSON.stringify(event)}\n\n`
@@ -1584,6 +1729,28 @@ export async function startFixture(
         if (!s) return send(res, { status: 404, body: {} })
         const b = await bodyOf(req)
         J.agentAsks(journalOf(s, String(b.brain)), String(b.from), String(b.to), String(b.kind))
+        return send(res, { status: 200, body: {} })
+      }
+      // Another curator decides a proposal meanwhile, or its author sends a new version of it.
+      const behindProposal = /^\/__fixture\/scenarios\/([\w]+)\/proposal-(decided|changed)$/.exec(
+        url.pathname,
+      )
+      if (behindProposal && method === 'POST') {
+        const s = scenarios.get(behindProposal[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        const b = await bodyOf(req)
+        const brain = String(b.brain ?? 'growth')
+        const p = inboxOf(s, brain).proposals.find((x) => x.id === b.id)
+        if (!p) return send(res, { status: 404, body: {} })
+        if (behindProposal[2] === 'changed') P.changeBehind(p)
+        else {
+          const by = { id: 'acc_eva', name: String(b.by ?? 'Eva') }
+          const status = (b.status as 'approved' | 'returned' | undefined) ?? 'approved'
+          P.decideBehind(p, by, status, NOW())
+          const br = s.brains.find((x) => x.slug === brain)
+          if (br) br.stats = { ...br.stats, pendingProposals: Math.max(0, br.stats.pendingProposals - 1) }
+          emit(s, brain, 'proposal.decided', { who: by, target: { id: p.id, label: status } })
+        }
         return send(res, { status: 200, body: {} })
       }
       // For a person walking the fixture by hand: /__fixture/use?preset=fresh&next=/setup

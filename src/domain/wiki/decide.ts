@@ -2,6 +2,8 @@
 // the rest with a comment, correct an operation first, or return it all. What is approved applies all
 // at once or not at all; a returned comment becomes a correction in the journal for the agent that
 // proposed, so it learns why. Only what was seen is approved: the fingerprint must match.
+import { can } from '../../auth/can.ts'
+import { actorOf } from '../../auth/principal.ts'
 import { AppError, conflict, invalid, notFound } from '../../core/errors.ts'
 import type { Row } from '../../db/db.ts'
 import { redact } from '../../privacy/redact.ts'
@@ -10,14 +12,17 @@ import { webCorrection } from '../entries.ts'
 import { emit } from '../events.ts'
 import { ApplyError, type ApplyItem, applyOps, type Revised } from './apply.ts'
 import { type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
-import { type Proposal, type ProposalOp, proposalOf, proposalOpOf } from './proposals.ts'
+import { named, type Proposal, type ProposalOp, proposalOf, proposalOpOf } from './proposals.ts'
 import { buildReview, dependencies, fingerprint, type Review, webOnly } from './review.ts'
 
+// `decide`: the person is about to decide (a curator of an active brain); otherwise only reading the
+// review, which every member may do in the web (spec B6 CA17: a reader sees the inbox, read-only).
 async function load(
   ctx: Ctx,
   id: string,
   lock: boolean,
-): Promise<{ row: Row; brainId: string; slug: string }> {
+  decide = true,
+): Promise<{ row: Row; brainId: string; slug: string; canDecide: boolean }> {
   const row = await ctx.db.one(`SELECT * FROM proposals WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [id])
   if (!row) throw notFound('proposal')
   const { brain, role } = await inBrain(ctx, { id: String(row.brain_id) }, lock ? 'share' : null).catch(
@@ -26,13 +31,15 @@ async function load(
     },
   )
   webOnly(ctx)
-  await allow(ctx, 'wiki.decide', { role, brainStatus: brain.status }, brain.id)
-  return { row, brainId: brain.id, slug: brain.slug }
+  const facts = { role, brainStatus: brain.status }
+  if (decide) await allow(ctx, 'wiki.decide', facts, brain.id)
+  const canDecide = can(actorOf(ctx.who), 'wiki.decide', facts).ok
+  return { row, brainId: brain.id, slug: brain.slug, canDecide }
 }
 
-export async function reviewProposal(ctx: Ctx, id: string): Promise<Review> {
-  const { row } = await load(ctx, id, false)
-  return buildReview(ctx, row)
+export async function reviewProposal(ctx: Ctx, id: string): Promise<Review & { canDecide: boolean }> {
+  const { row, canDecide } = await load(ctx, id, false, false)
+  return { ...(await buildReview(ctx, row)), canDecide }
 }
 
 // Only a pending proposal is decided, and only in the version the curator saw.
@@ -277,7 +284,7 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     const final = (
       await db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [row.id])
     ).map(proposalOpOf)
-    return { proposal: proposalOf(done as Row, now), ops: final, applied }
+    return { proposal: await named(db, proposalOf(done as Row, now)), ops: final, applied }
   })
   if (failure) throw failure
   return out as Decision
@@ -304,6 +311,6 @@ export async function returnProposal(
     const final = (
       await db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [row.id])
     ).map(proposalOpOf)
-    return { proposal: proposalOf(done as Row, now), ops: final, applied: [] }
+    return { proposal: await named(db, proposalOf(done as Row, now)), ops: final, applied: [] }
   })
 }

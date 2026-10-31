@@ -8,6 +8,7 @@ import type { Ctx } from '../context.ts'
 import { mentionsOf, type Op } from './model.ts'
 import { type FullRevision, fullRevision } from './pages.ts'
 import {
+  named,
   type Proposal,
   type ProposalOp,
   proposalOf,
@@ -237,7 +238,7 @@ export async function buildReview(ctx: Ctx, row: Row): Promise<Review> {
     })
   }
   return {
-    proposal: proposalOf(row, ctx.clock()),
+    proposal: await named(ctx.db, proposalOf(row, ctx.clock())),
     fingerprint: fingerprint(row, ops),
     ops: reviewed,
     warnings: warnings.filter((w) => w.op === null),

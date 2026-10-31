@@ -164,6 +164,13 @@ export const ERROR_STATUS: Record<string, number> = {
   entry_forgotten: 409,
   topic_taken: 409,
   relation_cycle: 409,
+  // The inbox (PR21): deciding is the web's; a proposal decided already or changed since it was read; an
+  // edit on a revision that moved on; part of a proposal approved without what it needs.
+  web_only: 403,
+  already_decided: 409,
+  proposal_changed: 409,
+  stale_base: 409,
+  missing_dependencies: 400,
   too_many_attempts: 429,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,

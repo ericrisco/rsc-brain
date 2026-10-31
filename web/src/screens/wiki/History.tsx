@@ -78,7 +78,7 @@ export function RecentHistory({ slug, address }: { slug: string; address: string
   )
 }
 
-function Words({ segments, as = 'p' }: { segments: Segment[]; as?: 'p' | 'span' }) {
+export function Words({ segments, as = 'p' }: { segments: Segment[]; as?: 'p' | 'span' }) {
   const w = T.wiki
   const Tag = as
   return (

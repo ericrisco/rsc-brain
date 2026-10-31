@@ -124,7 +124,7 @@ for (const theme of ['dark', 'light'] as const) {
     await scenario(context, baseURL as string, 'signed-in')
     await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
     await page.goto('/')
-    await expect(page.getByText('3 proposals to review')).toBeVisible()
+    await expect(page.getByRole('main').getByText('3 proposals to review')).toBeVisible()
     await audit(page, `${theme} home cards`)
     await page.goto('/b/growth')
     await expect(page.getByRole('region', { name: "Today's sessions" })).toBeVisible()

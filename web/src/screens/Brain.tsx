@@ -19,6 +19,7 @@ import { viewState } from '../ui/state.ts'
 import { ErrorState, Skeleton } from '../ui/states.tsx'
 import type { BrainRow, Stats } from './Home.tsx'
 import { conflictsHref, sessionHref, sessionsHref } from './journal/common.tsx'
+import { inboxHref, proposalHref } from './proposals/data.ts'
 
 export type BrainOne = BrainRow & { description: string }
 
@@ -116,7 +117,7 @@ function FirstSteps({ slug, steps }: { slug: string; steps: Overview['firstSteps
 }
 
 // Each number that names work to do leads to it: what is not in the wiki yet to the sessions that hold
-// it, the conflicts to Conflicts, what waits for review to its list below.
+// it, the conflicts to Conflicts, what waits for review to the proposals inbox.
 function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
   const o = T.overview
   const items: Array<readonly [string, string, string?]> = [
@@ -124,7 +125,7 @@ function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
     o.entries(stats.entries),
     [...o.uncompiled(stats.uncompiled), `${sessionsHref(slug)}?uncompiled=1`],
     [...o.conflicts(stats.conflicts), conflictsHref(slug)],
-    [...o.pending(stats.pendingProposals), '#waiting-title'],
+    [...o.pending(stats.pendingProposals), inboxHref(slug)],
   ]
   return (
     <section aria-labelledby="numbers-title">
@@ -193,7 +194,7 @@ function Today({ slug, sessions }: { slug: string; sessions: Session[] }) {
   )
 }
 
-function Waiting({ pending, total }: { pending: Pending[]; total: number }) {
+function Waiting({ slug, pending, total }: { slug: string; pending: Pending[]; total: number }) {
   const o = T.overview
   return (
     <section aria-labelledby="waiting-title">
@@ -211,7 +212,8 @@ function Waiting({ pending, total }: { pending: Pending[]; total: number }) {
             {pending.map((p) => (
               <li key={p.id}>
                 <p class="list-title">
-                  {p.title} {p.old ? <span class="tag warn">{o.old}</span> : null}
+                  <a href={proposalHref(slug, p.id)}>{p.title}</a>{' '}
+                  {p.old ? <span class="tag warn">{o.old}</span> : null}
                 </p>
                 <p class="meta">
                   {[o.ops(p.opCount), p.agent ? o.by(p.agent) : null].filter(Boolean).join(' · ')}
@@ -219,7 +221,9 @@ function Waiting({ pending, total }: { pending: Pending[]; total: number }) {
               </li>
             ))}
           </ul>
-          <p class="muted small">{o.decideLater}</p>
+          <p class="muted small">
+            {o.decideLater} <a href={inboxHref(slug)}>{o.allProposals}</a>
+          </p>
         </>
       )}
     </section>
@@ -333,7 +337,7 @@ export function Brain({ slug }: { slug: string }) {
           <div class="overview-grid">
             <Today slug={slug} sessions={o.todaySessions} />
             <div class="overview-side">
-              <Waiting pending={o.pending} total={o.stats.pendingProposals} />
+              <Waiting slug={slug} pending={o.pending} total={o.stats.pendingProposals} />
               <Health health={o.health} />
             </div>
           </div>

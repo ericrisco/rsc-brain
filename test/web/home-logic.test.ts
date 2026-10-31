@@ -25,7 +25,10 @@ describe('what waits for me', () => {
     stats: { pendingProposals: pending },
   })
   it('counts the proposals of the brains I curate, and leads to the one brain when only one waits', () => {
-    assert.deepEqual(toReview([b('a', 'curator', 2), b('b', 'reader', 5)]), { count: 2, href: '/b/a' })
+    assert.deepEqual(toReview([b('a', 'curator', 2), b('b', 'reader', 5)]), {
+      count: 2,
+      href: '/b/a/proposals',
+    })
     assert.deepEqual(toReview([b('a', 'curator', 2), b('c', 'curator', 1)]), { count: 3, href: '/' })
     assert.deepEqual(toReview([b('a', 'contributor', 4)]), { count: 0, href: '/' })
     assert.deepEqual(toReview([]), { count: 0, href: '/' })
