@@ -1745,12 +1745,24 @@ export async function startFixture(
         if (behindProposal[2] === 'changed') P.changeBehind(p)
         else {
           const by = { id: 'acc_eva', name: String(b.by ?? 'Eva') }
-          const status = (b.status as 'approved' | 'returned' | undefined) ?? 'approved'
+          const status = (b.status as 'approved' | 'returned' | 'withdrawn' | undefined) ?? 'approved'
           P.decideBehind(p, by, status, NOW())
           const br = s.brains.find((x) => x.slug === brain)
           if (br) br.stats = { ...br.stats, pendingProposals: Math.max(0, br.stats.pendingProposals - 1) }
           emit(s, brain, 'proposal.decided', { who: by, target: { id: p.id, label: status } })
         }
+        return send(res, { status: 200, body: {} })
+      }
+      // The administration purges text from a brain's wiki: its purge count goes up; open reviews hear it.
+      const purging = /^\/__fixture\/scenarios\/([\w]+)\/purge$/.exec(url.pathname)
+      if (purging && method === 'POST') {
+        const s = scenarios.get(purging[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        const b = await bodyOf(req)
+        const brain = String(b.brain ?? 'growth')
+        const inbox = inboxOf(s, brain)
+        inbox.purges = (inbox.purges ?? 0) + 1
+        emit(s, brain, 'wiki.changed', { target: { id: 'pg_intros', label: 'purge' } })
         return send(res, { status: 200, body: {} })
       }
       // For a person walking the fixture by hand: /__fixture/use?preset=fresh&next=/setup

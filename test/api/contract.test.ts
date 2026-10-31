@@ -162,7 +162,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     counts: ['pending', 'approved', 'partially_approved', 'returned', 'withdrawn', 'superseded'],
   },
   'GET /v1/proposals/{id}/review': {
-    '': ['proposal', 'fingerprint', 'ops', 'warnings', 'canDecide'],
+    '': ['proposal', 'fingerprint', 'ops', 'warnings', 'canDecide', 'purges'],
     proposal: ['id', 'title', 'reason', 'status', 'old', 'agent', 'authorName', 'decidedByName', 'collected'],
     'ops[]': ['index', 'op', 'status', 'corrected', 'before', 'after', 'dependsOn', 'stale', 'warnings'],
   },

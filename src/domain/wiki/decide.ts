@@ -13,7 +13,7 @@ import { emit } from '../events.ts'
 import { ApplyError, type ApplyItem, applyOps, type Revised } from './apply.ts'
 import { type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
 import { named, type Proposal, type ProposalOp, proposalOf, proposalOpOf } from './proposals.ts'
-import { buildReview, dependencies, fingerprint, type Review, webOnly } from './review.ts'
+import { buildReview, dependencies, fingerprint, type Review, webOnly, wikiPurges } from './review.ts'
 
 // `decide`: the person is about to decide (a curator of an active brain); otherwise only reading the
 // review, which every member may do in the web (spec B6 CA17: a reader sees the inbox, read-only).
@@ -68,7 +68,7 @@ async function stillAsSeen(ctx: Ctx, row: Row, seen: string): Promise<ProposalOp
   const ops = (
     await ctx.db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [row.id])
   ).map(proposalOpOf)
-  if (fingerprint(row, ops) !== seen) {
+  if (fingerprint(row, ops, await wikiPurges(ctx.db, String(row.brain_id))) !== seen) {
     const err = conflict(
       'proposal_changed',
       'The proposal changed while you were looking at it; nothing was applied.',
@@ -106,21 +106,31 @@ async function teach(ctx: Ctx, brainId: string, row: Row, comment: string, retur
 }
 
 // What a person may correct before approving (spec B2: «Edit de una operación»): the words of a new page,
-// of an edit and of a merge, and for an edit the revision they saw. Never tags or sources, never another
-// page: a correction is not a way to rewrite what the agent proposed into something else.
+// of an edit and of a merge — only those they edited — and for an edit the revision they saw. Never a whole
+// operation (it could carry tags, sources or another page), never tags or sources. `purges` echoes the
+// purges of the wiki the review showed: a correction written before a purge could put purged text back,
+// so it is refused (409, as a proposal that changed).
 const CORRECTABLE: Record<string, readonly string[]> = {
   create: ['title', 'summary', 'body'],
-  edit: ['title', 'summary', 'body', 'revision'],
+  edit: ['title', 'summary', 'body'],
   merge: ['body'],
 }
-function overlay(op: Op, raw: unknown, i: number, problems: Problem[]): Record<string, unknown> | null {
+function overlay(
+  op: Op,
+  raw: unknown,
+  i: number,
+  purges: number,
+  problems: Problem[],
+): Record<string, unknown> | null {
   const allowed = CORRECTABLE[op.op] ?? []
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     problems.push({ op: i, message: 'A correction is an object of the fields you edited.' })
     return null
   }
   const out: Record<string, unknown> = { ...op }
-  for (const [key, v] of Object.entries(raw)) {
+  let words = 0
+  const { revision, purges: seen, ...fields } = raw as Record<string, unknown>
+  for (const [key, v] of Object.entries(fields)) {
     if (!allowed.includes(key)) {
       problems.push({
         op: i,
@@ -128,13 +138,34 @@ function overlay(op: Op, raw: unknown, i: number, problems: Problem[]): Record<s
           ? `A correction of a ${op.op} changes only ${allowed.join(', ')}; not "${key}".`
           : `A ${op.op} operation cannot be corrected; return it instead.`,
       })
-    } else if (key === 'revision') {
-      if (typeof v !== 'number' || !Number.isSafeInteger(v) || v < 1)
-        problems.push({ op: i, message: '"revision" is the revision of the page you saw.' })
-      else out.baseRevision = v
     } else if (typeof v !== 'string') {
       problems.push({ op: i, message: `"${key}" is text.` })
-    } else out[key] = v
+    } else {
+      out[key] = v
+      words += 1
+    }
+  }
+  if (words === 0 && allowed.length) {
+    problems.push({
+      op: i,
+      message: `A correction changes at least one of ${allowed.join(', ')} (to accept an old base as it is, mark it "base reviewed").`,
+    })
+  }
+  if (revision !== undefined) {
+    if (op.op !== 'edit' || typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 1)
+      problems.push({ op: i, message: '"revision" is the revision of the page you saw (edits only).' })
+    else out.baseRevision = revision
+  }
+  if (typeof seen !== 'number' || !Number.isSafeInteger(seen) || seen < 0) {
+    problems.push({ op: i, message: '"purges" echoes the "purges" of the review you corrected.' })
+  } else if (seen !== purges && !problems.some((p) => p.op === i)) {
+    const err = conflict(
+      'proposal_changed',
+      'Text was purged from this wiki after your edit was written; nothing was applied.',
+      'Review it again and write your edit anew from what the pages hold now.',
+    )
+    err.current = { purged: true }
+    throw err
   }
   return out
 }
@@ -168,16 +199,15 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     // A curator's correction replaces the operation, checked like any operation.
     const corrected = new Set<number>()
     const problems: Problem[] = []
+    const purges = await wikiPurges(db, brainId)
     for (const [k, raw] of Object.entries(input.corrections ?? {})) {
       const i = Number(k)
       if (!all.includes(i))
         throw invalid(`The proposal has no operation ${k}.`, 'Correct an existing operation.')
       const was = ops[i] as ProposalOp
-      // The fields the person edited, laid over the stored operation (a whole operation is still read,
-      // as before). Either way the result is checked like any operation, and an edit's base revision is
-      // the one the person saw: the base check below runs for corrected edits too.
-      const merged =
-        raw !== null && typeof raw === 'object' && 'op' in raw ? raw : overlay(was.op, raw, i, problems)
+      // The fields the person edited, laid over the stored operation and checked like any operation; an
+      // edit's base revision is the one the person saw, and the base check below runs for it too.
+      const merged = overlay(was.op, raw, i, purges, problems)
       if (!merged) continue
       const op = readOp(merged, i, problems)
       if (op && (op.op !== was.op.op || op.address !== was.op.address)) {

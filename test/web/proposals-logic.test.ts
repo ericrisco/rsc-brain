@@ -20,6 +20,7 @@ import {
   keepChoices,
   needsBase,
   opWords,
+  purgedEdits,
   type ReviewOp,
   togetherWhy,
 } from '../../web/src/lib/proposals.ts'
@@ -144,17 +145,22 @@ describe('approveBody', () => {
 describe('keepChoices', () => {
   it('nothing to drop: the very same choices, so a late check never writes over what was typed', () => {
     const c = { selected: [0], comment: 'Typed.', baseReviewed: [], corrections: {} }
-    assert.equal(keepChoices(c, [op(0), op(1)]), c)
+    assert.equal(keepChoices(c, [op(0), op(1)], 0), c)
   })
 
   it('a new version keeps what still applies: the comment always, the rest for pending changes', () => {
-    const c = { selected: [0, 2, 5], comment: 'Why.', baseReviewed: [2, 5], corrections: { 5: {}, 0: {} } }
+    const c = {
+      selected: [0, 2, 5],
+      comment: 'Why.',
+      baseReviewed: [2, 5],
+      corrections: { 5: { purges: 0 }, 0: { purges: 0 } },
+    }
     const now = [op(0), op(1), op(2, { stale: { base: null, current: {}, proposed: {} } })]
-    assert.deepEqual(keepChoices(c, now), {
+    assert.deepEqual(keepChoices(c, now, 0), {
       selected: [0, 2],
       comment: 'Why.',
       baseReviewed: [2],
-      corrections: { 0: {} },
+      corrections: { 0: { purges: 0 } },
     })
   })
 })
@@ -226,18 +232,19 @@ describe('correctionOf', () => {
     after: { revision: 3, title: 'Agent', body: 'Agent body.', summary: 'S.' },
   })
   it('only the fields the person changed, and the revision of the page they saw', () => {
-    assert.deepEqual(correctionOf(edit, { title: 'Mine', body: 'Agent body.' }), {
+    assert.deepEqual(correctionOf(edit, { title: 'Mine', body: 'Agent body.' }, 0), {
       title: 'Mine',
       revision: 3,
+      purges: 0,
     })
-    assert.equal(correctionOf(edit, { title: 'Agent', body: 'Agent body.' }), null)
+    assert.equal(correctionOf(edit, { title: 'Agent', body: 'Agent body.' }, 0), null)
   })
   it('a new page has no revision to send', () => {
     const create = op(1, {
       op: { op: 'create', address: 'a/y', reason: 'r' },
       after: { title: 'T', body: 'B' },
     })
-    assert.deepEqual(correctionOf(create, { title: 'T', body: 'Mine' }), { body: 'Mine' })
+    assert.deepEqual(correctionOf(create, { title: 'T', body: 'Mine' }, 0), { body: 'Mine', purges: 0 })
   })
 })
 
@@ -265,5 +272,42 @@ describe('approveKeyHold', () => {
     assert.match(approveKeyHold({ ...none, selected: [0] }) ?? '', /You chose some changes/)
     assert.match(approveKeyHold({ ...none, comment: 'x' }) ?? '', /You wrote a comment/)
     assert.equal(approveKeyHold({ ...none, comment: '   ' }), null)
+  })
+})
+
+describe('second pass of the PR21 review', () => {
+  it('an edit written on an older revision does not settle an old base; «I’ve checked» does', () => {
+    const o = op(0, { stale: { base: null, current: {}, proposed: {} }, before: { revision: 4 } })
+    assert.equal(needsBase(o, { ...none, corrections: { 0: { body: 'x', revision: 3, purges: 0 } } }), true)
+    assert.equal(needsBase(o, { ...none, corrections: { 0: { body: 'x', revision: 4, purges: 0 } } }), false)
+    // A change the server does not call old, but whose edit was written before the page moved on.
+    const moved = op(1, { before: { revision: 5 } })
+    const c = { ...none, corrections: { 1: { title: 't', revision: 4, purges: 0 } } }
+    assert.equal(needsBase(moved, c), true)
+    assert.equal(needsBase(moved, { ...c, baseReviewed: [1] }), false)
+    assert.deepEqual(approveBody('fp', [moved], { ...c, baseReviewed: [1] }, 'all').baseReviewed, [1])
+    assert.deepEqual(keepChoices({ ...c, baseReviewed: [1] }, [moved], 0).baseReviewed, [1])
+  })
+
+  it('an edit carries the purges of the review it was written on', () => {
+    const create = op(1, {
+      op: { op: 'create', address: 'a/y', reason: 'r' },
+      after: { title: 'T', body: 'B' },
+    })
+    assert.deepEqual(correctionOf(create, { title: 'T', body: 'Mine' }, 2), { body: 'Mine', purges: 2 })
+  })
+
+  it('a new purge drops the edits written before it, and only those', () => {
+    const c = {
+      ...none,
+      comment: 'Why.',
+      corrections: { 0: { body: 'old', purges: 1 }, 1: { body: 'new', purges: 2 } },
+    }
+    const kept = keepChoices(c, [op(0), op(1)], 2)
+    assert.deepEqual(Object.keys(kept.corrections), ['1'])
+    assert.equal(kept.comment, 'Why.')
+    assert.equal(purgedEdits(c, 2), 1)
+    assert.equal(purgedEdits(c, 1), 1)
+    assert.equal(purgedEdits(none, 3), 0)
   })
 })

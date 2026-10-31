@@ -46,6 +46,7 @@ export type Review = {
   ops: ReviewOp[]
   warnings: ReviewOp['warnings']
   canDecide: boolean
+  purges: number
 }
 export type Decision = {
   proposal: ProposalView

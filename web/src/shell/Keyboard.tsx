@@ -76,7 +76,8 @@ export function Keyboard({
           e.preventDefault()
           const needs = b.dataset.needs ? document.getElementById(b.dataset.needs) : null
           if (id === 'approve' && b.dataset.hold) {
-            b.focus()
+            const to = b.dataset.holdTo ? document.getElementById(b.dataset.holdTo) : null
+            ;(to ?? b).focus()
             document.dispatchEvent(new CustomEvent('rscb-shortcut-hold', { detail: b.dataset.hold }))
           } else if (id === 'approve' && b.getAttribute('aria-disabled') !== 'true') b.click()
           else if (b.getAttribute('aria-disabled') === 'true' && needs) needs.focus()

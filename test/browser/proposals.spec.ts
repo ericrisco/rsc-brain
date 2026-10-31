@@ -323,6 +323,7 @@ test.describe('a proposal', () => {
     expect(body.corrections['0']).toEqual({
       body: 'The hook goes first. Short intros keep viewers.',
       revision: 3,
+      purges: 0,
     })
     await expect(page.getByRole('status').filter({ hasText: 'Approved.' })).toBeVisible()
   })
@@ -415,12 +416,13 @@ test.describe('the review of PR21', () => {
     await away(page)
     await page.keyboard.press('a')
     await expect(page.getByText('You chose some changes: “a” does not approve them all.')).toBeVisible()
-    await expect(all).toBeFocused()
+    await expect(some).toBeFocused()
     await page.getByRole('checkbox', { name: 'Approve change 1' }).uncheck()
     await page.getByLabel('Comment for the agent').fill('Half of it.')
     await away(page)
     await page.keyboard.press('a')
     await expect(page.getByText('You wrote a comment: “a” does not approve it all.')).toBeVisible()
+    await expect(page.getByLabel('Comment for the agent')).toBeFocused()
     expect(approved).toBe(0)
   })
 
@@ -519,4 +521,114 @@ test('a checkbox outside a proposal still holds single-letter shortcuts back, as
   await page.keyboard.press('w')
   await page.waitForTimeout(200)
   await expect(page).toHaveURL(/\/b\/growth\/journal$/)
+})
+
+test.describe('the second pass of the PR21 review', () => {
+  test('`a` then Enter never approves past a choice: the keyboard lands on «Approve selected», or the comment', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    const sent: Array<Record<string, unknown>> = []
+    page.on('request', (r) => {
+      if (r.url().endsWith('/approve')) sent.push(r.postDataJSON() as Record<string, unknown>)
+    })
+    await page.goto(`${INBOX}/prp_growth1`)
+    await page.getByRole('checkbox', { name: 'Approve change 1' }).check()
+    await page.getByLabel('Comment for the agent').fill('Only the first.')
+    await away(page)
+    await page.keyboard.press('a')
+    await expect(page.getByRole('button', { name: 'Approve selected & return the rest' })).toBeFocused()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('status').filter({ hasText: 'Approved in part' })).toBeVisible()
+    expect(sent).toEqual([{ fingerprint: 'fp_prp_growth1_1', approve: [0], comment: 'Only the first.' }])
+  })
+
+  test('`a` with only a comment goes to the comment; Enter there is a new line, never a decision', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    let sent = 0
+    page.on('request', (r) => {
+      if (r.url().endsWith('/approve') || r.url().endsWith('/return')) sent += 1
+    })
+    await page.goto(`${INBOX}/prp_growth2`)
+    const comment = page.getByLabel('Comment for the agent')
+    await comment.fill('Not sure yet.')
+    await away(page)
+    await page.keyboard.press('a')
+    await expect(comment).toBeFocused()
+    await page.keyboard.press('Enter')
+    await page.waitForTimeout(200)
+    expect(sent).toBe(0)
+  })
+
+  test('withdrawn by its author meanwhile: the screen says so and the comment stays', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'EventSource', { value: undefined })
+    })
+    await page.goto(`${INBOX}/prp_growth2`)
+    await page.getByLabel('Comment for the agent').fill('Words kept.')
+    await behind(baseURL as string, s.id, 'decided', { id: 'prp_growth2', status: 'withdrawn' })
+    await page.getByRole('button', { name: 'Approve all' }).click()
+    await expect(page.getByText('Withdrawn by its author. Nothing was applied.')).toBeVisible()
+    await expect(page.getByText('Your comment was not sent: “Words kept.”')).toBeVisible()
+  })
+
+  test('a purge of the wiki drops the edits written before it, and says so', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await page.goto(`${INBOX}/prp_growth1`)
+    const c2 = card(page, 2)
+    await c2.getByRole('button', { name: 'Edit', exact: true }).click()
+    await c2.getByLabel('Title').fill('Hooks that hold')
+    await c2.getByRole('button', { name: 'Use my version' }).click()
+    await expect(c2).toContainText('edited by you, not sent yet')
+    await page.waitForTimeout(300)
+    await fetch(`${baseURL}/__fixture/scenarios/${s.id}/purge`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brain: 'growth' }),
+    })
+    await expect(page.getByText('Text was purged from this wiki after you edited')).toBeVisible({
+      timeout: 3_000,
+    })
+    await expect(card(page, 2)).not.toContainText('edited by you')
+  })
+
+  test('on a 409 for an old base the card takes the keyboard, never the alert', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await page.goto(`${INBOX}/prp_growth1`)
+    await page.evaluate(() => {
+      ;(window as unknown as { landed: string[] }).landed = []
+      document.addEventListener('focusin', (e) => {
+        const t = e.target as HTMLElement
+        ;(window as unknown as { landed: string[] }).landed.push(t.getAttribute('role') ?? t.tagName)
+      })
+    })
+    await fetch(`${baseURL}/__fixture/scenarios/${s.id}/wiki-edit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ brain: 'growth', address: 'audience/intros', body: 'Newer.' }),
+    })
+    await page.getByRole('button', { name: 'Approve all' }).click()
+    await expect(card(page, 1)).toBeFocused()
+    const landed = await page.evaluate(() => (window as unknown as { landed: string[] }).landed)
+    expect(landed).not.toContain('alert')
+  })
 })

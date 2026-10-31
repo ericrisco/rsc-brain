@@ -31,7 +31,8 @@ export type FxProposal = {
   version: number
   ops: Array<{ op: Op; status: OpStatus; dependsOn: number[]; corrected: boolean }>
 }
-export type Inbox = { brain: string; proposals: FxProposal[] }
+// purges: how many times text was purged from this brain's wiki (a correction echoes it).
+export type Inbox = { brain: string; proposals: FxProposal[]; purges?: number }
 
 const ERIC = { id: 'acc_eric', name: 'Eric' }
 const FACTORY = { id: 'acc_factory', name: 'RSC Factory' }
@@ -315,7 +316,7 @@ export function bigInbox(brain: string): Inbox {
   }
 }
 
-const fingerprintOf = (p: FxProposal) => `fp_${p.id}_${p.version}`
+const fingerprintOf = (p: FxProposal, purges = 0) => `fp_${p.id}_${p.version}${purges ? `_p${purges}` : ''}`
 
 const plain = (p: FxProposal) => ({
   id: p.id,
@@ -426,10 +427,16 @@ export function reviewOf(inbox: Inbox, p: FxProposal, wiki: Wiki, canDecide: boo
           : [],
     }
   })
-  void inbox
   return {
     status: 200,
-    body: { proposal: plain(p), fingerprint: fingerprintOf(p), ops, warnings: [], canDecide },
+    body: {
+      proposal: plain(p),
+      fingerprint: fingerprintOf(p, inbox.purges ?? 0),
+      ops,
+      warnings: [],
+      canDecide,
+      purges: inbox.purges ?? 0,
+    },
   }
 }
 
@@ -462,7 +469,7 @@ function stillAsSeen(p: FxProposal, fingerprint: unknown, review: () => Answer):
       { current: { status: p.status, decidedBy: p.decidedBy?.id ?? null, decidedAt: p.decidedAt } },
     )
   }
-  if (fingerprint !== fingerprintOf(p))
+  if (fingerprint !== (review().body as { fingerprint: string }).fingerprint)
     return err(
       409,
       'proposal_changed',
@@ -573,18 +580,22 @@ export function approve(
   // A correction is the fields the person edited and the revision they saw, laid over the operation, as
   // the server does; an edit's base check then runs on the revision the correction was written on.
   const raw = (body.corrections ?? {}) as Record<string, Record<string, unknown>>
+  const purges = (review().body as { purges: number }).purges
   const corrected = new Map<number, Op>()
   for (const [k, c] of Object.entries(raw)) {
     const x = p.ops[Number(k)]
-    const allowed =
-      x?.op.op === 'edit'
-        ? ['title', 'summary', 'body', 'revision']
-        : x?.op.op === 'create'
-          ? ['title', 'summary', 'body']
-          : x?.op.op === 'merge'
-            ? ['body']
-            : []
-    const bad = !x || !c || typeof c !== 'object' || Object.keys(c).some((key) => !allowed.includes(key))
+    const words =
+      x?.op.op === 'edit' || x?.op.op === 'create'
+        ? ['title', 'summary', 'body']
+        : x?.op.op === 'merge'
+          ? ['body']
+          : []
+    const keys = c && typeof c === 'object' ? Object.keys(c) : []
+    const bad =
+      !x ||
+      keys.some((key) => ![...words, 'revision', 'purges'].includes(key)) ||
+      !keys.some((key) => words.includes(key)) ||
+      typeof c.purges !== 'number'
     if (bad)
       return {
         answer: err(
@@ -594,12 +605,22 @@ export function approve(
           'Fix each one listed in "problems".',
           {
             problems: [
-              { op: Number(k), message: 'A correction changes only the title, the summary or the text.' },
+              { op: Number(k), message: 'A correction changes the title, the summary or the text.' },
             ],
           },
         ),
       }
-    const { revision, ...fields } = c
+    if (c.purges !== purges)
+      return {
+        answer: err(
+          409,
+          'proposal_changed',
+          'Text was purged from this wiki after your edit was written; nothing was applied.',
+          'Review it again and write your edit anew from what the pages hold now.',
+          { current: { purged: true } },
+        ),
+      }
+    const { revision, purges: _seen, ...fields } = c
     corrected.set(Number(k), {
       ...x.op,
       ...fields,
@@ -685,9 +706,11 @@ export function giveBack(
 // Another curator decides meanwhile (the live notice «approved by Eva just now»).
 export function decideBehind(p: FxProposal, who: Who, status: Status, now: string): void {
   p.status = status
-  p.decidedBy = who
+  // A withdrawal is its author's: no curator decided it.
+  p.decidedBy = status === 'withdrawn' ? null : who
   p.decidedAt = now
-  for (const x of p.ops) x.status = status === 'returned' ? 'returned' : 'approved'
+  if (status !== 'withdrawn')
+    for (const x of p.ops) x.status = status === 'returned' ? 'returned' : 'approved'
 }
 
 // Its author sends a new version meanwhile (the fingerprint changes).

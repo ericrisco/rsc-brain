@@ -69,8 +69,14 @@ export function dependencies(ops: Op[]): number[][] {
   })
 }
 
-// Everything that, if it changed, changes what the curator approves.
-export function fingerprint(row: Row, ops: ProposalOp[]): string {
+// How many times text was purged from a brain's wiki (each purge counts; see purgesOf in decide.ts).
+export async function wikiPurges(db: Db, brainId: string): Promise<number> {
+  return Number((await db.one('SELECT wiki_purges FROM brains WHERE id = $1', [brainId]))?.wiki_purges ?? 0)
+}
+
+// Everything that, if it changed, changes what the curator approves — a purge of the wiki included: the
+// pages it shows may have lost text, and nothing written from what was seen before may be applied.
+export function fingerprint(row: Row, ops: ProposalOp[], purges: number): string {
   return createHash('sha256')
     .update(
       JSON.stringify({
@@ -80,6 +86,7 @@ export function fingerprint(row: Row, ops: ProposalOp[]): string {
         reason: row.reason,
         collected: row.collected,
         supersededBy: row.superseded_by,
+        purges,
         ops: ops.map((o) => [o.index, o.op, o.status, o.correctedBy, o.baseReviewedBy]),
       }),
     )
@@ -145,7 +152,14 @@ export type ReviewedOp = {
   warnings: Warning[]
 }
 
-export type Review = { proposal: Proposal; fingerprint: string; ops: ReviewedOp[]; warnings: Warning[] }
+export type Review = {
+  proposal: Proposal
+  fingerprint: string
+  ops: ReviewedOp[]
+  warnings: Warning[]
+  // The purges of the wiki so far: a correction echoes it (one written before a purge is refused).
+  purges: number
+}
 
 function afterOf(o: Op, before: PageState | null): Partial<PageState> | null {
   switch (o.op) {
@@ -201,6 +215,7 @@ export async function buildReview(ctx: Ctx, row: Row): Promise<Review> {
   const deps = dependencies(plain)
   const decided = new Set(ops.filter((o) => o.status !== 'pending').map((o) => o.index))
   const warnings = row.status === 'pending' ? await warningsOf(ctx.db, brainId, plain, decided) : []
+  const purges = await wikiPurges(ctx.db, brainId)
   const reviewed: ReviewedOp[] = []
   for (const o of ops) {
     const before = await stateOf(ctx.db, brainId, o.op.address)
@@ -239,7 +254,8 @@ export async function buildReview(ctx: Ctx, row: Row): Promise<Review> {
   }
   return {
     proposal: await named(ctx.db, proposalOf(row, ctx.clock())),
-    fingerprint: fingerprint(row, ops),
+    fingerprint: fingerprint(row, ops, purges),
+    purges,
     ops: reviewed,
     warnings: warnings.filter((w) => w.op === null),
   }

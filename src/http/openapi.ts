@@ -338,6 +338,7 @@ const REVIEW = obj({
   ),
   warnings: list(WARNING, 'About the whole proposal.'),
   canDecide: b('Whether you may approve or return it (a curator of an active brain, in the web).'),
+  purges: n('How many times text was purged from this wiki; a correction echoes it.'),
 })
 const DECISION = obj({
   proposal: PROPOSAL_NAMED,
@@ -1236,7 +1237,7 @@ const HAND: Record<string, Op> = {
         corrections: {
           type: 'object',
           description:
-            'Operation number → the fields you edited (title, summary, body) and, for an edit, the revision of the page you saw; laid over the operation, checked like any. A whole operation is still accepted.',
+            'Operation number → { the fields you edited (title, summary, body; at least one), "revision" of the page you saw (edits), "purges" of the review }; laid over the operation and checked like any. A correction written before a purge of the wiki is refused (409 proposal_changed).',
         },
         baseReviewed: list(n('Operation number.'), 'Old bases you reviewed.'),
       },

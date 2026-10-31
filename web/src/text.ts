@@ -1098,12 +1098,15 @@ export const T = {
     alsoChose: (list: string, i: number) => `Also chose ${list}, which change ${i} needs.`,
     alsoLeftOut: (list: string, i: number) =>
       `Also left out ${list}, which ${list.startsWith('changes') ? 'need' : 'needs'} change ${i}.`,
-    holdChosen: 'You chose some changes: “a” does not approve them all. Use the buttons below.',
-    holdComment: 'You wrote a comment: “a” does not approve it all. Use the buttons below.',
+    holdChosen: 'You chose some changes: “a” does not approve them all. Approve the chosen ones here.',
+    holdComment: 'You wrote a comment: “a” does not approve it all. Finish the comment, then pick a button.',
     approveAllIgnoring: (n: number) => `Approve all ${n} (ignore my selection)`,
     nextPending: 'Next pending proposal →',
     notSent: (c: string) => `Your comment was not sent: “${c}”`,
     editOld: 'Your edit was written on an older version — check it.',
+    purgedEdits:
+      'Text was purged from this wiki after you edited these changes, so your edits were dropped. Write them again from what the pages hold now.',
+    withdrawnMeanwhile: 'Withdrawn by its author. Nothing was applied.',
     editOldAt: (was: number, now: number) =>
       `Your edit was written on revision ${was}; the page is at revision ${now} now — check it.`,
     decidedAlready: (how: string, who: string, when: string) =>

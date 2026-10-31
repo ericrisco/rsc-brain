@@ -185,6 +185,8 @@ describe('the proposals inbox of the web (PR21)', { skip: skipPg }, () => {
   }
   const fp = async (id: string) =>
     String((await w.callWeb(ericWeb, 'GET', `/v1/proposals/${id}/review`)).body.fingerprint)
+  const purgesOf = async (id: string) =>
+    Number((await w.callWeb(ericWeb, 'GET', `/v1/proposals/${id}/review`)).body.purges)
   const read = async (address: string) =>
     (await w.call(eric.key, 'GET', `/v1/brains/inbox/pages/${address}`)).body.page as {
       title: string
@@ -209,9 +211,12 @@ describe('the proposals inbox of the web (PR21)', { skip: skipPg }, () => {
     })
     assert.equal(purged.status, 200, purged.text)
     const now = await read('corr/purge')
+    // What was seen before the purge is no longer what is approved: the person reviews it again.
+    const before = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, { fingerprint: seen })
+    assert.deepEqual([before.status, before.body.error?.code], [409, 'proposal_changed'])
     const r = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
-      fingerprint: seen,
-      corrections: { 0: { title: 'Person title', revision: now.revision } },
+      fingerprint: await fp(id),
+      corrections: { 0: { title: 'Person title', revision: now.revision, purges: await purgesOf(id) } },
     })
     assert.equal(r.status, 200, r.text)
     const after = await read('corr/purge')
@@ -231,29 +236,14 @@ describe('the proposals inbox of the web (PR21)', { skip: skipPg }, () => {
     assert.equal(moved.status, 200, moved.text)
     const partial = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
       fingerprint: seen,
-      corrections: { 0: { title: 'Person title', revision: 1 } },
+      corrections: { 0: { title: 'Person title', revision: 1, purges: await purgesOf(id) } },
     })
     assert.deepEqual([partial.status, partial.body.error?.code], [409, 'stale_base'], partial.text)
-    // The whole operation sent back as a correction (the old way) is checked the same.
-    const whole = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
-      fingerprint: seen,
-      corrections: {
-        0: {
-          op: 'edit',
-          address: 'corr/race',
-          baseRevision: 1,
-          title: 'Person title',
-          body: 'First body.',
-          reason: 'r',
-        },
-      },
-    })
-    assert.deepEqual([whole.status, whole.body.error?.code], [409, 'stale_base'], whole.text)
     assert.equal((await read('corr/race')).body, 'A colleague’s newer body.')
     // Written on the revision now there, it applies, and only the title changes.
     const ok = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
       fingerprint: seen,
-      corrections: { 0: { title: 'Person title', revision: 2 } },
+      corrections: { 0: { title: 'Person title', revision: 2, purges: await purgesOf(id) } },
     })
     assert.equal(ok.status, 200, ok.text)
     const p = await read('corr/race')
@@ -263,13 +253,65 @@ describe('the proposals inbox of the web (PR21)', { skip: skipPg }, () => {
   it('a correction carries only title, summary and body', async () => {
     await page('corr/fields', 'Body.')
     const id = await editTitle('corr/fields', 1)
-    for (const bad of [{ tags: ['x'] }, { sources: [] }, { title: 3 }, { address: 'elsewhere/x' }]) {
+    const purges = await purgesOf(id)
+    for (const bad of [
+      { tags: ['x'], revision: 1, purges },
+      { sources: [], revision: 1, purges },
+      { title: 3, revision: 1, purges },
+      { address: 'elsewhere/x', revision: 1, purges },
+      // A whole operation (it could carry tags): never a correction.
+      { op: 'edit', address: 'corr/fields', baseRevision: 1, title: 'x', tags: ['injected'], reason: 'r' },
+      // Nothing edited, or only the revision (that is «base reviewed»), or no purge mark.
+      {},
+      { revision: 1, purges },
+      { title: 'Mine', revision: 1 },
+    ]) {
       const r = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
         fingerprint: await fp(id),
-        corrections: { 0: { ...bad, revision: 1 } },
+        corrections: { 0: bad },
       })
       assert.deepEqual([r.status, r.body.error?.code], [400, 'invalid_request'], JSON.stringify(bad))
     }
+  })
+
+  it('a body edited before a purge is never applied after it (the purge mark must match)', async () => {
+    await page('corr/jane', 'Call Jane Roe on Monday.')
+    await w.callWeb(ericWeb, 'PATCH', '/v1/brains/inbox/pages/corr/jane', { baseRevision: 1, title: 'Calls' })
+    const id = await editTitle('corr/jane', 2)
+    const seen = await w.callWeb(ericWeb, 'GET', `/v1/proposals/${id}/review`)
+    const before = Number(seen.body.purges)
+    // The curator edits the body, from the page as it stood.
+    const mine = { body: 'Call Jane Roe on Monday, before ten.', revision: 2, purges: before }
+    const admin = await w.person('Purger2', { isAdmin: true })
+    const purged = await w.callWeb(await w.web(admin.id), 'POST', '/v1/brains/inbox/wiki/purge', {
+      address: 'corr/jane',
+      revision: 1,
+      text: ['Jane Roe'],
+      reason: 'personal data',
+    })
+    assert.equal(purged.status, 200, purged.text)
+    assert.equal((await read('corr/jane')).revision, 2, 'a purge keeps the revision')
+    const stale = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
+      fingerprint: String(seen.body.fingerprint),
+      corrections: { 0: mine },
+    })
+    assert.deepEqual([stale.status, stale.body.error?.code], [409, 'proposal_changed'], stale.text)
+    // Even with the new fingerprint, a correction written before the purge is refused.
+    const again = await w.callWeb(ericWeb, 'GET', `/v1/proposals/${id}/review`)
+    assert.equal(Number(again.body.purges), before + 1)
+    const old = await w.callWeb(ericWeb, 'POST', `/v1/proposals/${id}/approve`, {
+      fingerprint: String(again.body.fingerprint),
+      corrections: { 0: mine },
+    })
+    assert.deepEqual([old.status, old.body.error?.code], [409, 'proposal_changed'], old.text)
+    assert.ok((old.body.error?.message ?? '').includes('purged'))
+    assert.ok(!(await read('corr/jane')).body.includes('Jane Roe'))
+    const dump = JSON.stringify(
+      await w.db.query(
+        "SELECT r.body FROM page_revisions r JOIN pages p ON p.id = r.page_id WHERE p.address = 'corr/jane'",
+      ),
+    )
+    assert.ok(!dump.includes('Jane Roe'), dump)
   })
 
   it('order=oldest lists what waited longest first, by pages; another order is refused', async () => {

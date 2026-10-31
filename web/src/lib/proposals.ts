@@ -37,7 +37,14 @@ export type ReviewOp = {
 // A person's version of a change: only the words they edited, and for an edit the revision of the page
 // they saw (the server lays it over the stored operation and checks that revision). Never tags, sources
 // or a copy of the page.
-export type Correction = { title?: string; summary?: string; body?: string; revision?: number }
+// `purges`: the purges of the wiki the review showed; an edit written before a purge is never sent.
+export type Correction = {
+  title?: string
+  summary?: string
+  body?: string
+  revision?: number
+  purges?: number
+}
 
 export type Choices = {
   selected: number[]
@@ -116,9 +123,17 @@ export function choose(
 
 // An edit written on an older revision is approved only once the person edits it or marks the base
 // reviewed (spec B2 CA7).
-export function needsBase(o: Pick<ReviewOp, 'index' | 'stale'>, c: Choices): boolean {
-  return o.stale !== null && !c.baseReviewed.includes(o.index) && !(o.index in c.corrections)
+// An edit of the person's settles an old base only when written on the revision now there; one written
+// before the page moved on needs a look as much as the agent's (the server refuses it too).
+export function needsBase(o: Pick<ReviewOp, 'index' | 'stale' | 'before'>, c: Choices): boolean {
+  if (c.baseReviewed.includes(o.index)) return false
+  if (editIsOld(o, c)) return true
+  return o.stale !== null && !(o.index in c.corrections)
 }
+
+// The change needs an old base looked at: the agent wrote it on one, or the person's edit was.
+export const oldBase = (o: Pick<ReviewOp, 'index' | 'stale' | 'before'>, c: Choices) =>
+  o.stale !== null || editIsOld(o, c)
 
 export type Blockers = {
   all: string | null
@@ -173,7 +188,10 @@ export function approveBody(
   )
   if (Object.keys(corrections).length) out.corrections = corrections
   const reviewed = sorted(
-    c.baseReviewed.filter((i) => approve.includes(i) && ops.find((o) => o.index === i)?.stale),
+    c.baseReviewed.filter((i) => {
+      const o = ops.find((x) => x.index === i)
+      return approve.includes(i) && o !== undefined && oldBase(o, c)
+    }),
   )
   if (reviewed.length) out.baseReviewed = reviewed
   return out
@@ -181,20 +199,30 @@ export function approveBody(
 
 // After the proposal changed meanwhile: the comment always stays; the rest stays for changes still pending.
 // Nothing to drop gives back the same choices (the same object), so nothing is written again.
-export function keepChoices(c: Choices, ops: ReviewOp[]): Choices {
+export function keepChoices(c: Choices, ops: ReviewOp[], purges: number): Choices {
   const pending = new Set(ops.filter((o) => o.status === 'pending').map((o) => o.index))
-  const stale = new Set(ops.filter((o) => o.stale).map((o) => o.index))
+  // An edit written before the last purge of the wiki could hold purged text: it goes (purgedEdits says so).
+  const corrections = Object.fromEntries(
+    Object.entries(c.corrections).filter(([k, v]) => pending.has(Number(k)) && v.purges === purges),
+  )
+  const old = new Set(ops.filter((o) => oldBase(o, { ...c, corrections })).map((o) => o.index))
   const same =
     c.selected.every((i) => pending.has(i)) &&
-    c.baseReviewed.every((i) => pending.has(i) && stale.has(i)) &&
-    Object.keys(c.corrections).every((k) => pending.has(Number(k)))
+    c.baseReviewed.every((i) => pending.has(i) && old.has(i)) &&
+    Object.keys(corrections).length === Object.keys(c.corrections).length
   if (same) return c
   return {
     selected: sorted(c.selected.filter((i) => pending.has(i))),
     comment: c.comment,
-    baseReviewed: sorted(c.baseReviewed.filter((i) => pending.has(i) && stale.has(i))),
-    corrections: Object.fromEntries(Object.entries(c.corrections).filter(([k]) => pending.has(Number(k)))),
+    baseReviewed: sorted(c.baseReviewed.filter((i) => pending.has(i) && old.has(i))),
+    corrections,
   }
+}
+
+// How many of the person's edits were written before the last purge (they are dropped, and the screen
+// says so).
+export function purgedEdits(c: Choices, purges: number): number {
+  return Object.values(c.corrections).filter((v) => v.purges !== purges).length
 }
 
 // Another person decided (or its author withdrew) the proposal on screen, heard on the live feed (B5):
@@ -267,6 +295,7 @@ export function inboxDraftKey(account: string, proposal: string): string {
 export function correctionOf(
   o: Pick<ReviewOp, 'op' | 'before' | 'after'>,
   form: Record<string, string>,
+  purges: number,
 ): Correction | null {
   const out: Correction = {}
   for (const k of ['title', 'summary', 'body'] as const) {
@@ -275,6 +304,7 @@ export function correctionOf(
   }
   if (!Object.keys(out).length) return null
   if (o.op.op === 'edit' && typeof o.before?.revision === 'number') out.revision = o.before.revision
+  out.purges = purges
   return out
 }
 
