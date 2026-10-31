@@ -50,9 +50,10 @@ test('the overview leads to what it counts', async ({ page, context, baseURL }) 
     'href',
     `${J}?uncompiled=1`,
   )
+  // What waits for review leads to the proposals inbox (it exists since PR21).
   await expect(numbers.getByRole('link', { name: /waiting for review/ })).toHaveAttribute(
     'href',
-    '#waiting-title',
+    '/b/growth/proposals',
   )
   await numbers.getByRole('link', { name: /conflicts?$/ }).click()
   await expect(page).toHaveURL(new RegExp(`${J}/conflicts$`))

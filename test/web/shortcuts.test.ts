@@ -68,6 +68,7 @@ describe('keyboard shortcuts', () => {
       ids.add(s.id)
     }
     assert.deepEqual([...ids].sort(), [
+      'approve',
       'edit',
       'go-decisions',
       'go-home',
@@ -75,8 +76,10 @@ describe('keyboard shortcuts', () => {
       'go-log',
       'go-overview',
       'go-people',
+      'go-proposals',
       'go-wiki',
       'help',
+      'return',
       'search',
     ])
   })
@@ -96,5 +99,23 @@ describe('keyboard shortcuts', () => {
     assert.equal(m.handle(key('g')), null)
     assert.equal(m.handle(key('j')), 'go-journal')
     assert.equal(m.handle(key('j')), null)
+  })
+
+  it('"a" approves and "r" returns the proposal on screen, never while typing; "g" then "r" goes to the proposals (PR21)', () => {
+    const m = createKeymap(() => 0)
+    assert.equal(m.handle(key('a')), 'approve')
+    assert.equal(m.handle(key('r')), 'return')
+    assert.equal(m.handle(key('a', { typing: true })), null)
+    assert.equal(m.handle(key('r', { typing: true })), null)
+    assert.equal(m.handle(key('A')), null, 'Shift is not the shortcut')
+    assert.equal(m.handle(key('a', { meta: true })), null)
+    assert.equal(m.handle(key('g')), null)
+    assert.equal(m.handle(key('r')), 'go-proposals')
+    const ids = SHORTCUTS.map((s) => s.id)
+    for (const id of ['approve', 'return', 'go-proposals']) assert.ok(ids.includes(id as never), id)
+    for (const s of SHORTCUTS.filter((x) => x.id === 'approve' || x.id === 'return')) {
+      assert.ok(s.inBrain)
+      assert.match(s.control, /button/)
+    }
   })
 })

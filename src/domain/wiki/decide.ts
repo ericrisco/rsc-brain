@@ -2,6 +2,8 @@
 // the rest with a comment, correct an operation first, or return it all. What is approved applies all
 // at once or not at all; a returned comment becomes a correction in the journal for the agent that
 // proposed, so it learns why. Only what was seen is approved: the fingerprint must match.
+import { can } from '../../auth/can.ts'
+import { actorOf } from '../../auth/principal.ts'
 import { AppError, conflict, invalid, notFound } from '../../core/errors.ts'
 import type { Row } from '../../db/db.ts'
 import { redact } from '../../privacy/redact.ts'
@@ -10,14 +12,17 @@ import { webCorrection } from '../entries.ts'
 import { emit } from '../events.ts'
 import { ApplyError, type ApplyItem, applyOps, type Revised } from './apply.ts'
 import { type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
-import { type Proposal, type ProposalOp, proposalOf, proposalOpOf } from './proposals.ts'
-import { buildReview, dependencies, fingerprint, type Review, webOnly } from './review.ts'
+import { named, type Proposal, type ProposalOp, proposalOf, proposalOpOf } from './proposals.ts'
+import { buildReview, dependencies, fingerprint, type Review, webOnly, wikiPurges } from './review.ts'
 
+// `decide`: the person is about to decide (a curator of an active brain); otherwise only reading the
+// review, which every member may do in the web (spec B6 CA17: a reader sees the inbox, read-only).
 async function load(
   ctx: Ctx,
   id: string,
   lock: boolean,
-): Promise<{ row: Row; brainId: string; slug: string }> {
+  decide = true,
+): Promise<{ row: Row; brainId: string; slug: string; canDecide: boolean }> {
   const row = await ctx.db.one(`SELECT * FROM proposals WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [id])
   if (!row) throw notFound('proposal')
   const { brain, role } = await inBrain(ctx, { id: String(row.brain_id) }, lock ? 'share' : null).catch(
@@ -26,13 +31,15 @@ async function load(
     },
   )
   webOnly(ctx)
-  await allow(ctx, 'wiki.decide', { role, brainStatus: brain.status }, brain.id)
-  return { row, brainId: brain.id, slug: brain.slug }
+  const facts = { role, brainStatus: brain.status }
+  if (decide) await allow(ctx, 'wiki.decide', facts, brain.id)
+  const canDecide = can(actorOf(ctx.who), 'wiki.decide', facts).ok
+  return { row, brainId: brain.id, slug: brain.slug, canDecide }
 }
 
-export async function reviewProposal(ctx: Ctx, id: string): Promise<Review> {
-  const { row } = await load(ctx, id, false)
-  return buildReview(ctx, row)
+export async function reviewProposal(ctx: Ctx, id: string): Promise<Review & { canDecide: boolean }> {
+  const { row, canDecide } = await load(ctx, id, false, false)
+  return { ...(await buildReview(ctx, row)), canDecide }
 }
 
 // Only a pending proposal is decided, and only in the version the curator saw.
@@ -61,7 +68,7 @@ async function stillAsSeen(ctx: Ctx, row: Row, seen: string): Promise<ProposalOp
   const ops = (
     await ctx.db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [row.id])
   ).map(proposalOpOf)
-  if (fingerprint(row, ops) !== seen) {
+  if (fingerprint(row, ops, await wikiPurges(ctx.db, String(row.brain_id))) !== seen) {
     const err = conflict(
       'proposal_changed',
       'The proposal changed while you were looking at it; nothing was applied.',
@@ -98,6 +105,71 @@ async function teach(ctx: Ctx, brainId: string, row: Row, comment: string, retur
   })
 }
 
+// What a person may correct before approving (spec B2: «Edit de una operación»): the words of a new page,
+// of an edit and of a merge — only those they edited — and for an edit the revision they saw. Never a whole
+// operation (it could carry tags, sources or another page), never tags or sources. `purges` echoes the
+// purges of the wiki the review showed: a correction written before a purge could put purged text back,
+// so it is refused (409, as a proposal that changed).
+const CORRECTABLE: Record<string, readonly string[]> = {
+  create: ['title', 'summary', 'body'],
+  edit: ['title', 'summary', 'body'],
+  merge: ['body'],
+}
+function overlay(
+  op: Op,
+  raw: unknown,
+  i: number,
+  purges: number,
+  problems: Problem[],
+): Record<string, unknown> | null {
+  const allowed = CORRECTABLE[op.op] ?? []
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    problems.push({ op: i, message: 'A correction is an object of the fields you edited.' })
+    return null
+  }
+  const out: Record<string, unknown> = { ...op }
+  let words = 0
+  const { revision, purges: seen, ...fields } = raw as Record<string, unknown>
+  for (const [key, v] of Object.entries(fields)) {
+    if (!allowed.includes(key)) {
+      problems.push({
+        op: i,
+        message: allowed.length
+          ? `A correction of a ${op.op} changes only ${allowed.join(', ')}; not "${key}".`
+          : `A ${op.op} operation cannot be corrected; return it instead.`,
+      })
+    } else if (typeof v !== 'string') {
+      problems.push({ op: i, message: `"${key}" is text.` })
+    } else {
+      out[key] = v
+      words += 1
+    }
+  }
+  if (words === 0 && allowed.length) {
+    problems.push({
+      op: i,
+      message: `A correction changes at least one of ${allowed.join(', ')} (to accept an old base as it is, mark it "base reviewed").`,
+    })
+  }
+  if (revision !== undefined) {
+    if (op.op !== 'edit' || typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 1)
+      problems.push({ op: i, message: '"revision" is the revision of the page you saw (edits only).' })
+    else out.baseRevision = revision
+  }
+  if (typeof seen !== 'number' || !Number.isSafeInteger(seen) || seen < 0) {
+    problems.push({ op: i, message: '"purges" echoes the "purges" of the review you corrected.' })
+  } else if (seen !== purges && !problems.some((p) => p.op === i)) {
+    const err = conflict(
+      'proposal_changed',
+      'Text was purged from this wiki after your edit was written; nothing was applied.',
+      'Review it again and write your edit anew from what the pages hold now.',
+    )
+    err.current = { purged: true }
+    throw err
+  }
+  return out
+}
+
 export type Decision = { proposal: Proposal; ops: ProposalOp[]; applied: Revised[] }
 
 export type ApproveInput = {
@@ -127,12 +199,17 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     // A curator's correction replaces the operation, checked like any operation.
     const corrected = new Set<number>()
     const problems: Problem[] = []
+    const purges = await wikiPurges(db, brainId)
     for (const [k, raw] of Object.entries(input.corrections ?? {})) {
       const i = Number(k)
       if (!all.includes(i))
         throw invalid(`The proposal has no operation ${k}.`, 'Correct an existing operation.')
-      const op = readOp(raw, i, problems)
       const was = ops[i] as ProposalOp
+      // The fields the person edited, laid over the stored operation and checked like any operation; an
+      // edit's base revision is the one the person saw, and the base check below runs for it too.
+      const merged = overlay(was.op, raw, i, purges, problems)
+      if (!merged) continue
+      const op = readOp(merged, i, problems)
       if (op && (op.op !== was.op.op || op.address !== was.op.address)) {
         problems.push({ op: i, message: 'A correction keeps the kind of operation and its page.' })
       } else if (op) {
@@ -175,7 +252,7 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     const reviewedBase = new Set(input.baseReviewed ?? [])
     for (const i of approve) {
       const o = plain[i] as Op
-      if (o.op !== 'edit' || o.baseRevision === undefined || corrected.has(i) || reviewedBase.has(i)) continue
+      if (o.op !== 'edit' || o.baseRevision === undefined || reviewedBase.has(i)) continue
       const p = await db.one(
         'SELECT p.revision FROM page_addresses a JOIN pages p ON p.id = a.page_id WHERE a.brain_id = $1 AND a.address = $2',
         [brainId, o.address],
@@ -277,7 +354,7 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
     const final = (
       await db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [row.id])
     ).map(proposalOpOf)
-    return { proposal: proposalOf(done as Row, now), ops: final, applied }
+    return { proposal: await named(db, proposalOf(done as Row, now)), ops: final, applied }
   })
   if (failure) throw failure
   return out as Decision
@@ -304,6 +381,6 @@ export async function returnProposal(
     const final = (
       await db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [row.id])
     ).map(proposalOpOf)
-    return { proposal: proposalOf(done as Row, now), ops: final, applied: [] }
+    return { proposal: await named(db, proposalOf(done as Row, now)), ops: final, applied: [] }
   })
 }

@@ -15,6 +15,8 @@ export class ApiError extends Error {
   readonly current: unknown
   // Everything wrong with a change checked as a whole, each with its operation.
   readonly problems: Array<{ op: number | null; message: string }>
+  // The operations the problems are about (an old base names its operation without a message).
+  readonly problemOps: number[]
   constructor(
     status: number,
     code: string,
@@ -29,6 +31,9 @@ export class ApiError extends Error {
     this.howToProceed = howToProceed
     this.retryAfter = retryAfter
     this.current = extra.current
+    this.problemOps = Array.isArray(extra.problems)
+      ? extra.problems.flatMap((p) => (typeof p?.op === 'number' ? [p.op] : []))
+      : []
     this.problems = Array.isArray(extra.problems)
       ? extra.problems
           .filter((p): p is { op?: unknown; message: string } => typeof p?.message === 'string')

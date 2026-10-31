@@ -81,7 +81,8 @@ export function invalidate(prefix: string): void {
 // What an event of the live feed (B5) makes stale, by its kind.
 const BY_EVENT: Array<[RegExp, (brain: string) => string[]]> = [
   [/^proposal\./, (b) => [`brain:${b}:proposals`, `brain:${b}:overview`, 'brains']],
-  [/^wiki\./, (b) => [`brain:${b}:wiki`, `brain:${b}:overview`, 'brains']],
+  // A page that changed may be one an open proposal edits: its review shows the new base at once.
+  [/^wiki\./, (b) => [`brain:${b}:wiki`, `brain:${b}:proposals:review`, `brain:${b}:overview`, 'brains']],
   [/^(entry|session)\./, (b) => [`brain:${b}:journal`, `brain:${b}:overview`]],
 ]
 

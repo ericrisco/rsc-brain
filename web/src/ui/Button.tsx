@@ -37,6 +37,9 @@ export function Button({
         onClick={(e) => {
           if (off) {
             e.preventDefault()
+            // What it waits for (a comment): the keyboard goes there.
+            const needs = (e.currentTarget as HTMLElement).dataset.needs
+            if (needs && !pending) document.getElementById(needs)?.focus()
             return
           }
           onClick?.(e)

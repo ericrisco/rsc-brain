@@ -40,7 +40,7 @@ import {
 } from './data.ts'
 
 // The first page from a shared resource (it reloads with the journal); later pages kept here.
-function usePages<T>(
+export function usePages<T>(
   first: { items: T[]; next: string | null; total: number } | undefined,
   more: (next: string) => Promise<{ items: T[]; next: string | null }>,
   idOf: (x: T) => string,
@@ -82,7 +82,7 @@ function usePages<T>(
   return { first, items, nextPage, loading, error, load }
 }
 
-function More({
+export function More({
   p,
 }: {
   p: {

@@ -9,6 +9,7 @@ import { redact } from '../../privacy/redact.ts'
 import { audit } from '../audit.ts'
 import { allow, type Ctx } from '../context.ts'
 import { joinAsAdmin, scrubEntry } from '../curation.ts'
+import { emit } from '../events.ts'
 import { lockMeaning } from '../meaning.ts'
 import { mentionsOf, type Source } from './model.ts'
 import { pageNotFound } from './pages.ts'
@@ -420,6 +421,9 @@ export async function purgePageRevisions(
         'Tell the administration of this installation; this should not happen.',
       )
     }
+    // Every correction written before this purge is now refused, and open reviews hear it (B5 events).
+    await db.query('UPDATE brains SET wiki_purges = wiki_purges + 1 WHERE id = $1', [brainId])
+    await emit(db, c, { brainId, kind: 'wiki.changed', targetId: String(page.id), label: 'purge' })
     await audit(db, {
       at: now,
       actorId: ctx.who.accountId,

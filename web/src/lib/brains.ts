@@ -24,12 +24,12 @@ export function slugOf(name: string): string {
 type Waiting = { slug: string; role: string; stats: { pendingProposals: number } }
 
 // The proposals waiting for me: those of the brains I curate (only a curator decides, spec B2). With
-// one brain waiting, the count leads there; with more, to home, where each card says how many.
+// one brain waiting, the count leads to its inbox; with more, to home, where each card says how many.
 export function toReview(brains: readonly Waiting[]): { count: number; href: string } {
   const mine = brains.filter((b) => b.role === 'curator' && b.stats.pendingProposals > 0)
   const count = mine.reduce((n, b) => n + b.stats.pendingProposals, 0)
   const only = mine.length === 1 ? mine[0] : undefined
-  return { count, href: only ? `/b/${encodeURIComponent(only.slug)}` : '/' }
+  return { count, href: only ? `/b/${encodeURIComponent(only.slug)}/proposals` : '/' }
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']

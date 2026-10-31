@@ -75,6 +75,19 @@ export const proposalOf = (r: Row, now: Date): Proposal => ({
   purged: r.purged_at != null,
 })
 
+// Who proposed and who decided, by name: what a person reads in the inbox (spec B6 «Proposals»).
+export type NamedProposal = Proposal & { authorName: string; decidedByName: string | null }
+
+export async function named(db: Db, p: Proposal): Promise<NamedProposal> {
+  const ids = [p.authorId, ...(p.decidedBy ? [p.decidedBy] : [])]
+  const rows = await db.query<{ id: string; name: string }>(
+    'SELECT id, name FROM accounts WHERE id = ANY($1)',
+    [ids],
+  )
+  const nameOf = (id: string | null) => (id ? (rows.find((r) => r.id === id)?.name ?? '') : null)
+  return { ...p, authorName: nameOf(p.authorId) ?? '', decidedByName: nameOf(p.decidedBy) }
+}
+
 export const proposalOpOf = (r: Row): ProposalOp => ({
   index: Number(r.idx),
   op: r.op as Op,
@@ -477,7 +490,7 @@ async function proposalNotice(
       text: [
         `${by} proposed ${n} change${n === 1 ? '' : 's'} to the wiki of "${brain.name}".`,
         '',
-        `Review it (you will be asked to sign in): ${base}/brains/${brain.slug}/proposals/${id}`,
+        `Review it (you will be asked to sign in): ${base}/b/${brain.slug}/proposals/${id}`,
       ].join('\n'),
     })
   }
@@ -495,12 +508,12 @@ async function loadProposal(ctx: Ctx, id: string, lock = false): Promise<{ row: 
 export async function getProposal(
   ctx: Ctx,
   id: string,
-): Promise<{ proposal: Proposal; ops: ProposalOp[]; warnings: Warning[] }> {
+): Promise<{ proposal: NamedProposal; ops: ProposalOp[]; warnings: Warning[] }> {
   const { row } = await loadProposal(ctx, id)
   const ops = await loadOps(ctx.db, id)
   const pending = new Set(ops.filter((o) => o.status !== 'pending').map((o) => o.index))
   return {
-    proposal: proposalOf(row, ctx.clock()),
+    proposal: await named(ctx.db, proposalOf(row, ctx.clock())),
     ops,
     warnings:
       row.status === 'pending' || row.status === 'partially_approved'
@@ -514,13 +527,30 @@ export async function getProposal(
   }
 }
 
-export type InboxItem = Proposal & { opCount: number }
+export type InboxItem = NamedProposal & { opCount: number }
 
+const STATUSES: ProposalStatus[] = [
+  'pending',
+  'approved',
+  'partially_approved',
+  'returned',
+  'withdrawn',
+  'superseded',
+]
+
+// `counts`: how many proposals of the brain are in each status (mine=1: of mine), on the first page only.
 export async function listProposals(
   ctx: Ctx,
   slug: string,
-  o: { status?: ProposalStatus | 'all'; cursor?: string; limit?: number; mine?: boolean },
-): Promise<PageOf<InboxItem>> {
+  o: {
+    status?: ProposalStatus | 'all'
+    cursor?: string
+    limit?: number
+    mine?: boolean
+    // oldest: what waited longest first (the inbox of the web reviews pending ones in that order).
+    order?: 'newest' | 'oldest'
+  },
+): Promise<PageOf<InboxItem> & { counts?: Record<ProposalStatus, number> }> {
   const { brain } = await inBrain(ctx, { slug })
   const status = o.status ?? 'pending'
   const c = decode(o.cursor)
@@ -537,10 +567,12 @@ export async function listProposals(
     filter += ` AND p.author_id = $${params.length}`
   }
   const rows = await ctx.db.query(
-    `SELECT p.*, (SELECT count(*)::int FROM proposal_ops o WHERE o.proposal_id = p.id) AS op_count
+    `SELECT p.*, (SELECT count(*)::int FROM proposal_ops o WHERE o.proposal_id = p.id) AS op_count,
+            (SELECT name FROM accounts a WHERE a.id = p.author_id) AS author_name,
+            (SELECT name FROM accounts a WHERE a.id = p.decided_by) AS decider_name
        FROM proposals p
-      WHERE p.brain_id = $1${filter} AND ($2::timestamptz IS NULL OR (p.created_at, p.id) < ($2, $3))
-      ORDER BY p.created_at DESC, p.id DESC LIMIT $4`,
+      WHERE p.brain_id = $1${filter} AND ($2::timestamptz IS NULL OR (p.created_at, p.id) ${o.order === 'oldest' ? '>' : '<'} ($2, $3))
+      ORDER BY p.created_at ${o.order === 'oldest' ? 'ASC, p.id ASC' : 'DESC, p.id DESC'} LIMIT $4`,
     params,
   )
   const totalArgs: unknown[] = [brain.id]
@@ -560,11 +592,27 @@ export async function listProposals(
   const page = rows.slice(0, limit)
   const last = page.at(-1)
   const now = ctx.clock()
-  return {
-    items: page.map((r) => ({ ...proposalOf(r, now), opCount: Number(r.op_count) })),
+  const out: PageOf<InboxItem> & { counts?: Record<ProposalStatus, number> } = {
+    items: page.map((r) => ({
+      ...proposalOf(r, now),
+      authorName: r.author_name == null ? '' : String(r.author_name),
+      decidedByName: r.decider_name == null ? null : String(r.decider_name),
+      opCount: Number(r.op_count),
+    })),
     total: total?.n ?? 0,
     next: rows.length > limit && last ? encode(last.created_at as Date, String(last.id)) : null,
   }
+  if (!c) {
+    const by = await ctx.db.query<{ status: string; n: number }>(
+      `SELECT p.status, count(*)::int AS n FROM proposals p
+        WHERE p.brain_id = $1${o.mine ? ' AND p.author_id = $2' : ''} GROUP BY p.status`,
+      o.mine ? [brain.id, ctx.who.accountId] : [brain.id],
+    )
+    out.counts = Object.fromEntries(
+      STATUSES.map((st) => [st, by.find((r) => r.status === st)?.n ?? 0]),
+    ) as Record<ProposalStatus, number>
+  }
+  return out
 }
 
 export async function withdrawProposal(ctx: Ctx, id: string): Promise<Proposal> {

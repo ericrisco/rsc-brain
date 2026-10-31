@@ -58,6 +58,11 @@ export const ROUTE_TABLE = {
   forgotten: { route: 'GET /v1/brains/{slug}/forgotten' },
   toReview: { route: 'GET /v1/brains/{slug}/to-review' },
   addCorrection: { route: 'POST /v1/brains/{slug}/corrections' },
+  // The proposals inbox (PR21).
+  proposals: { route: 'GET /v1/brains/{slug}/proposals' },
+  proposalReview: { route: 'GET /v1/proposals/{id}/review' },
+  approveProposal: { route: 'POST /v1/proposals/{id}/approve' },
+  returnProposal: { route: 'POST /v1/proposals/{id}/return' },
 } as const satisfies Record<string, Op>
 
 export type OpName = keyof typeof ROUTE_TABLE

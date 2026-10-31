@@ -65,6 +65,24 @@ export function Keyboard({
         route(`/b/${encodeURIComponent(brain)}/wiki/log`)
       } else if (id === 'go-journal' && signedIn && brain) {
         route(`/b/${encodeURIComponent(brain)}/journal`)
+      } else if (id === 'go-proposals' && signedIn && brain) {
+        route(`/b/${encodeURIComponent(brain)}/proposals`)
+      } else if ((id === 'approve' || id === 'return') && signedIn) {
+        // `a` does what «Approve all» does, but only when the person chose nothing and wrote nothing;
+        // otherwise it goes to the button and says why. `r` never sends: it goes to the comment it needs,
+        // or to «Return», which Enter presses.
+        const b = document.querySelector<HTMLElement>(`main [data-shortcut="${id}"]`)
+        if (b) {
+          e.preventDefault()
+          const needs = b.dataset.needs ? document.getElementById(b.dataset.needs) : null
+          if (id === 'approve' && b.dataset.hold) {
+            const to = b.dataset.holdTo ? document.getElementById(b.dataset.holdTo) : null
+            ;(to ?? b).focus()
+            document.dispatchEvent(new CustomEvent('rscb-shortcut-hold', { detail: b.dataset.hold }))
+          } else if (id === 'approve' && b.getAttribute('aria-disabled') !== 'true') b.click()
+          else if (b.getAttribute('aria-disabled') === 'true' && needs) needs.focus()
+          else b.focus()
+        }
       } else if (id === 'edit' && signedIn) {
         // What "Edit" above a page does; on a page that has no Edit (not a curator), nothing.
         const edit = document.querySelector<HTMLAnchorElement>('main a[data-view="edit"]')

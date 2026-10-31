@@ -671,6 +671,114 @@ describe('the fixture API', () => {
     assert.equal((await go('GET', `/v1/brains/growth/sessions?cursor=${big.next}`)).status, 200)
   })
 
+  it('answers the proposals inbox like the server: list by status, review, approve all or part, return, 409', async () => {
+    const s = fx.scenario('signed-in')
+    const cookie = 'rscb_session=fx.acc_eric'
+    const go = (method: string, path: string, body?: unknown) =>
+      call(method, path, { scenario: s.id, cookie, body })
+    const list = (await go('GET', '/v1/brains/growth/proposals')).body as {
+      items: Array<{ id: string; old: boolean }>
+      total: number
+      counts: Record<string, number>
+    }
+    assert.equal(list.total, 3)
+    assert.deepEqual(list.counts, {
+      pending: 3,
+      approved: 1,
+      partially_approved: 1,
+      returned: 1,
+      withdrawn: 1,
+      superseded: 1,
+    })
+    assert.ok(list.items.some((p) => p.old))
+    assert.equal((await go('GET', '/v1/brains/growth/proposals?status=done')).status, 400)
+    assert.equal((await go('GET', '/v1/brains/growth/proposals?status=returned')).status, 200)
+    const review = async (id: string) =>
+      (await go('GET', `/v1/proposals/${id}/review`)).body as {
+        fingerprint: string
+        canDecide: boolean
+        ops: Array<{ stale: unknown; dependsOn: number[] }>
+      }
+    const one = await review('prp_growth1')
+    assert.equal(one.canDecide, true)
+    assert.equal(one.ops.length, 3)
+    const three = await review('prp_growth3')
+    assert.ok(three.ops[0]?.stale, 'an edit on an old base shows three versions')
+    assert.equal((await go('GET', '/v1/proposals/prp_nope/review')).status, 404)
+    // Part of it needs a comment; the fingerprint must be the one seen.
+    const part = { fingerprint: one.fingerprint, approve: [0, 1] }
+    assert.equal((await go('POST', '/v1/proposals/prp_growth1/approve', part)).status, 400)
+    assert.equal(
+      (await go('POST', '/v1/proposals/prp_growth1/approve', { ...part, fingerprint: 'fp_old' })).status,
+      409,
+    )
+    const done = await go('POST', '/v1/proposals/prp_growth1/approve', { ...part, comment: 'Not the third.' })
+    assert.equal(done.status, 200)
+    assert.equal((done.body as { proposal: { status: string } }).proposal.status, 'partially_approved')
+    assert.equal(
+      (await go('POST', '/v1/proposals/prp_growth1/approve', { fingerprint: one.fingerprint })).status,
+      409,
+    )
+    // An old base is approved only once reviewed; what needs another goes with it.
+    assert.equal(
+      (await go('POST', '/v1/proposals/prp_growth3/approve', { fingerprint: three.fingerprint })).status,
+      409,
+    )
+    const two = await review('prp_growth2')
+    assert.equal(
+      (
+        await go('POST', '/v1/proposals/prp_growth2/approve', {
+          fingerprint: two.fingerprint,
+          approve: [1],
+          comment: 'x',
+        })
+      ).status,
+      400,
+    )
+    assert.equal(
+      (await go('POST', '/v1/proposals/prp_growth2/return', { fingerprint: two.fingerprint })).status,
+      400,
+    )
+    assert.equal(
+      (await go('POST', '/v1/proposals/prp_growth2/return', { fingerprint: two.fingerprint, comment: 'No.' }))
+        .status,
+      200,
+    )
+    assert.equal(
+      (
+        await go('POST', '/v1/proposals/prp_growth3/approve', {
+          fingerprint: three.fingerprint,
+          baseReviewed: [0],
+        })
+      ).status,
+      200,
+    )
+    // Ana is a contributor in growth and a reader in support: she reads, she does not decide.
+    const m = fx.scenario('member')
+    const asAna = (method: string, path: string, body?: unknown) =>
+      call(method, path, { scenario: m.id, cookie: 'rscb_session=fx.acc_ana', body })
+    const hers = (await asAna('GET', '/v1/proposals/prp_support1/review')).body as {
+      canDecide: boolean
+      fingerprint: string
+    }
+    assert.equal(hers.canDecide, false)
+    assert.equal(
+      (await asAna('POST', '/v1/proposals/prp_support1/approve', { fingerprint: hers.fingerprint })).status,
+      403,
+    )
+    assert.equal((await asAna('GET', '/v1/brains/support/proposals')).status, 200)
+    // Much data, by pages.
+    s.set('proposals', 'much-data')
+    const big = (await go('GET', '/v1/brains/growth/proposals?limit=20')).body as {
+      items: unknown[]
+      total: number
+      next: string
+    }
+    assert.equal(big.items.length, 20)
+    assert.equal(big.total, 120)
+    assert.equal((await go('GET', `/v1/brains/growth/proposals?limit=20&cursor=${big.next}`)).status, 200)
+  })
+
   it('every operation the fixture answers was checked against the description', () => {
     assert.deepEqual(
       [...fx.operations].filter((op) => !seen.has(op)),

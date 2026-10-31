@@ -286,7 +286,8 @@ describe('wiki decisions in the web', { skip: skipPg }, () => {
 
   it('a curator corrects an operation before approving; history says a person corrected it', async () => {
     const id = await propose([create('corr/page', { body: 'agent text' })])
-    const r = await approve(id, { corrections: { 0: create('corr/page', { body: 'person text' }) } })
+    const purges = ((await review(id)) as unknown as { purges: number }).purges
+    const r = await approve(id, { corrections: { 0: { body: 'person text', purges } } })
     assert.equal(r.status, 200, r.text)
     const p = (await page('corr/page')) as { page: { body: string } }
     assert.equal(p.page.body, 'person text')
@@ -295,6 +296,7 @@ describe('wiki decisions in the web', { skip: skipPg }, () => {
     }[]
     assert.equal(h[0]?.corrected, true)
     const other = await propose([create('corr/two')])
+    // A whole operation is no correction: it could carry tags, sources or another page.
     const wrong = await approve(other, { corrections: { 0: create('corr/elsewhere') } })
     assert.equal(wrong.status, 400)
   })
@@ -510,7 +512,7 @@ describe('wiki decisions in the web', { skip: skipPg }, () => {
       fingerprint: fp,
       approve: [0],
       comment: 'bad key AKIAABCDEFGHIJKLMNOP',
-      corrections: { 1: create('sec/b', { body: 'person body' }) },
+      corrections: { 1: { body: 'person body', purges: 0 } },
     })
     assert.equal(r.status, 200, r.text)
     assert.ok(!r.text.includes('AKIAABCDEFGHIJKLMNOP'))

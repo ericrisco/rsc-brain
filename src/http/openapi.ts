@@ -234,6 +234,129 @@ export const EVENT = obj(
 )
 const PAGE = obj({ items: list({ type: 'object' }), next: NEXT })
 
+// Proposals as the inbox of the web reads and decides them (spec B2 «Revisar una propuesta», B6 PR21).
+const PROPOSAL_STATUS = s('pending, approved, partially_approved, returned, withdrawn or superseded.', {
+  enum: ['pending', 'approved', 'partially_approved', 'returned', 'withdrawn', 'superseded'],
+})
+const PROPOSAL = obj(
+  {
+    id: s('Proposal id (prp_…).'),
+    brainId: s('Its brain.'),
+    title: s('What it changes.'),
+    reason: s('Why.'),
+    authorId: s('The account that proposed.'),
+    authorName: s('Its name.'),
+    agent: nul(s('The agent or program that wrote it, as it named itself.')),
+    status: PROPOSAL_STATUS,
+    old: b('Pending for more than 30 days.'),
+    supersedes: nul(s('The proposal it replaced.')),
+    supersededBy: nul(s('The proposal that replaced it.')),
+    collected: list(s('Entry id.'), 'Entries it gathers without changes.'),
+    comment: nul(s('The curator’s comment on what went back.')),
+    decidedBy: nul(s('The curator who decided.')),
+    decidedByName: nul(s('Their name.')),
+    decidedAt: nul(s('When.', { format: 'date-time' })),
+    lastError: nul(s('Why the last approval could not apply.')),
+    createdAt: s('When it was sent.', { format: 'date-time' }),
+    purged: b('Its texts were purged.'),
+  },
+  ['authorName', 'decidedByName'],
+)
+const PROPOSAL_NAMED = {
+  ...PROPOSAL,
+  required: [...(PROPOSAL.required as string[]), 'authorName', 'decidedByName'],
+}
+const PROPOSAL_COUNTS = obj(
+  Object.fromEntries(
+    ['pending', 'approved', 'partially_approved', 'returned', 'withdrawn', 'superseded'].map((k) => [
+      k,
+      n(`Proposals ${k.replace('_', ' ')}.`),
+    ]),
+  ),
+)
+const INBOX = obj(
+  {
+    items: list(
+      {
+        ...PROPOSAL_NAMED,
+        properties: { ...(PROPOSAL.properties as Schema), opCount: n('Its operations.') },
+        required: [...PROPOSAL_NAMED.required, 'opCount'],
+      },
+      'Newest first.',
+    ),
+    next: NEXT,
+    total: n('How many in this status.'),
+    counts: PROPOSAL_COUNTS,
+  },
+  ['counts'],
+)
+const WARNING = obj({
+  op: nul(n('The operation it is about; null for the whole proposal.')),
+  code: s('A stable code.'),
+  message: s('What to look at.'),
+})
+const OP_STATUS = s('pending, approved or returned.', { enum: ['pending', 'approved', 'returned'] })
+const PROPOSAL_OP = obj(
+  {
+    index: n('Its number in the proposal, from 0.'),
+    op: {
+      type: 'object',
+      description: 'The operation (create, edit, move, link, unlink, status, merge or revert).',
+    },
+    status: OP_STATUS,
+    correctedBy: nul(s('The curator who corrected it before approving.')),
+    baseReviewedBy: nul(s('The curator who marked its old base reviewed.')),
+    appliedPage: nul(s('The page it changed.')),
+    appliedRevision: nul(n('The revision it made.')),
+  },
+  ['correctedBy', 'baseReviewedBy', 'appliedPage', 'appliedRevision'],
+)
+const PAGE_STATE = {
+  type: ['object', 'null'],
+  description:
+    'The page: address, revision, type, title, summary, body, tags, status, sources, links, mentions.',
+}
+const REVIEW = obj({
+  proposal: PROPOSAL_NAMED,
+  fingerprint: s('The version seen: approving and returning send it back.'),
+  ops: list(
+    obj({
+      index: n('Its number, from 0.'),
+      op: { type: 'object', description: 'The operation as proposed.' },
+      status: OP_STATUS,
+      corrected: b('A curator corrected it.'),
+      before: PAGE_STATE,
+      after: PAGE_STATE,
+      dependsOn: list(n('Operation number.'), 'The operations it cannot be approved without.'),
+      stale: {
+        type: ['object', 'null'],
+        description:
+          'An edit written on an older revision: base (the revision it was written on), current and proposed. Approving it needs a correction or "base reviewed".',
+      },
+      warnings: list(WARNING),
+    }),
+  ),
+  warnings: list(WARNING, 'About the whole proposal.'),
+  canDecide: b('Whether you may approve or return it (a curator of an active brain, in the web).'),
+  purges: n('How many times text was purged from this wiki; a correction echoes it.'),
+})
+const DECISION = obj({
+  proposal: PROPOSAL_NAMED,
+  ops: list(PROPOSAL_OP),
+  applied: list(
+    obj(
+      {
+        index: n('The operation.'),
+        pageId: s('The page changed.'),
+        address: s('Its address now.'),
+        revision: n('The revision made.'),
+      },
+      ['index'],
+    ),
+    'The pages that changed.',
+  ),
+})
+
 // The wiki as a person reads and edits it in the web (spec B2, B6 PR19).
 const PAGE_TYPE = s('topic, entity, decision, guide, agent, source or overview.', {
   enum: ['topic', 'entity', 'decision', 'guide', 'agent', 'source', 'overview'],
@@ -1088,9 +1211,44 @@ const HAND: Record<string, Op> = {
     }),
   },
   'GET /v1/brains/{slug}/proposals': {
-    summary: 'Proposals of a brain (mine=1 for yours).',
-    query: { status: 'A status, or all.', mine: '1 for yours only.', cursor: 'The next page.' },
-    reply: PAGE,
+    summary: 'Proposals of a brain (mine=1 for yours); the first page counts each status.',
+    query: {
+      status: 'A status (pending by default), or all.',
+      mine: '1 for yours only.',
+      cursor: 'The next page.',
+      limit: 'How many (1–200).',
+      order: 'newest (the default) or oldest first.',
+    },
+    reply: INBOX,
+  },
+  'GET /v1/proposals/{id}/review': {
+    summary:
+      'A proposal as a person reviews it in the web: each operation with the page before and after, what it depends on, and an old base in three versions. Any member reads it; only a curator decides.',
+    reply: REVIEW,
+  },
+  'POST /v1/proposals/{id}/approve': {
+    summary:
+      'Approve a proposal in the web (curators): all of it, or the operations in "approve" with a "comment" for the rest. "corrections" replaces an operation first; "baseReviewed" accepts an old base.',
+    body: obj(
+      {
+        fingerprint: s('The fingerprint of the review you saw.'),
+        approve: list(n('Operation number.'), 'Approve only these; the rest goes back.'),
+        comment: s('Why the rest goes back (needed when approving part).'),
+        corrections: {
+          type: 'object',
+          description:
+            'Operation number → { the fields you edited (title, summary, body; at least one), "revision" of the page you saw (edits), "purges" of the review }; laid over the operation and checked like any. A correction written before a purge of the wiki is refused (409 proposal_changed).',
+        },
+        baseReviewed: list(n('Operation number.'), 'Old bases you reviewed.'),
+      },
+      ['approve', 'comment', 'corrections', 'baseReviewed'],
+    ),
+    reply: DECISION,
+  },
+  'POST /v1/proposals/{id}/return': {
+    summary: 'Return a whole proposal in the web (curators), with a comment the agent learns from.',
+    body: obj({ fingerprint: s('The fingerprint of the review you saw.'), comment: s('Why it goes back.') }),
+    reply: DECISION,
   },
   'POST /v1/brains/{slug}/proposals': {
     summary: 'Send a wiki proposal for a person to approve.',

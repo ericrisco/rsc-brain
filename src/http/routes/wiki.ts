@@ -170,6 +170,10 @@ export const wikiRoutes: Route[] = [
         cursor: q(r.query.get('cursor')),
         limit: limitOf(r.query.get('limit')),
         mine: r.query.get('mine') === '1' || r.query.get('mine') === 'true',
+        order: oneOf({ order: q(r.query.get('order')) }, 'order', ['newest', 'oldest']) as
+          | 'newest'
+          | 'oldest'
+          | undefined,
       }),
     ),
   })),

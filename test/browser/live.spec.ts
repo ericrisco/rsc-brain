@@ -1,7 +1,7 @@
 // What the web shows stays current without reloading (review of PR18, L1–L4, P6): a tab hidden before
 // the first event still catches up when shown; a brain opened again shows what changed while away; the
-// brains list is asked again every 30 seconds and when the tab comes back; and the top bar holds no
-// counter that leads nowhere until the Proposals screen exists.
+// brains list is asked again every 30 seconds and when the tab comes back; and the top bar's counter of
+// proposals to review leads to the inbox (it came back with the Proposals screen, PR21).
 import type { Page } from '@playwright/test'
 import { expect, scenario, test } from './fixture.ts'
 
@@ -78,18 +78,17 @@ test('L4: home asks for the brains again every 30 seconds and when the tab comes
   await expect(card).toContainText('2 proposals', { timeout: 3_000 })
 })
 
-test('P6: no counter in the top bar while the Proposals screen does not exist', async ({
+test('P6: the counter of the top bar leads to the inbox, also on a phone', async ({
   page,
   context,
   baseURL,
 }) => {
   await scenario(context, baseURL as string, 'signed-in')
-  await page.goto('/')
-  // Proposals do wait (the cards say so), but the top bar offers no link that leads nowhere.
-  await expect(page.getByText(/proposals? to review/).first()).toBeVisible()
-  await expect(page.getByRole('banner').getByRole('link', { name: /to review/ })).toHaveCount(0)
   await page.setViewportSize({ width: 390, height: 844 })
-  await expect(page.getByRole('banner').locator('.to-review')).toHaveCount(0)
+  await page.goto('/')
+  const counter = page.getByRole('banner').getByRole('link', { name: /3 proposals to review/ })
+  await expect(counter).toBeVisible()
+  await expect(counter).toHaveAttribute('href', '/b/growth/proposals')
 })
 
 test('L5: step 1 marks itself after an agent only asked for context, which sends no event', async ({

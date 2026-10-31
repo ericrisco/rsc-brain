@@ -222,6 +222,28 @@ const last = (p: FxPage) => p.revs[p.revs.length - 1] as Rev
 const addressOf = (p: FxPage) => last(p).address
 const find = (w: Wiki, address: string) => w.pages.find((p) => p.addresses.includes(address))
 
+// A page as the review of a proposal shows it (B2 «Revisar»): its latest revision, or the one asked for.
+export function pageState(w: Wiki, address: string, revision?: number) {
+  const p = find(w, address)
+  if (!p) return null
+  const r = revision === undefined ? last(p) : p.revs.find((x) => x.revision === revision)
+  if (!r) return null
+  return {
+    pageId: p.id,
+    address: r.address,
+    revision: r.revision,
+    type: r.type,
+    title: r.title,
+    summary: r.summary,
+    body: r.body,
+    tags: r.tags,
+    status: r.status,
+    sources: r.sources,
+    links: r.links,
+    mentions: [...r.body.matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1] as string),
+  }
+}
+
 const err = (status: number, code: string, message: string, howToProceed: string) => ({
   status,
   body: { error: { code, message, howToProceed } },
