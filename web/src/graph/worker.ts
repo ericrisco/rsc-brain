@@ -42,7 +42,14 @@ function request() {
 }
 
 function layout(m: LayoutRequest) {
-  const start = performance.now()
+  // The worker's own working time, idle gaps between slices left out (CA5 reads it).
+  let busy = 0
+  const timed = <T>(f: () => T): T => {
+    const t = performance.now()
+    const out = f()
+    busy += performance.now() - t
+    return out
+  }
   current = m.id
   settled = false
   // Only the pages with links feel the forces; the rest is placed around them when they are done.
@@ -55,13 +62,16 @@ function layout(m: LayoutRequest) {
     const b = local.get(m.edges[e + 1] as number)
     if (a !== undefined && b !== undefined) pairs.push(a, b)
   }
-  const l = createLayout({
-    n: free.length,
-    edges: new Uint32Array(pairs),
-    seed: m.seed,
-    weights: Float32Array.from(free, (g) => m.weights[g] as number),
-    area: Int32Array.from(free, (g) => m.area[g] as number),
-  })
+  const l = timed(() =>
+    createLayout({
+      n: free.length,
+      edges: new Uint32Array(pairs),
+      seed: m.seed,
+      weights: Float32Array.from(free, (g) => m.weights[g] as number),
+      area: Int32Array.from(free, (g) => m.area[g] as number),
+    }),
+  )
+
   const post = (done: boolean) => {
     const part = l.positions()
     const xy = new Float32Array(2 * m.n)
@@ -69,22 +79,21 @@ function layout(m: LayoutRequest) {
       xy[2 * g] = part[2 * k] as number
       xy[2 * g + 1] = part[2 * k + 1] as number
     })
-    arrange(xy, m.role, m.edges)
+    timed(() => arrange(xy, m.role, m.edges))
     if (done) settled = true
     renderer.layout = xy
     request()
     const copy = xy.slice()
-    scope.postMessage(
-      { type: 'positions', id: m.id, xy: copy, done, ...(done ? { ms: performance.now() - start } : {}) },
-      [copy.buffer],
-    )
+    scope.postMessage({ type: 'positions', id: m.id, xy: copy, done, ...(done ? { ms: busy } : {}) }, [
+      copy.buffer,
+    ])
   }
   let last = performance.now()
   if (!m.reducedMotion && !l.done()) post(false)
   if (l.done()) return post(true)
   const slice = () => {
     if (current !== m.id) return
-    if (l.run(8)) return post(true)
+    if (timed(() => l.run(8))) return post(true)
     const now = performance.now()
     if (!m.reducedMotion && now - last >= 32) {
       last = now

@@ -516,13 +516,13 @@ function GraphScreen({ slug }: { slug: string }) {
           </h2>
           {focusItem ? null : (
             <span class="tag">
-              {list && listTotal !== undefined
-                ? g.count(listTotal, listTotal)
-                : byGroups
-                  ? g.groupsCount(
-                      vis?.pages ?? total,
-                      model.items.filter((it, i) => it.kind === 'group' && vis?.nodes[i]).length,
-                    )
+              {byGroups
+                ? g.groupsCount(
+                    vis?.pages ?? total,
+                    model.items.filter((it, i) => it.kind === 'group' && vis?.nodes[i]).length,
+                  )
+                : list && listTotal !== undefined
+                  ? g.count(listTotal, listTotal)
                   : g.count(vis?.pages ?? 0, model.pages)}
             </span>
           )}

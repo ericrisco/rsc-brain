@@ -19,9 +19,11 @@ if [ -n "${RSC_BRAIN_PG_URL:-}" ]; then echo "▸ test (with PostgreSQL)"; else 
 node --test --test-reporter=dot 'test/**/*.test.ts'
 echo "▸ web (Playwright + axe, against the fixture API)"
 rm -f test-results/measures.txt
-npx --no-install playwright test -c playwright.config.ts --reporter=dot
-# What the timing tests measured (the graph, CA5 and CA6), so a run's log keeps the numbers.
+# What the timing tests measured (the graph, CA5 and CA6), printed pass or fail, so a run's log keeps them.
+web_status=0
+npx --no-install playwright test -c playwright.config.ts --reporter=dot || web_status=$?
 if [ -f test-results/measures.txt ]; then sed 's/^/  measured: /' test-results/measures.txt; fi
+if [ "$web_status" -ne 0 ]; then exit "$web_status"; fi
 # The end-to-end tests need a PostgreSQL that answers; a result that did not run is reported as skipped.
 pg_reachable() {
   node -e 'const pg=require("pg");const c=new pg.Client({connectionString:process.env.RSC_BRAIN_PG_URL,connectionTimeoutMillis:3000});c.connect().then(()=>c.end()).then(()=>process.exit(0),()=>process.exit(1))' 2>/dev/null

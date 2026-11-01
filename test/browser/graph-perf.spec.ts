@@ -51,7 +51,7 @@ test.describe('the graph under load (CPU ×4)', () => {
     // The time to the settled picture (the layout done and painted), not to its first, unsettled frame. CDP
     // slows the page only ("Operation is only supported for pages, not workers"): the layout's worker runs at
     // full speed. So the bound is checked on an estimate that slows the worker too: the settled time plus three
-    // times the worker's own time (wall time, idle gaps included: it can only overstate).
+    // times the worker's own working time (the time inside the layout's slices: what four times slower stretches).
     const times: number[] = []
     const worker: number[] = []
     for (let i = 0; i < 5; i++) {
@@ -65,7 +65,7 @@ test.describe('the graph under load (CPU ×4)', () => {
     const estimate = times.map((t, i) => t + 3 * (worker[i] as number))
     const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[2] as number
     report('CA5 graph:settled ms (page CPU ×4, worker not slowed)', times.map(Math.round).join(', '))
-    report('CA5 worker layout ms (not slowed)', worker.join(', '))
+    report('CA5 worker working ms (not slowed)', worker.join(', '))
     report('CA5 settled estimate ms (page and worker ×4)', estimate.map(Math.round).join(', '))
     expect(times.every(Number.isFinite)).toBe(true)
     expect(worker.every((x) => Number.isFinite(x) && x > 0)).toBe(true)
