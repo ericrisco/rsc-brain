@@ -3,6 +3,7 @@
 // never offers what the API refuses nor hides what it allows), what a correction is about, relations in
 // words and as requests, the filters of Sessions, and draft keys.
 import { T } from '../text.ts'
+import { clientLabel } from './brains.ts'
 
 type Named = { id: string; name: string }
 
@@ -16,7 +17,9 @@ export function byline(e: {
   const ref = e.ref ? ` (${e.ref})` : ''
   if (e.onBehalf) return `${e.author.name}${ref} on behalf of ${e.onBehalf.name}`
   if (e.client === 'web') return `${e.author.name}, in the web`
-  if (e.client) return `${e.client} of ${e.author.name}${ref}`
+  // The client as Activity and «Who read this» say it (one name everywhere).
+  const client = clientLabel(e.client)
+  if (client) return `${client} of ${e.author.name}${ref}`
   return `${e.author.name}${ref}`
 }
 

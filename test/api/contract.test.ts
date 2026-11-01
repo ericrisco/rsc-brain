@@ -131,7 +131,22 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   },
   'GET /v1/search': {
     '': ['items', 'next'],
-    'items[]': ['kind', 'id', 'brain', 'title', 'snippet', 'at'],
+    // Spec B6 «Search» (PR23): each result says why it is there (B3), and its type and state.
+    'items[]': ['kind', 'id', 'brain', 'title', 'snippet', 'at', 'type', 'state', 'why', 'reason'],
+  },
+  // Spec B6 «Health» (PR23): the sections of B2, each item naming the page where it is fixed.
+  'GET /v1/brains/{slug}/wiki/health': {
+    '': [
+      'orphans',
+      'broken',
+      'conflicts',
+      'stale',
+      'unavailableSources',
+      'long',
+      'similarTitles',
+      'maintenance',
+    ],
+    maintenance: ['suggested', 'approvalsSince', 'every'],
   },
   'GET /v1/brains/{slug}/context': {
     '': ['text', 'chars', 'included', 'omitted', 'max'],
@@ -571,6 +586,8 @@ describe('the v1 contract', { skip: skipPg }, () => {
       'GET /v1/entries/{id}': (await w.call(eric.key, 'GET', `/v1/entries/${entryId}`)).body,
       'GET /v1/search': (await w.call(eric.key, 'GET', '/v1/search?q=retention')).body,
       'GET /v1/brains/{slug}/context': (await w.call(eric.key, 'GET', '/v1/brains/contract/context')).body,
+      'GET /v1/brains/{slug}/wiki/health': (await w.call(eric.key, 'GET', '/v1/brains/contract/wiki/health'))
+        .body,
       'GET /v1/brains/{slug}/proposals': (await w.call(eric.key, 'GET', '/v1/brains/contract/proposals'))
         .body,
       'GET /v1/brains/{slug}/trail': (await w.call(eric.key, 'GET', '/v1/brains/contract/trail?ref=x')).body,

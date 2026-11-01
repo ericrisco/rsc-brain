@@ -2,6 +2,7 @@
 // filters of the map and the decisions, links grouped by kind, the words that changed between two
 // revisions, the `[[` autocomplete of the editor, and what an edit sends.
 import { diffArrays, diffWordsWithSpace } from 'diff'
+import { clientLabel } from './brains.ts'
 
 export const PAGE_TYPES = ['topic', 'entity', 'decision', 'guide', 'agent', 'source', 'overview'] as const
 export const PAGE_STATUSES = ['current', 'stale', 'superseded', 'retired'] as const
@@ -303,7 +304,8 @@ export type Reader = {
 export function groupReaders(lines: ReadLine[]): Reader[] {
   const by = new Map<string, Reader>()
   for (const l of lines) {
-    const via = l.credential.kind === 'web' || !l.credential.name ? null : l.credential.name
+    // The client as Activity and the journal say it (one name everywhere).
+    const via = l.credential.kind === 'web' || !l.credential.name ? null : clientLabel(l.credential.name)
     const key = `${l.account.id}\u0000${via ?? ''}`
     const r = by.get(key) ?? { key, name: l.account.name, via, count: 0, last: l.at, kinds: [] }
     r.count += 1

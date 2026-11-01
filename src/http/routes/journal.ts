@@ -136,6 +136,8 @@ export const journalRoutes: Route[] = [
         ref: q(r.query.get('ref')),
         type: q(r.query.get('type')),
         sessionId: q(r.query.get('session')),
+        about: q(r.query.get('about')),
+        since: day(r.query.get('since'), 'since'),
         cursor: q(r.query.get('cursor')),
         limit: limitOf(r.query.get('limit')),
       }),

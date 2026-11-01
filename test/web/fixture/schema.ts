@@ -82,3 +82,10 @@ export function validate(
   }
   return out
 }
+
+// The problems of a value against a named schema of the description (an Event of the live stream), or [].
+export function validateSchema(doc: S, name: string, v: unknown): string[] {
+  const out: string[] = []
+  check(doc, { $ref: `#/components/schemas/${name}` }, v, '', out)
+  return out
+}

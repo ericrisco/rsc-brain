@@ -7,6 +7,7 @@ import { type Byline, bylines, ENTRY_TYPES, type Entry, entryOf, withByline } fr
 import { lastSeq } from './events.ts'
 import { inConflict } from './relations.ts'
 import { closeIdle, dayText, type Session, sessionOf } from './sessions.ts'
+import { isAddress } from './wiki/model.ts'
 
 export type Page<T> = { items: T[]; total: number; next: string | null }
 
@@ -191,7 +192,17 @@ export async function sessionView(ctx: Ctx, id: string): Promise<SessionView> {
   return sessionViewOf(row)
 }
 
-export type EntryFilter = { ref?: string; type?: string; sessionId?: string; cursor?: string; limit?: number }
+export type EntryFilter = {
+  ref?: string
+  type?: string
+  sessionId?: string
+  // Entries about a page (by its topic, or naming its address as a word), the rule of a stale page (health.ts).
+  about?: string
+  // Written after this moment.
+  since?: Date
+  cursor?: string
+  limit?: number
+}
 
 // Each entry says whether an open conflict is about it (a badge in a session, spec B6).
 export async function listEntries(
@@ -216,6 +227,17 @@ export async function listEntries(
   }
   if (f.type !== undefined) add('type = ?', f.type)
   if (f.sessionId !== undefined) add('session_id = ?', f.sessionId)
+  if (f.about !== undefined) {
+    if (!isAddress(f.about))
+      throw invalid(
+        '"about" is the address of a page, like "style/intros".',
+        'Use the address as the wiki shows it.',
+      )
+    params.push(f.about)
+    const at = `$${params.length}`
+    where.push(`(topic = ${at} OR content ~ ('(^|[^a-z0-9/-])' || ${at} || '($|[^a-z0-9/-])'))`)
+  }
+  if (f.since !== undefined) add('created_at > ?', f.since)
   const total = await ctx.db.one<{ n: number }>(
     `SELECT count(*)::int AS n FROM entries WHERE ${where.join(' AND ')}`,
     params,

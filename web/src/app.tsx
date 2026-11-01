@@ -7,9 +7,12 @@ import { LocationProvider, Route, Router, useLocation } from 'preact-iso'
 import { api, goTo } from './api/index.ts'
 import { signInPath } from './lib/nav.ts'
 import { useScreenTitle } from './lib/screen.ts'
+import { Activity } from './screens/Activity.tsx'
 import { Brain, brainResource } from './screens/Brain.tsx'
+import { HealthScreen } from './screens/Health.tsx'
 import { Home } from './screens/Home.tsx'
 import { Invite } from './screens/Invite.tsx'
+import { JournalAbout } from './screens/journal/About.tsx'
 import { JournalCorrect } from './screens/journal/Correct.tsx'
 import { JournalEntry } from './screens/journal/Entry.tsx'
 import { JournalConflicts, JournalForgotten, JournalToReview } from './screens/journal/Lists.tsx'
@@ -107,6 +110,16 @@ function ProposalPage({ slug, id }: { slug?: string; id?: string }) {
   return <ProposalScreen key={`${slug}/${id}`} slug={slug ?? ''} id={id ?? ''} />
 }
 
+function AboutPage({ slug }: { slug?: string }) {
+  return <JournalAbout key={slug} slug={slug ?? ''} />
+}
+function ActivityPage({ slug }: { slug?: string }) {
+  return <Activity key={slug} slug={slug ?? ''} />
+}
+function HealthPage({ slug }: { slug?: string }) {
+  return <HealthScreen key={slug} slug={slug ?? ''} />
+}
+
 function SignedIn() {
   const { path, url, route } = useLocation()
   const who = me()
@@ -172,6 +185,9 @@ function SignedIn() {
           <Route path="/b/:slug/journal/forgotten" component={ForgottenPage} />
           <Route path="/b/:slug/journal/to-review" component={ToReviewPage} />
           <Route path="/b/:slug/journal/correct" component={CorrectPage} />
+          <Route path="/b/:slug/journal/about" component={AboutPage} />
+          <Route path="/b/:slug/activity" component={ActivityPage} />
+          <Route path="/b/:slug/health" component={HealthPage} />
           <Route path="/people" component={People} />
           <Route default component={NotFound} />
         </Router>

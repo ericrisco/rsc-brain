@@ -209,14 +209,24 @@ const RECEIPT = obj({
   redactions: n('How many secrets were struck out.'),
   similar: list({ type: 'object' }, 'Similar entries to look at.'),
 })
-const HIT = obj({
-  kind: s('entry or page.'),
-  id: s('Its id.'),
-  brain: s('Its brain (slug).'),
-  title: s('Title.'),
-  snippet: s('Where it matched.'),
-  at: s('When it was written or changed.', { format: 'date-time' }),
-})
+const HIT = obj(
+  {
+    kind: s('entry or page.'),
+    id: s('Its id.'),
+    address: s('A page: its address.'),
+    brain: s('Its brain (slug).'),
+    type: s('Its type (an entry type, or a page type).'),
+    state: s('An entry: active, forgotten…; a page: current, stale or superseded.'),
+    title: s('Title.'),
+    snippet: s('Where it matched.'),
+    why: s('Why it is here: words, meaning, recent or link.', {
+      enum: ['words', 'meaning', 'recent', 'link'],
+    }),
+    reason: s('The same, in words.'),
+    at: s('When it was written or changed.', { format: 'date-time' }),
+  },
+  ['address'],
+)
 export const EVENT = obj(
   {
     id: s('The event id: send it back as Last-Event-ID to resume.'),
@@ -229,6 +239,14 @@ export const EVENT = obj(
     key: nul(obj({ id: s('Credential id.'), ref: nul(s('The external reference of a short key.')) })),
     target: nul(obj({ id: s('What it touches.'), label: nul(s('Its title or address.')) })),
     query: nul(s('For a search: the text searched, already redacted.')),
+    client: nul(
+      s('What did it: web, the agent of a short key, the app of a connection, or a program (G13).'),
+    ),
+    sessionRef: nul(s('The external reference of the session it happened in.')),
+    onBehalf: nul(obj({ id: s('Account id.'), name: s('Account name.') })),
+    summaryEntryId: nul(
+      s('For session.closed: the summary entry whose title is the label (a forget of it hides the title).'),
+    ),
   },
   [],
 )
@@ -601,6 +619,53 @@ const HAND: Record<string, Op> = {
         }),
       ),
     }),
+  },
+  'GET /v1/brains/{slug}/wiki/health': {
+    summary:
+      'The checks of the wiki (no AI): orphans, broken links, conflicts, stale pages, sources no longer available, long pages, titles almost the same; and whether a maintenance proposal is due.',
+    reply: (() => {
+      const ref = obj({ address: s('The page.'), title: s('Its title.') })
+      const pair = obj({
+        a: s('One page.'),
+        aTitle: s('Its title.'),
+        b: s('The other.'),
+        bTitle: s('Its title.'),
+      })
+      return obj({
+        orphans: list(ref),
+        broken: list(
+          obj({
+            from: s('The page with the link.'),
+            fromTitle: s('Its title.'),
+            to: s('The address it links to.'),
+          }),
+        ),
+        conflicts: list(pair),
+        stale: list(
+          obj({
+            address: s('The page.'),
+            title: s('Its title.'),
+            updatedAt: s('When it last changed.', { format: 'date-time' }),
+            newEntries: n('Entries about it written since.'),
+          }),
+        ),
+        unavailableSources: list(
+          obj({
+            address: s('The page.'),
+            title: s('Its title.'),
+            entryId: s('The source entry.'),
+            state: s('forgotten or purged.', { enum: ['forgotten', 'purged'] }),
+          }),
+        ),
+        long: list(obj({ address: s('The page.'), title: s('Its title.'), chars: n('Its length.') })),
+        similarTitles: list(pair),
+        maintenance: obj({
+          suggested: b('A maintenance proposal is due.'),
+          approvalsSince: n('Approvals since the last one.'),
+          every: n('Every how many approvals.'),
+        }),
+      })
+    })(),
   },
   'GET /v1/brains/{slug}/wiki/log': {
     summary: 'One line per change applied to the wiki, newest first.',
@@ -1134,6 +1199,8 @@ const HAND: Record<string, Op> = {
   'GET /v1/brains/{slug}/entries': {
     summary: 'Entries of a brain in order, by session, type or stamped reference.',
     query: {
+      about: 'Entries about this page address (its topic, or naming the address).',
+      since: 'Written after this day or ISO instant.',
       session: 'A session id.',
       type: 'An entry type.',
       ref: 'An external reference stamped by a short key.',

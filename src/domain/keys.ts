@@ -45,7 +45,8 @@ async function insert(
       id,
       k.accountId,
       k.kind,
-      k.name,
+      // A name or an agent may carry a pasted secret: stored redacted, so no reader of the key ever shows it.
+      redact(k.name).text.slice(0, 80) || 'key',
       hashSecret(secret),
       secret.slice(-4),
       k.perm,
@@ -54,7 +55,7 @@ async function insert(
       k.writeBrainId ?? null,
       k.readBrainIds ?? [],
       k.ref ?? null,
-      k.agent ?? null,
+      k.agent == null ? null : redact(k.agent).text.slice(0, 80),
       k.onBehalfId ?? null,
       k.parentId ?? null,
       at,

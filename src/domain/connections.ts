@@ -3,6 +3,7 @@
 // an access key of one hour and a refresh token that changes on every use. A connection lasts while it
 // is used: 90 days idle or 365 days in all end it. Whatever was granted, a connection never does more
 // than the person's current role.
+
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { memberRole } from '../auth/principal.ts'
 import { hashSecret, newSecret } from '../auth/secrets.ts'
@@ -11,6 +12,7 @@ import { notFound } from '../core/errors.ts'
 import { newId } from '../core/ids.ts'
 import type { Db, Row } from '../db/db.ts'
 import { type FetchPolicy, FetchRefused, fetchJson } from '../oauth/fetch.ts'
+import { redact } from '../privacy/redact.ts'
 import { audit } from './audit.ts'
 import { type Ctx, ok } from './context.ts'
 import { adminOnly, inWeb } from './guards.ts'
@@ -97,7 +99,9 @@ const isControl = (ch: string) => {
   return c < 32 || (c >= 127 && c < 160)
 }
 
-// A name as a client declares it, with control characters and broken text taken out.
+// A name as a client declares it, with control characters and broken text taken out, and any secret it
+// carries redacted: the name is stored, shown on the consent page, copied to the connection, its keys
+// and the audit.
 const clientName = (v: unknown, fallback: string) => {
   const raw = typeof v === 'string' && v.isWellFormed() ? v : ''
   const n = [...raw]
@@ -105,7 +109,7 @@ const clientName = (v: unknown, fallback: string) => {
     .join('')
     .trim()
     .replace(/\s+/g, ' ')
-  return (n || fallback).slice(0, 120)
+  return (redact(n).text.trim() || fallback).slice(0, 120)
 }
 const cleanUri = (x: unknown): x is string =>
   typeof x === 'string' && x.isWellFormed() && ![...x].some(isControl) && redirectAllowed(x)
@@ -360,7 +364,7 @@ async function mintAccess(
     [
       newId('crd'),
       g.account_id,
-      g.client_name.slice(0, 80),
+      redact(g.client_name).text.slice(0, 80) || 'app',
       hashSecret(secret),
       secret.slice(-4),
       g.perm,
@@ -421,7 +425,8 @@ export async function exchangeCode(db: Db, clock: Clock, b: Record<string, unkno
       account_id: String(c.account_id),
       brain_ids: c.brain_ids as string[],
       perm: String(c.perm),
-      client_name: String(client?.name ?? 'app'),
+      // An app stored before names were redacted is named clean all the same.
+      client_name: clientName(client?.name, 'app'),
     }
     await tx.query(
       `INSERT INTO oauth_grants (id, client_id, client_name, redirect_host, account_id, brain_ids, perm, refresh_hash, epoch,

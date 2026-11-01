@@ -9,7 +9,7 @@ import { ROUTES } from '../../src/http/app.ts'
 import { openapi } from '../../src/http/openapi.ts'
 import { generate } from '../../web/test/data/generate.ts'
 import { type Fixture, startFixture } from './fixture/fixture.ts'
-import { validate } from './fixture/schema.ts'
+import { validate, validateSchema } from './fixture/schema.ts'
 
 const doc = openapi(ROUTES, 'http://localhost')
 
@@ -457,6 +457,57 @@ describe('the fixture API', () => {
         .status,
       401,
     )
+  })
+
+  // PR23: Activity, Health and Search answer like the server: events name their client and follow pack
+  // rule 7 (live and replayed), the health of a wiki has the sections of B2, and every result says why.
+  it('activity, health and search (PR23): rule 7 on the events, the sections of health, a reason per result', async () => {
+    const s = fx.scenario('member')
+    const cookie = 'rscb_session=fx.acc_ana'
+    const emit = (b: Record<string, unknown>) =>
+      fetch(`${fx.url}/__fixture/scenarios/${s.id}/emit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ brain: 'growth', ...b }),
+      })
+    // Ana is a contributor of growth: Eric's search is not hers to see; his write and her own search are.
+    await emit({ kind: 'search', who: { id: 'acc_eric', name: 'Eric' }, query: 'eric-looks' })
+    await emit({ kind: 'search', who: { id: 'acc_ana', name: 'Ana' }, query: 'ana-looks' })
+    await emit({
+      kind: 'entry.saved',
+      who: { id: 'acc_eric', name: 'Eric' },
+      client: 'codex',
+      ref: 'run r_abc',
+    })
+    const res = await fetch(`${fx.url}/v1/brains/growth/events?lastEventId=0`, {
+      headers: { 'x-fixture-scenario': s.id, cookie },
+    })
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader()
+    let text = ''
+    while (!text.includes('run r_abc')) text += new TextDecoder().decode((await reader.read()).value)
+    await reader.cancel()
+    assert.doesNotMatch(text, /eric-looks/)
+    assert.match(text, /ana-looks/)
+    const saved = JSON.parse(/data: (.*run r_abc.*)/.exec(text)?.[1] ?? '{}') as Record<string, unknown>
+    assert.deepEqual(validateSchema(doc, 'Event', saved), [])
+    assert.equal(saved.client, 'codex')
+
+    const h = await call('GET', '/v1/brains/growth/wiki/health', { scenario: s.id, cookie })
+    assert.equal((h.body as { broken: unknown[] }).broken.length, 3)
+    s.set('health', 'empty')
+    assert.equal((await call('GET', '/v1/brains/growth/wiki/health', { scenario: s.id, cookie })).status, 200)
+    s.set('health', 'much-data')
+    const many = await call('GET', '/v1/brains/growth/wiki/health', { scenario: s.id, cookie })
+    assert.equal((many.body as { orphans: unknown[] }).orphans.length, 60)
+    assert.equal(
+      (await call('GET', '/v1/brains/nowhere/wiki/health', { scenario: s.id, cookie })).status,
+      404,
+    )
+
+    const r = await call('GET', '/v1/search?q=intro&brains=growth', { scenario: s.id, cookie })
+    const items = (r.body as { items: Array<{ brain: string; reason: string }> }).items
+    assert.ok(items.length > 0)
+    assert.ok(items.every((i) => i.brain === 'growth' && i.reason))
   })
 
   it('the wiki: map, pages, a page with its links, sources, history and readers, decisions and the log', async () => {

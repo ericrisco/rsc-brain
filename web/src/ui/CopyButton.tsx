@@ -1,17 +1,30 @@
-// Copies a text to the clipboard and says it did (or that it could not, so the person selects it).
-import { useState } from 'preact/hooks'
+// Copies a text to the clipboard and says it did. When it cannot (no clipboard API, as on plain http in a
+// local network, or the browser refuses), the text shows in a read-only field, selected, to copy by hand: it is
+// never nowhere.
+import { useEffect, useId, useRef, useState } from 'preact/hooks'
 import { T } from '../text.ts'
 
 export function CopyButton({ text, label, id }: { text: string; label: string; id?: string }) {
   const [said, setSaid] = useState<string | null>(null)
+  const [manual, setManual] = useState(false)
+  const field = useRef<HTMLTextAreaElement>(null)
+  const fieldId = useId()
   const copy = async () => {
     try {
+      if (!navigator.clipboard?.writeText) throw new Error('no clipboard')
       await navigator.clipboard.writeText(text)
+      setManual(false)
       setSaid(T.copy.done)
     } catch {
       setSaid(T.copy.failed)
+      setManual(true)
     }
   }
+  useEffect(() => {
+    if (!manual) return
+    field.current?.focus()
+    field.current?.select()
+  }, [manual, text])
   return (
     <span class="copy">
       <button type="button" class="button" id={id} onClick={() => void copy()}>
@@ -20,6 +33,21 @@ export function CopyButton({ text, label, id }: { text: string; label: string; i
       <span role="status" class="meta">
         {said}
       </span>
+      {manual ? (
+        <span class="copy-manual">
+          <label for={fieldId} class="meta">
+            {T.copy.manual}
+          </label>
+          <textarea
+            id={fieldId}
+            ref={field}
+            readOnly
+            rows={Math.min(8, text.split('\n').length + 1)}
+            value={text}
+            onFocus={(e) => (e.currentTarget as HTMLTextAreaElement).select()}
+          />
+        </span>
+      ) : null}
     </span>
   )
 }

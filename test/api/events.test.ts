@@ -19,6 +19,9 @@ type Ev = {
     key: { id: string; ref: string | null } | null
     target: { id: string; label: string | null } | null
     query: string | null
+    client?: string | null
+    sessionRef?: string | null
+    onBehalf?: { id: string; name: string } | null
     message?: string
     reason?: string
   }
@@ -396,5 +399,295 @@ describe('the event stream of a brain', { skip: skipPg }, () => {
     await again.waitEnd(5000)
     assert.ok(again.ended())
     assert.equal(again.events.find((e) => e.event === 'closed')?.data.reason, 'role_changed')
+  })
+
+  // Spec B6 «Activity», G13: each event names the client of the key that did it, as the journal names it
+  // (the web for a person's web session, the agent of a short key, else the program), so Activity filters
+  // by client.
+  it('G13: an event names its client: the web, the agent of a short key, or the program of a token', async () => {
+    const f = await subscribe(factory.key)
+    const agent = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'yt',
+        ref: 'run r_9',
+        agent: 'claude-code',
+        ttlMinutes: 60,
+      })
+    ).body.key as { id: string; secret: string }
+    assert.equal(
+      (
+        await w.callWeb(ericWeb, 'POST', '/v1/brains/yt/entries', {
+          type: 'note',
+          title: 'From the web',
+          content: 'x',
+        })
+      ).status,
+      201,
+    )
+    await w.call(agent.secret, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'From the agent',
+      content: 'x',
+    })
+    const web = await f.waitFor((e) => e.data.target?.label === 'From the web')
+    const short = await f.waitFor((e) => e.data.target?.label === 'From the agent')
+    assert.equal(web.data.client, 'web')
+    assert.equal(short.data.client, 'claude-code')
+    // Resumed, the same names: the client is kept with the event, not looked up again.
+    const back = await subscribe(factory.key, 'yt', { lastEventId: String(Number(web.id) - 1) })
+    const again = await back.waitFor((e) => e.data.target?.label === 'From the agent')
+    assert.equal(again.data.client, 'claude-code')
+    f.close()
+    back.close()
+  })
+
+  // Spec B6 CA6b: Activity follows pack rule 7 on the server, live and when resuming. Ana's agent searches;
+  // Bob, a contributor who is not Ana, never gets those searches; Eric, a curator, does; Ana does too.
+  it("CA6b: a contributor never gets Ana's agent's searches, live or replayed; a curator and Ana do", async () => {
+    const anaAgent = await w.call(ana.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'Ana marks the start',
+      content: 'x',
+    })
+    assert.equal(anaAgent.status, 201)
+    const bobLive = await subscribe(bob.key)
+    const start = await bobLive
+      .waitFor((e) => e.data.target?.label === 'Ana marks the start', 3000)
+      .catch(() => null)
+    const from = start ? String(Number(start.id) - 1) : '0'
+    await w.call(ana.key, 'GET', '/v1/search?q=ana-secret-plans')
+    await w.call(ana.key, 'GET', '/v1/brains/yt/pages/audience/retention')
+    await w.call(ana.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'Ana writes',
+      content: 'x',
+    })
+    await bobLive.waitFor((e) => e.data.target?.label === 'Ana writes')
+    const looks = (s: Stream) =>
+      s.events.filter(
+        (e) => (e.data.kind === 'search' || e.data.kind === 'read') && e.data.who?.id === ana.id,
+      )
+    assert.deepEqual(looks(bobLive), [], 'live')
+    for (const [who, key, sees] of [
+      ['Bob', bob.key, false],
+      ['Eric', eric.key, true],
+      ['Ana', ana.key, true],
+    ] as const) {
+      const back = await subscribe(key, 'yt', { lastEventId: from })
+      await back.waitFor((e) => e.data.target?.label === 'Ana writes')
+      const got = looks(back)
+      if (sees) {
+        assert.ok(
+          got.some((e) => e.data.kind === 'search' && e.data.query === 'ana-secret-plans'),
+          `${who} gets the search`,
+        )
+        assert.ok(
+          got.some((e) => e.data.kind === 'read'),
+          `${who} gets the read`,
+        )
+      } else assert.deepEqual(got, [], `${who} gets no search or read of Ana's when resuming`)
+      // Writes reach everyone.
+      assert.ok(back.events.some((e) => e.data.target?.label === 'Ana writes'))
+      back.close()
+    }
+    bobLive.close()
+  })
+
+  // Review of PR23 (privacy): a forgotten entry's title leaves Activity for whoever may not see it, as in the
+  // journal (entries.ts: purged hidden from all, forgotten from all but curators), live and when resuming.
+  it('a forgotten entry: its title is blanked for a contributor, kept for a curator', async () => {
+    const saved = await w.call(ana.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'Ana-secret-title',
+      content: 'x',
+    })
+    assert.equal(saved.status, 201, saved.text)
+    const id = (saved.body.receipt as { entryId: string }).entryId
+    assert.equal(
+      (await w.callWeb(ericWeb, 'POST', `/v1/entries/${id}/forget`, { reason: 'wrong' })).status,
+      200,
+    )
+    for (const [who, key, sees] of [
+      ['Bob', bob.key, false],
+      ['Eric', eric.key, true],
+    ] as const) {
+      const back = await subscribe(key, 'yt', { lastEventId: '0' })
+      const e = await back.waitFor((x) => x.data.kind === 'entry.saved' && x.data.target?.id === id)
+      if (sees) assert.equal(e.data.target?.label, 'Ana-secret-title', who)
+      else {
+        assert.equal(e.data.target?.label, null, who)
+        assert.doesNotMatch(e.raw, /Ana-secret-title/, who)
+      }
+      back.close()
+    }
+  })
+
+  it('the client is redacted when stored, and a token that says it is "web" is not the web', async () => {
+    const secret = 'sk-live-0123456789abcdefghijklmnopqrstuv'
+    const agent = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'yt',
+        ref: 'run r_0a1b2c3d',
+        agent: `bot ${secret}`,
+        ttlMinutes: 60,
+      })
+    ).body.key as { id: string; secret: string }
+    const f = await subscribe(factory.key)
+    await w.call(agent.secret, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'Redact me',
+      content: 'x',
+    })
+    const token = await w.token(bob.id)
+    const r = await fetch(`${w.base}/v1/brains/yt/entries`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'user-agent': 'web' },
+      body: JSON.stringify({ type: 'note', title: 'Spoofed web', content: 'x' }),
+    })
+    assert.equal(r.status, 201)
+    const red = await f.waitFor((e) => e.data.target?.label === 'Redact me')
+    assert.doesNotMatch(red.raw, /0123456789abcdefghij/)
+    const spoof = await f.waitFor((e) => e.data.target?.label === 'Spoofed web')
+    assert.notEqual(spoof.data.client, 'web')
+    assert.equal(spoof.data.client, 'test')
+    f.close()
+  })
+
+  it("events carry the session's reference and, for an agent's short key, who it acted for", async () => {
+    const f = await subscribe(factory.key)
+    const s = await w.call(bob.key, 'POST', '/v1/brains/yt/sessions', { purpose: 'Refs', ref: 'ticket 42' })
+    assert.equal(s.status, 201, s.text)
+    const sid = (s.body.session as { id: string }).id
+    await w.call(bob.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'In a session',
+      content: 'x',
+      sessionId: sid,
+    })
+    const opened = await f.waitFor((e) => e.data.kind === 'session.opened' && e.data.target?.id === sid)
+    const inside = await f.waitFor((e) => e.data.target?.label === 'In a session')
+    assert.equal(opened.data.sessionRef, 'ticket 42')
+    assert.equal(inside.data.sessionRef, 'ticket 42')
+    const forAna = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'yt',
+        ref: 'run r_4e5f6a7b',
+        onBehalf: ana.id,
+        ttlMinutes: 60,
+      })
+    ).body.key as { secret: string }
+    await w.call(forAna.secret, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'For Ana',
+      content: 'x',
+    })
+    const acted = await f.waitFor((e) => e.data.target?.label === 'For Ana')
+    assert.equal(acted.data.onBehalf?.id, ana.id)
+    assert.equal(acted.data.onBehalf?.name, 'Ana')
+    f.close()
+  })
+
+  // Second review of PR23 (B1): a session's summary is an entry; its title rides on «session.closed». The same
+  // rule as the entry: forgotten, blank for all but curators; purged, gone for everyone (and the stored label
+  // is scrubbed, so nothing brings it back).
+  it("B1: a forgotten session summary's title leaves session.closed for non-curators; purged, for everyone", async () => {
+    const admin = await w.person('Admin', { isAdmin: true })
+    const opened = await w.call(ana.key, 'POST', '/v1/brains/yt/sessions', { purpose: 'B1 purpose' })
+    const sid = (opened.body.session as { id: string }).id
+    const sum = await w.call(ana.key, 'POST', `/v1/sessions/${sid}/summary`, {
+      title: 'SUMMARY-SECRET-TITLE',
+      content: 'x',
+    })
+    assert.equal(sum.status, 201, sum.text)
+    const eid = (sum.body.receipt as { entryId: string }).entryId
+    assert.equal(
+      (await w.callWeb(ericWeb, 'POST', `/v1/entries/${eid}/forget`, { reason: 'wrong' })).status,
+      200,
+    )
+    const closedFor = async (key: string) => {
+      const back = await subscribe(key, 'yt', { lastEventId: '0' })
+      const e = await back.waitFor((x) => x.data.kind === 'session.closed' && x.data.target?.id === sid)
+      back.close()
+      return e
+    }
+    const bobs = await closedFor(bob.key)
+    assert.equal(bobs.data.target?.label ?? null, null)
+    // The closing names its summary entry, so a forget heard live can blank a row already shown.
+    assert.equal((bobs.data as { summaryEntryId?: string }).summaryEntryId, eid)
+    assert.doesNotMatch(bobs.raw, /SUMMARY-SECRET-TITLE/)
+    assert.equal((await closedFor(eric.key)).data.target?.label, 'SUMMARY-SECRET-TITLE')
+    // Forget and recover say what happened, never the title, and are not "edits".
+    const forgot = await closedFor(bob.key).then(async () => {
+      const back = await subscribe(bob.key, 'yt', { lastEventId: '0' })
+      const e = await back.waitFor((x) => x.data.kind === 'entry.changed' && x.data.target?.id === eid)
+      back.close()
+      return e
+    })
+    assert.equal(forgot.data.target?.label, 'forgotten')
+    const p = await w.call(admin.key, 'POST', `/v1/entries/${eid}/purge`, { reason: 'personal data' })
+    assert.equal(p.status, 200, p.text)
+    for (const key of [bob.key, eric.key]) {
+      const back = await subscribe(key, 'yt', { lastEventId: '0' })
+      await back.waitFor((x) => x.data.kind === 'session.closed' && x.data.target?.id === sid)
+      await new Promise((r) => setTimeout(r, 100))
+      assert.deepEqual(
+        back.events.filter((x) => x.raw.includes('SUMMARY-SECRET-TITLE')).map((x) => x.data.kind),
+        [],
+      )
+      back.close()
+    }
+    const stored = await w.db.query("SELECT 1 FROM events WHERE label LIKE '%SUMMARY-SECRET-TITLE%'")
+    assert.equal(stored.length, 0)
+  })
+
+  // Second review of PR23 (N3): a curator's change to an entry happens in their own work, not in the session
+  // the author wrote it in: no session reference unless the actor has one.
+  it('N3: a curator forgetting an entry does not carry the author session reference', async () => {
+    const opened = await w.call(ana.key, 'POST', '/v1/brains/yt/sessions', {
+      purpose: 'N3',
+      ref: 'ana-ticket-9',
+    })
+    const sid = (opened.body.session as { id: string }).id
+    const saved = await w.call(ana.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'N3 entry',
+      content: 'x',
+      sessionId: sid,
+    })
+    const eid = (saved.body.receipt as { entryId: string }).entryId
+    await w.callWeb(ericWeb, 'POST', `/v1/entries/${eid}/forget`, { reason: 'wrong' })
+    const back = await subscribe(eric.key, 'yt', { lastEventId: '0' })
+    const ch = await back.waitFor((x) => x.data.kind === 'entry.changed' && x.data.target?.id === eid)
+    const sv = await back.waitFor((x) => x.data.kind === 'entry.saved' && x.data.target?.id === eid)
+    assert.equal(ch.data.sessionRef ?? null, null)
+    assert.equal(sv.data.sessionRef, 'ana-ticket-9')
+    back.close()
+  })
+
+  // Second review of PR23 (S1): a service opening a session for its short key stores that key's client, from
+  // the credential; a secret pasted in the agent name never reaches the session, the event or the journal.
+  it("S1: a session opened for a short key stores the key's client redacted", async () => {
+    const secret = 'sk-live-0123456789abcdefghijklmnopqrstuv'
+    const k = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'yt',
+        ref: 'run r_11112222',
+        agent: `bot ${secret}`,
+        ttlMinutes: 60,
+      })
+    ).body.key as { id: string; secret: string }
+    const s = await w.call(factory.key, 'POST', '/v1/brains/yt/sessions', {
+      purpose: 'for key',
+      forKey: k.id,
+    })
+    assert.equal(s.status, 201, s.text)
+    const list = await w.call(bob.key, 'GET', '/v1/brains/yt/sessions')
+    const mine = (list.body.items as Array<{ id: string; client: string | null }>).find(
+      (x) => x.id === (s.body.session as { id: string }).id,
+    )
+    assert.ok(mine?.client)
+    assert.doesNotMatch(String(mine?.client), /0123456789abcdefghij/)
+    const stored = await w.db.query('SELECT agent, name FROM credentials WHERE id = $1', [k.id])
+    assert.doesNotMatch(JSON.stringify(stored), /0123456789abcdefghij/)
   })
 })

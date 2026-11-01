@@ -10,12 +10,12 @@ type Ref = { address: string; title: string }
 
 export type Health = {
   orphans: Ref[]
-  broken: { from: string; to: string }[]
-  conflicts: { a: string; b: string }[]
+  broken: { from: string; fromTitle: string; to: string }[]
+  conflicts: { a: string; aTitle: string; b: string; bTitle: string }[]
   stale: (Ref & { updatedAt: string; newEntries: number })[]
-  unavailableSources: { address: string; entryId: string; state: 'forgotten' | 'purged' }[]
+  unavailableSources: { address: string; title: string; entryId: string; state: 'forgotten' | 'purged' }[]
   long: (Ref & { chars: number })[]
-  similarTitles: { a: string; b: string }[]
+  similarTitles: { a: string; aTitle: string; b: string; bTitle: string }[]
   maintenance: { suggested: boolean; approvalsSince: number; every: number }
 }
 
@@ -42,7 +42,7 @@ export async function wikiHealth(ctx: Ctx, slug: string): Promise<Health> {
     [brain.id],
   )
   const broken = await db.query(
-    `SELECT p.address AS from, l.to_address AS to FROM page_links l JOIN pages p ON p.id = l.from_page
+    `SELECT p.address AS from, p.title AS from_title, l.to_address AS to FROM page_links l JOIN pages p ON p.id = l.from_page
       WHERE l.brain_id = $1 AND ${LIVE} AND l.to_address IS NOT NULL
         AND NOT EXISTS (SELECT 1 FROM page_addresses a WHERE a.brain_id = l.brain_id AND a.address = l.to_address)
       ORDER BY p.address, l.to_address`,
@@ -50,7 +50,10 @@ export async function wikiHealth(ctx: Ctx, slug: string): Promise<Health> {
   )
   const conflicts = await db.query(
     // One conflict per pair of pages, whichever way the links go.
-    `SELECT DISTINCT least(p.address, q.address) AS a, greatest(p.address, q.address) AS b FROM page_links l
+    `SELECT DISTINCT CASE WHEN p.address < q.address THEN p.address ELSE q.address END AS a,
+                     CASE WHEN p.address < q.address THEN p.title ELSE q.title END AS a_title,
+                     CASE WHEN p.address < q.address THEN q.address ELSE p.address END AS b,
+                     CASE WHEN p.address < q.address THEN q.title ELSE p.title END AS b_title FROM page_links l
        JOIN pages p ON p.id = l.from_page JOIN pages q ON q.id = l.to_page
       WHERE l.brain_id = $1 AND l.kind = 'contradicts'
         AND p.status IN ('current', 'stale') AND q.status IN ('current', 'stale')
@@ -70,7 +73,7 @@ export async function wikiHealth(ctx: Ctx, slug: string): Promise<Health> {
     [brain.id, cutoff],
   )
   const unavailable = await db.query(
-    `SELECT p.address, e.id, e.state FROM page_sources s
+    `SELECT p.address, p.title, e.id, e.state FROM page_sources s
        JOIN pages p ON p.id = s.page_id JOIN entries e ON e.id = s.entry_id
       WHERE p.brain_id = $1 AND ${LIVE} AND e.state <> 'active' ORDER BY p.address, e.id`,
     [brain.id],
@@ -84,19 +87,29 @@ export async function wikiHealth(ctx: Ctx, slug: string): Promise<Health> {
     `SELECT p.address, p.title FROM pages p WHERE p.brain_id = $1 AND ${LIVE} ORDER BY p.address LIMIT 2000`,
     [brain.id],
   )
-  const similar: { a: string; b: string }[] = []
+  const similar: Health['similarTitles'] = []
   for (let i = 0; i < titles.length && similar.length < 200; i += 1) {
     for (let j = i + 1; j < titles.length; j += 1) {
       const x = titles[i] as Record<string, unknown>
       const y = titles[j] as Record<string, unknown>
       if (nearlySame(String(x.title), String(y.title)))
-        similar.push({ a: String(x.address), b: String(y.address) })
+        similar.push({
+          a: String(x.address),
+          aTitle: String(x.title),
+          b: String(y.address),
+          bTitle: String(y.title),
+        })
     }
   }
   return {
     orphans: orphans.map(ref),
-    broken: broken.map((r) => ({ from: String(r.from), to: String(r.to) })),
-    conflicts: conflicts.map((r) => ({ a: String(r.a), b: String(r.b) })),
+    broken: broken.map((r) => ({ from: String(r.from), fromTitle: String(r.from_title), to: String(r.to) })),
+    conflicts: conflicts.map((r) => ({
+      a: String(r.a),
+      aTitle: String(r.a_title),
+      b: String(r.b),
+      bTitle: String(r.b_title),
+    })),
     stale: stale.map((r) => ({
       ...ref(r),
       updatedAt: (r.updated_at as Date).toISOString(),
@@ -104,6 +117,7 @@ export async function wikiHealth(ctx: Ctx, slug: string): Promise<Health> {
     })),
     unavailableSources: unavailable.map((r) => ({
       address: String(r.address),
+      title: String(r.title),
       entryId: String(r.id),
       state: r.state as 'forgotten' | 'purged',
     })),

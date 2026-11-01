@@ -55,6 +55,8 @@ function BrainLinks({ brain }: { brain: BrainNav }) {
       here: path === `${base}/journal` ? true : path.startsWith(`${base}/journal/`) ? 'inside' : false,
       keys: 'g j',
     },
+    { href: `${base}/activity`, label: T.shell.activity, here: path === `${base}/activity` },
+    { href: `${base}/health`, label: T.shell.health, here: path === `${base}/health` },
   ]
   return (
     <nav class="nav" aria-label={T.shell.brainNav}>
@@ -303,7 +305,7 @@ export function Shell({
       {/* Keyed: the brain's menu appearing above them must not remount an open dialog. */}
       <Keyboard key="keys" signedIn brain={brain?.slug ?? null} canInvite={me.account.canInvite} />
       <HelpDialog key="help" signedIn inBrain={Boolean(brain)} canInvite={me.account.canInvite} />
-      <SearchDialog key="search" />
+      <SearchDialog key="search" brain={brain ? { slug: brain.slug, name: brain.name } : null} />
       <ConnectDialog key="connect" />
       <CreateBrainDialog key="create" />
     </div>
