@@ -215,11 +215,11 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
                       } else move(e)
                     }}
                   />
+                  {/* Never held while a search is on its way: new words replace it (the latest answer wins). */}
                   <Button
                     type="submit"
                     kind="primary"
-                    pending={pending}
-                    pendingLabel="…"
+                    aria-busy={pending ? 'true' : undefined}
                     blocked={online.value ? null : T.states.writeOffline}
                   >
                     {s.submit}

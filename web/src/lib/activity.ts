@@ -149,3 +149,21 @@ export function factoryRunHref(
   if (!run) return null
   return `${factoryUrl.replace(/\/+$/, '')}/runs/${run}`
 }
+
+// A forget heard live (entry.changed «forgotten») takes the title off the rows already shown for that entry,
+// for anyone but a curator, as the server does for what it sends after (pack rule 7, the journal's rule). A
+// recovery heard after it gives the title back. Newest first.
+export function hideForgotten(events: readonly LiveEvent[], curator: boolean): LiveEvent[] {
+  if (curator) return [...events]
+  const gone = new Set<string>()
+  const back = new Set<string>()
+  return events.map((e) => {
+    const id = e.target?.id
+    if (!id) return e
+    if (e.kind === 'entry.changed' && (e.target?.label === 'forgotten' || e.target?.label === 'recovered')) {
+      if (!gone.has(id) && !back.has(id)) (e.target?.label === 'forgotten' ? gone : back).add(id)
+      return e
+    }
+    return gone.has(id) && e.target ? { ...e, target: { ...e.target, label: null } } : e
+  })
+}

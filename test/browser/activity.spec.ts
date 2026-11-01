@@ -327,3 +327,21 @@ test('sessions quiet for 30 minutes are apart, with since when', async ({ page, 
       .filter({ hasText: 'Fix the onboarding emails' }),
   ).toHaveCount(0)
 })
+
+test('a forget heard live takes the title off the rows already shown, for a member', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  const s = await scenario(context, baseURL as string, 'member')
+  await page.goto(A)
+  await expect(page.locator('.live-state')).toHaveText('Live')
+  await s.emit('growth', 'entry.saved', { target: { id: 'ent_secret', label: 'Secret-title-here' } })
+  await expect(feed(page).filter({ hasText: 'Secret-title-here' })).toHaveCount(1)
+  await s.emit('growth', 'entry.changed', { target: { id: 'ent_secret', label: 'forgotten' } })
+  await expect(feed(page).first()).toContainText('forgot an entry')
+  await expect(page.getByText('Secret-title-here')).toHaveCount(0)
+  // A session closed with a summary it may no longer see: said without a title.
+  await s.emit('growth', 'session.closed', { target: { id: 'ses_x', label: null } as never })
+  await expect(feed(page).first()).toContainText('closed a session')
+})

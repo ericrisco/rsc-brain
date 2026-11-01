@@ -586,4 +586,106 @@ describe('the event stream of a brain', { skip: skipPg }, () => {
     assert.equal(acted.data.onBehalf?.name, 'Ana')
     f.close()
   })
+
+  // Second review of PR23 (B1): a session's summary is an entry; its title rides on «session.closed». The same
+  // rule as the entry: forgotten, blank for all but curators; purged, gone for everyone (and the stored label
+  // is scrubbed, so nothing brings it back).
+  it("B1: a forgotten session summary's title leaves session.closed for non-curators; purged, for everyone", async () => {
+    const admin = await w.person('Admin', { isAdmin: true })
+    const opened = await w.call(ana.key, 'POST', '/v1/brains/yt/sessions', { purpose: 'B1 purpose' })
+    const sid = (opened.body.session as { id: string }).id
+    const sum = await w.call(ana.key, 'POST', `/v1/sessions/${sid}/summary`, {
+      title: 'SUMMARY-SECRET-TITLE',
+      content: 'x',
+    })
+    assert.equal(sum.status, 201, sum.text)
+    const eid = (sum.body.receipt as { entryId: string }).entryId
+    assert.equal(
+      (await w.callWeb(ericWeb, 'POST', `/v1/entries/${eid}/forget`, { reason: 'wrong' })).status,
+      200,
+    )
+    const closedFor = async (key: string) => {
+      const back = await subscribe(key, 'yt', { lastEventId: '0' })
+      const e = await back.waitFor((x) => x.data.kind === 'session.closed' && x.data.target?.id === sid)
+      back.close()
+      return e
+    }
+    const bobs = await closedFor(bob.key)
+    assert.equal(bobs.data.target?.label ?? null, null)
+    assert.doesNotMatch(bobs.raw, /SUMMARY-SECRET-TITLE/)
+    assert.equal((await closedFor(eric.key)).data.target?.label, 'SUMMARY-SECRET-TITLE')
+    // Forget and recover say what happened, never the title, and are not "edits".
+    const forgot = await closedFor(bob.key).then(async () => {
+      const back = await subscribe(bob.key, 'yt', { lastEventId: '0' })
+      const e = await back.waitFor((x) => x.data.kind === 'entry.changed' && x.data.target?.id === eid)
+      back.close()
+      return e
+    })
+    assert.equal(forgot.data.target?.label, 'forgotten')
+    const p = await w.call(admin.key, 'POST', `/v1/entries/${eid}/purge`, { reason: 'personal data' })
+    assert.equal(p.status, 200, p.text)
+    for (const key of [bob.key, eric.key]) {
+      const back = await subscribe(key, 'yt', { lastEventId: '0' })
+      await back.waitFor((x) => x.data.kind === 'session.closed' && x.data.target?.id === sid)
+      await new Promise((r) => setTimeout(r, 100))
+      assert.deepEqual(
+        back.events.filter((x) => x.raw.includes('SUMMARY-SECRET-TITLE')).map((x) => x.data.kind),
+        [],
+      )
+      back.close()
+    }
+    const stored = await w.db.query("SELECT 1 FROM events WHERE label LIKE '%SUMMARY-SECRET-TITLE%'")
+    assert.equal(stored.length, 0)
+  })
+
+  // Second review of PR23 (N3): a curator's change to an entry happens in their own work, not in the session
+  // the author wrote it in: no session reference unless the actor has one.
+  it('N3: a curator forgetting an entry does not carry the author session reference', async () => {
+    const opened = await w.call(ana.key, 'POST', '/v1/brains/yt/sessions', {
+      purpose: 'N3',
+      ref: 'ana-ticket-9',
+    })
+    const sid = (opened.body.session as { id: string }).id
+    const saved = await w.call(ana.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'N3 entry',
+      content: 'x',
+      sessionId: sid,
+    })
+    const eid = (saved.body.receipt as { entryId: string }).entryId
+    await w.callWeb(ericWeb, 'POST', `/v1/entries/${eid}/forget`, { reason: 'wrong' })
+    const back = await subscribe(eric.key, 'yt', { lastEventId: '0' })
+    const ch = await back.waitFor((x) => x.data.kind === 'entry.changed' && x.data.target?.id === eid)
+    const sv = await back.waitFor((x) => x.data.kind === 'entry.saved' && x.data.target?.id === eid)
+    assert.equal(ch.data.sessionRef ?? null, null)
+    assert.equal(sv.data.sessionRef, 'ana-ticket-9')
+    back.close()
+  })
+
+  // Second review of PR23 (S1): a service opening a session for its short key stores that key's client, from
+  // the credential; a secret pasted in the agent name never reaches the session, the event or the journal.
+  it("S1: a session opened for a short key stores the key's client redacted", async () => {
+    const secret = 'sk-live-0123456789abcdefghijklmnopqrstuv'
+    const k = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'yt',
+        ref: 'run r_11112222',
+        agent: `bot ${secret}`,
+        ttlMinutes: 60,
+      })
+    ).body.key as { id: string; secret: string }
+    const s = await w.call(factory.key, 'POST', '/v1/brains/yt/sessions', {
+      purpose: 'for key',
+      forKey: k.id,
+    })
+    assert.equal(s.status, 201, s.text)
+    const list = await w.call(bob.key, 'GET', '/v1/brains/yt/sessions')
+    const mine = (list.body.items as Array<{ id: string; client: string | null }>).find(
+      (x) => x.id === (s.body.session as { id: string }).id,
+    )
+    assert.ok(mine?.client)
+    assert.doesNotMatch(String(mine?.client), /0123456789abcdefghij/)
+    const stored = await w.db.query('SELECT agent, name FROM credentials WHERE id = $1', [k.id])
+    assert.doesNotMatch(JSON.stringify(stored), /0123456789abcdefghij/)
+  })
 })

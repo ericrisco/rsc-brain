@@ -287,6 +287,12 @@ export async function scrubEntry(c: Ctx, id: string, why: string): Promise<void>
   await c.db.query('DELETE FROM trail_counts WHERE target_id = $1', [id])
   await c.db.query("DELETE FROM meaning_vectors WHERE kind = 'entry' AND target_id = $1", [id])
   await c.db.query("DELETE FROM meaning_failures WHERE kind = 'entry' AND target_id = $1", [id])
+  // A session it summed up closed with its title as the label: that label goes (the event stays).
+  await c.db.query(
+    `UPDATE events SET label = NULL
+      WHERE kind = 'session.closed' AND target_id IN (SELECT id FROM sessions WHERE summary_entry_id = $1)`,
+    [id],
+  )
   // Its events, and the searches that found it (they carry the text searched).
   await c.db.query('DELETE FROM events WHERE target_id = $1 OR (brain_id = $2 AND $1 = ANY(result_ids))', [
     id,

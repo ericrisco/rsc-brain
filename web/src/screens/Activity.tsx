@@ -12,6 +12,7 @@ import {
   factoryRunHref,
   filterEvents,
   groupEvents,
+  hideForgotten,
   KINDS,
   waitingLabel,
 } from '../lib/activity.ts'
@@ -241,11 +242,21 @@ function Notices({ s }: { s: Stream }) {
   )
 }
 
-function Feed({ slug, s, factoryUrl }: { slug: string; s: Stream; factoryUrl: string | null }) {
+function Feed({
+  slug,
+  s,
+  factoryUrl,
+  curator,
+}: {
+  slug: string
+  s: Stream
+  factoryUrl: string | null
+  curator: boolean
+}) {
   const a = T.activity
   const [f, setF] = useState<ActivityFilters>(NO_FILTERS)
   const [limit, setLimit] = useState(PAGE)
-  const all = s.events.value
+  const all = hideForgotten(s.events.value, curator)
   const paused = s.paused.value
   const waiting = waitingLabel(s.waiting.value, f, s.overflow.value)
   const rows = groupEvents(filterEvents(all, f))
@@ -369,7 +380,11 @@ export function Activity({ slug }: { slug: string }) {
       </p>
       <div class="activity">
         <Sessions slug={slug} factoryUrl={factoryUrl} />
-        {s ? <Feed slug={slug} s={s} factoryUrl={factoryUrl} /> : <Skeleton rows={3} />}
+        {s ? (
+          <Feed slug={slug} s={s} factoryUrl={factoryUrl} curator={brain.role === 'curator'} />
+        ) : (
+          <Skeleton rows={3} />
+        )}
       </div>
     </>
   )

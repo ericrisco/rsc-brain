@@ -266,3 +266,29 @@ test('on a phone the filters open right below their button, without moving what 
   const panel = await d.getByLabel('Show').boundingBox()
   expect(panel?.y ?? 0).toBeGreaterThan((after?.y ?? 0) + (after?.height ?? 0) - 1)
 })
+
+test('new words sent while a search is on its way replace it; old answers never show under new words', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth')
+  await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
+  let n = 0
+  await page.route('**/v1/search?*', async (route) => {
+    n += 1
+    if (n === 1) await new Promise((r) => setTimeout(r, 1_500))
+    await route.continue()
+  })
+  await page.keyboard.press('Control+k')
+  const d = dialog(page)
+  await d.getByLabel('Search for').fill('retention')
+  await d.getByLabel('Search for').press('Enter')
+  await d.getByLabel('Search for').fill('zzz-nothing-at-all')
+  await d.getByLabel('Search for').press('Enter')
+  await expect(d.getByText('Nothing found for "zzz-nothing-at-all".')).toBeVisible()
+  await page.waitForTimeout(1_800)
+  await expect(d.getByRole('list', { name: 'Results' })).toHaveCount(0)
+  expect(n).toBe(2)
+})

@@ -14,6 +14,7 @@ import {
   factoryRunHref,
   filterEvents,
   groupEvents,
+  hideForgotten,
   KINDS,
   SAFE_URL,
   waitingLabel,
@@ -181,6 +182,24 @@ describe('activity, review of PR23', () => {
       JSON.stringify(describeEvent(ev('entry.changed', { target: { id: 'e', label: 'forgotten' } }))),
       /: forgotten|changed an entry/,
     )
+  })
+
+  it('a forget heard live blanks the title of rows already shown for that entry, for a non-curator', () => {
+    const rows = [
+      ev('entry.changed', { id: '3', target: { id: 'ent_1', label: 'forgotten' } }),
+      ev('entry.saved', { id: '2', target: { id: 'ent_2', label: 'Other' } }),
+      ev('entry.saved', { id: '1', target: { id: 'ent_1', label: 'Secret title' } }),
+    ]
+    const shown = hideForgotten(rows, false)
+    assert.equal(shown[2]?.target?.label, null)
+    assert.equal(shown[1]?.target?.label, 'Other')
+    assert.equal(shown[0]?.target?.label, 'forgotten')
+    // A curator still sees it; a recovery after the forget brings it back.
+    assert.equal(hideForgotten(rows, true)[2]?.target?.label, 'Secret title')
+    const back = [ev('entry.changed', { id: '4', target: { id: 'ent_1', label: 'recovered' } }), ...rows]
+    assert.equal(hideForgotten(back, false)[3]?.target?.label, 'Secret title')
+    // A closed session without its summary's title reads as closing a session.
+    assert.equal(describeEvent(ev('session.closed', { target: { id: 'ses_1', label: null } })).what, null)
   })
 
   it('a row of an agent acting for someone names them', () => {

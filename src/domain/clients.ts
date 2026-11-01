@@ -41,5 +41,6 @@ export async function clientNow(db: Db, who: Principal, credentialId: string = w
       WHERE c.id = $1`,
     [credentialId],
   )
-  return r?.client ?? null
+  // What keys stored before their names were redacted on the way in is redacted on the way out.
+  return r?.client ? redact(r.client).text.slice(0, 200) : null
 }

@@ -3,6 +3,7 @@
 // an access key of one hour and a refresh token that changes on every use. A connection lasts while it
 // is used: 90 days idle or 365 days in all end it. Whatever was granted, a connection never does more
 // than the person's current role.
+
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { memberRole } from '../auth/principal.ts'
 import { hashSecret, newSecret } from '../auth/secrets.ts'
@@ -11,6 +12,7 @@ import { notFound } from '../core/errors.ts'
 import { newId } from '../core/ids.ts'
 import type { Db, Row } from '../db/db.ts'
 import { type FetchPolicy, FetchRefused, fetchJson } from '../oauth/fetch.ts'
+import { redact } from '../privacy/redact.ts'
 import { audit } from './audit.ts'
 import { type Ctx, ok } from './context.ts'
 import { adminOnly, inWeb } from './guards.ts'
@@ -360,7 +362,7 @@ async function mintAccess(
     [
       newId('crd'),
       g.account_id,
-      g.client_name.slice(0, 80),
+      redact(g.client_name).text.slice(0, 80) || 'app',
       hashSecret(secret),
       secret.slice(-4),
       g.perm,

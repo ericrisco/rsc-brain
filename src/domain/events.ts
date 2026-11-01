@@ -95,20 +95,30 @@ export function visibleTo(v: Viewer, e: Pick<EventRow, 'kind' | 'accountId' | 'c
 
 // The title of an event's entry, as this viewer may see it: hidden when the entry is purged, and from all but
 // curators when it is forgotten (the rule of the journal, entries.ts relationsOf).
+// Forgetting and recovering an entry are labelled with what happened, not with its title: they say so to all.
+const ACTIONS = new Set(['forgotten', 'recovered'])
 export function labelFor(
   v: Pick<Viewer, 'curator'>,
-  e: Pick<EventRow, 'label' | 'targetState'>,
+  e: Pick<EventRow, 'label' | 'targetState'> & { kind?: string },
 ): string | null {
+  if (e.kind === 'entry.changed' && e.label !== null && ACTIONS.has(e.label)) return e.label
   if (e.targetState === 'purged' || (e.targetState === 'forgotten' && !v.curator)) return null
   return e.label
 }
 
-const SELECT = `SELECT e.*, b.slug, a.name AS account_name, en.state AS target_state, se.ref AS session_ref,
-                       cr.on_behalf_id, ob.name AS on_behalf_name
+// The state that rules an event's label: its entry's, or, for a closed session (whose label is its summary's
+// title), the summary entry's. The session reference: of the session it opened or closed, or of the session
+// an entry was written in, for the writing itself; a later change by someone else (entry.changed) happened
+// outside that session and carries none.
+const SELECT = `SELECT e.*, b.slug, a.name AS account_name, coalesce(en.state, sm.state) AS target_state,
+                       se.ref AS session_ref, cr.on_behalf_id, ob.name AS on_behalf_name
                   FROM events e JOIN brains b ON b.id = e.brain_id LEFT JOIN accounts a ON a.id = e.account_id
                   LEFT JOIN entries en ON en.id = e.target_id
                   LEFT JOIN sessions se
-                         ON se.id = CASE WHEN e.kind LIKE 'session.%' THEN e.target_id ELSE en.session_id END
+                         ON se.id = CASE WHEN e.kind LIKE 'session.%' THEN e.target_id
+                                         WHEN e.kind IN ('entry.saved', 'entry.revised', 'entry.repeated')
+                                           THEN en.session_id END
+                  LEFT JOIN entries sm ON e.kind = 'session.closed' AND sm.id = se.summary_entry_id
                   LEFT JOIN credentials cr ON cr.id = e.credential_id
                   LEFT JOIN accounts ob ON ob.id = cr.on_behalf_id`
 

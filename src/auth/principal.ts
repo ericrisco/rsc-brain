@@ -4,6 +4,7 @@
 import { unauthorized } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
 import { clientOfKey } from '../domain/clients.ts'
+import { redact } from '../privacy/redact.ts'
 import type { Actor, CredentialKind, Role } from './can.ts'
 import { minRole } from './can.ts'
 import { hashSecret, KEY_PREFIX } from './secrets.ts'
@@ -175,7 +176,7 @@ export async function resolveKey(
     `UPDATE credentials SET last_used_at = $2, last_client = coalesce($3, last_client),
             expires_at = CASE WHEN kind = 'web' THEN $2::timestamptz + make_interval(days => $4) ELSE expires_at END
       WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < $2::timestamptz - interval '60 seconds')`,
-    [r.id, now, conn?.userAgent || null, WEB_SESSION_DAYS],
+    [r.id, now, conn?.userAgent ? redact(conn.userAgent).text.slice(0, 200) : null, WEB_SESSION_DAYS],
   )
   return {
     accountId: String(r.account_id),
