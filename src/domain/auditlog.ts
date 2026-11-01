@@ -94,10 +94,13 @@ const view = (r: Row) => ({
 
 export async function readAudit(ctx: Ctx, f: AuditFilters) {
   adminOnly(ctx)
+  // The newest line there is as the view is read, taken first: the download of this view (even an empty one)
+  // is pinned to it with "upTo", so lines written after the view are not in the file.
+  const top = await ctx.db.one<{ id: string | null }>('SELECT max(id)::text AS id FROM audit')
   const items = await query(ctx, f, null, AUDIT_PAGE + 1)
   const more = items.length > AUDIT_PAGE
   const page = items.slice(0, AUDIT_PAGE)
-  return { items: page, next: more ? (page.at(-1)?.id ?? null) : null }
+  return { items: page, next: more ? (page.at(-1)?.id ?? null) : null, upTo: top?.id ?? '0' }
 }
 
 // A curator sees the audit of their brain.

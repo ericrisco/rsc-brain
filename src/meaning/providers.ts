@@ -9,6 +9,8 @@ export type Provider = {
   // To name a provider's key without showing it, and a local provider's address (Admin › Meaning search).
   last4?: string
   url?: string
+  // Where its text goes, without the key: the key through a keyed hash given by the caller.
+  fingerprint?: (hash: (text: string) => string) => string
   embed(texts: string[], o: { signal: AbortSignal }): Promise<number[][]>
 }
 
@@ -49,6 +51,7 @@ export function openai(key: string, model = 'text-embedding-3-small', dimensions
     name: 'openai',
     model: `${model}@${dimensions}`,
     last4: key.slice(-4),
+    fingerprint: (hash) => `openai:${hash(key)}`,
     async embed(texts, { signal }) {
       const out = await post(
         'https://api.openai.com/v1/embeddings',

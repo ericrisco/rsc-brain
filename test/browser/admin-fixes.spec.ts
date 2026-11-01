@@ -159,3 +159,45 @@ test.describe('meaning search: a new destination, a new acceptance', () => {
     await expect(page.getByText('Off: searches use words only.')).toBeVisible()
   })
 })
+
+test.describe('second review: an empty view, and why meaning search went off', () => {
+  test('the download of an empty view is pinned to the newest line the server had', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/admin/audit')
+    await page.getByLabel('Action').fill('nothing.')
+    const read = page.waitForResponse(
+      (r) => r.url().includes('/v1/admin/audit?') && r.url().includes('nothing.'),
+    )
+    await page.getByRole('button', { name: 'Apply filters' }).click()
+    const top = ((await (await read).json()) as { upTo: string }).upTo
+    await expect(page.getByText('No lines for these filters.')).toBeVisible()
+    const href = (await page
+      .getByRole('link', { name: 'Download these lines (CSV)' })
+      .getAttribute('href')) as string
+    expect(new URL(href, 'http://x').searchParams.get('upTo')).toBe(top)
+  })
+
+  test('turned off by a new destination: the screen says why until it is on again', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/admin/meaning')
+    const openai = page.getByRole('region', { name: 'OpenAI' })
+    await openai.getByLabel('OpenAI API key').fill('sk-test-0123456789abcdefghij-k9Z2')
+    await openai.getByRole('button', { name: 'Save key' }).click()
+    const on = page.getByRole('region', { name: 'Turn on meaning search' })
+    await on.getByRole('radio', { name: /OpenAI/ }).check()
+    await on.getByRole('checkbox', { name: /I understand/ }).check()
+    await on.getByRole('button', { name: 'Turn on meaning search' }).click()
+    await openai.getByLabel('OpenAI API key').fill('sk-another-account-9876543210')
+    await openai.getByRole('button', { name: 'Save key' }).click()
+    await page.reload()
+    await expect(page.getByText(/Turned off: the key or address of openai changed/)).toBeVisible()
+  })
+})

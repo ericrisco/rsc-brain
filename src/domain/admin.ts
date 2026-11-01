@@ -495,7 +495,7 @@ const MAIL_FIELDS = [
 type MailField = (typeof MAIL_FIELDS)[number]
 
 // What the mail form shows, as a save compares it (the password by whether it is set and its version).
-function mailBase(s: MailSettings | null): Record<MailField, unknown> {
+function mailBase(s: MailSettings | null, version: number): Record<MailField, unknown> {
   return {
     configured: s !== null,
     host: s?.host ?? null,
@@ -505,14 +505,22 @@ function mailBase(s: MailSettings | null): Record<MailField, unknown> {
     fromName: s?.from.name ?? null,
     fromAddress: s?.from.address ?? null,
     hasPassword: Boolean(s?.password),
-    passwordVersion: s?.passwordVersion ?? 0,
+    passwordVersion: version,
   }
+}
+
+// The password version lives in its own column: removing the mail settings never takes it back, so a save
+// based on what was read before a remove and a new password is still seen as stale.
+async function passwordVersion(db: Ctx['db']): Promise<number> {
+  const r = await db.one<{ v: number }>('SELECT mail_password_version AS v FROM installation WHERE id = 1')
+  return Number(r?.v ?? 0)
 }
 
 const MAIL_FAILURES = 20
 
 async function mailView(db: Ctx['db']) {
   const s = await mailSettings(db)
+  const version = await passwordVersion(db)
   const row = (l: Row) => ({
     at: (l.at as Date).toISOString(),
     to: String(l.to_addr),
@@ -528,7 +536,7 @@ async function mailView(db: Ctx['db']) {
     `SELECT at, to_addr, kind, status, error FROM mail_log WHERE status <> 'sent'
       ORDER BY at DESC, id DESC LIMIT ${MAIL_FAILURES}`,
   )
-  const base = mailBase(s)
+  const base = mailBase(s, version)
   return {
     configured: s !== null,
     settings: s
@@ -594,14 +602,14 @@ export async function setMail(
     throw invalid('"password" is text.', 'Fix "password".')
   }
   // Sealed before the transaction: a missing installation secret refuses before anything is read.
-  // Sealed before the transaction: a missing installation secret refuses before anything is read.
   const typed = typeof input.password === 'string' && input.password !== '' ? input.password : null
   const sealed = typed ? sealPassword(ctx.mail?.secret, typed) : null
   return ctx.db.tx(async (db) => {
     // Saves of the mail settings take turns, so two on the same base cannot both pass.
     await db.query('SELECT 1 FROM installation WHERE id = 1 FOR UPDATE')
     const before = await mailSettings(db)
-    const was = mailBase(before)
+    const version = await passwordVersion(db)
+    const was = mailBase(before, version)
     if (base) {
       const moved = (Object.keys(base) as MailField[]).filter((f) => was[f] !== base[f])
       if (moved.length) throw settingsChanged(moved, await mailView(db))
@@ -619,20 +627,22 @@ export async function setMail(
         'Type the password again for the new server (or remove it, if the new one needs none).',
       )
     }
-    const version = before?.passwordVersion ?? 0
+
     const s: MailSettings = {
       host,
       port,
       secure: input.secure === true,
       user: user as string | null,
       password: keep ? (before?.password ?? null) : sealed,
-      passwordVersion: keep ? version : version + 1,
+
       // Empty: the name of the installation when sending, so a rename applies.
       from: { name: fromName, address: fromAddress },
     }
-    const same = before !== null && keep && JSON.stringify(mailBase(s)) === JSON.stringify(was)
+    const same = before !== null && keep && JSON.stringify(mailBase(s, version)) === JSON.stringify(was)
     if (same) return { ...(await mailView(db)), ...(base ? { unchanged: true as const } : {}) }
     await storeMail(db, s)
+    if (!keep)
+      await db.query('UPDATE installation SET mail_password_version = $1 WHERE id = 1', [version + 1])
     const pw = keep ? '' : sealed ? '; password set' : '; password removed'
     await ok({ ...ctx, db }, 'settings.mail', null, 'mail', `${host}:${port} from ${fromAddress}${pw}`)
     return mailView(db)

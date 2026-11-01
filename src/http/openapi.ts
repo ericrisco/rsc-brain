@@ -107,6 +107,10 @@ const MEANING = obj({
       model: nul(s('The model it uses.')),
     }),
   ),
+  offReason: {
+    type: ['string', 'null'],
+    description: 'Why it went off by itself (a new destination), until turned on again.',
+  },
   warning: s('What turning it on means.'),
   progress: nul(obj({ done: n('Texts with their meaning.'), total: n('Texts to process.') })),
 })
@@ -1720,7 +1724,11 @@ const HAND: Record<string, Op> = {
       to: 'Up to this time (exclusive).',
       before: 'The "next" of the previous page.',
     },
-    reply: obj({ items: list(AUDIT_ROW), next: NEXT }),
+    reply: obj({
+      items: list(AUDIT_ROW),
+      next: NEXT,
+      upTo: s('The newest line there was when this page was read: the "upTo" of the download of this view.'),
+    }),
   },
   'GET /v1/admin/audit/export': {
     summary:

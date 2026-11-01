@@ -59,6 +59,8 @@ function Screen() {
   const [applied, setApplied] = useState<AuditFilters>(kept)
   const [rows, setRows] = useState<Row[] | null>(null)
   const [next, setNext] = useState<string | null>(null)
+  // The newest line the server had when the view was read: the pin of the download when the view is empty.
+  const [top, setTop] = useState<string | null>(null)
   const [error, setError] = useState<ApiError | null>(null)
   const [more, setMore] = useState(false)
   const [moreError, setMoreError] = useState<ApiError | null>(null)
@@ -72,11 +74,12 @@ function Screen() {
     setError(null)
     setRows(null)
     try {
-      const page = await api.call<{ items: Row[]; next: string | null }>('auditLines', {
+      const page = await api.call<{ items: Row[]; next: string | null; upTo: string }>('auditLines', {
         query: auditQuery(f),
       })
       setRows(page.items)
       setNext(page.next)
+      setTop(page.upTo)
     } catch (e) {
       setError(e as ApiError)
     }
@@ -187,7 +190,7 @@ function Screen() {
       <p class="download">
         <a
           class="button secondary"
-          href={auditExportHref(auditQuery(applied), rows?.[0]?.id ?? null)}
+          href={auditExportHref(auditQuery(applied), rows?.[0]?.id ?? top)}
           download
         >
           {A.download}

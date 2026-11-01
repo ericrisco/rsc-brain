@@ -20,8 +20,7 @@ export type MailSettings = {
   secure: boolean
   user: string | null
   password: string | null // sealed
-  // Raised at each new password: a save sees someone set another one meanwhile, without any part of it.
-  passwordVersion?: number
+
   from: Sender
 }
 
@@ -114,15 +113,28 @@ export async function branded(db: Db, m: Message): Promise<Message> {
 // Why a send failed, as a short category: what a mail server says can quote anything (its greeting, the
 // address, a token), so its words are neither stored nor shown.
 export function mailError(err: unknown): string {
+  // The code first: it says what happened; the words can name anything (a host called "auth.example.com").
   const code = String((err as { code?: unknown })?.code ?? '')
+  const BY_CODE: Record<string, string> = {
+    EAUTH: 'auth failed',
+    ECONNREFUSED: 'connection refused',
+    EDNS: 'server not found',
+    ENOTFOUND: 'server not found',
+    EAI_AGAIN: 'server not found',
+    ETIMEDOUT: 'timeout',
+    ETIMEOUT: 'timeout',
+    ETLS: 'TLS',
+    EENVELOPE: 'rejected',
+    EMESSAGE: 'rejected',
+  }
+  if (BY_CODE[code]) return BY_CODE[code]
   const text = err instanceof Error ? err.message : String(err)
-  if (code === 'EAUTH' || /\b535\b|auth/i.test(text)) return 'auth failed'
-  if (code === 'ECONNREFUSED' || /ECONNREFUSED|connection refused/i.test(text)) return 'connection refused'
-  if (code === 'EDNS' || /ENOTFOUND|EAI_AGAIN/.test(text)) return 'server not found'
-  if (code === 'ETIMEDOUT' || code === 'ETIMEOUT' || /timed? ?out|greeting never/i.test(text))
-    return 'timeout'
-  if (code === 'ETLS' || /certificate|\bTLS\b|\bSSL\b|handshake/i.test(text)) return 'TLS'
-  if (code === 'EENVELOPE' || code === 'EMESSAGE' || /\b5\d\d\b/.test(text)) return 'rejected'
+  if (/ECONNREFUSED|connection refused/i.test(text)) return 'connection refused'
+  if (/ENOTFOUND|EAI_AGAIN/.test(text)) return 'server not found'
+  if (/timed? ?out|greeting never/i.test(text)) return 'timeout'
+  if (/certificate|\bTLS\b|\bSSL\b|handshake/i.test(text)) return 'TLS'
+  if (/\b535\b|authentication failed|invalid login/i.test(text)) return 'auth failed'
+  if (/\b5\d\d\b/.test(text)) return 'rejected'
   return 'failed'
 }
 

@@ -2,6 +2,7 @@
 // rsc-brain command line. Each command says what it did, or what to do when it cannot.
 import { createServer } from 'node:http'
 import { parseArgs } from 'node:util'
+import { resealV1 } from '../auth/reseal.ts'
 import { readConfig } from '../config.ts'
 import { systemClock } from '../core/clock.ts'
 import { AppError } from '../core/errors.ts'
@@ -79,6 +80,9 @@ async function main(argv: string[]): Promise<number> {
     const cfg = readConfig()
     const db = openPool(cfg.databaseUrl)
     await migrate(db)
+    // What was sealed before purposes is sealed again, bound to its column (once; logged).
+    const resealed = await resealV1(db, cfg.secret)
+    if (resealed) out(`Sealed ${resealed} stored secret(s) again in the current format.\n`)
     // Providers of meaning come from the environment, and from what the administration set in the web;
     // meaning search stays off until the administration turns it on there (spec B3).
     const meaning = providersFromEnv()

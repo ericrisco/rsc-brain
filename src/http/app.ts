@@ -327,6 +327,8 @@ export function createHandler(deps: AppDeps) {
   // Once the first-time setup is done it stays done: no need to ask the database again.
   let ready = false
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    // Whether the body was read: a refusal sent before it (or instead of it) closes the connection.
+    let bodyRead = false
     try {
       const url = new URL(req.url ?? '/', 'http://localhost')
       const method = req.method ?? 'GET'
@@ -399,7 +401,9 @@ export function createHandler(deps: AppDeps) {
       }
       if (found.route.public) {
         // A page that a browser posts to checks its own origin; JSON callers send no cookie here.
-        const reply = await found.route.public({ ...base, body: await readBody(req) })
+        const body = await readBody(req)
+        bodyRead = true
+        const reply = await found.route.public({ ...base, body })
         return send(res, reply.status ?? 200, reply.body, reply.headers)
       }
       // A cookie-borne write must come from the web itself: a page elsewhere cannot add this header
@@ -417,6 +421,7 @@ export function createHandler(deps: AppDeps) {
       // A route only the administration uses refuses anyone else before reading a (large) body.
       if (found.route.admin) adminOnly({ db: deps.db, clock: deps.clock, who })
       const body = await readBody(req, found.route.maxBody)
+      bodyRead = true
       const reply = await found.route.handler({ ...base, body, who })
       if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)
       send(res, reply.status ?? 200, reply.body, reply.headers, {
@@ -424,6 +429,16 @@ export function createHandler(deps: AppDeps) {
         accepts: acceptsGzip(req.headers['accept-encoding']),
       })
     } catch (err) {
+      // A refusal before the body was read (401, 403, 404, 413…): the rest of it is never read, so the
+      // connection ends. The answer goes first; the socket is let go a moment after it is sent, so the client
+      // reads the refusal before the connection drops.
+      const unread =
+        !bodyRead &&
+        (Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'] !== undefined)
+      if (unread && !res.headersSent) {
+        res.setHeader('connection', 'close')
+        res.once('finish', () => setTimeout(() => req.socket.destroy(), 100).unref())
+      }
       // The standard sign-in's endpoints answer in the standard's shape, even for a malformed request.
       if (
         err instanceof AppError &&

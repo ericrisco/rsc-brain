@@ -61,6 +61,7 @@ type Fx = {
     acceptedAt: string | null
     done: number
     total: number
+    offReason?: string | null
   }
   openai: { last4: string } | null
   ollama: { url: string } | null
@@ -324,6 +325,7 @@ function meaningView(s: AdminScen) {
         model: f.ollama ? 'nomic-embed-text' : null,
       },
     ],
+    offReason: m.enabled ? null : (m.offReason ?? null),
     warning: WARNING,
     progress: m.enabled ? { done: m.done, total: m.total } : null,
   }
@@ -595,6 +597,7 @@ export const ADMIN_OPS: Record<string, Op> = {
     run: admin(
       (c) => {
         fxOf(c.s).meaning.enabled = false
+        fxOf(c.s).meaning.offReason = null
         audited(c, 'meaning.disable', '')
         return { status: 200, body: meaningView(c.s) }
       },
@@ -632,7 +635,12 @@ export const ADMIN_OPS: Record<string, Op> = {
           )
         // A new destination for the provider in use: off, and the warning to accept again.
         if (f.meaning.enabled && f.meaning.provider === name) {
-          f.meaning = { ...f.meaning, enabled: false, acceptedAt: null }
+          f.meaning = {
+            ...f.meaning,
+            enabled: false,
+            acceptedAt: null,
+            offReason: `Turned off: the key or address of ${name} changed in the administration. Accept the warning again to turn it on.`,
+          }
           audited(c, 'meaning.disable', `${name}: its key or address changed`)
         }
         audited(c, 'meaning.provider', `${name}: set`)
@@ -679,7 +687,11 @@ export const ADMIN_OPS: Record<string, Op> = {
       const page = from.slice(0, 100)
       return {
         status: 200,
-        body: { items: page, next: from.length > 100 ? (page.at(-1)?.id ?? null) : null },
+        body: {
+          items: page,
+          next: from.length > 100 ? (page.at(-1)?.id ?? null) : null,
+          upTo: fxOf(c.s).audit[0]?.id ?? '0',
+        },
       }
     }),
   },

@@ -40,6 +40,7 @@ type Meaning = {
   acceptedAt: string | null
   available: string[]
   providers: Provider[]
+  offReason: string | null
   warning: string
   progress: { done: number; total: number } | null
 }
@@ -67,6 +68,7 @@ function Status({ m, onSaid }: { m: Meaning; onSaid: (t: string) => void }) {
     <>
       <p class="list-title">{m.enabled ? A.meaningOn(labelOf(m, m.provider), m.model) : A.meaningOff}</p>
       {m.enabled && m.acceptedAt ? <p class="meta">{A.meaningAccepted(T.date(m.acceptedAt))}</p> : null}
+      {!m.enabled && m.offReason ? <p class="note">{m.offReason}</p> : null}
       {m.enabled && p ? (
         <div class="progress-block">
           <progress

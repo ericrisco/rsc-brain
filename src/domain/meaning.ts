@@ -6,7 +6,7 @@ import { seal } from '../auth/vault.ts'
 import { AppError, invalid, notFound } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
 import { type Providers, SEND_CHARS } from '../meaning/providers.ts'
-import { applyStored, environmentOf, keyOpens, stored } from '../meaning/stored.ts'
+import { applyStored, destinationOf, environmentOf, keyOpens, stored } from '../meaning/stored.ts'
 import { audit } from './audit.ts'
 import type { Ctx } from './context.ts'
 import { webOnly } from './wiki/review.ts'
@@ -124,8 +124,12 @@ async function offForNewDestination(db: Db, ctx: Ctx, p: string, now: Date): Pro
   const s = await meaningSettings(db)
   if (!s.enabled || s.provider !== p) return
   await db.query(
-    'UPDATE meaning_settings SET enabled = false, accepted_by = NULL, accepted_at = NULL, changed_at = $1 WHERE id = 1',
-    [now],
+    `UPDATE meaning_settings SET enabled = false, accepted_by = NULL, accepted_at = NULL, changed_at = $1,
+            off_reason = $2 WHERE id = 1`,
+    [
+      now,
+      `Turned off: the key or address of ${p} changed in the administration. Accept the warning again to turn it on.`,
+    ],
   )
   await audit(db, {
     at: now,
@@ -137,6 +141,13 @@ async function offForNewDestination(db: Db, ctx: Ctx, p: string, now: Date): Pro
   })
 }
 
+async function offReason(db: Db): Promise<string | null> {
+  const r = await db.one<{ off_reason: string | null }>(
+    'SELECT off_reason FROM meaning_settings WHERE id = 1',
+  )
+  return r?.off_reason ?? null
+}
+
 export async function getMeaning(ctx: Ctx) {
   adminInWeb(ctx)
   const s = await meaningSettings(ctx.db)
@@ -144,6 +155,8 @@ export async function getMeaning(ctx: Ctx) {
     ...s,
     available: Object.keys(ctx.meaning ?? {}),
     providers: await providerViews(ctx),
+    // Why it went off by itself (a new destination), until it is turned on again.
+    offReason: s.enabled ? null : await offReason(ctx.db),
     warning: WARNING,
     progress: s.enabled ? await meaningProgress(ctx.db, s) : null,
   }
@@ -290,8 +303,9 @@ export async function enableMeaning(ctx: Ctx, input: { provider: string; accept:
   await ctx.db.tx(async (db) => {
     await db.query(
       `UPDATE meaning_settings SET enabled = true, provider = $1, model = $2, accepted_by = $3,
-              accepted_at = $4, changed_at = $4 WHERE id = 1`,
-      [p.name, p.model, ctx.who.accountId, now],
+              accepted_at = $4, changed_at = $4, destination = $5, off_reason = NULL WHERE id = 1`,
+      // Where the text goes, as accepted: checked again whenever the providers change or the server starts.
+      [p.name, p.model, ctx.who.accountId, now, destinationOf(p, ctx.mail?.secret)],
     )
     await db.query('DELETE FROM meaning_vectors WHERE provider <> $1 OR model <> $2', [p.name, p.model])
     await audit(db, {
@@ -311,7 +325,10 @@ export async function disableMeaning(ctx: Ctx) {
   adminInWeb(ctx)
   const now = ctx.clock()
   await ctx.db.tx(async (db) => {
-    await db.query('UPDATE meaning_settings SET enabled = false, changed_at = $1 WHERE id = 1', [now])
+    await db.query(
+      'UPDATE meaning_settings SET enabled = false, changed_at = $1, off_reason = NULL WHERE id = 1',
+      [now],
+    )
     await audit(db, {
       at: now,
       actorId: ctx.who.accountId,
