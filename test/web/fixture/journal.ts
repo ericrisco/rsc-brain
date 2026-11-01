@@ -242,6 +242,21 @@ export function freshJournal(slug: string): Journal {
       lastActivityAt: at(29, 8),
       closedAt: null,
     },
+    // A run of RSC Factory still going (Activity: its reference links to the run, CA9).
+    {
+      id: sid(5),
+      brainId,
+      purpose: 'Narrate the outro of video 42',
+      ref: 'run r_abc, step 1',
+      status: 'open',
+      day: null,
+      client: 'narrator',
+      author: FACTORY,
+      summaryEntryId: null,
+      openedAt: at(26, 10),
+      lastActivityAt: at(26, 11),
+      closedAt: null,
+    },
   )
   j.entries.push(
     entry(b, eid('intros'), sid(1), {

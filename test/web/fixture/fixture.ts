@@ -65,6 +65,7 @@ export type Screen =
   | 'members'
   | 'proposals'
   | 'proposal'
+  | 'health'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
 // alone: the administrator the setup made, the only person in the installation.
@@ -114,11 +115,15 @@ type Scen = {
   brains: Brain[]
   life: Map<string, Life>
   invitations: Invitation[]
-  // Live event streams open in this scenario, by brain.
-  streams: Set<{ brain: string; res: ServerResponse }>
+  // Live event streams open in this scenario, by brain, with who follows (pack rule 7).
+  streams: Set<Follower>
+  // The server is down for the live events (a lost connection): open streams were cut, new ones refused.
+  streamsDown: boolean
+  // The address of RSC Factory the administration set (G4, PR25); null when none.
+  factoryUrl: string | null
   seq: number
   // Every event of the scenario, so a stream that comes back with Last-Event-ID gets what it missed.
-  log: Array<{ seq: number; brain: string; frame: string }>
+  log: Array<{ seq: number; brain: string; frame: string; kind: string; who: string | null }>
   // The wiki of each brain, made when first read.
   wikis: Map<string, Wiki>
   // The journal of each brain, made when first read ("<slug>#big" for the much-data state).
@@ -128,6 +133,13 @@ type Scen = {
   // The wiki of every brain is a seeded one of this many pages (the graph's load tests, CA5 and CA6).
   seeded?: Seeded
 }
+
+type Follower = { brain: string; res: ServerResponse; viewer: { id: string; curator: boolean } }
+// Pack rule 7, as the server applies it: a curator gets everything; anyone else every change and proposal,
+// and only their own searches and reads.
+const LOOKS = ['search', 'read']
+const sees = (v: Follower['viewer'], e: { kind: string; who: string | null }) =>
+  v.curator || !LOOKS.includes(e.kind) || e.who === v.id
 
 type Answer = { status: number; body: unknown; headers?: Record<string, string> }
 type Ctx = {
@@ -352,6 +364,8 @@ function freshScenario(id: string, preset: Preset): Scen {
       },
     ],
     streams: new Set(),
+    streamsDown: false,
+    factoryUrl: null,
     seq: 100,
     log: [],
     wikis: new Map(),
@@ -680,7 +694,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
                 totp: who.totp,
               },
               key: { id: `crd_web_${who.id}`, kind: 'web', perm: 'write', ref: null, agent: null },
-              installation: { name: s.name, factoryUrl: null },
+              installation: { name: s.name, factoryUrl: s.factoryUrl },
             },
           }
         : UNAUTHORIZED,
@@ -1218,73 +1232,175 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         ),
       ),
   },
+  'GET /v1/brains/{slug}/wiki/health': {
+    screen: 'health',
+    run: (c) => {
+      const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+      if (!b) return NO_BRAIN
+      return { status: 200, body: healthOf(b.slug, c.s.states.get('health')) }
+    },
+  },
   'GET /v1/search': {
     screen: 'search',
-    run: ({ s, query }) => {
+    run: ({ s, query, who }) => {
       const st = s.states.get('search')
       const q = (query.get('q') ?? '').toLowerCase()
       const limit = Math.min(50, Number(query.get('limit') ?? 20) || 20)
-      // Journal entries only (a page's sources in the editor): by words of the title or the text, or the
-      // newest with no words.
-      if (query.get('in') === 'entries') {
-        const brain = query.get('brains') ?? 'growth'
+      const offset = Number(query.get('offset') ?? 0) || 0
+      const mine = brainsOf(s, who).map((b) => b.slug)
+      const asked = (query.get('brains') ?? '').split(',').filter(Boolean)
+      const brains = asked.length ? asked.filter((b) => mine.includes(b)) : mine
+      const types = (query.get('types') ?? '').split(',').filter(Boolean)
+      const scope = query.get('in') ?? 'both'
+      const words = { why: 'words', reason: 'matched by words' }
+      // Journal entries only, with no words (a page's sources in the editor): the newest.
+      if (scope === 'entries' && !q) {
+        const brain = brains[0] ?? 'growth'
         const found = journalOf(s, brain)
           .entries.filter((e) => e.state === 'active' && e.supersededBy === null)
-          .filter((e) => !q || e.title.toLowerCase().includes(q) || e.content.toLowerCase().includes(q))
           .slice(0, limit)
           .map((e) => ({
             kind: 'entry',
             id: e.id,
             brain,
+            type: e.type,
+            state: e.state,
             title: e.title,
             snippet: e.content,
+            why: 'recent',
+            reason: 'most recent',
             at: e.createdAt,
           }))
         return { status: 200, body: { items: found, next: null } }
       }
-      // The pages of the hand-made wiki first (they open), then the seeded ones.
+      if (st === 'empty' || st === 'filtered-empty' || !q)
+        return { status: 200, body: { items: [], next: null } }
+      // The pages of the hand-made wiki first (they open), then the seeded ones; all in the first brain.
       // A snippet is a piece of the body, markdown and all, as the server's.
       const hand = freshWiki().pages.map((p) => {
         const r = p.revs[p.revs.length - 1] as {
           address: string
+          type: string
+          status: string
           title: string
           summary: string
           body: string
         }
-        return { address: r.address, title: r.title, summary: r.summary, snippet: r.body.slice(0, 160) }
+        return {
+          address: r.address,
+          type: r.type,
+          status: r.status,
+          title: r.title,
+          summary: r.summary,
+          snippet: r.body.slice(0, 160),
+        }
       })
-      const hits =
-        st === 'empty' || st === 'filtered-empty'
+      const pages =
+        scope === 'entries' || !brains.includes('growth')
           ? []
-          : [...hand, ...WIKI.pages]
-              .filter((p) => q && (p.title.toLowerCase().includes(q) || p.summary.toLowerCase().includes(q)))
-              .slice(0, limit)
+          : [...hand, ...WIKI.pages.map((p) => ({ ...p, snippet: p.summary }))]
+              .filter((p) => p.title.toLowerCase().includes(q) || p.summary.toLowerCase().includes(q))
+              .filter((p) => !types.length || types.includes(p.type))
               .map((p) => ({
                 kind: 'page',
                 id: `pg_${p.address.replace(/\W/g, '_')}`,
                 address: p.address,
                 brain: 'growth',
+                type: p.type,
+                state: p.status,
                 title: p.title,
-                snippet: 'snippet' in p ? p.snippet : p.summary,
+                snippet: p.snippet,
+                ...words,
                 at: AT,
               }))
-      // Journal entries of the first brain too, as the server mixes them in.
+      // Journal entries of each brain asked, as the server mixes them in.
       const entries =
-        st === 'empty' || st === 'filtered-empty' || !q
+        scope === 'pages'
           ? []
-          : journalOf(s, 'growth')
-              .entries.filter((e) => e.state === 'active' && e.title.toLowerCase().includes(q))
-              .map((e) => ({
-                kind: 'entry',
-                id: e.id,
-                brain: 'growth',
-                title: e.title,
-                snippet: e.content,
-                at: e.createdAt,
-              }))
-      return { status: 200, body: { items: [...hits, ...entries].slice(0, limit), next: null } }
+          : brains.flatMap((brain) =>
+              journalOf(s, brain)
+                .entries.filter(
+                  (e) =>
+                    e.state === 'active' &&
+                    (e.title.toLowerCase().includes(q) ||
+                      // Asked for entries only (a page's sources), the text counts too.
+                      (scope === 'entries' &&
+                        e.supersededBy === null &&
+                        e.content.toLowerCase().includes(q))),
+                )
+                .filter((e) => !types.length || types.includes(e.type))
+                .map((e) => ({
+                  kind: 'entry',
+                  id: e.id,
+                  brain,
+                  type: e.type,
+                  state: e.state,
+                  title: e.title,
+                  snippet: e.content,
+                  // Found by meaning, not by its words: the reason says so.
+                  ...(e.title.toLowerCase().startsWith(q)
+                    ? words
+                    : { why: 'meaning', reason: 'matched by meaning' }),
+                  at: e.createdAt,
+                })),
+            )
+      const from = query.get('from') ?? ''
+      const all = [...pages, ...entries].filter((h) => !from || h.at >= from)
+      const much = st === 'much-data'
+      const items = (much ? Array.from({ length: 3 }, () => all).flat() : all).slice(offset, offset + limit)
+      const next = offset + limit < (much ? all.length * 3 : all.length) ? offset + limit : null
+      return { status: 200, body: { items, next } }
     },
   },
+}
+
+// The health of a wiki (B2): the first brain has something in each common section; "much-data" a long list.
+function healthOf(slug: string, st: State | undefined) {
+  const none = {
+    orphans: [] as Array<{ address: string; title: string }>,
+    broken: [] as Array<{ from: string; to: string }>,
+    conflicts: [] as Array<{ a: string; b: string }>,
+    stale: [] as Array<{ address: string; title: string; updatedAt: string; newEntries: number }>,
+    unavailableSources: [] as Array<{ address: string; entryId: string; state: 'forgotten' | 'purged' }>,
+    long: [] as Array<{ address: string; title: string; chars: number }>,
+    similarTitles: [] as Array<{ a: string; b: string }>,
+    maintenance: { suggested: false, approvalsSince: 3, every: 20 },
+  }
+  if (st === 'empty' || slug !== 'growth') return none
+  const h = {
+    ...none,
+    broken: [
+      { from: 'audience/retention', to: 'drafts/hooks-that-work' },
+      { from: 'audience/intros', to: 'audience/hook-length' },
+      { from: 'product/pricing', to: 'product/plans' },
+    ],
+    conflicts: [
+      { a: 'audience/intros', b: 'audience/old-intros' },
+      { a: 'audience/retention', b: 'product/pricing' },
+    ],
+    orphans: [
+      { address: 'misc/naming', title: 'Naming videos' },
+      { address: 'misc/thumbnails', title: 'Thumbnails' },
+      { address: 'misc/shorts', title: 'Shorts' },
+      { address: 'misc/music', title: 'Music' },
+    ],
+    stale: [
+      {
+        address: 'audience/old-intros',
+        title: 'Old intros',
+        updatedAt: '2026-06-01T10:00:00.000Z',
+        newEntries: 4,
+      },
+    ],
+    similarTitles: [{ a: 'audience/intros', b: 'audience/old-intros' }],
+    maintenance: { suggested: true, approvalsSince: 21, every: 20 },
+  }
+  if (st === 'much-data')
+    h.orphans = Array.from({ length: 60 }, (_, i) => ({
+      address: `misc/page-${String(i + 1).padStart(2, '0')}`,
+      title: `Page ${i + 1}`,
+    }))
+  return h
 }
 
 // Paths that need a session; the rest are public, as on the server.
@@ -1297,6 +1413,7 @@ const PRIVATE = new Set([
   'GET /v1/brains/{slug}',
   'GET /v1/brains/{slug}/overview',
   'GET /v1/search',
+  'GET /v1/brains/{slug}/wiki/health',
   'GET /v1/invitations',
   'POST /v1/invitations',
   'POST /v1/invitations/{id}/resend',
@@ -1599,12 +1716,15 @@ async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
   }
 }
 
-function emit(
-  s: Scen,
-  slug: string,
-  kind: string,
-  o: { who?: { id: string; name: string }; target?: { id: string; label: string } } = {},
-): void {
+export type EmitOptions = {
+  who?: { id: string; name: string } | null
+  target?: { id: string; label: string }
+  client?: string | null
+  ref?: string | null
+  query?: string | null
+}
+
+function emit(s: Scen, slug: string, kind: string, o: EmitOptions = {}): void {
   const b = s.brains.find((x) => x.slug === slug)
   const life = s.life.get(slug) ?? { entries: 0, agent: false }
   // An agent asked for context: step 1 is done, but the brain says nothing (no event, as the server).
@@ -1628,19 +1748,23 @@ function emit(
     }
   }
   s.seq += 1
+  const who = o.who === undefined ? { id: 'acc_eric', name: 'Eric' } : o.who
   const event = {
     id: String(s.seq),
-    at: AT,
+    at: NOW(),
     brain: slug,
     kind,
-    who: o.who ?? { id: 'acc_eric', name: 'Eric' },
-    key: { id: 'crd_agent', ref: null },
-    target: o.target ?? { id: 'ent_fixture', label: 'First thing the agent learnt' },
-    query: null,
+    who,
+    key: { id: o.ref ? 'crd_short' : 'crd_agent', ref: o.ref ?? null },
+    target:
+      kind === 'search' ? null : (o.target ?? { id: 'ent_fixture', label: 'First thing the agent learnt' }),
+    query: kind === 'search' ? (o.query ?? 'retention') : null,
+    client: o.client === undefined ? 'claude-code' : o.client,
   }
   const frame = `id: ${s.seq}\ndata: ${JSON.stringify(event)}\n\n`
-  s.log.push({ seq: s.seq, brain: slug, frame })
-  for (const st of s.streams) if (st.brain === slug) st.res.write(frame)
+  const line = { seq: s.seq, brain: slug, frame, kind, who: who?.id ?? null }
+  s.log.push(line)
+  for (const st of s.streams) if (st.brain === slug && sees(st.viewer, line)) st.res.write(frame)
 }
 
 export type ScenarioHandle = {
@@ -1710,6 +1834,7 @@ export async function startFixture(
           s.states.set(screen as Screen, state)
         if (b.mail === false) s.mail = false
         if (b.seeded === 300 || b.seeded === 5000 || b.seeded === 'lumpy') s.seeded = b.seeded
+        if (typeof b.factoryUrl === 'string') s.factoryUrl = b.factoryUrl
         return send(res, { status: 201, body: { id: s.id } })
       }
       const control = /^\/__fixture\/scenarios\/([\w]+)\/state$/.exec(url.pathname)
@@ -1733,7 +1858,22 @@ export async function startFixture(
         const s = scenarios.get(emitting[1] as string)
         if (!s) return send(res, { status: 404, body: {} })
         const b = await bodyOf(req)
-        emit(s, String(b.brain), String(b.kind ?? 'entry.saved'))
+        const o: EmitOptions = {}
+        if (b.who !== undefined) o.who = b.who as { id: string; name: string } | null
+        if (b.target !== undefined) o.target = b.target as { id: string; label: string }
+        if (b.client !== undefined) o.client = b.client as string | null
+        if (b.ref !== undefined) o.ref = b.ref as string | null
+        if (b.query !== undefined) o.query = b.query as string | null
+        emit(s, String(b.brain), String(b.kind ?? 'entry.saved'), o)
+        return send(res, { status: 200, body: {} })
+      }
+      // The live events go down (open streams are cut and new ones refused) or come back: a lost connection.
+      const down = /^\/__fixture\/scenarios\/([\w]+)\/streams$/.exec(url.pathname)
+      if (down && method === 'POST') {
+        const s = scenarios.get(down[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        s.streamsDown = (await bodyOf(req)).down === true
+        if (s.streamsDown) for (const st of [...s.streams]) st.res.destroy()
         return send(res, { status: 200, body: {} })
       }
       // Another curator edits a page of the wiki meanwhile (an edit conflict, CA10).
@@ -1843,7 +1983,19 @@ export async function startFixture(
         const who = session ? (s.accounts.find((a) => `fx.${a.id}` === session) ?? null) : null
         if (!who) return send(res, UNAUTHORIZED)
         const slug = decodeURIComponent(live[1] as string)
-        if (![...brainsOf(s, who), ...MANY].some((b) => b.slug === slug)) return send(res, NO_BRAIN)
+        const mine = [...brainsOf(s, who), ...MANY].find((b) => b.slug === slug)
+        if (!mine) return send(res, NO_BRAIN)
+        if (s.streamsDown)
+          return send(
+            res,
+            err(
+              503,
+              'busy',
+              'The installation is restarting.',
+              'Try again in a moment; the web does so by itself.',
+            ),
+          )
+        const viewer = { id: who.id, curator: mine.role === 'curator' }
         res.writeHead(200, {
           'content-type': 'text/event-stream; charset=utf-8',
           'cache-control': 'no-store',
@@ -1853,8 +2005,9 @@ export async function startFixture(
         // Resuming: what came after the id the client sends, as the server replays it.
         const given = String(req.headers['last-event-id'] ?? url.searchParams.get('lastEventId') ?? '')
         if (/^\d+$/.test(given))
-          for (const e of s.log) if (e.brain === slug && e.seq > Number(given)) res.write(e.frame)
-        const stream = { brain: slug, res }
+          for (const e of s.log)
+            if (e.brain === slug && e.seq > Number(given) && sees(viewer, e)) res.write(e.frame)
+        const stream = { brain: slug, res, viewer }
         s.streams.add(stream)
         req.on('close', () => s.streams.delete(stream))
         return

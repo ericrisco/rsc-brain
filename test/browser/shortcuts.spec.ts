@@ -45,7 +45,7 @@ test('each shortcut and its visible control do the same', async ({ page, context
   await page.locator('html[data-keys="on"]').waitFor({ state: 'attached' })
   await page.keyboard.press('Control+k')
   await expect(page.getByRole('dialog', { name: 'Search' })).toBeVisible()
-  await expect(page.getByLabel('Search all your brains')).toBeFocused()
+  await expect(page.getByLabel('Search for')).toBeFocused()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog', { name: 'Search' })).toBeHidden()
   // ⌘K: Playwright's Chromium on macOS keeps the real key press for the browser, so there the page gets
@@ -64,11 +64,11 @@ test('each shortcut and its visible control do the same', async ({ page, context
     .getByRole('button', { name: /Search/ })
     .click()
   await expect(page.getByRole('dialog', { name: 'Search' })).toBeVisible()
-  await page.getByLabel('Search all your brains').fill('retention')
+  await page.getByLabel('Search for').fill('retention')
   await page.keyboard.press('Enter')
   await expect(page.getByText(/\d+ results/)).toBeVisible()
   // Esc goes back even with text in the field.
-  await page.getByLabel('Search all your brains').press('Escape')
+  await page.getByLabel('Search for').press('Escape')
   await expect(page.getByRole('dialog', { name: 'Search' })).toBeHidden()
 
   // go-home: "g h" and the brand at the top left.
@@ -132,9 +132,9 @@ test('a letter typed in a field is text, not a shortcut', async ({ page, context
   await expect(page.getByRole('link', { name: 'Growth' })).toBeVisible()
   await page.locator('html[data-keys="on"]').waitFor({ state: 'attached' })
   await page.keyboard.press('Control+k')
-  await expect(page.getByLabel('Search all your brains')).toBeFocused()
+  await expect(page.getByLabel('Search for')).toBeFocused()
   await page.keyboard.type('g h ?')
-  await expect(page.getByLabel('Search all your brains')).toHaveValue('g h ?')
+  await expect(page.getByLabel('Search for')).toHaveValue('g h ?')
   await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toHaveCount(0)
 })
 

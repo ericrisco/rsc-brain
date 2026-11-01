@@ -65,6 +65,8 @@ export const ROUTE_TABLE = {
   proposalReview: { route: 'GET /v1/proposals/{id}/review' },
   approveProposal: { route: 'POST /v1/proposals/{id}/approve' },
   returnProposal: { route: 'POST /v1/proposals/{id}/return' },
+  // Health (PR23).
+  wikiHealth: { route: 'GET /v1/brains/{slug}/wiki/health' },
 } as const satisfies Record<string, Op>
 
 export type OpName = keyof typeof ROUTE_TABLE

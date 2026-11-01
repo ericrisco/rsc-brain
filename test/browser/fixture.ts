@@ -20,7 +20,17 @@ type Scenario = {
   // Every session ends on the server, while the web is open (the cookie stays in the browser).
   endSessions(): Promise<void>
   // An event in a brain, as an agent's write makes it (the open live streams hear it).
-  emit(brain: string, kind?: string): Promise<void>
+  emit(brain: string, kind?: string, o?: EmitOptions): Promise<void>
+  // The live events go down (open streams cut, new ones refused) or come back.
+  streams(down: boolean): Promise<void>
+}
+
+export type EmitOptions = {
+  who?: { id: string; name: string } | null
+  target?: { id: string; label: string }
+  client?: string | null
+  ref?: string | null
+  query?: string | null
 }
 
 export async function scenario(
@@ -29,7 +39,7 @@ export async function scenario(
   preset: Preset,
   states: States = {},
   // seeded: the brains' wiki is the seeded one of 300 or 5 000 pages (the graph, CA5 and CA6).
-  o: { mail?: boolean; seeded?: 300 | 5000 | 'lumpy' } = {},
+  o: { mail?: boolean; seeded?: 300 | 5000 | 'lumpy'; factoryUrl?: string } = {},
 ): Promise<Scenario> {
   const res = await fetch(`${baseURL}/__fixture/scenarios`, {
     method: 'POST',
@@ -39,6 +49,7 @@ export async function scenario(
       states,
       ...(o.mail === false ? { mail: false } : {}),
       ...(o.seeded ? { seeded: o.seeded } : {}),
+      ...(o.factoryUrl ? { factoryUrl: o.factoryUrl } : {}),
     }),
   })
   const { id } = (await res.json()) as { id: string }
@@ -59,11 +70,18 @@ export async function scenario(
     endSessions: async () => {
       await fetch(`${baseURL}/__fixture/scenarios/${id}/end-sessions`, { method: 'POST' })
     },
-    emit: async (brain, kind = 'entry.saved') => {
+    emit: async (brain, kind = 'entry.saved', more = {}) => {
       await fetch(`${baseURL}/__fixture/scenarios/${id}/emit`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ brain, kind }),
+        body: JSON.stringify({ brain, kind, ...more }),
+      })
+    },
+    streams: async (down) => {
+      await fetch(`${baseURL}/__fixture/scenarios/${id}/streams`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ down }),
       })
     },
   }

@@ -38,8 +38,9 @@ export async function emit(
   },
 ): Promise<void> {
   await db.query(
-    `INSERT INTO events (brain_id, at, kind, account_id, credential_id, ref, target_id, label, query, result_ids)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    `INSERT INTO events (brain_id, at, kind, account_id, credential_id, ref, target_id, label, query, result_ids,
+                         client)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       e.brainId,
       ctx.clock(),
@@ -51,6 +52,8 @@ export async function emit(
       e.label ? redact(e.label).text.slice(0, 200) : null,
       e.query == null ? null : redact(e.query).text.slice(0, 1000),
       e.resultIds ?? [],
+      // The client of the key, as the journal names it (domain/clients.ts); kept, never looked up again.
+      ctx.who?.client ? ctx.who.client.slice(0, 200) : null,
     ],
   )
 }
@@ -70,6 +73,7 @@ export type EventRow = {
   targetId: string | null
   label: string | null
   query: string | null
+  client: string | null
 }
 
 // Who follows a brain, and so which of its events they get (pack rule 7, the same rule as the trail of
@@ -100,6 +104,7 @@ const rowOf = (r: Row): EventRow => ({
   targetId: r.target_id == null ? null : String(r.target_id),
   label: r.label == null ? null : String(r.label),
   query: r.query == null ? null : String(r.query),
+  client: r.client == null ? null : String(r.client),
 })
 
 // The highest delivery number given so far.

@@ -60,7 +60,7 @@ test.describe('Sessions', () => {
     await page.getByLabel('Client').selectOption('Codex')
     await page.getByLabel('Author').selectOption({ label: 'Ana' })
     // Nothing applies until the button says so.
-    await expect(page.getByRole('list', { name: 'Sessions' }).getByRole('listitem')).toHaveCount(4)
+    await expect(page.getByRole('list', { name: 'Sessions' }).getByRole('listitem')).toHaveCount(5)
     await page.getByRole('button', { name: 'Apply filters' }).click()
     await expect(page).toHaveURL(/client=Codex/)
     await expect(page).toHaveURL(/author=acc_ana/)
@@ -81,7 +81,7 @@ test.describe('Sessions', () => {
     await page.getByRole('button', { name: 'Apply filters' }).click()
     await expect(page.getByRole('heading', { name: 'No results for these filters' })).toBeVisible()
     await page.getByRole('button', { name: 'Clear filters' }).first().click()
-    await expect(items).toHaveCount(4)
+    await expect(items).toHaveCount(5)
   })
 
   test('empty says how entries arrive; loading has its shape; an error recovers', async ({
@@ -114,7 +114,7 @@ test.describe('Sessions', () => {
     await page.goto(J)
     const items = page.getByRole('list', { name: 'Sessions' }).getByRole('listitem')
     await expect(items).toHaveCount(50)
-    await expect(page.getByText('504 sessions')).toBeVisible()
+    await expect(page.getByText('505 sessions')).toBeVisible()
     await noSideScroll(page)
     await page.getByRole('button', { name: 'Show more' }).click()
     await expect(items).toHaveCount(100)
@@ -483,7 +483,7 @@ test.describe('Entries open from elsewhere', () => {
       .locator('header')
       .getByRole('button', { name: /Search/ })
       .click()
-    await page.getByLabel('Search all your brains').fill('thirty')
+    await page.getByLabel('Search for').fill('thirty')
     await page.keyboard.press('Enter')
     const hit = page
       .getByRole('dialog', { name: 'Search' })

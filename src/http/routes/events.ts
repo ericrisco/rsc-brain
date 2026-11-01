@@ -29,6 +29,8 @@ export function eventOf(e: EventRow) {
     key: e.credentialId ? { id: e.credentialId, ref: e.ref } : null,
     target: e.targetId || e.label ? { id: e.targetId, label: e.label } : null,
     query: e.query,
+    // G13 (spec B6 «Activity»): the client of the key that did it, for filtering by client.
+    client: e.client,
   }
 }
 

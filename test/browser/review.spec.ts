@@ -91,7 +91,7 @@ test.describe('R4: a session that ends mid-use', () => {
     await expect(page.getByRole('link', { name: 'Growth' })).toBeVisible()
     await page.locator('html[data-keys="on"]').waitFor({ state: 'attached' })
     await page.keyboard.press('Control+k')
-    await page.getByLabel('Search all your brains').fill('retention')
+    await page.getByLabel('Search for').fill('retention')
     await s.endSessions()
     await page.keyboard.press('Enter')
     await expect(page).toHaveURL(/\/sign-in\?next=%2F%3Ffrom%3Dmail$/)

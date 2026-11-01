@@ -246,7 +246,7 @@ test.describe('U5: the small things', () => {
     await page.keyboard.press('Control+k')
     const search = page.getByRole('dialog', { name: 'Search' })
     await expect(search).toContainText('There is nothing to search yet')
-    await expect(search.getByLabel('Search all your brains')).toHaveCount(0)
+    await expect(search.getByLabel('Search for')).toHaveCount(0)
   })
 
   test('the setup page logo is not a link to sign in', async ({ page, context, baseURL }) => {

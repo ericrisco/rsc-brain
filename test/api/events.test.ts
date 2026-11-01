@@ -19,6 +19,7 @@ type Ev = {
     key: { id: string; ref: string | null } | null
     target: { id: string; label: string | null } | null
     query: string | null
+    client?: string | null
     message?: string
     reason?: string
   }
@@ -396,5 +397,97 @@ describe('the event stream of a brain', { skip: skipPg }, () => {
     await again.waitEnd(5000)
     assert.ok(again.ended())
     assert.equal(again.events.find((e) => e.event === 'closed')?.data.reason, 'role_changed')
+  })
+
+  // Spec B6 «Activity», G13: each event names the client of the key that did it, as the journal names it
+  // (the web for a person's web session, the agent of a short key, else the program), so Activity filters
+  // by client.
+  it('G13: an event names its client: the web, the agent of a short key, or the program of a token', async () => {
+    const f = await subscribe(factory.key)
+    const agent = (
+      await w.call(factory.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'yt',
+        ref: 'run r_9',
+        agent: 'claude-code',
+        ttlMinutes: 60,
+      })
+    ).body.key as { id: string; secret: string }
+    assert.equal(
+      (
+        await w.callWeb(ericWeb, 'POST', '/v1/brains/yt/entries', {
+          type: 'note',
+          title: 'From the web',
+          content: 'x',
+        })
+      ).status,
+      201,
+    )
+    await w.call(agent.secret, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'From the agent',
+      content: 'x',
+    })
+    const web = await f.waitFor((e) => e.data.target?.label === 'From the web')
+    const short = await f.waitFor((e) => e.data.target?.label === 'From the agent')
+    assert.equal(web.data.client, 'web')
+    assert.equal(short.data.client, 'claude-code')
+    // Resumed, the same names: the client is kept with the event, not looked up again.
+    const back = await subscribe(factory.key, 'yt', { lastEventId: String(Number(web.id) - 1) })
+    const again = await back.waitFor((e) => e.data.target?.label === 'From the agent')
+    assert.equal(again.data.client, 'claude-code')
+    f.close()
+    back.close()
+  })
+
+  // Spec B6 CA6b: Activity follows pack rule 7 on the server, live and when resuming. Ana's agent searches;
+  // Bob, a contributor who is not Ana, never gets those searches; Eric, a curator, does; Ana does too.
+  it("CA6b: a contributor never gets Ana's agent's searches, live or replayed; a curator and Ana do", async () => {
+    const anaAgent = await w.call(ana.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'Ana marks the start',
+      content: 'x',
+    })
+    assert.equal(anaAgent.status, 201)
+    const bobLive = await subscribe(bob.key)
+    const start = await bobLive
+      .waitFor((e) => e.data.target?.label === 'Ana marks the start', 3000)
+      .catch(() => null)
+    const from = start ? String(Number(start.id) - 1) : '0'
+    await w.call(ana.key, 'GET', '/v1/search?q=ana-secret-plans')
+    await w.call(ana.key, 'GET', '/v1/brains/yt/pages/audience/retention')
+    await w.call(ana.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'Ana writes',
+      content: 'x',
+    })
+    await bobLive.waitFor((e) => e.data.target?.label === 'Ana writes')
+    const looks = (s: Stream) =>
+      s.events.filter(
+        (e) => (e.data.kind === 'search' || e.data.kind === 'read') && e.data.who?.id === ana.id,
+      )
+    assert.deepEqual(looks(bobLive), [], 'live')
+    for (const [who, key, sees] of [
+      ['Bob', bob.key, false],
+      ['Eric', eric.key, true],
+      ['Ana', ana.key, true],
+    ] as const) {
+      const back = await subscribe(key, 'yt', { lastEventId: from })
+      await back.waitFor((e) => e.data.target?.label === 'Ana writes')
+      const got = looks(back)
+      if (sees) {
+        assert.ok(
+          got.some((e) => e.data.kind === 'search' && e.data.query === 'ana-secret-plans'),
+          `${who} gets the search`,
+        )
+        assert.ok(
+          got.some((e) => e.data.kind === 'read'),
+          `${who} gets the read`,
+        )
+      } else assert.deepEqual(got, [], `${who} gets no search or read of Ana's when resuming`)
+      // Writes reach everyone.
+      assert.ok(back.events.some((e) => e.data.target?.label === 'Ana writes'))
+      back.close()
+    }
+    bobLive.close()
   })
 })
