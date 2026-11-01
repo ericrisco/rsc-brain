@@ -41,7 +41,6 @@ const WIKI_SETTINGS = obj({
   longChars: n('Characters after which a page counts as long.'),
   maintenanceEvery: n('Approvals between maintenance suggestions.'),
   approvalsSince: n('Approvals since the last maintenance suggestion.'),
-  revision: s('The revision of what people edit; send it back to save on top of it.'),
 })
 const MEMBER_SET = obj({
   accountId: s('Account id.'),
@@ -1564,15 +1563,19 @@ const HAND: Record<string, Op> = {
   // The settings of a brain and the administration of people and service accounts (B6 PR25a).
   'GET /v1/brains/{slug}/wiki/settings': {
     summary:
-      'The settings of a brain: compile guide, usage note, meaning search and health thresholds, with the default texts and a revision (G11). Members read them.',
+      'The settings of a brain: compile guide, usage note, meaning search and health thresholds, with the default texts (G11). Members read them.',
     reply: WIKI_SETTINGS,
   },
   'PUT /v1/brains/{slug}/wiki/settings': {
     summary:
-      'Change the settings of a brain (curators, in the rsc-brain web). With "revision", a save on settings someone changed since is refused (settings_changed).',
+      'Change the settings of a brain (curators, in the rsc-brain web). With "base" (each field as you read it), a save of a field someone changed since is refused (settings_changed, with "current"); fields not sent are never touched.',
     body: obj(
       {
-        revision: s('The revision read; leave it out to save regardless.'),
+        base: {
+          type: 'object',
+          description:
+            'What each field you change was when you read it ({"staleDays": 90}; the guide is null while it is the default). Leave it out to save regardless.',
+        },
         guide: nul(s('The compile guide; null for the default.')),
         mapIntro: s('The intro of the wiki map.'),
         usageNote: s('The note that opens every start-up context (at most 2 000 characters).'),

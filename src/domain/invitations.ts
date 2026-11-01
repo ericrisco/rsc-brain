@@ -20,6 +20,7 @@ import { mintWebSession } from './keys.ts'
 
 export const INVITE_HOURS = 72
 export const MAX_EMAILS = 50
+export const RESEND_EVERY_MS = 60_000
 
 export type Grant = { brainId: string; role: Role }
 
@@ -397,6 +398,23 @@ export async function resendInvitation(ctx: Ctx, id: string): Promise<Invited> {
         'This invitation was already used or withdrawn.',
         'Invite the email again if it still needs access.',
       )
+    }
+    // One new link a minute per invitation: a mailbox is not flooded, and links are not churned.
+    const last = await db.one<{ at: Date }>(
+      `SELECT max(at) AS at FROM audit WHERE action = 'invitation.resend' AND target = $1 AND outcome = 'ok'`,
+      [String(r.email)],
+    )
+    const wait = last?.at ? Math.ceil((last.at.getTime() + RESEND_EVERY_MS - now.getTime()) / 1000) : 0
+    if (wait > 0) {
+      const e = new AppError(
+        429,
+        'too_soon',
+        'A new link for this invitation was made less than a minute ago.',
+        `Wait ${wait} s, then make another; the last link still works.`,
+      )
+      e.extra = { retryAfter: wait }
+      e.headers = { 'retry-after': String(wait) }
+      throw e
     }
     await db.query('UPDATE invitations SET token_hash = $2, expires_at = $3 WHERE id = $1', [
       id,

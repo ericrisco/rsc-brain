@@ -7,6 +7,7 @@ import { newId } from '../core/ids.ts'
 import type { Db } from '../db/db.ts'
 import { accountByEmail } from './accounts.ts'
 import { allow, type Brain, brainOf, type Ctx, inBrain, ok } from './context.ts'
+import { inWeb } from './guards.ts'
 import { sendInvitation, storeInvitation } from './invitations.ts'
 
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
@@ -174,7 +175,9 @@ export async function setArchived(ctx: Ctx, slug: string, archived: boolean): Pr
 
 // Only the administration deletes, typing the brain's name. The administration does not need to be
 // a member to delete; exporting first (spec B7) does need it.
+// Deleting is done in the web, signed in as a person: an administrator's token cannot.
 export async function deleteBrain(ctx: Ctx, slug: string, confirm: string): Promise<void> {
+  inWeb(ctx, 'Deleting a brain')
   await allow(ctx, 'brain.delete', {})
   await ctx.db.tx(async (db) => {
     const row = await db.one<{ id: string }>('SELECT id FROM brains WHERE slug = $1 FOR UPDATE', [slug])

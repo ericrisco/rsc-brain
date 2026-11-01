@@ -2,7 +2,6 @@
 // same operations, checked the same way, written by the same applier, so history and log show it like
 // an approved proposal. An edit goes against a revision: if the page moved on, nothing is saved and the
 // current version comes back (CA10). Also the curator's settings: the compile guide and the map intro.
-import { createHash } from 'node:crypto'
 import { conflict, invalid } from '../../core/errors.ts'
 import { redact } from '../../privacy/redact.ts'
 import { allow, type Ctx, inBrain } from '../context.ts'
@@ -64,9 +63,10 @@ export async function directChange(
 }
 
 export type SettingsInput = {
-  // The revision the person read (G11): a save on an older one is refused, so two curators editing at
-  // once never overwrite each other unseen. Left out, the save goes as before (programs).
-  revision?: string
+  // What each field was when the person read it (G11, per-field compare-and-set): a save of a field
+  // someone changed since is refused with what is there now, so two curators editing at once never
+  // overwrite each other unseen; fields not sent are never touched. Left out, a save goes as before.
+  base?: Partial<Record<SettingsField, unknown>>
   guide?: string | null
   mapIntro?: string
   usageNote?: string
@@ -76,24 +76,29 @@ export type SettingsInput = {
   maintenanceEvery?: number
 }
 
-// The settings as the brain's settings screen reads them (G11): the default texts beside the current
-// ones, and a revision of what people edit (not the count of approvals, which moves by itself).
-export type SettingsView = WikiSettings & { guideDefault: string; usageNoteDefault: string; revision: string }
+// The fields a person edits (not the count of approvals, which moves by itself).
+export const SETTINGS_FIELDS = [
+  'guide',
+  'mapIntro',
+  'usageNote',
+  'meaningExcluded',
+  'staleDays',
+  'longChars',
+  'maintenanceEvery',
+] as const
+export type SettingsField = (typeof SETTINGS_FIELDS)[number]
+
+// The settings as the brain's settings screen reads them (G11): the default texts beside the current ones.
+export type SettingsView = WikiSettings & { guideDefault: string; usageNoteDefault: string }
 export const USAGE_NOTE_DEFAULT = ''
 
 export function settingsView(s: WikiSettings): SettingsView {
-  const edited = [
-    s.customGuide ? s.guide : null,
-    s.mapIntro,
-    s.usageNote,
-    s.meaningExcluded,
-    s.staleDays,
-    s.longChars,
-    s.maintenanceEvery,
-  ]
-  const revision = createHash('sha256').update(JSON.stringify(edited)).digest('hex').slice(0, 24)
-  return { ...s, guideDefault: DEFAULT_GUIDE, usageNoteDefault: USAGE_NOTE_DEFAULT, revision }
+  return { ...s, guideDefault: DEFAULT_GUIDE, usageNoteDefault: USAGE_NOTE_DEFAULT }
 }
+
+// A field as stored and compared: the guide is null while it is the default.
+const stored = (s: WikiSettings, f: SettingsField): unknown =>
+  f === 'guide' ? (s.customGuide ? s.guide : null) : s[f]
 
 // Any member reads them: the guide and the note already reach every member's agents.
 export async function getWikiSettings(ctx: Ctx, slug: string): Promise<SettingsView> {
@@ -102,7 +107,9 @@ export async function getWikiSettings(ctx: Ctx, slug: string): Promise<SettingsV
 }
 
 export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput): Promise<SettingsView> {
-  const guide = s.guide === undefined || s.guide === null ? s.guide : redact(s.guide.trim()).text
+  let guide = s.guide === undefined || s.guide === null ? s.guide : redact(s.guide.trim()).text
+  // The default text itself is the default: stored as null, so the brain follows it as it improves.
+  if (typeof guide === 'string' && guide === DEFAULT_GUIDE.trim()) guide = null
   const mapIntro = s.mapIntro === undefined ? undefined : redact(s.mapIntro.trim()).text
   const usageNote = s.usageNote === undefined ? undefined : redact(s.usageNote.trim()).text
   if (guide !== undefined && guide !== null && (!guide || guide.length > 20_000)) {
@@ -132,14 +139,19 @@ export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput):
     await db.query('INSERT INTO wiki_settings (brain_id) VALUES ($1) ON CONFLICT (brain_id) DO NOTHING', [
       brain.id,
     ])
-    if (s.revision !== undefined) {
+    if (s.base) {
+      // Saves of this brain's settings take turns from here, so two on the same value cannot both pass.
       await db.query('SELECT 1 FROM wiki_settings WHERE brain_id = $1 FOR UPDATE', [brain.id])
-      if (settingsView(await settingsOf(db, brain.id)).revision !== s.revision) {
-        throw conflict(
+      const now = await settingsOf(db, brain.id)
+      const moved = (Object.keys(s.base) as SettingsField[]).filter((f) => stored(now, f) !== s.base?.[f])
+      if (moved.length) {
+        const e = conflict(
           'settings_changed',
-          `Someone changed the settings of "${slug}" since you opened them.`,
-          'Read them again, then save your change on top.',
+          `Someone changed ${moved.join(', ')} of "${slug}" since you read ${moved.length === 1 ? 'it' : 'them'}.`,
+          'Read the current values in "current", then save your change again on top of them.',
         )
+        e.current = settingsView(now)
+        throw e
       }
     }
     const sets: string[] = []

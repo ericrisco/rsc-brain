@@ -62,10 +62,47 @@ test.describe('administration: people', () => {
     await expect(eric).toContainText('The installation always keeps an administrator')
     const ana = person(page, 'ana@example.test')
     await ana.getByRole('button', { name: 'Make administrator: Ana' }).click()
-    await expect(page.getByRole('status').filter({ hasText: 'Ana is now an administrator.' })).toBeVisible()
+    // Asked first, saying what it gives.
+    const dialog = page.getByRole('dialog', { name: 'Make Ana an administrator?' })
+    await expect(dialog).toContainText('can delete brains')
+    await dialog.getByRole('button', { name: 'Make administrator: Ana' }).click()
+    // The keyboard lands on what the change says, not on the page.
+    await expect(page.getByRole('status').filter({ hasText: 'Ana is now an administrator.' })).toBeFocused()
     await expect(
       eric.getByRole('button', { name: 'Remove administrator rights from Eric' }),
     ).not.toHaveAttribute('aria-disabled', 'true')
+    // Removing my own rights: asked, then the administration closes and says why.
+    await eric.getByRole('button', { name: 'Remove administrator rights from Eric' }).click()
+    const self = page.getByRole('dialog', { name: "Remove Eric's administrator rights?" })
+    await expect(self).toContainText('leave the administration')
+    await self.getByRole('button', { name: 'Remove administrator rights from Eric' }).click()
+    await expect(page.locator('[data-state="forbidden"]')).toContainText(
+      'You removed your own administrator rights',
+    )
+    await page.getByRole('button', { name: /Account/ }).click()
+    await expect(page.locator('#account-menu').getByRole('link', { name: 'Administration' })).toHaveCount(0)
+  })
+
+  test('find people by name, email or status; a filter with nothing offers to clear it; many people go by pages', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', { people: 'much-data' })
+    await page.goto('/admin/people')
+    const list = page.getByRole('region', { name: 'People in this installation' })
+    await expect(list.locator('li[data-person]')).toHaveCount(20)
+    await list.getByRole('button', { name: /Show 20 more/ }).click()
+    await expect(list.locator('li[data-person]')).toHaveCount(40)
+    await list.getByLabel('Find by name or email').fill('person41@')
+    await expect(list.locator('li[data-person]')).toHaveCount(1)
+    await list.getByLabel('Find by name or email').fill('ana@')
+    await expect(list.locator('li[data-person]')).toHaveCount(1)
+    await list.getByLabel('Status').selectOption('removed')
+    await expect(list.locator('[data-state="filtered-empty"]')).toContainText('No results for these filters.')
+    await list.getByRole('button', { name: 'Clear filters' }).click()
+    await expect(list.getByLabel('Find by name or email')).toBeFocused()
+    await expect(list.locator('li[data-person]')).toHaveCount(20)
   })
 
   test('let someone create brains, and stop it', async ({ page, context, baseURL }) => {
@@ -73,7 +110,7 @@ test.describe('administration: people', () => {
     await page.goto('/admin/people')
     const ana = person(page, 'ana@example.test')
     await ana.getByRole('button', { name: 'Let create brains: Ana' }).click()
-    await expect(page.getByRole('status').filter({ hasText: 'Ana can create brains.' })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: 'Ana can create brains.' })).toBeFocused()
     await ana.getByRole('button', { name: 'Stop creating brains: Ana' }).click()
     await expect(
       page.getByRole('status').filter({ hasText: 'Ana can no longer create brains.' }),
@@ -93,7 +130,7 @@ test.describe('administration: people', () => {
     await expect(dialog).toContainText('signed out everywhere')
     await expect(dialog).toContainText('What Ana wrote stays')
     await dialog.getByRole('button', { name: 'Deactivate Ana' }).click()
-    await expect(page.getByRole('status').filter({ hasText: 'Ana is deactivated.' })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: 'Ana is deactivated.' })).toBeFocused()
     await expect(ana).toContainText('deactivated')
     await ana.getByRole('button', { name: 'Reactivate Ana' }).click()
     await expect(page.getByRole('status').filter({ hasText: 'Ana is active again.' })).toBeVisible()
@@ -147,6 +184,10 @@ test.describe('administration: invitations', () => {
     await expect(list.getByRole('listitem')).toContainText('cy@example.test')
     await list.getByLabel('Show').selectOption('used')
     await expect(list.getByRole('listitem')).toContainText('ana@example.test')
+    await list.getByLabel('Show').selectOption('revoked')
+    await expect(list.locator('[data-state="filtered-empty"]')).toBeVisible()
+    await list.getByRole('button', { name: 'Show all invitations' }).click()
+    await expect(list.getByLabel('Show')).toHaveValue('all')
     await list.getByLabel('Show').selectOption('pending')
     const bo = list.getByRole('listitem').filter({ hasText: 'bo@example.test' })
     await bo.getByRole('button', { name: 'New link for bo@example.test' }).click()
@@ -246,9 +287,51 @@ test.describe('administration: service accounts', () => {
     )
     const oldKey = svc.getByRole('listitem').filter({ hasText: '…F4ct' })
     await oldKey.getByRole('button', { name: 'Revoke …F4ct' }).click()
+    await expect(oldKey.getByRole('button', { name: 'Revoke …F4ct and its short keys' })).toBeFocused()
     await oldKey.getByRole('button', { name: 'Revoke …F4ct and its short keys' }).click()
-    await expect(page.getByRole('status').filter({ hasText: 'Key …F4ct revoked.' })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: 'Key …F4ct revoked.' })).toBeFocused()
     await expect(svc.getByRole('listitem').filter({ hasText: '…F4ct' })).toContainText('revoked')
+  })
+
+  test('a service account is deactivated in its own words, and the keyboard lands on what happened', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/admin/services')
+    const svc = page
+      .getByRole('region', { name: 'Service accounts' })
+      .getByRole('listitem')
+      .filter({ hasText: 'Factory runner' })
+      .first()
+    await svc.getByRole('button', { name: 'Deactivate Factory runner' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Deactivate Factory runner?' })
+    await expect(dialog).toContainText('main keys stop working')
+    await expect(dialog).not.toContainText('signed out')
+    await expect(dialog).not.toContainText('connected apps')
+    await dialog.getByRole('button', { name: 'Deactivate Factory runner' }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Factory runner is deactivated.' })).toBeFocused()
+    await expect(svc).toContainText('deactivated')
+    // A new one that was never used says so in its words.
+    const form = page.getByRole('form', { name: 'New service account' })
+    await form.getByLabel('Name').fill('Fresh runner')
+    await form.getByRole('button', { name: 'Create service account' }).click()
+    await page
+      .getByRole('region', { name: 'Main key of Fresh runner' })
+      .getByRole('button', { name: 'Done, hide the key' })
+      .click()
+    const fresh = page
+      .getByRole('region', { name: 'Service accounts' })
+      .getByRole('listitem')
+      .filter({ hasText: 'Fresh runner' })
+      .first()
+    await expect(fresh).toContainText('never used')
+    await expect(fresh).not.toContainText('signed in')
+    // With its only key revoked, it says it has none working.
+    await fresh.getByRole('button', { name: /^Revoke …/ }).click()
+    await fresh.getByRole('button', { name: /and its short keys$/ }).click()
+    await expect(fresh).toContainText('No main key: make one to use this account.')
   })
 
   test('a key shown is forgotten when the page goes to the back/forward cache', async ({

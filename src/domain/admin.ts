@@ -329,7 +329,7 @@ export async function newMainKey(ctx: Ctx, serviceId: string, name: unknown): Pr
       serviceId,
     ])
     if (!a) throw notFound('service account')
-    if (a.status !== 'active') throw invalid('This service account was removed.', 'Reactivate it first.')
+    if (a.status !== 'active') throw invalid('This service account is deactivated.', 'Reactivate it first.')
     const open = await db.one<{ n: number }>(
       "SELECT count(*)::int AS n FROM credentials WHERE account_id = $1 AND kind = 'main' AND revoked_at IS NULL",
       [serviceId],

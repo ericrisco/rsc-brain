@@ -93,11 +93,10 @@ const SHAPES: Record<string, Record<string, string[]>> = {
       'staleDays',
       'longChars',
       'maintenanceEvery',
-      'revision',
     ],
   },
   'PUT /v1/brains/{slug}/wiki/settings': {
-    '': ['guide', 'customGuide', 'usageNote', 'meaningExcluded', 'revision'],
+    '': ['guide', 'customGuide', 'usageNote', 'meaningExcluded'],
   },
   'GET /v1/admin/accounts/{id}/keys': {
     'keys[]': ['id', 'kind', 'name', 'last4', 'createdAt', 'lastUsedAt', 'status'],
@@ -833,7 +832,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
     out['PUT /v1/brains/{slug}/wiki/settings'] = (
       await w.callWeb(ericWeb, 'PUT', '/v1/brains/contract/wiki/settings', {
         usageNote: 'Contract note.',
-        revision: read.body.revision,
+        base: { usageNote: read.body.usageNote },
       })
     ).body
     return out
@@ -1210,12 +1209,22 @@ describe('the v1 contract', { skip: skipPg }, () => {
       'settings_changed',
       w.callWeb(soloWeb, 'PUT', '/v1/brains/solo/wiki/settings', {
         staleDays: 13,
-        revision: readFirst.body.revision,
+        base: { staleDays: readFirst.body.staleDays },
       }),
     )
     const svc = await w.callWeb(bossWeb, 'POST', '/v1/admin/services', { name: 'Two keys' })
     const svcId = String((svc.body.account as Json).id)
     await w.callWeb(bossWeb, 'POST', `/v1/admin/services/${svcId}/keys`, {})
+    await add(
+      'already_member',
+      w.callWeb(soloWeb, 'POST', '/v1/brains/solo/members', { account: eric.id, role: 'curator' }),
+    )
+    const slow = await w.callWeb(bossWeb, 'POST', '/v1/invitations', {
+      emails: ['slow-contract@example.com'],
+    })
+    const slowId = String((slow.body.invitations as Json[])[0]?.id)
+    await w.callWeb(bossWeb, 'POST', `/v1/invitations/${slowId}/resend`)
+    await add('too_soon', w.callWeb(bossWeb, 'POST', `/v1/invitations/${slowId}/resend`))
     await add('too_many_main_keys', w.callWeb(bossWeb, 'POST', `/v1/admin/services/${svcId}/keys`, {}))
     // Every other administrator steps down; the last one cannot.
     const admins = (await w.callWeb(bossWeb, 'GET', '/v1/admin/accounts')).body.accounts as Json[]

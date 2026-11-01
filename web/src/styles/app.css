@@ -3842,3 +3842,70 @@ dialog.search-dialog {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Fixes of PR25a: headings of the settings parts stronger than field labels; folded guide. */
+.part-heading {
+  font: 600 18px / 1.3 var(--sans);
+  color: var(--text);
+}
+
+.part-heading:focus {
+  outline: none;
+}
+
+.settings-tab {
+  display: grid;
+  gap: 40px;
+  max-width: 760px;
+}
+
+.folded {
+  max-height: 5.5em;
+  overflow: hidden;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.plain-list {
+  display: grid;
+  gap: 6px;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.theirs-values {
+  display: grid;
+  gap: 2px;
+}
+
+.admin-list > li.with-actions {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.admin-actions {
+  flex-direction: row;
+  justify-content: flex-start;
+}
+
+.admin-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 180px);
+  gap: 12px;
+  align-items: end;
+}
+
+@media (max-width: 479px) {
+  .admin-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The actions of a person, a service account or a member sit in one wrapping row, not a column. */
+.list > li.with-actions > div.admin-actions,
+.list > li.with-actions > div.member-actions {
+  display: flex;
+  flex-flow: row wrap;
+  align-items: center;
+  gap: 8px 12px;
+}

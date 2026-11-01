@@ -154,10 +154,10 @@ test('archiving: the brain refuses an agent write until it is unarchived', async
       headers: { authorization: `Bearer ${secret}` },
       data: { type: 'note', title, content: `${title}.` },
     })
-  await page.goto(`/b/${slug}/settings`)
+  await page.goto(`/b/${slug}/settings/archive`)
   await region(page, 'Archive').getByRole('button', { name: 'Archive this brain' }).click()
   const dialog = page.getByRole('dialog', { name: 'Archive Settings archive?' })
-  await expect(dialog).toContainText('No one can write to it')
+  await expect(dialog).toContainText('What stops')
   await dialog.getByRole('button', { name: 'Archive Settings archive' }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Settings archive is archived.' })).toBeVisible()
   const refused = await write('While archived')

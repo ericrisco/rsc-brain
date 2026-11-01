@@ -184,6 +184,9 @@ export const ERROR_STATUS: Record<string, number> = {
   last_admin: 409,
   too_many_main_keys: 409,
   settings_changed: 409,
+  // Fixes of PR25a: adding someone already in the brain; a new invitation link sooner than a minute.
+  already_member: 409,
+  too_soon: 429,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }

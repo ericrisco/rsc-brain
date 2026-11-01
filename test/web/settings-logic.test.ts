@@ -6,13 +6,14 @@ import { repoKey as serverRepoKey } from '../../src/domain/repos.ts'
 import {
   type AdminAccount,
   memberRows,
-  type ProfileOfSettings,
   peopleRows,
   refsLabel,
   repoKey,
   rolesLabel,
-  savedSettings,
+  type SettingsRead,
   serviceRows,
+  settingsSave,
+  textDrafts,
   thresholdProblems,
 } from '../../web/src/lib/settings.ts'
 
@@ -32,6 +33,17 @@ describe('repository addresses, as brain_resolve matches them', () => {
     '   ',
     'https://github.com/../etc',
     'git+ssh://git@github.com:22/org/repo.git',
+    // Fixes of PR25a: relative paths and a bare org/repo name no host; git:// on its own port; case.
+    './app',
+    '../app',
+    'org/repo',
+    'gitserver/team/app',
+    'localhost/team/app',
+    'git@gitserver:team/app',
+    'git://host.example:9418/A/b.git/',
+    'git://host.example:9419/a/b',
+    'GIT@GitHub.com:Org/Repo.git/',
+    'ssh://git@host.example/a/b//',
   ]
   for (const c of cases) {
     it(`the web reads "${c}" exactly as the server does`, () => {
@@ -74,6 +86,17 @@ describe('health thresholds', () => {
     assert.deepEqual(thresholdProblems({ staleDays: '90', longChars: '20000', maintenanceEvery: '20' }), {})
     const p = thresholdProblems({ staleDays: '0', longChars: '999', maintenanceEvery: '1001' })
     assert.deepEqual(Object.keys(p).sort(), ['longChars', 'maintenanceEvery', 'staleDays'])
+    // The bounds themselves are in.
+    assert.deepEqual(
+      thresholdProblems({ staleDays: '3650', longChars: '100000', maintenanceEvery: '1000' }),
+      {},
+    )
+    assert.deepEqual(thresholdProblems({ staleDays: '1', longChars: '1000', maintenanceEvery: '1' }), {})
+    assert.deepEqual(
+      Object.keys(thresholdProblems({ staleDays: '3651', longChars: '100001', maintenanceEvery: '1001' }))
+        .length,
+      3,
+    )
     assert.match(String(p.staleDays), /1 to 3650/)
     assert.deepEqual(
       Object.keys(thresholdProblems({ staleDays: '1.5', longChars: 'x', maintenanceEvery: '' })).sort(),
@@ -82,29 +105,55 @@ describe('health thresholds', () => {
   })
 })
 
-describe('what a save sends', () => {
-  const read: ProfileOfSettings = {
+describe('what a save sends: only the fields changed, each with the value it was based on', () => {
+  const read: SettingsRead = {
     guide: 'Default guide.',
     guideDefault: 'Default guide.',
     customGuide: false,
     usageNote: '',
     usageNoteDefault: '',
-    revision: 'r1',
+    meaningExcluded: false,
+    staleDays: 90,
+    longChars: 20000,
+    maintenanceEvery: 20,
   }
-  it('the default guide, unchanged, stays the default (null), never a copy of it', () => {
-    assert.deepEqual(savedSettings(read, { guide: 'Default guide.' }), { revision: 'r1', guide: null })
-    assert.deepEqual(savedSettings(read, { guide: 'Ours.' }), { revision: 'r1', guide: 'Ours.' })
+  it('the default guide, unchanged, sends nothing', () => {
+    assert.equal(settingsSave(read, { guide: 'Default guide.' }), null)
   })
-  it('reset to default sends null; an empty guide is the default too', () => {
+  it('a custom guide goes with the base it was written on (null while the default)', () => {
+    assert.deepEqual(settingsSave(read, { guide: 'Ours.' }), { guide: 'Ours.', base: { guide: null } })
     const custom = { ...read, guide: 'Ours.', customGuide: true }
-    assert.deepEqual(savedSettings(custom, { guide: '' }), { revision: 'r1', guide: null })
-    assert.deepEqual(savedSettings(custom, { guide: '  Default guide.\n' }), { revision: 'r1', guide: null })
-  })
-  it('the usage note goes as written, trimmed', () => {
-    assert.deepEqual(savedSettings(read, { usageNote: '  Use ticket ids. ' }), {
-      revision: 'r1',
-      usageNote: 'Use ticket ids.',
+    assert.deepEqual(settingsSave(custom, { guide: '' }), { guide: null, base: { guide: 'Ours.' } })
+    assert.deepEqual(settingsSave(custom, { guide: '  Default guide.\n' }), {
+      guide: null,
+      base: { guide: 'Ours.' },
     })
+  })
+  it('the usage note goes trimmed, with its base', () => {
+    assert.deepEqual(settingsSave(read, { usageNote: '  Use ticket ids. ' }), {
+      usageNote: 'Use ticket ids.',
+      base: { usageNote: '' },
+    })
+  })
+  it('thresholds: only those that changed, as numbers', () => {
+    assert.deepEqual(settingsSave(read, { staleDays: 30, longChars: 20000, maintenanceEvery: 20 }), {
+      staleDays: 30,
+      base: { staleDays: 90 },
+    })
+    assert.equal(settingsSave(read, { staleDays: 90, longChars: 20000, maintenanceEvery: 20 }), null)
+  })
+})
+
+describe('drafts of the settings texts live in memory only', () => {
+  it('kept by account, brain and part; cleared one by one and all at sign-out', () => {
+    textDrafts.set('acc_a', 'growth', 'guide', 'secret pasted')
+    textDrafts.set('acc_b', 'growth', 'guide', 'other')
+    assert.equal(textDrafts.get('acc_a', 'growth', 'guide'), 'secret pasted')
+    assert.equal(textDrafts.get('acc_a', 'growth', 'usage'), undefined)
+    textDrafts.clear('acc_a', 'growth', 'guide')
+    assert.equal(textDrafts.get('acc_a', 'growth', 'guide'), undefined)
+    textDrafts.clearAll()
+    assert.equal(textDrafts.get('acc_b', 'growth', 'guide'), undefined)
   })
 })
 

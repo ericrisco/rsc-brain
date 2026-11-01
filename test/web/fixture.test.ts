@@ -383,6 +383,9 @@ describe('the fixture API', () => {
       (await call('POST', `/v1/invitations/${inv?.id}/resend`, { scenario: s.id, cookie, body: {} })).status,
       200,
     )
+    // One new link a minute per invitation.
+    const soon = await call('POST', `/v1/invitations/${inv?.id}/resend`, { scenario: s.id, cookie, body: {} })
+    assert.equal((soon.body as { error: { code: string } }).error.code, 'too_soon')
     assert.equal((await call('DELETE', `/v1/invitations/${inv?.id}`, { scenario: s.id, cookie })).status, 200)
     const closed = await call('POST', `/v1/invitations/${inv?.id}/resend`, {
       scenario: s.id,
@@ -985,20 +988,38 @@ describe('the fixture API', () => {
     const o = { scenario: s.id, cookie: s.cookie }
     type E = { error: { code: string } }
     const code = (a: Ans) => (a.body as E).error?.code
-    // Settings: read with a revision, saved on it, refused on an old one.
+    // Settings: each field saved on the value it was read; another field never conflicts.
     const read = await call('GET', '/v1/brains/growth/wiki/settings', o)
     assert.equal(read.status, 200)
-    const rev = (read.body as { revision: string }).revision
     const saved = await call('PUT', '/v1/brains/growth/wiki/settings', {
       ...o,
-      body: { usageNote: 'Ids.', revision: rev },
+      body: { usageNote: 'Ids.', base: { usageNote: '' } },
     })
     assert.equal(saved.status, 200)
+    assert.equal(
+      (
+        await call('PUT', '/v1/brains/growth/wiki/settings', {
+          ...o,
+          body: { staleDays: 5, base: { staleDays: 90 } },
+        })
+      ).status,
+      200,
+    )
     const late = await call('PUT', '/v1/brains/growth/wiki/settings', {
       ...o,
-      body: { staleDays: 5, revision: rev },
+      body: { usageNote: 'Late.', base: { usageNote: '' } },
     })
     assert.equal(code(late), 'settings_changed')
+    assert.equal((late.body as { error: { current: { usageNote: string } } }).error.current.usageNote, 'Ids.')
+    assert.equal(
+      code(
+        await call('PUT', '/v1/brains/growth/wiki/settings', {
+          ...o,
+          body: { staleDays: 6, base: { nope: 1 } },
+        }),
+      ),
+      'invalid_request',
+    )
     assert.equal(
       code(await call('PUT', '/v1/brains/growth/wiki/settings', { ...o, body: { staleDays: 0 } })),
       'invalid_request',
@@ -1013,16 +1034,17 @@ describe('the fixture API', () => {
       (
         await call('POST', '/v1/brains/support/members', {
           ...o,
-          body: { account: 'ana@example.test', role: 'reader' },
+          body: { account: 'acc_svc_factory', role: 'reader' },
         })
       ).status,
       201,
     )
-    const added = await call('POST', '/v1/brains/growth/members', {
+    // Someone already in the brain is not added again: the role changes in the list.
+    const again = await call('POST', '/v1/brains/growth/members', {
       ...o,
       body: { account: 'ana@example.test', role: 'reader' },
     })
-    assert.equal(added.status, 201)
+    assert.equal(code(again), 'already_member')
     assert.equal(
       code(
         await call('POST', '/v1/brains/growth/members', {
@@ -1075,8 +1097,16 @@ describe('the fixture API', () => {
     )
     // Archive and back; deleting asks for the name.
     assert.equal((await call('POST', '/v1/brains/growth/archive', { ...o, body: {} })).status, 200)
+    assert.equal(
+      code(await call('POST', '/v1/brains/growth/repos', { ...o, body: { repo: 'github.com/acme/late' } })),
+      'forbidden',
+    )
     assert.equal((await call('POST', '/v1/brains/growth/unarchive', { ...o, body: {} })).status, 200)
     assert.equal(code(await call('POST', '/v1/brains/support/archive', { ...o, body: {} })), 'forbidden')
+    assert.equal(
+      code(await call('DELETE', '/v1/brains/support', { ...o, body: { confirm: 'support' }, csrf: false })),
+      'csrf',
+    )
     assert.equal(
       code(await call('DELETE', '/v1/brains/support', { ...o, body: { confirm: 'nope' } })),
       'invalid_request',

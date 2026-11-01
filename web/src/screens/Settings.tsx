@@ -3,14 +3,19 @@
 // repositories agents find it by; write the compile guide and the usage note, or go back to the default;
 // leave it out of meaning search; set the health thresholds; archive it or bring it back. Done when: each
 // part says it is saved, in words. Risks: a brain left without a curator (refused by the server, and said
-// on the row before anyone tries); two curators saving at once (a save carries the revision it read: the
-// second is refused, sees the other's version and keeps what it typed); archiving by mistake (asked first,
+// on the row before anyone tries); two curators saving at once (each part sends only the fields it
+// changed, each with the value it read: a field someone changed since is refused, the other's value is
+// shown and what was typed stays; other fields are never touched); archiving by mistake (asked first,
 // with what stops). Who may do what is the server's (B4); this screen only offers it to whoever may.
+//
+// Four tabs, one job each, each its own address: Members, Agents (what agents find and read: repositories,
+// guide, usage note, meaning search), Health, Archive (export, archive, delete). On a phone each fits in
+// about two screens.
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import type { ApiError } from '../api/client.ts'
-import { draft } from '../api/draft.ts'
+import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { invalidate, resource } from '../api/resource.ts'
 import { ago } from '../lib/brains.ts'
@@ -19,12 +24,13 @@ import {
   memberRows,
   ROLES,
   repoKey,
-  savedSettings,
+  type SettingsRead,
+  settingsSave,
   THRESHOLDS,
   type ThresholdName,
+  textDrafts,
   thresholdProblems,
 } from '../lib/settings.ts'
-import { draftKeyOf } from '../lib/wiki.ts'
 import { justDeleted, me, online } from '../session.ts'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
@@ -34,25 +40,14 @@ import { writeBlocked } from '../ui/state.ts'
 import { ErrorState, FormAlert, Skeleton } from '../ui/states.tsx'
 import { TextArea } from '../ui/TextArea.tsx'
 import { brainResource } from './Brain.tsx'
-import { brainsResource } from './Home.tsx'
 
 const S = T.settings
 
-type Settings = {
-  guide: string
-  guideDefault: string
-  customGuide: boolean
-  usageNote: string
-  usageNoteDefault: string
-  meaningExcluded: boolean
-  staleDays: number
-  longChars: number
-  maintenanceEvery: number
-  revision: string
-}
+type Settings = SettingsRead
 type Member = { accountId: string; kind: string; name: string; email: string | null; role: string }
 type Repo = { repo: string; linkedAt: string }
 type BrainInfo = { slug: string; name: string; role: string; status: string }
+export type SettingsTab = 'members' | 'agents' | 'health' | 'archive'
 
 const settingsResource = (slug: string) =>
   resource<Settings>(`brain:${slug}:settings`, () => api.call<Settings>('wikiSettings', { path: { slug } }))
@@ -66,7 +61,7 @@ const reposResource = (slug: string) =>
     api.call<{ repos: Repo[] }>('repos', { path: { slug } }),
   )
 
-const blocked = (pending = false) => writeBlocked({ online: online.value, pending })
+const blocked = () => writeBlocked({ online: online.value, pending: false })
 
 // A part of the page: a region named by its heading.
 function Part({
@@ -82,7 +77,7 @@ function Part({
 }) {
   return (
     <section class="settings-part" aria-labelledby={`${id}-title`}>
-      <h2 id={`${id}-title`} class="section-title flush">
+      <h2 id={`${id}-title`} class="part-heading" tabIndex={-1}>
         {title}
       </h2>
       {lead ? <p class="muted">{lead}</p> : null}
@@ -91,8 +86,12 @@ function Part({
   )
 }
 
-// What a part says once done; announced, and in words (never colour alone).
-function Said({ text, id }: { text: string | null; id?: string }) {
+// What a part says once done; announced, in words. `focus` bumps to take the keyboard there once drawn
+// (the control pressed may be gone or changed), so it never falls to the page.
+function Said({ text, id, focus = 0 }: { text: string | null; id: string; focus?: number }) {
+  useEffect(() => {
+    if (focus) document.getElementById(id)?.focus()
+  }, [focus])
   return (
     <p class="said ok" role="status" id={id} tabIndex={-1}>
       {text}
@@ -100,77 +99,210 @@ function Said({ text, id }: { text: string | null; id?: string }) {
   )
 }
 
-function Members({ brain, me: myId }: { brain: BrainInfo; me: string }) {
-  const r = membersResource(brain.slug)
+function useSaid(): { said: string | null; focus: number; say: (t: string | null, take?: boolean) => void } {
   const [said, setSaid] = useState<string | null>(null)
-  const [failed, setFailed] = useState<{ id: string; error: ApiError } | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
-  const [asking, setAsking] = useState<string | null>(null)
-  const [selfDemote, setSelfDemote] = useState<string | null>(null)
-  const [who, setWho] = useState('')
-  const [role, setRole] = useState('contributor')
-  const [problem, setProblem] = useState<string | null>(null)
-  const [addError, setAddError] = useState<ApiError | null>(null)
-  const [adding, setAdding] = useState(false)
-  const heading = useRef<HTMLHeadingElement>(null)
-  const rows = r.data.value ? memberRows(r.data.value.members, myId) : undefined
-  const { route } = useLocation()
+  const [focus, setFocus] = useState(0)
+  return {
+    said,
+    focus,
+    say: (t, take = false) => {
+      setSaid(t)
+      if (take && t) setFocus((n) => n + 1)
+    },
+  }
+}
 
-  const changeRole = async (m: MemberRow, next: string) => {
-    setBusy(m.accountId)
-    setFailed(null)
-    setSaid(null)
+function MemberItem({
+  m,
+  brain,
+  onSaved,
+  onFailed,
+  failed,
+}: {
+  m: MemberRow
+  brain: BrainInfo
+  onSaved: (text: string, you: boolean) => Promise<void>
+  onFailed: (id: string, e: ApiError | null) => void
+  failed: ApiError | null
+}) {
+  const [pick, setPick] = useState(m.role)
+  const [busy, setBusy] = useState(false)
+  const [asking, setAsking] = useState(false)
+  const [selfDemote, setSelfDemote] = useState(false)
+  const { route } = useLocation()
+  useEffect(() => setPick(m.role), [m.role])
+  useEffect(() => {
+    if (asking) document.getElementById(`remove-yes-${m.accountId}`)?.focus()
+  }, [asking])
+  const reasonId = `only-curator-${m.accountId}`
+  const save = async () => {
+    setBusy(true)
+    onFailed(m.accountId, null)
     try {
       await api.call('setMemberRole', {
         path: { slug: brain.slug, account: m.accountId },
-        body: { role: next },
+        body: { role: pick },
       })
-      await r.reload()
-      setSaid(S.nowRole(m.name, next))
-      if (m.you) {
-        // What I may do here changed: the brain is read again (a non-curator is shown why it cannot stay).
-        invalidate(`brain:${brain.slug}:basic`)
-        invalidate('brains')
-      }
+      await onSaved(S.nowRole(m.name, pick), m.you)
     } catch (e) {
-      setFailed({ id: m.accountId, error: e as ApiError })
-      await r.reload()
+      onFailed(m.accountId, e as ApiError)
     } finally {
-      setBusy(null)
+      setBusy(false)
     }
   }
-  const remove = async (m: MemberRow) => {
-    setBusy(m.accountId)
-    setFailed(null)
-    setSaid(null)
+  const remove = async () => {
+    setBusy(true)
+    onFailed(m.accountId, null)
     try {
       await api.call('removeMember', { path: { slug: brain.slug, account: m.accountId } })
-      setAsking(null)
+      setAsking(false)
       if (m.you) {
         invalidate('brains')
         route('/', true)
         return
       }
-      await r.reload()
-      setSaid(S.removed(m.name, brain.name))
-      heading.current?.focus()
+      await onSaved(S.removed(m.name, brain.name), false)
     } catch (e) {
-      setFailed({ id: m.accountId, error: e as ApiError })
+      onFailed(m.accountId, e as ApiError)
     } finally {
-      setBusy(null)
+      setBusy(false)
     }
+  }
+  const changed = pick !== m.role
+  return (
+    <li class="with-actions" data-member={m.accountId}>
+      <div>
+        <p class="list-title">
+          {m.name}
+          {m.you ? <span class="tag">{S.you}</span> : null}
+          {m.kind === 'service' ? <span class="tag">{S.service}</span> : null}
+          {m.lastCurator ? <span class="tag ok">{S.onlyCurator}</span> : null}
+        </p>
+        {m.email ? <p class="meta mono wrap">{m.email}</p> : null}
+        {m.lastCurator ? (
+          <p class="meta" id={reasonId}>
+            {S.onlyCuratorWhy}
+          </p>
+        ) : null}
+        {failed ? (
+          <p class="problem" role="alert">
+            {failed.message} {failed.howToProceed}
+          </p>
+        ) : null}
+      </div>
+      <div class="actions member-actions">
+        <select
+          id={`role-${m.accountId}`}
+          aria-label={S.roleOf(m.name)}
+          aria-describedby={m.lastCurator ? reasonId : undefined}
+          value={pick}
+          disabled={m.lastCurator}
+          onChange={(e) => setPick(e.currentTarget.value)}
+        >
+          {m.roles.map((x) => (
+            <option key={x} value={x}>
+              {T.people.roles[x]}
+            </option>
+          ))}
+        </select>
+        {changed ? (
+          <Button
+            kind="primary"
+            pending={busy}
+            pendingLabel={S.saving}
+            blocked={blocked()}
+            aria-label={S.saveRoleOf(m.name)}
+            onClick={() => {
+              if (m.you && m.role === 'curator' && pick !== 'curator') setSelfDemote(true)
+              else void save()
+            }}
+          >
+            {S.saveRole}
+          </Button>
+        ) : null}
+        {m.lastCurator || asking || changed ? null : (
+          <Button blocked={blocked()} aria-label={S.remove(m.name)} onClick={() => setAsking(true)}>
+            {S.removeShort}
+          </Button>
+        )}
+      </div>
+      {asking ? (
+        <div class="confirm">
+          <p>{m.you ? S.removeSelfLead(brain.name) : S.removeLead(m.name, brain.name)}</p>
+          <div class="actions">
+            <Button
+              id={`remove-yes-${m.accountId}`}
+              kind="primary"
+              pending={busy}
+              pendingLabel={T.states.pending}
+              blocked={blocked()}
+              onClick={() => void remove()}
+            >
+              {S.removeFrom(m.name, brain.name)}
+            </Button>
+            <Button
+              kind="quiet"
+              onClick={() => {
+                setAsking(false)
+                document.getElementById(`role-${m.accountId}`)?.focus()
+              }}
+            >
+              {S.keep}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      <Dialog open={selfDemote} title={S.demoteSelfTitle} onClose={() => setSelfDemote(false)}>
+        <p>{S.demoteSelfLead(brain.name, pick)}</p>
+        <div class="actions">
+          <Button
+            kind="primary"
+            onClick={() => {
+              setSelfDemote(false)
+              void save()
+            }}
+          >
+            {S.demoteSelfConfirm}
+          </Button>
+          <Button kind="quiet" onClick={() => setSelfDemote(false)}>
+            {S.keep}
+          </Button>
+        </div>
+      </Dialog>
+    </li>
+  )
+}
+
+function Members({ brain, me: myId }: { brain: BrainInfo; me: string }) {
+  const r = membersResource(brain.slug)
+  const said = useSaid()
+  const [failed, setFailed] = useState<{ id: string; error: ApiError } | null>(null)
+  const [who, setWho] = useState('')
+  const [role, setRole] = useState('contributor')
+  const [problem, setProblem] = useState<string | null>(null)
+  const [addError, setAddError] = useState<ApiError | null>(null)
+  const [adding, setAdding] = useState(false)
+  const rows = r.data.value ? memberRows(r.data.value.members, myId) : undefined
+
+  // Someone already in the list: the form says so and the keyboard goes to their role.
+  const already = (m: MemberRow) => {
+    setAddError(null)
+    setProblem(S.already(m.name, m.role))
+    requestAnimationFrame(() => document.getElementById(`role-${m.accountId}`)?.focus())
   }
   const add = async (e: Event) => {
     e.preventDefault()
     if (adding || !online.value) return
     setAddError(null)
-    setSaid(null)
+    said.say(null)
     const v = who.trim()
     if (!v) {
       setProblem(S.needWho)
       document.getElementById('member-who')?.focus()
       return
     }
+    const known = rows?.find((m) => m.accountId === v || m.email?.toLowerCase() === v.toLowerCase())
+    if (known) return already(known)
     setProblem(null)
     setAdding(true)
     try {
@@ -180,21 +312,26 @@ function Members({ brain, me: myId }: { brain: BrainInfo; me: string }) {
       })
       setWho('')
       await r.reload()
-      setSaid(S.added(out.member.name, out.member.role))
+      said.say(S.added(out.member.name, out.member.role))
     } catch (err) {
-      setAddError(err as ApiError)
+      const a = err as ApiError
+      if (a.code === 'already_member') {
+        // Added meanwhile by someone else: the list is read again and the row named.
+        await r.reload()
+        const row = memberRows(r.data.value?.members ?? [], myId).find(
+          (m) => m.accountId === v || m.email?.toLowerCase() === v.toLowerCase(),
+        )
+        if (row) already(row)
+        else setProblem(a.message)
+      } else setAddError(a)
     } finally {
       setAdding(false)
     }
   }
 
   return (
-    <section class="settings-part" aria-labelledby="members-title">
-      <h2 id="members-title" class="section-title flush" tabIndex={-1} ref={heading}>
-        {S.members}
-      </h2>
-      <p class="muted">{S.membersLead}</p>
-      <Said text={said} />
+    <Part id="members" title={S.members} lead={S.membersLead}>
+      <Said text={said.said} id="members-said" focus={said.focus} />
       {!rows ? (
         r.error.value ? (
           <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />
@@ -204,78 +341,26 @@ function Members({ brain, me: myId }: { brain: BrainInfo; me: string }) {
       ) : (
         <ul class="list">
           {rows.map((m) => (
-            <li key={m.accountId} class="with-actions">
-              <div>
-                <p class="list-title">
-                  {m.name}
-                  {m.you ? <span class="tag">{S.you}</span> : null}
-                  {m.kind === 'service' ? <span class="tag">{S.service}</span> : null}
-                  {m.lastCurator ? <span class="tag ok">{S.onlyCurator}</span> : null}
-                </p>
-                {m.email ? <p class="meta mono">{m.email}</p> : null}
-                {m.lastCurator ? <p class="meta">{S.onlyCuratorWhy}</p> : null}
-                {failed?.id === m.accountId ? (
-                  <p class="problem" role="alert">
-                    {failed.error.message} {failed.error.howToProceed}
-                  </p>
-                ) : null}
-              </div>
-              <div class="actions member-actions">
-                <select
-                  aria-label={S.roleOf(m.name)}
-                  value={m.role}
-                  disabled={m.lastCurator || busy === m.accountId || !online.value}
-                  onChange={(e) => {
-                    const next = e.currentTarget.value
-                    if (m.you && m.role === 'curator' && next !== 'curator') {
-                      e.currentTarget.value = m.role
-                      setSelfDemote(next)
-                      return
-                    }
-                    void changeRole(m, next)
-                  }}
-                >
-                  {m.roles.map((x) => (
-                    <option key={x} value={x}>
-                      {T.people.roles[x]}
-                    </option>
-                  ))}
-                </select>
-                {m.lastCurator ? null : asking === m.accountId ? null : (
-                  <Button
-                    blocked={blocked()}
-                    aria-label={S.remove(m.name)}
-                    onClick={() => setAsking(m.accountId)}
-                  >
-                    {S.removeShort}
-                  </Button>
-                )}
-              </div>
-              {asking === m.accountId ? (
-                <div class="confirm">
-                  <p>{m.you ? S.removeSelfLead(brain.name) : S.removeLead(m.name, brain.name)}</p>
-                  <div class="actions">
-                    <Button
-                      kind="primary"
-                      pending={busy === m.accountId}
-                      pendingLabel={T.states.pending}
-                      blocked={blocked()}
-                      onClick={() => void remove(m)}
-                      autoFocus
-                    >
-                      {S.removeFrom(m.name, brain.name)}
-                    </Button>
-                    <Button kind="quiet" onClick={() => setAsking(null)}>
-                      {S.keep}
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
-            </li>
+            <MemberItem
+              key={m.accountId}
+              m={m}
+              brain={brain}
+              failed={failed?.id === m.accountId ? failed.error : null}
+              onFailed={(id, e) => setFailed(e ? { id, error: e } : null)}
+              onSaved={async (text, you) => {
+                await r.reload()
+                said.say(text, true)
+                if (you) {
+                  // What I may do here changed: the brain is read again (a non-curator is shown why).
+                  invalidate(`brain:${brain.slug}:basic`)
+                  invalidate('brains')
+                }
+              }}
+            />
           ))}
         </ul>
       )}
-      <form class="settings-form" aria-label={S.add} onSubmit={add} noValidate>
+      <form class="settings-form add-form" aria-label={S.add} onSubmit={add} noValidate>
         <h3 class="part-title">{S.add}</h3>
         <p class="muted small">{S.addLead}</p>
         <FormAlert error={addError} />
@@ -295,13 +380,23 @@ function Members({ brain, me: myId }: { brain: BrainInfo; me: string }) {
           />
           <div class="field">
             <label for="member-role">{S.newRole}</label>
-            <select id="member-role" value={role} onChange={(e) => setRole(e.currentTarget.value)}>
+            <select
+              id="member-role"
+              value={role}
+              aria-describedby={role === 'curator' ? 'member-role-hint' : undefined}
+              onChange={(e) => setRole(e.currentTarget.value)}
+            >
               {ROLES.map((x) => (
                 <option key={x} value={x}>
                   {T.people.roles[x]}
                 </option>
               ))}
             </select>
+            {role === 'curator' ? (
+              <span class="hint" id="member-role-hint">
+                {S.curatorNotService}
+              </span>
+            ) : null}
           </div>
         </div>
         <div class="actions">
@@ -310,54 +405,33 @@ function Members({ brain, me: myId }: { brain: BrainInfo; me: string }) {
           </Button>
         </div>
       </form>
-      <Dialog open={selfDemote !== null} title={S.demoteSelfTitle} onClose={() => setSelfDemote(null)}>
-        {selfDemote ? (
-          <>
-            <p>{S.demoteSelfLead(brain.name, selfDemote)}</p>
-            <div class="actions">
-              <Button
-                kind="primary"
-                onClick={() => {
-                  const me_ = rows?.find((x) => x.you)
-                  const next = selfDemote
-                  setSelfDemote(null)
-                  if (me_) void changeRole(me_, next)
-                }}
-              >
-                {S.demoteSelfConfirm}
-              </Button>
-              <Button kind="quiet" onClick={() => setSelfDemote(null)}>
-                {S.keep}
-              </Button>
-            </div>
-          </>
-        ) : null}
-      </Dialog>
-    </section>
+    </Part>
   )
 }
 
-function Repositories({ brain }: { brain: BrainInfo }) {
+function Repositories({ brain, archived }: { brain: BrainInfo; archived: boolean }) {
   const r = reposResource(brain.slug)
   const [text, setText] = useState('')
   const [tried, setTried] = useState(false)
   const [error, setError] = useState<ApiError | null>(null)
   const [pending, setPending] = useState(false)
-  const [said, setSaid] = useState<string | null>(null)
+  const said = useSaid()
   const [asking, setAsking] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const heading = useRef<HTMLHeadingElement>(null)
   const key = repoKey(text)
-  const folder = /^(\/|~|[a-z]:\\|\.)/i.test(text.trim())
-  const verdict = !text.trim() ? null : key ? S.matches(key) : folder ? S.folder : S.notRepo
+  const t = text.trim()
+  const verdict = !t ? null : key ? S.matches(key) : /^(\/|~|[a-z]:\\)/i.test(t) ? S.folder : S.notRepo
   const list = r.data.value?.repos
+  useEffect(() => {
+    if (asking) document.getElementById('unlink-yes')?.focus()
+  }, [asking])
 
   const link = async (e: Event) => {
     e.preventDefault()
-    if (pending || !online.value) return
+    if (pending || !online.value || archived) return
     setTried(true)
     setError(null)
-    setSaid(null)
+    said.say(null)
     if (!key) {
       document.getElementById('repo-address')?.focus()
       return
@@ -371,7 +445,7 @@ function Repositories({ brain }: { brain: BrainInfo }) {
       setText('')
       setTried(false)
       await r.reload()
-      setSaid(S.linked(out.repo))
+      said.say(S.linked(out.repo))
     } catch (err) {
       setError(err as ApiError)
     } finally {
@@ -385,8 +459,7 @@ function Repositories({ brain }: { brain: BrainInfo }) {
       await api.call('unlinkRepo', { path: { slug: brain.slug }, body: { repo } })
       setAsking(null)
       await r.reload()
-      setSaid(S.unlinked(repo))
-      heading.current?.focus()
+      said.say(S.unlinked(repo), true)
     } catch (err) {
       setError(err as ApiError)
     } finally {
@@ -394,12 +467,8 @@ function Repositories({ brain }: { brain: BrainInfo }) {
     }
   }
   return (
-    <section class="settings-part" aria-labelledby="repos-title">
-      <h2 id="repos-title" class="section-title flush" tabIndex={-1} ref={heading}>
-        {S.repos}
-      </h2>
-      <p class="muted">{S.reposLead}</p>
-      <Said text={said} />
+    <Part id="repos" title={S.repos} lead={S.reposLead}>
+      <Said text={said.said} id="repos-said" focus={said.focus} />
       {!list ? (
         r.error.value ? (
           <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />
@@ -423,12 +492,12 @@ function Repositories({ brain }: { brain: BrainInfo }) {
                   <p>{S.unlinkLead}</p>
                   <div class="actions">
                     <Button
+                      id="unlink-yes"
                       kind="primary"
                       pending={busy === x.repo}
                       pendingLabel={T.states.pending}
                       blocked={blocked()}
                       onClick={() => void unlink(x.repo)}
-                      autoFocus
                     >
                       {S.unlinkConfirm}
                     </Button>
@@ -449,6 +518,7 @@ function Repositories({ brain }: { brain: BrainInfo }) {
         </ul>
       )}
       <form class="settings-form" aria-label={S.link} onSubmit={link} noValidate>
+        {archived ? <p class="note">{S.archivedRepos}</p> : null}
         <FormAlert error={error} />
         <Field
           id="repo-address"
@@ -466,65 +536,112 @@ function Repositories({ brain }: { brain: BrainInfo }) {
           }}
         />
         <div class="actions">
-          <Button type="submit" pending={pending} pendingLabel={S.linking} blocked={blocked()}>
+          <Button
+            type="submit"
+            pending={pending}
+            pendingLabel={S.linking}
+            blocked={archived ? S.archivedRepos : blocked()}
+          >
             {S.link}
           </Button>
         </div>
       </form>
-    </section>
+    </Part>
   )
 }
 
-// The settings every text and number part reads, and what a save does with an answer or a conflict.
-function useSave(slug: string) {
+// A part of the settings: its own base (what its fields were when it read them), so a save sends only
+// what it changed on top of what it saw, whatever other parts saved meanwhile. A conflict brings the
+// current values, which become its base; what the person typed stays in the fields.
+function usePart(slug: string) {
   const r = settingsResource(slug)
+  const [base, setBase] = useState<Settings | null>(null)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<ApiError | null>(null)
-  const [said, setSaid] = useState<string | null>(null)
-  const [conflict, setConflict] = useState(false)
-  const save = async (body: Record<string, unknown>): Promise<boolean> => {
-    if (pending || !online.value) return false
-    setPending(true)
+  const said = useSaid()
+  const [theirs, setTheirs] = useState<Settings | null>(null)
+  // The base the fields were filled from: a field still showing it follows a new base (theirs after a
+  // conflict, or what a save returned); a field the person changed keeps what they typed.
+  const was = useRef<Settings | null>(null)
+  // Read again when a tab opens (it may have changed meanwhile); the part starts from that fresh read.
+  useFresh(r)
+  useEffect(() => {
+    if (r.data.value && !base && !r.loading.value) setBase(r.data.value)
+  }, [r.data.value, r.loading.value])
+  const save = async (edit: Parameters<typeof settingsSave>[1]): Promise<Settings | null> => {
+    if (pending || !online.value || !base) return null
+    const body = settingsSave(base, edit)
     setError(null)
-    setSaid(null)
+    if (!body) {
+      said.say(S.nothing)
+      return null
+    }
+    setPending(true)
+    said.say(null)
     try {
-      r.data.value = await api.call<Settings>('saveWikiSettings', { path: { slug }, body })
-      setConflict(false)
-      setSaid(S.saved)
-      return true
+      const fresh = await api.call<Settings>('saveWikiSettings', { path: { slug }, body })
+      r.data.value = fresh
+      was.current = base
+      setBase(fresh)
+      setTheirs(null)
+      said.say(S.saved)
+      return fresh
     } catch (e) {
       const a = e as ApiError
-      if (a.code === 'settings_changed') {
-        // Theirs comes back; what this person typed stays in the field, to save again on top.
-        await r.reload()
-        setConflict(true)
+      if (a.code === 'settings_changed' && a.current && typeof a.current === 'object') {
+        const now = a.current as Settings
+        r.data.value = now
+        was.current = base
+        setBase(now)
+        setTheirs(now)
       } else setError(a)
-      return false
+      return null
     } finally {
       setPending(false)
     }
   }
-  return { r, pending, error, said, conflict, save, setSaid }
+  const follow = <K,>(value: K, field: (x: Settings) => K, set: (v: K) => void) => {
+    const before = was.current
+    if (before && base && before !== base && value === field(before)) set(field(base))
+  }
+
+  return { r, base, pending, error, said, theirs, save, follow }
 }
 
-function Conflict({ theirs }: { theirs?: string | undefined }) {
+function Conflict({ children }: { children?: ComponentChildren }) {
   return (
     <>
       <FormAlert error={{ message: S.changedTitle, howToProceed: S.changedHow }} />
-      {theirs !== undefined ? (
+      {children ? (
         <div class="theirs">
           <p class="meta">{S.theirs}</p>
-          <pre class="command">
-            <code>{theirs || '—'}</code>
-          </pre>
+          {children}
         </div>
       ) : null}
     </>
   )
 }
 
+function PartBody({
+  r,
+  rows,
+  children,
+}: {
+  r: ReturnType<typeof settingsResource>
+  rows: number
+  children: ComponentChildren
+}) {
+  if (r.data.value) return <>{children}</>
+  return r.error.value ? (
+    <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />
+  ) : (
+    <Skeleton rows={rows} />
+  )
+}
+
 // A text of the brain (the compile guide or the usage note): the default beside it, «reset to default»,
-// one Save, a draft of this tab per person and brain, and a conflict that keeps what was typed.
+// one Save, a draft in this tab's memory per person and brain, and a conflict that keeps what was typed.
+// The guide is long: it is folded until the person opens it.
 function TextPart({
   slug,
   archived,
@@ -537,133 +654,150 @@ function TextPart({
   part: 'guide' | 'usage'
 }) {
   const guide = part === 'guide'
-  const { r, pending, error, said, conflict, save, setSaid } = useSave(slug)
-  const s = r.data.value
-  const store = typeof sessionStorage === 'undefined' ? null : sessionStorage
-  const d = store ? draft(draftKeyOf(account, slug, `settings:${part}`), store) : null
+  const { r, base, pending, error, said, theirs, save, follow } = usePart(slug)
   const [text, setText] = useState<string | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
+  const [open, setOpen] = useState(!guide || textDrafts.get(account, slug, part) !== undefined)
   const max = guide ? 20_000 : 2000
-  const current = s ? (guide ? s.guide : s.usageNote) : ''
-  const fallback = s ? (guide ? s.guideDefault : s.usageNoteDefault) : ''
+  const current = base ? (guide ? base.guide : base.usageNote) : ''
+  const fallback = base ? (guide ? base.guideDefault : base.usageNoteDefault) : ''
   // The field starts from the brain's text, or from what this person typed and did not save.
   useEffect(() => {
-    if (s && text === null) setText(d?.get() || current)
-  }, [s])
+    if (base && text === null) setText(textDrafts.get(account, slug, part) ?? current)
+    else if (text !== null) follow(text, (x) => (guide ? x.guide : x.usageNote), setText)
+  }, [base])
+  useEffect(() => {
+    if (open && guide && text !== null) document.getElementById(`${part}-text`)?.focus()
+  }, [open])
   const id = `${part}-text`
   const value = text ?? ''
-  const isDefault = s ? (guide ? !s.customGuide : s.usageNote === s.usageNoteDefault) : true
+  const isDefault = base ? (guide ? !base.customGuide : base.usageNote === base.usageNoteDefault) : true
   const label = guide ? S.guide : S.usage
   const submit = async (e: Event) => {
     e.preventDefault()
-    if (!s) return
     if (value.trim().length > max) {
       setProblem(S.tooLong(max))
       document.getElementById(id)?.focus()
       return
     }
-    const body = savedSettings(s, guide ? { guide: value } : { usageNote: value })
-    if (await save(body)) {
-      d?.clear()
-      const fresh = r.data.value
-      if (fresh) setText(guide ? fresh.guide : fresh.usageNote)
+    const fresh = await save(guide ? { guide: value } : { usageNote: value })
+    if (fresh) {
+      textDrafts.clear(account, slug, part)
+      setText(guide ? fresh.guide : fresh.usageNote)
     }
   }
+  const hint =
+    !value.trim() && guide
+      ? S.emptyGuide
+      : guide
+        ? S.chars(value.length, max)
+        : `${S.usageHint} ${S.chars(value.length, max)}`
   return (
     <Part id={part} title={label} lead={guide ? S.guideLead : S.usageLead}>
-      {!s ? (
-        r.error.value ? (
-          <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />
+      <PartBody r={r} rows={guide ? 2 : 3}>
+        <p class="meta">
+          <span class={`tag ${isDefault ? '' : 'ok'}`}>{isDefault ? S.isDefault : S.isCustom}</span>
+        </p>
+        {!open ? (
+          <>
+            <pre class="command folded">
+              <code>{current.split('\n').slice(0, 3).join('\n')}</code>
+            </pre>
+            <div class="actions">
+              <Button onClick={() => setOpen(true)}>{S.editGuide}</Button>
+            </div>
+          </>
         ) : (
-          <Skeleton rows={3} />
-        )
-      ) : (
-        <form class="settings-form" onSubmit={submit} noValidate>
-          <p class="meta">
-            <span class={`tag ${isDefault ? '' : 'ok'}`}>{isDefault ? S.isDefault : S.isCustom}</span>
-          </p>
-          {archived ? <p class="note">{S.archivedNote}</p> : null}
-          <FormAlert error={error} />
-          {conflict ? <Conflict theirs={current} /> : null}
-          <TextArea
-            id={id}
-            label={label}
-            hint={guide ? S.chars(value.length, max) : `${S.usageHint} ${S.chars(value.length, max)}`}
-            rows={guide ? 12 : 4}
-            value={value}
-            problem={problem}
-            onValue={(v) => {
-              setText(v)
-              setSaid(null)
-              setProblem(null)
-              if (d) v === current ? d.clear() : d.set(v)
-            }}
-          />
-          <Said text={said} />
-          <div class="actions">
-            <Button
-              type="submit"
-              kind="primary"
-              pending={pending}
-              pendingLabel={S.saving}
-              blocked={archived ? S.archivedNote : blocked()}
-            >
-              {guide ? S.saveGuide : S.saveNote}
-            </Button>
-            <Button
-              kind="quiet"
-              blocked={archived ? S.archivedNote : null}
-              onClick={() => {
-                setText(fallback)
-                d?.set(fallback === current ? '' : fallback)
-                setSaid(S.resetNote)
-                document.getElementById(id)?.focus()
+          <form class="settings-form" onSubmit={submit} noValidate>
+            {archived ? <p class="note">{S.archivedNote}</p> : null}
+            <FormAlert error={error} />
+            {theirs ? (
+              <Conflict>
+                <pre class="command">
+                  <code>{(guide ? theirs.guide : theirs.usageNote) || '—'}</code>
+                </pre>
+              </Conflict>
+            ) : null}
+            <TextArea
+              id={id}
+              label={label}
+              hint={hint}
+              rows={guide ? 12 : 4}
+              value={value}
+              problem={problem}
+              onValue={(v) => {
+                setText(v)
+                said.say(null)
+                setProblem(null)
+                if (v === current) textDrafts.clear(account, slug, part)
+                else textDrafts.set(account, slug, part, v)
               }}
-            >
-              {S.resetDefault}
-            </Button>
-          </div>
-          {guide ? (
-            <details class="default-text">
-              <summary class="default-summary">{S.showDefault}</summary>
-              <pre class="command">
-                <code>{s.guideDefault}</code>
-              </pre>
-            </details>
-          ) : null}
-        </form>
-      )}
+            />
+            <Said text={said.said} id={`${part}-said`} focus={said.focus} />
+            <div class="actions">
+              <Button
+                type="submit"
+                kind="primary"
+                pending={pending}
+                pendingLabel={S.saving}
+                blocked={archived ? S.archivedNote : blocked()}
+              >
+                {guide ? S.saveGuide : S.saveNote}
+              </Button>
+              <Button
+                kind="quiet"
+                blocked={archived ? S.archivedNote : null}
+                onClick={() => {
+                  setText(fallback)
+                  if (fallback === current) textDrafts.clear(account, slug, part)
+                  else textDrafts.set(account, slug, part, fallback)
+                  said.say(S.resetNote)
+                  document.getElementById(id)?.focus()
+                }}
+              >
+                {S.resetDefault}
+              </Button>
+            </div>
+            {guide && base ? (
+              <details class="default-text">
+                <summary class="default-summary">{S.showDefault}</summary>
+                <pre class="command">
+                  <code>{base.guideDefault}</code>
+                </pre>
+              </details>
+            ) : null}
+          </form>
+        )}
+      </PartBody>
     </Part>
   )
 }
 
 function Meaning({ slug, archived }: { slug: string; archived: boolean }) {
-  const { r, pending, error, said, conflict, save, setSaid } = useSave(slug)
-  const s = r.data.value
+  const { r, base, pending, error, said, theirs, save, follow } = usePart(slug)
   const [out, setOut] = useState<boolean | null>(null)
   useEffect(() => {
-    if (s && out === null) setOut(s.meaningExcluded)
-  }, [s])
+    if (base && out === null) setOut(base.meaningExcluded)
+    else if (out !== null) follow(out, (x) => x.meaningExcluded, setOut)
+  }, [base])
   return (
     <Part id="meaning" title={S.meaning} lead={S.meaningLead}>
-      {!s ? (
-        r.error.value ? (
-          <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />
-        ) : (
-          <Skeleton rows={1} />
-        )
-      ) : (
+      <PartBody r={r} rows={1}>
         <form
           class="settings-form"
           noValidate
           onSubmit={(e) => {
             e.preventDefault()
-            void save({ revision: s.revision, meaningExcluded: out === true })
+            void save({ meaningExcluded: out === true })
           }}
         >
           {archived ? <p class="note">{S.archivedNote}</p> : null}
           <FormAlert error={error} />
-          {conflict ? <Conflict /> : null}
+          {theirs ? (
+            <Conflict>
+              <p>{theirs.meaningExcluded ? S.theirsOut : S.theirsIn}</p>
+            </Conflict>
+          ) : null}
           <div class="pick">
             <input
               type="checkbox"
@@ -672,7 +806,7 @@ function Meaning({ slug, archived }: { slug: string; archived: boolean }) {
               aria-describedby="meaning-out-hint"
               onChange={(e) => {
                 setOut(e.currentTarget.checked)
-                setSaid(null)
+                said.say(null)
               }}
             />
             <label for="meaning-out">{S.meaningOut}</label>
@@ -680,7 +814,7 @@ function Meaning({ slug, archived }: { slug: string; archived: boolean }) {
           <p class="hint" id="meaning-out-hint">
             {S.meaningOutHint}
           </p>
-          <Said text={said} />
+          <Said text={said.said} id="meaning-said" focus={said.focus} />
           <div class="actions">
             <Button
               type="submit"
@@ -692,24 +826,33 @@ function Meaning({ slug, archived }: { slug: string; archived: boolean }) {
             </Button>
           </div>
         </form>
-      )}
+      </PartBody>
     </Part>
   )
 }
 
 function Health({ slug, archived }: { slug: string; archived: boolean }) {
-  const { r, pending, error, said, conflict, save, setSaid } = useSave(slug)
-  const s = r.data.value
+  const { r, base, pending, error, said, theirs, save, follow } = usePart(slug)
   const [v, setV] = useState<Record<ThresholdName, string> | null>(null)
   const [problems, setProblems] = useState<Partial<Record<ThresholdName, string>>>({})
   useEffect(() => {
-    if (s && v === null)
+    if (base && v === null)
       setV({
-        staleDays: String(s.staleDays),
-        longChars: String(s.longChars),
-        maintenanceEvery: String(s.maintenanceEvery),
+        staleDays: String(base.staleDays),
+        longChars: String(base.longChars),
+        maintenanceEvery: String(base.maintenanceEvery),
       })
-  }, [s])
+    else if (v) {
+      const next = { ...v }
+      for (const k of ['staleDays', 'longChars', 'maintenanceEvery'] as const)
+        follow(
+          next[k],
+          (x) => String(x[k]),
+          (x) => (next[k] = x),
+        )
+      setV(next)
+    }
+  }, [base])
   const fields: Array<{ k: ThresholdName; label: string; hint: string }> = [
     { k: 'staleDays', label: S.staleDays, hint: S.staleHint },
     { k: 'longChars', label: S.longChars, hint: S.longHint },
@@ -717,69 +860,74 @@ function Health({ slug, archived }: { slug: string; archived: boolean }) {
   ]
   return (
     <Part id="health" title={S.health} lead={S.healthLead}>
-      {!s || !v ? (
-        r.error.value ? (
-          <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />
-        ) : (
-          <Skeleton rows={2} />
-        )
-      ) : (
-        <form
-          class="settings-form"
-          noValidate
-          onSubmit={(e) => {
-            e.preventDefault()
-            const p = thresholdProblems(v)
-            setProblems(p)
-            const first = fields.find((f) => p[f.k])
-            if (first) {
-              document.getElementById(`threshold-${first.k}`)?.focus()
-              return
-            }
-            void save({
-              revision: s.revision,
-              staleDays: Number(v.staleDays),
-              longChars: Number(v.longChars),
-              maintenanceEvery: Number(v.maintenanceEvery),
-            })
-          }}
-        >
-          {archived ? <p class="note">{S.archivedNote}</p> : null}
-          <FormAlert error={error} />
-          {conflict ? <Conflict /> : null}
-          <div class="thresholds">
-            {fields.map((f) => (
-              <Field
-                key={f.k}
-                id={`threshold-${f.k}`}
-                label={f.label}
-                hint={f.hint}
-                inputMode="numeric"
-                value={v[f.k]}
-                problem={problems[f.k] ?? null}
-                min={THRESHOLDS[f.k].min}
-                max={THRESHOLDS[f.k].max}
-                onValue={(x) => {
-                  setV({ ...v, [f.k]: x })
-                  setSaid(null)
-                  if (problems[f.k]) setProblems({ ...problems, [f.k]: undefined })
-                }}
-              />
-            ))}
-          </div>
-          <Said text={said} />
-          <div class="actions">
-            <Button
-              type="submit"
-              pending={pending}
-              pendingLabel={S.saving}
-              blocked={archived ? S.archivedNote : blocked()}
-            >
-              {S.save}
-            </Button>
-          </div>
-        </form>
-      )}
+      <PartBody r={r} rows={2}>
+        {v ? (
+          <form
+            class="settings-form"
+            noValidate
+            onSubmit={(e) => {
+              e.preventDefault()
+              const p = thresholdProblems(v)
+              setProblems(p)
+              const first = fields.find((f) => p[f.k])
+              if (first) {
+                document.getElementById(`threshold-${first.k}`)?.focus()
+                return
+              }
+              void save({
+                staleDays: Number(v.staleDays),
+                longChars: Number(v.longChars),
+                maintenanceEvery: Number(v.maintenanceEvery),
+              })
+            }}
+          >
+            {archived ? <p class="note">{S.archivedNote}</p> : null}
+            <FormAlert error={error} />
+            {theirs ? (
+              <Conflict>
+                <ul class="theirs-values">
+                  {fields.map((f) => (
+                    <li key={f.k}>
+                      {f.label}: <strong>{theirs[f.k]}</strong>
+                    </li>
+                  ))}
+                </ul>
+              </Conflict>
+            ) : null}
+            <div class="thresholds">
+              {fields.map((f) => (
+                <Field
+                  key={f.k}
+                  id={`threshold-${f.k}`}
+                  label={f.label}
+                  hint={f.hint}
+                  inputMode="numeric"
+                  value={v[f.k]}
+                  problem={problems[f.k] ?? null}
+                  min={THRESHOLDS[f.k].min}
+                  max={THRESHOLDS[f.k].max}
+                  onValue={(x) => {
+                    setV({ ...v, [f.k]: x })
+                    said.say(null)
+                    if (problems[f.k]) setProblems({ ...problems, [f.k]: undefined })
+                  }}
+                />
+              ))}
+            </div>
+            <Said text={said.said} id="health-said" focus={said.focus} />
+            <div class="actions">
+              <Button
+                type="submit"
+                pending={pending}
+                pendingLabel={S.saving}
+                blocked={archived ? S.archivedNote : blocked()}
+              >
+                {S.save}
+              </Button>
+            </div>
+          </form>
+        ) : null}
+      </PartBody>
     </Part>
   )
 }
@@ -788,13 +936,8 @@ function Archive({ brain }: { brain: BrainInfo }) {
   const [asking, setAsking] = useState(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<ApiError | null>(null)
-  const [said, setSaid] = useState<string | null>(null)
+  const said = useSaid()
   const archived = brain.status === 'archived'
-  // Once what it says is drawn, the keyboard goes there (the button it pressed is gone).
-  const [toSaid, setToSaid] = useState(0)
-  useEffect(() => {
-    if (toSaid) document.getElementById('archive-said')?.focus()
-  }, [toSaid])
   const run = async (to: boolean) => {
     setPending(true)
     setError(null)
@@ -803,8 +946,7 @@ function Archive({ brain }: { brain: BrainInfo }) {
       setAsking(false)
       await brainResource(brain.slug).reload()
       invalidate('brains')
-      setSaid(to ? S.archived(brain.name) : S.active(brain.name))
-      setToSaid((n) => n + 1)
+      said.say(to ? S.archived(brain.name) : S.active(brain.name), true)
     } catch (e) {
       setError(e as ApiError)
     } finally {
@@ -813,8 +955,12 @@ function Archive({ brain }: { brain: BrainInfo }) {
   }
   return (
     <Part id="archive" title={S.archive} lead={archived ? S.archivedLead : S.archiveLead}>
-      <Said text={said} id="archive-said" />
+      <Said text={said.said} id="archive-said" focus={said.focus} />
       <FormAlert error={asking ? null : error} />
+      <ul class="plain-list">
+        <li>{S.archiveStops}</li>
+        <li>{S.archiveKeeps}</li>
+      </ul>
       <div class="actions">
         {archived ? (
           <Button
@@ -939,14 +1085,17 @@ function Delete({ brain }: { brain: BrainInfo }) {
   )
 }
 
-export function BrainSettings({ slug }: { slug: string }) {
+const TABS: Array<{ tab: SettingsTab; path: string; label: string }> = [
+  { tab: 'members', path: '', label: S.tabs.members },
+  { tab: 'agents', path: '/agents', label: S.tabs.agents },
+  { tab: 'health', path: '/health', label: S.tabs.health },
+  { tab: 'archive', path: '/archive', label: S.tabs.archive },
+]
+
+export function BrainSettings({ slug, tab }: { slug: string; tab: SettingsTab }) {
   const who = me().data.value
   const b = brainResource(slug)
   const brain = b.data.value?.brain
-  // A role that changed (here, or elsewhere) is read again with the list of brains.
-  useEffect(() => {
-    void brainsResource()
-  }, [])
   if (!brain || !who) {
     return (
       <>
@@ -978,6 +1127,7 @@ export function BrainSettings({ slug }: { slug: string }) {
   }
   const archived = brain.status === 'archived'
   const info: BrainInfo = { slug: brain.slug, name: brain.name, role: brain.role, status: brain.status }
+  const base = `/b/${encodeURIComponent(brain.slug)}/settings`
   return (
     <div class="settings">
       <div class="title-row">
@@ -987,22 +1137,38 @@ export function BrainSettings({ slug }: { slug: string }) {
         </div>
       </div>
       <p class="lead">{S.lead(brain.name)}</p>
-      <div class="settings-grid">
-        <div class="settings-main">
-          <Members brain={info} me={who.account.id} />
-          <TextPart slug={brain.slug} archived={archived} account={who.account.id} part="guide" />
-          <TextPart slug={brain.slug} archived={archived} account={who.account.id} part="usage" />
-        </div>
-        <div class="settings-side">
-          <Repositories brain={info} />
-          <Meaning slug={brain.slug} archived={archived} />
-          <Health slug={brain.slug} archived={archived} />
-          <Part id="export" title={S.exportTitle}>
-            <p class="muted">{S.exportLead}</p>
-          </Part>
-          <Archive brain={info} />
-          {who.account.isAdmin ? <Delete brain={info} /> : null}
-        </div>
+      {archived ? <p class="alert warn">{S.archivedBanner}</p> : null}
+      <nav class="tabs" aria-label={S.tabsLabel}>
+        <ul class="tab-list">
+          {TABS.map((t) => (
+            <li key={t.tab}>
+              <a href={`${base}${t.path}`} aria-current={t.tab === tab ? 'page' : undefined}>
+                {t.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      <div class="settings-tab">
+        {tab === 'members' ? <Members brain={info} me={who.account.id} /> : null}
+        {tab === 'agents' ? (
+          <>
+            <Repositories brain={info} archived={archived} />
+            <TextPart slug={brain.slug} archived={archived} account={who.account.id} part="usage" />
+            <TextPart slug={brain.slug} archived={archived} account={who.account.id} part="guide" />
+            <Meaning slug={brain.slug} archived={archived} />
+          </>
+        ) : null}
+        {tab === 'health' ? <Health slug={brain.slug} archived={archived} /> : null}
+        {tab === 'archive' ? (
+          <>
+            <Part id="export" title={S.exportTitle}>
+              <p class="muted">{S.exportLead}</p>
+            </Part>
+            <Archive brain={info} />
+            {who.account.isAdmin ? <Delete brain={info} /> : null}
+          </>
+        ) : null}
       </div>
     </div>
   )

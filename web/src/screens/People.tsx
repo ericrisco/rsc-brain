@@ -436,9 +436,23 @@ function Invitations({
           <Skeleton rows={2} />
         )
       ) : list.length === 0 ? (
-        <p class="quiet-empty" data-state={show === 'all' ? 'empty' : 'filtered-empty'}>
-          {show === 'all' ? p.noInvitations : T.states.filteredEmpty}
-        </p>
+        show === 'all' ? (
+          <p class="quiet-empty" data-state="empty">
+            {p.noInvitations}
+          </p>
+        ) : (
+          <div class="quiet-empty" data-state="filtered-empty">
+            <p>{T.states.filteredEmpty}</p>
+            <Button
+              onClick={() => {
+                setShow('all')
+                document.getElementById('invitations-show')?.focus()
+              }}
+            >
+              {T.admin.showEvery}
+            </Button>
+          </div>
+        )
       ) : (
         <ul class="list">
           {list.map((inv) => {

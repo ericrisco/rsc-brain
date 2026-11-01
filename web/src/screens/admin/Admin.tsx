@@ -7,6 +7,8 @@
 // (refused by the server, and said on the row before anyone tries); a main key that leaks (it lives only
 // in this screen's memory, is shown once, and is gone when hidden or when the page is put away). Who may
 // do what is the server's (B4); this screen only offers it to whoever may.
+
+import { signal } from '@preact/signals'
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
@@ -93,15 +95,20 @@ function AdminFrame({ children }: { children: (who: Me) => ComponentChildren }) 
         <div class="state forbidden" role="alert" data-state="forbidden">
           <span class="kind">{T.kind.noAccess}</span>
           <h2>{T.states.forbiddenTitle}</h2>
-          <p>{A.cannot}</p>
-          <p class="how">{A.cannotHow}</p>
+          <p>{leftAdmin.value ? A.leftAdmin : A.cannot}</p>
+          <p class="how">{leftAdmin.value ? A.leftAdminHow : A.cannotHow}</p>
         </div>
       )}
     </div>
   )
 }
 
-function Said({ text }: { text: string | null }) {
+// What a change says, announced; `focus` bumps to take the keyboard there once drawn (the control pressed
+// may be gone or changed), so it never falls to the page.
+function Said({ text, focus = 0 }: { text: string | null; focus?: number }) {
+  useEffect(() => {
+    if (focus) document.getElementById('admin-said')?.focus()
+  }, [focus])
   return (
     <p class="said ok" role="status" tabIndex={-1} id="admin-said">
       {text}
@@ -109,16 +116,33 @@ function Said({ text }: { text: string | null }) {
   )
 }
 
+function useSaid() {
+  const [said, setSaid] = useState<string | null>(null)
+  const [focus, setFocus] = useState(0)
+  return {
+    said,
+    focus,
+    say: (t: string | null, take = false) => {
+      setSaid(t)
+      if (take && t) setFocus((n) => n + 1)
+    },
+  }
+}
+
+// Set when an administrator took away their own rights here: the administration closes and says why.
+const leftAdmin = signal(false)
+
 // Deactivating says what ends now and what stays, and asks first.
 function DeactivateDialog({
   a,
   onClose,
   onDone,
 }: {
-  a: { id: string; name: string } | null
+  a: { id: string; name: string; kind?: string } | null
   onClose: () => void
   onDone: (out: { brainsWithoutCurator: string[] }) => void
 }) {
+  const service = a?.kind === 'service'
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<ApiError | null>(null)
   useEffect(() => setError(null), [a?.id])
@@ -126,8 +150,8 @@ function DeactivateDialog({
     <Dialog open={a !== null} title={a ? A.deactivateTitle(a.name) : ''} onClose={onClose}>
       {a ? (
         <>
-          <p>{A.deactivateLead(a.name)}</p>
-          <p>{A.deactivateKeeps(a.name)}</p>
+          <p>{service ? A.deactivateServiceLead(a.name) : A.deactivateLead(a.name)}</p>
+          <p>{service ? A.deactivateServiceKeeps(a.name) : A.deactivateKeeps(a.name)}</p>
           <FormAlert error={error} />
           <div class="actions">
             <Button
@@ -163,24 +187,37 @@ function DeactivateDialog({
   )
 }
 
+const PAGE = 20
+
 function PeopleList({ who }: { who: Me }) {
   const r = adminAccounts()
   useFresh(r)
   const { links, newest, announce } = useLinks()
-  const [said, setSaid] = useState<string | null>(null)
+  const said = useSaid()
   const [busy, setBusy] = useState<string | null>(null)
   const [failed, setFailed] = useState<{ id: string; error: ApiError } | null>(null)
   const [asking, setAsking] = useState<PersonRow | null>(null)
-  const rows = r.data.value ? peopleRows(r.data.value.accounts) : undefined
+  const [rights, setRights] = useState<{ a: PersonRow; to: boolean } | null>(null)
+  const [query, setQuery] = useState('')
+  const [status, setStatus] = useState<'all' | 'active' | 'removed'>('all')
+  const [shown, setShown] = useState(PAGE)
+  const all = r.data.value ? peopleRows(r.data.value.accounts) : undefined
+  const q = query.trim().toLowerCase()
+  const rows = all?.filter(
+    (a) =>
+      (status === 'all' || a.status === status) &&
+      (!q || a.name.toLowerCase().includes(q) || (a.email ?? '').toLowerCase().includes(q)),
+  )
+  const filtered = Boolean(q) || status !== 'all'
 
   const act = async (a: PersonRow, run: () => Promise<unknown>, done: string) => {
     setBusy(a.id)
     setFailed(null)
-    setSaid(null)
+    said.say(null)
     try {
       await run()
       await r.reload()
-      setSaid(done)
+      said.say(done, true)
     } catch (e) {
       setFailed({ id: a.id, error: e as ApiError })
       await r.reload()
@@ -188,8 +225,14 @@ function PeopleList({ who }: { who: Me }) {
       setBusy(null)
     }
   }
-  const patch = (a: PersonRow, body: Record<string, boolean>, done: string) =>
-    act(a, () => api.call('updateAccount', { path: { id: a.id }, body }), done)
+  const patch = async (a: PersonRow, body: Record<string, boolean>, done: string) => {
+    await act(a, () => api.call('updateAccount', { path: { id: a.id }, body }), done)
+    // My own rights changed: who I am is read again, and the screens follow (out of here, if not admin).
+    if (a.id === who.account.id) {
+      if (body.isAdmin === false) leftAdmin.value = true
+      await me().reload()
+    }
+  }
 
   return (
     <section aria-labelledby="accounts-title">
@@ -202,139 +245,204 @@ function PeopleList({ who }: { who: Me }) {
       <p class="sr-only" role="status">
         {announce}
       </p>
-      <Said text={said} />
+      <Said text={said.said} focus={said.focus} />
+      {all && all.length > 1 ? (
+        <div class="filters admin-filters">
+          <Field
+            id="people-find"
+            label={A.find}
+            type="search"
+            value={query}
+            onValue={(v) => {
+              setQuery(v)
+              setShown(PAGE)
+            }}
+          />
+          <div class="field">
+            <label for="people-status">{A.status}</label>
+            <select
+              id="people-status"
+              value={status}
+              onChange={(e) => {
+                setStatus(e.currentTarget.value as typeof status)
+                setShown(PAGE)
+              }}
+            >
+              <option value="all">{A.showAll}</option>
+              <option value="active">{A.active}</option>
+              <option value="removed">{A.deactivated}</option>
+            </select>
+          </div>
+        </div>
+      ) : null}
       {!rows ? (
         r.error.value ? (
           <ErrorState error={r.error.value} onRetry={() => void r.reload()} />
         ) : (
           <Skeleton rows={3} />
         )
+      ) : rows.length === 0 && filtered ? (
+        <div class="quiet-empty" data-state="filtered-empty">
+          <p>{T.states.filteredEmpty}</p>
+          <Button
+            onClick={() => {
+              setQuery('')
+              setStatus('all')
+              document.getElementById('people-find')?.focus()
+            }}
+          >
+            {T.states.clearFilters}
+          </Button>
+        </div>
       ) : (
-        <ul class="list admin-list">
-          {rows.map((a) => {
-            const you = a.id === who.account.id
-            const active = a.status === 'active'
-            return (
-              <li key={a.id} class="with-actions">
-                <div>
-                  <p class="list-title">
-                    {a.name}
-                    {you ? <span class="tag">{T.people.you}</span> : null}
-                    <span class={`tag ${active ? 'ok' : 'warn'}`}>{active ? A.active : A.deactivated}</span>
-                    {a.isAdmin ? <span class="tag">{A.admin}</span> : null}
-                    {!a.isAdmin && a.canCreateBrains ? <span class="tag">{A.creates}</span> : null}
-                    {a.lastAdmin ? <span class="tag ok">{A.onlyAdmin}</span> : null}
-                  </p>
-                  <p class="meta">
-                    {a.email ? <span class="mono wrap">{a.email}</span> : null}
-                    {a.email ? ' · ' : ''}
-                    {T.people.seen(ago(a.lastSeenAt))}
-                  </p>
-                  <p class="meta">{rolesLabel(a.roles)}</p>
-                  {failed?.id === a.id ? (
-                    <p class="problem" role="alert">
-                      {failed.error.message} {failed.error.howToProceed}
+        <>
+          <ul class="list admin-list">
+            {rows.slice(0, shown).map((a) => {
+              const you = a.id === who.account.id
+              const active = a.status === 'active'
+              return (
+                <li key={a.id} class="with-actions" data-person={a.id}>
+                  <div>
+                    <p class="list-title">
+                      {a.name}
+                      {you ? <span class="tag">{T.people.you}</span> : null}
+                      <span class={`tag ${active ? 'ok' : 'warn'}`}>{active ? A.active : A.deactivated}</span>
+                      {a.isAdmin ? <span class="tag">{A.admin}</span> : null}
+                      {!a.isAdmin && a.canCreateBrains ? <span class="tag">{A.creates}</span> : null}
+                      {a.lastAdmin ? <span class="tag ok">{A.onlyAdmin}</span> : null}
                     </p>
-                  ) : null}
-                </div>
-                <div class="actions admin-actions">
-                  {active ? (
-                    a.isAdmin ? (
+                    <p class="meta">
+                      {a.email ? <span class="mono wrap">{a.email}</span> : null}
+                      {a.email ? ' · ' : ''}
+                      {T.people.seen(ago(a.lastSeenAt))}
+                    </p>
+                    <p class="meta">{rolesLabel(a.roles)}</p>
+                    {failed?.id === a.id ? (
+                      <p class="problem" role="alert">
+                        {failed.error.message} {failed.error.howToProceed}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div class="actions admin-actions">
+                    {active ? (
                       <Button
+                        kind="quiet"
                         pending={busy === a.id}
                         pendingLabel={T.states.pending}
-                        blocked={a.lastAdmin ? A.onlyAdminWhy : blocked()}
-                        aria-label={A.unAdmin(a.name)}
-                        onClick={() => void patch(a, { isAdmin: false }, A.noLongerAdmin(a.name))}
+                        blocked={a.isAdmin && a.lastAdmin ? A.onlyAdminWhy : blocked()}
+                        aria-label={a.isAdmin ? A.unAdmin(a.name) : A.makeAdmin(a.name)}
+                        onClick={() => setRights({ a, to: !a.isAdmin })}
                       >
-                        {A.unAdminShort}
+                        {a.isAdmin ? A.unAdminShort : A.makeAdminShort}
+                      </Button>
+                    ) : null}
+                    {active && !a.isAdmin ? (
+                      <Button
+                        kind="quiet"
+                        blocked={blocked()}
+                        aria-label={a.canCreateBrains ? A.stopCreate(a.name) : A.allowCreate(a.name)}
+                        onClick={() =>
+                          void patch(
+                            a,
+                            { canCreateBrains: !a.canCreateBrains },
+                            a.canCreateBrains ? A.cannotCreateNow(a.name) : A.canCreateNow(a.name),
+                          )
+                        }
+                      >
+                        {a.canCreateBrains ? A.stopCreateShort : A.allowCreateShort}
+                      </Button>
+                    ) : null}
+                    {active && !you ? (
+                      <Button
+                        kind="quiet"
+                        blocked={blocked()}
+                        aria-label={T.people.resetOf(a.name)}
+                        onClick={async () => {
+                          setFailed(null)
+                          try {
+                            const out = await api.call<{ link: string }>('resetLink', { path: { id: a.id } })
+                            links.add([resetLinkOf(a, out, a.id)])
+                          } catch (e) {
+                            setFailed({ id: a.id, error: e as ApiError })
+                          }
+                        }}
+                      >
+                        {T.people.reset}
+                      </Button>
+                    ) : null}
+                    {you ? null : active ? (
+                      <Button
+                        kind="quiet"
+                        blocked={a.lastAdmin ? A.onlyAdminWhy : blocked()}
+                        aria-label={A.deactivate(a.name)}
+                        onClick={() => setAsking(a)}
+                      >
+                        {A.deactivateShort}
                       </Button>
                     ) : (
-                      <>
-                        <Button
-                          pending={busy === a.id}
-                          pendingLabel={T.states.pending}
-                          blocked={blocked()}
-                          aria-label={A.makeAdmin(a.name)}
-                          onClick={() => void patch(a, { isAdmin: true }, A.nowAdmin(a.name))}
-                        >
-                          {A.makeAdminShort}
-                        </Button>
-                        {a.canCreateBrains ? (
-                          <Button
-                            kind="quiet"
-                            blocked={blocked()}
-                            aria-label={A.stopCreate(a.name)}
-                            onClick={() =>
-                              void patch(a, { canCreateBrains: false }, A.cannotCreateNow(a.name))
-                            }
-                          >
-                            {A.stopCreateShort}
-                          </Button>
-                        ) : (
-                          <Button
-                            kind="quiet"
-                            blocked={blocked()}
-                            aria-label={A.allowCreate(a.name)}
-                            onClick={() => void patch(a, { canCreateBrains: true }, A.canCreateNow(a.name))}
-                          >
-                            {A.allowCreateShort}
-                          </Button>
-                        )}
-                      </>
-                    )
-                  ) : null}
-                  {active && !you ? (
-                    <Button
-                      kind="quiet"
-                      blocked={blocked()}
-                      aria-label={T.people.resetOf(a.name)}
-                      onClick={async () => {
-                        setFailed(null)
-                        try {
-                          const out = await api.call<{ link: string }>('resetLink', { path: { id: a.id } })
-                          links.add([resetLinkOf(a, out, a.id)])
-                        } catch (e) {
-                          setFailed({ id: a.id, error: e as ApiError })
+                      <Button
+                        kind="quiet"
+                        pending={busy === a.id}
+                        pendingLabel={T.states.pending}
+                        blocked={blocked()}
+                        aria-label={A.reactivate(a.name)}
+                        onClick={() =>
+                          void act(
+                            a,
+                            () => api.call('restoreAccount', { path: { id: a.id } }),
+                            A.reactivated(a.name),
+                          )
                         }
-                      }}
-                    >
-                      {T.people.reset}
-                    </Button>
-                  ) : null}
-                  {you ? null : active ? (
-                    <Button
-                      kind="quiet"
-                      blocked={a.lastAdmin ? A.onlyAdminWhy : blocked()}
-                      aria-label={A.deactivate(a.name)}
-                      onClick={() => setAsking(a)}
-                    >
-                      {A.deactivateShort}
-                    </Button>
-                  ) : (
-                    <Button
-                      pending={busy === a.id}
-                      pendingLabel={T.states.pending}
-                      blocked={blocked()}
-                      aria-label={A.reactivate(a.name)}
-                      onClick={() =>
-                        void act(
-                          a,
-                          () => api.call('restoreAccount', { path: { id: a.id } }),
-                          A.reactivated(a.name),
-                        )
-                      }
-                    >
-                      {A.reactivateShort}
-                    </Button>
-                  )}
-                </div>
-                <LinksOf links={links} of={a.id} newest={newest} />
-              </li>
-            )
-          })}
-        </ul>
+                      >
+                        {A.reactivateShort}
+                      </Button>
+                    )}
+                  </div>
+                  <LinksOf links={links} of={a.id} newest={newest} />
+                </li>
+              )
+            })}
+          </ul>
+          {rows.length > shown ? (
+            <div class="actions">
+              <Button onClick={() => setShown(shown + PAGE)}>{A.showMore(rows.length - shown)}</Button>
+            </div>
+          ) : null}
+        </>
       )}
+      <Dialog
+        open={rights !== null}
+        title={rights ? (rights.to ? A.makeAdminTitle(rights.a.name) : A.unAdminTitle(rights.a.name)) : ''}
+        onClose={() => setRights(null)}
+      >
+        {rights ? (
+          <>
+            <p>
+              {rights.to
+                ? A.makeAdminLead(rights.a.name)
+                : rights.a.id === who.account.id
+                  ? A.unAdminSelfLead
+                  : A.unAdminLead(rights.a.name)}
+            </p>
+            <div class="actions">
+              <Button
+                kind="primary"
+                blocked={blocked()}
+                onClick={() => {
+                  const { a, to } = rights
+                  setRights(null)
+                  void patch(a, { isAdmin: to }, to ? A.nowAdmin(a.name) : A.noLongerAdmin(a.name))
+                }}
+              >
+                {rights.to ? A.makeAdmin(rights.a.name) : A.unAdmin(rights.a.name)}
+              </Button>
+              <Button kind="quiet" onClick={() => setRights(null)}>
+                {T.settings.cancel}
+              </Button>
+            </div>
+          </>
+        ) : null}
+      </Dialog>
       <DeactivateDialog
         a={asking}
         onClose={() => setAsking(null)}
@@ -344,10 +452,11 @@ function PeopleList({ who }: { who: Me }) {
           links.drop({ of: asking?.id ?? '' })
           await r.reload()
           invalidate('admin:brains')
-          setSaid(
+          said.say(
             out.brainsWithoutCurator.length
               ? `${A.deactivated_(name)} ${A.orphans(out.brainsWithoutCurator)}`
               : A.deactivated_(name),
+            true,
           )
         }}
       />
@@ -411,10 +520,12 @@ function Keys({ id, active, onSaid }: { id: string; active: boolean; onSaid: (s:
     ) : (
       <p class="meta">{A.loadingKeys}</p>
     )
+  const live = keys.filter((k) => k.status === 'active').length
   if (!keys.length) return active ? <p class="meta">{A.noKeys}</p> : null
   return (
     <div class="main-keys">
       <p class="part-title">{A.mainKeys}</p>
+      {active && !live ? <p class="meta">{A.noKeys}</p> : null}
       <FormAlert error={error} />
       <ul class="list compact">
         {keys.map((k) => (
@@ -578,16 +689,13 @@ function Services() {
   const r = adminAccounts()
   useFresh(r)
   const [shown, setShown] = useState<Shown | null>(null)
-  const [said, setSaid] = useState<string | null>(null)
+  const { said, focus, say } = useSaid()
+  const setSaid = (t: string | null) => say(t, true)
   const [busy, setBusy] = useState<string | null>(null)
   const [failed, setFailed] = useState<{ id: string; error: ApiError } | null>(null)
   const [asking, setAsking] = useState<AdminAccount | null>(null)
   const hidden = useRef('')
-  // Set when the key is hidden: once what it says is drawn, the keyboard goes there.
-  const [toSaid, setToSaid] = useState(0)
-  useEffect(() => {
-    if (toSaid) document.getElementById('admin-said')?.focus()
-  }, [toSaid])
+
   // Put in the back/forward cache, the key shown is forgotten.
   useEffect(() => {
     const away = () => setShown(null)
@@ -599,7 +707,6 @@ function Services() {
     hidden.current = shown?.name ?? ''
     setShown(null)
     setSaid(A.hidden(hidden.current))
-    setToSaid((n) => n + 1)
   }
   const live = (id: string) =>
     keysResource(id).data.value?.keys.filter((k) => k.kind === 'main' && k.status === 'active').length ?? 0
@@ -608,7 +715,7 @@ function Services() {
       <div class="people-main">
         <NewService
           onMade={(s) => {
-            setSaid(null)
+            say(null)
             setShown(s)
           }}
         />
@@ -620,7 +727,7 @@ function Services() {
             {A.services}
           </h2>
           <p class="muted">{A.servicesLead}</p>
-          <Said text={said} />
+          <Said text={said} focus={focus} />
           {!rows ? (
             r.error.value ? (
               <ErrorState error={r.error.value} onRetry={() => void r.reload()} />
@@ -647,7 +754,7 @@ function Services() {
                         {v.canCreateBrains ? <span class="tag">{A.creates}</span> : null}
                       </p>
                       <p class="meta">
-                        {rolesLabel(v.roles)} · {T.people.seen(ago(v.lastSeenAt))}
+                        {rolesLabel(v.roles)} · {A.used(ago(v.lastSeenAt))}
                       </p>
                       {failed?.id === v.id ? (
                         <p class="problem" role="alert">
@@ -666,7 +773,7 @@ function Services() {
                             onClick={async () => {
                               setBusy(v.id)
                               setFailed(null)
-                              setSaid(null)
+                              say(null)
                               try {
                                 const out = await api.call<{ key: { secret: string } }>('newMainKey', {
                                   path: { id: v.id },

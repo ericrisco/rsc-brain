@@ -241,8 +241,9 @@ test.describe('links in view (P1, P2, P3)', () => {
     })
     await bo.getByRole('button', { name: 'New link for bo@example.test' }).click()
     await expect(page.getByText('/invite#token=')).toHaveCount(1)
+    // One new link a minute: a second press soon after says so, and the link shown still works.
     await bo.getByRole('button', { name: 'New link for bo@example.test' }).click()
-    // The first link stopped working: only the new one is shown.
+    await expect(bo.getByRole('alert')).toContainText('less than a minute ago')
     await expect(page.getByText('/invite#token=')).toHaveCount(1)
     await bo.getByRole('button', { name: 'Withdraw invitation for bo@example.test' }).click()
     await page

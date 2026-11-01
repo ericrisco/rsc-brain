@@ -58,7 +58,18 @@ function BrainLinks({ brain }: { brain: BrainNav }) {
     { href: `${base}/health`, label: T.shell.health, here: path === `${base}/health` },
     // Only curators change a brain's settings (B4); the others are not offered the page.
     ...(brain.role === 'curator'
-      ? [{ href: `${base}/settings`, label: T.shell.settings, here: path === `${base}/settings` }]
+      ? [
+          {
+            href: `${base}/settings`,
+            label: T.shell.settings,
+            here:
+              path === `${base}/settings`
+                ? true
+                : path.startsWith(`${base}/settings/`)
+                  ? ('inside' as const)
+                  : false,
+          },
+        ]
       : []),
   ]
   return (

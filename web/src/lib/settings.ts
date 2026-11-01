@@ -17,6 +17,9 @@ export function repoKey(v: unknown): string | null {
   if (typeof v !== 'string') return null
   let s = v.trim()
   if (!s || s.length > 500) return null
+  if (s.startsWith('.')) return null
+  const bare = !/^[a-z][a-z0-9+.-]*:\/\//i.test(s) && !/^[^/@\s]+@/.test(s)
+  if (bare && !/^(localhost|[^/:]*\.[^/:]*)(:\d+)?\//i.test(s)) return null
   let scheme = 'ssh'
   const scp = /^[^/@\s]+@([^:/\s]+):(?!\/)(.+)$/.exec(s)
   if (scp) s = `${scp[1]}/${scp[2]}`
@@ -32,7 +35,7 @@ export function repoKey(v: unknown): string | null {
     .replace(/\.git$/i, '')
     .replace(/\/+/g, '/')
     .toLowerCase()
-  if (!/^[a-z0-9.-]+(:\d+)?\/\S+$/.test(s) || s.length > 300 || s.includes('..')) return null
+  if (!/^[a-z0-9][a-z0-9.-]*(:\d+)?\/\S+$/.test(s) || s.length > 300 || s.includes('..')) return null
   return s
 }
 
@@ -76,29 +79,65 @@ export function thresholdProblems(v: Record<ThresholdName, string>): Partial<Rec
   return out
 }
 
-export type ProfileOfSettings = {
+export type SettingsRead = {
   guide: string
   guideDefault: string
   customGuide: boolean
   usageNote: string
   usageNoteDefault: string
-  revision: string
+  meaningExcluded: boolean
+  staleDays: number
+  longChars: number
+  maintenanceEvery: number
 }
+type Edit = Partial<{
+  guide: string
+  usageNote: string
+  meaningExcluded: boolean
+  staleDays: number
+  longChars: number
+  maintenanceEvery: number
+}>
+export type SettingsBody = Record<string, unknown> & { base: Record<string, unknown> }
 
-// What a save of the texts sends: always the revision read (so a save on settings someone changed since
-// is refused, not lost), the guide as null when it is the default (empty, or the default text itself), so
-// the brain follows the default as it improves, and the usage note trimmed.
-export function savedSettings(
-  read: ProfileOfSettings,
-  edit: { guide?: string; usageNote?: string },
-): { revision: string; guide?: string | null; usageNote?: string } {
-  const out: { revision: string; guide?: string | null; usageNote?: string } = { revision: read.revision }
+// What a save of one part sends (per-field compare-and-set): only the fields it changed, and in "base"
+// what each was when the part read it, so the server refuses a field someone changed since and never
+// touches the others. The guide goes as null when it is the default (empty, or the default text itself)
+// and is compared as stored (null while the default). Null when nothing changed.
+export function settingsSave(read: SettingsRead, edit: Edit): SettingsBody | null {
+  const out: SettingsBody = { base: {} }
   if (edit.guide !== undefined) {
     const g = edit.guide.trim()
-    out.guide = !g || g === read.guideDefault.trim() ? null : g
+    const next = !g || g === read.guideDefault.trim() ? null : g
+    const was = read.customGuide ? read.guide : null
+    if (next !== was) {
+      out.guide = next
+      out.base.guide = was
+    }
   }
-  if (edit.usageNote !== undefined) out.usageNote = edit.usageNote.trim()
-  return out
+  if (edit.usageNote !== undefined && edit.usageNote.trim() !== read.usageNote) {
+    out.usageNote = edit.usageNote.trim()
+    out.base.usageNote = read.usageNote
+  }
+  for (const k of ['meaningExcluded', 'staleDays', 'longChars', 'maintenanceEvery'] as const) {
+    if (edit[k] !== undefined && edit[k] !== read[k]) {
+      out[k] = edit[k]
+      out.base[k] = read[k]
+    }
+  }
+  return Object.keys(out.base).length ? out : null
+}
+
+// What a person typed in a settings text and did not save: in this tab's memory only (never in storage,
+// so a secret pasted by mistake never lands there), by account, brain and part; gone at sign-out.
+const drafts = new Map<string, string>()
+const draftKey = (account: string, slug: string, part: string) => `${account}\u0000${slug}\u0000${part}`
+export const textDrafts = {
+  get: (account: string, slug: string, part: string) => drafts.get(draftKey(account, slug, part)),
+  set: (account: string, slug: string, part: string, v: string) =>
+    drafts.set(draftKey(account, slug, part), v),
+  clear: (account: string, slug: string, part: string) => drafts.delete(draftKey(account, slug, part)),
+  clearAll: () => drafts.clear(),
 }
 
 export type AdminAccount = {

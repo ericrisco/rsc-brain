@@ -85,7 +85,12 @@ export const peopleRoutes: Route[] = [
     return {
       status: 201,
       body: {
-        member: await setMember(ctxOf(r), r.params.slug as string, { account: b.account, role: b.role }),
+        member: await setMember(
+          ctxOf(r),
+          r.params.slug as string,
+          { account: b.account, role: b.role },
+          true,
+        ),
       },
     }
   }),

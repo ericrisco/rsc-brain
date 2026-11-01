@@ -158,6 +158,8 @@ type Scen = {
   settings: Map<string, FxSettings>
   services: FxService[]
   keys: FxKey[]
+  // When each invitation last got a new link (one a minute).
+  resent: Map<string, number>
 }
 
 type FxMember = { accountId: string; kind: string; name: string; email: string | null; role: string }
@@ -170,7 +172,6 @@ type FxSettings = {
   longChars: number
   maintenanceEvery: number
   approvalsSince: number
-  rev: number
 }
 type FxService = {
   id: string
@@ -538,6 +539,7 @@ function freshScenario(id: string, preset: Preset): Scen {
     made: 0,
     members: new Map(),
     roleChanges: new Map(),
+    resent: new Map(),
     repos: new Map([
       ['growth', [{ repo: 'github.com/acme/growth-site', linkedAt: '2026-10-02T10:00:00.000Z' }]],
     ]),
@@ -1070,6 +1072,21 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           'This invitation was already used or withdrawn.',
           'Invite the email again if it still needs access.',
         )
+      const wait = Math.ceil(((s.resent.get(inv.id) ?? 0) + 60_000 - Date.now()) / 1000)
+      if (wait > 0)
+        return {
+          status: 429,
+          headers: { 'retry-after': String(wait) },
+          body: {
+            error: {
+              code: 'too_soon',
+              message: 'A new link for this invitation was made less than a minute ago.',
+              howToProceed: `Wait ${wait} s, then make another; the last link still works.`,
+              retryAfter: wait,
+            },
+          },
+        }
+      s.resent.set(inv.id, Date.now())
       inv.status = 'pending'
       inv.expiresAt = '2026-11-01T10:00:00.000Z'
       return { status: 200, body: { invitation: invited(s, inv) } }
@@ -1381,15 +1398,47 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       if (b.status === 'archived') return ARCHIVED
       const x = settingsOf(c.s, b.slug)
       const body = c.body
-      if (body.revision !== undefined && typeof body.revision !== 'string')
-        return err(400, 'invalid_request', '"revision" must be a string.', 'Send "revision" as text.')
-      if (typeof body.revision === 'string' && body.revision !== settingsView(x).revision)
+      const FIELDS = [
+        'guide',
+        'mapIntro',
+        'usageNote',
+        'meaningExcluded',
+        'staleDays',
+        'longChars',
+        'maintenanceEvery',
+      ]
+      const base = body.base
+      if (
+        base !== undefined &&
+        (typeof base !== 'object' ||
+          base === null ||
+          Array.isArray(base) ||
+          Object.keys(base).some((k) => !FIELDS.includes(k)))
+      )
         return err(
-          409,
-          'settings_changed',
-          `Someone changed the settings of "${b.slug}" since you opened them.`,
-          'Read them again, then save your change on top.',
+          400,
+          'invalid_request',
+          '"base" holds what each field was when you read it.',
+          'Fix "base".',
         )
+      if (base) {
+        const moved = Object.entries(base as Record<string, unknown>)
+          .filter(([k, v]) => x[k as keyof FxSettings] !== v)
+          .map(([k]) => k)
+        if (moved.length)
+          return {
+            status: 409,
+            body: {
+              error: {
+                code: 'settings_changed',
+                message: `Someone changed ${moved.join(', ')} of "${b.slug}" since you read ${moved.length === 1 ? 'it' : 'them'}.`,
+                howToProceed:
+                  'Read the current values in "current", then save your change again on top of them.',
+                current: settingsView(x),
+              },
+            },
+          }
+      }
       const range = (k: 'staleDays' | 'longChars' | 'maintenanceEvery', min: number, max: number) => {
         const v = body[k]
         return v === undefined || (Number.isSafeInteger(v) && (v as number) >= min && (v as number) <= max)
@@ -1411,13 +1460,12 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
             'The guide has 1 to 20 000 characters.',
             'Shorten it, or send null to go back to the default.',
           )
-        x.guide = g
+        x.guide = g === DEFAULT_GUIDE.trim() ? null : g
       }
       if (typeof body.usageNote === 'string') x.usageNote = body.usageNote.trim()
       if (typeof body.meaningExcluded === 'boolean') x.meaningExcluded = body.meaningExcluded
       for (const k of ['staleDays', 'longChars', 'maintenanceEvery'] as const)
         if (typeof body[k] === 'number') x[k] = body[k] as number
-      x.rev += 1
       return { status: 200, body: settingsView(x) }
     },
   },
@@ -1450,7 +1498,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         return err(
           400,
           'invalid_request',
-          'That account was removed.',
+          'That account was deactivated.',
           'The administration can reactivate it first.',
         )
       if (service && role === 'curator')
@@ -1463,21 +1511,20 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       const list = membersOf(c.s, slug)
       const id = (person?.id ?? service?.id) as string
       const had = list.find((x) => x.accountId === id)
-      if (
-        had?.role === 'curator' &&
-        role !== 'curator' &&
-        list.filter((x) => x.role === 'curator').length === 1
-      )
-        return LAST_CURATOR(slug)
-      if (had) had.role = role
-      else
-        list.push({
-          accountId: id,
-          kind: person ? 'person' : 'service',
-          name: (person?.name ?? service?.name) as string,
-          email: person?.email ?? null,
-          role,
-        })
+      if (had)
+        return err(
+          409,
+          'already_member',
+          `${had.name} is already a ${had.role} of "${slug}" — change their role in the list.`,
+          `Change the role with PUT /v1/brains/${slug}/members/${id}.`,
+        )
+      list.push({
+        accountId: id,
+        kind: person ? 'person' : 'service',
+        name: (person?.name ?? service?.name) as string,
+        email: person?.email ?? null,
+        role,
+      })
       c.s.roleChanges.set(`${id}:${slug}`, role)
       return {
         status: 201,
@@ -1564,13 +1611,20 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           `Only curators of "${b.slug}" link repositories to it.`,
           'Ask a curator of the brain.',
         )
+      if (b.status === 'archived')
+        return err(
+          403,
+          'forbidden',
+          'This brain is archived, so no repository can be linked to it.',
+          'A curator of the brain can unarchive it first.',
+        )
       const key = repoKey(c.body.repo)
       if (!key)
         return err(
           400,
           'invalid_request',
           'That is not a repository address.',
-          'Give its remote, such as https://github.com/org/repo.',
+          'Use the full address, e.g. github.com/org/repo (or the output of "git remote get-url origin").',
         )
       const list = c.s.repos.get(b.slug) ?? []
       if (!list.some((x) => x.repo === key)) list.push({ repo: key, linkedAt: NOW() })
@@ -1613,6 +1667,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   },
   'DELETE /v1/brains/{slug}': {
     run: (c) => {
+      if (!c.web) return WEB_ONLY('Deleting a brain')
       if (!c.who?.isAdmin)
         return err(
           403,
@@ -1836,7 +1891,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           'Check the service account id.',
         )
       if (v.removed)
-        return err(400, 'invalid_request', 'This service account was removed.', 'Reactivate it first.')
+        return err(400, 'invalid_request', 'This service account is deactivated.', 'Reactivate it first.')
       if (s.keys.filter((k) => k.account === v.id && !k.revoked).length >= 2)
         return err(
           409,
@@ -2627,7 +2682,6 @@ function settingsOf(s: Scen, slug: string): FxSettings {
       longChars: 20000,
       maintenanceEvery: 20,
       approvalsSince: 3,
-      rev: 1,
     }
     s.settings.set(slug, x)
   }
@@ -2645,14 +2699,12 @@ const settingsView = (x: FxSettings) => ({
   longChars: x.longChars,
   maintenanceEvery: x.maintenanceEvery,
   approvalsSince: x.approvalsSince,
-  revision: `rev${String(x.rev).padStart(4, '0')}`,
 })
 
 // Another curator changes the settings of a brain meanwhile (the conflict of a save).
 export function settingsBehind(s: Scen, slug: string, change: Partial<FxSettings>): void {
   const x = settingsOf(s, slug)
   Object.assign(x, change)
-  x.rev += 1
 }
 
 // A curator archives or unarchives a brain (B4: archiving is a curator's; deleting the administration's).
@@ -2693,6 +2745,19 @@ function adminAccounts(s: Scen, who: Account) {
       createdAt: '2026-10-01T10:00:00.000Z',
     }
   })
+  // Many people (paging and the filter of the administration).
+  if (s.states.get('people') === 'much-data')
+    for (let i = 1; i <= 45; i++)
+      people.push({
+        ...(people[1] ?? people[0]),
+        id: `acc_many${i}`,
+        name: `Person ${String(i).padStart(2, '0')}`,
+        email: `person${i}@example.test`,
+        isAdmin: false,
+        canCreateBrains: false,
+        roles: [],
+        brains: 0,
+      } as (typeof people)[number])
   if (who.alone) return people
   const services = s.services.map((v) => {
     const roles = v.roles.flatMap((r) => {
