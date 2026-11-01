@@ -49,7 +49,14 @@ export const peopleRoutes: Route[] = [
     })
     return { status: 201, body: { invitations } }
   }),
-  route('GET /v1/invitations', async (r) => ({ body: { invitations: await listInvitations(ctxOf(r)) } })),
+  // By pages (cursor, limit) and status, on the server.
+  route('GET /v1/invitations', async (r) => ({
+    body: await listInvitations(ctxOf(r), {
+      status: r.query.get('status'),
+      cursor: r.query.get('cursor'),
+      limit: r.query.get('limit'),
+    }),
+  })),
   route('POST /v1/invitations/:id/resend', async (r) => ({
     body: { invitation: await resendInvitation(ctxOf(r), r.params.id as string) },
   })),

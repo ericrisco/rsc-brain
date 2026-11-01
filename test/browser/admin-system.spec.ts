@@ -259,7 +259,7 @@ test.describe('administration: audit', () => {
     context,
     baseURL,
   }) => {
-    await scenario(context, baseURL as string, 'signed-in')
+    await scenario(context, baseURL as string, 'signed-in', { 'admin-audit': 'much-data' })
     await page.goto('/admin/audit')
     const rows = page.getByRole('table', { name: 'Audit lines' }).getByRole('row')
     await expect(rows).toHaveCount(101)

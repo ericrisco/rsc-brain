@@ -971,6 +971,7 @@ const HAND: Record<string, Op> = {
       installation: obj({
         name: s('The name of the installation.'),
         factoryUrl: nul(s('The address of RSC Factory, when the administration set one.')),
+        admins: list(s('A name.'), 'The administrators to ask about the installation (up to 5).'),
       }),
       key: obj({
         id: s('Credential id.'),
@@ -1148,6 +1149,7 @@ const HAND: Record<string, Op> = {
           who: s('The account that opened it.'),
           client: nul(s('The agent or app of its key.')),
           purpose: s('What it is for.'),
+          day: nul(s('The day of a session a key got by writing without opening one; null otherwise.')),
           ref: nul(s('External reference.')),
           status: s('open, closed or closed_no_summary.'),
           entries: n('Entries written in it (its summary aside).'),
@@ -1200,7 +1202,13 @@ const HAND: Record<string, Op> = {
     reply: obj({ invitations: list(INVITED) }),
   },
   'GET /v1/invitations': {
-    summary: 'Invitations: all of them for the administration; a curator sees the ones they sent.',
+    summary:
+      'Invitations by pages, newest first: all of them for the administration; a curator sees the ones they sent and could still make.',
+    query: {
+      status: 'Only this status: pending, expired, used or revoked.',
+      cursor: 'The "next" of the previous page.',
+      limit: 'How many (default 50, at most 200).',
+    },
     reply: obj({
       invitations: list(
         obj({
@@ -1216,6 +1224,7 @@ const HAND: Record<string, Op> = {
           expiresAt: s('Until when it works.', { format: 'date-time' }),
         }),
       ),
+      next: nul(s('The cursor of the next page; null on the last one.')),
     }),
   },
   'POST /v1/invitations/{id}/resend': {

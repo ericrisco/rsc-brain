@@ -62,7 +62,8 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
       // Inviting happens in the web: a token cannot invite, even an administrator's.
       assert.equal(account.canInvite, false)
       assert.equal(account.totp, null)
-      assert.deepEqual(r.body.installation, { name: 'Test', factoryUrl: null })
+      // admins (PR26): whom to ask about the installation, by name.
+      assert.deepEqual(r.body.installation, { name: 'Test', factoryUrl: null, admins: ['Eric'] })
     })
 
     it('in the web, the administration may invite; a person without the rights may not', async () => {
@@ -481,6 +482,7 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
       const s = sessions[0] as Json
       assert.deepEqual(Object.keys(s).sort(), [
         'client',
+        'day',
         'entries',
         'id',
         'lastActivityAt',

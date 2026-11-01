@@ -61,14 +61,16 @@ test.describe('a brain', () => {
     await page.goto('/b/growth')
     const alert = page.getByRole('alert')
     await expect(alert).toContainText('You cannot open this')
-    await expect(alert).toContainText('ask a curator of that brain to add you')
+    await expect(alert).toContainText('Ask a curator of that brain to add you')
     await expect(alert.getByRole('button', { name: 'Try again' })).toHaveCount(0)
   })
 
   test('one that does not exist reads the same', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/b/nowhere')
-    await expect(page.getByRole('alert')).toContainText('No brain with that name is available to you.')
+    await expect(page.getByRole('alert')).toContainText(
+      'This brain does not exist, or you are not one of its members.',
+    )
   })
 })
 

@@ -74,7 +74,7 @@ test.describe('a brain at work', () => {
     await expect(today).toContainText('open')
     // A program without a purpose: said in words, never a raw user agent.
     const third = today.getByRole('listitem').nth(2)
-    await expect(third).toContainText('No purpose given')
+    await expect(third).toContainText('Unnamed work · an API client')
     await expect(third).toContainText('an API client')
     await expect(today).not.toContainText('curl/')
     await expect(today).not.toContainText('Session without a purpose')

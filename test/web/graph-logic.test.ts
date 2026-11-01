@@ -9,7 +9,10 @@ import {
   type Answer,
   areas,
   fit,
+  fitPad,
   focusView,
+  GROUP_SHAPE,
+  groupRadius,
   hit,
   hubs,
   keyOf,
@@ -430,5 +433,25 @@ describe('moving around', () => {
     }
     // A canvas too short for the band still draws something.
     assert.ok(fit(ring, on, 300, 120, 40, 90).scale > 0)
+  })
+})
+
+// Review of PR26: the pad around the fitted picture holds the biggest group box drawn (a box is sized in
+// pixels): with only pages, 48; with a big group, its box and 24 more.
+describe('the pad around the fitted picture', () => {
+  it('48 for pages; a big group box widens it; a group hidden from the fit does not', () => {
+    const scene = (counts: number[], groups: boolean[], byGroups = true) => ({
+      n: counts.length,
+      shape: Uint8Array.from(groups.map((g) => (g ? GROUP_SHAPE : 0))),
+      count: Uint32Array.from(counts),
+      byGroups,
+    })
+    assert.equal(fitPad(scene([0, 0], [false, false]), new Uint8Array([1, 1])), 48)
+    const big = scene([2000, 1], [true, false])
+    assert.equal(fitPad(big, new Uint8Array([1, 1])), 24 + groupRadius(2000))
+    assert.ok(fitPad(big, new Uint8Array([1, 1])) > 48)
+    assert.equal(fitPad(big, new Uint8Array([0, 1])), 48)
+    // Drawn among pages (the gathered pages of a level), a group box is smaller.
+    assert.equal(fitPad(scene([2000], [true], false), new Uint8Array([1])), 48)
   })
 })

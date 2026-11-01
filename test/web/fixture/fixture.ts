@@ -924,7 +924,11 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
                 totp: who.totp,
               },
               key: { id: `crd_web_${who.id}`, kind: 'web', perm: 'write', ref: null, agent: null },
-              installation: { name: s.name, factoryUrl: s.factoryUrl },
+              installation: {
+                name: s.name,
+                factoryUrl: s.factoryUrl,
+                admins: s.accounts.filter((a) => a.isAdmin && !a.removed).map((a) => a.name),
+              },
             },
           }
         : UNAUTHORIZED,
@@ -1029,12 +1033,26 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   },
   'GET /v1/invitations': {
     screen: 'people',
-    run: ({ s, who }) => {
+    // By pages, as the server: `status`, `cursor` (an offset here) and `limit` (default 50).
+    run: ({ s, who, query }) => {
       if (!who?.isAdmin) return ONLY_ADMIN_INVITES
       const st = s.states.get('people')
-      const list =
+      const all =
         st === 'empty' ? [] : st === 'much-data' ? [...s.invitations, ...manyInvitations()] : s.invitations
-      return { status: 200, body: { invitations: list } }
+      const status = query.get('status')
+      if (status && !['pending', 'expired', 'used', 'revoked'].includes(status))
+        return err(
+          400,
+          'invalid_request',
+          `There is no invitation status "${status}".`,
+          'Use one of: pending, expired, used, revoked.',
+        )
+      const list = status ? all.filter((i) => i.status === status) : all
+      const from = Number(query.get('cursor') || 0)
+      const limit = Math.min(200, Number(query.get('limit')) || 50)
+      const page = list.slice(from, from + limit)
+      const next = from + limit < list.length ? String(from + limit) : null
+      return { status: 200, body: { invitations: page, next } }
     },
   },
   'POST /v1/invitations': {
@@ -2374,6 +2392,19 @@ function healthOf(slug: string, st: State | undefined) {
     ],
     similarTitles: [
       { a: 'audience/intros', aTitle: 'Writing intros', b: 'audience/old-intros', bTitle: 'Old intros' },
+      // A templated wiki: long titles almost the same, which wrap on a phone (axe target-size at 375 px).
+      {
+        a: 'reports/weekly-retention-report-for-the-onboarding-funnel-2026-w43',
+        aTitle: 'Weekly retention report for the onboarding funnel, week 43 of 2026',
+        b: 'reports/weekly-retention-report-for-the-onboarding-funnel-2026-w44',
+        bTitle: 'Weekly retention report for the onboarding funnel, week 44 of 2026',
+      },
+      {
+        a: 'reports/monthly-retention-report-for-the-support-channel-2026-10',
+        aTitle: 'Monthly retention report for the support channel, October 2026',
+        b: 'reports/monthly-retention-report-for-the-support-channel-2026-09',
+        bTitle: 'Monthly retention report for the support channel, September 2026',
+      },
     ],
     maintenance: { suggested: true, approvalsSince: 21, every: 20 },
   }
@@ -2827,6 +2858,8 @@ function sessionsOf(slug: string, n: number) {
     // The third: a program that opened no session of its own (no purpose, a raw user agent).
     client: i === 2 ? 'curl/8.7.1' : (CLIENTS[i % CLIENTS.length] ?? null),
     purpose: ['Review the intros of October', 'Fix the onboarding emails', ''][i % 3] ?? '',
+    // The one with no purpose is the session of the day a key got by writing without opening one.
+    day: i % 3 === 2 ? '2026-10-29' : null,
     ref: i % 3 === 2 ? `r_${slug.slice(0, 3)}${i}` : null,
     status: i === 0 ? 'open' : i % 4 === 3 ? 'closed_no_summary' : 'closed',
     entries: (i * 7) % 13,
@@ -3244,7 +3277,10 @@ export async function startFixture(
             ended: false,
           })
         } else if (b.via === 'app-request') {
-          const a = s.apps.find((x) => x.account === account && x.lastRequestAt === null)
+          // `id`: an app already in use asks again; else the one approved that has not asked yet.
+          const a = b.id
+            ? s.apps.find((x) => x.account === account && x.id === b.id)
+            : s.apps.find((x) => x.account === account && x.lastRequestAt === null)
           if (!a) return send(res, { status: 404, body: {} })
           a.lastRequestAt = NOW()
         } else {

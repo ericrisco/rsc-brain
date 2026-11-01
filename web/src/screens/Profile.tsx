@@ -14,6 +14,7 @@ import { invalidate, resource } from '../api/resource.ts'
 import { ago } from '../lib/brains.ts'
 import {
   brainsLabel,
+  effectivePerm,
   groupKey,
   lastUseLabel,
   notifyRows,
@@ -22,6 +23,7 @@ import {
   TOKEN_DAYS,
   type TokenForm,
   tokenRequest,
+  writeAllowed,
 } from '../lib/profile.ts'
 import { branding, justSignedOut, type Me, me, online } from '../session.ts'
 import { T } from '../text.ts'
@@ -158,6 +160,12 @@ function NewTokenForm({
 }) {
   const brains = brainsResource().data.value?.brains ?? []
   const [f, setF] = useState<TokenForm>({ name: '', perm: 'write', days: 90, scope: 'all', brains: [] })
+  // «Read and write» only where the person writes: a reader's token reads (B4).
+  const roles = new Map(brains.map((b) => [b.slug, b.role]))
+  const canWrite = brains.length === 0 || writeAllowed(f, roles)
+  useEffect(() => {
+    if (!canWrite && f.perm === 'write') setF((x) => ({ ...x, perm: 'read' }))
+  }, [canWrite])
   const [problems, setProblems] = useState<{ name?: string; brains?: string }>({})
   const [error, setError] = useState<ApiError | null>(null)
   const [pending, setPending] = useState(false)
@@ -270,10 +278,17 @@ function NewTokenForm({
             type="radio"
             name="token-perm"
             checked={f.perm === 'write'}
+            disabled={!canWrite}
+            aria-describedby={canWrite ? undefined : 'token-perm-why'}
             onChange={() => setF({ ...f, perm: 'write' })}
           />
           {P.write}
         </label>
+        {canWrite ? null : (
+          <span id="token-perm-why" class="hint">
+            {P.readerOnly}
+          </span>
+        )}
       </fieldset>
       <div class="field">
         <label for="token-days">{P.expires}</label>
@@ -329,6 +344,8 @@ function OnceToken({ made, onDone }: { made: Made; onDone: () => void }) {
 }
 
 function Tokens({ start, forget }: { start: boolean; forget: number }) {
+  // As each token works: «write» over brains the person only reads is read (B4).
+  const roles = new Map((brainsResource().data.value?.brains ?? []).map((b) => [b.slug, b.role]))
   const r = tokensResource()
   useFresh(r)
   const [form, setForm] = useState(false)
@@ -436,7 +453,7 @@ function Tokens({ start, forget }: { start: boolean; forget: number }) {
                   {t.expiresSoon ? <span class="tag warn">{P.endsSoon}</span> : null}
                 </p>
                 <p class="meta">
-                  {permLabel(t.perm)} · {brainsLabel(t)}
+                  {permLabel(effectivePerm(t, roles))} · {brainsLabel(t)}
                 </p>
                 <p class="meta">
                   {lastUseLabel(t)} · {P.endsOn(T.date(t.expiresAt))}
@@ -471,7 +488,7 @@ function Tokens({ start, forget }: { start: boolean; forget: number }) {
                       {t.name} <span class="tag mono">…{t.last4}</span>
                     </p>
                     <p class="meta">
-                      {permLabel(t.perm)} · {brainsLabel(t)}
+                      {permLabel(effectivePerm(t, roles))} · {brainsLabel(t)}
                     </p>
                     <p class="meta">
                       {lastUseLabel(t)} · {P.endedOn(T.date(t.expiresAt))}

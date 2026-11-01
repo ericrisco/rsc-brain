@@ -43,7 +43,11 @@ describe('what waits for me', () => {
       count: 2,
       href: '/b/a/proposals',
     })
-    assert.deepEqual(toReview([b('a', 'curator', 2), b('c', 'curator', 1)]), { count: 3, href: '/' })
+    // The final review of B6: with several waiting, the count leads to the first brain with proposals.
+    assert.deepEqual(toReview([b('a', 'curator', 2), b('c', 'curator', 1)]), {
+      count: 3,
+      href: '/b/a/proposals',
+    })
     assert.deepEqual(toReview([b('a', 'contributor', 4)]), { count: 0, href: '/' })
     assert.deepEqual(toReview([]), { count: 0, href: '/' })
   })
@@ -114,5 +118,20 @@ describe('the client of a session, in words', () => {
     assert.equal(clientLabel(null), null)
     assert.equal(clientLabel(''), null)
     assert.ok((clientLabel('x'.repeat(200)) ?? '').length <= 40)
+  })
+})
+
+// The final review of B6: links for several people are «them», shown once each.
+describe('the words when invitation links are ready', () => {
+  it('one link is «it»; several are «them»', async () => {
+    const { T } = await import('../../web/src/text.ts')
+    assert.equal(
+      T.people.linkReady(['ana@x.test']),
+      'Link for ana@x.test is ready: copy it now, it is shown only once.',
+    )
+    assert.equal(
+      T.people.linkReady(['ana@x.test', 'bo@x.test']),
+      'Links for ana@x.test, bo@x.test are ready: copy them now, each is shown only once.',
+    )
   })
 })

@@ -16,12 +16,14 @@ import {
 } from '../../web/src/lib/connect.ts'
 import {
   brainsLabel,
+  effectivePerm,
   groupKey,
   lastUseLabel,
   notifyRows,
   passwordChanged,
   permLabel,
   tokenRequest,
+  writeAllowed,
 } from '../../web/src/lib/profile.ts'
 
 const NOW = new Date('2026-11-01T12:00:00.000Z')
@@ -345,5 +347,29 @@ describe('after a new password', () => {
     const plain = 'Password changed. Your other sessions are signed out.'
     assert.equal(passwordChanged(undefined, [{ ended: false }]), plain)
     assert.equal(passwordChanged([{ expired: false }], undefined), plain)
+  })
+})
+
+// The final review of B6: a token never says more than its owner may do. A reader in every brain it
+// reaches cannot pick «Read and write», and a token's permission is shown as it works (capped by role).
+describe('a token’s permission, capped by the person’s roles', () => {
+  const roles = new Map([
+    ['growth', 'reader'],
+    ['support', 'contributor'],
+  ])
+  it('write may be picked only where the person writes', () => {
+    assert.equal(writeAllowed({ scope: 'some', brains: ['growth'] }, roles), false)
+    assert.equal(writeAllowed({ scope: 'some', brains: ['growth', 'support'] }, roles), true)
+    assert.equal(writeAllowed({ scope: 'all', brains: [] }, roles), true)
+    assert.equal(writeAllowed({ scope: 'all', brains: [] }, new Map([['growth', 'reader']])), false)
+  })
+  it('a write token over brains the person only reads works as read', () => {
+    assert.equal(effectivePerm({ perm: 'write', allBrains: false, brains: ['growth'] }, roles), 'read')
+    assert.equal(effectivePerm({ perm: 'write', allBrains: false, brains: ['support'] }, roles), 'write')
+    assert.equal(
+      effectivePerm({ perm: 'write', allBrains: true, brains: null }, new Map([['growth', 'reader']])),
+      'read',
+    )
+    assert.equal(effectivePerm({ perm: 'read', allBrains: true, brains: null }, roles), 'read')
   })
 })

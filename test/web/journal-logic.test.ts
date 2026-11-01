@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   aboutOf,
+  activeNow,
   byline,
   conflictActions,
   correctionAbout,
@@ -169,11 +170,34 @@ describe('relations in words', () => {
 describe('sessions', () => {
   it('a session without a purpose says what it is', () => {
     assert.equal(sessionLabel({ purpose: 'Intros', day: null }), 'Intros')
-    assert.equal(
-      sessionLabel({ purpose: 'implicit', day: '2026-10-29' }),
-      'Work without a session on 29 Oct 2026',
-    )
     assert.equal(sessionLabel({ purpose: '', day: null }), 'Session with no purpose given')
+  })
+
+  // The final review of B6: one name for the session a key gets by writing without opening one.
+  it('work without a session is «Unnamed work · <client>»; in the web, «Web edits · <person>»', () => {
+    assert.equal(
+      sessionLabel({ purpose: 'implicit', day: '2026-10-29', client: 'claude-code/2.1.3', author: eric }),
+      'Unnamed work · Claude Code',
+    )
+    assert.equal(sessionLabel({ purpose: '', day: '2026-10-29', client: null }), 'Unnamed work · an agent')
+    assert.equal(
+      sessionLabel({ purpose: '', day: '2026-10-29', client: 'web', author: eric }),
+      'Web edits · Eric',
+    )
+    assert.equal(
+      sessionLabel({ purpose: '', day: '2026-10-29', client: 'web', who: 'Ana' }),
+      'Web edits · Ana',
+    )
+  })
+
+  it('the sessions active now are agents’ and services’, never the web’s own edits', () => {
+    const s = (id: string, client: string | null, day: string | null) => ({ id, client, day })
+    assert.deepEqual(
+      activeNow([s('a', 'Claude Code', null), s('b', 'web', '2026-10-29'), s('c', null, '2026-10-29')]).map(
+        (x) => x.id,
+      ),
+      ['a', 'c'],
+    )
   })
 
   it('filters become the query, empty ones left out and uncompiled as 1', () => {
@@ -226,13 +250,9 @@ describe('review of PR20', () => {
     assert.equal(plainText('_really_ and __bold__ and *this*'), 'really and bold and this')
   })
 
-  it('the session of a day reads its day, whether the day comes as a day or as an instant', () => {
-    for (const day of ['2026-10-29', '2026-10-29T00:00:00.000Z']) {
-      const label = sessionLabel({ purpose: 'implicit', day })
-      assert.doesNotMatch(label, /Invalid/, day)
-      assert.match(label, /29 Oct 2026/, day)
-    }
-    assert.equal(sessionLabel({ purpose: 'implicit', day: 'nonsense' }), 'Work without a session')
+  it('the session of a day has the same name whatever form its day comes in', () => {
+    for (const day of ['2026-10-29', '2026-10-29T00:00:00.000Z', 'nonsense'])
+      assert.equal(sessionLabel({ purpose: 'implicit', day, client: 'codex' }), 'Unnamed work · Codex', day)
   })
 
   it('superseding an entry or dismissing a correction: its author or a curator, as the server decides', () => {
@@ -304,5 +324,19 @@ describe('what a new correction is about, at first', () => {
     assert.equal(correctionAbout({ fromEntry: '', fromPage: '', pages: 0 }), 'nothing')
     // Not known yet (the brain is loading): a page, as before.
     assert.equal(correctionAbout({ fromEntry: '', fromPage: '', pages: undefined }), 'page')
+  })
+})
+
+// Review of PR26: a purge removes the entry's text, its versions and its place in search; copies quoted
+// elsewhere (a page, a proposal, a comment) are not swept (aplazado a la spec de privacidad). The words say
+// exactly that, never «gone for good».
+describe('the words of a purged entry', () => {
+  it('say what is removed and what is not', async () => {
+    const { T } = await import('../../web/src/text.ts')
+    const w = T.journal.statePurged
+    assert.doesNotMatch(w, /gone for good|for ever|forever/i)
+    assert.match(w, /versions/)
+    assert.match(w, /search/)
+    assert.match(w, /quoted elsewhere/)
   })
 })

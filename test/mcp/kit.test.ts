@@ -814,3 +814,21 @@ describe('the block that saves a token, run in a shell', () => {
     })
   }
 })
+
+// The final review of B6: the hooks and the bridge run the rsc-brain command, which is not published yet
+// (it comes with the installation release, B7). The kit says so, and that the standard connection or the
+// remote MCP over HTTP need no command.
+describe('the kit is honest about the rsc-brain command', () => {
+  const kit = connectKit({ mcpUrl: 'https://brain.example.com/mcp', brain: null })
+  it('the Claude Code reminder says how to get the command, and that it is not published yet', () => {
+    const cc = kit.agents.find((a) => a.id === 'claude-code')
+    const note = cc?.reminder && 'note' in cc.reminder ? cc.reminder.note : ''
+    assert.match(note, /not published yet/)
+    assert.match(note, /without it/)
+  })
+  it('the bridge says the same, and points to the remote connection that needs no command', () => {
+    const other = kit.agents.find((a) => a.id === 'other')
+    assert.match(other?.token.note ?? '', /not published yet/)
+    assert.match(other?.token.note ?? '', /Remote MCP over HTTP/)
+  })
+})

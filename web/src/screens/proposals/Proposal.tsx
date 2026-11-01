@@ -46,9 +46,10 @@ import { Button } from '../../ui/Button.tsx'
 import { Field } from '../../ui/Field.tsx'
 import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
 import { TextArea } from '../../ui/TextArea.tsx'
-import { entryHref } from '../journal/common.tsx'
 import { blockedNow, logHref, pageHref, useBrain, WikiHead } from '../wiki/common.tsx'
+import { entryResource } from '../wiki/data.ts'
 import { BodyDiff, BodyLines, ListDiff, Words } from '../wiki/History.tsx'
+import { SourcePanel } from '../wiki/Page.tsx'
 import {
   type Decision,
   inboxHref,
@@ -190,8 +191,16 @@ const mine = (after: PageState | null, correction: Correction | undefined): Page
   return out
 }
 
+// A source entry, named by its title (CA4: its id means nothing to a person).
+function SourceTitle({ id }: { id: string }) {
+  const e = entryResource(id).data.value?.entry
+  return <>{e?.title ?? T.proposals.sourceLoading}</>
+}
+
+// The sources of a change: an entry opens beside the proposal (the wiki page's side panel), which stays.
 function Sources({ slug, op }: { slug: string; op: Op }) {
   const w = T.proposals
+  const [open, setOpen] = useState<string | null>(null)
   const list = Array.isArray(op.sources) ? (op.sources as NonNullable<PageState['sources']>) : null
   if (!list) return null
   return (
@@ -205,11 +214,15 @@ function Sources({ slug, op }: { slug: string; op: Op }) {
             <li key={sourceKey(s)}>
               {'entryId' in s ? (
                 <>
-                  {w.sourceEntry} <span class="mono">{s.entryId}</span> ·{' '}
-                  <a href={entryHref(slug, s.entryId)}>
-                    {w.openSource}
-                    <span class="sr-only"> {s.entryId}</span>
-                  </a>
+                  {w.sourceEntry}{' '}
+                  <button
+                    type="button"
+                    class="linkish"
+                    data-op-source={s.entryId}
+                    onClick={() => setOpen(s.entryId)}
+                  >
+                    <SourceTitle id={s.entryId} />
+                  </button>
                 </>
               ) : (
                 <a href={s.url} target="_blank" rel="noopener noreferrer">
@@ -220,6 +233,20 @@ function Sources({ slug, op }: { slug: string; op: Op }) {
           ))}
         </ul>
       )}
+      {open ? (
+        <SourcePanel
+          key={open}
+          slug={slug}
+          id={open}
+          onClose={() => {
+            const back = open
+            setOpen(null)
+            requestAnimationFrame(() =>
+              document.querySelector<HTMLElement>(`[data-op-source="${CSS.escape(back)}"]`)?.focus(),
+            )
+          }}
+        />
+      ) : null}
     </div>
   )
 }
@@ -437,8 +464,15 @@ function Card({ slug, o, bornBy, purges, act, choices, several, onChoose, onBase
         </form>
       ) : act && pending && (parts.length || oldBase(o, choices)) ? (
         <p class="actions op-actions">
+          {/* Each card's «Edit» names its change (several on one page read apart). */}
           {parts.length ? (
-            <button type="button" class="button secondary" ref={editButton} onClick={open}>
+            <button
+              type="button"
+              class="button secondary"
+              ref={editButton}
+              aria-label={w.editTitle(n)}
+              onClick={open}
+            >
               {w.edit}
             </button>
           ) : null}

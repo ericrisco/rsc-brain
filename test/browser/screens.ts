@@ -29,6 +29,8 @@ export type Row = {
   // What leads to the rest, when not a «more» button or link.
   muchShows?: (page: Page) => Locator
   forbidden?: Na
+  // Makes the default state hold something (an event in the live feed) before the page is read again.
+  seed?: (s: { emit(brain: string, kind?: string): Promise<void> }) => Promise<void>
   // Why a box to type in is there while loading (a form for something new, empty by nature).
   typing?: string
 }
@@ -204,7 +206,7 @@ export const ROWS: Row[] = [
     path: '/b/growth/journal/about?address=audience/retention',
     route: '/b/:slug/journal/about',
     key: 'entries',
-    ready: heading('Entries about audience/retention'),
+    ready: named('Short intros keep viewers'),
     empty: true,
     filtered: { na: NO_FILTERS },
     much: {
@@ -238,6 +240,7 @@ export const ROWS: Row[] = [
     route: '/b/:slug/activity',
     key: 'brain',
     ready: heading('Live feed'),
+    seed: async (s) => s.emit('growth', 'entry.saved'),
     empty: true,
     filtered: {
       na: 'its filters are folded and act on what was heard (activity.spec: «filtered empty clears»)',
@@ -332,7 +335,12 @@ export const ROWS: Row[] = [
     write: button('Send invitations'),
     typing: INVITE_FORM,
     empty: true,
-    filtered: { na: 'its «Show» filter has the same empty words as empty (tested as empty)' },
+    filtered: {
+      path: '/admin/invitations',
+      act: async (p) => {
+        await p.getByLabel('Show').selectOption('revoked')
+      },
+    },
     much: true,
   },
   {

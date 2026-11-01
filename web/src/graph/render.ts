@@ -9,12 +9,13 @@
 // middle, one hop on a filled ring and two hops on a hollow, smaller one. Names go where they fit: the item
 // the person is on, its neighbours, the hubs, the groups, and everything once zoomed in.
 import type { View } from './model.ts'
-import { fit } from './model.ts'
+import { fit, fitPad, GROUP_SHAPE, groupRadius } from './model.ts'
+
+export { fitPad, GROUP_SHAPE, groupRadius }
 
 export type Palette = { text: string; muted: string; accent: string; danger: string; ground: string }
 
 export const SHAPES = ['topic', 'entity', 'decision', 'guide', 'agent', 'source', 'overview'] as const
-export const GROUP_SHAPE = 255
 
 // Each link kind: its dash (screen px), width, and whether it points somewhere (an arrowhead at its end).
 export const LINE: Record<string, { dash: number[]; width: number; arrow: boolean }> = {
@@ -88,7 +89,7 @@ export function shape(ctx: Path, type: string, x: number, y: number, r: number):
 }
 
 export const NODE_R = 5
-export const groupRadius = (count: number) => Math.min(28, 7 + 1.1 * Math.sqrt(count))
+
 // Pages shrink when the picture is zoomed far out (many pages on a phone), never below 2.5 px.
 export const nodeRadius = (scale: number) => Math.min(NODE_R, Math.max(2.5, NODE_R * Math.sqrt(scale)))
 // A page grows with how linked it is, up to twice its size.
@@ -175,14 +176,8 @@ export class Renderer {
     const st = this.state
     const xy = st?.xy ?? this.layout
     if (!sc || !st || !xy || xy.length !== 2 * sc.n || st.width === 0 || st.height === 0) return null
-    // The pad holds the biggest box drawn whole: a group's box is sized in pixels, not by the zoom.
-    let reach = 0
-    if (st.autoFit)
-      for (let i = 0; i < sc.n; i++)
-        if (st.fit[i] && sc.shape[i] === GROUP_SHAPE)
-          reach = Math.max(reach, groupRadius(sc.count[i] as number) * (sc.byGroups ? 1 : 0.6))
     const view = st.autoFit
-      ? fit(xy, st.fit, st.width, Math.max(120, st.height - st.inset), 24 + Math.max(24, reach), st.top)
+      ? fit(xy, st.fit, st.width, Math.max(120, st.height - st.inset), fitPad(sc, st.fit), st.top)
       : st.view
     const { palette, dpr } = st
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)

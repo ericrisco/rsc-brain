@@ -183,7 +183,7 @@ function Sources({ slug, reading, curator }: { slug: string; reading: Reading; c
 let opened = false
 
 // The entry a source points at, beside the page (a modal side panel: the page stays where it was).
-function SourcePanel({ slug, id, onClose }: { slug: string; id: string; onClose: () => void }) {
+export function SourcePanel({ slug, id, onClose }: { slug: string; id: string; onClose: () => void }) {
   // Gone by any way (Back too): the step it added is taken back already.
   useEffect(
     () => () => {

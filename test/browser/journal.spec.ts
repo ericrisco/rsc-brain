@@ -33,7 +33,7 @@ test.describe('Sessions', () => {
     await expect(page).toHaveTitle(/^Sessions · /)
     const list = page.getByRole('list', { name: 'Sessions' })
     const items = list.getByRole('listitem')
-    await expect(items.first()).toContainText('Work without a session on 29 Oct 2026')
+    await expect(items.first()).toContainText('Web edits · Eric')
     await expect(items.first()).toContainText('Eric, in the web')
     const intros = items.filter({ hasText: 'Review the intros of October' })
     await expect(intros).toContainText('Claude Code of Eric')
@@ -128,7 +128,7 @@ test.describe('Sessions', () => {
   test('a brain the person is not in says so', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/b/nowhere/journal')
-    await expect(page.locator('[data-state="forbidden"]')).toContainText('ask a curator')
+    await expect(page.locator('[data-state="forbidden"]')).toContainText(/ask a curator/i)
   })
 })
 

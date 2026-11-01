@@ -520,3 +520,20 @@ export function fit(xy: Float32Array, visible: Uint8Array, w: number, h: number,
   )
   return { scale, tx: w / 2 - ((x0 + x1) / 2) * scale, ty: mid - ((y0 + y1) / 2) * scale }
 }
+
+// The shape code of a group box, and its radius in pixels by how many pages it holds (render.ts draws them).
+export const GROUP_SHAPE = 255
+export const groupRadius = (count: number) => Math.min(28, 7 + 1.1 * Math.sqrt(count))
+
+// The pad around what is fitted: room for the biggest group box drawn whole (a box is sized in pixels, not
+// by the zoom), and never less than 48 px.
+export function fitPad(
+  sc: { n: number; shape: Uint8Array; count: ArrayLike<number>; byGroups: boolean },
+  fitted: Uint8Array,
+): number {
+  let reach = 0
+  for (let i = 0; i < sc.n; i++)
+    if (fitted[i] && sc.shape[i] === GROUP_SHAPE)
+      reach = Math.max(reach, groupRadius(sc.count[i] as number) * (sc.byGroups ? 1 : 0.6))
+  return 24 + Math.max(24, reach)
+}

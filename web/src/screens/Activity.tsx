@@ -17,7 +17,7 @@ import {
   waitingLabel,
 } from '../lib/activity.ts'
 import { ago, clientLabel } from '../lib/brains.ts'
-import { sessionLabel } from '../lib/journal.ts'
+import { activeNow, sessionLabel } from '../lib/journal.ts'
 import { isAddress, pageHref } from '../lib/markdown.ts'
 import { KEEP, type LiveEvent, type Stream } from '../live/stream.ts'
 import { useStream } from '../live/useStream.ts'
@@ -101,8 +101,10 @@ function Sessions({ slug, factoryUrl }: { slug: string; factoryUrl: string | nul
   const list = r.data.value
   const now = Date.now()
   const quiet = (s: SessionView) => now - Date.parse(s.lastActivityAt) > QUIET_MS
-  const active = list?.items.filter((s) => !quiet(s)) ?? []
-  const idle = list?.items.filter(quiet) ?? []
+  // Agents' and services' sessions; the web's own edits show in the feed, not here.
+  const open = activeNow(list?.items ?? [])
+  const active = open.filter((s) => !quiet(s))
+  const idle = open.filter(quiet)
   return (
     <div class="act-sessions">
       <section aria-labelledby="act-sessions-title">

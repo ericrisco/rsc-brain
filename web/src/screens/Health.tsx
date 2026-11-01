@@ -44,7 +44,9 @@ function Act({ slug, can, text, label }: { slug: string; can: boolean; text: str
 function PageLink({ l }: { l: HealthLink }) {
   return (
     <span class="health-page">
-      <a href={l.href}>{l.label}</a>
+      <a class="health-page-link" href={l.href}>
+        {l.label}
+      </a>
       {l.address ? <span class="mono meta"> {l.address}</span> : null}
     </span>
   )

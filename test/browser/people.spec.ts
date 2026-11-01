@@ -304,21 +304,62 @@ test.describe('links in view (P1, P2, P3)', () => {
     await expect(page.getByRole('heading', { level: 2, name: 'Invitations' })).toBeFocused()
   })
 
-  // PR26 (spec B6 «Mucho dato»): accepted invitations stay, so a long history comes by pages.
-  test('a long history of invitations comes 20 at a time; «Show more» puts the keyboard on the first new one', async ({
+  // PR26 (spec B6 «Mucho dato»): accepted invitations stay, so a long history comes by pages from the
+  // server (a cursor and 20 at a time), and «Show more» puts the keyboard on the first new one.
+  test('a long history of invitations comes 20 at a time from the server; the keyboard lands on the first new one', async ({
     page,
     context,
     baseURL,
   }) => {
     await scenario(context, baseURL as string, 'signed-in', { people: 'much-data' })
+    const asked: URL[] = []
+    page.on('request', (r) => {
+      const u = new URL(r.url())
+      if (u.pathname === '/v1/invitations' && r.method() === 'GET') asked.push(u)
+    })
     await page.goto('/people')
-    const rows = page.getByRole('region', { name: 'Invitations' }).getByRole('listitem')
+    const rows = page.getByRole('region', { name: 'Invitations' }).locator('li[data-invitation]')
     await expect(rows).toHaveCount(20)
-    await page.getByRole('button', { name: 'Show 20 more (28 left)' }).click()
+    expect(asked.at(-1)?.searchParams.get('limit')).toBe('20')
+    await page.getByRole('button', { name: 'Show more invitations' }).click()
     await expect(rows).toHaveCount(40)
     await expect(rows.nth(20)).toBeFocused()
-    await page.getByRole('button', { name: 'Show 8 more (8 left)' }).click()
+    expect(asked.at(-1)?.searchParams.get('cursor')).toBeTruthy()
+    await page.getByRole('button', { name: 'Show more invitations' }).click()
     await expect(rows).toHaveCount(48)
-    await expect(page.getByRole('button', { name: /^Show \d+ more/ })).toHaveCount(0)
+    await expect(rows.nth(40)).toBeFocused()
+    await expect(page.getByRole('button', { name: 'Show more invitations' })).toHaveCount(0)
+  })
+
+  // Review of PR26: after a filter change, «Show more» still put the keyboard on the first new one (the
+  // index it went to before was not reset), and the status is asked of the server.
+  test('the «Show» filter asks the server; after changing it, «Show more» still lands on the first new one', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', { people: 'much-data' })
+    const asked: URL[] = []
+    page.on('request', (r) => {
+      const u = new URL(r.url())
+      if (u.pathname === '/v1/invitations' && r.method() === 'GET') asked.push(u)
+    })
+    await page.goto('/admin/invitations')
+    const rows = page.getByRole('region', { name: 'Invitations' }).locator('li[data-invitation]')
+    await expect(rows).toHaveCount(20)
+    await page.getByRole('button', { name: 'Show more invitations' }).click()
+    await expect(rows.nth(20)).toBeFocused()
+    await page.getByLabel('Show').selectOption('used')
+    await expect.poll(() => asked.at(-1)?.searchParams.get('status')).toBe('used')
+    await expect(rows).toHaveCount(20)
+    await expect(rows.filter({ hasNotText: 'accepted' })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Show more invitations' }).click()
+    await expect(rows).toHaveCount(40)
+    await expect(rows.nth(20)).toBeFocused()
+    // Back to all: the first 20 again, and «Show more» lands on the 21st once more.
+    await page.getByLabel('Show').selectOption('all')
+    await expect(rows).toHaveCount(20)
+    await page.getByRole('button', { name: 'Show more invitations' }).click()
+    await expect(rows.nth(20)).toBeFocused()
   })
 })

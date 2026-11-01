@@ -65,6 +65,30 @@ describe('what a state says', () => {
     assert.equal(v.retry, false)
   })
 
+  // The final review of B6: a page of the web never tells a person to call the API.
+  it('a brain one is not in reads in the web’s words: what it means and whom to ask, never an API route', () => {
+    const v = errorView(
+      new ApiError(
+        404,
+        'brain_not_found',
+        'No brain with that name is available to you.',
+        'Check the name with GET /v1/brains, or ask a curator of that brain to add you.',
+      ),
+    )
+    assert.equal(v.kind, 'forbidden')
+    assert.doesNotMatch(`${v.message} ${v.howToProceed}`, /\/v1|GET |POST |PUT |DELETE |API/)
+    assert.match(v.message, /does not exist|not one of its members/)
+    assert.match(v.howToProceed, /curator/)
+  })
+
+  it('any refusal that names a route gets the web’s words for how to go on', () => {
+    const v = errorView(new ApiError(404, 'not_found', 'No page at x.', 'Use GET /v1/brains/x/wiki/pages.'))
+    assert.doesNotMatch(v.howToProceed, /\/v1|GET /)
+    assert.equal(v.message, 'No page at x.')
+    const r = errorView(new ApiError(403, 'forbidden', 'Your role does not allow this.', 'Ask a curator.'))
+    assert.equal(r.howToProceed, 'Ask a curator.')
+  })
+
   it('offline says so and offers to try again', () => {
     const v = errorView(
       new ApiError(0, 'offline', 'rsc-brain could not be reached.', 'Check your connection.'),

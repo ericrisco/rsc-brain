@@ -267,6 +267,8 @@ export function freshJournal(slug: string): Journal {
       author: ERIC,
       client: 'Claude Code',
       tags: ['intros', 'retention'],
+      // Its topic is the page Retention: «Entries about audience/retention» lists it.
+      topic: 'audience/retention',
       compiled: true,
       createdAt: at(14, 9),
     }),

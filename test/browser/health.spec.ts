@@ -8,7 +8,7 @@ test('the sections of B2, each item opening its page', async ({ page, context, b
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto(H)
   await expect(page.getByRole('heading', { level: 1, name: 'Health' })).toBeVisible()
-  await expect(page.getByText('11 things to fix')).toBeVisible()
+  await expect(page.getByText('13 things to fix')).toBeVisible()
   const broken = page.getByRole('region', { name: 'Broken links' })
   await expect(broken.getByRole('listitem')).toHaveCount(3)
   await expect(broken.getByRole('listitem').first()).toContainText('links to drafts/hooks-that-work')
@@ -35,7 +35,7 @@ test('«ask an agent to fix this» copies an instruction with the tool and the b
   expect(copied).toContain('the 3 broken links')
   expect(copied).toContain('"growth"')
   await page.getByRole('button', { name: 'Ask an agent to fix all of this' }).click()
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('all 11 problems')
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('all 13 problems')
 })
 
 test('a maintenance proposal due is said, with its instruction', async ({ page, context, baseURL }) => {
@@ -75,7 +75,7 @@ test('loading, error with try again, no access', async ({ page, context, baseURL
   await s.state('health', 'normal')
   await s.state('brain', 'forbidden')
   await page.goto(H)
-  await expect(page.getByRole('alert')).toContainText('ask a curator of that brain to add you')
+  await expect(page.getByRole('alert')).toContainText('Ask a curator of that brain to add you')
 })
 
 test('320 px, dark: nothing scrolls sideways', async ({ page, context, baseURL }) => {

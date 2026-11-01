@@ -72,6 +72,15 @@ async function open(
   return s
 }
 
+// What leads to the rest of a long list: the row's own, or a «more», «show all» or «next» control.
+const muchOf = (r: Row, page: Page) =>
+  r.muchShows
+    ? r.muchShows(page)
+    : page
+        .getByRole('main')
+        .getByRole('button', { name: /more|show all|next/i })
+        .or(page.getByRole('main').getByRole('link', { name: /more|show all|next/i }))
+
 const keyOf = (r: Row) => (isNa(r.key) ? null : r.key)
 
 for (const r of ROWS) {
@@ -81,9 +90,20 @@ for (const r of ROWS) {
       context,
       baseURL,
     }) => {
-      await open(page, context, baseURL as string, r)
+      const s = await open(page, context, baseURL as string, r)
+      if (r.seed) {
+        await r.seed(s)
+        await page.reload()
+      }
       await expect(r.ready(page)).toBeVisible()
       await expect(page.locator('[data-state="loading"]')).toHaveCount(0)
+      // What only the other states show is not here: each of those cells proves its state.
+      if (r.empty === true)
+        await expect(
+          r.emptyShows ? r.emptyShows(page) : page.locator('[data-state="empty"]'),
+          'not empty by default',
+        ).toHaveCount(0)
+      if (r.much === true) await expect(muchOf(r, page), 'no paging by default').toHaveCount(0)
       await nothingCut(page, r.name)
     })
 
@@ -117,6 +137,9 @@ for (const r of ROWS) {
       baseURL,
     }) => {
       const s = await open(page, context, baseURL as string, r, { [key]: 'loading' })
+      await expect(page.locator('[data-state="loading"]').first()).toBeVisible()
+      // Still loading well after an ordinary answer would have come: the state, not a quick load.
+      await page.waitForTimeout(1200)
       await expect(page.locator('[data-state="loading"]').first()).toBeVisible()
       // No editable box with nothing in it where a saved value is about to land.
       if (!r.typing)
@@ -152,6 +175,9 @@ for (const r of ROWS) {
         await expect(alert).toContainText('You cannot open this')
         await expect(alert).toContainText(/ask|curator|administrator/i)
         await expect(alert.getByRole('button', { name: 'Try again' })).toHaveCount(0)
+        // The web's words, with a way out: never an API route.
+        await expect(alert.getByRole('link', { name: 'Go to your brains' })).toBeVisible()
+        await expect(alert).not.toContainText(/\/v1|GET \/|\bAPI\b/)
         await nothingCut(page, `${r.name} no access`)
       })
 
@@ -175,7 +201,7 @@ for (const r of ROWS) {
         const none = page.locator('[data-state="filtered-empty"]').first()
         await expect(none).toBeVisible()
         await nothingCut(page, `${r.name} filtered empty`)
-        await none.getByRole('button', { name: /clear|show every/i }).click()
+        await none.getByRole('button', { name: /clear|show all/i }).click()
         await expect(r.ready(page)).toBeVisible()
       })
 
@@ -187,15 +213,7 @@ for (const r of ROWS) {
       }) => {
         await open(page, context, baseURL as string, r, { [r.muchKey ?? key]: 'much-data' })
         await expect(page.locator('[data-state="loading"]')).toHaveCount(0, { timeout: 10_000 })
-        if (r.muchShows) await expect(r.muchShows(page)).toBeVisible()
-        else
-          await expect(
-            page
-              .getByRole('main')
-              .getByRole('button', { name: /more|show all|next/i })
-              .or(page.getByRole('main').getByRole('link', { name: /more|show all|next/i }))
-              .first(),
-          ).toBeVisible()
+        await expect(muchOf(r, page).first()).toBeVisible()
         await nothingCut(page, `${r.name} a lot of data`)
       })
   })

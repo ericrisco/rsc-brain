@@ -21,7 +21,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   'GET /v1/me': {
     account: ['id', 'kind', 'name', 'email', 'isAdmin', 'canCreateBrains', 'canInvite', 'totp'],
     key: ['id', 'kind', 'perm', 'ref', 'agent'],
-    installation: ['name', 'factoryUrl'],
+    installation: ['name', 'factoryUrl', 'admins'],
   },
   'POST /v1/brains': {
     brain: ['id', 'slug', 'name', 'description', 'purpose', 'status', 'createdAt', 'updatedAt'],
@@ -59,6 +59,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     'invitations[]': ['id', 'email', 'link', 'expiresAt', 'mailed', 'mailError'],
   },
   'GET /v1/invitations': {
+    '': ['invitations', 'next'],
     'invitations[]': ['id', 'email', 'status', 'brains', 'isAdmin', 'invitedBy', 'createdAt', 'expiresAt'],
   },
   'POST /v1/invitations/{id}/resend': {

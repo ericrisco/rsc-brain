@@ -151,3 +151,176 @@ test('a correction in a brain with no page yet starts on «Nothing in particular
   await page.getByRole('button', { name: 'Add correction' }).click()
   await expect(page).toHaveURL(/\/journal\/entries\//)
 })
+
+// The final review of B6: the web's own edits are not «sessions active now» (they show in the feed); a
+// session a key got by writing without opening one is «Unnamed work · <client>» everywhere.
+test('Activity lists agents’ sessions only; the web’s edits are not among them', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth/activity')
+  const sessions = page.locator('.act-sessions')
+  await expect(sessions.getByRole('link', { name: 'Narrate the outro of video 42' })).toBeVisible()
+  await expect(sessions).not.toContainText('Web edits')
+  await expect(sessions).not.toContainText('Work without a session')
+  await page.goto('/b/growth/journal')
+  await expect(
+    page.getByRole('list', { name: 'Sessions' }).getByRole('link', { name: 'Web edits · Eric' }),
+  ).toBeVisible()
+  await page.goto('/b/growth')
+  await expect(
+    page
+      .getByRole('region', { name: "Today's sessions" })
+      .getByRole('link', { name: 'Unnamed work · an API client' }),
+  ).toBeVisible()
+})
+
+// The final review of B6 (CA4 on a proposal too): a change's source opens beside the proposal, named by its
+// entry's title, and the proposal stays; Escape closes it and the keyboard returns.
+test('a source of a proposed change opens beside the proposal, by its title, without leaving it', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth/proposals/prp_growth1')
+  const source = page.getByRole('button', { name: 'The hook goes first' }).first()
+  await expect(source).toBeVisible()
+  await expect(page.getByRole('main')).not.toContainText('ent_fx_hooks')
+  await source.click()
+  await expect(page.getByRole('dialog', { name: 'The hook goes first' })).toBeVisible()
+  await expect(page).toHaveURL(/\/proposals\/prp_growth1$/)
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(source).toBeFocused()
+})
+
+// The final review of B6: what waits for review is a link wherever it is said.
+test('«N proposals to review» on a brain card opens that brain’s inbox', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/')
+  await page.locator('.cards').getByRole('link', { name: '3 proposals to review' }).click()
+  await expect(page).toHaveURL(/\/b\/growth\/proposals$/)
+})
+
+// The final review of B6: where only curators or the administration may go, the page names whom to ask, as
+// the inbox does for a reader.
+test('Settings and Admin name whom to ask', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'member')
+  await page.goto('/admin/people')
+  await expect(page.getByRole('alert')).toContainText('Ask an administrator (Eric)')
+  await page.goto('/b/support/settings')
+  await expect(page.getByRole('alert')).toContainText(/Ask a curator of Support \(.+\) for the curator role/)
+})
+
+// The final review of B6: a tab of the administration puts the keyboard on its own section, and the first
+// field is the next Tab, not a walk through the page from «Administration».
+test('an administration tab lands on its section heading; its first field is one Tab away', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/admin/people')
+  await expect(page.getByRole('heading', { name: 'People in this installation' })).toBeVisible()
+  const tabs = page.getByRole('navigation', { name: 'Administration' })
+  await tabs.getByRole('link', { name: 'Invitations' }).click()
+  await expect(page.getByRole('heading', { level: 2, name: 'Invite people' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(page.getByLabel('Emails')).toBeFocused()
+  await tabs.getByRole('link', { name: 'Service accounts' }).click()
+  await expect(page.getByRole('heading', { level: 2, name: 'New service account' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(page.getByLabel('Name', { exact: true })).toBeFocused()
+  await tabs.getByRole('link', { name: 'People' }).click()
+  await expect(page.getByRole('heading', { level: 2, name: 'People in this installation' })).toBeFocused()
+})
+
+// The final review of B6: a token never says more than its owner may do (B4). Ana reads Support only.
+test('a reader cannot pick «Read and write» for a token over brains she only reads', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'member')
+  await page.goto('/profile')
+  const roles = await page.evaluate(async () => {
+    const r = await fetch('/v1/brains', { headers: { 'x-requested-with': 'rsc-brain-web' } })
+    return ((await r.json()) as { brains: Array<{ name: string; role: string }> }).brains
+  })
+  const read = roles.find((b) => b.role === 'reader')
+  test.skip(!read, 'the member reads no brain in this fixture')
+  await page.getByRole('button', { name: 'Create a token' }).first().click()
+  await page.getByRole('radio', { name: 'Only these brains' }).check()
+  await page.getByRole('checkbox', { name: read?.name ?? '' }).check()
+  await expect(page.getByRole('radio', { name: 'Read and write' })).toBeDisabled()
+  await expect(page.getByRole('radio', { name: 'Read only' })).toBeChecked()
+  await expect(page.getByText('you are a reader in these brains')).toBeVisible()
+})
+
+// The final review of B6: the live check is shown once, after the steps that connect the agent.
+test('«Connect your agent» shows its live check once, after the steps', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/connect')
+  await expect(page.getByRole('region', { name: 'Live check' })).toHaveCount(1)
+  await expect(page.locator('[data-check-mini]')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Create a token' }).click()
+  await expect(page.getByRole('button', { name: 'Copy the token' })).toBeVisible()
+  await expect(page.locator('[data-check-mini]')).toHaveCount(0)
+  const after = await page.evaluate(() => {
+    const panel = document.querySelector('[role="tabpanel"]') as Element
+    const check = document.querySelector('.live-check') as Element
+    return Boolean(panel.compareDocumentPosition(check) & Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+  expect(after, 'the check comes after the steps').toBe(true)
+})
+
+// The final review of B6: after an edit conflict the page's header says the revision now on the server.
+test('after an edit conflict, the header shows the newer revision', async ({ page, context, baseURL }) => {
+  const s = await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth/pages/audience/retention?view=edit')
+  const meta = page.locator('.page-meta')
+  await expect(meta).toContainText('Revision 3')
+  await page.getByLabel('Body', { exact: true }).fill('Mine.')
+  await fetch(`${baseURL}/__fixture/scenarios/${s.id}/wiki-edit`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ brain: 'growth', address: 'audience/retention', body: 'Theirs.' }),
+  })
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  await expect(page.getByRole('region', { name: 'Eva saved revision 4 while you edited' })).toBeVisible()
+  await expect(meta).toContainText('Revision 4')
+})
+
+// The final review of B6: each card's «Edit» has its own name.
+test('the «Edit» of each proposed change is named by its change', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth/proposals/prp_growth1')
+  await expect(page.getByRole('button', { name: 'Edit change 1', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Edit change 2', exact: true })).toBeVisible()
+})
+
+// The final review of B6: in the `[[` list, the first ArrowDown chooses the first page (it was chosen at
+// once, for Enter; the arrow does not skip it).
+test('in the `[[` list the first ArrowDown stays on the first page', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth/pages/audience/retention?view=edit')
+  const body = page.getByLabel('Body', { exact: true })
+  await body.fill('See [[aud')
+  const list = page.getByRole('listbox', { name: 'Pages to link' })
+  await expect(list.getByRole('option').first()).toHaveAttribute('aria-selected', 'true')
+  await body.press('ArrowDown')
+  await expect(list.getByRole('option').first()).toHaveAttribute('aria-selected', 'true')
+  await body.press('ArrowDown')
+  await expect(list.getByRole('option').nth(1)).toHaveAttribute('aria-selected', 'true')
+})
