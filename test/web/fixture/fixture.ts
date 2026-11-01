@@ -68,6 +68,7 @@ export type Screen =
   | 'health'
   | 'tokens'
   | 'apps'
+  | 'notify'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
 // alone: the administrator the setup made, the only person in the installation.
@@ -146,6 +147,7 @@ type Scen = {
 type FxToken = {
   account: string
   id: string
+  expired: boolean
   name: string
   last4: string
   perm: string
@@ -167,6 +169,7 @@ type FxApp = {
   perm: string
   createdAt: string
   lastUsedAt: string
+  lastRequestAt: string | null
   endsAt: string
   ended: boolean
 }
@@ -421,6 +424,7 @@ function freshScenario(id: string, preset: Preset): Scen {
       {
         account: 'acc_eric',
         id: 'crd_tok_laptop',
+        expired: false,
         name: 'Claude Code laptop',
         last4: 'k3Qa',
         perm: 'write',
@@ -435,6 +439,7 @@ function freshScenario(id: string, preset: Preset): Scen {
       {
         account: 'acc_eric',
         id: 'crd_tok_ci',
+        expired: false,
         name: 'CI reader',
         last4: 'Zp09',
         perm: 'read',
@@ -445,6 +450,21 @@ function freshScenario(id: string, preset: Preset): Scen {
         expiresSoon: true,
         lastUsedAt: null,
         lastClient: null,
+      },
+      {
+        account: 'acc_eric',
+        id: 'crd_tok_old',
+        expired: true,
+        name: 'Old laptop',
+        last4: 'Q7dd',
+        perm: 'write',
+        allBrains: true,
+        brains: null,
+        createdAt: '2026-06-01T10:00:00.000Z',
+        expiresAt: '2026-08-30T10:00:00.000Z',
+        expiresSoon: false,
+        lastUsedAt: '2026-08-29T10:00:00.000Z',
+        lastClient: 'codex/0.40',
       },
     ],
     apps: [
@@ -458,6 +478,7 @@ function freshScenario(id: string, preset: Preset): Scen {
         perm: 'write',
         createdAt: '2026-10-01T10:00:00.000Z',
         lastUsedAt: '2026-10-28T18:00:00.000Z',
+        lastRequestAt: '2026-10-28T18:00:00.000Z',
         endsAt: '2027-01-26T18:00:00.000Z',
         ended: false,
       },
@@ -978,6 +999,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       s.tokens.unshift({
         account: who.id,
         id,
+        expired: false,
         name: String(body.name ?? ''),
         last4: secret.slice(-4),
         perm: String(body.perm ?? 'write'),
@@ -1063,6 +1085,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
     },
   },
   'PUT /v1/brains/{slug}/notify': {
+    screen: 'notify',
     run: ({ s, who, params, body }) => {
       const b = brainsOf(s, who).find((x) => x.slug === params.slug)
       if (!b || !who) return NO_BRAIN
@@ -1095,6 +1118,15 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           'Type the password you sign in with now.',
         )
       if (typeof body.next !== 'string' || body.next.length < 12 || body.next.length > 200) return SHORT
+      if (body.current === who.password && who.totp && body.code !== CODE)
+        return body.code
+          ? NOT_THE_CODE
+          : err(
+              400,
+              'invalid_request',
+              'This account has a second factor: send the code of the authenticator app in "code" too.',
+              'Type the 6 digits your app shows now.',
+            )
       if (body.current !== who.password)
         return err(
           400,
@@ -1105,6 +1137,16 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       who.password = body.next
       // Every other web session of the person ends; this one stays (the fixture keeps one per person).
       return { status: 204, body: null }
+    },
+  },
+  'POST /v1/me/revoke-all': {
+    run: ({ s, who }) => {
+      if (!who) return UNAUTHORIZED
+      const tokens = s.tokens.filter((t) => t.account === who.id).length
+      const apps = s.apps.filter((a) => a.account === who.id).length
+      s.tokens = s.tokens.filter((t) => t.account !== who.id)
+      s.apps = s.apps.filter((a) => a.account !== who.id)
+      return { status: 200, body: { tokens, apps } }
     },
   },
   'POST /v1/me/totp': {
@@ -1698,6 +1740,7 @@ const PRIVATE = new Set([
   'DELETE /v1/me/apps/{id}',
   'PUT /v1/brains/{slug}/notify',
   'POST /v1/me/password',
+  'POST /v1/me/revoke-all',
   'POST /v1/me/totp',
   'POST /v1/me/totp/confirm',
   'DELETE /v1/me/totp',
@@ -2282,9 +2325,15 @@ export async function startFixture(
             perm: 'write',
             createdAt: NOW(),
             lastUsedAt: NOW(),
+            // requested: false is the moment of the code exchange, before the app's first request.
+            lastRequestAt: b.requested === false ? null : NOW(),
             endsAt: new Date(Date.now() + 90 * 86_400_000).toISOString(),
             ended: false,
           })
+        } else if (b.via === 'app-request') {
+          const a = s.apps.find((x) => x.account === account && x.lastRequestAt === null)
+          if (!a) return send(res, { status: 404, body: {} })
+          a.lastRequestAt = NOW()
         } else {
           const t = s.tokens.find((x) => x.account === account)
           if (!t) return send(res, { status: 404, body: {} })

@@ -139,7 +139,7 @@ test.describe('a token instead', () => {
     await page.getByRole('main').getByRole('link', { name: 'Connect your agent' }).first().click()
     const instead = page.getByRole('region', { name: 'Token connection' })
     await expect(instead).toContainText('shown once')
-    await instead.getByRole('button', { name: 'Create a token and fill in the configuration' }).click()
+    await instead.getByRole('button', { name: 'Create a token' }).click()
     const copy = instead.getByRole('button', { name: 'Copy the token' })
     await expect(copy).toBeFocused()
     const once = instead.getByRole('region', { name: 'Your new token' })

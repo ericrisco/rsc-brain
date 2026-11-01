@@ -244,6 +244,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   'GET /v1/me/tokens': {
     'tokens[]': [
       'id',
+      'expired',
       'name',
       'last4',
       'perm',
@@ -258,7 +259,18 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   },
   'DELETE /v1/me/tokens/{id}': { '': ['revoked'] },
   'GET /v1/me/apps': {
-    'apps[]': ['id', 'name', 'nameNote', 'brains', 'perm', 'createdAt', 'lastUsedAt', 'endsAt', 'ended'],
+    'apps[]': [
+      'id',
+      'name',
+      'nameNote',
+      'brains',
+      'perm',
+      'createdAt',
+      'lastUsedAt',
+      'lastRequestAt',
+      'endsAt',
+      'ended',
+    ],
   },
   'DELETE /v1/me/apps/{id}': { '': ['revoked'] },
   'PUT /v1/brains/{slug}/notify': { '': ['notifyProposals'] },
@@ -266,6 +278,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   'POST /v1/me/totp/confirm': { '': ['enabled'] },
   'DELETE /v1/me/totp': { '': ['enabled'] },
   'POST /v1/auth/logout-everywhere': { '': ['signedOut'] },
+  'POST /v1/me/revoke-all': { '': ['tokens', 'apps'] },
   // The journal in the web (spec B6, PR20; plan G12): the fixture answers these in CI.
   'GET /v1/brains/{slug}/sessions': {
     // facets come with the first page only (not required by the description), and are pinned below.
@@ -743,6 +756,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       next: 'a newer passphrase',
     })
     assert.deepEqual([changed.status, changed.text], [204, ''])
+    out['POST /v1/me/revoke-all'] = (await w.callWeb(web, 'POST', '/v1/me/revoke-all', {})).body
     out['POST /v1/auth/logout-everywhere'] = (
       await w.callWeb(web, 'POST', '/v1/auth/logout-everywhere', {})
     ).body

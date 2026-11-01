@@ -6,6 +6,7 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
+import qrcode from 'qrcode-generator'
 import type { ApiError } from '../api/client.ts'
 import { useFresh } from '../api/fresh.ts'
 import { api, forgetSession } from '../api/index.ts'
@@ -33,6 +34,7 @@ import { brainsResource } from './Home.tsx'
 
 type Token = {
   id: string
+  expired: boolean
   name: string
   last4: string
   perm: string
@@ -324,7 +326,7 @@ function OnceToken({ made, onDone }: { made: Made; onDone: () => void }) {
   )
 }
 
-function Tokens({ start }: { start: boolean }) {
+function Tokens({ start, forget }: { start: boolean; forget: number }) {
   const r = tokensResource()
   useFresh(r)
   const [form, setForm] = useState(false)
@@ -332,11 +334,17 @@ function Tokens({ start }: { start: boolean }) {
   const [said, setSaid] = useState<string | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
   const createRef = useRef<HTMLDivElement>(null)
-  const items = r.data.value?.tokens ?? []
+  const all = r.data.value?.tokens ?? []
+  const items = all.filter((t) => !t.expired)
+  const expired = all.filter((t) => t.expired)
   const { shown, more, showAll } = useShowAll(items)
   useEffect(() => {
     if (start) heading.current?.scrollIntoView({ block: 'start' })
   }, [])
+  // Put in the back/forward cache, the token shown is forgotten.
+  useEffect(() => {
+    if (forget) setMade(null)
+  }, [forget])
   const madeName = useRef('')
   // Set when the token is hidden: once what it says is drawn, the keyboard goes there.
   const [toSaid, setToSaid] = useState(0)
@@ -401,7 +409,7 @@ function Tokens({ start }: { start: boolean }) {
         ) : (
           <Skeleton rows={2} />
         )
-      ) : items.length === 0 ? (
+      ) : all.length === 0 ? (
         <div class="quiet-empty" data-state="empty">
           <p class="list-title">{P.noTokens}</p>
           <p class="muted">{P.noTokensLead}</p>
@@ -439,6 +447,38 @@ function Tokens({ start }: { start: boolean }) {
               <Button onClick={showAll}>{P.showAll(items.length)}</Button>
             </div>
           ) : null}
+          {expired.length ? (
+            <>
+              <h3 class="part-title" id="expired-title">
+                {P.expired}
+              </h3>
+              <ul class="list" aria-labelledby="expired-title">
+                {expired.map((t) => (
+                  <Revocable
+                    key={t.id}
+                    id={t.id}
+                    name={t.name}
+                    onRevoke={async () => {
+                      await api.call('revokeToken', { path: { id: t.id } })
+                      setSaid(P.revoked(t.name))
+                      await r.reload()
+                      heading.current?.focus()
+                    }}
+                  >
+                    <p class="list-title">
+                      {t.name} <span class="tag mono">…{t.last4}</span>
+                    </p>
+                    <p class="meta">
+                      {permLabel(t.perm)} · {brainsLabel(t)}
+                    </p>
+                    <p class="meta">
+                      {lastUseLabel(t)} · {P.endedOn(T.date(t.expiresAt))}
+                    </p>
+                  </Revocable>
+                ))}
+              </ul>
+            </>
+          ) : null}
         </>
       )}
     </section>
@@ -447,6 +487,8 @@ function Tokens({ start }: { start: boolean }) {
 
 function Apps() {
   const r = appsResource()
+  // Brains by their names, as people know them (the API gives their addresses).
+  const names = new Map((brainsResource().data.value?.brains ?? []).map((b) => [b.slug, b.name]))
   useFresh(r)
   const [said, setSaid] = useState<string | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
@@ -491,7 +533,7 @@ function Apps() {
               >
                 <p class="list-title">{a.name}</p>
                 <p class="meta">
-                  {permLabel(a.perm)} · {a.brains.join(', ')}
+                  {permLabel(a.perm)} · {a.brains.map((x) => names.get(x) ?? x).join(', ')}
                 </p>
                 <p class="meta">
                   {P.lastUsed(ago(a.lastUsedAt) ?? '')} · {P.appEnds(T.date(a.endsAt))}
@@ -597,23 +639,48 @@ function Notices() {
   )
 }
 
+// Which field a refusal is about, so it is marked and the keyboard goes there.
+function passwordFieldOf(e: ApiError): 'current' | 'next' | 'code' | null {
+  if (e.code === 'wrong_password') return 'current'
+  if (/code/i.test(e.message)) return 'code'
+  if (/password has/i.test(e.message)) return 'next'
+  return null
+}
+
 function Password({ who }: { who: Me }) {
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
+  const [code, setCode] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<ApiError | null>(null)
-  const [done, setDone] = useState(false)
+  const [done, setDone] = useState<string | null>(null)
+  const form = useRef<HTMLFormElement>(null)
+  const totp = who.account.totp === true
+  const bad = error ? passwordFieldOf(error) : null
+  useEffect(() => {
+    if (bad) form.current?.querySelector<HTMLInputElement>(`#pw-${bad}`)?.focus()
+  }, [error])
   const submit = async (e: Event) => {
     e.preventDefault()
     if (pending || !online.value) return
     setPending(true)
     setError(null)
-    setDone(false)
+    setDone(null)
     try {
-      await api.call('changePassword', { body: { current, next } })
+      await api.call('changePassword', { body: { current, next, ...(totp ? { code: code.trim() } : {}) } })
       setCurrent('')
       setNext('')
-      setDone(true)
+      setCode('')
+      // What still works after a new password: the tokens and apps the person may want to revoke too.
+      const t = tokensResource()
+      const a = appsResource()
+      await Promise.all([t.reload(), a.reload()])
+      setDone(
+        P.changed(
+          (t.data.value?.tokens ?? []).filter((x) => !x.expired).length,
+          a.data.value?.apps.length ?? 0,
+        ),
+      )
     } catch (err) {
       setError(err as ApiError)
     } finally {
@@ -621,12 +688,12 @@ function Password({ who }: { who: Me }) {
     }
   }
   return (
-    <form class="form profile-sub" aria-label={P.passwordForm} onSubmit={submit} noValidate>
+    <form class="form profile-sub" aria-label={P.passwordForm} onSubmit={submit} noValidate ref={form}>
       <h3 class="part-title">{P.password}</h3>
       <p role="status" class="said">
-        {done ? P.changed : null}
+        {done}
       </p>
-      <FormAlert error={error} />
+      <FormAlert error={error} focus={!bad} />
       <input
         type="email"
         name="email"
@@ -636,14 +703,17 @@ function Password({ who }: { who: Me }) {
         readOnly
       />
       <PasswordField
+        id="pw-current"
         label={P.current}
         name="current-password"
         autocomplete="current-password"
         maxLength={200}
         value={current}
         onValue={setCurrent}
+        problem={bad === 'current' ? error?.message : null}
       />
       <PasswordField
+        id="pw-next"
         label={P.next}
         hint={P.nextHint}
         name="new-password"
@@ -652,7 +722,22 @@ function Password({ who }: { who: Me }) {
         maxLength={200}
         value={next}
         onValue={setNext}
+        problem={bad === 'next' ? error?.message : null}
       />
+      {totp ? (
+        <Field
+          id="pw-code"
+          label={P.codeField}
+          hint={P.codeHint}
+          name="one-time-code"
+          autocomplete="one-time-code"
+          inputMode="numeric"
+          maxLength={6}
+          value={code}
+          onValue={setCode}
+          problem={bad === 'code' ? error?.message : null}
+        />
+      ) : null}
       <div class="actions">
         <Button type="submit" pending={pending} pendingLabel={P.changing} blocked={blocked()}>
           {P.change}
@@ -662,23 +747,137 @@ function Password({ who }: { who: Me }) {
   )
 }
 
+function RevokeAll() {
+  const [asking, setAsking] = useState(false)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<ApiError | null>(null)
+  const [said, setSaid] = useState<string | null>(null)
+  const yes = useRef<HTMLDivElement>(null)
+  const status = useRef<HTMLParagraphElement>(null)
+  useEffect(() => {
+    if (asking) yes.current?.querySelector('button')?.focus()
+  }, [asking])
+  useEffect(() => {
+    if (said) status.current?.focus()
+  }, [said])
+  const go = async () => {
+    if (pending || !online.value) return
+    setPending(true)
+    setError(null)
+    try {
+      const r = await api.call<{ tokens: number; apps: number }>('revokeAll', { body: {} })
+      setAsking(false)
+      setSaid(P.revokedAll(r.tokens, r.apps))
+      invalidate('profile:')
+    } catch (e) {
+      setError(e as ApiError)
+    } finally {
+      setPending(false)
+    }
+  }
+  return (
+    <section class="profile-sub" aria-labelledby="keys-title">
+      <h3 id="keys-title" class="part-title">
+        {P.keys}
+      </h3>
+      <p class="muted">{P.keysLead}</p>
+      <p role="status" class="said" tabIndex={-1} ref={status}>
+        {said}
+      </p>
+      <FormAlert error={error} />
+      {asking ? (
+        <div class="confirm">
+          <p>{P.revokeAllLead}</p>
+          <div class="actions" ref={yes}>
+            <Button
+              kind="primary"
+              pending={pending}
+              pendingLabel={T.states.pending}
+              blocked={blocked()}
+              onClick={() => void go()}
+            >
+              {P.revokeAllYes}
+            </Button>
+            <Button kind="quiet" onClick={() => setAsking(false)}>
+              {P.cancel}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div class="actions">
+          <Button
+            blocked={blocked()}
+            onClick={() => {
+              setSaid(null)
+              setAsking(true)
+            }}
+          >
+            {P.revokeAll}
+          </Button>
+        </div>
+      )}
+    </section>
+  )
+}
+
 type Enrol = { secret: string; otpauthUrl: string }
 
-function SecondFactor({ who }: { who: Me }) {
+// The key as a QR code, drawn as SVG (no script, no inline style: the page's CSP allows it).
+function Qr({ text }: { text: string }) {
+  const qr = qrcode(0, 'M')
+  qr.addData(text)
+  qr.make()
+  const n = qr.getModuleCount()
+  let d = ''
+  for (let r = 0; r < n; r++)
+    for (let c = 0; c < n; c++) if (qr.isDark(r, c)) d += `M${c + 4} ${r + 4}h1v1h-1z`
+  return (
+    <svg
+      class="qr"
+      viewBox={`0 0 ${n + 8} ${n + 8}`}
+      role="img"
+      aria-label={P.qr}
+      shape-rendering="crispEdges"
+    >
+      <rect width={n + 8} height={n + 8} fill="#fff" />
+      <path d={d} fill="#000" />
+    </svg>
+  )
+}
+
+function SecondFactor({ who, forget }: { who: Me; forget: number }) {
   const on = who.account.totp === true
-  // off: nothing open; enrol: the key and the code; disable: the code to turn it off.
+  // idle: nothing open; enrol: the key and the code; disable: the code to turn it off.
   const [step, setStep] = useState<'idle' | 'enrol' | 'disable'>('idle')
   const [enrol, setEnrol] = useState<Enrol | null>(null)
   const [code, setCode] = useState('')
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<{ message: string; howToProceed?: string } | null>(null)
   const [said, setSaid] = useState<string | null>(null)
+  // Where the keyboard goes next: the code (opened), the status (done) or the button (cancelled).
+  const [land, setLand] = useState<'code' | 'status' | 'button' | null>(null)
+  const box = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (!land) return
+    const at =
+      land === 'code'
+        ? box.current?.querySelector<HTMLElement>('#totp-code')
+        : land === 'status'
+          ? box.current?.querySelector<HTMLElement>('#totp-said')
+          : box.current?.querySelector<HTMLElement>('#totp-open')
+    at?.focus()
+    setLand(null)
+  }, [land, step, said, on])
   const reset = () => {
     setStep('idle')
     setEnrol(null)
     setCode('')
     setError(null)
   }
+  // Put in the back/forward cache, the key is forgotten.
+  useEffect(() => {
+    if (forget) reset()
+  }, [forget])
   const start = async () => {
     if (pending || !online.value) return
     setPending(true)
@@ -687,6 +886,7 @@ function SecondFactor({ who }: { who: Me }) {
     try {
       setEnrol(await api.call<Enrol>('totpStart', { body: {} }))
       setStep('enrol')
+      setLand('code')
     } catch (e) {
       setError(e as ApiError)
     } finally {
@@ -709,6 +909,7 @@ function SecondFactor({ who }: { who: Me }) {
       reset()
       setSaid(turnedOn ? P.totpIsOn : P.totpIsOff)
       await me().reload()
+      setLand('status')
     } catch (err) {
       setError(err as ApiError)
     } finally {
@@ -716,7 +917,7 @@ function SecondFactor({ who }: { who: Me }) {
     }
   }
   return (
-    <section class="profile-sub" aria-labelledby="totp-title">
+    <section class="profile-sub" aria-labelledby="totp-title" ref={box}>
       <h3 id="totp-title" class="part-title">
         {P.totp}
       </h3>
@@ -724,7 +925,7 @@ function SecondFactor({ who }: { who: Me }) {
       <p>
         <span class={`tag${on ? ' ok' : ''}`}>{on ? P.totpOn : P.totpOff}</span>
       </p>
-      <p role="status" class="said">
+      <p role="status" class="said" id="totp-said" tabIndex={-1}>
         {said}
       </p>
       {step === 'idle' ? (
@@ -732,11 +933,20 @@ function SecondFactor({ who }: { who: Me }) {
           <FormAlert error={error} />
           <div class="actions">
             {on ? (
-              <Button blocked={blocked()} onClick={() => setStep('disable')}>
+              <Button
+                id="totp-open"
+                blocked={blocked()}
+                onClick={() => {
+                  setSaid(null)
+                  setStep('disable')
+                  setLand('code')
+                }}
+              >
                 {P.turnOff}
               </Button>
             ) : (
               <Button
+                id="totp-open"
                 pending={pending}
                 pendingLabel={T.states.pending}
                 blocked={blocked()}
@@ -751,6 +961,8 @@ function SecondFactor({ who }: { who: Me }) {
         <form class="form" onSubmit={finish} noValidate>
           {step === 'enrol' && enrol ? (
             <div class="totp-key">
+              <p>{P.qrLead}</p>
+              <Qr text={enrol.otpauthUrl} />
               <p>{P.keyStep}</p>
               <p class="key">
                 <span class="sr-only">{P.keyLabel}: </span>
@@ -767,8 +979,9 @@ function SecondFactor({ who }: { who: Me }) {
           ) : (
             <p>{P.offLead}</p>
           )}
-          <FormAlert error={error} />
+          <FormAlert error={error} focus={false} />
           <Field
+            id="totp-code"
             label={P.code}
             hint={P.codeHint}
             name="one-time-code"
@@ -777,7 +990,7 @@ function SecondFactor({ who }: { who: Me }) {
             maxLength={6}
             value={code}
             onValue={setCode}
-            autoFocus
+            problem={error ? error.message : null}
           />
           <div class="actions">
             <Button
@@ -789,7 +1002,13 @@ function SecondFactor({ who }: { who: Me }) {
             >
               {step === 'enrol' ? P.turnOn : P.turnOffConfirm}
             </Button>
-            <Button kind="quiet" onClick={reset}>
+            <Button
+              kind="quiet"
+              onClick={() => {
+                reset()
+                setLand('button')
+              }}
+            >
               {P.cancel}
             </Button>
           </div>
@@ -865,6 +1084,13 @@ function Everywhere() {
 export function Profile() {
   const { path } = useLocation()
   const who = me().data.value
+  // Each time the page goes to the back/forward cache, what it shows once is forgotten.
+  const [forget, setForget] = useState(0)
+  useEffect(() => {
+    const away = () => setForget((n) => n + 1)
+    window.addEventListener('pagehide', away)
+    return () => window.removeEventListener('pagehide', away)
+  }, [])
   if (!who) return <Skeleton rows={3} />
   return (
     <div class="profile">
@@ -879,7 +1105,7 @@ export function Profile() {
       </div>
       <div class="profile-grid">
         <div class="profile-main">
-          <Tokens start={path === '/profile/tokens'} />
+          <Tokens start={path === '/profile/tokens'} forget={forget} />
           <Apps />
         </div>
         <div class="profile-side">
@@ -889,7 +1115,8 @@ export function Profile() {
               {P.security}
             </h2>
             <Password who={who} />
-            <SecondFactor who={who} />
+            <RevokeAll />
+            <SecondFactor who={who} forget={forget} />
             <Everywhere />
           </section>
         </div>

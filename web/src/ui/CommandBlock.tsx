@@ -23,7 +23,7 @@ export function CommandBlock({ block, copy = T.connect.copy }: { block: Block; c
       <pre class="command">
         <code>{block.text}</code>
       </pre>
-      <CopyButton text={block.text} label={copy} />
+      <CopyButton text={block.text} label={copy} name={T.connect.copyNamed(block.title)} />
     </div>
   )
 }

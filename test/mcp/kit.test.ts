@@ -18,8 +18,8 @@ type Blocks = { blocks: Json[] }
 const CLI = new URL('../../src/cli/main.ts', import.meta.url).pathname
 const AGENTS = ['claude-code', 'codex', 'opencode', 'cursor', 'other']
 // What the config files write literally, for the agent to expand from the environment.
-const CLAUDE_HEADER = 'Bearer $' + '{RSC_BRAIN_TOKEN}'
-const CURSOR_HEADER = 'Bearer $' + '{env:RSC_BRAIN_TOKEN}'
+const CLAUDE_HEADER = 'Bearer $' + '{RSC_BRAIN_TOKEN_CLAUDE_CODE}'
+const CURSOR_HEADER = 'Bearer $' + '{env:RSC_BRAIN_TOKEN_CURSOR}'
 
 // A port nothing listens on: the server is down.
 const deadPort = () =>
@@ -186,13 +186,32 @@ describe('the connection kit', { skip: skipPg }, () => {
         assert.match(String(a.check), /what does this brain know about X\?/i)
         const blocks = tokenBlocks(a)
         assert.ok(blocks.length > 0, `${a.id}: a token block`)
-        // The web fills the placeholder once (B6); the server never puts a secret in a block.
-        assert.ok(
-          blocks.some((b) => String(b.text).includes(String(r.body.tokenPlaceholder))),
-          `${a.id}: some block carries the placeholder`,
-        )
         for (const b of blocks) assert.ok(b.title && b.where && b.format && b.text, `${a.id}: block fields`)
+        // PR24 review: a token never goes on a command line (shell history). It is pasted at a hidden prompt
+        // into a file only the person can read; no shell block carries the placeholder.
+        const shell = blocks.filter((b) => b.format === 'shell')
+        assert.ok(
+          shell.some((b) => /read -rs \w+/.test(String(b.text))),
+          `${a.id}: a hidden prompt`,
+        )
+        for (const b of shell)
+          assert.ok(
+            !String(b.text).includes(String(r.body.tokenPlaceholder)),
+            `${a.id}: no token in a command`,
+          )
+        // Each agent has a variable and a file of its own, so two agents never overwrite one token.
+        assert.match(String(a.tokenEnv), /^RSC_BRAIN_TOKEN(_[A-Z]+)*$/)
+        assert.match(String(a.tokenFile), /^~\/\.config\/rsc-brain\//)
       }
+      const envs = agents.map((a) => a.tokenEnv)
+      assert.equal(new Set(envs).size, envs.length, 'one variable per agent')
+      // Only a text to paste into an app's own settings carries the placeholder, for the web to fill once.
+      const other = agents.find((a) => a.id === 'other')
+      assert.ok(
+        tokenBlocks(other).some(
+          (b) => b.format === 'text' && String(b.text).includes(String(r.body.tokenPlaceholder)),
+        ),
+      )
       assert.ok(!r.text.includes(eric.key), 'the caller key is never in the kit')
       // Every agent studied supports the standard sign-in with only the address, and gets a reminder.
       for (const a of agents.filter((x) => x.id !== 'other')) assert.ok(a.signIn, `${a.id}: sign-in`)
@@ -203,9 +222,12 @@ describe('the connection kit', { skip: skipPg }, () => {
       const r = await w.call(eric.key, 'GET', '/v1/connect?agent=claude-code')
       const [a] = agentsOf(r.body)
       const signIn = (a as Json).signIn as Blocks
+      // One paste: add the server, then sign in (the browser opens to approve).
       assert.ok(
-        signIn.blocks.some((b) =>
-          String(b.text).includes('claude mcp add --transport http rsc-brain http://localhost/mcp'),
+        signIn.blocks.some(
+          (b) =>
+            String(b.text) ===
+            'claude mcp add --transport http rsc-brain http://localhost/mcp --scope user\nclaude mcp login rsc-brain',
         ),
       )
       const file = tokenBlocks(a).find((b) => b.where === '.mcp.json')
@@ -223,9 +245,19 @@ describe('the connection kit', { skip: skipPg }, () => {
       assert.equal(hooks.SessionStart?.[0]?.hooks[0]?.type, 'command')
       assert.equal(
         hooks.SessionStart?.[0]?.hooks[0]?.command,
-        'rsc-brain hook session-start --url http://localhost/mcp',
+        'rsc-brain hook session-start --url http://localhost/mcp --token-file ~/.config/rsc-brain/claude-code.token',
       )
-      assert.equal(hooks.Stop?.[0]?.hooks[0]?.command, 'rsc-brain hook stop --url http://localhost/mcp')
+      assert.equal(
+        hooks.Stop?.[0]?.hooks[0]?.command,
+        'rsc-brain hook stop --url http://localhost/mcp --token-file ~/.config/rsc-brain/claude-code.token',
+      )
+      // The variable the config reads is loaded from the agent's own file, never typed.
+      assert.ok(
+        tokenBlocks(a).some(
+          (b) =>
+            b.text === 'export RSC_BRAIN_TOKEN_CLAUDE_CODE="$(cat ~/.config/rsc-brain/claude-code.token)"',
+        ),
+      )
       assert.equal(hooks.Stop?.[0]?.matcher, undefined, 'Stop takes no matcher')
     })
 
@@ -241,7 +273,7 @@ describe('the connection kit', { skip: skipPg }, () => {
         type: 'remote',
         url: 'http://localhost/mcp',
         oauth: false,
-        headers: { Authorization: 'Bearer {env:RSC_BRAIN_TOKEN}' },
+        headers: { Authorization: 'Bearer {env:RSC_BRAIN_TOKEN_OPENCODE}' },
       })
       assert.deepEqual(blockOf('cursor', '.cursor/mcp.json').mcpServers['rsc-brain'], {
         url: 'http://localhost/mcp',
@@ -274,7 +306,7 @@ describe('the connection kit', { skip: skipPg }, () => {
       const [a] = agentsOf(r.body)
       assert.match(String((a as Json).check), /"alpha"/)
       const hooks = JSON.parse(String(reminderBlocks(a)[0]?.text)).hooks
-      assert.match(hooks.SessionStart[0].hooks[0].command, /--brain alpha$/)
+      assert.match(hooks.SessionStart[0].hooks[0].command, /--brain alpha( |$)/)
       const none = await w.call(eric.key, 'GET', '/v1/connect?brain=nowhere')
       assert.equal(none.status, 404)
     })
@@ -285,7 +317,7 @@ describe('the connection kit', { skip: skipPg }, () => {
       const toml = String(tokenBlocks(a).find((b) => b.where === '~/.codex/config.toml')?.text)
       assert.match(toml, /^\[mcp_servers\.rsc-brain\]$/m)
       assert.equal(/^url = "(.+)"$/m.exec(toml)?.[1], 'http://localhost/mcp')
-      assert.equal(/^bearer_token_env_var = "(.+)"$/m.exec(toml)?.[1], 'RSC_BRAIN_TOKEN')
+      assert.equal(/^bearer_token_env_var = "(.+)"$/m.exec(toml)?.[1], 'RSC_BRAIN_TOKEN_CODEX')
       // Codex sends the value of that variable as a bearer token to the url; here, to the test server.
       const token = await w.token(eric.id, { perm: 'write' })
       const init = await direct(token, 'initialize', {
@@ -492,6 +524,36 @@ describe('the connection kit', { skip: skipPg }, () => {
       } finally {
         server.close()
       }
+    })
+
+    it('a --token-file given wins over RSC_BRAIN_TOKEN (another agent may have set it)', async () => {
+      const token = await w.token(eric.id)
+      const file = join(stateDir, 'token-explicit')
+      await writeFile(file, `${token}\n`, { mode: 0o600 })
+      const b = new Bridge(['--url', mcpUrl, '--token-file', file], { RSC_BRAIN_TOKEN: 'rscb_not_this_one' })
+      try {
+        const r = await b.request(1, 'tools/list')
+        assert.ok(((r.result as Json).tools as Json[]).length > 0, JSON.stringify(r))
+        await b.close()
+      } finally {
+        b.p.kill()
+      }
+    })
+
+    it('says who it is: the rsc-brain bridge and its version, as the profile shows it', async () => {
+      const token = await w.token(eric.id)
+      const b = new Bridge(['--url', mcpUrl], { RSC_BRAIN_TOKEN: token })
+      try {
+        await b.request(1, 'tools/list')
+        await b.close()
+      } finally {
+        b.p.kill()
+      }
+      const row = await w.db.one<{ last_client: string }>(
+        "SELECT last_client FROM credentials WHERE kind = 'token' AND last4 = $1",
+        [token.slice(-4)],
+      )
+      assert.match(String(row?.last_client), /^rsc-brain-bridge\/\d+\.\d+\.\d+$/)
     })
 
     it('reads the token from --token-file', async () => {

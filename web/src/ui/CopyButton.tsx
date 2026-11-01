@@ -4,7 +4,18 @@
 import { useEffect, useId, useRef, useState } from 'preact/hooks'
 import { T } from '../text.ts'
 
-export function CopyButton({ text, label, id }: { text: string; label: string; id?: string }) {
+// `name`: what a screen reader hears when the visible label alone («Copy») would not say what is copied.
+export function CopyButton({
+  text,
+  label,
+  id,
+  name,
+}: {
+  text: string
+  label: string
+  id?: string
+  name?: string
+}) {
   const [said, setSaid] = useState<string | null>(null)
   const [manual, setManual] = useState(false)
   const field = useRef<HTMLTextAreaElement>(null)
@@ -27,7 +38,7 @@ export function CopyButton({ text, label, id }: { text: string; label: string; i
   }, [manual, text])
   return (
     <span class="copy">
-      <button type="button" class="button" id={id} onClick={() => void copy()}>
+      <button type="button" class="button" id={id} aria-label={name} onClick={() => void copy()}>
         {label}
       </button>
       <span role="status" class="meta">

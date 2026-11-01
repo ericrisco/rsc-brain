@@ -915,6 +915,7 @@ const HAND: Record<string, Op> = {
       tokens: list(
         obj({
           id: s('Credential id.'),
+          expired: b('It no longer works: its time ran out (revoked ones are never listed).'),
           name: s('What it is for.'),
           last4: s('Its last four characters.'),
           perm: s('read, or write (read + write).'),
@@ -926,7 +927,7 @@ const HAND: Record<string, Op> = {
           lastUsedAt: nul(s('Its last request; null until its first.', { format: 'date-time' })),
           lastClient: nul(s('The program that made its last request.')),
         }),
-        'Newest first.',
+        'Working ones first, newest first; then the expired ones.',
       ),
     }),
   },
@@ -947,7 +948,12 @@ const HAND: Record<string, Op> = {
           brains: list(s('The name of a brain.'), 'The brains it reaches.'),
           perm: s('read, or write (read + write).'),
           createdAt: s('When it was connected.', { format: 'date-time' }),
-          lastUsedAt: s('Its last request.', { format: 'date-time' }),
+          lastUsedAt: s('Its last request, or its sign-in when it made none yet.', { format: 'date-time' }),
+          lastRequestAt: nul(
+            s('The last request of its keys; null until its first one after the sign-in.', {
+              format: 'date-time',
+            }),
+          ),
           endsAt: s('When it ends unless used again.', { format: 'date-time' }),
           ended: b('It no longer works.'),
         }),
@@ -968,7 +974,19 @@ const HAND: Record<string, Op> = {
     summary:
       'Change your password (the rsc-brain web only), with the current one. Ends your pending reset links and your other web sessions. Wrong current passwords count toward the same brake as signing in.',
     status: 204,
-    body: obj({ current: s('The password you sign in with now.'), next: s('12 to 200 characters.') }),
+    body: obj(
+      {
+        current: s('The password you sign in with now.'),
+        next: s('12 to 200 characters.'),
+        code: s('The code of the authenticator app, when the account has a second factor.'),
+      },
+      ['code'],
+    ),
+  },
+  'POST /v1/me/revoke-all': {
+    summary:
+      'Revoke every personal token and every connected app of yours at once (the rsc-brain web only). Web sessions stay.',
+    reply: obj({ tokens: n('Tokens revoked.'), apps: n('Connected apps revoked.') }),
   },
   'POST /v1/me/totp': {
     summary:

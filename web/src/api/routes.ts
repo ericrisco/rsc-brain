@@ -39,6 +39,7 @@ export const ROUTE_TABLE = {
   revokeApp: { route: 'DELETE /v1/me/apps/{id}' },
   notify: { route: 'PUT /v1/brains/{slug}/notify' },
   changePassword: { route: 'POST /v1/me/password' },
+  revokeAll: { route: 'POST /v1/me/revoke-all' },
   totpStart: { route: 'POST /v1/me/totp' },
   totpConfirm: { route: 'POST /v1/me/totp/confirm' },
   totpDisable: { route: 'DELETE /v1/me/totp' },

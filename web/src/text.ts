@@ -246,24 +246,28 @@ export const T = {
     agent: 'Your agent',
     lead: (brain: string | null) =>
       brain
-        ? `Your agent reads and writes the brain ${brain} over MCP. Connect it once, then watch the check below turn green.`
-        : 'Your agent reads and writes your brains over MCP. Connect it once, then watch the check below turn green.',
+        ? `Your agent reads and writes the brain ${brain} over MCP. Connect it once, then watch the check turn green.`
+        : 'Your agent reads and writes your brains over MCP. Connect it once, then watch the check turn green.',
     allBrains: 'Connect it to all your brains instead',
     copy: 'Copy',
+    copyNamed: (title: string) => `Copy: ${title}`,
     standard: 'Standard connection',
-    standardLead: 'Recommended: no token to keep. Your agent opens your browser once and you accept there.',
+    recommended: 'Recommended',
+    standardLead: 'No token to keep: your agent opens your browser once and you approve there.',
     noStandard:
-      'Add this address to any agent that speaks MCP over HTTP. If it supports the standard sign-in, it opens your browser to accept; if not, use a token below.',
+      'Add this address to any agent that speaks MCP over HTTP. If it supports the standard sign-in, it opens your browser to approve; if not, use a token below.',
     address: 'MCP address',
     token: 'Token connection',
     tokenLead: (brain: string | null) =>
-      `For an agent that cannot open your browser: a personal token, read and write, for 90 days, for ${brain ? `the brain ${brain}` : 'all your brains'}. rsc-brain makes it and fills it into the configuration below, shown once.`,
-    createToken: 'Create a token and fill in the configuration',
+      `The alternative, for an agent that cannot open your browser: a personal token, read and write, for 90 days, for ${brain ? `the brain ${brain}` : 'all your brains'}. It is shown once.`,
+    tokenSafe:
+      'The token never goes on a command line: you paste it at a hidden prompt, into a file only you can read, so it stays out of your shell history.',
+    createToken: 'Create a token',
     creatingToken: 'Creating the token…',
     tokenName: (agent: string) => `${agent} (from Connect your agent)`,
     yourToken: 'Your new token',
     tokenOnce:
-      'Copy it now: rsc-brain shows this token only this once. The configuration below has it filled in.',
+      'Copy it now: rsc-brain shows this token only this once. Paste it at the hidden prompt of the first command below.',
     tokenUntil: (date: string) => `It works until ${date}.`,
     copyToken: 'Copy the token',
     done: 'Done, hide the token',
@@ -273,6 +277,7 @@ export const T = {
     reminderPrompt: (name: string) => `Prompt of the server to close a session: "${name}".`,
     check: 'How to check it works',
     liveTitle: 'Live check',
+    liveFor: (agent: string) => `Live check: ${agent}`,
     waiting: 'Waiting for your agent…',
     waitingLead:
       'Start or restart your agent so it connects. This turns green on its first request to rsc-brain.',
@@ -284,6 +289,19 @@ export const T = {
     connectedNext: 'Now ask it something about your brain, as below.',
     paused: 'Offline: the check carries on when the connection is back.',
     failed: (message: string) => `Could not check just now: ${message} Trying again.`,
+    stopped: 'Stopped checking after 10 minutes.',
+    checkAgain: 'Check again',
+    tipsTitle: 'Still waiting? Try this:',
+    tipRestart: 'Restart your agent: most read their MCP settings only when they start.',
+    tipVariable: (env: string) =>
+      `With a token: in the terminal that starts your agent, run echo \${#${env}}. It should print a number above 0 (the length of the token, never the token).`,
+    tipList: {
+      'claude-code': 'In Claude Code, run /mcp: rsc-brain should be listed as connected.',
+      codex: 'Run "codex mcp list": rsc-brain should be there.',
+      opencode: 'Run "opencode mcp list": rsc-brain should be there.',
+      cursor: 'In Cursor, open the MCP settings: rsc-brain should be on.',
+      other: "Open your agent's list of MCP servers: rsc-brain should be there.",
+    } as Record<string, string>,
   },
 
   profile: {
@@ -345,7 +363,20 @@ export const T = {
     nextHint: '12 to 200 characters. A few unrelated words make a good one.',
     change: 'Change password',
     changing: 'Changing…',
-    changed: 'Password changed. Your other sessions are signed out.',
+    changed: (tokens: number, apps: number) =>
+      `Password changed. Your other sessions are signed out. Your ${plural(tokens, 'token')} and ${plural(apps, 'connected app')} still work.`,
+    codeField: 'Code from your authenticator app',
+    keys: 'Revoke everything',
+    keysLead: 'A new password does not stop your tokens and connected apps. To stop them all at once:',
+    revokeAll: 'Revoke all tokens and apps',
+    revokeAllLead: 'Every agent and program using them stops at its next request. Web sessions stay.',
+    revokeAllYes: 'Yes, revoke them all',
+    revokedAll: (tokens: number, apps: number) =>
+      `${plural(tokens, 'token')} and ${plural(apps, 'connected app')} ${tokens + apps === 1 ? 'is' : 'are'} revoked.`,
+    expired: 'Expired',
+    endedOn: (date: string) => `Ended ${date}`,
+    qr: 'QR code of the key',
+    qrLead: 'Scan it with your authenticator app, or type the key:',
     totp: 'Second factor',
     totpLead: 'A 6-digit code from an authenticator app, asked when you sign in.',
     totpOn: 'On',
@@ -353,7 +384,7 @@ export const T = {
     turnOn: 'Turn on',
     turnOff: 'Turn off',
     turnOffConfirm: 'Turn off the second factor',
-    keyStep: 'Add this key to your authenticator app:',
+    keyStep: 'Or type this key into the app:',
     keyLabel: 'Key',
     copyKey: 'Copy the key',
     openApp: 'Open in your authenticator app',

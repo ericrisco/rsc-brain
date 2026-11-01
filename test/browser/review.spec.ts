@@ -16,7 +16,7 @@ test.describe('R1: the first steps point at the installation, not at the browser
     await expect(page.getByRole('heading', { name: 'Get started' })).toBeVisible()
     const command = page.locator('pre.command')
     await expect(command).toHaveText(
-      'claude mcp add --transport http rsc-brain https://brain.example.test/mcp --scope user',
+      'claude mcp add --transport http rsc-brain https://brain.example.test/mcp --scope user\nclaude mcp login rsc-brain',
     )
     await expect(command).not.toContainText(baseURL as string)
   })

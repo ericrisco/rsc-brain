@@ -4,6 +4,7 @@
 // no answer. Whatever goes wrong comes back as a JSON-RPC error that says how to proceed; the bridge
 // keeps running.
 import { createInterface } from 'node:readline'
+import { VERSION } from '../core/version.ts'
 import { requestHeaders } from '../mcp/headers.ts'
 
 type Json = Record<string, unknown>
@@ -43,6 +44,8 @@ export async function runBridge(o: {
           'content-type': 'application/json',
           accept: 'application/json, text/event-stream',
           authorization: `Bearer ${o.token}`,
+          // Who is asking, as the profile and the live check of the web name it.
+          'user-agent': `rsc-brain-bridge/${VERSION}`,
           ...requestHeaders(msg, legacy),
         },
         body: JSON.stringify(msg),

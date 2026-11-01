@@ -31,7 +31,7 @@ import {
 } from '../../domain/invitations.ts'
 import { listMembers, removeMember, setMember, setNotify } from '../../domain/members.ts'
 import { markNoticesRead, myNotices } from '../../domain/notices.ts'
-import { createToken, listTokens, revokeToken } from '../../domain/tokens.ts'
+import { createToken, listTokens, revokeAll, revokeToken } from '../../domain/tokens.ts'
 import { bool, obj } from '../input.ts'
 import { publicRoute, type Req, type Route, route } from '../router.ts'
 import { cookie, fromWeb } from './auth.ts'
@@ -127,6 +127,7 @@ export const peopleRoutes: Route[] = [
     await revokeToken(ctxOf(r), r.params.id as string)
     return { body: { revoked: r.params.id } }
   }),
+  route('POST /v1/me/revoke-all', async (r) => ({ body: await revokeAll(ctxOf(r)) })),
   route('GET /v1/me/apps', async (r) => ({ body: { apps: await listApps(ctxOf(r)) } })),
   route('DELETE /v1/me/apps/:id', async (r) => {
     await revokeApp(ctxOf(r), r.params.id as string)

@@ -9,6 +9,7 @@ import {
   checkClientAndReturn,
   checkRequest,
   consentBrains,
+  consentDefaults,
   exchangeCode,
   hostOf,
   issueCode,
@@ -169,12 +170,15 @@ async function consentPage(
   message?: string,
 ): Promise<Reply> {
   const brains = await consentBrains(r.db, who.accountId)
+  const hint =
+    /(?:^|;\s*)rscb_connect=([a-z0-9-]{1,64})(?:;|$)/.exec(String(r.headers.cookie ?? ''))?.[1] ?? null
+  const start = await consentDefaults(r.db, who.accountId, brains, hint, a.scope)
   const shown = hostOf(a.redirectUri)
   const list = brains.length
     ? brains
         .map(
           (b) =>
-            `<label class="opt"><input type="checkbox" name="brain_${esc(b.id)}" value="on"> <span><strong>${esc(b.name)}</strong> <span class="muted">${esc(b.slug)} · you are ${esc(b.role)}</span></span></label>`,
+            `<label class="opt"><input type="checkbox" name="brain_${esc(b.id)}" value="on"${start.brainIds.has(b.id) ? ' checked' : ''}> <span><strong>${esc(b.name)}</strong> <span class="muted">${esc(b.slug)} · you are ${esc(b.role)}</span></span></label>`,
         )
         .join('')
     : '<p class="muted">You are not a member of any brain yet.</p>'
@@ -188,8 +192,8 @@ ${message ? `<p class="error" role="alert">${esc(message)}</p>` : ''}
 <input type="hidden" name="csrf" value="${sign(r, consentKey(who, a))}">
 <fieldset><legend>Brains it can reach</legend>${list}</fieldset>
 <fieldset><legend>Permission</legend>
-<label class="opt"><input type="radio" name="perm" value="read" checked> Read</label>
-<label class="opt"><input type="radio" name="perm" value="write"> Read and write (the journal, and proposals to the wiki)</label></fieldset>
+<label class="opt"><input type="radio" name="perm" value="read"${start.perm === 'read' ? ' checked' : ''}> Read</label>
+<label class="opt"><input type="radio" name="perm" value="write"${start.perm === 'write' ? ' checked' : ''}> Read and write (the journal, and proposals to the wiki)</label></fieldset>
 <p class="muted">Signed in as ${esc(who.name)}. You can end this connection any time in your profile, under “Connected apps”.</p>
 <div class="row"><button type="submit" name="decision" value="deny">Deny</button><button class="primary" type="submit" name="decision" value="approve"${brains.length ? '' : ' disabled'}>Approve</button></div></form>`,
   )

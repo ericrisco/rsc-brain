@@ -1491,17 +1491,6 @@ dialog.wide-dialog {
   font-size: 13px;
 }
 
-.check {
-  padding-top: 12px;
-  border-top: 1px solid var(--rule);
-}
-
-/* biome-ignore lint/style/noDescendingSpecificity: the heading of the connect dialog, not of a step */
-.check h3 {
-  margin-bottom: 4px;
-  font: 550 14px var(--sans);
-}
-
 select,
 textarea {
   width: 100%;
@@ -3506,15 +3495,56 @@ dialog.search-dialog {
   gap: 4px;
 }
 
+.live-line {
+  margin: 0;
+}
+
 .check-word {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
   font: 550 15px var(--sans);
 }
 
-.check-state.ok .check-word {
+.check-word.ok {
   color: var(--accent);
+}
+
+/* The same check, short, beside the configuration. */
+.check-mini {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.check-mini .check-word {
+  font-size: 14px;
+}
+
+.tips {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+}
+
+.tips-list {
+  display: grid;
+  gap: 4px;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+/* The key of the second factor as a QR code: dark on white whatever the theme, as scanners need. */
+.qr {
+  width: 176px;
+  height: 176px;
+  border-radius: 4px;
 }
 
 .check-dot {

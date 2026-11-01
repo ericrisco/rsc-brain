@@ -971,6 +971,10 @@ describe('the fixture API', () => {
       await call('GET', '/v1/me/tokens', o)
     }
     s.set('tokens', 'normal')
+    assert.deepEqual((await call('POST', '/v1/me/revoke-all', { ...o, body: {} })).body, {
+      tokens: 3,
+      apps: 0,
+    })
     const out = await call('POST', '/v1/auth/logout-everywhere', { ...o, body: {} })
     assert.deepEqual(out.body, { signedOut: 1 })
     assert.equal((await call('GET', '/v1/me', o)).status, 401)

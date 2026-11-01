@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { hashPassword } from '../../src/auth/password.ts'
+import { stepOf, totpAt } from '../../src/auth/totp.ts'
 import { BRAKE, newReset } from '../../src/domain/login.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
@@ -98,6 +99,41 @@ describe('changing a password from the profile (G6)', { skip: skipPg }, () => {
     assert.equal((await change(here, { current: PW, next: NEXT })).status, 204)
     // The right password clears the brake.
     assert.equal((await login(p.email, NEXT)).status, 200)
+  })
+
+  it('the attempt that starts the wait says so: the fifth wrong current password is 429, not 400', async () => {
+    const p = await person('Wes')
+    const here = await w.web(p.id)
+    const got: number[] = []
+    for (let i = 0; i < BRAKE.after; i++)
+      got.push((await change(here, { current: `wrong guess number ${i}`, next: NEXT })).status)
+    assert.deepEqual(got, [400, 400, 400, 400, 429])
+    // Outside sign-in, the wait does not send the person to reset a password they are signed in with.
+    const held = await change(here, { current: PW, next: NEXT })
+    assert.doesNotMatch(String(held.body.error?.howToProceed), /reset/i)
+  })
+
+  it('with a second factor on, it needs a right code too; a wrong one counts at the brake', async () => {
+    const p = await person('Zoe')
+    const here = await w.web(p.id)
+    const seed = String((await w.callWeb(here, 'POST', '/v1/me/totp')).body.secret)
+    await w.callWeb(here, 'POST', '/v1/me/totp/confirm', { code: totpAt(seed, stepOf(w.now)) })
+    w.advance(30_000)
+    const none = await change(here, { current: PW, next: NEXT })
+    assert.deepEqual([none.status, none.body.error?.code], [400, 'invalid_request'], none.text)
+    assert.match(String(none.body.error?.message), /code/i)
+    const wrong = await change(here, { current: PW, next: NEXT, code: '000000' })
+    assert.deepEqual([wrong.status, wrong.body.error?.code], [400, 'invalid_request'], wrong.text)
+    const brake = await w.db.one<{ failures: number }>('SELECT failures FROM login_brakes WHERE email = $1', [
+      p.email,
+    ])
+    assert.ok((brake?.failures ?? 0) >= 2, 'the missing and the wrong code took their turns')
+    assert.equal((await login(p.email, NEXT)).status, 401, 'nothing changed')
+    const ok = await change(here, { current: PW, next: NEXT, code: totpAt(seed, stepOf(w.now)) })
+    assert.equal(ok.status, 204, ok.text)
+    // The same code never works twice.
+    const again = await change(here, { current: NEXT, next: PW, code: totpAt(seed, stepOf(w.now)) })
+    assert.equal(again.status, 400, again.text)
   })
 
   it('only in the web: a token, or a web request without its header, cannot change a password', async () => {

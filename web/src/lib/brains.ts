@@ -50,6 +50,7 @@ export function ago(iso: string | null, now: Date = new Date()): string | null {
 // The client of a session as a person says it (overview, «Today's sessions»): a known agent by its
 // name, a program by what it is, a browser as a browser — never a raw user agent.
 const AGENTS: Array<[RegExp, string]> = [
+  [/^rsc-brain-bridge\//i, 'the rsc-brain bridge'],
   [/claude[\s_-]?code/i, 'Claude Code'],
   [/codex/i, 'Codex'],
   [/cursor/i, 'Cursor'],

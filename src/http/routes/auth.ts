@@ -117,7 +117,7 @@ export const authRoutes: Route[] = [
   // G6: a new password from the profile; nothing to say back.
   route('POST /v1/me/password', async (r) => {
     const b = obj(r.body)
-    await changePassword(ctxOf(r), r.conn, { current: b.current, next: b.next })
+    await changePassword(ctxOf(r), r.conn, r.secret, { current: b.current, next: b.next, code: b.code })
     return { status: 204, body: null }
   }),
   route('POST /v1/me/totp', async (r) => ({

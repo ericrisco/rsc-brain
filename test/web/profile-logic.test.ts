@@ -2,7 +2,17 @@
 // of the screens so it is tested on its own (plan §2: the .tsx files only paint).
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { checkOf, fillToken, toAsk } from '../../web/src/lib/connect.ts'
+import {
+  afterPoll,
+  CHECK_STOP_MS,
+  checkOf,
+  fillToken,
+  shouldPoll,
+  startCheck,
+  TIPS_AFTER_MS,
+  tipsDue,
+  toAsk,
+} from '../../web/src/lib/connect.ts'
 import {
   brainsLabel,
   groupKey,
@@ -44,6 +54,14 @@ describe('a token in the list', () => {
       'Used yesterday by an API client',
     )
     assert.equal(lastUseLabel(token({ lastUsedAt: '2026-11-01T11:59:50.000Z' }), NOW), 'Used just now')
+    // The bridge says who it is; never «an API client».
+    assert.equal(
+      lastUseLabel(
+        token({ lastUsedAt: '2026-11-01T11:59:50.000Z', lastClient: 'rsc-brain-bridge/0.1.0' }),
+        NOW,
+      ),
+      'Used just now by the rsc-brain bridge',
+    )
   })
 })
 
@@ -142,7 +160,12 @@ describe('the live check', () => {
     )
   })
   it('turns green when a connection appears that was not there when the page opened', () => {
-    const app = (id: string, name = 'Claude Code') => ({ id, name, lastUsedAt: '2026-11-01T11:59:00.000Z' })
+    const app = (id: string, name = 'Claude Code') => ({
+      id,
+      name,
+      lastUsedAt: '2026-11-01T11:59:00.000Z',
+      lastRequestAt: '2026-11-01T11:59:00.000Z' as string | null,
+    })
     assert.deepEqual(checkOf({ tokenId: null, knownApps: new Set(['app_old']), apps: [app('app_old')] }), {
       kind: 'waiting',
     })
@@ -156,5 +179,63 @@ describe('the live check', () => {
     )
     // Before the first answer there is nothing to compare with: never green by accident.
     assert.deepEqual(checkOf({ tokenId: null, knownApps: null, apps: [app('app_new')] }), { kind: 'waiting' })
+  })
+  it('an app counts only once its key made a request, not at the sign-in (the code exchange)', () => {
+    const exchanged = {
+      id: 'app_new',
+      name: 'Claude Code',
+      lastUsedAt: '2026-11-01T11:59:00.000Z',
+      lastRequestAt: null,
+    }
+    assert.deepEqual(checkOf({ tokenId: null, knownApps: new Set(), apps: [exchanged] }), { kind: 'waiting' })
+    assert.equal(
+      checkOf({
+        tokenId: null,
+        knownApps: new Set(),
+        apps: [{ ...exchanged, lastRequestAt: '2026-11-01T11:59:30.000Z' }],
+      }).kind,
+      'connected',
+    )
+  })
+})
+
+describe('the live check of one agent, over time', () => {
+  const T0 = 1_000_000
+  const used = (id: string) => ({ id, lastUsedAt: '2026-11-01T11:59:00.000Z', lastClient: 'claude-code/2' })
+  it('asks only while waiting, with the tab shown and the browser online', () => {
+    const c = startCheck(T0)
+    assert.equal(shouldPoll(c, { hidden: false, online: true }), true)
+    assert.equal(shouldPoll(c, { hidden: true, online: true }), false, 'never while the tab is hidden')
+    assert.equal(shouldPoll(c, { hidden: false, online: false }), false)
+  })
+  it('the first answer fixes the apps that were there; green stops asking', () => {
+    let c = startCheck(T0, 'crd_1')
+    c = afterPoll(
+      c,
+      { tokens: [], apps: [{ id: 'app_old', name: 'Cursor', lastUsedAt: '', lastRequestAt: 'x' }] },
+      T0 + 2000,
+    )
+    assert.deepEqual([...(c.knownApps ?? [])], ['app_old'])
+    assert.equal(c.kind, 'waiting')
+    c = afterPoll(c, { tokens: [used('crd_1')], apps: [] }, T0 + 4000)
+    assert.equal(c.kind, 'connected')
+    assert.equal(shouldPoll(c, { hidden: false, online: true }), false, 'no more asking once green')
+    // Green stays green: a later answer, even past 10 minutes, changes nothing.
+    assert.equal(afterPoll(c, { tokens: [], apps: [] }, T0 + CHECK_STOP_MS * 2), c)
+  })
+  it('stops after 10 minutes of waiting, until asked to check again', () => {
+    let c = startCheck(T0)
+    c = afterPoll(c, { apps: [] }, T0 + CHECK_STOP_MS - 1)
+    assert.equal(c.kind, 'waiting')
+    c = afterPoll(c, { apps: [] }, T0 + CHECK_STOP_MS)
+    assert.equal(c.kind, 'stopped')
+    assert.equal(shouldPoll(c, { hidden: false, online: true }), false)
+    const again = startCheck(T0 + CHECK_STOP_MS + 5, c.tokenId)
+    assert.equal(shouldPoll(again, { hidden: false, online: true }), true)
+  })
+  it('after a minute of waiting, the tips show', () => {
+    const c = startCheck(T0)
+    assert.equal(tipsDue(c, T0 + TIPS_AFTER_MS - 1), false)
+    assert.equal(tipsDue(c, T0 + TIPS_AFTER_MS), true)
   })
 })

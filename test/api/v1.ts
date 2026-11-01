@@ -113,6 +113,7 @@ export const V1 = [
   'POST /v1/keys/short',
   'POST /v1/me/notices/read',
   'POST /v1/me/password',
+  'POST /v1/me/revoke-all',
   'POST /v1/me/tokens',
   'POST /v1/me/totp',
   'POST /v1/me/totp/confirm',

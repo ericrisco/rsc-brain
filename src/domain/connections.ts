@@ -312,6 +312,32 @@ export async function consentBrains(db: Db, accountId: string) {
   }))
 }
 
+// What the consent page starts from (PR24): the brain the web named («Connect your agent» for a brain
+// leaves a cookie hint), else the brains of the invitation the person joined with, else their only brain;
+// and read + write when the app asks for it and the person may write in what is chosen. A hint for a brain
+// the person is not in counts for nothing. The person still sees all of it and decides.
+export async function consentDefaults(
+  db: Db,
+  accountId: string,
+  brains: Array<{ id: string; slug: string; role: string }>,
+  hint: string | null,
+  scope: string | null,
+): Promise<{ brainIds: Set<string>; perm: 'read' | 'write' }> {
+  let chosen = brains.filter((b) => hint !== null && b.slug === hint)
+  if (!chosen.length) {
+    const inv = await db.one<{ grants: Array<{ brainId: string }> }>(
+      'SELECT grants FROM invitations WHERE account_id = $1 AND used_at IS NOT NULL ORDER BY used_at DESC LIMIT 1',
+      [accountId],
+    )
+    const invited = new Set((inv?.grants ?? []).map((g) => g.brainId))
+    chosen = brains.filter((b) => invited.has(b.id))
+  }
+  if (!chosen.length && brains.length === 1) chosen = brains
+  const asksWrite = !scope || scope.split(/\s+/).includes('brain:write')
+  const mayWrite = chosen.length > 0 && chosen.every((b) => b.role !== 'reader')
+  return { brainIds: new Set(chosen.map((b) => b.id)), perm: asksWrite && mayWrite ? 'write' : 'read' }
+}
+
 // The person consented: a code for the client, for 60 seconds, once.
 export async function issueCode(
   db: Db,
@@ -548,7 +574,7 @@ export async function refreshGrant(db: Db, clock: Clock, b: Record<string, unkno
   })
 }
 
-async function endGrant(db: Db, id: string, now: Date) {
+export async function endGrant(db: Db, id: string, now: Date) {
   await db.query('UPDATE oauth_grants SET revoked_at = coalesce(revoked_at, $2) WHERE id = $1', [id, now])
   await db.query('UPDATE credentials SET revoked_at = coalesce(revoked_at, $2) WHERE grant_id = $1', [
     id,
@@ -584,6 +610,11 @@ export async function revokeByToken(db: Db, clock: Clock, b: Record<string, unkn
 
 const appView = async (db: Db, r: Row, now: Date) => {
   const slugs = await db.query('SELECT slug FROM brains WHERE id = ANY($1) ORDER BY slug', [r.brain_ids])
+  // The grant counts as used from the code exchange; its keys say when it really reached rsc-brain.
+  const used = await db.one<{ at: Date | null }>(
+    'SELECT max(last_used_at) AS at FROM credentials WHERE grant_id = $1',
+    [r.id],
+  )
   return {
     id: String(r.id),
     name: String(r.client_name),
@@ -593,6 +624,7 @@ const appView = async (db: Db, r: Row, now: Date) => {
     perm: String(r.perm),
     createdAt: (r.created_at as Date).toISOString(),
     lastUsedAt: (r.last_used_at as Date).toISOString(),
+    lastRequestAt: used?.at ? used.at.toISOString() : null,
     endsAt: new Date(
       Math.min((r.last_used_at as Date).getTime() + 90 * 86_400_000, (r.expires_max as Date).getTime()),
     ).toISOString(),
