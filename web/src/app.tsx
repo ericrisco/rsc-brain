@@ -9,6 +9,7 @@ import { signInPath } from './lib/nav.ts'
 import { useScreenTitle } from './lib/screen.ts'
 import { Activity } from './screens/Activity.tsx'
 import { Brain, brainResource } from './screens/Brain.tsx'
+import { Connect } from './screens/Connect.tsx'
 import { HealthScreen } from './screens/Health.tsx'
 import { Home } from './screens/Home.tsx'
 import { Invite } from './screens/Invite.tsx'
@@ -20,6 +21,7 @@ import { JournalSession } from './screens/journal/Session.tsx'
 import { JournalSessions } from './screens/journal/Sessions.tsx'
 import { NotFound } from './screens/NotFound.tsx'
 import { People } from './screens/People.tsx'
+import { Profile } from './screens/Profile.tsx'
 import { ProposalsInbox } from './screens/proposals/Inbox.tsx'
 import { ProposalScreen } from './screens/proposals/Proposal.tsx'
 import { Reset } from './screens/Reset.tsx'
@@ -189,6 +191,9 @@ function SignedIn() {
           <Route path="/b/:slug/activity" component={ActivityPage} />
           <Route path="/b/:slug/health" component={HealthPage} />
           <Route path="/people" component={People} />
+          <Route path="/profile" component={Profile} />
+          <Route path="/profile/tokens" component={Profile} />
+          <Route path="/connect" component={Connect} />
           <Route default component={NotFound} />
         </Router>
       )}

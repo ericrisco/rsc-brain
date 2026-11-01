@@ -104,23 +104,27 @@ test.describe('create a brain', () => {
 })
 
 test.describe('connect your agent', () => {
-  test('always there; gives the command of each agent for this installation', async ({
+  test('always there; leads to the page with the command of each agent for this installation', async ({
     page,
     context,
     baseURL,
   }) => {
     await scenario(context, baseURL as string, 'member')
     await page.goto('/')
-    await page.getByRole('button', { name: 'Connect your agent' }).click()
-    const dialog = page.getByRole('dialog', { name: 'Connect your agent' })
-    await expect(dialog.locator('pre.command').first()).toContainText(
+    await page.getByRole('main').getByRole('link', { name: 'Connect your agent' }).click()
+    await expect(page).toHaveURL(/\/connect$/)
+    const panel = page.getByRole('tabpanel', { name: 'Claude Code' })
+    await expect(panel.locator('pre.command').first()).toContainText(
       'claude mcp add --transport http rsc-brain https://brain.example.test/mcp',
     )
-    await dialog.getByLabel('Your agent').selectOption({ label: 'Codex' })
-    await expect(dialog.locator('pre.command').first()).toContainText('codex mcp add rsc-brain')
-    await expect(dialog.getByText(/How to check/)).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(dialog).toBeHidden()
+    await page.getByRole('tab', { name: 'Codex' }).click()
+    await expect(page.getByRole('tabpanel', { name: 'Codex' }).locator('pre.command').first()).toContainText(
+      'codex mcp add rsc-brain',
+    )
+    await expect(page.getByRole('region', { name: 'How to check it works' })).toBeVisible()
+    // Back home, where it started.
+    await page.goBack()
+    await expect(page.getByRole('heading', { level: 1, name: 'Your brains' })).toBeVisible()
   })
 })
 
@@ -132,25 +136,30 @@ test.describe('a token instead', () => {
   }) => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/')
-    await page.getByRole('button', { name: 'Connect your agent' }).first().click()
-    const dialog = page.getByRole('dialog', { name: 'Connect your agent' })
-    const instead = dialog.getByRole('region', { name: 'Use a token instead' })
+    await page.getByRole('main').getByRole('link', { name: 'Connect your agent' }).first().click()
+    const instead = page.getByRole('region', { name: 'Token connection' })
     await expect(instead).toContainText('shown once')
-    await expect(instead).toContainText('profile')
-    await instead.getByRole('button', { name: 'Create a token' }).click()
+    await instead.getByRole('button', { name: 'Create a token and fill in the configuration' }).click()
     const copy = instead.getByRole('button', { name: 'Copy the token' })
     await expect(copy).toBeFocused()
-    await expect(instead.locator('pre.command')).toContainText('rscb_')
+    const once = instead.getByRole('region', { name: 'Your new token' })
+    await expect(once.locator('pre.command').first()).toContainText('rscb_')
     await expect(instead).toContainText('all your brains')
     await expect(instead).toContainText('every brain you are a member of')
-    const secret = String(await instead.locator('pre.command').textContent())
-    await page.keyboard.press('Escape')
-    await page.getByRole('button', { name: 'Connect your agent' }).first().click()
-    await expect(dialog.getByText(secret)).toHaveCount(0)
+    const secret = String(await once.locator('pre.command').first().textContent()).trim()
+    // Leaving the page is enough: coming back, the token is gone.
+    await page.goBack()
+    await page.goForward()
+    await expect(page.getByRole('heading', { level: 1, name: 'Connect your agent' })).toBeVisible()
+    await expect(page.getByText(secret)).toHaveCount(0)
     const kept = await page.evaluate(
-      () => JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }) + location.href,
+      () =>
+        JSON.stringify({ ...sessionStorage }) +
+        JSON.stringify({ ...localStorage }) +
+        location.href +
+        JSON.stringify(history.state),
     )
-    expect(kept).not.toContain(secret.trim())
+    expect(kept).not.toContain(secret)
   })
 })
 

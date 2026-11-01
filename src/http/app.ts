@@ -202,6 +202,12 @@ function send(
   // The route compresses big answers (`compress`); whether this client takes gzip.
   compress: { route: boolean; accepts: boolean } = { route: false, accepts: false },
 ): void {
+  // Nothing to say back (a password changed): no body at all, as 204 requires.
+  if (status === 204) {
+    res.writeHead(204, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...headers })
+    res.end()
+    return
+  }
   const raw = typeof body === 'string' && headers['content-type'] !== undefined
   const bounded = raw ? { text: body as string, cut: false } : boundJson(JSON.stringify(body))
   const text = bounded.text

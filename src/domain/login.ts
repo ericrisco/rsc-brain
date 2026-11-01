@@ -1,7 +1,7 @@
 // Signing in (spec B4 «Entrar»): email and password, plus the code when the person has a second factor;
 // a brake after five failures in a row; signing out here or everywhere; resetting a password with a
 // single-use link; turning the second factor on and off.
-import { checkPassword, dummyHash, hashPassword, verifyPassword } from '../auth/password.ts'
+import { checkPassword, dummyHash, hashPassword, PASSWORD, verifyPassword } from '../auth/password.ts'
 import { hashSecret, newSecret } from '../auth/secrets.ts'
 import { checkTotp, newTotpSecret, otpauthUrl, stepOf } from '../auth/totp.ts'
 import { seal, unseal } from '../auth/vault.ts'
@@ -10,6 +10,7 @@ import { AppError, invalid, notFound, unauthorized } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
 import { audit } from './audit.ts'
 import type { Ctx } from './context.ts'
+import { inWeb } from './guards.ts'
 import { type ConnFacts, installation, requireSecure } from './installation.ts'
 import { mintWebSession } from './keys.ts'
 import { webOnly } from './wiki/review.ts'
@@ -421,6 +422,62 @@ export async function confirmReset(
       action: 'auth.password_reset',
       outcome: 'ok',
       detail: `from ${conn.ip}`,
+    })
+  })
+}
+
+// A new password from the profile (spec B6 «Profile», plan G6): only in the web, with the current
+// password. A wrong one takes its turn at the brake of signing in (same email, same count), so a stolen
+// session cannot guess the password without end. The change ends every pending reset link and every other
+// web session of the person; this one stays, and tokens and connected apps are not sessions.
+export async function changePassword(
+  ctx: Ctx,
+  conn: ConnFacts,
+  input: { current: unknown; next: unknown },
+): Promise<void> {
+  inWeb(ctx, 'Changing a password')
+  const current = typeof input.current === 'string' ? input.current : ''
+  if (!current || current.length > PASSWORD.max) {
+    throw invalid('Send your current password in "current".', 'Type the password you sign in with now.')
+  }
+  const next = checkPassword(input.next)
+  const key = ctx.who.email ?? `account:${ctx.who.accountId}`
+  const now = ctx.clock()
+  const waiting = await attempt(ctx.db, key, now)
+  if (waiting) throw braked(waiting, now)
+  const a = await ctx.db.one<Row>('SELECT password_hash FROM accounts WHERE id = $1', [ctx.who.accountId])
+  if (!a?.password_hash || !(await verifyPassword(current, String(a.password_hash)))) {
+    await failedAudit(ctx.db, ctx.who.accountId, now, 'wrong current password', conn)
+    throw await refuse(
+      ctx.db,
+      key,
+      now,
+      new AppError(
+        400,
+        'wrong_password',
+        'The current password is not right.',
+        'Type it again. Forgot it? Sign out and reset it from the sign-in page ("Forgot your password?").',
+      ),
+    )
+  }
+  const hash = await hashPassword(next)
+  await ctx.db.tx(async (tx) => {
+    await lockResets(tx, ctx.who.accountId)
+    await tx.query('UPDATE accounts SET password_hash = $2 WHERE id = $1', [ctx.who.accountId, hash])
+    await endResets(tx, ctx.who.accountId, now)
+    await clearBrake(tx, key)
+    const ended = await tx.query(
+      `UPDATE credentials SET revoked_at = $3 WHERE account_id = $1 AND kind = 'web' AND id <> $2
+          AND revoked_at IS NULL RETURNING id`,
+      [ctx.who.accountId, ctx.who.credential.id, now],
+    )
+    await audit(tx, {
+      at: now,
+      actorId: ctx.who.accountId,
+      credentialId: ctx.who.credential.id,
+      action: 'auth.password_change',
+      outcome: 'ok',
+      detail: `${ended.length} other session(s) ended`,
     })
   })
 }

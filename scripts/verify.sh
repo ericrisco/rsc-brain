@@ -36,7 +36,12 @@ elif ! pg_reachable; then
   echo "▸ e2e skipped: PostgreSQL at RSC_BRAIN_PG_URL does not answer"
 else
   echo "▸ e2e (with PostgreSQL)"
-  npx --no-install playwright test -c playwright.e2e.config.ts --reporter=dot
+  rm -f test-results/ca1.txt
+  e2e_status=0
+  npx --no-install playwright test -c playwright.e2e.config.ts --reporter=dot || e2e_status=$?
+  # CA1's count of actions and time, printed pass or fail.
+  if [ -f test-results/ca1.txt ]; then sed 's/^/  measured: /' test-results/ca1.txt; fi
+  if [ "$e2e_status" -ne 0 ]; then exit "$e2e_status"; fi
 fi
 echo "▸ audit";     npm audit --omit=dev --audit-level=high
 echo "✓ verify passed"

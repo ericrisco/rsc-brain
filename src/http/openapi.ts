@@ -908,6 +908,93 @@ const HAND: Record<string, Op> = {
       ['note'],
     ),
   },
+  'GET /v1/me/tokens': {
+    summary:
+      'Your personal tokens that still work (the rsc-brain web only). Never the secret: its last four characters, its last use and its client.',
+    reply: obj({
+      tokens: list(
+        obj({
+          id: s('Credential id.'),
+          name: s('What it is for.'),
+          last4: s('Its last four characters.'),
+          perm: s('read, or write (read + write).'),
+          allBrains: b('It reaches every brain you are a member of, including later ones.'),
+          brains: nul(list(s('The name of a brain.'), 'The brains it reaches; null with allBrains.')),
+          createdAt: s('When.', { format: 'date-time' }),
+          expiresAt: s('When it ends.', { format: 'date-time' }),
+          expiresSoon: b('It ends within the notice period.'),
+          lastUsedAt: nul(s('Its last request; null until its first.', { format: 'date-time' })),
+          lastClient: nul(s('The program that made its last request.')),
+        }),
+        'Newest first.',
+      ),
+    }),
+  },
+  'DELETE /v1/me/tokens/{id}': {
+    summary: 'Revoke one of your tokens (the rsc-brain web only): it stops at its next request.',
+    reply: obj({ revoked: s('The id revoked.') }),
+  },
+  'GET /v1/me/apps': {
+    summary:
+      'Your connected apps: the live connections made with the standard sign-in (the rsc-brain web only).',
+    reply: obj({
+      apps: list(
+        obj({
+          id: s('Connection id.'),
+          name: s('The name the app declared.'),
+          nameNote: s('That name is not verified.'),
+          returnsTo: s('Where its sign-in returned to.'),
+          brains: list(s('The name of a brain.'), 'The brains it reaches.'),
+          perm: s('read, or write (read + write).'),
+          createdAt: s('When it was connected.', { format: 'date-time' }),
+          lastUsedAt: s('Its last request.', { format: 'date-time' }),
+          endsAt: s('When it ends unless used again.', { format: 'date-time' }),
+          ended: b('It no longer works.'),
+        }),
+        'Most recently used first.',
+      ),
+    }),
+  },
+  'DELETE /v1/me/apps/{id}': {
+    summary: 'Revoke a connected app (the rsc-brain web only): its keys stop at their next request.',
+    reply: obj({ revoked: s('The id revoked.') }),
+  },
+  'PUT /v1/brains/{slug}/notify': {
+    summary: 'Whether new proposals of this brain reach you by email (curators, in the rsc-brain web).',
+    body: obj({ notifyProposals: b('true to get them.') }),
+    reply: obj({ notifyProposals: b('What is set now.') }),
+  },
+  'POST /v1/me/password': {
+    summary:
+      'Change your password (the rsc-brain web only), with the current one. Ends your pending reset links and your other web sessions. Wrong current passwords count toward the same brake as signing in.',
+    status: 204,
+    body: obj({ current: s('The password you sign in with now.'), next: s('12 to 200 characters.') }),
+  },
+  'POST /v1/me/totp': {
+    summary:
+      'Start setting up a second factor (the rsc-brain web only): a secret for your authenticator app. With one on already, send its current code to replace it.',
+    body: obj({ code: s('The current code, to replace a second factor that is on.') }, ['code']),
+    reply: obj({
+      secret: s('The secret to type into the authenticator app. Shown only here.'),
+      otpauthUrl: s('The same secret as an otpauth:// address.'),
+    }),
+  },
+  'POST /v1/me/totp/confirm': {
+    summary:
+      'Turn the second factor on with a first code from the authenticator app (the rsc-brain web only).',
+    body: obj({ code: s('The 6 digits the app shows now.') }),
+    reply: obj({ enabled: b('It is on.') }),
+  },
+  'DELETE /v1/me/totp': {
+    summary: 'Turn the second factor off with a current code (the rsc-brain web only).',
+    body: obj({ code: s('The 6 digits the app shows now.') }),
+    reply: obj({ enabled: b('It is off (false).') }),
+  },
+  'POST /v1/auth/logout-everywhere': {
+    summary:
+      'Sign out of every web session of yours, this one included. Tokens and connected apps keep working.',
+    reply: obj({ signedOut: n('How many sessions ended.') }),
+  },
   'GET /v1/brains': { summary: 'The brains this key can use.', reply: obj({ brains: list(BRAIN_ROLE) }) },
   'POST /v1/brains': {
     summary: 'Create a brain (with the right to create brains).',
@@ -1488,25 +1575,28 @@ export function openapi(routes: Route[], serverUrl: string | null): Schema {
       description,
       schema: { type: 'string' },
     }))
-    const ok = hand?.image
-      ? {
-          description: 'The image; its type comes from its first bytes (PNG, WebP or JPEG).',
-          content: Object.fromEntries(
-            ['image/png', 'image/webp', 'image/jpeg'].map((t) => [
-              t,
-              { schema: { type: 'string', format: 'binary' } },
-            ]),
-          ),
-        }
-      : hand?.stream
-        ? {
-            description: 'A stream of events: "id:", "event:" and "data:" lines; "data" is an Event.',
-            content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/Event' } } },
-          }
-        : {
-            description: hand ? 'Success.' : 'Success (201 when something was created).',
-            content: { 'application/json': { schema: hand?.reply ?? { type: 'object' } } },
-          }
+    const ok =
+      hand?.status === 204
+        ? { description: 'Done; the answer has no body.' }
+        : hand?.image
+          ? {
+              description: 'The image; its type comes from its first bytes (PNG, WebP or JPEG).',
+              content: Object.fromEntries(
+                ['image/png', 'image/webp', 'image/jpeg'].map((t) => [
+                  t,
+                  { schema: { type: 'string', format: 'binary' } },
+                ]),
+              ),
+            }
+          : hand?.stream
+            ? {
+                description: 'A stream of events: "id:", "event:" and "data:" lines; "data" is an Event.',
+                content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/Event' } } },
+              }
+            : {
+                description: hand ? 'Success.' : 'Success (201 when something was created).',
+                content: { 'application/json': { schema: hand?.reply ?? { type: 'object' } } },
+              }
     const op: Schema = {
       operationId: operationId(o.method, o.path),
       summary: hand?.summary ?? `${o.method} ${o.path}`,

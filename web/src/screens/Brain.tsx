@@ -11,9 +11,8 @@ import { resource } from '../api/resource.ts'
 import { clientLabel } from '../lib/brains.ts'
 import { useLive } from '../live/follow.ts'
 import { online } from '../session.ts'
-import { connectFor } from '../shell/dialogs.ts'
+import { connectHref } from '../shell/dialogs.ts'
 import { T } from '../text.ts'
-import { Button } from '../ui/Button.tsx'
 import { CopyButton } from '../ui/CopyButton.tsx'
 import { viewState } from '../ui/state.ts'
 import { ErrorState, Skeleton } from '../ui/states.tsx'
@@ -89,12 +88,9 @@ function FirstSteps({ slug, steps }: { slug: string; steps: Overview['firstSteps
       <ol>
         <Step n={1} done={steps.agentConnected} title={o.step1}>
           <p>{o.step1Lead}</p>
-          <Button
-            kind={steps.agentConnected ? 'secondary' : 'primary'}
-            onClick={() => (connectFor.value = { brain: slug })}
-          >
+          <a class={`button ${steps.agentConnected ? 'secondary' : 'primary'}`} href={connectHref(slug)}>
             {T.connect.open}
-          </Button>
+          </a>
         </Step>
         <Step n={2} done={steps.firstEntry} title={o.step2}>
           <p>{o.step2Lead}</p>

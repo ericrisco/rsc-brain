@@ -112,6 +112,7 @@ export const V1 = [
   'POST /v1/invitations/{id}/resend',
   'POST /v1/keys/short',
   'POST /v1/me/notices/read',
+  'POST /v1/me/password',
   'POST /v1/me/tokens',
   'POST /v1/me/totp',
   'POST /v1/me/totp/confirm',
@@ -173,6 +174,8 @@ export const ERROR_STATUS: Record<string, number> = {
   stale_base: 409,
   missing_dependencies: 400,
   too_many_attempts: 429,
+  // The profile (PR24): a wrong current password when changing it.
+  wrong_password: 400,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }

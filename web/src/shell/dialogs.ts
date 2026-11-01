@@ -1,7 +1,8 @@
-// The dialogs any screen can open: connecting an agent (for a brain, or for the installation) and
-// creating a brain. Shared signals, so a card, a first step and the top bar open the same one.
+// The dialogs any screen can open: creating a brain. A shared signal, so a card, a first step and the
+// top bar open the same one. Connecting an agent is a page of its own (/connect).
 import { signal } from '@preact/signals'
 
-// null: closed; { brain: null }: the installation; { brain: slug }: the kit names that brain.
-export const connectFor = signal<{ brain: string | null } | null>(null)
+// «Connect your agent», for the installation or naming a brain.
+export const connectHref = (brain: string | null) =>
+  brain ? `/connect?brain=${encodeURIComponent(brain)}` : '/connect'
 export const createOpen = signal(false)

@@ -12,7 +12,6 @@ import { T } from '../text.ts'
 import { Brand } from '../ui/Brand.tsx'
 import { Dialog } from '../ui/Dialog.tsx'
 import { OfflineStrip } from '../ui/states.tsx'
-import { ConnectDialog } from './ConnectDialog.tsx'
 import { CreateBrainDialog } from './CreateBrainDialog.tsx'
 import { HelpDialog } from './HelpDialog.tsx'
 import { Keyboard } from './Keyboard.tsx'
@@ -146,6 +145,12 @@ function AccountMenu({ me }: { me: Me }) {
             <p>{name}</p>
             {me.account.email ? <p class="meta">{me.account.email}</p> : null}
           </div>
+          <a href="/profile" onClick={() => setOpen(false)}>
+            <span>{T.shell.profile}</span>
+          </a>
+          <a href="/connect" onClick={() => setOpen(false)}>
+            <span>{T.shell.connect}</span>
+          </a>
           {me.account.canInvite ? (
             <a href="/people" onClick={() => setOpen(false)}>
               <span>{T.shell.people}</span>
@@ -306,7 +311,6 @@ export function Shell({
       <Keyboard key="keys" signedIn brain={brain?.slug ?? null} canInvite={me.account.canInvite} />
       <HelpDialog key="help" signedIn inBrain={Boolean(brain)} canInvite={me.account.canInvite} />
       <SearchDialog key="search" brain={brain ? { slug: brain.slug, name: brain.name } : null} />
-      <ConnectDialog key="connect" />
       <CreateBrainDialog key="create" />
     </div>
   )
