@@ -53,7 +53,7 @@ export async function emit(
       e.query == null ? null : redact(e.query).text.slice(0, 1000),
       e.resultIds ?? [],
       // The client of the key, as the journal names it (domain/clients.ts); kept, never looked up again.
-      ctx.who?.client ? ctx.who.client.slice(0, 200) : null,
+      ctx.who?.client ? redact(ctx.who.client).text.slice(0, 200) : null,
     ],
   )
 }
@@ -74,6 +74,12 @@ export type EventRow = {
   label: string | null
   query: string | null
   client: string | null
+  // The state of the entry it names, if it names one (a forgotten title is not for everyone).
+  targetState: string | null
+  // The external reference of the session it happened in (or of the session it opened or closed).
+  sessionRef: string | null
+  // Who a short key acted for (Factory runs agents for people).
+  onBehalf: { id: string; name: string } | null
 }
 
 // Who follows a brain, and so which of its events they get (pack rule 7, the same rule as the trail of
@@ -87,8 +93,24 @@ export function visibleTo(v: Viewer, e: Pick<EventRow, 'kind' | 'accountId' | 'c
   return v.short ? e.credentialId === v.credentialId : e.accountId === v.accountId
 }
 
-const SELECT = `SELECT e.*, b.slug, a.name AS account_name
-                  FROM events e JOIN brains b ON b.id = e.brain_id LEFT JOIN accounts a ON a.id = e.account_id`
+// The title of an event's entry, as this viewer may see it: hidden when the entry is purged, and from all but
+// curators when it is forgotten (the rule of the journal, entries.ts relationsOf).
+export function labelFor(
+  v: Pick<Viewer, 'curator'>,
+  e: Pick<EventRow, 'label' | 'targetState'>,
+): string | null {
+  if (e.targetState === 'purged' || (e.targetState === 'forgotten' && !v.curator)) return null
+  return e.label
+}
+
+const SELECT = `SELECT e.*, b.slug, a.name AS account_name, en.state AS target_state, se.ref AS session_ref,
+                       cr.on_behalf_id, ob.name AS on_behalf_name
+                  FROM events e JOIN brains b ON b.id = e.brain_id LEFT JOIN accounts a ON a.id = e.account_id
+                  LEFT JOIN entries en ON en.id = e.target_id
+                  LEFT JOIN sessions se
+                         ON se.id = CASE WHEN e.kind LIKE 'session.%' THEN e.target_id ELSE en.session_id END
+                  LEFT JOIN credentials cr ON cr.id = e.credential_id
+                  LEFT JOIN accounts ob ON ob.id = cr.on_behalf_id`
 
 const rowOf = (r: Row): EventRow => ({
   id: Number(r.id),
@@ -105,6 +127,10 @@ const rowOf = (r: Row): EventRow => ({
   label: r.label == null ? null : String(r.label),
   query: r.query == null ? null : String(r.query),
   client: r.client == null ? null : String(r.client),
+  targetState: r.target_state == null ? null : String(r.target_state),
+  sessionRef: r.session_ref == null ? null : String(r.session_ref),
+  onBehalf:
+    r.on_behalf_id == null ? null : { id: String(r.on_behalf_id), name: String(r.on_behalf_name ?? '') },
 })
 
 // The highest delivery number given so far.
@@ -171,7 +197,9 @@ export async function missedBefore(
     `SELECT 1 FROM events
       WHERE brain_id = $1 AND seq > $2 AND at < $3
         AND ($4 OR kind <> ALL($5::text[]) OR (CASE WHEN $6 THEN credential_id = $7 ELSE account_id = $8 END))
-      LIMIT 1`,
+      -- In the order of events_brain_at: the planner walks that index instead of betting on a table scan
+      -- (which reads everything when nothing matches).
+      ORDER BY at DESC LIMIT 1`,
     [brainId, after, since, v.curator, LOOKS, v.short, v.credentialId, v.accountId],
   )
   return r !== undefined

@@ -175,6 +175,11 @@ describe('the order in which events are delivered', { skip: skipPg }, () => {
     const gap = await s.waitFor((e) => e.event === 'gap')
     assert.match(gap.data.message ?? '', /ahead/)
     assert.match(gap.data.message ?? '', /lists/)
+    // Review of PR23: the gap names the newest id, so a client holding a later one resets to it (a restored
+    // database numbers again from below) instead of dropping what follows as already seen.
+    const newest = (gap.data as { lastEventId?: string }).lastEventId ?? ''
+    assert.match(newest, /^\d+$/)
+    assert.ok(Number(newest) < 999999999)
     await insert(w.db, 'ahead', 'After the future')
     await s.waitFor(labelled('After the future'))
     s.close()

@@ -74,6 +74,13 @@ function world(hidden = false) {
       doc.hidden = h
       visibility?.()
     },
+    // The tab is hidden but the page has not heard it yet (the event comes after a drop).
+    hideQuietly() {
+      doc.hidden = true
+    },
+    closed(reason: string, message = 'Stopped.') {
+      last().listeners.get('closed')?.({ data: JSON.stringify({ reason, message }) })
+    },
   }
 }
 
@@ -139,7 +146,8 @@ describe('the live module', () => {
       s.events.value.map((e) => e.id),
       ['3', '2', '1'],
     )
-    // Live again: the next drop waits the shortest time again.
+    // Live again and steady for 10 s: the next drop waits the shortest time again.
+    mock.timers.tick(10_000)
     w.last().onerror?.()
     mock.timers.tick(RECONNECT_MS[0] as number)
     assert.equal(w.sources.length, 4)
@@ -218,10 +226,11 @@ describe('the live module', () => {
     w.setHidden(false)
     assert.equal(w.sources.length, 2)
     assert.equal(w.last().url, '/v1/brains/growth/events?lastEventId=1')
-    // A drop while hidden does not wake it: it waits until shown.
+    // A drop while the tab is hidden (before the page heard it) does not wake it: it waits until shown.
     w.last().onopen?.()
-    w.setHidden(true)
-    w.sources[1]?.onerror?.()
+    w.hideQuietly()
+    w.last().onerror?.()
+    assert.equal(s.state.value, 'idle')
     mock.timers.tick(30_000)
     assert.equal(w.sources.length, 2)
     s.stop()
@@ -241,6 +250,135 @@ describe('the live module', () => {
     const w = world()
     const s = follow('a b/c', w.deps)
     assert.equal(w.last().url, '/v1/brains/a%20b%2Fc/events')
+    s.stop()
+  })
+
+  // Review of PR23.
+  it('an event with the id already shown is not shown twice (M1)', () => {
+    const w = world()
+    const s = follow('growth', w.deps)
+    w.last().onopen?.()
+    const e = w.event()
+    w.last().onmessage?.({ data: JSON.stringify(e), lastEventId: e.id })
+    assert.equal(s.events.value.length, 1)
+    s.stop()
+  })
+
+  it('what waits while paused is capped too (M9)', () => {
+    const w = world()
+    const s = follow('growth', w.deps, { keep: 3 })
+    w.last().onopen?.()
+    s.pause()
+    for (let i = 0; i < 5; i++) w.event()
+    assert.equal(s.waiting.value.length, 3)
+    assert.equal(s.overflow.value, true)
+    s.resume()
+    assert.equal(s.overflow.value, false)
+    s.stop()
+  })
+
+  it('stopped for a role or a key, hiding and showing the tab does not open it again (M6), and the list is cleared', () => {
+    const w = world()
+    let told = 0
+    const s = follow('growth', w.deps, { onClosed: () => told++ })
+    w.last().onopen?.()
+    w.event()
+    s.pause()
+    w.event()
+    w.closed('role_changed', 'Your role in this brain changed.')
+    assert.equal(s.state.value, 'closed')
+    // What the person may no longer see leaves the screen.
+    assert.deepEqual(s.events.value, [])
+    assert.deepEqual(s.waiting.value, [])
+    w.setHidden(true)
+    assert.equal(s.state.value, 'closed')
+    w.setHidden(false)
+    assert.equal(w.sources.length, 1)
+    assert.equal(s.state.value, 'closed')
+    assert.equal(told, 1)
+    s.stop()
+    for (const reason of [
+      'key_revoked',
+      'unauthorized',
+      'account_removed',
+      'key_invalidated',
+      'connection_ended',
+    ]) {
+      const v = world()
+      const t = follow('growth', v.deps)
+      v.closed(reason)
+      assert.equal(t.state.value, 'closed', reason)
+      t.stop()
+    }
+  })
+
+  it('«closed» for an internal error comes back by itself, keeping the list', () => {
+    const w = world()
+    const s = follow('growth', w.deps)
+    w.last().onopen?.()
+    w.event()
+    w.closed('internal', 'The stream stopped on an error; reconnect with the last event id.')
+    assert.equal(s.state.value, 'reconnecting')
+    assert.equal(s.closed.value, null)
+    assert.equal(s.events.value.length, 1)
+    mock.timers.tick(RECONNECT_MS[0] as number)
+    assert.equal(w.sources.length, 2)
+    assert.equal(w.last().url, '/v1/brains/growth/events?lastEventId=1')
+    s.stop()
+  })
+
+  it('«retry now» opens at once while reconnecting; «reconnect» also clears the gap', () => {
+    const w = world()
+    const s = follow('growth', w.deps)
+    w.last().onopen?.()
+    w.event()
+    w.last().onerror?.()
+    assert.equal(s.state.value, 'reconnecting')
+    s.retryNow()
+    assert.equal(w.sources.length, 2)
+    w.last().listeners.get('gap')?.({ data: JSON.stringify({ message: 'Missed some.' }) })
+    assert.equal(s.gap.value, 'Missed some.')
+    s.retry()
+    assert.equal(s.gap.value, null)
+    s.stop()
+  })
+
+  it('a restored server numbers from below: a gap naming an older newest id resets the cursor', () => {
+    const w = world()
+    const s = follow('growth', w.deps)
+    w.last().onopen?.()
+    for (let i = 0; i < 5; i++) w.event()
+    w.last().listeners.get('gap')?.({ data: JSON.stringify({ message: 'Ahead.', lastEventId: '2' }) })
+    // What the restored server numbers next (3) is new, not "already seen".
+    w.last().onmessage?.({ data: JSON.stringify({ id: '3', kind: 'entry.saved' }), lastEventId: '3' })
+    assert.equal(s.events.value[0]?.id, '3')
+    w.last().onerror?.()
+    mock.timers.tick(RECONNECT_MS[0] as number)
+    assert.equal(w.last().url, '/v1/brains/growth/events?lastEventId=3')
+    s.stop()
+  })
+
+  it('a flapping server is backed off: the wait shortens only after 10 s open', () => {
+    const w = world()
+    const s = follow('growth', w.deps)
+    for (const wait of [RECONNECT_MS[0], RECONNECT_MS[1], RECONNECT_MS[2]]) {
+      w.last().onopen?.()
+      w.event()
+      // Open for a while, but less than 10 s: still flapping.
+      mock.timers.tick(5_000)
+      const before = w.sources.length
+      w.last().onerror?.()
+      mock.timers.tick((wait as number) - 1)
+      assert.equal(w.sources.length, before, `waits ${wait} ms`)
+      mock.timers.tick(1)
+      assert.equal(w.sources.length, before + 1)
+    }
+    // Open for 10 s: the next drop waits the shortest time again.
+    w.last().onopen?.()
+    mock.timers.tick(10_000)
+    w.last().onerror?.()
+    mock.timers.tick(RECONNECT_MS[0] as number)
+    assert.equal(w.sources.length, 5)
     s.stop()
   })
 })

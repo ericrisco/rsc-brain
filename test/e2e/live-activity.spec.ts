@@ -112,15 +112,16 @@ test('CA8: an agent’s write shows in under 2 seconds; pause holds the list unt
   await expect(admin.locator('.live-state')).toHaveText('Live')
   const agent = { authorization: `Bearer ${bob.token}` }
   const title = `Live write ${Date.now()}`
+  // The clock starts before the write is sent: the 2 s cover the write itself, the feed and the screen.
+  const t0 = Date.now()
   const saved = await admin.request.post(`/v1/brains/${SLUG}/entries`, {
     headers: agent,
     data: { type: 'learning', title, content: 'x' },
   })
   expect(saved.status()).toBe(201)
-  const t201 = Date.now()
   await expect(feed(admin).first()).toContainText(title, { timeout: 2_000 })
-  const shown = Date.now() - t201
-  expect(shown, `shown ${shown} ms after the 201`).toBeLessThan(2_000)
+  const shown = Date.now() - t0
+  expect(shown, `shown ${shown} ms after the write was sent`).toBeLessThan(2_000)
 
   await admin.getByRole('button', { name: 'Pause' }).click()
   const before = await feed(admin).count()
@@ -148,4 +149,27 @@ test('Health of the new brain says «Nothing to fix»; the open session of an ag
   await expect(open.getByRole('link', { name: /ticket 42/ })).toHaveCount(0)
   await admin.goto(`/b/${SLUG}/health`)
   await expect(admin.getByRole('heading', { name: 'Nothing to fix' })).toBeVisible()
+})
+
+// Review of PR23: an agent working with a person's token stamps no key reference; its session's reference is
+// what a person filters by.
+test('the reference filter finds the writes of a session by its reference', async () => {
+  const agent = { authorization: `Bearer ${bob.token}` }
+  const s = await admin.request.post(`/v1/brains/${SLUG}/sessions`, {
+    headers: agent,
+    data: { purpose: 'Ticket work', ref: 'ticket-77' },
+  })
+  expect(s.status(), await s.text()).toBe(201)
+  const sid = ((await s.json()) as { session: { id: string } }).session.id
+  const saved = await admin.request.post(`/v1/brains/${SLUG}/entries`, {
+    headers: agent,
+    data: { type: 'note', title: 'Done in ticket 77', content: 'x', sessionId: sid },
+  })
+  expect(saved.status()).toBe(201)
+  await admin.goto(A)
+  await expect(feed(admin).filter({ hasText: 'Done in ticket 77' })).toHaveCount(1)
+  await admin.locator('summary').filter({ hasText: 'Filter the activity' }).click()
+  await admin.getByLabel('Reference').fill('ticket-77')
+  await expect(feed(admin).filter({ hasText: 'Done in ticket 77' })).toHaveCount(1)
+  await expect(feed(admin).filter({ hasText: 'Live write' })).toHaveCount(0)
 })

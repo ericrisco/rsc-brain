@@ -242,6 +242,8 @@ export const EVENT = obj(
     client: nul(
       s('What did it: web, the agent of a short key, the app of a connection, or a program (G13).'),
     ),
+    sessionRef: nul(s('The external reference of the session it happened in.')),
+    onBehalf: nul(obj({ id: s('Account id.'), name: s('Account name.') })),
   },
   [],
 )
@@ -620,10 +622,21 @@ const HAND: Record<string, Op> = {
       'The checks of the wiki (no AI): orphans, broken links, conflicts, stale pages, sources no longer available, long pages, titles almost the same; and whether a maintenance proposal is due.',
     reply: (() => {
       const ref = obj({ address: s('The page.'), title: s('Its title.') })
-      const pair = obj({ a: s('One page.'), b: s('The other.') })
+      const pair = obj({
+        a: s('One page.'),
+        aTitle: s('Its title.'),
+        b: s('The other.'),
+        bTitle: s('Its title.'),
+      })
       return obj({
         orphans: list(ref),
-        broken: list(obj({ from: s('The page with the link.'), to: s('The address it links to.') })),
+        broken: list(
+          obj({
+            from: s('The page with the link.'),
+            fromTitle: s('Its title.'),
+            to: s('The address it links to.'),
+          }),
+        ),
         conflicts: list(pair),
         stale: list(
           obj({
@@ -636,6 +649,7 @@ const HAND: Record<string, Op> = {
         unavailableSources: list(
           obj({
             address: s('The page.'),
+            title: s('Its title.'),
             entryId: s('The source entry.'),
             state: s('forgotten or purged.', { enum: ['forgotten', 'purged'] }),
           }),
@@ -1182,6 +1196,8 @@ const HAND: Record<string, Op> = {
   'GET /v1/brains/{slug}/entries': {
     summary: 'Entries of a brain in order, by session, type or stamped reference.',
     query: {
+      about: 'Entries about this page address (its topic, or naming the address).',
+      since: 'Written after this day or ISO instant.',
       session: 'A session id.',
       type: 'An entry type.',
       ref: 'An external reference stamped by a short key.',

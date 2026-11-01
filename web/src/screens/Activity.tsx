@@ -11,7 +11,9 @@ import {
   describeEvent,
   factoryRunHref,
   filterEvents,
+  groupEvents,
   KINDS,
+  waitingLabel,
 } from '../lib/activity.ts'
 import { ago, clientLabel } from '../lib/brains.ts'
 import { sessionLabel } from '../lib/journal.ts'
@@ -23,12 +25,15 @@ import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
 import { Empty, ErrorState, Skeleton } from '../ui/states.tsx'
 import { entryHref, sessionHref, sessionsHref } from './journal/common.tsx'
-import { sessionsResource } from './journal/data.ts'
+import { type SessionView, sessionsResource } from './journal/data.ts'
 import { proposalHref } from './proposals/data.ts'
 import { useBrain } from './wiki/common.tsx'
 
 const PAGE = 50
 const SESSIONS_SHOWN = 20
+// An open session with nothing written for this long is quiet, not active.
+export const QUIET_MS = 30 * 60_000
+const NO_FILTERS: ActivityFilters = { client: '', kind: '', ref: '' }
 
 // The reference of a session or an event: a link to its Factory run when there is one, else text.
 function Ref({ value, factoryUrl }: { value: string; factoryUrl: string | null }) {
@@ -42,72 +47,122 @@ function Ref({ value, factoryUrl }: { value: string; factoryUrl: string | null }
   )
 }
 
+const hhmm = (iso: string) => {
+  const d = new Date(iso)
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
+}
+
+function SessionList({
+  slug,
+  items,
+  factoryUrl,
+  quiet,
+}: {
+  slug: string
+  items: SessionView[]
+  factoryUrl: string | null
+  quiet: boolean
+}) {
+  const a = T.activity
+  return (
+    <ul class="list compact">
+      {items.slice(0, SESSIONS_SHOWN).map((s) => (
+        <li key={s.id}>
+          <p class="list-title">
+            <span class={quiet ? 'quiet-dot' : 'live-dot'} aria-hidden="true" />
+            <a href={sessionHref(slug, s.id)}>{sessionLabel(s)}</a>
+          </p>
+          <p class="meta wrap">
+            {[
+              clientLabel(s.client),
+              s.author.name,
+              quiet ? a.quietSince(hhmm(s.lastActivityAt)) : a.opened(ago(s.openedAt) ?? ''),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+            {s.ref ? (
+              <>
+                {' · '}
+                <Ref value={s.ref} factoryUrl={factoryUrl} />
+              </>
+            ) : null}
+          </p>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function Sessions({ slug, factoryUrl }: { slug: string; factoryUrl: string | null }) {
   const a = T.activity
   const r = sessionsResource(slug, { status: 'open' })
   useFresh(r)
   const list = r.data.value
+  const now = Date.now()
+  const quiet = (s: SessionView) => now - Date.parse(s.lastActivityAt) > QUIET_MS
+  const active = list?.items.filter((s) => !quiet(s)) ?? []
+  const idle = list?.items.filter(quiet) ?? []
   return (
-    <section class="act-sessions" aria-labelledby="act-sessions-title">
-      <h2 id="act-sessions-title" class="section-title">
-        {a.sessionsTitle}
-        {list?.total ? <span class="count">{list.total}</span> : null}
-      </h2>
-      {!list ? (
-        r.error.value ? (
-          <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />
+    <div class="act-sessions">
+      <section aria-labelledby="act-sessions-title">
+        <h2 id="act-sessions-title" class="section-title">
+          {a.sessionsTitle}
+          {list ? <span class="count">{active.length}</span> : null}
+        </h2>
+        {!list ? (
+          r.error.value ? (
+            <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />
+          ) : (
+            <Skeleton rows={1} />
+          )
+        ) : active.length === 0 ? (
+          <div class="quiet-empty">
+            <p>{a.noSessions}</p>
+            <p class="muted">{a.noSessionsHow}</p>
+          </div>
         ) : (
-          <Skeleton rows={1} />
-        )
-      ) : list.items.length === 0 ? (
-        <div class="quiet-empty">
-          <p>{a.noSessions}</p>
-          <p class="muted">{a.noSessionsHow}</p>
-        </div>
-      ) : (
-        <>
-          <ul class="list compact">
-            {list.items.slice(0, SESSIONS_SHOWN).map((s) => (
-              <li key={s.id}>
-                <p class="list-title">
-                  <span class="live-dot" aria-hidden="true" />
-                  <a href={sessionHref(slug, s.id)}>{sessionLabel(s)}</a>
-                </p>
-                <p class="meta wrap">
-                  {[clientLabel(s.client), s.author.name, a.opened(ago(s.openedAt) ?? '')]
-                    .filter(Boolean)
-                    .join(' · ')}
-                  {s.ref ? (
-                    <>
-                      {' · '}
-                      <Ref value={s.ref} factoryUrl={factoryUrl} />
-                    </>
-                  ) : null}
-                </p>
-              </li>
-            ))}
-          </ul>
-          {list.total > SESSIONS_SHOWN ? (
-            <p class="muted small">
-              <a href={`${sessionsHref(slug)}?status=open`}>{T.journal.title}</a>
-            </p>
-          ) : null}
-        </>
-      )}
-    </section>
+          <SessionList slug={slug} items={active} factoryUrl={factoryUrl} quiet={false} />
+        )}
+      </section>
+      {idle.length ? (
+        <section aria-labelledby="act-quiet-title">
+          <h2 id="act-quiet-title" class="section-title">
+            {a.quietTitle}
+            <span class="count">{idle.length}</span>
+          </h2>
+          <SessionList slug={slug} items={idle} factoryUrl={factoryUrl} quiet />
+        </section>
+      ) : null}
+      {list && list.total > SESSIONS_SHOWN ? (
+        <p class="muted small">
+          <a href={`${sessionsHref(slug)}?status=open`}>{T.journal.title}</a>
+        </p>
+      ) : null}
+    </div>
   )
 }
 
 // Where an event leads: the entry, the proposal or the page it names.
 function hrefOf(slug: string, e: LiveEvent): string | null {
   const id = e.target?.id ?? ''
-  if (e.kind.startsWith('entry.') && id.startsWith('ent_')) return entryHref(slug, id)
+  if (e.kind.startsWith('entry.') && id.startsWith('ent_') && e.target?.label !== 'forgotten')
+    return entryHref(slug, id)
   if (e.kind.startsWith('proposal.') && id.startsWith('prp_')) return proposalHref(slug, id)
   if (e.kind === 'read' && e.target?.label && isAddress(e.target.label)) return pageHref(slug, e.target.label)
   return null
 }
 
-function Line({ slug, e, factoryUrl }: { slug: string; e: LiveEvent; factoryUrl: string | null }) {
+function Line({
+  slug,
+  e,
+  count,
+  factoryUrl,
+}: {
+  slug: string
+  e: LiveEvent
+  count: number
+  factoryUrl: string | null
+}) {
   const a = T.activity
   const d = describeEvent(e)
   const href = hrefOf(slug, e)
@@ -115,6 +170,7 @@ function Line({ slug, e, factoryUrl }: { slug: string; e: LiveEvent; factoryUrl:
     <li data-kind={d.kind}>
       <p class="act-line">
         <strong>{d.who}</strong> {d.client ? <span class="muted">{a.by(d.client)} </span> : null}
+        {d.forWhom ? <span class="muted">{a.forWhom(d.forWhom)} </span> : null}
         {d.did}
         {d.what ? (
           <>
@@ -128,6 +184,7 @@ function Line({ slug, e, factoryUrl }: { slug: string; e: LiveEvent; factoryUrl:
             )}
           </>
         ) : null}
+        {count > 1 ? <span class="tag act-count">{a.times(count)}</span> : null}
       </p>
       <p class="meta wrap">
         <span class="tag act-tag">{a.kinds[d.kind] ?? e.kind}</span>{' '}
@@ -138,6 +195,12 @@ function Line({ slug, e, factoryUrl }: { slug: string; e: LiveEvent; factoryUrl:
           <>
             {' · '}
             <Ref value={e.key.ref} factoryUrl={factoryUrl} />
+          </>
+        ) : null}
+        {e.sessionRef && e.sessionRef !== e.key?.ref ? (
+          <>
+            {' · '}
+            <Ref value={e.sessionRef} factoryUrl={factoryUrl} />
           </>
         ) : null}
       </p>
@@ -153,6 +216,9 @@ function Notices({ s }: { s: Stream }) {
         <div class="alert warn act-notice" role="status">
           <span class="kind">{T.kind.warning}</span>
           <span>{a.reconnecting}</span>
+          <span>
+            <Button onClick={() => s.retryNow()}>{a.retryNow}</Button>
+          </span>
         </div>
       ) : null}
       {s.closed.value ? (
@@ -177,11 +243,12 @@ function Notices({ s }: { s: Stream }) {
 
 function Feed({ slug, s, factoryUrl }: { slug: string; s: Stream; factoryUrl: string | null }) {
   const a = T.activity
-  const [f, setF] = useState<ActivityFilters>({ client: '', kind: '', ref: '' })
+  const [f, setF] = useState<ActivityFilters>(NO_FILTERS)
   const [limit, setLimit] = useState(PAGE)
   const all = s.events.value
-  const waiting = s.waiting.value.length
-  const shown = filterEvents(all, f)
+  const paused = s.paused.value
+  const waiting = waitingLabel(s.waiting.value, f, s.overflow.value)
+  const rows = groupEvents(filterEvents(all, f))
   const nActive = [f.client, f.kind, f.ref].filter(Boolean).length
   const filtered = nActive > 0
   const clients = clientsOf([...s.waiting.value, ...all])
@@ -190,24 +257,26 @@ function Feed({ slug, s, factoryUrl }: { slug: string; s: Stream; factoryUrl: st
     setF({ ...f, [k]: (e.currentTarget as HTMLInputElement | HTMLSelectElement).value })
     setLimit(PAGE)
   }
+  // The badge says what the list does: paused wins over a live stream (it still listens, the list holds).
+  const badge = paused && state === 'live' ? 'paused' : state
   return (
     <section class="act-feed" aria-labelledby="act-feed-title">
       <div class="section-head">
         <h2 id="act-feed-title" class="section-title">
           {a.feedTitle}
         </h2>
-        <p class={`live-state ${state}`} role="status">
+        <p class={`live-state ${badge}`} role="status">
           <span class="dot" aria-hidden="true" />
-          {a.state[state] ?? state}
+          {a.state[badge] ?? badge}
         </p>
-        <Button onClick={() => (s.paused.value ? s.resume() : s.pause())}>
-          {s.paused.value ? (waiting ? a.resumeWith(waiting) : a.resume) : a.pause}
+        <Button onClick={() => (paused ? s.resume() : s.pause())}>
+          {paused ? (waiting !== '0' ? a.resumeWith(waiting) : a.resume) : a.pause}
         </Button>
       </div>
       <Notices s={s} />
-      {s.paused.value ? (
+      {paused ? (
         <p class="paused-note muted" role="status">
-          {waiting ? a.newWaiting(waiting) : a.pausedNote}
+          {waiting !== '0' ? a.newWaiting(waiting) : a.pausedNote}
         </p>
       ) : null}
       <details class="filter-box act-filters">
@@ -256,24 +325,24 @@ function Feed({ slug, s, factoryUrl }: { slug: string; s: Stream; factoryUrl: st
           </form>
         </search>
       </details>
-      {all.length === 0 && (state === 'connecting' || state === 'reconnecting') && !waiting ? (
+      {all.length === 0 && (state === 'connecting' || state === 'reconnecting') && waiting === '0' ? (
         <Skeleton rows={3} />
-      ) : all.length === 0 && !waiting ? (
+      ) : all.length === 0 && waiting === '0' ? (
         <Empty title={a.emptyTitle}>
           <p>{a.emptyLead}</p>
         </Empty>
-      ) : shown.length === 0 && filtered ? (
-        <Empty title={a.filteredEmpty} filtered onClear={() => setF({ client: '', kind: '', ref: '' })} />
+      ) : rows.length === 0 && filtered ? (
+        <Empty title={a.filteredEmpty} filtered onClear={() => setF(NO_FILTERS)} />
       ) : (
         <>
           <ul class="list act-list" aria-label={a.feedTitle}>
-            {shown.slice(0, limit).map((e) => (
-              <Line key={e.id} slug={slug} e={e} factoryUrl={factoryUrl} />
+            {rows.slice(0, limit).map((r) => (
+              <Line key={r.e.id} slug={slug} e={r.e} count={r.count} factoryUrl={factoryUrl} />
             ))}
           </ul>
-          {shown.length > limit ? (
+          {rows.length > limit ? (
             <Button onClick={() => setLimit(limit + PAGE)}>
-              {a.showMore(Math.min(PAGE, shown.length - limit))}
+              {a.showMore(Math.min(PAGE, rows.length - limit))}
             </Button>
           ) : all.length >= KEEP ? (
             <p class="muted small">{a.tooMuch(KEEP)}</p>

@@ -1,3 +1,5 @@
+import { plainText } from './markdown.ts'
+
 // Search from anywhere (spec B6 «Search», T039): the request for the current brain or all of them, with the
 // filters; and what to suggest when nothing is found.
 
@@ -52,3 +54,33 @@ export const ENTRY_TYPES = [
 ]
 export const PAGE_TYPES = ['topic', 'entity', 'decision', 'guide', 'agent', 'source', 'overview']
 export const TYPES = [...new Set([...ENTRY_TYPES, ...PAGE_TYPES])].sort()
+
+// The types the Type filter offers for what is shown.
+export function typesFor(what: SearchForm['what']): string[] {
+  if (what === 'pages') return [...PAGE_TYPES].sort()
+  if (what === 'entries') return [...ENTRY_TYPES].sort()
+  return TYPES
+}
+
+// A snippet as plain words, with the parts the server marked as matching («…») to highlight. Markdown and
+// wiki links are dropped (plainText), never rendered: what comes back is text for text nodes.
+export type SnippetPart = { text: string; mark: boolean }
+export function snippetParts(snippet: string): SnippetPart[] {
+  const plain = plainText(snippet)
+  const out: SnippetPart[] = []
+  let at = 0
+  for (const m of plain.matchAll(/«([^«»]*)»/g)) {
+    const i = m.index ?? 0
+    if (i > at) out.push({ text: plain.slice(at, i), mark: false })
+    if (m[1]) out.push({ text: m[1], mark: true })
+    at = i + m[0].length
+  }
+  if (at < plain.length) out.push({ text: plain.slice(at), mark: false })
+  // Neighbouring plain parts (an empty mark between them) are one.
+  return out.reduce<SnippetPart[]>((acc, p) => {
+    const prev = acc.at(-1)
+    if (prev && !prev.mark && !p.mark) prev.text += p.text
+    else acc.push({ ...p })
+    return acc
+  }, [])
+}

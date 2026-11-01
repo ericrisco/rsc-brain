@@ -38,6 +38,8 @@ test('CA8: an agent’s write shows in under 2 s; paused, the list stays still a
   await expect(feed(page).first()).toContainText('saved')
 
   await page.getByRole('button', { name: 'Pause' }).click()
+  // The badge says so while paused.
+  await expect(page.locator('.live-state')).toHaveText('Paused')
   await s.emit('growth', 'entry.saved', { target: { id: 'e2', label: 'Second thing' } })
   await s.emit('growth', 'proposal.submitted', { target: { id: 'p1', label: 'Tighten intros' } })
   const resume = page.getByRole('button', { name: 'Resume (2 new)' })
@@ -117,12 +119,16 @@ test('active sessions: client and reference; a Factory run links only with a Fac
   const sessions = page.getByRole('region', { name: 'Active sessions now' })
   const run = sessions.getByRole('listitem').filter({ hasText: 'Narrate the outro of video 42' })
   await expect(run).toContainText('narrator')
-  const link = run.getByRole('link', { name: /run r_abc, step 1/ })
-  await expect(link).toHaveAttribute('href', 'https://factory.example.test/runs/r_abc')
+  const link = run.getByRole('link', { name: /run r_3f9a1c2e, step 1/ })
+  await expect(link).toHaveAttribute('href', 'https://factory.example.test/runs/r_3f9a1c2e')
   await expect(link).toHaveAttribute('target', '_blank')
   await expect(link).toHaveAttribute('rel', 'noopener noreferrer')
   // A reference that names no run is text.
-  const other = sessions.getByRole('listitem').filter({ hasText: 'Fix the onboarding emails' })
+  // Quiet for more than 30 minutes: listed apart.
+  const other = page
+    .getByRole('region', { name: 'Quiet sessions' })
+    .getByRole('listitem')
+    .filter({ hasText: 'Fix the onboarding emails' })
   await expect(other).toContainText('repo web, branch emails')
   await expect(other.getByRole('link', { name: /repo web/ })).toHaveCount(0)
 })
@@ -134,8 +140,8 @@ test('without a Factory address, a run reference is text', async ({ page, contex
     .getByRole('region', { name: 'Active sessions now' })
     .getByRole('listitem')
     .filter({ hasText: 'Narrate the outro' })
-  await expect(run).toContainText('run r_abc, step 1')
-  await expect(run.getByRole('link', { name: /r_abc/ })).toHaveCount(0)
+  await expect(run).toContainText('run r_3f9a1c2e, step 1')
+  await expect(run.getByRole('link', { name: /r_3f9a1c2e/ })).toHaveCount(0)
 })
 
 test('filters by client, kind and reference; filtered empty clears', async ({ page, context, baseURL }) => {
@@ -144,7 +150,7 @@ test('filters by client, kind and reference; filtered empty clears', async ({ pa
   await expect(page.locator('.live-state')).toHaveText('Live')
   await s.emit('growth', 'entry.saved', { client: 'codex', target: { id: 'a', label: 'By Codex' } })
   await s.emit('growth', 'proposal.submitted', { target: { id: 'b', label: 'A proposal' } })
-  await s.emit('growth', 'entry.saved', { ref: 'run r_abc', target: { id: 'c', label: 'From a run' } })
+  await s.emit('growth', 'entry.saved', { ref: 'run r_3f9a1c2e', target: { id: 'c', label: 'From a run' } })
   await expect(feed(page)).toHaveCount(3)
   // Folded until opened (a phone sees the feed first).
   await expect(page.getByLabel('Client')).toBeHidden()
@@ -157,7 +163,7 @@ test('filters by client, kind and reference; filtered empty clears', async ({ pa
   await expect(feed(page)).toHaveCount(1)
   await expect(feed(page).first()).toContainText('A proposal')
   await page.getByLabel('Kind').selectOption('')
-  await page.getByLabel('Reference').fill('r_abc')
+  await page.getByLabel('Reference').fill('r_3f9a1c2e')
   await expect(feed(page)).toHaveCount(1)
   await page.getByLabel('Reference').fill('nothing-like-this')
   await expect(page.getByRole('heading', { name: 'No results for these filters' })).toBeVisible()
@@ -203,7 +209,7 @@ test('320 px and dark: nothing scrolls sideways, pause and filters reachable by 
   await expect(page.locator('.live-state')).toHaveText('Live')
   for (let i = 0; i < 4; i++)
     await s.emit('growth', 'entry.saved', {
-      ref: 'run r_abc, step 1, a long reference that must wrap on a phone',
+      ref: 'run r_3f9a1c2e, step 1, a long reference that must wrap on a phone',
       target: { id: `e${i}`, label: `An entry with a rather long title number ${i} that wraps` },
     })
   await expect(feed(page)).toHaveCount(4)
@@ -224,4 +230,100 @@ test('the side bar leads to Activity and Health', async ({ page, context, baseUR
   await nav.getByRole('link', { name: 'Health' }).click()
   await expect(page).toHaveURL(/\/b\/growth\/health$/)
   await expect(page.getByRole('heading', { level: 1, name: 'Health' })).toBeVisible()
+})
+
+// Review of PR23.
+const openFilters = (page: Page) => page.locator('summary').filter({ hasText: 'Filter the activity' }).click()
+
+test('«N new» counts what the filters would show; «Retry now» while reconnecting', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  const s = await scenario(context, baseURL as string, 'signed-in')
+  await page.goto(A)
+  await expect(page.locator('.live-state')).toHaveText('Live')
+  await openFilters(page)
+  await page.getByLabel('Kind').selectOption('proposals')
+  await page.getByRole('button', { name: 'Pause' }).click()
+  await s.emit('growth', 'entry.saved', { target: { id: 'e1', label: 'Not a proposal' } })
+  await s.emit('growth', 'proposal.submitted', { target: { id: 'p1', label: 'A proposal' } })
+  await expect(page.getByRole('button', { name: 'Resume (1 new)' })).toBeVisible()
+  await page.getByRole('button', { name: 'Resume (1 new)' }).click()
+  await s.streams(true)
+  await expect(page.locator('.live-state')).toHaveText('Reconnecting…', { timeout: 5_000 })
+  await s.streams(false)
+  await page.getByRole('button', { name: 'Retry now' }).click()
+  await expect(page.locator('.live-state')).toHaveText('Live', { timeout: 3_000 })
+})
+
+test('the reference filter finds the session reference; a Factory row names who it acted for', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  const s = await scenario(context, baseURL as string, 'signed-in')
+  await page.goto(A)
+  await expect(page.locator('.live-state')).toHaveText('Live')
+  await s.emit('growth', 'entry.saved', {
+    sessionRef: 'ticket 42',
+    target: { id: 'e1', label: 'In ticket 42' },
+  })
+  await s.emit('growth', 'entry.saved', {
+    client: 'narrator',
+    who: { id: 'acc_factory', name: 'RSC Factory' },
+    onBehalf: { id: 'acc_ana', name: 'Ana' },
+    target: { id: 'e2', label: 'Narrated' },
+  })
+  await expect(feed(page).first()).toContainText('for Ana')
+  await openFilters(page)
+  await page.getByLabel('Reference').fill('ticket 42')
+  await expect(feed(page)).toHaveCount(1)
+  await expect(feed(page).first()).toContainText('In ticket 42')
+})
+
+test('repeated searches are one row with a count; forgetting reads in words', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  const s = await scenario(context, baseURL as string, 'signed-in')
+  await page.goto(A)
+  await expect(page.locator('.live-state')).toHaveText('Live')
+  for (let i = 0; i < 3; i++) await s.emit('growth', 'search', { query: 'pricing' })
+  await s.emit('growth', 'entry.changed', { target: { id: 'ent_x', label: 'forgotten' } })
+  await expect(feed(page).first()).toContainText('forgot an entry')
+  await expect(feed(page).first()).not.toContainText('changed an entry')
+  await expect(feed(page).filter({ hasText: 'pricing' })).toHaveCount(1)
+  await expect(feed(page).filter({ hasText: 'pricing' })).toContainText('3 times')
+})
+
+test('removed from the brain while watching: the list is cleared and says why', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  const s = await scenario(context, baseURL as string, 'signed-in')
+  await page.goto(A)
+  await expect(page.locator('.live-state')).toHaveText('Live')
+  await s.emit('growth', 'search', { query: 'something-private' })
+  await expect(feed(page).filter({ hasText: 'something-private' })).toHaveCount(1)
+  await s.close('growth', 'role_changed', 'Your role in this brain changed, or you left it.')
+  await expect(page.getByText('Your role in this brain changed')).toBeVisible()
+  await expect(page.getByText('something-private')).toHaveCount(0)
+})
+
+test('sessions quiet for 30 minutes are apart, with since when', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto(A)
+  const quiet = page.getByRole('region', { name: 'Quiet sessions' })
+  await expect(quiet.getByRole('listitem').filter({ hasText: 'Fix the onboarding emails' })).toContainText(
+    /Quiet since \d\d:\d\d UTC/,
+  )
+  await expect(
+    page
+      .getByRole('region', { name: 'Active sessions now' })
+      .getByRole('listitem')
+      .filter({ hasText: 'Fix the onboarding emails' }),
+  ).toHaveCount(0)
 })

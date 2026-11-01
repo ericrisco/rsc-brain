@@ -247,14 +247,15 @@ export function freshJournal(slug: string): Journal {
       id: sid(5),
       brainId,
       purpose: 'Narrate the outro of video 42',
-      ref: 'run r_abc, step 1',
+      ref: 'run r_3f9a1c2e, step 1',
       status: 'open',
       day: null,
       client: 'narrator',
       author: FACTORY,
       summaryEntryId: null,
       openedAt: at(26, 10),
-      lastActivityAt: at(26, 11),
+      // Still working: its last write is now (Activity tells active sessions from quiet ones).
+      lastActivityAt: new Date().toISOString(),
       closedAt: null,
     },
   )
@@ -573,8 +574,24 @@ const sessionRef = (j: Journal, id: string) => {
 
 export function entriesOf(j: Journal, q: Q): Answer {
   const session = q.get('session')
+  // Entries about a page, written since a moment (Health: «N newer entries about it»).
+  const about = q.get('about')
+  const since = q.get('since')
+  if (about !== null && !/^[a-z0-9]+(-[a-z0-9]+)*(\/[a-z0-9]+(-[a-z0-9]+)*)*$/.test(about))
+    return {
+      status: 400,
+      body: {
+        error: {
+          code: 'invalid_request',
+          message: '"about" is the address of a page, like "style/intros".',
+          howToProceed: 'Use the address as the wiki shows it.',
+        },
+      },
+    }
   const list = j.entries
     .filter((e) => e.state === 'active' && (!session || e.sessionId === session))
+    .filter((e) => !about || e.topic === about || e.content.includes(about))
+    .filter((e) => !since || e.createdAt > since)
     .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.id < b.id ? -1 : 1))
   const page = paged(list, q)
   if (isAnswer(page)) return page

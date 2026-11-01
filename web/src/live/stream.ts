@@ -18,6 +18,9 @@ export type LiveEvent = {
   target: { id: string | null; label: string | null } | null
   query: string | null
   client: string | null
+  // The reference of the session it happened in, and who an agent's short key acted for.
+  sessionRef: string | null
+  onBehalf: { id: string; name: string } | null
 }
 
 export type SourceLike = {
@@ -49,8 +52,9 @@ export const KEEP = 500
 export type Stream = {
   // Newest first.
   events: { readonly value: LiveEvent[] }
-  // Arrived while paused, newest first.
+  // Arrived while paused, newest first (at most the cap; `overflow` says more came).
   waiting: { readonly value: LiveEvent[] }
+  overflow: { readonly value: boolean }
   state: { readonly value: LiveState }
   paused: { readonly value: boolean }
   // What the server said was missed and cannot be replayed; null when nothing was.
@@ -59,17 +63,11 @@ export type Stream = {
   closed: { readonly value: string | null }
   pause(): void
   resume(): void
+  // While reconnecting: try now instead of waiting.
+  retryNow(): void
+  // After «closed»: open again.
   retry(): void
   stop(): void
-}
-
-const message = (data: string): string | null => {
-  try {
-    const m = (JSON.parse(data) as { message?: unknown }).message
-    return typeof m === 'string' && m ? m : null
-  } catch {
-    return null
-  }
 }
 
 function eventOf(data: string): LiveEvent | null {
@@ -86,9 +84,39 @@ function eventOf(data: string): LiveEvent | null {
       target: e.target ?? null,
       query: typeof e.query === 'string' ? e.query : null,
       client: typeof e.client === 'string' ? e.client : null,
+      sessionRef: typeof e.sessionRef === 'string' ? e.sessionRef : null,
+      onBehalf:
+        e.onBehalf && typeof e.onBehalf.name === 'string'
+          ? { id: String(e.onBehalf.id), name: e.onBehalf.name }
+          : null,
     }
   } catch {
     return null
+  }
+}
+
+// Why the server may end a stream for good: the person's role changed, or the key is no longer valid. Any
+// other reason ("internal") is a dropped connection: the stream comes back by itself.
+export const TERMINAL = new Set([
+  'role_changed',
+  'unauthorized',
+  'key_revoked',
+  'key_expired',
+  'key_invalidated',
+  'account_removed',
+  'connection_ended',
+  'wrong_channel',
+])
+
+// How long a stream must stay open before a drop counts as the first again (a flapping server is backed off).
+export const STEADY_MS = 10_000
+
+const parse = (data: string): Record<string, unknown> => {
+  try {
+    const v = JSON.parse(data) as unknown
+    return v && typeof v === 'object' ? (v as Record<string, unknown>) : {}
+  } catch {
+    return {}
   }
 }
 
@@ -108,6 +136,7 @@ export function follow(
   const keep = o.keep ?? KEEP
   const events = signal<LiveEvent[]>([])
   const waiting = signal<LiveEvent[]>([])
+  const overflow = signal(false)
   const state = signal<LiveState>('connecting')
   const paused = signal(false)
   const gap = signal<string | null>(null)
@@ -116,10 +145,17 @@ export function follow(
   let last = o.history ? '0' : ''
   let source: SourceLike | null = null
   let timer: ReturnType<typeof setTimeout> | undefined
+  let steady: ReturnType<typeof setTimeout> | undefined
   let drops = 0
   let stopped = false
   const base = `/v1/brains/${encodeURIComponent(slug)}/events`
 
+  const clearTimers = () => {
+    if (timer !== undefined) clearTimeout(timer)
+    timer = undefined
+    if (steady !== undefined) clearTimeout(steady)
+    steady = undefined
+  }
   const letGo = () => {
     if (source) {
       source.onopen = null
@@ -128,8 +164,23 @@ export function follow(
       source.close()
     }
     source = null
-    if (timer !== undefined) clearTimeout(timer)
-    timer = undefined
+    clearTimers()
+  }
+
+  // Dropped: open again after a wait that grows with each drop in a row.
+  const later = () => {
+    letGo()
+    if (deps.doc.hidden) {
+      state.value = 'idle'
+      return
+    }
+    state.value = 'reconnecting'
+    const wait = RECONNECT_MS[Math.min(drops, RECONNECT_MS.length - 1)] as number
+    drops += 1
+    timer = setTimeout(() => {
+      timer = undefined
+      open()
+    }, wait)
   }
 
   const open = () => {
@@ -144,45 +195,52 @@ export function follow(
     source = s
     if (state.value !== 'reconnecting') state.value = 'connecting'
     s.onopen = () => {
-      drops = 0
       state.value = 'live'
+      // Only a stream that stays open a while counts as steady again.
+      if (steady !== undefined) clearTimeout(steady)
+      steady = setTimeout(() => {
+        steady = undefined
+        drops = 0
+      }, STEADY_MS)
     }
     s.onmessage = (m) => {
       const e = eventOf(m.data)
       if (!e || (last && Number(e.id) <= Number(last))) return
       last = e.id
-      if (state.value !== 'live') {
-        drops = 0
-        state.value = 'live'
-      }
-      if (paused.value) waiting.value = [e, ...waiting.value].slice(0, keep)
-      else events.value = [e, ...events.value].slice(0, keep)
+      if (state.value !== 'live') state.value = 'live'
+      if (paused.value) {
+        const next = [e, ...waiting.value]
+        if (next.length > keep) overflow.value = true
+        waiting.value = next.slice(0, keep)
+      } else events.value = [e, ...events.value].slice(0, keep)
       o.onEvent?.(e)
     }
-    s.onerror = () => {
-      letGo()
-      if (deps.doc.hidden) {
-        state.value = 'idle'
-        return
-      }
-      state.value = 'reconnecting'
-      const wait = RECONNECT_MS[Math.min(drops, RECONNECT_MS.length - 1)] as number
-      drops += 1
-      timer = setTimeout(() => {
-        timer = undefined
-        open()
-      }, wait)
-    }
+    s.onerror = later
     s.addEventListener('gap', (m) => {
+      const d = parse(m.data)
+      // A server restored from an older copy numbers from below what this page last got: start from its newest.
+      const newest = typeof d.lastEventId === 'string' && /^\d+$/.test(d.lastEventId) ? d.lastEventId : null
+      if (newest && last && Number(newest) < Number(last)) last = newest
       if (fromStart) return
-      gap.value = message(m.data) ?? 'Some events were missed.'
+      gap.value = typeof d.message === 'string' && d.message ? d.message : 'Some events were missed.'
       o.onGap?.()
     })
     s.addEventListener('closed', (m) => {
+      const d = parse(m.data)
+      const reason = typeof d.reason === 'string' ? d.reason : ''
+      if (!TERMINAL.has(reason)) {
+        later()
+        return
+      }
       letGo()
       batch(() => {
+        // What this person may no longer see leaves the screen.
+        events.value = []
+        waiting.value = []
+        overflow.value = false
         state.value = 'closed'
-        closed.value = message(m.data) ?? 'The live feed of this brain ended.'
+        closed.value =
+          typeof d.message === 'string' && d.message ? d.message : 'The live feed of this brain ended.'
       })
       o.onClosed?.()
     })
@@ -202,6 +260,7 @@ export function follow(
   return {
     events,
     waiting,
+    overflow,
     state,
     paused,
     gap,
@@ -213,14 +272,23 @@ export function follow(
       batch(() => {
         events.value = [...waiting.value, ...events.value].slice(0, keep)
         waiting.value = []
+        overflow.value = false
         paused.value = false
       })
     },
+    retryNow: () => {
+      if (state.value !== 'reconnecting') return
+      letGo()
+      open()
+    },
     retry: () => {
       letGo()
-      closed.value = null
+      batch(() => {
+        closed.value = null
+        gap.value = null
+        state.value = 'connecting'
+      })
       drops = 0
-      state.value = 'connecting'
       open()
     },
     stop: () => {

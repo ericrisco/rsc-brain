@@ -1345,7 +1345,11 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
                 })),
             )
       const from = query.get('from') ?? ''
-      const all = [...pages, ...entries].filter((h) => !from || h.at >= from)
+      // The words matched are marked «…», as the server marks them.
+      const matched = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+      const all = [...pages, ...entries]
+        .filter((h) => !from || h.at >= from)
+        .map((h) => ({ ...h, snippet: String(h.snippet).replace(matched, (m) => `«${m}»`) }))
       const much = st === 'much-data'
       const items = (much ? Array.from({ length: 3 }, () => all).flat() : all).slice(offset, offset + limit)
       const next = offset + limit < (much ? all.length * 3 : all.length) ? offset + limit : null
@@ -1354,29 +1358,35 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   },
 }
 
-// The health of a wiki (B2): the first brain has something in each common section; "much-data" a long list.
+// The health of a wiki (B2): the first brain (and Support, where Ana reads) has something in each common
+// section; "much-data" a long list. Every page comes with its title.
 function healthOf(slug: string, st: State | undefined) {
   const none = {
     orphans: [] as Array<{ address: string; title: string }>,
-    broken: [] as Array<{ from: string; to: string }>,
-    conflicts: [] as Array<{ a: string; b: string }>,
+    broken: [] as Array<{ from: string; fromTitle: string; to: string }>,
+    conflicts: [] as Array<{ a: string; aTitle: string; b: string; bTitle: string }>,
     stale: [] as Array<{ address: string; title: string; updatedAt: string; newEntries: number }>,
-    unavailableSources: [] as Array<{ address: string; entryId: string; state: 'forgotten' | 'purged' }>,
+    unavailableSources: [] as Array<{
+      address: string
+      title: string
+      entryId: string
+      state: 'forgotten' | 'purged'
+    }>,
     long: [] as Array<{ address: string; title: string; chars: number }>,
-    similarTitles: [] as Array<{ a: string; b: string }>,
+    similarTitles: [] as Array<{ a: string; aTitle: string; b: string; bTitle: string }>,
     maintenance: { suggested: false, approvalsSince: 3, every: 20 },
   }
-  if (st === 'empty' || slug !== 'growth') return none
+  if (st === 'empty' || (slug !== 'growth' && slug !== 'support')) return none
   const h = {
     ...none,
     broken: [
-      { from: 'audience/retention', to: 'drafts/hooks-that-work' },
-      { from: 'audience/intros', to: 'audience/hook-length' },
-      { from: 'product/pricing', to: 'product/plans' },
+      { from: 'audience/retention', fromTitle: 'Retention', to: 'drafts/hooks-that-work' },
+      { from: 'audience/intros', fromTitle: 'Writing intros', to: 'audience/hook-length' },
+      { from: 'product/pricing', fromTitle: 'Pricing', to: 'product/plans' },
     ],
     conflicts: [
-      { a: 'audience/intros', b: 'audience/old-intros' },
-      { a: 'audience/retention', b: 'product/pricing' },
+      { a: 'audience/intros', aTitle: 'Writing intros', b: 'audience/old-intros', bTitle: 'Old intros' },
+      { a: 'audience/retention', aTitle: 'Retention', b: 'product/pricing', bTitle: 'Pricing' },
     ],
     orphans: [
       { address: 'misc/naming', title: 'Naming videos' },
@@ -1386,13 +1396,15 @@ function healthOf(slug: string, st: State | undefined) {
     ],
     stale: [
       {
-        address: 'audience/old-intros',
-        title: 'Old intros',
+        address: 'audience/retention',
+        title: 'Retention',
         updatedAt: '2026-06-01T10:00:00.000Z',
         newEntries: 4,
       },
     ],
-    similarTitles: [{ a: 'audience/intros', b: 'audience/old-intros' }],
+    similarTitles: [
+      { a: 'audience/intros', aTitle: 'Writing intros', b: 'audience/old-intros', bTitle: 'Old intros' },
+    ],
     maintenance: { suggested: true, approvalsSince: 21, every: 20 },
   }
   if (st === 'much-data')
@@ -1718,6 +1730,8 @@ async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
 
 export type EmitOptions = {
   who?: { id: string; name: string } | null
+  sessionRef?: string | null
+  onBehalf?: { id: string; name: string } | null
   target?: { id: string; label: string }
   client?: string | null
   ref?: string | null
@@ -1760,6 +1774,8 @@ function emit(s: Scen, slug: string, kind: string, o: EmitOptions = {}): void {
       kind === 'search' ? null : (o.target ?? { id: 'ent_fixture', label: 'First thing the agent learnt' }),
     query: kind === 'search' ? (o.query ?? 'retention') : null,
     client: o.client === undefined ? 'claude-code' : o.client,
+    sessionRef: o.sessionRef ?? null,
+    onBehalf: o.onBehalf ?? null,
   }
   const frame = `id: ${s.seq}\ndata: ${JSON.stringify(event)}\n\n`
   const line = { seq: s.seq, brain: slug, frame, kind, who: who?.id ?? null }
@@ -1864,7 +1880,22 @@ export async function startFixture(
         if (b.client !== undefined) o.client = b.client as string | null
         if (b.ref !== undefined) o.ref = b.ref as string | null
         if (b.query !== undefined) o.query = b.query as string | null
+        if (b.sessionRef !== undefined) o.sessionRef = b.sessionRef as string | null
+        if (b.onBehalf !== undefined) o.onBehalf = b.onBehalf as { id: string; name: string } | null
         emit(s, String(b.brain), String(b.kind ?? 'entry.saved'), o)
+        return send(res, { status: 200, body: {} })
+      }
+      // The server ends the open streams of a brain, saying why (a role changed, a key revoked, an error).
+      const closing = /^\/__fixture\/scenarios\/([\w]+)\/close$/.exec(url.pathname)
+      if (closing && method === 'POST') {
+        const s = scenarios.get(closing[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        const b = await bodyOf(req)
+        for (const st of [...s.streams])
+          if (st.brain === String(b.brain)) {
+            st.res.end(`event: closed\ndata: ${JSON.stringify({ reason: b.reason, message: b.message })}\n\n`)
+            s.streams.delete(st)
+          }
         return send(res, { status: 200, body: {} })
       }
       // The live events go down (open streams are cut and new ones refused) or come back: a lost connection.

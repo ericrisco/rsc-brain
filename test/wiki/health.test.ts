@@ -154,6 +154,18 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     assert.ok(h.orphans.some((o) => o.address === 'ca15/orphan'))
     assert.ok(!h.orphans.some((o) => o.address === 'ca15/linker' || o.address === 'ca15/cites'))
     assert.ok(h.broken.some((b) => b.from === 'ca15/linker' && b.to === 'ca15/nowhere'))
+    // Review of PR23: each page comes with its title, for the web to show it first.
+    assert.equal(
+      (h.broken as Array<{ from: string; fromTitle?: string }>).find((b) => b.from === 'ca15/linker')
+        ?.fromTitle,
+      'Page ca15/linker',
+    )
+    assert.equal(
+      (h.unavailableSources as Array<{ address: string; title?: string }>).find(
+        (u) => u.address === 'ca15/cites',
+      )?.title,
+      'Page ca15/cites',
+    )
     assert.ok(
       h.unavailableSources.some(
         (u) => u.address === 'ca15/cites' && u.entryId === purged && u.state === 'purged',
@@ -168,6 +180,9 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     await create('h/long', { body: 'x'.repeat(1500) })
     await create('h/t1', { title: 'What keeps our viewers watching' })
     await create('h/t2', { title: 'What keeps our viewers watching?' })
+    // Written before the page changed: about it, but not newer than it.
+    await save({ type: 'note', title: 'before', content: 'Earlier about h/old.' })
+    w.advance(1000)
     await create('h/old')
     w.advance(11 * 86_400_000)
     // Web sessions last hours, not days: sign in again after the clock jumps.
@@ -184,6 +199,30 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     assert.ok(h.conflicts.some((c) => c.a === 'h/x' && c.b === 'h/y'))
     assert.ok(h.long.some((l) => l.address === 'h/long'))
     assert.ok(h.similarTitles.some((s) => s.a === 'h/t1' && s.b === 'h/t2'))
+    const pair = (h.similarTitles as Array<{ a: string; aTitle?: string; bTitle?: string }>).find(
+      (s) => s.a === 'h/t1',
+    )
+    assert.deepEqual(
+      [pair?.aTitle, pair?.bTitle],
+      ['What keeps our viewers watching', 'What keeps our viewers watching?'],
+    )
+    const contra = (h.conflicts as Array<{ a: string; aTitle?: string; bTitle?: string }>).find(
+      (c) => c.a === 'h/x',
+    )
+    assert.deepEqual([contra?.aTitle, contra?.bTitle], ['Page h/x', 'Page h/y'])
+    // Review of PR23: «N newer entries about it» opens the journal at those entries, by the same rule.
+    const old = h.stale.find((s) => s.address === 'h/old') as { address: string; updatedAt?: string }
+    const about = await w.call(
+      ana.key,
+      'GET',
+      `/v1/brains/yt/entries?about=h%2Fold&since=${encodeURIComponent(String(old.updatedAt))}`,
+    )
+    assert.equal(about.status, 200, about.text)
+    assert.deepEqual(
+      (about.body.items as { title: string }[]).map((x) => x.title),
+      ['again'],
+    )
+    assert.equal((await w.call(ana.key, 'GET', '/v1/brains/yt/entries?about=Not%20an%20address')).status, 400)
     assert.deepEqual(
       h.stale.filter((s) => s.address === 'h/old').map((s) => s.newEntries),
       [1],

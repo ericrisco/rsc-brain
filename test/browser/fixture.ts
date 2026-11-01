@@ -23,10 +23,14 @@ type Scenario = {
   emit(brain: string, kind?: string, o?: EmitOptions): Promise<void>
   // The live events go down (open streams cut, new ones refused) or come back.
   streams(down: boolean): Promise<void>
+  // The server ends the open streams of a brain with "closed" and its reason.
+  close(brain: string, reason: string, message: string): Promise<void>
 }
 
 export type EmitOptions = {
   who?: { id: string; name: string } | null
+  sessionRef?: string | null
+  onBehalf?: { id: string; name: string } | null
   target?: { id: string; label: string }
   client?: string | null
   ref?: string | null
@@ -75,6 +79,13 @@ export async function scenario(
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ brain, kind, ...more }),
+      })
+    },
+    close: async (brain, reason, message) => {
+      await fetch(`${baseURL}/__fixture/scenarios/${id}/close`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ brain, reason, message }),
       })
     },
     streams: async (down) => {

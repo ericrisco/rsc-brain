@@ -155,3 +155,114 @@ test('an error says what happened and keeps the words', async ({ page, context, 
   await d.getByRole('button', { name: 'Try again' }).click()
   await expect(d.getByRole('list', { name: 'Results' })).toBeVisible()
 })
+
+// Review of PR23.
+test('«Show more» pages the words that were searched, not what the field says now', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', { search: 'much-data' })
+  await page.goto('/')
+  await page.keyboard.press('Control+k')
+  const d = dialog(page)
+  await d.getByLabel('Search for').fill('intro')
+  await d.getByLabel('Search for').press('Enter')
+  await expect(d.getByRole('list', { name: 'Results' }).getByRole('listitem')).toHaveCount(20)
+  const asked: string[] = []
+  page.on('request', (r) => {
+    if (r.url().includes('/v1/search')) asked.push(r.url())
+  })
+  await d.getByLabel('Search for').fill('something else')
+  await d.getByRole('button', { name: 'Show more results' }).click()
+  await expect.poll(() => asked.length).toBe(1)
+  expect(asked[0]).toContain('q=intro')
+  expect(asked[0]).toContain('offset=20')
+})
+
+test('reopened in another brain, the old results are gone', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth')
+  await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
+  await page.keyboard.press('Control+k')
+  await dialog(page).getByLabel('Search for').fill('intro')
+  await dialog(page).getByLabel('Search for').press('Enter')
+  await expect(dialog(page).getByRole('list', { name: 'Results' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  // Moving inside the web (no reload): the dialog keeps its state, so the old answer must go.
+  await page.getByRole('link', { name: '← All brains' }).click()
+  await page.getByRole('link', { name: 'Support' }).click()
+  await expect(page.getByRole('heading', { level: 1, name: 'Support' })).toBeVisible()
+  await page.keyboard.press('Control+k')
+  await expect(dialog(page).getByRole('radio', { name: 'This brain (Support)' })).toBeChecked()
+  await expect(dialog(page).getByRole('list', { name: 'Results' })).toHaveCount(0)
+})
+
+test('a filter changed while a search is on its way runs; the older answer never lands', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth')
+  await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
+  // The first answer is slow; the second fast.
+  let n = 0
+  await page.route('**/v1/search?*', async (route) => {
+    n += 1
+    if (n === 2) await new Promise((r) => setTimeout(r, 1_500))
+    await route.continue()
+  })
+  await page.keyboard.press('Control+k')
+  const d = dialog(page)
+  await d.getByLabel('Search for').fill('retention')
+  await d.getByLabel('Search for').press('Enter')
+  await expect(d.getByRole('list', { name: 'Results' })).toBeVisible()
+  await d.getByLabel('Show').selectOption('entries')
+  await d.getByLabel('Show').selectOption('pages')
+  await page.waitForTimeout(2_000)
+  const kinds = await d.getByRole('list', { name: 'Results' }).getByRole('listitem').allTextContents()
+  expect(kinds.length).toBeGreaterThan(0)
+  for (const k of kinds) expect(k).toContain('Wiki page')
+})
+
+test('snippets highlight what matched and show no markdown; Type follows what is shown', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth')
+  await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
+  await page.keyboard.press('Control+k')
+  const d = dialog(page)
+  await d.getByLabel('Search for').fill('retention')
+  await d.getByLabel('Search for').press('Enter')
+  await expect(d.getByRole('list', { name: 'Results' }).locator('mark').first()).toBeVisible()
+  await expect(d.getByRole('list', { name: 'Results' })).not.toContainText('«')
+  await expect(d.getByRole('list', { name: 'Results' })).not.toContainText('[[')
+  await expect(d.getByRole('list', { name: 'Results' })).not.toContainText('##')
+  await d.getByLabel('Show').selectOption('pages')
+  const types = await d.getByLabel('Type').locator('option').allTextContents()
+  expect(types).not.toContain('Learning')
+  expect(types).toContain('Topic')
+})
+
+test('on a phone the filters open right below their button, without moving what is above', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.setViewportSize({ width: 375, height: 740 })
+  await page.goto('/b/growth')
+  await page.getByRole('button', { name: 'Search' }).first().click()
+  const d = dialog(page)
+  const toggle = d.getByRole('button', { name: 'Filters' })
+  const before = await toggle.boundingBox()
+  await toggle.click()
+  const after = await d.getByRole('button', { name: 'Hide filters' }).boundingBox()
+  expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThan(2)
+  const panel = await d.getByLabel('Show').boundingBox()
+  expect(panel?.y ?? 0).toBeGreaterThan((after?.y ?? 0) + (after?.height ?? 0) - 1)
+})

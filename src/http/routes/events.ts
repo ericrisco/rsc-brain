@@ -9,7 +9,14 @@
 import { bearer, resolveKey, roleIn } from '../../auth/principal.ts'
 import { AppError, invalid } from '../../core/errors.ts'
 import { inBrain } from '../../domain/context.ts'
-import { type EventRow, eventsOfBrain, missedBefore, type Viewer, visibleTo } from '../../domain/events.ts'
+import {
+  type EventRow,
+  eventsOfBrain,
+  labelFor,
+  missedBefore,
+  type Viewer,
+  visibleTo,
+} from '../../domain/events.ts'
 import { type Req, type Route, route, type StreamOut } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
@@ -19,7 +26,8 @@ export const REPLAY_HOURS = 24
 const REPLAY_BATCH = 500
 
 // The event as a program sees it: identifiers and labels, never a body.
-export function eventOf(e: EventRow) {
+export function eventOf(e: EventRow, v: Pick<Viewer, 'curator'> = { curator: false }) {
+  const label = labelFor(v, e)
   return {
     id: String(e.seq),
     at: e.at.toISOString(),
@@ -27,10 +35,13 @@ export function eventOf(e: EventRow) {
     kind: e.kind,
     who: e.accountId ? { id: e.accountId, name: e.accountName ?? '' } : null,
     key: e.credentialId ? { id: e.credentialId, ref: e.ref } : null,
-    target: e.targetId || e.label ? { id: e.targetId, label: e.label } : null,
+    target: e.targetId || label ? { id: e.targetId, label } : null,
     query: e.query,
     // G13 (spec B6 «Activity»): the client of the key that did it, for filtering by client.
     client: e.client,
+    // Review of PR23: the reference of its session, and who an agent's short key acted for.
+    sessionRef: e.sessionRef,
+    onBehalf: e.onBehalf,
   }
 }
 
@@ -77,7 +88,7 @@ async function follow(
     for (const e of rows) {
       if (e.seq <= lastSent) continue
       lastSent = e.seq
-      if (visibleTo(viewer, e)) out.write(frame({ id: String(e.seq), data: eventOf(e) }))
+      if (visibleTo(viewer, e)) out.write(frame({ id: String(e.seq), data: eventOf(e, viewer) }))
     }
   }
   const sub = await r.hub.subscribe(brain.id, (rows) => {
@@ -114,6 +125,8 @@ async function follow(
             kind: 'gap',
             brain: brain.slug,
             at: r.clock().toISOString(),
+            // The newest id there is: a client that holds a later one goes back to this one.
+            lastEventId: String(sub.from),
             message: `The last event id you sent (${after}) is ahead of the newest event of this installation (${sub.from}); it may have been restored from a copy. Catch up with the lists (for example the pending proposals and recent sessions), then follow from here.`,
           },
         }),

@@ -5,8 +5,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import type { ApiError } from '../api/client.ts'
 import { api } from '../api/index.ts'
-import { pageHref, plainText } from '../lib/markdown.ts'
-import { activeFilters, noResults, type SearchForm, searchParams, TYPES } from '../lib/search.ts'
+import { pageHref } from '../lib/markdown.ts'
+import {
+  activeFilters,
+  noResults,
+  type SearchForm,
+  searchParams,
+  snippetParts,
+  typesFor,
+} from '../lib/search.ts'
 import { brainsResource } from '../screens/Home.tsx'
 import { entryHref } from '../screens/journal/common.tsx'
 import { online } from '../session.ts'
@@ -55,48 +62,75 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
   const list = useRef<HTMLUListElement>(null)
   const input = useRef<HTMLInputElement>(null)
   const grown = useRef<number | null>(null)
+  // The search the results on screen answer (more results page this one, never the field as it is now).
+  const shown = useRef<SearchForm | null>(null)
+  // Each request is numbered: only the answer to the latest lands.
+  const seq = useRef(0)
   const open = searchOpen.value
+  const here = brain?.slug ?? null
 
-  // Opened: where the keyboard was, and the brain on screen as the place to search. Closed: the keyboard
-  // goes back there, unless a result was opened (the new screen places it).
+  const clear = () => {
+    seq.current += 1
+    shown.current = null
+    setHits(null)
+    setNext(null)
+    setAsked('')
+    setError(null)
+    setPending(false)
+  }
+
+  // Opened: where the keyboard was, and the brain on screen as the place to search; results asked under
+  // another place are dropped. Closed: the keyboard goes back there, unless a result was opened (the new
+  // screen places it).
   useLayoutEffect(() => {
     if (open) {
       opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
-      setScope(brain ? 'brain' : 'all')
+      const place = here ? 'brain' : 'all'
+      setScope(place)
+      const was = shown.current
+      if (was && (was.scope !== place || was.brain !== here)) clear()
       return
     }
     const back = opener.current
     opener.current = null
     if (back?.isConnected && (document.activeElement === document.body || document.activeElement === null))
       back.focus()
-  }, [open])
+  }, [open, here])
 
-  const run = async (o: { offset?: number; scope?: 'brain' | 'all'; filters?: Filters } = {}) => {
-    const text = q.trim()
-    if (!text || pending) return
-    const form: SearchForm = {
-      q: text,
-      scope: o.scope ?? scope,
-      brain: brain?.slug ?? null,
-      ...(o.filters ?? filters),
-    }
+  const ask = async (form: SearchForm, offset = 0) => {
+    const mine = ++seq.current
     setPending(true)
     setError(null)
     try {
       const r = await api.call<{ items: Hit[]; next: number | null }>('search', {
-        query: searchParams(form, o.offset ?? 0),
+        query: searchParams(form, offset),
       })
-      if (o.offset) {
+      if (mine !== seq.current) return
+      if (offset) {
         grown.current = hits?.length ?? 0
         setHits([...(hits ?? []), ...r.items])
       } else setHits(r.items)
+      shown.current = form
       setNext(r.next)
-      setAsked(text)
+      setAsked(form.q)
     } catch (e) {
-      setError(e as ApiError)
+      if (mine === seq.current) setError(e as ApiError)
     } finally {
-      setPending(false)
+      if (mine === seq.current) setPending(false)
     }
+  }
+
+  // The words in the field, where the dialog says, with the filters shown.
+  const run = () => {
+    const text = q.trim()
+    if (!text) return
+    void ask({ q: text, scope, brain: here, ...filters })
+  }
+
+  // More results of the search on screen.
+  const more = () => {
+    const form = shown.current
+    if (form && next !== null) void ask(form, next)
   }
 
   // More results: the keyboard goes to the first new one.
@@ -107,10 +141,20 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
     list.current?.querySelectorAll<HTMLElement>('a.rt')[at]?.focus()
   }, [hits])
 
+  // Another place or filter: the search on screen runs again with it (the latest change wins).
   const change = (o: { scope?: 'brain' | 'all'; filters?: Filters }) => {
+    const nextScope = o.scope ?? scope
+    const nextFilters = o.filters ?? filters
     if (o.scope) setScope(o.scope)
-    if (o.filters) setFilters(o.filters)
-    if (asked) void run(o)
+    if (o.filters) {
+      // A type the new «Show» does not offer goes.
+      const offered = typesFor(nextFilters.what)
+      const f = offered.includes(nextFilters.type) ? nextFilters : { ...nextFilters, type: '' }
+      setFilters(f)
+      if (shown.current) void ask({ ...shown.current, scope: nextScope, brain: here, ...f })
+      return
+    }
+    if (shown.current) void ask({ ...shown.current, scope: nextScope, brain: here, ...nextFilters })
   }
 
   // Up and down move between the field and the results.
@@ -146,7 +190,7 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
               class="form"
               onSubmit={(e) => {
                 e.preventDefault()
-                void run()
+                run()
               }}
             >
               <div class="field">
@@ -218,7 +262,40 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
                 {panel ? s.hideFilters : s.filtersOn(nFilters)}
               </button>
             </form>
-            {error ? <ErrorState error={error} onRetry={() => void run()} /> : null}
+          </search>
+          <aside class="search-filters" id="search-filters" aria-label={s.filters}>
+            <h3 class="section-title search-filters-title">{s.filters}</h3>
+            <div class="field">
+              <label for="search-what">{s.what}</label>
+              <select id="search-what" value={filters.what} onChange={set('what')}>
+                <option value="">{s.whatAll}</option>
+                <option value="pages">{s.whatPages}</option>
+                <option value="entries">{s.whatEntries}</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="search-type">{s.type}</label>
+              <select id="search-type" value={filters.type} onChange={set('type')}>
+                <option value="">{s.anyType}</option>
+                {typesFor(filters.what).map((t) => (
+                  <option key={t} value={t}>
+                    {T.journal.types[t] ?? T.wiki.types[t] ?? t}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div class="field">
+              <label for="search-from">{s.from}</label>
+              <input id="search-from" type="date" value={filters.from} onChange={set('from')} />
+            </div>
+            {nFilters ? (
+              <button type="button" class="button quiet" onClick={() => change({ filters: NONE })}>
+                {T.states.clearFilters}
+              </button>
+            ) : null}
+          </aside>
+          <div class="search-results">
+            {error ? <ErrorState error={error} onRetry={() => run()} /> : null}
             {hits && !error ? (
               <section aria-live="polite" aria-label={s.results(hits.length, next !== null)}>
                 {hits.length ? (
@@ -259,7 +336,11 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
                           ) : (
                             <span class="rt">{h.title}</span>
                           )}
-                          <span class="snippet">{plainText(h.snippet)}</span>
+                          <span class="snippet">
+                            {snippetParts(h.snippet).map((p, k) =>
+                              p.mark ? <mark key={k}>{p.text}</mark> : <span key={k}>{p.text}</span>,
+                            )}
+                          </span>
                           <span class="why">
                             <span class="sr-only">{s.why}: </span>
                             <span class={`tag why-${h.why}`}>{h.reason}</span>
@@ -271,44 +352,13 @@ export function SearchDialog({ brain }: { brain: { slug: string; name: string } 
                   </ul>
                 ) : null}
                 {next !== null && hits.length ? (
-                  <Button pending={pending} pendingLabel="…" onClick={() => void run({ offset: next })}>
+                  <Button pending={pending} pendingLabel="…" onClick={more}>
                     {s.more}
                   </Button>
                 ) : null}
               </section>
             ) : null}
-          </search>
-          <aside class="search-filters" id="search-filters" aria-label={s.filters}>
-            <h3 class="section-title search-filters-title">{s.filters}</h3>
-            <div class="field">
-              <label for="search-what">{s.what}</label>
-              <select id="search-what" value={filters.what} onChange={set('what')}>
-                <option value="">{s.whatAll}</option>
-                <option value="pages">{s.whatPages}</option>
-                <option value="entries">{s.whatEntries}</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="search-type">{s.type}</label>
-              <select id="search-type" value={filters.type} onChange={set('type')}>
-                <option value="">{s.anyType}</option>
-                {TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {T.journal.types[t] ?? T.wiki.types[t] ?? t}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div class="field">
-              <label for="search-from">{s.from}</label>
-              <input id="search-from" type="date" value={filters.from} onChange={set('from')} />
-            </div>
-            {nFilters ? (
-              <button type="button" class="button quiet" onClick={() => change({ filters: NONE })}>
-                {T.states.clearFilters}
-              </button>
-            ) : null}
-          </aside>
+          </div>
         </div>
       )}
     </Dialog>

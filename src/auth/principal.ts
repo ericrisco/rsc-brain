@@ -209,6 +209,7 @@ export async function resolveKey(
       agent: r.agent,
       clientName: r.g_client_name,
       program: conn?.userAgent || r.last_client,
+      name: r.name,
     }),
   }
 }
