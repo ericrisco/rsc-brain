@@ -126,7 +126,7 @@ type Scen = {
   // The proposals of each brain, made when first read ("<slug>#big" for the much-data state).
   inboxes: Map<string, P.Inbox>
   // The wiki of every brain is a seeded one of this many pages (the graph's load tests, CA5 and CA6).
-  seeded?: 300 | 5000
+  seeded?: Seeded
 }
 
 type Answer = { status: number; body: unknown; headers?: Record<string, string> }
@@ -263,11 +263,16 @@ const WIKI = generate({ pages: 300, seed: 48291 })
 // A wiki with many pages a group, for the map's "much data" (each group shows a few, then opens whole).
 const BIG = generate({ pages: 2000, seed: 48291 })
 // The seeded wikis of the graph (plan §4: the same data the real server is seeded with), made when first used.
-const SEEDED = new Map<number, G.GraphData>()
-function seededWiki(pages: 300 | 5000): G.GraphData {
+// The seeded wikis: 300 or 5 000 pages, or a lumpy one (pages at every level beside the groups).
+type Seeded = 300 | 5000 | 'lumpy'
+const SEEDED = new Map<Seeded, G.GraphData>()
+function seededWiki(pages: Seeded): G.GraphData {
   let d = SEEDED.get(pages)
   if (!d) {
-    d = G.seededData(pages === 300 ? WIKI : generate({ pages, seed: 48291 }))
+    d =
+      pages === 'lumpy'
+        ? G.lumpyData()
+        : G.seededData(pages === 300 ? WIKI : generate({ pages, seed: 48291 }))
     SEEDED.set(pages, d)
   }
   return d
@@ -1704,7 +1709,7 @@ export async function startFixture(
         for (const [screen, state] of Object.entries((b.states ?? {}) as Record<string, State>))
           s.states.set(screen as Screen, state)
         if (b.mail === false) s.mail = false
-        if (b.seeded === 300 || b.seeded === 5000) s.seeded = b.seeded
+        if (b.seeded === 300 || b.seeded === 5000 || b.seeded === 'lumpy') s.seeded = b.seeded
         return send(res, { status: 201, body: { id: s.id } })
       }
       const control = /^\/__fixture\/scenarios\/([\w]+)\/state$/.exec(url.pathname)
@@ -1807,8 +1812,9 @@ export async function startFixture(
       if (url.pathname === '/__fixture/use') {
         const s = make((url.searchParams.get('preset') as Preset) ?? 'signed-in')
         if (url.searchParams.get('mail') === 'off') s.mail = false
-        const seeded = Number(url.searchParams.get('seeded'))
-        if (seeded === 300 || seeded === 5000) s.seeded = seeded
+        const seeded = url.searchParams.get('seeded')
+        if (seeded === '300' || seeded === '5000') s.seeded = Number(seeded) as 300 | 5000
+        else if (seeded === 'lumpy') s.seeded = 'lumpy'
         const states = url.searchParams.getAll('state')
         for (const x of states) {
           const [screen, state] = x.split(':')

@@ -9,8 +9,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import { useFresh } from '../../api/fresh.ts'
 import {
   areas,
+  countKey,
   type Direction,
   type Filters,
+  focusView,
   hit,
   hubs,
   keyOf,
@@ -18,7 +20,6 @@ import {
   type Model,
   mainCluster,
   modelOf,
-  neighbourhood,
   radial,
   roles,
   step,
@@ -44,7 +45,7 @@ import { T } from '../../text.ts'
 import { viewState } from '../../ui/state.ts'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
 import { pageHref, StatusTag, TypeTag, useBrain, useFilters, WikiHead } from './common.tsx'
-import { graphResource, peekResource } from './data.ts'
+import { graphResource, pagesResource, peekResource } from './data.ts'
 import { GraphList } from './GraphList.tsx'
 
 export const graphHref = (slug: string) => `/b/${encodeURIComponent(slug)}/wiki/graph`
@@ -85,6 +86,7 @@ const KEYS = [
   'tag',
   'linkKind',
   'group',
+  'loose',
   'focus',
   'hops',
   'sort',
@@ -103,7 +105,6 @@ function cleanFilters(v: Record<(typeof KEYS)[number], string>): Filters {
   }
 }
 
-const wideScreen = () => typeof matchMedia === 'function' && matchMedia('(min-width: 768px)').matches
 const coarse = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 
 function GraphScreen({ slug }: { slug: string }) {
@@ -114,66 +115,84 @@ function GraphScreen({ slug }: { slug: string }) {
   const group = v.group
   const filters = cleanFilters(v)
   const filtering = Boolean(filters.q || filters.type || filters.status || filters.tag || filters.linkKind)
-  const active = [filters.q, filters.type, filters.status, filters.tag, filters.linkKind].filter(
-    Boolean,
-  ).length
-  const r = graphResource(slug, group)
+  const loose = v.loose === '1'
+  const r = graphResource(slug, group, {}, loose)
   useFresh(r)
   const data = r.data.value
   const model = useMemo(() => (data ? modelOf(data) : null), [data])
-  // By groups, the server counts the pages each group has under the filters.
+  // The server's answer under the filters: by groups, how many pages each group has; in one group (or the
+  // gathered pages), which pages have a link of the kind asked for (links out of a group carry no kind here).
   const counted =
-    model?.mode === 'groups' && filtering
-      ? graphResource(slug, group, filters as Record<string, string>)
+    model && filtering && (model.mode === 'groups' || (filters.linkKind && (group || loose)))
+      ? graphResource(slug, group, filters as Record<string, string>, loose)
       : null
+  const answer = counted?.data.value
   const counts = useMemo(
     () =>
-      counted?.data.value ? new Map(counted.data.value.groups.map((x) => [x.prefix, x.count])) : undefined,
-    [counted?.data.value],
+      model?.mode === 'groups' && answer
+        ? new Map(answer.groups.map((x) => [countKey(x), x.count]))
+        : undefined,
+    [model, answer],
+  )
+  const countedTypes = useMemo(
+    () =>
+      model?.mode === 'groups' && answer
+        ? new Map(answer.groups.map((x) => [countKey(x), x.types]))
+        : undefined,
+    [model, answer],
+  )
+  const matching = useMemo(
+    () => (filters.linkKind && answer ? new Set(answer.nodes.map((n) => n[0])) : undefined),
+    [filters.linkKind, answer],
   )
   const hops: 1 | 2 = v.hops === '2' ? 2 : 1
   const list = v.view === 'list'
   const opener = useRef<HTMLElement | null>(null)
-  // Where the keyboard goes once the screen has drawn what an action changed.
+  // Where the keyboard goes once the screen has drawn what an action changed: never left waiting. It lands
+  // as soon as that place is drawn; when the screen is done loading without it, on the focus bar or the
+  // heading; any other key or click of the person's, or two seconds, clears it.
   const pending = useRef<string | null>(null)
+  const want = (selector: string) => {
+    pending.current = selector
+    window.setTimeout(() => {
+      if (pending.current === selector) land(true)
+    }, 2000)
+  }
   // Where to go back to when focus is left: the row button that set it, or the page on the canvas.
   const focusFrom = useRef<{ address: string; row: boolean } | null>(null)
   const [startKey, setStartKey] = useState<string | null>(null)
-  const [filtersOpen] = useState(wideScreen)
 
-  // A page to focus on lives in a group: in a wiki drawn by groups, its group opens first.
+  // A page to focus on lives in a group: in a wiki drawn by groups, its group (or the gathered pages) opens.
   useEffect(() => {
-    if (model?.mode === 'groups' && v.focus) {
+    if (model?.mode === 'groups' && v.focus && !model.index.has(`p:${v.focus}`)) {
       const inside = model.items.find(
-        (it) => it.kind === 'group' && (v.focus === it.prefix || v.focus.startsWith(`${it.prefix}/`)),
+        (it) =>
+          it.kind === 'group' && !it.loose && (v.focus === it.prefix || v.focus.startsWith(`${it.prefix}/`)),
       )
-      if (inside?.kind === 'group') f.set({ group: inside.prefix })
+      if (inside?.kind === 'group') f.set({ group: inside.prefix, loose: '' })
+      else if (model.items.some((it) => it.kind === 'group' && it.loose)) f.set({ loose: '1' })
     }
   }, [model, v.focus])
 
   const vis = useMemo(() => {
     if (!model) return null
-    const base = visibility(model, filters, counts)
+    const base = visibility(model, filters, counts, matching)
     const at = v.focus ? model.index.get(keyOf({ kind: 'page', address: v.focus })) : undefined
-    if (at === undefined) return { ...base, focus: -1, hood: null as Map<number, number> | null }
-    const hood = neighbourhood(model, at, hops)
-    const nodes = new Uint8Array(base.nodes.length)
-    let shown = 0
-    let pages = 0
-    for (const [i] of hood) {
-      // The page in focus always shows; its neighbours as the filters say.
-      nodes[i] = i === at ? 1 : (base.nodes[i] as number)
-      shown += nodes[i] as number
-      if (i < model.pages) pages += nodes[i] as number
-    }
-    const edges = new Uint8Array(base.edges.length)
-    for (let e = 0; e < edges.length; e++)
-      edges[e] =
-        base.edges[e] && nodes[model.edges[2 * e] as number] && nodes[model.edges[2 * e + 1] as number]
-          ? 1
-          : 0
-    return { ...base, nodes, edges, shown, pages, focus: at, hood }
-  }, [model, counts, filters.q, filters.type, filters.status, filters.tag, filters.linkKind, v.focus, hops])
+    if (at === undefined) return { ...base, focus: -1, focused: null }
+    const focused = focusView(model, base, at, hops)
+    return { ...focused, focus: at, focused }
+  }, [
+    model,
+    counts,
+    matching,
+    filters.q,
+    filters.type,
+    filters.status,
+    filters.tag,
+    filters.linkKind,
+    v.focus,
+    hops,
+  ])
 
   const state = viewState({ loading: r.loading.value, data, error: r.error.value, online: online.value })
   const selected = v.inspect
@@ -185,18 +204,49 @@ function GraphScreen({ slug }: { slug: string }) {
     [model],
   )
   const byGroups = model?.mode === 'groups'
-  const total = byGroups && counted?.data.value ? counted.data.value.total : (model?.total ?? 0)
-  const emptyWiki = model !== null && model.total === 0 && !group && !filtering
+  const total = byGroups && answer ? answer.total : (model?.total ?? 0)
+  const emptyWiki = model !== null && model.total === 0 && !group && !loose && !filtering
+  // The list says how many pages it has: the header says the same (Retired ones too, when asked for).
+  const listQuery = {
+    ...filters,
+    status: filters.status || DRAWN,
+    prefix: group,
+    ...(loose ? { loose: '1' } : {}),
+    sort: v.sort,
+  }
+  const listed =
+    list && !v.focus && model ? pagesResource(slug, { ...listQuery, cursor: '', limit: '50' }) : null
+  const listTotal = listed?.data.value?.total
+  const loading = r.loading.value || Boolean(counted?.loading.value) || Boolean(listed?.loading.value)
 
-  // Every render: the keyboard goes where the last action said, once that place is on screen.
-  useLayoutEffect(() => {
-    if (!pending.current) return
-    const el = document.querySelector<HTMLElement>(pending.current)
+  // The keyboard goes where the last action said: there when it is drawn; once nothing is loading (or after
+  // two seconds), to the focus bar or the heading instead.
+  const land = (late = false) => {
+    const sel = pending.current
+    if (!sel) return
+    const el = document.querySelector<HTMLElement>(sel)
     if (el) {
       pending.current = null
-      el.focus()
+      el.focus({ preventScroll: sel === '#graph-focus' })
+      return
     }
-  })
+    if (loading && !late) return
+    pending.current = null
+    document.querySelector<HTMLElement>('#graph-focus, #graph-place')?.focus({ preventScroll: true })
+  }
+  useLayoutEffect(() => land())
+  // Any key or click of the person's own clears a place still waiting: it never takes the keyboard back later.
+  useEffect(() => {
+    const clear = () => {
+      pending.current = null
+    }
+    document.addEventListener('keydown', clear, true)
+    document.addEventListener('pointerdown', clear, true)
+    return () => {
+      document.removeEventListener('keydown', clear, true)
+      document.removeEventListener('pointerdown', clear, true)
+    }
+  }, [])
 
   const select = (key: string | null) => {
     if (key !== null && document.activeElement instanceof HTMLElement && !selected)
@@ -223,35 +273,66 @@ function GraphScreen({ slug }: { slug: string }) {
 
   const focusOn = (address: string, h: 1 | 2, from?: { row: boolean }) => {
     if (from) focusFrom.current = { address, row: from.row }
-    pending.current = '#graph-focus'
+    want('#graph-focus')
     const sub = group && address !== group && !address.startsWith(`${group}/`) ? areaOf(address) : group
-    f.set({ focus: address, hops: h === 2 ? '2' : '', group: sub }, { push: !v.focus })
+    // A first focus, or one that moves to another group, is a step Back undoes.
+    f.set(
+      { focus: address, hops: h === 2 ? '2' : '', group: sub, ...(sub !== group ? { loose: '' } : {}) },
+      { push: !v.focus || sub !== group },
+    )
   }
   const leaveFocus = () => {
     const back = focusFrom.current
     focusFrom.current = null
-    if (back?.row) pending.current = `[data-focus-for="${CSS.escape(back.address)}"]`
+    if (back?.row) want(`[data-focus-for="${CSS.escape(back.address)}"]`)
     else {
       setStartKey(v.focus ? `p:${v.focus}` : null)
-      pending.current = list ? '#graph-place' : 'canvas.graph-canvas'
+      want(list ? '#graph-place' : 'canvas.graph-canvas')
     }
     f.set({ focus: '', hops: '' })
   }
-  const openGroup = (prefix: string) => {
-    pending.current = '#graph-place'
-    f.set({ group: prefix, focus: '', inspect: '' }, { push: true })
+  // `asLoose`: the pages gathered at that level, not the group of that name.
+  const openGroup = (prefix: string, asLoose = false) => {
+    want('#graph-place')
+    f.set({ group: prefix, loose: asLoose ? '1' : '', focus: '', inspect: '' }, { push: true })
   }
   const clearFilters = () => {
-    pending.current = '#graph-q'
+    want('#graph-q')
     f.set({ q: '', type: '', status: '', tag: '', linkKind: '' })
   }
   const setView = (to: 'graph' | 'list') => f.set({ view: to === 'list' ? 'list' : '' })
 
   const trail = group ? group.split('/').map((_, i, parts) => parts.slice(0, i + 1).join('/')) : []
-  const place = group ? g.inGroup(group) : byGroups ? g.allGroups : g.allPages
+  const focusPages = vis && vis.focus >= 0 ? vis.pages : 0
+  const place =
+    focusItem?.kind === 'page'
+      ? g.focusPlace(focusItem.title, hops, focusPages)
+      : loose
+        ? g.otherPages(group)
+        : group
+          ? g.inGroup(group)
+          : byGroups
+            ? g.allGroups
+            : g.allPages
+  // The filters on, said in the summary so they show while folded.
+  const chips = [
+    filters.q ? g.chip(g.words, `“${filters.q}”`) : '',
+    filters.type ? g.chip(w.type, w.types[filters.type] ?? filters.type) : '',
+    filters.status
+      ? g.chip(
+          w.status,
+          filters.status
+            .split(',')
+            .map((x) => w.statuses[x] ?? x)
+            .join(', '),
+        )
+      : '',
+    filters.linkKind ? g.chip(g.linkKind, g.linkKindNames[filters.linkKind] ?? filters.linkKind) : '',
+    filters.tag ? g.chip(w.tag, filters.tag) : '',
+  ].filter(Boolean)
   const head = (
     <>
-      <WikiHead title={list ? g.listTitle : g.title} lead={g.lead} />
+      <WikiHead title={g.title} lead={g.lead} />
       <div class="graph-bar">
         <fieldset class="toggle graph-views">
           <legend class="sr-only">{g.views}</legend>
@@ -272,7 +353,7 @@ function GraphScreen({ slug }: { slug: string }) {
             {g.listView}
           </button>
         </fieldset>
-        {group ? (
+        {group || loose ? (
           <nav class="graph-trail" aria-label={g.groupTrail}>
             <button type="button" class="button quiet" onClick={() => openGroup('')}>
               {g.allGroups}
@@ -280,7 +361,7 @@ function GraphScreen({ slug }: { slug: string }) {
             {trail.map((p) => (
               <span key={p} class="trail-step">
                 <span aria-hidden="true">›</span>{' '}
-                {p === group ? (
+                {p === group && !loose ? (
                   <span class="mono" aria-current="location">
                     {p.split('/').at(-1)}
                   </span>
@@ -291,109 +372,124 @@ function GraphScreen({ slug }: { slug: string }) {
                 )}
               </span>
             ))}
+            {loose ? (
+              <span class="trail-step">
+                <span aria-hidden="true">›</span> <span aria-current="location">{g.otherPages('')}</span>
+              </span>
+            ) : null}
           </nav>
         ) : null}
-      </div>
-      {emptyWiki ? null : (
-        <details class="graph-filters" open={filtersOpen}>
-          <summary>{g.filtersOn(active)}</summary>
-          <search aria-label={g.filterSearch}>
-            <form class="filters" onSubmit={(e) => e.preventDefault()}>
-              <div class="field grow">
-                <label for="graph-q">{g.words}</label>
-                <input
-                  id="graph-q"
-                  type="search"
-                  value={v.q}
-                  aria-describedby="graph-q-hint"
-                  onInput={(e) => f.set({ q: (e.currentTarget as HTMLInputElement).value })}
-                />
-                <span id="graph-q-hint" class="hint">
-                  {g.wordsHint}
-                </span>
-              </div>
-              <div class="field">
-                <label for="graph-type">{w.type}</label>
-                <select
-                  id="graph-type"
-                  value={filters.type}
-                  onChange={(e) => f.set({ type: (e.currentTarget as HTMLSelectElement).value })}
-                >
-                  <option value="">{w.anyType}</option>
-                  {PAGE_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {w.types[t]}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div class="field">
-                <label for="graph-status">{w.status}</label>
-                <select
-                  id="graph-status"
-                  value={filters.status}
-                  onChange={(e) => f.set({ status: (e.currentTarget as HTMLSelectElement).value })}
-                >
-                  <option value="">{w.anyStatus}</option>
-                  {PAGE_STATUSES.map((t) => (
-                    <option key={t} value={t}>
-                      {w.statuses[t]}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div class="field">
-                <label for="graph-kind">{g.linkKind}</label>
-                <select
-                  id="graph-kind"
-                  value={filters.linkKind}
-                  onChange={(e) => f.set({ linkKind: (e.currentTarget as HTMLSelectElement).value })}
-                >
-                  <option value="">{g.anyLinkKind}</option>
-                  {KINDS.map((k) => (
-                    <option key={k} value={k}>
-                      {g.linkKindNames[k]}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div class="field">
-                <label for="graph-tag">{w.tag}</label>
-                {/* One control everywhere: typed, with the tags the drawn pages carry offered. */}
-                <input
-                  id="graph-tag"
-                  type="text"
-                  list="graph-tags"
-                  value={v.tag}
-                  aria-describedby="graph-tag-hint"
-                  onChange={(e) => f.set({ tag: (e.currentTarget as HTMLInputElement).value.trim() })}
-                />
-                <datalist id="graph-tags">
-                  {tags.map((t) => (
-                    <option key={t} value={t} />
-                  ))}
-                </datalist>
-                <span id="graph-tag-hint" class="hint">
-                  {g.tagHint}
-                </span>
-              </div>
-              {filtering ? (
-                <div class="actions">
-                  <button type="button" class="button quiet" onClick={clearFilters}>
-                    {T.states.clearFilters}
-                  </button>
+        {emptyWiki ? null : (
+          <details class="graph-filters">
+            <summary>{g.filtersSummary(chips)}</summary>
+            <search aria-label={g.filterSearch}>
+              <form class="filters" onSubmit={(e) => e.preventDefault()}>
+                <div class="field grow">
+                  <label for="graph-q">{g.words}</label>
+                  <input
+                    id="graph-q"
+                    type="search"
+                    value={v.q}
+                    aria-describedby="graph-q-hint"
+                    onInput={(e) => f.set({ q: (e.currentTarget as HTMLInputElement).value })}
+                  />
+                  <span id="graph-q-hint" class="hint">
+                    {g.wordsHint}
+                  </span>
                 </div>
-              ) : null}
-            </form>
-          </search>
-        </details>
-      )}
+                <div class="field">
+                  <label for="graph-type">{w.type}</label>
+                  <select
+                    id="graph-type"
+                    value={filters.type}
+                    onChange={(e) => f.set({ type: (e.currentTarget as HTMLSelectElement).value })}
+                  >
+                    <option value="">{w.anyType}</option>
+                    {PAGE_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {w.types[t]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="graph-status">{w.status}</label>
+                  <select
+                    id="graph-status"
+                    value={filters.status}
+                    onChange={(e) => f.set({ status: (e.currentTarget as HTMLSelectElement).value })}
+                  >
+                    <option value="">{w.anyStatus}</option>
+                    {PAGE_STATUSES.map((t) => (
+                      <option key={t} value={t}>
+                        {w.statuses[t]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="graph-kind">{g.linkKind}</label>
+                  <select
+                    id="graph-kind"
+                    value={filters.linkKind}
+                    onChange={(e) => f.set({ linkKind: (e.currentTarget as HTMLSelectElement).value })}
+                  >
+                    <option value="">{g.anyLinkKind}</option>
+                    {KINDS.map((k) => (
+                      <option key={k} value={k}>
+                        {g.linkKindNames[k]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="graph-tag">{w.tag}</label>
+                  {/* One control everywhere: typed, with the tags the drawn pages carry offered. */}
+                  <input
+                    id="graph-tag"
+                    type="text"
+                    list="graph-tags"
+                    value={v.tag}
+                    aria-describedby="graph-tag-hint"
+                    onInput={(e) => f.set({ tag: (e.currentTarget as HTMLInputElement).value.trim() })}
+                  />
+                  <datalist id="graph-tags">
+                    {tags.map((t) => (
+                      <option key={t} value={t} />
+                    ))}
+                  </datalist>
+                  <span id="graph-tag-hint" class="hint">
+                    {g.tagHint}
+                  </span>
+                </div>
+                {filtering ? (
+                  <div class="actions">
+                    <button type="button" class="button quiet" onClick={clearFilters}>
+                      {T.states.clearFilters}
+                    </button>
+                  </div>
+                ) : null}
+              </form>
+            </search>
+          </details>
+        )}
+      </div>
       {focusItem?.kind === 'page' ? (
         <section id="graph-focus" class="graph-focus" tabIndex={-1} aria-label={g.focusBar}>
           <p>
             {g.focusOn('')}
             <strong>{focusItem.title}</strong>
           </p>
+          {vis?.focused?.hiddenVia.size ? (
+            <p class="meta">
+              {[...vis.focused.hiddenVia]
+                .map((i) => {
+                  const it = model?.items[i]
+                  return g.viaHidden(it?.kind === 'page' ? it.title : (it?.prefix ?? ''))
+                })
+                .join('; ')}
+            </p>
+          ) : null}
           <fieldset class="toggle">
             <legend class="sr-only">{g.hops}</legend>
             {([1, 2] as const).map((h) => (
@@ -418,19 +514,24 @@ function GraphScreen({ slug }: { slug: string }) {
           <h2 id="graph-place" class="graph-place" tabIndex={-1}>
             {place}
           </h2>
-          <span class="tag">
-            {byGroups
-              ? g.groupsCount(
-                  vis?.pages ?? total,
-                  model.items.filter((it, i) => it.kind === 'group' && vis?.nodes[i]).length,
-                )
-              : g.count(vis?.pages ?? 0, model.pages)}
-          </span>
+          {focusItem ? null : (
+            <span class="tag">
+              {list && listTotal !== undefined
+                ? g.count(listTotal, listTotal)
+                : byGroups
+                  ? g.groupsCount(
+                      vis?.pages ?? total,
+                      model.items.filter((it, i) => it.kind === 'group' && vis?.nodes[i]).length,
+                    )
+                  : g.count(vis?.pages ?? 0, model.pages)}
+            </span>
+          )}
         </div>
       ) : null}
-      {byGroups && !list ? (
+      {byGroups && !list && !focusItem ? (
         <p class="graph-note">{group ? g.nested(group, model?.total ?? 0) : g.huge(model?.total ?? 0)}</p>
       ) : null}
+      {loose && !focusItem ? <p class="graph-note">{g.otherPagesNote(group, model?.total ?? 0)}</p> : null}
     </>
   )
 
@@ -445,9 +546,9 @@ function GraphScreen({ slug }: { slug: string }) {
       onFocus={(a, h) => focusOn(a, h, { row: false })}
       onShow={(key) => f.set({ inspect: key })}
       onOpenGroup={openGroup}
-      onGroupList={(prefix) => {
-        pending.current = '#graph-place'
-        f.set({ view: 'list', group: prefix, focus: '' }, { push: true })
+      onGroupList={(prefix, asLoose) => {
+        want('#graph-place')
+        f.set({ view: 'list', group: prefix, loose: asLoose ? '1' : '', focus: '' }, { push: true })
       }}
     />
   )
@@ -470,10 +571,10 @@ function GraphScreen({ slug }: { slug: string }) {
         filters={filters}
         visible={vis?.nodes ?? null}
         counts={counts}
-        group={group}
-        sort={v.sort}
+        countedTypes={countedTypes}
+        query={listQuery}
         emptyWiki={emptyWiki}
-        focus={vis && vis.focus >= 0 ? { index: vis.focus, hood: vis.hood as Map<number, number> } : null}
+        focus={vis?.focused ? { index: vis.focus, ...vis.focused } : null}
         setSort={(sort) => f.set({ sort })}
         onInspect={(t) => select(keyOf(t))}
         onFocus={(a, h) => focusOn(a, h, { row: true })}
@@ -508,15 +609,17 @@ function GraphScreen({ slug }: { slug: string }) {
         edges={vis.edges}
         shown={vis.shown}
         focus={vis.focus}
-        hood={vis.hood}
+        hood={vis.focused?.hood ?? null}
+        bridges={vis.focused?.bridges ?? null}
         counts={counts}
+        focusSaid={focusItem?.kind === 'page' ? place : ''}
         selected={selectedIndex}
         startKey={startKey}
         onSelect={(i) => {
           const it = model.items[i]
           if (it) select(keyOf(it))
         }}
-        refit={`${group}|${v.focus}|${hops}|${filters.q}|${filters.type}|${filters.status}|${filters.tag}|${filters.linkKind}|${counts ? 'c' : ''}`}
+        refit={`${group}|${loose}|${v.focus}|${hops}|${filters.q}|${filters.type}|${filters.status}|${filters.tag}|${filters.linkKind}|${counts ? 'c' : ''}`}
       />
     )
 
@@ -543,6 +646,8 @@ function palette(): Palette {
   }
 }
 
+const narrow = () => typeof matchMedia === 'function' && matchMedia('(max-width: 1099px)').matches
+
 const reducedMotion = () =>
   typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
@@ -555,12 +660,18 @@ const ARROWS: Record<string, Direction> = {
 
 // The words on the canvas for each item: a page's title, a group's last part and its pages.
 function labelsOf(model: Model, counts: Map<string, number> | undefined): string[] {
-  return model.items.map((it) =>
-    it.kind === 'page'
-      ? it.title
-      : `${it.prefix.split('/').at(-1)} · ${(counts?.get(it.prefix) ?? it.count).toLocaleString('en-US')}`,
-  )
+  return model.items.map((it) => {
+    if (it.kind === 'page') return it.title
+    const n = counts?.get(countKey(it)) ?? it.count
+    return it.loose
+      ? T.graph.otherPagesCount(it.prefix, n)
+      : `${it.prefix.split('/').at(-1)} · ${n.toLocaleString('en-US')}`
+  })
 }
+
+// What a group is called: its address, or, for the pages gathered at a level, "Other pages in eng (60)".
+export const groupName = (it: { prefix: string; count: number; loose?: true }, n = it.count) =>
+  it.loose ? T.graph.otherPagesCount(it.prefix, n) : it.prefix
 
 function sceneOf(model: Model, labels: string[]): Scene {
   return {
@@ -582,6 +693,7 @@ function sceneOf(model: Model, labels: string[]): Scene {
     links: model.count,
     kinds: model.kinds,
     labels,
+    role: roles(model),
   }
 }
 
@@ -592,7 +704,9 @@ function GraphCanvas({
   shown,
   focus,
   hood,
+  bridges,
   counts,
+  focusSaid,
   selected,
   startKey,
   onSelect,
@@ -604,7 +718,10 @@ function GraphCanvas({
   shown: number
   focus: number
   hood: Map<number, number> | null
+  bridges: [number, number][] | null
   counts: Map<string, number> | undefined
+  // What the live region says when focus changes ("" out of focus).
+  focusSaid: string
   selected: number
   startKey: string | null
   onSelect: (i: number) => void
@@ -632,9 +749,26 @@ function GraphCanvas({
   const frames = useRef(0)
   const settled = useRef(false)
   const marked = useRef({ ready: false, settled: false })
+  const dpr = useRef(typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1)
+  // How much of the canvas a phone's inspector covers: the picture fits in the rest.
+  const inset = useRef(0)
   const labels = useMemo(() => labelsOf(model, counts), [model, counts])
   const hubList = useMemo(() => hubs(model, nodes, HUBS), [model, nodes])
-  const fitMask = useMemo(() => mainCluster(model, nodes, edges), [model, nodes, edges])
+  const role = useMemo(() => roles(model), [model])
+  // Fit: in focus, every ring; otherwise the main cluster and the row of pages without links (never a few far
+  // off pages shrinking the rest).
+  const fitMask = useMemo(() => {
+    if (focus >= 0) return nodes
+    const m = mainCluster(model, nodes, edges)
+    for (let i = 0; i < m.length; i++) if (nodes[i] && role[i] === 1) m[i] = 1
+    return m
+  }, [model, nodes, edges, focus, role])
+  const orphans = useMemo(() => {
+    let n = 0
+    for (let i = 0; i < model.pages; i++) if (nodes[i] && role[i] === 1) n += 1
+    return n
+  }, [model, nodes, role])
+  const bridgePairs = useMemo(() => (bridges?.length ? new Uint32Array(bridges.flat()) : null), [bridges])
   const rings = useMemo(
     () => (hood && focus >= 0 ? radial(model, hood, model.items.length) : null),
     [model, hood, focus],
@@ -645,8 +779,32 @@ function GraphCanvas({
     for (const [i, d] of hood) h[i] = d
     return h
   }, [model, hood])
-  const latest = useRef({ nodes, edges, focus, selected, active, rings, hop, hubList, fitMask })
-  latest.current = { nodes, edges, focus, selected, active, rings, hop, hubList, fitMask }
+  const latest = useRef({
+    nodes,
+    edges,
+    focus,
+    selected,
+    active,
+    rings,
+    hop,
+    hubList,
+    fitMask,
+    bridgePairs,
+    orphans,
+  })
+  latest.current = {
+    nodes,
+    edges,
+    focus,
+    selected,
+    active,
+    rings,
+    hop,
+    hubList,
+    fitMask,
+    bridgePairs,
+    orphans,
+  }
   const shownXY = () => latest.current.rings ?? positions.current
 
   const post = (m: ToWorker, transfer: Transferable[] = []) => {
@@ -662,8 +820,10 @@ function GraphCanvas({
     }
     worker.current?.postMessage(m, transfer)
   }
-  const drawn = (d: { view: View; active: [number, number] | null; settled: boolean }) => {
+  const drawn = (d: { id: number; view: View; active: [number, number] | null; settled: boolean }) => {
     const c = canvas.current
+    // A picture of an older layout (a group left a moment ago) says nothing about this one.
+    if (d.id !== layoutId.current) return
     view.current = d.view
     draws.current += 1
     if (!c) return
@@ -691,7 +851,7 @@ function GraphCanvas({
       c.width = Math.round(st.width * st.dpr)
       c.height = Math.round(st.height * st.dpr)
       const d = l.renderer.paint(l.ctx)
-      if (d) drawn({ ...d, settled: settled.current })
+      if (d) drawn({ ...d, id: layoutId.current, settled: settled.current })
     })
   }
   const sendState = () => {
@@ -700,7 +860,7 @@ function GraphCanvas({
     const state: State = {
       width: w,
       height: h,
-      dpr: window.devicePixelRatio || 1,
+      dpr: dpr.current,
       palette: palette(),
       nodes: s.nodes,
       edges: s.edges,
@@ -714,6 +874,9 @@ function GraphCanvas({
       hop: s.hop,
       xy: s.rings,
       hubs: s.hubList,
+      bridges: s.bridgePairs,
+      orphanLabel: s.orphans && s.focus < 0 ? T.graph.orphans(s.orphans) : '',
+      inset: inset.current,
     }
     post({ type: 'state', state })
   }
@@ -730,7 +893,10 @@ function GraphCanvas({
       positions.current = m.xy
       frames.current += 1
       c.dataset.frames = String(frames.current)
-      if (m.done) settled.current = true
+      if (m.done) {
+        settled.current = true
+        if (m.ms !== undefined) c.dataset.layoutMs = String(Math.round(m.ms))
+      }
       setReady(true)
       const l = local.current
       if (l) {
@@ -802,10 +968,66 @@ function GraphCanvas({
     return () => ro.disconnect()
   }, [])
 
+  // The pixel ratio changes when the window moves to another screen or the page is zoomed: paint sharp again.
+  useEffect(() => {
+    let mq: MediaQueryList | null = null
+    const watch = () => {
+      dpr.current = window.devicePixelRatio || 1
+      mq?.removeEventListener('change', changed)
+      mq = typeof matchMedia === 'function' ? matchMedia(`(resolution: ${dpr.current}dppx)`) : null
+      mq?.addEventListener('change', changed)
+    }
+    const changed = () => {
+      watch()
+      sendState()
+    }
+    watch()
+    return () => mq?.removeEventListener('change', changed)
+  }, [])
+
+  // The live region says where focus is now, never a page from before.
+  useEffect(() => {
+    setSaid(focusSaid)
+    if (focusSaid) setActive(-1)
+  }, [focusSaid])
+
+  // On a narrow screen the inspector rises from the bottom over the picture: the picture fits above it (and
+  // follows the sheet as it grows), and a page picked under it is moved above it.
+  useLayoutEffect(() => {
+    const sheet = selected >= 0 && narrow() ? document.querySelector('.graph-inspector:not(.empty)') : null
+    const c = canvas.current
+    if (!sheet || !c) {
+      if (inset.current) {
+        inset.current = 0
+        sendState()
+      }
+      return
+    }
+    const place = () => {
+      const top = sheet.getBoundingClientRect().top
+      const rect = c.getBoundingClientRect()
+      inset.current = Math.max(0, Math.min(rect.height, rect.bottom - top))
+      const x = shownXY()
+      if (!auto.current && x) {
+        const v = view.current
+        const sx = (x[2 * selected] as number) * v.scale + v.tx
+        const sy = (x[2 * selected + 1] as number) * v.scale + v.ty
+        const bottom = rect.height - inset.current
+        if (sy < 24 || sy > bottom - 24 || sx < 24 || sx > rect.width - 24)
+          view.current = { ...v, tx: v.tx + (rect.width / 2 - sx), ty: v.ty + (bottom / 2 - sy) }
+      }
+      sendState()
+    }
+    place()
+    const ro = new ResizeObserver(place)
+    ro.observe(sheet)
+    return () => ro.disconnect()
+  }, [selected, focus, ready])
+
   useEffect(() => {
     auto.current = true
   }, [refit])
-  useEffect(sendState, [nodes, edges, focus, selected, active, refit, rings, hubList])
+  useEffect(sendState, [nodes, edges, focus, selected, active, refit, rings, hubList, bridgePairs, orphans])
 
   // The wheel zooms around the pointer; it must be able to stop the page from scrolling.
   useEffect(() => {
@@ -841,7 +1063,7 @@ function GraphCanvas({
     const it = model.items[i]
     if (!it) return ''
     return it.kind === 'group'
-      ? g.onGroup(it.prefix, counts?.get(it.prefix) ?? it.count)
+      ? g.onGroup(groupName(it), counts?.get(countKey(it)) ?? it.count)
       : g.onPage(
           it.title,
           T.wiki.types[it.type] ?? it.type,
@@ -959,19 +1181,19 @@ function GraphCanvas({
 
   return (
     <section class="graph-section" aria-label={g.graphView}>
-      <div class="graph-tools">
-        <button type="button" class="button quiet" onClick={() => zoom(1.25)} aria-keyshortcuts="+">
-          {g.zoomIn}
-        </button>
-        <button type="button" class="button quiet" onClick={() => zoom(0.8)} aria-keyshortcuts="-">
-          {g.zoomOut}
-        </button>
-        <button type="button" class="button quiet" onClick={fitAll} aria-keyshortcuts="0">
-          {g.fitAll}
-        </button>
-      </div>
       <div class="graph-stage">
         <div class="graph-box" ref={box} data-scroll-x>
+          <div class="graph-tools">
+            <button type="button" class="button quiet" onClick={() => zoom(1.25)} aria-keyshortcuts="+">
+              {g.zoomIn}
+            </button>
+            <button type="button" class="button quiet" onClick={() => zoom(0.8)} aria-keyshortcuts="-">
+              {g.zoomOut}
+            </button>
+            <button type="button" class="button quiet" onClick={fitAll} aria-keyshortcuts="0">
+              {g.fitAll}
+            </button>
+          </div>
           {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: "application" makes a screen reader hand the arrow keys to the canvas, which walks the graph with them */}
           <canvas
             ref={canvas}
@@ -1008,7 +1230,7 @@ function GraphCanvas({
             </div>
           )}
         </div>
-        <Legend />
+        <Legend model={model} nodes={nodes} edges={edges} inFocus={focus >= 0} />
       </div>
       <p id="graph-help" class="hint">
         {coarse() ? g.touchHelp : g.canvasHelp}
@@ -1020,8 +1242,36 @@ function GraphCanvas({
   )
 }
 
-function Legend() {
+// What the picture holds, and only that: the shapes of the types drawn, the kinds of the lines drawn.
+function Legend({
+  model,
+  nodes,
+  edges,
+  inFocus,
+}: {
+  model: Model
+  nodes: Uint8Array
+  edges: Uint8Array
+  inFocus: boolean
+}) {
   const g = T.graph
+  const drawn = useMemo(() => {
+    const types = new Set<string>()
+    let superseded = false
+    for (let i = 0; i < model.pages; i++) {
+      const it = model.items[i]
+      if (!nodes[i] || it?.kind !== 'page') continue
+      types.add(it.type)
+      if (it.status === 'superseded') superseded = true
+    }
+    const kinds = new Set<string>()
+    for (let e = 0; e < edges.length; e++)
+      if (edges[e])
+        kinds.add((model.kind[e] as number) < 0 ? 'group' : (model.kinds[model.kind[e] as number] ?? ''))
+    return { types, kinds, superseded }
+  }, [model, nodes, edges])
+  const shapes = SHAPES.filter((t) => drawn.types.has(t))
+  const lines = [...KINDS, 'group'].filter((k) => drawn.kinds.has(k))
   return (
     <details class="graph-legend" open>
       <summary>{g.legend}</summary>
@@ -1029,7 +1279,7 @@ function Legend() {
         <div>
           <p class="section-title">{g.shapes}</p>
           <ul class="plain">
-            {SHAPES.map((t) => (
+            {shapes.map((t) => (
               <li key={t}>
                 <ShapeIcon type={t} />
                 {T.wiki.types[t]}
@@ -1040,7 +1290,8 @@ function Legend() {
         <div>
           <p class="section-title">{g.lines}</p>
           <ul class="plain">
-            {[...KINDS, 'group'].map((k) => {
+            {lines.length ? null : <li class="meta">{g.noLinks}</li>}
+            {lines.map((k) => {
               const line = LINE[k] ?? (LINE.related as (typeof LINE)[string])
               return (
                 <li key={k}>
@@ -1070,12 +1321,12 @@ function Legend() {
         <div>
           <p class="section-title">{g.marks}</p>
           <ul class="plain">
-            <li>{g.dimmed}</li>
-            <li>{g.bigger}</li>
-            <li>{g.ringOne}</li>
-            <li>{g.ringTwo}</li>
+            {drawn.superseded ? <li>{g.dimmed}</li> : null}
+            {lines.length ? <li>{g.bigger}</li> : null}
+            {inFocus ? <li>{g.ringOne}</li> : null}
+            {inFocus ? <li>{g.ringTwo}</li> : null}
           </ul>
-          <p class="meta">{g.arrows}</p>
+          {lines.some((k) => LINE[k]?.arrow) ? <p class="meta">{g.arrows}</p> : null}
         </div>
       </div>
     </details>
@@ -1127,12 +1378,15 @@ function Inspector({
   onClose: () => void
   onFocus: (address: string, hops: 1 | 2) => void
   onShow: (key: string) => void
-  onOpenGroup: (prefix: string) => void
-  onGroupList: (prefix: string) => void
+  onOpenGroup: (prefix: string, loose?: boolean) => void
+  onGroupList: (prefix: string, loose?: boolean) => void
 }) {
   const g = T.graph
   const heading = useRef<HTMLHeadingElement>(null)
   const key = target ? keyOf(target) : ''
+  // On a narrow screen the sheet opens as a peek (the picture stays in view) and grows on asking.
+  const [sheet, setSheet] = useState<'peek' | 'full'>('peek')
+  useEffect(() => setSheet('peek'), [key])
   // Opened from a button of the list, the keyboard follows it here before anything else can happen; from the
   // canvas it stays there.
   useLayoutEffect(() => {
@@ -1150,11 +1404,19 @@ function Inspector({
     )
   const at = model?.index.get(key) ?? -1
   return (
-    <aside class="graph-inspector" aria-labelledby="inspector-name inspector-title">
+    <aside class="graph-inspector" data-sheet={sheet} aria-labelledby="inspector-name inspector-title">
       <div class="inspector-head">
         <p class="section-title" id="inspector-name">
           {g.inspector}
         </p>
+        <button
+          type="button"
+          class="button quiet sheet-toggle"
+          aria-expanded={sheet === 'full' ? 'true' : 'false'}
+          onClick={() => setSheet(sheet === 'full' ? 'peek' : 'full')}
+        >
+          {sheet === 'full' ? g.less : g.more}
+        </button>
         <button type="button" class="button quiet" onClick={onClose}>
           {g.closeInspector}
         </button>
@@ -1209,7 +1471,14 @@ function PagePeek({
   const title = page?.title ?? (item?.kind === 'page' ? item.title : address)
   const status = page?.status ?? (item?.kind === 'page' ? item.status : '')
   const type = page?.type ?? (item?.kind === 'page' ? item.type : '')
-  const drawable = status !== 'retired'
+  // Focus needs links: a page alone has nothing around it.
+  const linked =
+    at >= 0 && model
+      ? (model.degree[at] as number) > 0
+      : reading
+        ? reading.links.in.length > 0 || reading.links.out.some((l) => l.state !== 'broken')
+        : true
+  const drawable = status !== 'retired' && linked
   const shownHere = (a: string) => model?.index.has(`p:${a}`) ?? false
   // "Caching → mentions → Research overview": who links to whom, by what.
   const links = (
@@ -1315,6 +1584,7 @@ function PagePeek({
           </>
         ) : null}
       </div>
+      {!linked && status !== 'retired' ? <p class="meta">{g.noFocusAlone}</p> : null}
       {reading ? (
         <>
           {links(reading.links.out, true, g.linksOut, 'inspector-out')}
@@ -1338,26 +1608,34 @@ function GroupPeek({
   model: Model | null
   at: number
   headingRef: preact.RefObject<HTMLHeadingElement>
-  onOpenGroup: (prefix: string) => void
-  onGroupList: (prefix: string) => void
+  onOpenGroup: (prefix: string, loose?: boolean) => void
+  onGroupList: (prefix: string, loose?: boolean) => void
   onShow: (key: string) => void
 }) {
   const g = T.graph
   const item = at >= 0 ? model?.items[at] : undefined
   const group = item?.kind === 'group' ? item : null
+  const loose = group?.loose === true
   const lines =
     model && at >= 0 ? linksOf(model, at).filter((l) => model.items[l.index]?.kind === 'group') : []
   return (
     <>
-      <h2 id="inspector-title" class="inspector-title mono" tabIndex={-1} ref={headingRef}>
-        {prefix}
+      <h2
+        id="inspector-title"
+        class={`inspector-title${loose ? '' : ' mono'}`}
+        tabIndex={-1}
+        ref={headingRef}
+      >
+        {group ? groupName(group) : prefix}
       </h2>
-      {group ? <p class="meta">{g.groupPages(group.count)}</p> : null}
+      {group ? (
+        <p class="meta">{loose ? g.otherPagesNote(prefix, group.count) : g.groupPages(group.count)}</p>
+      ) : null}
       <div class="inspector-actions">
-        <button type="button" class="button" onClick={() => onOpenGroup(prefix)}>
+        <button type="button" class="button" onClick={() => onOpenGroup(prefix, loose)}>
           {g.openGroup}
         </button>
-        <button type="button" class="button quiet" onClick={() => onGroupList(prefix)}>
+        <button type="button" class="button quiet" onClick={() => onGroupList(prefix, loose)}>
           {g.groupInList}
         </button>
       </div>
@@ -1385,10 +1663,10 @@ function GroupPeek({
                   <button
                     type="button"
                     class="button quiet small"
-                    aria-label={g.inspectName(other.prefix)}
+                    aria-label={g.inspectName(groupName(other))}
                     onClick={() => onShow(`g:${other.prefix}`)}
                   >
-                    {other.prefix}
+                    {groupName(other)}
                   </button>{' '}
                   <span class="meta">{g.linksCount(l.count)}</span>
                 </li>

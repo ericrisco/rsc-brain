@@ -4,7 +4,13 @@
 // the wiki comes as groups by the first part of the address, each opened on its own with `prefix`.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { GRAPH_KINDS, type GraphLink, type GraphPage, graphView } from '../../src/domain/wiki/graph.ts'
+import {
+  checkFilters,
+  GRAPH_KINDS,
+  type GraphLink,
+  type GraphPage,
+  graphView,
+} from '../../src/domain/wiki/graph.ts'
 
 const page = (address: string, extra: Partial<GraphPage> = {}): GraphPage => ({
   address,
@@ -152,10 +158,7 @@ describe('the graph of a wiki (G10)', () => {
     const whole = graphView(pages, [], { maxChars: 2000 })
     assert.equal(whole.mode, 'groups')
     assert.equal(whole.groups.length, 2)
-    // A group whose pages would not fit opens further, one part deeper (here a group a page).
-    const one = graphView(pages, [], { maxChars: 2000, prefix: 'a0' })
-    assert.equal(one.mode, 'groups')
-    assert.equal(one.groups.length, 20)
+    // A group whose pages would not fit and have no deeper part to split them by: too big.
     const tiny = graphView(pages, [], { maxChars: 200, prefix: 'a0' })
     assert.equal(tiny.mode, 'too-big')
     assert.equal(tiny.total, 20)
@@ -182,13 +185,12 @@ describe('the graph of a wiki (G10)', () => {
       [
         ['a/x', 2],
         ['a/y', 2],
-        ['a/z', 1],
       ],
     )
-    // The page at "a" itself is not a group: it is drawn beside them, linked to the group it links into.
+    // The page at "a" itself and "a/z" (nothing under it) are not groups: they are drawn beside them.
     assert.deepEqual(
       v.nodes.map((n) => n[0]),
-      ['a'],
+      ['a', 'a/z'],
     )
     assert.deepEqual(v.across, [[0, 'a/x', 1]])
     assert.deepEqual(v.groupEdges, [['a/x', 'a/y', 2]])
@@ -262,6 +264,98 @@ describe('the graph of a wiki (G10)', () => {
       ['o/c', 's/a'],
     )
     assert.deepEqual(small.edges, [[1, 0, GRAPH_KINDS.indexOf('depends-on')]])
+  })
+
+  it('pages or groups is decided on the unfiltered pages, also when a filter makes the answer small', () => {
+    // The reviewers' case: 1 800 pages of long titles do not fit as pages, so they come by groups; a filter
+    // that leaves 200 must not turn them into pages (every box would read 0).
+    const pages = Array.from({ length: 1800 }, (_, i) =>
+      page(`area${i % 5}/page-number-${String(i).padStart(5, '0')}`, {
+        title: `A reasonably long title for the page number with more words ${i}`,
+        type: i % 9 === 0 ? 'decision' : 'topic',
+        tags: ['alpha', 'beta'],
+      }),
+    )
+    const links = pages.slice(1).map((p, i) => link(p.address, pages[i]?.address ?? ''))
+    const all = graphView(pages, links, { maxChars: 256_000 })
+    assert.equal(all.mode, 'groups')
+    const f = graphView(pages, links, { maxChars: 256_000, filters: { type: 'decision' } })
+    assert.equal(f.mode, 'groups')
+    assert.equal(f.total, 200)
+    assert.deepEqual(
+      f.groups.map((g) => g.count),
+      [40, 40, 40, 40, 40],
+    )
+  })
+
+  it('too big is decided on the unfiltered pages too', () => {
+    const pages = ['x', 'y', 'z', 'w'].map((g, i) => page(`a/${g}/1`, { type: i ? 'topic' : 'decision' }))
+    // Unfiltered, "a" makes 4 groups (more than 3): too big, whatever a filter leaves (here one group).
+    const v = graphView(pages, [], { max: 3, prefix: 'a', filters: { type: 'decision' } })
+    assert.equal(v.mode, 'too-big')
+  })
+
+  it('a page with no deeper part is a page beside the groups, at the top and inside a group', () => {
+    const pages = [
+      page('eng/backend/a'),
+      page('eng/backend/b'),
+      page('eng/frontend/c'),
+      page('eng/note-1'),
+      page('eng/note-2'),
+      page('readme-1'),
+      page('sales/x'),
+    ]
+    const top = graphView(pages, [link('readme-1', 'sales/x')], { max: 3 })
+    assert.equal(top.mode, 'groups')
+    assert.deepEqual(
+      top.groups.map((g) => g.prefix),
+      ['eng', 'sales'],
+    )
+    assert.deepEqual(
+      top.nodes.map((n) => n[0]),
+      ['readme-1'],
+    )
+    assert.deepEqual(top.across, [[0, 'sales', 1]])
+    const eng = graphView(pages, [], { max: 3, prefix: 'eng' })
+    assert.equal(eng.mode, 'groups')
+    assert.deepEqual(
+      eng.groups.map((g) => [g.prefix, g.count]),
+      [
+        ['eng/backend', 2],
+        ['eng/frontend', 1],
+      ],
+    )
+    assert.deepEqual(
+      eng.nodes.map((n) => n[0]),
+      ['eng/note-1', 'eng/note-2'],
+    )
+  })
+
+  it('more than 50 such pages are gathered into one group of the other pages, opened with loose', () => {
+    const pages = [
+      ...Array.from({ length: 60 }, (_, i) => page(`eng/note-${i}`)),
+      ...Array.from({ length: 4 }, (_, i) => page(`eng/backend/s${i}`)),
+    ]
+    const v = graphView(pages, [], { max: 60, prefix: 'eng' })
+    assert.equal(v.mode, 'groups')
+    assert.deepEqual(v.nodes, [])
+    assert.deepEqual(
+      v.groups.map((g) => [g.prefix, g.count, g.loose ?? false]),
+      [
+        ['eng/backend', 4, false],
+        ['eng', 60, true],
+      ],
+    )
+    const loose = graphView(pages, [], { max: 60, prefix: 'eng', loose: true })
+    assert.equal(loose.mode, 'pages')
+    assert.equal(loose.total, 60)
+    assert.ok(loose.nodes.every((n) => n[0].startsWith('eng/note-')))
+  })
+
+  it('refuses a prefix, words or a tag longer than 200 characters', () => {
+    assert.throws(() => checkFilters({ prefix: 'a'.repeat(201) }), /200/)
+    assert.throws(() => checkFilters({ q: 'a'.repeat(201) }), /200/)
+    checkFilters({ prefix: 'a'.repeat(200) })
   })
 
   it('works out 5 000 pages in a blink', () => {

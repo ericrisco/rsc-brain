@@ -141,6 +141,30 @@ describe('the layout of the graph', () => {
     assert.ok(gx > 0, 'on the side of the page it links with')
   })
 
+  it('many groups on the rim, all pointing the same way, are spread evenly and never overlap', () => {
+    // A small cluster and 12 groups, every one linked to page 1: they would all pile up on its side.
+    const n = 2 + 12
+    const xy = new Float32Array(2 * n)
+    xy.set([-5, 0, 5, 0])
+    const role = new Uint8Array(n).fill(ROLE.rim)
+    role[0] = ROLE.free
+    role[1] = ROLE.free
+    const edges = new Uint32Array([0, 1, ...Array.from({ length: 12 }, (_, k) => [1, 2 + k]).flat()])
+    arrange(xy, role, edges)
+    let closest = Number.POSITIVE_INFINITY
+    for (let a = 2; a < n; a++)
+      for (let b = a + 1; b < n; b++)
+        closest = Math.min(
+          closest,
+          Math.hypot(
+            (xy[2 * a] as number) - (xy[2 * b] as number),
+            (xy[2 * a + 1] as number) - (xy[2 * b + 1] as number),
+          ),
+        )
+    // At least 60 apart: room for a box and its name at the zoom that fits them.
+    assert.ok(closest >= 60, `closest ${closest.toFixed(1)}`)
+  })
+
   it('runs in slices of a few milliseconds, so the worker can post frames between them', () => {
     const l = createLayout({ n: 2000, edges: sample(2000), seed: 9 })
     let calls = 0

@@ -512,6 +512,8 @@ export type PageListItem = {
 export type PageListQuery = {
   q?: string
   prefix?: string
+  // Only the pages at the level of `prefix` with no deeper part, as the graph gathers them.
+  loose?: boolean
   type?: string
   status?: string
   tag?: string
@@ -571,12 +573,26 @@ export async function listPages(
     return `$${params.length}`
   }
   const where = ['p.brain_id = $1']
-  if (o.q !== undefined) {
-    const like = p(`%${likeText(o.q)}%`)
+  // Words are trimmed, as the graph trims them; only spaces is no filter.
+  const words = o.q?.trim()
+  if (words) {
+    const like = p(`%${likeText(words)}%`)
     where.push(`(p.address ILIKE ${like} OR p.title ILIKE ${like})`)
   }
   if (o.prefix !== undefined)
     where.push(`(p.address = ${p(o.prefix)} OR p.address LIKE ${p(`${likeText(o.prefix)}/%`)})`)
+  if (o.loose) {
+    // The page at the prefix itself, or one part below it with no page that is not retired under it; every
+    // address with a page under it (each part of each address but the last) is worked out once, hashed.
+    const deeper = o.prefix === undefined ? '%/%' : `${likeText(o.prefix)}/%/%`
+    const self = o.prefix === undefined ? 'false' : `p.address = ${p(o.prefix)}`
+    where.push(
+      `(${self} OR (p.address NOT LIKE ${p(deeper)} AND p.address NOT IN (
+         SELECT array_to_string((string_to_array(c.address, '/'))[1:k], '/')
+           FROM pages c, generate_series(1, cardinality(string_to_array(c.address, '/')) - 1) k
+          WHERE c.brain_id = $1 AND c.status <> 'retired')))`,
+    )
+  }
   if (o.type !== undefined) where.push(`p.type = ${p(o.type)}`)
   if (o.status !== undefined) where.push(`p.status = ANY(${p(o.status.split(','))}::text[])`)
   if (o.tag !== undefined) where.push(`${p(o.tag)} = ANY(p.tags)`)

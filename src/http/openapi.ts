@@ -472,6 +472,8 @@ const HAND: Record<string, Op> = {
     query: {
       q: 'Part of the address or the title.',
       prefix: 'Only pages under this first part of the address.',
+      loose:
+        '1: only the pages at the level of prefix (the top without one) with no deeper part, as the graph gathers them.',
       type: 'Only this page type.',
       status:
         'Only these statuses: one or more of current, stale, superseded and retired, separated by commas.',
@@ -504,6 +506,8 @@ const HAND: Record<string, Op> = {
       'The graph of a wiki: a node a page and an edge a link, retired pages left out. Up to 2 000 pages it comes whole; above that, as groups one part of the address deeper; prefix opens one group (a group above 2 000 opens by groups again). The filters narrow what is counted and drawn, never whether it comes as pages or groups. Sent gzipped when big and accepted.',
     query: {
       prefix: 'Open this group: the pages whose address starts with it (one or more parts).',
+      loose:
+        '1 opens the pages gathered at this level (the group marked loose): pages with no deeper part of their own.',
       q: 'Only pages with these words in the title or the address.',
       type: 'Only this page type.',
       status: 'Only these statuses, separated by commas.',
@@ -533,16 +537,25 @@ const HAND: Record<string, Op> = {
         'In one group: [node, other group, links both ways].',
       ),
       groups: list(
-        obj({
-          prefix: s('First part of the address.'),
-          count: n('Pages in it.'),
-          types: {
-            type: 'object',
-            description: 'Pages in it by type.',
-            additionalProperties: { type: 'integer' },
+        obj(
+          {
+            prefix: s('The address the group is under (the level itself, "" at the top, for a loose group).'),
+            count: n('Pages in it.'),
+            types: {
+              type: 'object',
+              description: 'Pages in it by type.',
+              additionalProperties: { type: 'integer' },
+            },
+            loose: {
+              type: 'boolean',
+              enum: [true],
+              description:
+                'The pages of this level with no deeper part, gathered when they are more than 50 (open with loose=1).',
+            },
           },
-        }),
-        'The groups of the wiki; in one group, the other groups its pages link with.',
+          ['loose'],
+        ),
+        'The groups of the wiki; in one group, the other groups its pages link with. A page with no deeper part is a node beside the groups.',
       ),
       groupEdges: list(
         { type: 'array', prefixItems: [s('Group.'), s('Group.'), n('Links.')] },

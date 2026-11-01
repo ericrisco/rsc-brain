@@ -166,10 +166,19 @@ export const wikiChanged = (slug: string) => {
 }
 
 // The graph, whole or one group (G10); with filters, the counts of a graph drawn by groups.
-export const graphResource = (slug: string, group: string, filters: Record<string, string> = {}) => {
+// `loose`: the pages gathered at the level of `group` (the top without one).
+export const graphResource = (
+  slug: string,
+  group: string,
+  filters: Record<string, string> = {},
+  loose = false,
+) => {
   const f = Object.fromEntries(Object.entries(filters).filter(([, v]) => v))
-  return resource(key(slug, `graph:${group}:${JSON.stringify(f)}`), () =>
-    api.call<Answer>('wikiGraph', { path: { slug }, query: { prefix: group || undefined, ...f } }),
+  return resource(key(slug, `graph:${group}:${loose ? 'loose:' : ''}${JSON.stringify(f)}`), () =>
+    api.call<Answer>('wikiGraph', {
+      path: { slug },
+      query: { prefix: group || undefined, ...(loose ? { loose: '1' } : {}), ...f },
+    }),
   )
 }
 

@@ -32,7 +32,7 @@ function paint() {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   const drawn = renderer.paint(ctx)
-  if (drawn) scope.postMessage({ type: 'drawn', ...drawn, settled })
+  if (drawn) scope.postMessage({ type: 'drawn', id: current, ...drawn, settled })
 }
 function request() {
   if (frame || !canvas) return
@@ -42,6 +42,7 @@ function request() {
 }
 
 function layout(m: LayoutRequest) {
+  const start = performance.now()
   current = m.id
   settled = false
   // Only the pages with links feel the forces; the rest is placed around them when they are done.
@@ -73,7 +74,10 @@ function layout(m: LayoutRequest) {
     renderer.layout = xy
     request()
     const copy = xy.slice()
-    scope.postMessage({ type: 'positions', id: m.id, xy: copy, done }, [copy.buffer])
+    scope.postMessage(
+      { type: 'positions', id: m.id, xy: copy, done, ...(done ? { ms: performance.now() - start } : {}) },
+      [copy.buffer],
+    )
   }
   let last = performance.now()
   if (!m.reducedMotion && !l.done()) post(false)

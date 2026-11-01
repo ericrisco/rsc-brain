@@ -1,5 +1,6 @@
-// Spec B6 CA5, CA6 and CA7 (PR22, T034), in Chromium with the CPU slowed down four times through CDP (plan
-// §5.2: the bound CI keeps; the reference machine is measured locally). CA5: 300 pages are drawn within 3 s
+// Spec B6 CA5, CA6 and CA7 (PR22, T034), in Chromium with the page's CPU slowed down four times through CDP
+// (plan §5.2: the bound CI keeps; the reference machine is measured locally). CDP cannot slow a worker, so CA5
+// adds three times the layout worker's own time to what it measures. CA5: 300 pages are drawn within 3 s
 // of opening (median of five loads). CA6: with 5 000 pages the graph comes by groups, three of them open one
 // after the other, a page is focused and the list shown, and no task of the page lasts 200 ms or more.
 // CA7: with reduced motion the worker sends one settled picture and nothing is drawn at rest.
@@ -47,31 +48,49 @@ test.describe('the graph under load (CPU ×4)', () => {
     await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
     await page.addInitScript(WATCH_LONG_TASKS)
     await slowCpu(page)
-    // The time to the settled picture (the layout done and painted), not to its first, unsettled frame.
+    // The time to the settled picture (the layout done and painted), not to its first, unsettled frame. CDP
+    // slows the page only ("Operation is only supported for pages, not workers"): the layout's worker runs at
+    // full speed. So the bound is checked on an estimate that slows the worker too: the settled time plus three
+    // times the worker's own time (wall time, idle gaps included: it can only overstate).
     const times: number[] = []
+    const worker: number[] = []
     for (let i = 0; i < 5; i++) {
       await page.goto(GRAPH)
       await settled(page)
       times.push(
         await page.evaluate(() => performance.getEntriesByName('graph:settled')[0]?.startTime ?? Number.NaN),
       )
+      worker.push(Number(await page.locator('canvas.graph-canvas').getAttribute('data-layout-ms')))
     }
-    const median = [...times].sort((a, b) => a - b)[2] as number
-    report('CA5 graph:settled ms (CPU ×4)', times.map(Math.round).join(', '))
+    const estimate = times.map((t, i) => t + 3 * (worker[i] as number))
+    const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[2] as number
+    report('CA5 graph:settled ms (page CPU ×4, worker not slowed)', times.map(Math.round).join(', '))
+    report('CA5 worker layout ms (not slowed)', worker.join(', '))
+    report('CA5 settled estimate ms (page and worker ×4)', estimate.map(Math.round).join(', '))
     expect(times.every(Number.isFinite)).toBe(true)
-    expect(median).toBeLessThan(3000)
-    report('CA5 longest task ms (CPU ×4)', String(await longest(page)))
-    // The list: the pages drawn, and the retired ones on asking: all 300.
+    expect(worker.every((x) => Number.isFinite(x) && x > 0)).toBe(true)
+    expect(median(estimate)).toBeLessThan(3000)
+    report('CA5 longest task ms (page CPU ×4)', String(await longest(page)))
+    // The list: the pages drawn, and the retired ones on asking: all 300. Read once the caption has its number.
     await page.getByRole('button', { name: 'List' }).click()
     const caption = page.getByRole('table', { name: /Pages of the wiki/ }).getByRole('caption')
-    await expect(caption).toContainText(/of (\d+) pages/)
-    const drawn = Number(/of (\d+) pages/.exec((await caption.textContent()) ?? '')?.[1])
+    const count = async () =>
+      Number(/of (\d+) pages?/.exec((await caption.textContent()) ?? '')?.[1] ?? Number.NaN)
+    await expect.poll(count, { timeout: 30_000 }).toBeGreaterThan(0)
+    const drawn = await count()
     const status = page.getByLabel('Status', { exact: true })
-    if (!(await status.isVisible())) await page.getByText(/^Filters/).click()
+    if (!(await status.isVisible())) await page.locator('.graph-filters summary').click()
     await status.selectOption('retired')
-    await expect(caption).not.toContainText(`of ${drawn} pages`)
-    const retired = Number(/of (\d+) pages?/.exec((await caption.textContent()) ?? '')?.[1])
-    expect(drawn + retired).toBe(300)
+    await expect
+      .poll(
+        async () => {
+          const n = await count()
+          return n > 0 && n !== drawn
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(true)
+    expect(drawn + (await count())).toBe(300)
   })
 
   test('CA6: 5 000 pages come by groups, open one by one, and no task blocks the page 200 ms', async ({

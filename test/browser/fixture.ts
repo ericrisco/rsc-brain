@@ -29,7 +29,7 @@ export async function scenario(
   preset: Preset,
   states: States = {},
   // seeded: the brains' wiki is the seeded one of 300 or 5 000 pages (the graph, CA5 and CA6).
-  o: { mail?: boolean; seeded?: 300 | 5000 } = {},
+  o: { mail?: boolean; seeded?: 300 | 5000 | 'lumpy' } = {},
 ): Promise<Scenario> {
   const res = await fetch(`${baseURL}/__fixture/scenarios`, {
     method: 'POST',

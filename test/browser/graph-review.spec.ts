@@ -5,6 +5,11 @@
 import { expect, scenario, test } from './fixture.ts'
 
 const GRAPH = '/b/growth/wiki/graph'
+// The filters fold into their summary; a test that sets one opens them first.
+const openFilters = async (page: import('@playwright/test').Page) => {
+  const box = page.locator('.graph-filters')
+  if (!(await box.evaluate((d) => (d as HTMLDetailsElement).open))) await box.locator('summary').click()
+}
 const settled = (page: import('@playwright/test').Page) =>
   expect(page.locator('canvas.graph-canvas[data-settled]')).toHaveCount(1, { timeout: 20_000 })
 const inspectorOf = (page: import('@playwright/test').Page) =>
@@ -24,6 +29,7 @@ test('the list shows what the graph draws: retired pages only with the Retired s
   // The header and the table say the same number.
   expect(caption).toContain((await badge.textContent()) ?? 'none')
   for (const s of await table.locator('tbody .tag').allTextContents()) expect(s).not.toBe('Retired')
+  await openFilters(page)
   await page.getByLabel('Status', { exact: true }).selectOption('retired')
   await expect(table.locator('tbody .tag').first()).toHaveText('Retired')
   await page.getByLabel('Status', { exact: true }).selectOption('')
@@ -43,6 +49,7 @@ test('focus in the list keeps the filters: a tag leaves out the neighbours witho
   const table = page.getByRole('table', { name: 'Retention and its neighbours' })
   await expect(table.locator('tbody tr').nth(1)).toBeVisible()
   const all = await table.locator('tbody tr').count()
+  await openFilters(page)
   await page.getByLabel('Tag', { exact: true }).fill('q4')
   await page.getByLabel('Tag', { exact: true }).press('Enter')
   await page.getByLabel('Tag', { exact: true }).blur()
@@ -75,6 +82,7 @@ test('the keyboard lands somewhere after Focus, Leave focus, All groups and Clea
   await page.keyboard.press('Enter')
   await expect(page.locator('#graph-place')).toBeFocused()
   await expect(page.locator('#graph-place')).toHaveText('All groups')
+  await openFilters(page)
   await page.getByLabel('Type', { exact: true }).selectOption('decision')
   await page.getByRole('button', { name: 'Clear filters' }).focus()
   await page.keyboard.press('Enter')
@@ -110,6 +118,7 @@ test('by groups, a filter changes the count of the header and of each group', as
   await expect(badge).toContainText('in 12 groups')
   const before = await badge.textContent()
   const firstCount = await groups.locator('tbody tr td.num').first().textContent()
+  await openFilters(page)
   await page.getByLabel('Type', { exact: true }).selectOption('decision')
   await expect(badge).not.toHaveText(before ?? '')
   await expect(groups.locator('tbody tr td.num').first()).not.toHaveText(firstCount ?? '')
@@ -142,6 +151,7 @@ test('Escape closes the inspector opened from the list at once, and Enter does n
   await settled(page)
   const canvas = page.locator('canvas.graph-canvas')
   await canvas.focus()
+  await openFilters(page)
   await page.getByLabel('Words', { exact: true }).fill('retention')
   await settled(page)
   await canvas.focus()

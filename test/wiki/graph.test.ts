@@ -18,7 +18,7 @@ type Graph = {
   nodes: Node[]
   edges: [number, number, number][]
   across: [number, string, number][]
-  groups: { prefix: string; count: number; types: Record<string, number> }[]
+  groups: { prefix: string; count: number; types: Record<string, number>; loose?: true }[]
   groupEdges: [string, string, number][]
 }
 type Item = { address: string; title: string; type: string; status: string; in: number; out: number }
@@ -170,6 +170,9 @@ describe('the graph of a wiki (G10) and its list (G9)', { skip: skipPg }, () => 
       ['audience/retention', 'product/pricing'],
     )
     assert.equal((await list('?linkKind=contradicts')).total, 0)
+    // Words are trimmed, as the graph trims them.
+    assert.equal((await list('?q=%20retention%20')).total, (await list('?q=retention')).total)
+    assert.ok((await list('?q=retention')).total > 0)
     const bad = await w.call(eric.key, 'GET', '/v1/brains/gr/wiki/pages?linkKind=likes')
     assert.equal(bad.status, 400)
   })
@@ -309,6 +312,56 @@ describe('the graph of a wiki (G10) and its list (G9)', { skip: skipPg }, () => 
         assert.equal(plain.headers.get('content-encoding'), null, accept)
         assert.equal((plain.body as unknown as Graph).mode, 'pages', accept)
       }
+    })
+
+    it('a lumpy brain: loose pages beside the groups, many of them gathered and opened with loose', async () => {
+      await w.call(eric.key, 'POST', '/v1/brains', { slug: 'lumpy', purpose: 'Uneven.' })
+      const b = await w.db.one<{ id: string }>("SELECT id FROM brains WHERE slug = 'lumpy'")
+      // 2 101 pages: 2 001 under eng (1 941 of them in eng/backend, 60 loose notes in eng), and 100 top pages.
+      await w.db.query(
+        `INSERT INTO pages (id, brain_id, address, type, title, status, created_at, updated_at)
+         SELECT 'pg_l' || i, $1,
+                CASE WHEN i < 1941 THEN 'eng/backend/s-' || i WHEN i < 2001 THEN 'eng/note-' || i ELSE 'readme-' || i END,
+                'topic', 'Page ' || i, 'current', now(), now()
+           FROM generate_series(0, 2100) i`,
+        [b?.id],
+      )
+      await w.db.query(
+        'INSERT INTO page_addresses SELECT brain_id, address, id, now() FROM pages WHERE brain_id = $1',
+        [b?.id],
+      )
+      const top = await graph('', eric.key, 'lumpy')
+      assert.equal(top.mode, 'groups')
+      // 100 loose pages at the top: more than 50, gathered into one group of their own ("" is the top).
+      assert.deepEqual(
+        top.groups.map((g) => [g.prefix, g.count, g.loose ?? false]),
+        [
+          ['eng', 2001, false],
+          ['', 100, true],
+        ],
+      )
+      const eng = await graph('?prefix=eng', eric.key, 'lumpy')
+      assert.equal(eng.mode, 'groups')
+      assert.deepEqual(
+        eng.groups.map((g) => [g.prefix, g.count, g.loose ?? false]),
+        [
+          ['eng/backend', 1941, false],
+          ['eng', 60, true],
+        ],
+      )
+      const notes = await graph('?prefix=eng&loose=1', eric.key, 'lumpy')
+      assert.equal(notes.mode, 'pages')
+      assert.equal(notes.total, 60)
+      const readmes = await graph('?loose=1', eric.key, 'lumpy')
+      assert.equal(readmes.total, 100)
+      assert.equal((await w.call(eric.key, 'GET', '/v1/brains/lumpy/wiki/graph?loose=yes')).status, 400)
+      // The list shows the same gathered pages, by pages.
+      const t = performance.now()
+      assert.equal((await list('?prefix=eng&loose=1&limit=10', 'lumpy')).total, 60)
+      // Each address with a page under it is worked out once (hashed), not page by page.
+      assert.ok(performance.now() - t < 300, `${Math.round(performance.now() - t)} ms`)
+      assert.equal((await list('?loose=1&limit=10', 'lumpy')).total, 100)
+      assert.equal((await w.call(eric.key, 'GET', '/v1/brains/lumpy/wiki/pages?loose=2')).status, 400)
     })
 
     it('filters by link kind quickly on 5 000 pages', async () => {

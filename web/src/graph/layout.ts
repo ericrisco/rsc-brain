@@ -417,14 +417,20 @@ export function arrange(xy: Float32Array, role: Uint8Array, edges: Uint32Array):
   }
   if (!rim.length) return
   rim.sort((a, b) => a.angle - b.angle)
-  const radius = reach + 80
+  // Evenly spaced, in the order of their directions, turned so each sits as near its own as the others allow;
+  // the circle is wide enough to leave 80 between neighbours (a box and its name), and outside the cloud.
   const step = (Math.PI * 2) / rim.length
-  // Spread no closer than one step, keeping each as near its own direction as the others allow.
-  let last = Number.NEGATIVE_INFINITY
-  for (const r of rim) {
-    const angle = rim.length === 1 ? r.angle : Math.max(r.angle, last + Math.min(step, 0.5))
-    last = angle
+  const radius = Math.max(reach + 80, rim.length > 1 ? 80 / (2 * Math.sin(step / 2)) : 0)
+  let sx = 0
+  let sy = 0
+  rim.forEach((r, k) => {
+    sx += Math.cos(r.angle - k * step)
+    sy += Math.sin(r.angle - k * step)
+  })
+  const turn = sx === 0 && sy === 0 ? 0 : Math.atan2(sy, sx)
+  rim.forEach((r, k) => {
+    const angle = rim.length === 1 ? r.angle : turn + k * step
     xy[2 * r.i] = cx + radius * Math.cos(angle)
     xy[2 * r.i + 1] = cy + radius * Math.sin(angle)
-  }
+  })
 }

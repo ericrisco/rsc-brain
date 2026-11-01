@@ -4,13 +4,14 @@
 // stays whole whatever the size of the wiki). What the graph does, it does by keyboard: inspect, open the page,
 // focus at one or two hops (a table of the page and its neighbours, under the same filters), and, in a wiki
 // drawn by groups, a table of the groups to open one by one.
+import type { ComponentChildren } from 'preact'
 import { useState } from 'preact/hooks'
-import { type Filters, keyOf, linksOf, type Model } from '../../graph/model.ts'
+import { countKey, type Filters, keyOf, linksOf, type Model } from '../../graph/model.ts'
 import { T } from '../../text.ts'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
 import { pageHref, StatusTag } from './common.tsx'
 import { type PageRow, pagesResource } from './data.ts'
-import { DRAWN, type Target } from './Graph.tsx'
+import { groupName, type Target } from './Graph.tsx'
 
 const PER = 50
 const COLUMNS = ['title', 'address', 'type', 'status', 'in', 'out', 'updatedAt'] as const
@@ -22,8 +23,8 @@ export function GraphList({
   filters,
   visible,
   counts,
-  group,
-  sort,
+  countedTypes,
+  query,
   emptyWiki,
   focus,
   setSort,
@@ -37,23 +38,38 @@ export function GraphList({
   filters: Filters
   visible: Uint8Array | null
   counts: Map<string, number> | undefined
-  group: string
-  sort: string
+  countedTypes: Map<string, Record<string, number>> | undefined
+  // The list's query, the one the header counts with: filters, statuses drawn by default, group, sort.
+  query: Record<string, string>
   emptyWiki: boolean
-  focus: { index: number; hood: Map<number, number> } | null
+  focus: {
+    index: number
+    hood: Map<number, number>
+    via: Map<number, number>
+    nodes: Uint8Array
+  } | null
   setSort: (sort: string) => void
   onInspect: (t: Target) => void
   onFocus: (address: string, hops: 1 | 2) => void
-  onOpenGroup: (prefix: string) => void
+  onOpenGroup: (prefix: string, loose?: boolean) => void
   selected: string | null
 }) {
-  if (emptyWiki) return <Empty title={T.graph.noPagesYet}>{<p>{T.graph.emptyLead}</p>}</Empty>
+  const g = T.graph
+  if (emptyWiki)
+    return (
+      <Empty title={g.noPagesYet}>
+        <p>
+          {g.emptyListLead} <a href={`/b/${encodeURIComponent(slug)}/proposals`}>{g.proposals}</a>.
+        </p>
+      </Empty>
+    )
   return (
     <div class="graph-list">
       {model.mode === 'groups' ? (
         <GroupsTable
           model={model}
           counts={counts}
+          countedTypes={countedTypes}
           onInspect={onInspect}
           onOpenGroup={onOpenGroup}
           selected={selected}
@@ -73,8 +89,7 @@ export function GraphList({
         <PagesTable
           slug={slug}
           filters={filters}
-          group={group}
-          sort={sort}
+          query={query}
           setSort={setSort}
           onInspect={onInspect}
           onFocus={onFocus}
@@ -85,24 +100,52 @@ export function GraphList({
   )
 }
 
+// The buttons of a row: one Tab stop; the arrow keys (and Home, End) move between them.
+function RowActions({ label, children }: { label: string; children: ComponentChildren }) {
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return
+    const buttons = [...(e.currentTarget as HTMLElement).querySelectorAll('button')]
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
+    if (at < 0 || buttons.length < 2) return
+    e.preventDefault()
+    const last = buttons.length - 1
+    const next =
+      e.key === 'Home'
+        ? 0
+        : e.key === 'End'
+          ? last
+          : (at + (e.key === 'ArrowRight' ? 1 : -1) + buttons.length) % buttons.length
+    buttons[next]?.focus()
+  }
+  return (
+    <div role="toolbar" aria-label={label} class="row-actions" onKeyDown={onKeyDown}>
+      {children}
+    </div>
+  )
+}
+
 function GroupsTable({
   model,
   counts,
+  countedTypes,
   onInspect,
   onOpenGroup,
   selected,
 }: {
   model: Model
   counts: Map<string, number> | undefined
+  countedTypes: Map<string, Record<string, number>> | undefined
   onInspect: (t: Target) => void
-  onOpenGroup: (prefix: string) => void
+  onOpenGroup: (prefix: string, loose?: boolean) => void
   selected: string | null
 }) {
   const g = T.graph
   const rows = model.items.flatMap((it, i) => {
     if (it.kind !== 'group') return []
-    const n = counts ? (counts.get(it.prefix) ?? 0) : it.count
-    return n > 0 ? [{ it, i, n }] : []
+    const n = counts ? (counts.get(countKey(it)) ?? 0) : it.count
+    // Under a filter, the types the server counted under it.
+    const types = countedTypes ? (countedTypes.get(countKey(it)) ?? {}) : it.types
+    return n > 0 ? [{ it, i, n, types }] : []
   })
   return (
     <div class="table-wrap" data-scroll-x>
@@ -122,37 +165,41 @@ function GroupsTable({
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ it, i, n }) => {
+          {rows.map(({ it, i, n, types }) => {
             const links = linksOf(model, i).reduce((s, l) => s + l.count, 0)
+            const name = groupName(it, n)
             return (
-              <tr key={it.prefix} aria-current={selected === keyOf(it) ? 'true' : undefined}>
-                <th scope="row" class="mono">
-                  {it.prefix}
+              <tr key={countKey(it)} aria-current={selected === keyOf(it) ? 'true' : undefined}>
+                <th scope="row" class={it.loose ? undefined : 'mono'}>
+                  {name}
                 </th>
                 <td class="num">{n.toLocaleString('en-US')}</td>
                 <td>
-                  {Object.entries(it.types)
+                  {Object.entries(types)
                     .map(([t, c]) => `${T.wiki.typesPlural[t] ?? t} ${c}`)
                     .join(', ')}
                 </td>
                 <td class="num">{links.toLocaleString('en-US')}</td>
-                <td class="row-actions">
-                  <button
-                    type="button"
-                    class="button small"
-                    aria-label={g.openGroupName(it.prefix)}
-                    onClick={() => onOpenGroup(it.prefix)}
-                  >
-                    {g.openGroup}
-                  </button>
-                  <button
-                    type="button"
-                    class="button quiet small"
-                    aria-label={g.inspectName(it.prefix)}
-                    onClick={() => onInspect({ kind: 'group', prefix: it.prefix })}
-                  >
-                    {g.inspect}
-                  </button>
+                <td>
+                  <RowActions label={g.rowActions(name)}>
+                    <button
+                      type="button"
+                      class="button small"
+                      aria-label={g.openGroupName(name)}
+                      onClick={() => onOpenGroup(it.prefix, it.loose === true)}
+                    >
+                      {g.openGroup}
+                    </button>
+                    <button
+                      type="button"
+                      class="button quiet small"
+                      tabIndex={-1}
+                      aria-label={g.inspectName(name)}
+                      onClick={() => onInspect({ kind: 'group', prefix: it.prefix })}
+                    >
+                      {g.inspect}
+                    </button>
+                  </RowActions>
                 </td>
               </tr>
             )
@@ -174,7 +221,7 @@ function FocusTable({
 }: {
   slug: string
   model: Model
-  focus: { index: number; hood: Map<number, number> }
+  focus: { index: number; hood: Map<number, number>; via: Map<number, number>; nodes: Uint8Array }
   visible: Uint8Array | null
   onInspect: (t: Target) => void
   onFocus: (address: string, hops: 1 | 2) => void
@@ -196,6 +243,12 @@ function FocusTable({
         ? `${name(l.index)} ${g.arrow} ${kind} ${g.arrow} ${centre.title}`
         : `${centre.title} ${g.arrow} ${kind} ${g.arrow} ${name(l.index)}`
     direct.set(l.index, [...(direct.get(l.index) ?? []), line])
+  }
+  // A two-hop row says the neighbour it comes through (and when a filter hides that one).
+  const through = (i: number) => {
+    const by = focus.via.get(i)
+    if (by === undefined) return '—'
+    return focus.nodes[by] ? g.via(name(by)) : g.viaHidden(name(by))
   }
   // The same filters as the graph: a neighbour they hide is not listed either.
   const rows = [...focus.hood]
@@ -232,16 +285,18 @@ function FocusTable({
                   <td>{g.col.group}</td>
                   <td>—</td>
                   <td class="num">{hops}</td>
-                  <td>{direct.get(i)?.join('; ') ?? '—'}</td>
-                  <td class="row-actions">
-                    <button
-                      type="button"
-                      class="button quiet small"
-                      aria-label={g.inspectName(it.prefix)}
-                      onClick={() => onInspect({ kind: 'group', prefix: it.prefix })}
-                    >
-                      {g.inspect}
-                    </button>
+                  <td>{direct.get(i)?.join('; ') ?? through(i)}</td>
+                  <td>
+                    <RowActions label={g.rowActions(groupName(it))}>
+                      <button
+                        type="button"
+                        class="button quiet small"
+                        aria-label={g.inspectName(groupName(it))}
+                        onClick={() => onInspect({ kind: 'group', prefix: it.prefix })}
+                      >
+                        {g.inspect}
+                      </button>
+                    </RowActions>
                   </td>
                 </tr>
               )
@@ -256,27 +311,30 @@ function FocusTable({
                   <StatusTag status={it.status} />
                 </td>
                 <td class="num">{g.hop(hops)}</td>
-                <td>{hops === 0 ? '—' : (direct.get(i)?.join('; ') ?? '—')}</td>
-                <td class="row-actions">
-                  <button
-                    type="button"
-                    class="button quiet small"
-                    aria-label={g.inspectName(it.title)}
-                    onClick={() => onInspect({ kind: 'page', address: it.address })}
-                  >
-                    {g.inspect}
-                  </button>
-                  {hops > 0 ? (
+                <td>{hops === 0 ? '—' : (direct.get(i)?.join('; ') ?? through(i))}</td>
+                <td>
+                  <RowActions label={g.rowActions(it.title)}>
                     <button
                       type="button"
-                      class="button small"
-                      data-focus-for={it.address}
-                      aria-label={g.focusName(it.title)}
-                      onClick={() => onFocus(it.address, 1)}
+                      class="button quiet small"
+                      aria-label={g.inspectName(it.title)}
+                      onClick={() => onInspect({ kind: 'page', address: it.address })}
                     >
-                      {g.focus1}
+                      {g.inspect}
                     </button>
-                  ) : null}
+                    {hops > 0 && (model.degree[i] as number) > 0 ? (
+                      <button
+                        type="button"
+                        class="button small"
+                        tabIndex={-1}
+                        data-focus-for={it.address}
+                        aria-label={g.focusName(it.title)}
+                        onClick={() => onFocus(it.address, 1)}
+                      >
+                        {g.focus1}
+                      </button>
+                    ) : null}
+                  </RowActions>
                 </td>
               </tr>
             )
@@ -290,8 +348,7 @@ function FocusTable({
 function PagesTable({
   slug,
   filters,
-  group,
-  sort,
+  query,
   setSort,
   onInspect,
   onFocus,
@@ -299,16 +356,15 @@ function PagesTable({
 }: {
   slug: string
   filters: Filters
-  group: string
-  sort: string
+  // The pages the graph draws, unless a status says otherwise (Retired shows the retired ones).
+  query: Record<string, string>
   setSort: (sort: string) => void
   onInspect: (t: Target) => void
   onFocus: (address: string, hops: 1 | 2) => void
   selected: string | null
 }) {
   const g = T.graph
-  // The pages the graph draws, unless a status says otherwise (Retired shows the retired ones).
-  const query = { ...filters, status: filters.status || DRAWN, prefix: group, sort }
+  const sort = query.sort ?? ''
   const qkey = JSON.stringify(query)
   // The cursors of the pages already passed, to go back; a new query starts again from the first page.
   const [kept, setKept] = useState<{ key: string; cursors: string[] }>({ key: qkey, cursors: [] })
@@ -343,8 +399,18 @@ function PagesTable({
   }
   const from = trail.length * PER
   const filtering = Boolean(filters.q || filters.type || filters.status || filters.tag || filters.linkKind)
+  const paged = Boolean(data && (trail.length > 0 || data.next))
   return (
     <>
+      {paged ? (
+        <button
+          type="button"
+          class="skip-link"
+          onClick={() => document.getElementById('graph-pager')?.focus()}
+        >
+          {g.skipToPager}
+        </button>
+      ) : null}
       <div class="table-wrap" data-scroll-x>
         <table class="data-table" aria-busy={r.loading.value ? 'true' : undefined}>
           <caption>
@@ -376,26 +442,29 @@ function PagesTable({
                 <td class="num">{p.in}</td>
                 <td class="num">{p.out}</td>
                 <td class="nowrap">{p.updatedAt.slice(0, 10)}</td>
-                <td class="row-actions">
-                  <button
-                    type="button"
-                    class="button quiet small"
-                    aria-label={g.inspectName(p.title)}
-                    onClick={() => onInspect({ kind: 'page', address: p.address })}
-                  >
-                    {g.inspect}
-                  </button>
-                  {p.status !== 'retired' ? (
+                <td>
+                  <RowActions label={g.rowActions(p.title)}>
                     <button
                       type="button"
-                      class="button small"
-                      data-focus-for={p.address}
-                      aria-label={g.focusName(p.title)}
-                      onClick={() => onFocus(p.address, 1)}
+                      class="button quiet small"
+                      aria-label={g.inspectName(p.title)}
+                      onClick={() => onInspect({ kind: 'page', address: p.address })}
                     >
-                      {g.focus1}
+                      {g.inspect}
                     </button>
-                  ) : null}
+                    {p.status !== 'retired' && p.in + p.out > 0 ? (
+                      <button
+                        type="button"
+                        class="button small"
+                        tabIndex={-1}
+                        data-focus-for={p.address}
+                        aria-label={g.focusName(p.title)}
+                        onClick={() => onFocus(p.address, 1)}
+                      >
+                        {g.focus1}
+                      </button>
+                    ) : null}
+                  </RowActions>
                 </td>
               </tr>
             ))}
@@ -405,8 +474,8 @@ function PagesTable({
       {!data && r.loading.value ? <Skeleton rows={5} /> : null}
       {!data && r.error.value ? <ErrorState error={r.error.value} onRetry={() => void r.reload()} /> : null}
       {data && data.items.length === 0 ? <Empty title={filtering ? g.noRows : g.noPagesYet} /> : null}
-      {data && (trail.length > 0 || data.next) ? (
-        <nav class="pager" aria-label={g.pagesTable}>
+      {paged && data ? (
+        <nav class="pager" id="graph-pager" tabIndex={-1} aria-label={g.pager}>
           <button
             type="button"
             class="button quiet"

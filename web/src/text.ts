@@ -702,7 +702,6 @@ export const T = {
   // The journal (spec B6 «Journal», B1; PR20).
   graph: {
     title: 'Graph',
-    listTitle: 'Pages',
     lead: 'Every page of the wiki and how they link. Retired pages are not drawn; the list shows them with the Retired status.',
     views: 'Show as',
     graphView: 'Graph',
@@ -711,7 +710,6 @@ export const T = {
       shown === total ? plural(total, 'page') : `${fmt(shown)} of ${plural(total, 'page')}`,
     groupsCount: (pages: number, groups: number) => `${plural(pages, 'page')} in ${plural(groups, 'group')}`,
     filters: 'Filters',
-    filtersOn: (n: number) => (n ? `Filters · ${n} on` : 'Filters'),
     filterSearch: 'Filter the graph and the list',
     words: 'Words',
     wordsHint: 'In the title or the address.',
@@ -752,7 +750,7 @@ export const T = {
     openList: 'Open the list',
     emptyTitle: 'Nothing to draw yet',
     emptyLead:
-      'The graph draws the pages of this wiki that are not retired. Pages arrive when a curator approves a proposal.',
+      'The graph draws the pages of this wiki that are not retired. Pages arrive when agents propose them and a curator approves.',
     noPagesYet: 'No pages yet',
     canvasLabel: (n: number) => `Graph of ${plural(n, 'item')}`,
     canvasRole: 'graph',
@@ -830,6 +828,26 @@ export const T = {
     noRows: 'No pages match these filters.',
     hop: (n: number) => (n === 0 ? 'Focused' : plural(n, 'hop')),
     arrow: '→',
+    otherPages: (prefix: string) => (prefix ? `Other pages in ${prefix}` : 'Other pages'),
+    otherPagesCount: (prefix: string, n: number) =>
+      `${prefix ? `Other pages in ${prefix}` : 'Other pages'} (${fmt(n)})`,
+    otherPagesNote: (prefix: string, n: number) =>
+      `${plural(n, 'page')} ${prefix ? `in ${prefix}` : 'at the top of the wiki'} with no deeper part of the address, gathered here.`,
+    focusPlace: (title: string, hops: 1 | 2, pages: number) =>
+      `Focus: ${title} · ${hops === 2 ? '2 hops' : '1 hop'} · ${plural(pages, 'page')}`,
+    filtersSummary: (chips: string[]) => (chips.length ? `Filters · ${chips.join(' · ')}` : 'Filters'),
+    chip: (name: string, value: string) => `${name}: ${value}`,
+    via: (name: string) => `via ${name}`,
+    viaHidden: (name: string) => `via ${name} (hidden by filter)`,
+    orphans: (n: number) => `Pages with no links (${fmt(n)})`,
+    more: 'More',
+    less: 'Less',
+    skipToPager: 'Skip to the page buttons',
+    pager: 'Pages of the list',
+    emptyListLead: 'Pages arrive when agents propose them and a curator approves. New ones wait in',
+    proposals: 'Proposals',
+    rowActions: (name: string) => `Actions for ${name}`,
+    noFocusAlone: 'This page has no links, so there is nothing to focus on.',
   },
 
   journal: {

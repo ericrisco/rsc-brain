@@ -2740,7 +2740,12 @@ label.op-head:hover {
 }
 
 .graph-filters {
-  margin: 16px 0 0;
+  margin: 0;
+}
+
+/* Open, the filters take the whole row under the bar. */
+.graph-filters[open] {
+  flex-basis: 100%;
 }
 
 /* biome-ignore lint/style/noDescendingSpecificity: scoped to the graph; it never competes with the earlier rule */
@@ -2784,16 +2789,24 @@ label.op-head:hover {
   min-width: 0;
 }
 
+/* Over the picture, top right: the picture keeps the height. */
 .graph-tools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 4px;
+  padding: 2px;
+  background: var(--surface);
+  border-radius: var(--radius);
 }
 
 .graph-box {
   position: relative;
-  height: clamp(320px, 62vh, 680px);
+  /* The rest of the window under the bar, the filters and the tools: the picture starts above the fold. */
+  height: max(360px, calc(100dvh - var(--topbar) - 236px));
   background: var(--surface);
   border-radius: var(--radius);
   overflow: hidden;
@@ -3002,11 +3015,31 @@ label.op-head:hover {
 }
 
 .data-table .row-actions {
+  display: flex;
+  gap: 6px;
   white-space: nowrap;
 }
 
-.row-actions .button + .button {
-  margin-left: 6px;
+/* Out of sight until the keyboard reaches it: a way past a long table to its page buttons. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  font: inherit;
+}
+
+.skip-link:focus {
+  position: static;
+  margin-bottom: 8px;
+}
+
+.pager:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .sort {
@@ -3056,14 +3089,31 @@ label.op-head:hover {
     right: 0;
     bottom: 0;
     z-index: 30;
-    max-height: 50vh;
+    max-height: 30vh;
     border-radius: 12px 12px 0 0;
     box-shadow: 0 -8px 24px oklch(0 0 0 / 0.35);
   }
+
+  .graph-inspector[data-sheet="full"] {
+    max-height: 80vh;
+  }
+}
+
+/* Wide: the inspector is a column, never a sheet; nothing to grow. */
+@media (min-width: 1100px) {
+  .sheet-toggle {
+    display: none;
+  }
+}
+
+/* In focus, the focus bar takes its share of the window. */
+main:has(#graph-focus) .graph-box {
+  height: max(360px, calc(100dvh - var(--topbar) - 300px));
 }
 
 @media (max-width: 767px) {
-  .graph-box {
-    height: clamp(280px, 56vh, 520px);
+  .graph-box,
+  main:has(#graph-focus) .graph-box {
+    height: max(300px, calc(100dvh - var(--topbar) - 220px));
   }
 }

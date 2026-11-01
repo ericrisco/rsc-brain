@@ -39,6 +39,30 @@ export function seededData(g: ReturnType<typeof generate>): GraphData {
   }
 }
 
+// A lumpy wiki: 1 941 pages in eng/backend, 60 loose notes in eng, 100 loose pages at the top, 5 in sales, and
+// a chain of related links through each part (the shape that once turned single pages into one-page groups).
+export function lumpyData(): GraphData {
+  const page = (address: string, i: number): DataPage => ({
+    address,
+    title: `${address.split('/').at(-1)} page`,
+    type: i % 7 === 0 ? 'decision' : 'topic',
+    status: 'current',
+    tags: i % 3 === 0 ? ['core'] : [],
+    summary: `About ${address}.`,
+    updatedAt: new Date(Date.UTC(2026, 9, 1) + i * 1000).toISOString(),
+  })
+  const pages = [
+    ...Array.from({ length: 1941 }, (_, i) => page(`eng/backend/s-${i}`, i)),
+    ...Array.from({ length: 60 }, (_, i) => page(`eng/note-${i}`, i)),
+    ...Array.from({ length: 100 }, (_, i) => page(`readme-${i}`, i)),
+    ...Array.from({ length: 5 }, (_, i) => page(`sales/deal-${i}`, i)),
+  ]
+  const links = pages
+    .slice(1)
+    .map((p, i) => ({ from: (pages[i] as DataPage).address, to: p.address, kind: 'related' }))
+  return { pages, links }
+}
+
 export const merge = (a: GraphData, b: GraphData): GraphData => ({
   pages: [...a.pages, ...b.pages],
   links: [...a.links, ...b.links],
@@ -111,9 +135,25 @@ export function listPagesOf(d: GraphData, q: Q): Answer {
         kinded.add(l.from)
         kinded.add(l.to)
       }
-  const words = (q.get('q') ?? '').toLowerCase()
+  const words = (q.get('q') ?? '').trim().toLowerCase()
   const prefix = q.get('prefix')
   const tag = q.get('tag')
+  const loose = q.get('loose')
+  if (loose !== null && loose !== '1')
+    return invalid('"loose" is "1" or left out.', 'Send loose=1 to open the pages gathered at a level.')
+  // Addresses with a page that is not retired under them: not loose.
+  const parents = new Set(
+    drawn.size
+      ? [...drawn].flatMap((a) =>
+          a
+            .split('/')
+            .slice(0, -1)
+            .map((_, k, parts) => parts.slice(0, k + 1).join('/')),
+        )
+      : [],
+  )
+  const depth = prefix ? prefix.split('/').length : 0
+  const isLoose = (a: string) => a === prefix || (a.split('/').length === depth + 1 && !parents.has(a))
   const rows = d.pages
     .filter(
       (p) =>
@@ -122,6 +162,7 @@ export function listPagesOf(d: GraphData, q: Q): Answer {
         (!status || status.split(',').includes(p.status)) &&
         (!tag || p.tags.includes(tag)) &&
         (!prefix || p.address === prefix || p.address.startsWith(`${prefix}/`)) &&
+        (!loose || isLoose(p.address)) &&
         (!linkKind || kinded.has(p.address)),
     )
     .map((p) => ({
@@ -164,11 +205,14 @@ export function listPagesOf(d: GraphData, q: Q): Answer {
 // G10, by the server's own rules.
 export function graphOf(d: GraphData, q: Q): Answer {
   for (const k of q.keys())
-    if (!['prefix', 'q', 'type', 'status', 'tag', 'linkKind'].includes(k))
+    if (!['prefix', 'loose', 'q', 'type', 'status', 'tag', 'linkKind'].includes(k))
       return invalid(
         `"${k}" is not a parameter of the graph.`,
-        'Use prefix, q, type, status, tag or linkKind.',
+        'Use prefix, loose, q, type, status, tag or linkKind.',
       )
+  const loose = q.get('loose')
+  if (loose !== null && loose !== '1')
+    return invalid('"loose" is "1" or left out.', 'Send loose=1 to open the pages gathered at a level.')
   const prefix = q.get('prefix')
   if (prefix !== null && !/^[a-z0-9]+(-[a-z0-9]+)*(\/[a-z0-9]+(-[a-z0-9]+)*)*$/.test(prefix))
     return invalid(
@@ -188,6 +232,7 @@ export function graphOf(d: GraphData, q: Q): Answer {
       maxChars: MAX_REPLY_CHARS,
       filters,
       ...(prefix === null ? {} : { prefix }),
+      ...(loose ? { loose: true } : {}),
     }),
   }
 }

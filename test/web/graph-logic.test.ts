@@ -9,6 +9,7 @@ import {
   type Answer,
   areas,
   fit,
+  focusView,
   hit,
   hubs,
   keyOf,
@@ -178,6 +179,18 @@ describe('filters, the same as the list', () => {
     const v = visibility(m, { ...NO_FILTERS, linkKind: 'depends-on' })
     assert.deepEqual(Array.from(v.edges), [0, 0, 1])
   })
+  it('a link kind keeps a page whose partner of that kind another filter hides, as the server does', () => {
+    // a/one is related to a/two, a decision: by topic, a/two is hidden but a/one still has a related link.
+    assert.deepEqual(shown({ linkKind: 'related', type: 'topic' }), ['a/one'])
+    const v = visibility(m, { ...NO_FILTERS, linkKind: 'related', type: 'topic' })
+    assert.deepEqual(Array.from(v.edges), [0, 0, 0])
+  })
+  it('in one group, the pages the server says match a link kind (links out of the group carry no kind)', () => {
+    const one = modelOf(oneGroup)
+    const v = visibility(one, { ...NO_FILTERS, linkKind: 'depends-on' }, undefined, new Set(['a/two']))
+    assert.deepEqual(Array.from(v.nodes), [0, 1, 0])
+    assert.equal(v.pages, 1)
+  })
   it('an edge is drawn only when both its pages are', () => {
     const v = visibility(m, { ...NO_FILTERS, type: 'topic' })
     assert.deepEqual(Array.from(v.edges), [0, 0, 1])
@@ -206,8 +219,28 @@ describe('reading the picture', () => {
     const m = modelOf(pages)
     assert.deepEqual(Array.from(m.degree), [2, 2, 2, 0])
     const all = new Uint8Array([1, 1, 1, 1])
-    assert.deepEqual(hubs(m, all, 2), [0, 1])
-    assert.deepEqual(hubs(m, new Uint8Array([0, 1, 1, 1]), 5), [1, 2])
+    assert.deepEqual(hubs(m, all, 2), [0, 2])
+    assert.deepEqual(hubs(m, new Uint8Array([0, 1, 1, 1]), 5), [2, 1])
+  })
+  it('hubs: ties go to the page linked to most, then by title', () => {
+    // All three linked pages link with two and are linked to once: by title, One, Three, Two.
+    assert.deepEqual(hubs(modelOf(pages), new Uint8Array([1, 1, 1, 1]), 3), [0, 2, 1])
+    const m = modelOf({
+      ...pages,
+      nodes: [
+        ['p/b', 'B', 'topic', 'current', []],
+        ['p/a', 'A', 'topic', 'current', []],
+        ['p/c', 'C', 'topic', 'current', []],
+        ['p/d', 'D', 'topic', 'current', []],
+      ],
+      edges: [
+        [2, 0, 1],
+        [0, 3, 1],
+        [1, 3, 1],
+      ],
+    })
+    // B and D both link with two; D is linked to twice.
+    assert.deepEqual(hubs(m, new Uint8Array([1, 1, 1, 1]), 2), [3, 0])
   })
   it('roles: pages without links are parked, the boxes of other groups go on the rim', () => {
     assert.deepEqual(Array.from(roles(modelOf(pages))), [ROLE.free, ROLE.free, ROLE.free, ROLE.orphan])
@@ -283,6 +316,27 @@ describe('focus', () => {
       [2, 2],
     ])
     assert.deepEqual([...neighbourhood(m, 3, 2)], [[3, 0]])
+  })
+  it('focus with a filter: a hidden one-hop page still leads to its two-hop pages, by a faint line', () => {
+    // one → two → three, all linked in a chain from a/one; two is a decision, hidden by type.
+    const chain = modelOf({
+      ...pages,
+      edges: [
+        [0, 1, 1],
+        [1, 2, 0],
+      ],
+    })
+    const base = visibility(chain, { ...NO_FILTERS, type: 'topic' })
+    const f = focusView(chain, base, 0, 2)
+    assert.deepEqual(Array.from(f.nodes), [1, 0, 1, 0])
+    assert.equal(f.shown, 2)
+    // three is reached through two, which the filter hides: one line from the page in focus.
+    assert.deepEqual([...f.via], [[2, 1]])
+    assert.deepEqual(f.bridges, [[0, 2]])
+    assert.deepEqual(f.hiddenVia, new Set([1]))
+    const plain = focusView(chain, visibility(chain, NO_FILTERS), 0, 2)
+    assert.deepEqual(plain.bridges, [])
+    assert.deepEqual([...plain.via], [[2, 1]])
   })
   it('the links of an item, both ways, with their kind', () => {
     assert.deepEqual(linksOf(m, 0), [

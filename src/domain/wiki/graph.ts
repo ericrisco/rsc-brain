@@ -15,7 +15,9 @@ export const GRAPH_KINDS = ['mentions', ...LINK_KINDS] as const
 export type GraphPage = { address: string; title: string; type: string; status: string; tags: string[] }
 export type GraphLink = { from: string; to: string; kind: string }
 export type GraphNode = [address: string, title: string, type: string, status: string, tags: string[]]
-export type GraphGroup = { prefix: string; count: number; types: Record<string, number> }
+// `loose`: the pages that sit at this level with no deeper part, gathered when they are many (open the group
+// with `loose`); its prefix is the level's own ("" for the whole wiki).
+export type GraphGroup = { prefix: string; count: number; types: Record<string, number>; loose?: true }
 
 export type GraphView = {
   mode: 'pages' | 'groups' | 'too-big'
@@ -104,15 +106,20 @@ function groupsOf(pages: GraphPage[], keyOf: (address: string) => string | null)
 
 const fits = (v: GraphView, maxChars: number) => JSON.stringify(v).length <= maxChars
 
+// More pages than this sitting at one level with no deeper part are gathered into one group.
+export const LOOSE_MAX = 50
+
 // What the graph shows of a wiki: the pages of `prefix` (the whole wiki without one), or, when they are more
-// than `max` or would not fit, the groups one part of the address deeper, with any page that sits at the
-// prefix itself beside them. More groups than `max`: too big (the list has them all). The filters (the same as
-// the list's) narrow what is counted and drawn; whether it comes as pages or groups is decided by all pages, so
-// filtering never reshapes the picture.
+// than `max` or would not fit, the groups one part of the address deeper. A page with no deeper part (no
+// other page under it) is not a group: it is drawn beside the groups, or, when there are more than
+// LOOSE_MAX of them, they are gathered into one group of their own (`loose` opens it). More groups than `max`:
+// too big (the list has them all). Whether it comes as pages, groups or too big is decided once, on all the
+// pages at the prefix; the filters (the same as the list's) only narrow what is counted and drawn, so filtering
+// never reshapes the picture or empties it.
 export function graphView(
   allPages: GraphPage[],
   allLinks: GraphLink[],
-  o: { prefix?: string; max?: number; maxChars?: number; filters?: GraphFilters } = {},
+  o: { prefix?: string; max?: number; maxChars?: number; filters?: GraphFilters; loose?: boolean } = {},
 ): GraphView {
   const max = o.max ?? GRAPH_MAX_PAGES
   // The route passes the size of an answer (spec B5); without it nothing is too big.
@@ -123,39 +130,63 @@ export function graphView(
   const pages = allPages.filter((p) => p.status !== 'retired').sort((a, b) => byText(a.address, b.address))
   const known = new Set(pages.map((p) => p.address))
   const kindOf = new Map<string, number>(GRAPH_KINDS.map((k, i) => [k, i]))
-  let links = allLinks.filter(
+  const allDrawn = allLinks.filter(
     (l) => l.from !== l.to && known.has(l.from) && known.has(l.to) && kindOf.has(l.kind),
   )
+  // Addresses with another page under them: those are groups, not loose pages.
+  const parents = new Set<string>()
+  for (const p of pages) {
+    const parts = p.address.split('/')
+    for (let k = 1; k < parts.length; k++) parents.add(parts.slice(0, k).join('/'))
+  }
   const members = pages.filter((p) => under(prefix, p.address))
-  // The filters: words, type, statuses (a comma list), tag, and a link kind (pages with one, either way).
+  // A page at this level with nothing under it (or the page at the prefix itself).
+  const isLoose = (a: string) =>
+    a === prefix || (a.split('/').length === depth + 1 && !parents.has(a) && under(prefix, a))
+  const looseAll = members.filter((p) => isLoose(p.address))
+  const gathered = looseAll.length > Math.min(LOOSE_MAX, max)
+  const looseKey = prefix ?? ''
+  // The group an address is in at this level: its own (one part deeper), the gathered one, or none.
+  const groupOf = (a: string): string | null =>
+    !under(prefix, a) ? null : isLoose(a) ? (gathered ? looseKey : null) : keyAt(a, depth)
+
+  // The filters: words, type, statuses (a comma list), tag, and a link kind (pages with one, either way, to a
+  // page that exists and is not retired, whatever the filters do to that page).
   const q = f.q?.trim().toLowerCase() ?? ''
   const statuses = f.status ? f.status.split(',') : null
-  if (f.linkKind) links = links.filter((l) => l.kind === f.linkKind)
-  const kinded = new Set(links.flatMap((l) => [l.from, l.to]))
+  const kinded = f.linkKind
+    ? new Set(allDrawn.filter((l) => l.kind === f.linkKind).flatMap((l) => [l.from, l.to]))
+    : null
   const shown = (p: GraphPage) =>
     (!q || p.address.includes(q) || p.title.toLowerCase().includes(q)) &&
     (!f.type || p.type === f.type) &&
     (!statuses || statuses.includes(p.status)) &&
     (!f.tag || p.tags.includes(f.tag)) &&
-    (!f.linkKind || kinded.has(p.address))
-  const filtering = Boolean(q || f.type || statuses || f.tag || f.linkKind)
+    (!kinded || kinded.has(p.address))
+  const filtering = Boolean(q || f.type || statuses || f.tag || kinded)
   const kept = filtering ? pages.filter(shown) : pages
   const keptSet = new Set(kept.map((p) => p.address))
-  if (filtering) links = links.filter((l) => keptSet.has(l.from) && keptSet.has(l.to))
-  const inside = kept.filter((p) => under(prefix, p.address))
+  const links = allDrawn.filter(
+    (l) =>
+      (!f.linkKind || l.kind === f.linkKind) && (!filtering || (keptSet.has(l.from) && keptSet.has(l.to))),
+  )
   const empty = { kinds: GRAPH_KINDS, nodes: [], edges: [], across: [], groups: [], groupEdges: [] }
   const nodeOf = (p: GraphPage): GraphNode => [p.address, p.title, p.type, p.status, p.tags]
 
-  // [node, group, links both ways] for links between `nodes` and pages outside them, by `groupOf`.
-  const acrossOf = (index: Map<string, number>, groupOf: (address: string) => string | null) => {
+  // [node, group, links both ways] for links between `nodes` and pages outside them.
+  const acrossOf = (
+    index: Map<string, number>,
+    other: (address: string) => string | null,
+    ls: GraphLink[],
+  ) => {
     const across = new Map<string, number>()
-    for (const l of links) {
+    for (const l of ls) {
       const i = index.get(l.from)
       const j = index.get(l.to)
       if ((i === undefined) === (j === undefined)) continue
-      const other = groupOf(i === undefined ? l.from : l.to)
-      if (other === null) continue
-      const key = `${i ?? j} ${other}`
+      const g = other(i === undefined ? l.from : l.to)
+      if (g === null) continue
+      const key = `${i ?? j} ${g}`
       across.set(key, (across.get(key) ?? 0) + 1)
     }
     return [...across]
@@ -166,11 +197,12 @@ export function graphView(
       .sort((a, b) => a[0] - b[0] || byText(a[1], b[1]))
   }
 
-  const asPages = (): GraphView => {
-    const index = new Map(inside.map((p, i) => [p.address, i]))
+  // The pages drawn: of the prefix, or only its loose ones; links out go to the group they lead into.
+  const asPages = (from: GraphPage[], ls: GraphLink[], within: GraphPage[]): GraphView => {
+    const index = new Map(from.map((p, i) => [p.address, i]))
     const seen = new Set<string>()
     const edges: [number, number, number][] = []
-    for (const l of links) {
+    for (const l of ls) {
       const i = index.get(l.from)
       const j = index.get(l.to)
       if (i === undefined || j === undefined) continue
@@ -181,31 +213,32 @@ export function graphView(
       edges.push([i, j, k])
     }
     edges.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2])
-    const across = prefix === null ? [] : acrossOf(index, (a) => outer(prefix, a))
+    const outside = (a: string): string | null =>
+      index.has(a)
+        ? null
+        : o.loose
+          ? (groupOf(a) ?? (prefix === null ? null : outer(prefix, a)))
+          : prefix === null
+            ? null
+            : outer(prefix, a)
+    const across = prefix === null && !o.loose ? [] : acrossOf(index, outside, ls)
     const touched = new Set(across.map((x) => x[1]))
     return {
       ...empty,
       mode: 'pages',
       prefix,
-      total: inside.length,
-      nodes: inside.map(nodeOf),
+      total: from.length,
+      nodes: from.map(nodeOf),
       edges,
       across,
-      groups:
-        prefix === null
-          ? []
-          : groupsOf(kept, (a) => (under(prefix, a) ? null : outer(prefix, a))).filter((g) =>
-              touched.has(g.prefix),
-            ),
+      groups: groupsOf(within, outside).filter((g) => touched.has(g.prefix)),
     }
   }
 
-  const asGroups = (): GraphView => {
-    // A page at the prefix itself is not a group of its own: it is drawn beside the groups.
-    const loose = inside.filter((p) => p.address === prefix)
-    const groupOf = (a: string) => (a === prefix || !under(prefix, a) ? null : keyAt(a, depth))
+  const asGroups = (inside: GraphPage[], ls: GraphLink[]): GraphView => {
+    const loose = gathered ? [] : inside.filter((p) => isLoose(p.address))
     const between = new Map<string, number>()
-    for (const l of links) {
+    for (const l of ls) {
       const a = groupOf(l.from)
       const b = groupOf(l.to)
       if (a === null || b === null || a === b) continue
@@ -213,33 +246,49 @@ export function graphView(
       between.set(key, (between.get(key) ?? 0) + 1)
     }
     const index = new Map(loose.map((p, i) => [p.address, i]))
+    const groups = groupsOf(inside, (a) => (isLoose(a) ? null : keyAt(a, depth)))
+    // The gathered pages come last, as one group of their own.
+    const rest = inside.filter((p) => isLoose(p.address))
+    if (gathered && rest.length)
+      groups.push({ ...(groupsOf(rest, () => looseKey)[0] as GraphGroup), loose: true })
     return {
       ...empty,
       mode: 'groups',
       prefix,
       total: inside.length,
       nodes: loose.map(nodeOf),
-      across: acrossOf(index, groupOf),
-      groups: groupsOf(inside, groupOf),
+      across: acrossOf(index, groupOf, ls),
+      groups,
       groupEdges: [...between]
         .map(([key, n]): [string, string, number] => {
-          const [a, b] = key.split(' ') as [string, string]
-          return [a, b, n]
+          const at = key.indexOf(' ')
+          return [key.slice(0, at), key.slice(at + 1), n]
         })
         .sort((x, y) => byText(x[0], y[0]) || byText(x[1], y[1])),
     }
   }
 
-  const tooBig: GraphView = { ...empty, mode: 'too-big', prefix, total: inside.length }
-  if (members.length <= max) {
-    const v = asPages()
-    if (fits(v, maxChars)) return v
+  const keptMembers = filtering ? members.filter((p) => keptSet.has(p.address)) : members
+  const tooBig: GraphView = { ...empty, mode: 'too-big', prefix, total: keptMembers.length }
+  // The gathered loose pages, opened.
+  if (o.loose) {
+    const all = asPages(looseAll, allDrawn, pages)
+    if (looseAll.length > max || !fits(all, maxChars))
+      return { ...tooBig, total: looseAll.filter((p) => keptSet.has(p.address)).length }
+    return asPages(
+      looseAll.filter((p) => keptSet.has(p.address)),
+      links,
+      kept,
+    )
   }
-  // Groups: as many as the pages unfiltered would make (the picture keeps its shape under a filter).
-  const keys = new Set(members.filter((p) => p.address !== prefix).map((p) => keyAt(p.address, depth)))
-  if (keys.size > max) return tooBig
-  const g = asGroups()
-  return fits(g, maxChars) ? g : tooBig
+  // The shape, from all the pages at the prefix.
+  if (members.length <= max && fits(asPages(members, allDrawn, pages), maxChars))
+    return asPages(keptMembers, links, kept)
+  const keys = new Set(members.flatMap((p) => groupOf(p.address) ?? []))
+  // Nothing deeper to split by (every page sits at this level): too big; so are more groups than the limit.
+  if (!members.some((p) => !isLoose(p.address)) || keys.size > max) return tooBig
+  if (!fits(asGroups(members, allDrawn), maxChars)) return tooBig
+  return asGroups(keptMembers, links)
 }
 
 // Every page of a brain that is not retired, and every link between two of them with both ends resolved
@@ -281,7 +330,7 @@ export const PREFIX = /^[a-z0-9]+(-[a-z0-9]+)*(\/[a-z0-9]+(-[a-z0-9]+)*)*$/
 export async function wikiGraph(
   ctx: Ctx,
   slug: string,
-  o: GraphFilters & { prefix?: string; maxChars: number },
+  o: GraphFilters & { prefix?: string; loose?: boolean; maxChars: number },
 ): Promise<GraphView> {
   if (o.prefix !== undefined && !PREFIX.test(o.prefix))
     throw invalid(
@@ -291,6 +340,11 @@ export async function wikiGraph(
   checkFilters(o)
   const { brain } = await inBrain(ctx, { slug })
   const { pages, links } = await graphData(ctx.db, brain.id)
-  const { maxChars, prefix, ...filters } = o
-  return graphView(pages, links, { maxChars, filters, ...(prefix === undefined ? {} : { prefix }) })
+  const { maxChars, prefix, loose, ...filters } = o
+  return graphView(pages, links, {
+    maxChars,
+    filters,
+    ...(prefix === undefined ? {} : { prefix }),
+    ...(loose ? { loose } : {}),
+  })
 }

@@ -22,9 +22,18 @@ export type ToWorker =
   | { type: 'labels'; labels: string[] }
   | { type: 'state'; state: State }
 
-export type PositionsMessage = { type: 'positions'; id: number; xy: Float32Array; done: boolean }
+export type PositionsMessage = {
+  type: 'positions'
+  id: number
+  xy: Float32Array
+  done: boolean
+  // Once done: how long the worker took, wall time from the request (CA5 reads it: CDP cannot slow a worker).
+  ms?: number
+}
 export type DrawnMessage = {
   type: 'drawn'
+  // The layout this picture shows: a picture of an older one says nothing about the new one.
+  id: number
   view: View
   active: [number, number] | null
   // The layout this picture shows has settled.

@@ -111,6 +111,8 @@ export type Scene = {
   links: Uint32Array
   kinds: string[]
   labels: string[]
+  // Per item: free, parked without links, or on the rim (layout.ts ROLE).
+  role: Uint8Array
 }
 
 // What changes as the person looks.
@@ -135,6 +137,12 @@ export type State = {
   xy: Float32Array | null
   // Names worth showing first (the hubs), after the ones the person is on.
   hubs: number[]
+  // In focus: [page, two-hop item] pairs reached only through one-hop pages a filter hides (a faint line).
+  bridges: Uint32Array | null
+  // The caption over the row of pages without links ("" for none).
+  orphanLabel: string
+  // The height at the bottom of the canvas a sheet covers (a phone's inspector): fit leaves it out.
+  inset: number
 }
 
 export type Drawn = { view: View; active: [number, number] | null }
@@ -165,7 +173,7 @@ export class Renderer {
     const st = this.state
     const xy = st?.xy ?? this.layout
     if (!sc || !st || !xy || xy.length !== 2 * sc.n || st.width === 0 || st.height === 0) return null
-    const view = st.autoFit ? fit(xy, st.fit, st.width, st.height, 48) : st.view
+    const view = st.autoFit ? fit(xy, st.fit, st.width, Math.max(120, st.height - st.inset), 48) : st.view
     const { palette, dpr } = st
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, st.width, st.height)
@@ -179,7 +187,20 @@ export class Renderer {
       const r = base * grow(sc.degree[i] as number)
       return st.hop && st.hop[i] === 2 ? r * 0.8 : r
     }
-    const dim = (i: number) => sc.superseded[i] === 1
+    // Under the pointer: the item and its lines stand out, the rest is dimmed.
+    let lit: Uint8Array | null = null
+    if (st.hover >= 0 && st.nodes[st.hover]) {
+      lit = new Uint8Array(sc.n)
+      lit[st.hover] = 1
+      for (let e = 0; e < sc.kind.length; e++) {
+        if (!st.edges[e]) continue
+        const i = sc.edges[2 * e] as number
+        const j = sc.edges[2 * e + 1] as number
+        if (i === st.hover) lit[j] = 1
+        if (j === st.hover) lit[i] = 1
+      }
+    }
+    const dim = (i: number) => sc.superseded[i] === 1 || (lit !== null && !lit[i])
     // Everything is drawn in screen pixels: line widths and dashes stay the same at any zoom.
 
     if (st.hop && st.focus >= 0) {
@@ -209,7 +230,8 @@ export class Renderer {
           if (!st.edges[e] || sc.kind[e] !== k) continue
           const i = sc.edges[2 * e] as number
           const j = sc.edges[2 * e + 1] as number
-          if ((dim(i) || dim(j)) !== faint) continue
+          const off = lit ? i !== st.hover && j !== st.hover : dim(i) || dim(j)
+          if (off !== faint) continue
           const x0 = SX(i)
           const y0 = SY(i)
           const x1 = SX(j)
@@ -233,14 +255,18 @@ export class Renderer {
         ctx.lineWidth = k < 0 ? (sc.byGroups ? 3 : 0.8) : style.width
         ctx.strokeStyle = name === 'contradicts' ? palette.danger : palette.muted
         ctx.globalAlpha = faint
-          ? 0.2
-          : k < 0
-            ? sc.byGroups
-              ? 0.25
-              : 0.12
-            : name === 'contradicts'
-              ? 0.85
-              : 0.55
+          ? lit
+            ? 0.08
+            : 0.2
+          : lit
+            ? 0.95
+            : k < 0
+              ? sc.byGroups
+                ? 0.25
+                : 0.12
+              : name === 'contradicts'
+                ? 0.85
+                : 0.55
         ctx.stroke()
         if (heads.length) {
           ctx.setLineDash([])
@@ -271,10 +297,46 @@ export class Renderer {
     ctx.setLineDash([])
     ctx.globalAlpha = 1
 
+    // In focus with a filter: a faint dashed line to a two-hop page reached through a hidden one.
+    if (st.bridges?.length) {
+      ctx.beginPath()
+      for (let b = 0; b < st.bridges.length; b += 2) {
+        const i = st.bridges[b] as number
+        const j = st.bridges[b + 1] as number
+        ctx.moveTo(SX(i), SY(i))
+        ctx.lineTo(SX(j), SY(j))
+      }
+      ctx.setLineDash([3, 6])
+      ctx.lineWidth = 1
+      ctx.strokeStyle = palette.muted
+      ctx.globalAlpha = 0.45
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.globalAlpha = 1
+    }
+
+    // The caption over the row of pages without links.
+    if (st.orphanLabel && !st.xy) {
+      let x = Number.POSITIVE_INFINITY
+      let y = Number.POSITIVE_INFINITY
+      for (let i = 0; i < sc.n; i++)
+        if (st.nodes[i] && sc.role[i] === 1) {
+          x = Math.min(x, SX(i))
+          y = Math.min(y, SY(i))
+        }
+      if (Number.isFinite(x)) {
+        ctx.font = '12px ui-sans-serif, system-ui, sans-serif'
+        ctx.textBaseline = 'bottom'
+        ctx.fillStyle = palette.muted
+        ctx.fillText(st.orphanLabel, Math.max(4, x - base), y - base - 6)
+      }
+    }
+
     // Group boxes, sized by their pages.
     for (let i = 0; i < sc.n; i++) {
       if (!st.nodes[i] || !isGroup(i)) continue
       const r = boxR(i)
+      ctx.globalAlpha = lit && !lit[i] ? 0.35 : 1
       ctx.beginPath()
       ctx.roundRect(SX(i) - r, SY(i) - r, 2 * r, 2 * r, r * 0.3)
       ctx.fillStyle = palette.ground
@@ -285,6 +347,7 @@ export class Renderer {
       ctx.stroke()
       ctx.setLineDash([])
     }
+    ctx.globalAlpha = 1
 
     // Pages: one path per shape, filled (hollow at two hops), dimmed and struck when superseded.
     for (const [t, type] of SHAPES.entries()) {
@@ -299,7 +362,7 @@ export class Renderer {
             any = true
           }
           if (!any) continue
-          ctx.globalAlpha = faint ? 0.45 : 1
+          ctx.globalAlpha = faint ? (lit ? 0.25 : 0.45) : 1
           if (hollow) {
             ctx.lineWidth = 1.5
             ctx.strokeStyle = palette.text
@@ -316,7 +379,7 @@ export class Renderer {
     ctx.beginPath()
     let struck = false
     for (let i = 0; i < sc.pages; i++) {
-      if (!st.nodes[i] || !dim(i)) continue
+      if (!st.nodes[i] || sc.superseded[i] !== 1) continue
       const r = radius(i) * 1.5
       ctx.moveTo(SX(i) - r, SY(i) + r)
       ctx.lineTo(SX(i) + r, SY(i) - r)
@@ -342,6 +405,7 @@ export class Renderer {
     ring(st.active, 2, 7, palette.accent)
 
     this.names(ctx, st, sc, view, SX, SY, radius, isGroup, dim)
+    ctx.textBaseline = 'alphabetic'
     const a = st.active
     return { view, active: a >= 0 && st.nodes[a] ? [Math.round(SX(a)), Math.round(SY(a))] : null }
   }
@@ -400,15 +464,32 @@ export class Renderer {
         w = ctx.measureText(text).width
         this.widths.set(i, w)
       }
-      const x = SX(i) + radius(i) * (isGroup(i) ? 1 : 1.3) + 6
-      const y = SY(i)
-      if (x > st.width + 10 || x + w < -10 || y < -10 || y > st.height + 10) continue
+      const cx = SX(i)
+      const cy = SY(i)
+      if (cx < -10 || cx > st.width + 10 || cy < -10 || cy > st.height + 10) continue
+      const off = radius(i) * (isGroup(i) ? 1 : 1.3) + 6
+      // Right of the item, else left of it, else above, else below; always inside the canvas.
+      const inside = (x: number, y: number): [number, number] => [
+        Math.min(Math.max(4, x), st.width - w - 4),
+        Math.min(Math.max(10, y), st.height - 10),
+      ]
+      const spots: [number, number][] = [
+        inside(cx + off, cy),
+        inside(cx - off - w, cy),
+        inside(cx - w / 2, cy - off - 4),
+        inside(cx - w / 2, cy + off + 4),
+      ]
       const forced = must.includes(i)
-      if (!forced && overlaps(x - 2, y - 8, w + 4, 16)) continue
+      const spot =
+        spots.find(([x, y]) => !overlaps(x - 2, y - 8, w + 4, 16)) ?? (forced ? spots[0] : undefined)
+      if (!spot) continue
+      const [x, y] = spot
       placed.push(x - 2, y - 8, w + 4, 16)
-      ctx.lineWidth = 3
+      // A halo of the ground colour keeps the name readable over lines.
+      ctx.lineWidth = 4
+      ctx.lineJoin = 'round'
       ctx.strokeStyle = st.palette.ground
-      ctx.globalAlpha = dim(i) ? 0.7 : 1
+      ctx.globalAlpha = dim(i) ? 0.6 : 1
       ctx.strokeText(text, x, y)
       ctx.fillStyle = i === st.selected || i === st.active ? st.palette.accent : st.palette.text
       ctx.fillText(text, x, y)

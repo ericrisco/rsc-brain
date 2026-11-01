@@ -5,6 +5,11 @@
 import { expect, noSideScroll, scenario, test } from './fixture.ts'
 
 const GRAPH = '/b/growth/wiki/graph'
+// The filters fold into their summary; a test that sets one opens them first.
+const openFilters = async (page: import('@playwright/test').Page) => {
+  const box = page.locator('.graph-filters')
+  if (!(await box.evaluate((d) => (d as HTMLDetailsElement).open))) await box.locator('summary').click()
+}
 const settled = (page: import('@playwright/test').Page) =>
   expect(page.locator('canvas.graph-canvas[data-settled]')).toHaveCount(1, { timeout: 20_000 })
 
@@ -51,7 +56,7 @@ test.describe('the graph', () => {
     await page.goto(GRAPH)
     await settled(page)
     await page.getByRole('button', { name: 'List' }).click()
-    await expect(page.getByRole('heading', { level: 1, name: 'Pages' })).toBeVisible()
+    await expect(page.getByRole('table', { name: /Pages of the wiki/ })).toBeVisible()
     await page.getByRole('button', { name: 'Inspect Retention' }).click()
     const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
     await expect(inspector.getByRole('heading', { level: 2, name: 'Retention' })).toBeFocused()
@@ -78,6 +83,7 @@ test.describe('the graph', () => {
     await settled(page)
     const count = page.locator('.graph-place-row .tag')
     const all = await count.textContent()
+    await openFilters(page)
     await page.getByLabel('Type', { exact: true }).selectOption('decision')
     await expect(page).toHaveURL(/type=decision/)
     await expect(count).not.toHaveText(all ?? '')
@@ -151,6 +157,7 @@ test.describe('the list (CA5: everything the graph does, by keyboard)', () => {
     await page.getByRole('button', { name: 'Previous' }).click()
     await expect(table.getByRole('caption')).toContainText('1–50 of 282 pages')
     // Filtered the same way as the graph.
+    await openFilters(page)
     await page.getByLabel('Type', { exact: true }).selectOption('decision')
     await expect(table.getByRole('caption')).not.toContainText('of 282 pages')
     for (const cell of await table.locator('tbody tr td:nth-of-type(2)').allTextContents())

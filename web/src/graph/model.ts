@@ -11,7 +11,7 @@ export type Answer = {
   nodes: [address: string, title: string, type: string, status: string, tags: string[]][]
   edges: [number, number, number][]
   across: [number, string, number][]
-  groups: { prefix: string; count: number; types: Record<string, number> }[]
+  groups: { prefix: string; count: number; types: Record<string, number>; loose?: true }[]
   groupEdges: [string, string, number][]
 }
 
@@ -23,7 +23,14 @@ export type PageItem = {
   status: string
   tags: string[]
 }
-export type GroupItem = { kind: 'group'; prefix: string; count: number; types: Record<string, number> }
+export type GroupItem = {
+  kind: 'group'
+  prefix: string
+  count: number
+  types: Record<string, number>
+  // The pages of a level with no deeper part, gathered (opened with loose).
+  loose?: true
+}
 export type Item = PageItem | GroupItem
 
 export type Model = {
@@ -42,10 +49,14 @@ export type Model = {
   count: Uint32Array
   // Per item: how heavy it is in the layout (a group: its pages).
   weights: Float32Array
-  // Per item: how many other items it links with.
+  // Per item: how many other items it links with, and how many link to it.
   degree: Uint32Array
+  into: Uint32Array
   index: Map<string, number>
 }
+
+// How the server's counts name a group: the gathered pages of a level carry a "~" (their prefix is the level's).
+export const countKey = (g: { prefix: string; loose?: true }) => `${g.loose ? '~' : ''}${g.prefix}`
 
 export const keyOf = (i: { kind: 'page'; address: string } | { kind: 'group'; prefix: string }) =>
   i.kind === 'page' ? `p:${i.address}` : `g:${i.prefix}`
@@ -62,7 +73,15 @@ export function modelOf(a: Answer): Model {
         tags,
       }),
     ),
-    ...a.groups.map((g): GroupItem => ({ kind: 'group', prefix: g.prefix, count: g.count, types: g.types })),
+    ...a.groups.map(
+      (g): GroupItem => ({
+        kind: 'group',
+        prefix: g.prefix,
+        count: g.count,
+        types: g.types,
+        ...(g.loose ? { loose: true as const } : {}),
+      }),
+    ),
   ]
   const index = new Map(items.map((it, i) => [keyOf(it), i]))
   const pairs: number[] = []
@@ -89,12 +108,15 @@ export function modelOf(a: Answer): Model {
     counts.push(n)
   }
   const near = items.map(() => new Set<number>())
+  const from = items.map(() => new Set<number>())
   for (let e = 0; e < pairs.length; e += 2) {
+    if ((kinds[e / 2] as number) >= 0) from[pairs[e + 1] as number]?.add(pairs[e] as number)
     near[pairs[e] as number]?.add(pairs[e + 1] as number)
     near[pairs[e + 1] as number]?.add(pairs[e] as number)
   }
   return {
     degree: new Uint32Array(near.map((x) => x.size)),
+    into: new Uint32Array(from.map((x) => x.size)),
     mode: a.mode,
     prefix: a.prefix,
     total: a.total,
@@ -132,11 +154,18 @@ const KNOWN_KINDS = [
 ]
 
 // What is drawn under these filters, the list's own: a page that matches them all (statuses may be several,
-// comma separated); with a link kind, only links of that kind and only pages with one; an edge when both ends
-// are drawn. A link kind that does not exist filters nothing, as the list leaves it out. Groups are counted
-// by the server under the same filters (`counts`), and a group left with no page is not drawn. In one group,
-// the box of another group shows while a page drawn links to it.
-export function visibility(m: Model, f: Filters, counts?: Map<string, number>): Visibility {
+// comma separated); with a link kind, only links of that kind, and only pages with one to a page that exists,
+// whether or not that page is drawn (the server's rule); an edge when both ends are drawn. A link kind that
+// does not exist filters nothing, as the list leaves it out. In one group, links out of it carry no kind, so
+// the server says which pages have one (`matching`). Groups are counted by the server under the same filters
+// (`counts`), and a group left with no page is not drawn. In one group, the box of another group shows while a
+// page drawn links to it.
+export function visibility(
+  m: Model,
+  f: Filters,
+  counts?: Map<string, number>,
+  matching?: Set<string>,
+): Visibility {
   const n = m.items.length
   const nodes = new Uint8Array(n)
   const edges = new Uint8Array(m.kind.length)
@@ -144,12 +173,20 @@ export function visibility(m: Model, f: Filters, counts?: Map<string, number>): 
   const statuses = f.status ? f.status.split(',') : null
   const kind = f.linkKind && KNOWN_KINDS.includes(f.linkKind) ? m.kinds.indexOf(f.linkKind) : -2
   const byGroups = m.mode === 'groups'
+  // The pages with a link of the kind asked for, whatever the other filters do to the other end.
+  const kinded = new Uint8Array(n)
+  if (kind !== -2)
+    for (let e = 0; e < edges.length; e++)
+      if (m.kind[e] === kind) {
+        kinded[m.edges[2 * e] as number] = 1
+        kinded[m.edges[2 * e + 1] as number] = 1
+      }
   let pages = 0
   for (let i = 0; i < n; i++) {
     const it = m.items[i] as Item
     if (it.kind === 'group') {
       if (!byGroups) continue
-      const c = counts ? (counts.get(it.prefix) ?? 0) : it.count
+      const c = counts ? (counts.get(countKey(it)) ?? 0) : it.count
       if (c > 0) {
         nodes[i] = 1
         pages += c
@@ -160,11 +197,11 @@ export function visibility(m: Model, f: Filters, counts?: Map<string, number>): 
       (!f.type || it.type === f.type) &&
       (!statuses || statuses.includes(it.status)) &&
       (!f.tag || it.tags.includes(f.tag)) &&
-      (!q || it.address.includes(q) || it.title.toLowerCase().includes(q))
+      (!q || it.address.includes(q) || it.title.toLowerCase().includes(q)) &&
+      (kind === -2 || (matching ? matching.has(it.address) : kinded[i] === 1))
         ? 1
         : 0
   }
-  const linked = new Uint8Array(n)
   for (let e = 0; e < edges.length; e++) {
     const i = m.edges[2 * e] as number
     const j = m.edges[2 * e + 1] as number
@@ -182,10 +219,7 @@ export function visibility(m: Model, f: Filters, counts?: Map<string, number>): 
     if (!nodes[i] || !nodes[j]) continue
     if (kind !== -2 && k >= 0 && k !== kind) continue
     edges[e] = 1
-    linked[i] = 1
-    linked[j] = 1
   }
-  if (kind !== -2) for (let i = 0; i < m.pages; i++) if (!linked[i]) nodes[i] = 0
   let shown = 0
   for (let i = 0; i < n; i++) {
     shown += nodes[i] as number
@@ -194,11 +228,73 @@ export function visibility(m: Model, f: Filters, counts?: Map<string, number>): 
   return { nodes, edges, shown, pages }
 }
 
-// The `count` most linked items drawn, the most linked first (ties: the first one).
+export type Focused = Visibility & {
+  // How far each item is from the page in focus.
+  hood: Map<number, number>
+  // Per two-hop item: the one-hop item it is reached through (a drawn one when there is one).
+  via: Map<number, number>
+  // [page in focus, two-hop item] pairs reached only through one-hop pages the filters hide: a faint line.
+  bridges: [number, number][]
+  // The one-hop pages hidden by the filters that lead somewhere drawn.
+  hiddenVia: Set<number>
+}
+
+// Focus as drawn: the page and its neighbourhood at one or two hops, each as the filters say (the page in focus
+// always shows). A two-hop page reached only through hidden one-hop pages keeps a faint line to the middle.
+export function focusView(m: Model, base: Visibility, at: number, hops: 1 | 2): Focused {
+  const hood = neighbourhood(m, at, hops)
+  const nodes = new Uint8Array(base.nodes.length)
+  let shown = 0
+  let pages = 0
+  for (const [i] of hood) {
+    nodes[i] = i === at ? 1 : (base.nodes[i] as number)
+    shown += nodes[i] as number
+    if (i < m.pages) pages += nodes[i] as number
+  }
+  const edges = new Uint8Array(base.edges.length)
+  const via = new Map<number, number>()
+  for (let e = 0; e < edges.length; e++) {
+    const i = m.edges[2 * e] as number
+    const j = m.edges[2 * e + 1] as number
+    edges[e] = base.edges[e] && nodes[i] && nodes[j] ? 1 : 0
+    for (const [a, b] of [
+      [i, j],
+      [j, i],
+    ] as const) {
+      if (hood.get(a) !== 1 || hood.get(b) !== 2) continue
+      const now = via.get(b)
+      // A drawn one-hop page first, then the first by index.
+      if (now === undefined || (!nodes[now] && nodes[a]) || (!nodes[now] === !nodes[a] && a < now))
+        via.set(b, a)
+    }
+  }
+  const bridges: [number, number][] = []
+  const hiddenVia = new Set<number>()
+  for (const [b, a] of [...via].sort((x, y) => x[0] - y[0]))
+    if (nodes[b] && !nodes[a]) {
+      bridges.push([at, b])
+      hiddenVia.add(a)
+    }
+  return { nodes, edges, shown, pages, hood, via, bridges, hiddenVia }
+}
+
+// The `count` most linked items drawn, the most linked first; ties go to the one linked to most, then by name.
 export function hubs(m: Model, nodes: Uint8Array, count: number): number[] {
   const drawn: number[] = []
   for (let i = 0; i < nodes.length; i++) if (nodes[i] && (m.degree[i] as number) > 0) drawn.push(i)
-  return drawn.sort((a, b) => (m.degree[b] as number) - (m.degree[a] as number) || a - b).slice(0, count)
+  const name = (i: number) => {
+    const it = m.items[i] as Item
+    return it.kind === 'page' ? it.title : it.prefix
+  }
+  return drawn
+    .sort(
+      (a, b) =>
+        (m.degree[b] as number) - (m.degree[a] as number) ||
+        (m.into[b] as number) - (m.into[a] as number) ||
+        name(a).localeCompare(name(b)) ||
+        a - b,
+    )
+    .slice(0, count)
 }
 
 // Where each item goes once the forces are done (layout.ts ROLE): a page with no link is parked; in one

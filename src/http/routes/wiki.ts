@@ -49,6 +49,14 @@ function whole(v: string | null, name: string, min: number, max: number): number
   return n
 }
 
+// "loose=1": the pages gathered at a level (no deeper part of the address); anything else is a mistake.
+function looseOf(v: string | null): true | undefined {
+  if (v === null) return undefined
+  if (v !== '1')
+    throw invalid('"loose" is "1" or left out.', 'Send loose=1 to open the pages gathered at a level.')
+  return true
+}
+
 export const wikiRoutes: Route[] = [
   route('GET /v1/brains/:slug/wiki/map', async (r) => {
     const status = q(r.query.get('status'))
@@ -79,6 +87,7 @@ export const wikiRoutes: Route[] = [
       compact({
         q: q(r.query.get('q')),
         prefix: q(r.query.get('prefix')),
+        loose: looseOf(r.query.get('loose')),
         type: q(r.query.get('type')),
         status: q(r.query.get('status')),
         tag: q(r.query.get('tag')),
@@ -93,17 +102,19 @@ export const wikiRoutes: Route[] = [
   route('GET /v1/brains/:slug/wiki/graph', async (r) => {
     // The graph takes the list's filters only; anything else (a sort, a cursor) is a mistake worth saying.
     for (const k of r.query.keys())
-      if (!['prefix', 'q', 'type', 'status', 'tag', 'linkKind'].includes(k))
+      if (!['prefix', 'loose', 'q', 'type', 'status', 'tag', 'linkKind'].includes(k))
         throw invalid(
           `"${k}" is not a parameter of the graph.`,
-          'Use prefix, q, type, status, tag or linkKind.',
+          'Use prefix, loose, q, type, status, tag or linkKind.',
         )
+    const loose = looseOf(r.query.get('loose'))
     return {
       body: await wikiGraph(
         ctxOf(r),
         r.params.slug as string,
         compact({
           prefix: q(r.query.get('prefix')),
+          loose,
           q: q(r.query.get('q')),
           type: q(r.query.get('type')),
           status: q(r.query.get('status')),
