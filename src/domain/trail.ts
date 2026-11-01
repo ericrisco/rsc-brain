@@ -25,6 +25,8 @@ export async function track(
     label?: string | null
   },
 ): Promise<void> {
+  // During maintenance reads leave no trail, so the copy taken for an update stays current (spec B7 C12).
+  if (ctx.who.maintenance) return
   const ref = t.ref ?? (ctx.who.credential.kind === 'short' ? ctx.who.credential.ref : null)
   // The session is the one the key's writes in that brain go to (as sessionFor picks it, without
   // opening one): its newest explicit or bound session, else its implicit session of the day.

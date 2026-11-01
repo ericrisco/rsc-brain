@@ -141,9 +141,14 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     'providers[]': ['name', 'label', 'needs', 'source', 'last4', 'url', 'urlHidden', 'unreadable', 'model'],
   },
   'GET /v1/admin/system': {
-    '': ['version', 'startedAt', 'database', 'meaning', 'streams', 'mail'],
+    '': ['version', 'startedAt', 'database', 'meaning', 'streams', 'mail', 'disk', 'maintenance'],
     database: ['ok', 'migration'],
     streams: ['open', 'max'],
+    disk: ['backupsFree', 'databaseBytes'],
+  },
+  // B7 (C20): what an outside watcher reads; never the version.
+  'GET /v1/health': {
+    '': ['ok', 'database', 'maintenance'],
   },
   'PUT /v1/admin/branding/logo': {
     logo: ['url', 'updatedAt'],
@@ -697,6 +702,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       'GET /v1/connect': (await w.call(eric.key, 'GET', '/v1/connect')).body,
       'GET /v1/me/sessions': (await w.call(eric.key, 'GET', '/v1/me/sessions')).body,
       'GET /v1/branding': (await w.call(null, 'GET', '/v1/branding')).body,
+      'GET /v1/health': (await w.call(null, 'GET', '/v1/health')).body,
       ...(await doors()),
       ...(await people()),
       ...(await wiki(entryId)),

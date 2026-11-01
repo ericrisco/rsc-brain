@@ -42,6 +42,8 @@ export type PublicReq = {
   timings: EventTimings
   // When this process started serving (Admin › Backups & system).
   startedAt: Date
+  // The folder of the copies (RSC_BRAIN_BACKUPS), when one is set.
+  backups: string | null
 }
 export type Req = PublicReq & { who: Principal }
 // A stream the server keeps writing to (Server-Sent Events) until the client leaves or `end` is called.
@@ -78,15 +80,23 @@ export type Route = {
   maxBody?: number
   // Only the administration (web): checked before the body is read.
   admin?: boolean
+  // Not a write for the maintenance gate though its method is not GET (http/maintenance.ts): 'reads' changes
+  // nothing; 'own' applies the gate itself (the MCP endpoint, per tool). Unset: a write unless GET or HEAD.
+  maintenance?: 'reads' | 'own'
 }
 
 export function publicRoute(
   spec: string,
   handler: (r: PublicReq) => Promise<Reply>,
-  o: { beforeSetup?: boolean } = {},
+  o: { beforeSetup?: boolean; maintenance?: 'reads' } = {},
 ): Route {
   const r = route(spec, () => Promise.reject(new Error('a public route runs through `public`')))
-  return { ...r, public: handler, ...(o.beforeSetup ? { beforeSetup: true } : {}) }
+  return {
+    ...r,
+    public: handler,
+    ...(o.beforeSetup ? { beforeSetup: true } : {}),
+    ...(o.maintenance ? { maintenance: o.maintenance } : {}),
+  }
 }
 
 export function route(spec: string, handler: Handler): Route {

@@ -8,6 +8,7 @@ import { AppError, invalid } from '../core/errors.ts'
 import { VERSION } from '../core/version.ts'
 import { installation } from '../domain/installation.ts'
 import { CUT_HOW, head, MAX_REPLY_CHARS } from '../http/bounds.ts'
+import { isWrite, underMaintenance } from '../http/maintenance.ts'
 import { match, type PublicReq, type Reply, type Route } from '../http/router.ts'
 import { headerValue, NAMED_METHODS } from './headers.ts'
 import { INSTRUCTIONS, PROMPTS } from './instructions.ts'
@@ -30,11 +31,19 @@ class RpcError extends Error {
   code: number
   status: number
   data: unknown
-  constructor(status: number, code: number, message: string, data?: unknown) {
+  headers: Record<string, string>
+  constructor(
+    status: number,
+    code: number,
+    message: string,
+    data?: unknown,
+    headers: Record<string, string> = {},
+  ) {
     super(message)
     this.status = status
     this.code = code
     this.data = data
+    this.headers = headers
   }
 }
 
@@ -49,11 +58,30 @@ const raw = (status: number, body: unknown, headers: Record<string, string> = {}
   headers: { 'content-type': 'application/json; charset=utf-8', ...headers },
 })
 const failure = (id: unknown, e: RpcError) =>
-  raw(e.status, {
-    jsonrpc: '2.0',
-    id: id ?? null,
-    error: { code: e.code, message: e.message, ...(e.data ? { data: e.data } : {}) },
-  })
+  raw(
+    e.status,
+    {
+      jsonrpc: '2.0',
+      id: id ?? null,
+      error: { code: e.code, message: e.message, ...(e.data ? { data: e.data } : {}) },
+    },
+    e.headers,
+  )
+
+// A write while rsc-brain is under maintenance (spec B7 C12): 503 with Retry-After, said in JSON-RPC like the
+// rate limit, so an agent waits and sends it again.
+function refuseDuringMaintenance(r: PublicReq, who: Who): void {
+  if (!who.maintenance) return
+  const err = underMaintenance(who.maintenance, r.clock())
+  const e = err.body()
+  throw new RpcError(
+    503,
+    -32030,
+    `${e.code}: ${e.message} How to proceed: ${e.howToProceed}`,
+    e,
+    err.headers ?? {},
+  )
+}
 
 // The id of a request, when it is one a reply may carry (a string or a whole number).
 function idOf(body: unknown): string | number | null {
@@ -239,10 +267,11 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
       { jsonrpc: '2.0', error: { code: -32600, message: 'The MCP endpoint takes POST only.' } },
       { allow: 'POST' },
     )
+  // The endpoint applies the maintenance gate per tool call ('own'): reading tools keep answering.
   return [
-    { ...route('POST /mcp'), public: handler },
+    { ...route('POST /mcp'), public: handler, maintenance: 'own' },
     { ...route('GET /mcp'), public: notHere },
-    { ...route('DELETE /mcp'), public: notHere },
+    { ...route('DELETE /mcp'), public: notHere, maintenance: 'own' },
   ]
 }
 
@@ -348,6 +377,7 @@ async function callTool(
   }
   const why = allowed(tool, who)
   if (why) return toolError(`${why.code}: ${why.message} How to proceed: ${why.howToProceed}`)
+  if (tool.writes) refuseDuringMaintenance(r, who)
   const args = (params.arguments ?? {}) as Json
   if (typeof args !== 'object' || args === null || Array.isArray(args)) {
     return toolError(
@@ -365,6 +395,8 @@ async function callTool(
         'Check the arguments and try again.',
       )
     }
+    // A tool that reads but lands on a route that writes is still a write.
+    if (isWrite(found.route)) refuseDuringMaintenance(r, who)
     const reply = await found.route.handler({ ...r, params: found.params, query, body: call.body, who })
     const body = reply.body as Json
     return toolResult(body, idChars)

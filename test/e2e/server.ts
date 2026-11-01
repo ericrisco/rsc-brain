@@ -1,9 +1,11 @@
 // The real Brain for `npm run test:e2e` (plan §5.1, local lane): the handler of `rsc-brain serve` with the
 // built web, on a fresh PostgreSQL database that is not set up yet, with mail captured instead of sent.
 // A test reads the captured mail at /__e2e/mail (test-only; never part of the product).
+
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { dirname } from 'node:path'
+import { silentLog } from '../../src/core/log.ts'
 import { migrate } from '../../src/db/migrate.ts'
 import { createHandler } from '../../src/http/app.ts'
 import type { Message } from '../../src/mail/mail.ts'
@@ -41,7 +43,7 @@ const handler = createHandler({
       mails.push(m)
     },
   }),
-  log: () => {},
+  log: silentLog,
 })
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost')

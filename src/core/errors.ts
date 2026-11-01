@@ -21,6 +21,8 @@ export class AppError extends Error {
   headers?: Record<string, string>
   // Extra fields the caller needs (retryAfter seconds), sent in the error body.
   extra?: Record<string, unknown>
+  // Fields sent next to the error, at the top of the answer (retryAfter of maintenance, plan §3.1).
+  outer?: Record<string, unknown>
   constructor(status: number, code: string, message: string, howToProceed: string) {
     super(message)
     this.status = status

@@ -6,12 +6,15 @@ import { resealV1 } from '../auth/reseal.ts'
 import { readConfig } from '../config.ts'
 import { systemClock } from '../core/clock.ts'
 import { AppError } from '../core/errors.ts'
+import { failureFields, stdoutLog as log } from '../core/log.ts'
+import { VERSION } from '../core/version.ts'
 import { openPool } from '../db/db.ts'
 import { migrate } from '../db/migrate.ts'
 import { accountByEmail, createAccount } from '../domain/accounts.ts'
 import { companionSetup, setupDone } from '../domain/installation.ts'
 import { mintMainKey, mintPersonToken } from '../domain/keys.ts'
 import { newReset, resetLink } from '../domain/login.ts'
+import { type MaintenanceReason, maintenance, whenOpen } from '../domain/maintenance.ts'
 import { embedRound } from '../domain/meaning.ts'
 import { remindExpiringTokens } from '../domain/notices.ts'
 import { closeIdle } from '../domain/sessions.ts'
@@ -40,6 +43,11 @@ Usage:
                                                       RSC_BRAIN_TOKEN or a file (~/.config/rsc-brain/token)
   rsc-brain hook session-start --url U [--brain B]    Claude Code hook: the brain's context at the start
   rsc-brain hook stop --url U                         Claude Code hook: ask once for the session summary
+  rsc-brain maintenance on [--seconds N] [--reason R] refuse writes for N seconds (60 to 1800, default 1800);
+                                                      R is update, restore or manual (default manual)
+  rsc-brain maintenance off                           take writes again
+  rsc-brain maintenance status [--json]               whether writes are refused, until when and why
+  rsc-brain version                                   print the version of rsc-brain
   rsc-brain help                                      show this help
 
 Environment:
@@ -48,6 +56,7 @@ Environment:
   RSC_BRAIN_HOST           address to listen on (default 127.0.0.1)
   RSC_BRAIN_SECRET         installation secret (32+ characters) that seals second factors and mail
   RSC_BRAIN_TRUSTED_PROXIES  proxies whose X-Forwarded-Proto/-For are believed (comma separated)
+  RSC_BRAIN_BACKUPS        folder of the copies (its free space shows in Admin › Backups & system)
 `
 
 const out = (s: string) => process.stdout.write(s)
@@ -67,6 +76,11 @@ async function main(argv: string[]): Promise<number> {
     out(HELP)
     return 0
   }
+  if (cmd === 'version' || cmd === '--version') {
+    out(`${VERSION}\n`)
+    return 0
+  }
+  if (cmd === 'maintenance') return maintenanceCommand(sub, rest)
   if (cmd === 'bridge') return bridgeCommand([sub, ...rest].filter((x) => x !== undefined))
   if (cmd === 'hook') return hookCommand(sub, rest)
   if (cmd === 'migrate') {
@@ -82,7 +96,7 @@ async function main(argv: string[]): Promise<number> {
     await migrate(db)
     // What was sealed before purposes is sealed again, bound to its column (once; logged).
     const resealed = await resealV1(db, cfg.secret)
-    if (resealed) out(`Sealed ${resealed} stored secret(s) again in the current format.\n`)
+    if (resealed) log.info('resealed', { count: resealed })
     // Providers of meaning come from the environment, and from what the administration set in the web;
     // meaning search stays off until the administration turns it on there (spec B3).
     const meaning = providersFromEnv()
@@ -95,6 +109,8 @@ async function main(argv: string[]): Promise<number> {
         meaning,
         secret: cfg.secret,
         trustedProxies: cfg.trustedProxies,
+        backups: cfg.backups,
+        log,
       }),
     )
     await new Promise<void>((resolve, reject) => {
@@ -109,14 +125,18 @@ async function main(argv: string[]): Promise<number> {
       })
       server.listen(cfg.port, cfg.host, resolve)
     })
-    out(`rsc-brain listening on http://${cfg.host}:${cfg.port}\n`)
+    log.info('listening', { port: cfg.port })
     // Sessions idle for 24 hours close themselves (spec B1); listings also sweep before they answer.
     // The trail older than 90 days folds into counters (spec B3).
+    // During maintenance they all wait for the next round (spec B7 C12).
     const sweep = setInterval(() => {
-      closeIdle(db, systemClock()).catch(() => {})
-      foldTrail(db, systemClock()).catch(() => {})
-      // A week before a token ends, its person gets a mail (once).
-      remindExpiringTokens(db, systemClock, { secret: cfg.secret }).catch(() => {})
+      const failed = (err: unknown) => log.warn('sweep_failed', failureFields(err))
+      whenOpen(db, systemClock, async () => {
+        await closeIdle(db, systemClock()).catch(failed)
+        await foldTrail(db, systemClock()).catch(failed)
+        // A week before a token ends, its person gets a mail (once).
+        await remindExpiringTokens(db, systemClock, { secret: cfg.secret }).catch(failed)
+      }).catch(failed)
     }, 10 * 60_000)
     sweep.unref()
     // What has no vector yet is sent to the provider in batches, one run a minute at most.
@@ -124,14 +144,15 @@ async function main(argv: string[]): Promise<number> {
     const embed = setInterval(() => {
       if (embedding) return
       embedding = true
-      embedRound(db, meaning, systemClock)
-        .catch(() => {})
+      whenOpen(db, systemClock, () => embedRound(db, meaning, systemClock))
+        .catch((err: unknown) => log.warn('sweep_failed', failureFields(err)))
         .finally(() => {
           embedding = false
         })
     }, 60_000)
     embed.unref()
     const stop = () => {
+      log.info('stopping')
       server.close(() => {
         db.close().then(
           () => process.exit(0),
@@ -281,6 +302,73 @@ async function main(argv: string[]): Promise<number> {
   }
   process.stderr.write(`Unknown command "${argv.join(' ')}". Run "rsc-brain help" to see the commands.\n`)
   return 2
+}
+
+// Maintenance around an update or a restore (spec B7 C12): writes are refused until it is turned off or
+// expires on its own (30 minutes at most).
+async function maintenanceCommand(which: string | undefined, args: string[]): Promise<number> {
+  const usage = (why: string) => {
+    process.stderr.write(
+      `${why} Usage: rsc-brain maintenance on [--seconds 60..1800] [--reason update|restore|manual] | off | status [--json]\n`,
+    )
+    return 2
+  }
+  let values: { seconds?: string; reason?: string; json?: boolean }
+  try {
+    values = parseArgs({
+      args,
+      options: { seconds: { type: 'string' }, reason: { type: 'string' }, json: { type: 'boolean' } },
+      strict: true,
+    }).values
+  } catch (err) {
+    return usage(`${(err as Error).message}.`)
+  }
+  if (which !== 'on' && which !== 'off' && which !== 'status') return usage('Say on, off or status.')
+  const seconds = values.seconds === undefined ? undefined : Number(values.seconds)
+  const reason = (values.reason ?? 'manual') as MaintenanceReason
+  if (which === 'on') {
+    if (seconds !== undefined && !(Number.isInteger(seconds) && seconds >= 60 && seconds <= 1800))
+      return usage('--seconds is a whole number from 60 to 1800.')
+    if (!['update', 'restore', 'manual'].includes(reason))
+      return usage('--reason is update, restore or manual.')
+  }
+  return withDb(async (db) => {
+    await migrate(db)
+    if (which === 'on') {
+      const { until } = await maintenance.on(db, systemClock(), {
+        reason,
+        ...(seconds === undefined ? {} : { seconds }),
+      })
+      out(`Maintenance is on until ${until.toISOString()} (${reason}). Writes are refused; reads work.\n`)
+      return 0
+    }
+    if (which === 'off') {
+      await maintenance.off(db)
+      out('Maintenance is off. Writes are taken again.\n')
+      return 0
+    }
+    const now = systemClock()
+    const m = await maintenance.current(db, now)
+    const last = m ? null : await maintenance.last(db)
+    if (values.json) {
+      out(
+        `${JSON.stringify({
+          until: m ? m.until.toISOString() : null,
+          reason: m ? m.reason : null,
+          ...(last ? { expiredAt: last.until.toISOString() } : {}),
+        })}\n`,
+      )
+    } else if (m) {
+      out(`Maintenance is on until ${m.until.toISOString()} (${m.reason}). Writes are refused; reads work.\n`)
+    } else if (last) {
+      out(
+        `Maintenance is off. The last one (${last.reason}) expired at ${last.until.toISOString()} without being turned off.\n`,
+      )
+    } else {
+      out('Maintenance is off.\n')
+    }
+    return 0
+  })
 }
 
 // The bridge: a wrong option or a missing token stops it before the agent sends anything.

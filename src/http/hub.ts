@@ -10,7 +10,9 @@
 //
 // One installation is one process: one poller numbers. Several processes would each need their own
 // cursor over `seq`, and only one of them may number.
+
 import { AppError } from '../core/errors.ts'
+import { failureFields, type Log } from '../core/log.ts'
 import type { Db } from '../db/db.ts'
 import { type EventRow, eventsAfter, lastSeq, sequenceEvents } from '../domain/events.ts'
 
@@ -52,7 +54,7 @@ export type EventHub = {
 
 type Sub = { brainId: string; push: (rows: EventRow[]) => void }
 
-export function eventHub(db: Db, t: EventTimings, log: (line: string) => void): EventHub {
+export function eventHub(db: Db, t: EventTimings, log: Log): EventHub {
   const subs = new Set<Sub>()
   let cursor = 0
   let timer: ReturnType<typeof setInterval> | null = null
@@ -90,7 +92,7 @@ export function eventHub(db: Db, t: EventTimings, log: (line: string) => void): 
         if (mine) sub.push(mine)
       }
     } catch (err) {
-      log(`events: ${err instanceof Error ? err.message : String(err)}`)
+      log.warn('events_failed', failureFields(err))
     } finally {
       busy = false
     }

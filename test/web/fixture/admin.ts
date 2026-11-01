@@ -759,6 +759,8 @@ export const ADMIN_OPS: Record<string, Op> = {
           },
           streams: { open: 2, max: 200 },
           mail: { configured: f.mail !== null, lastFailureAt: failed?.at ?? null },
+          disk: { backupsFree: 41_000_000_000, databaseBytes: 52_000_000 },
+          maintenance: null,
         },
       }
     }),

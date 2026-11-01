@@ -4,6 +4,7 @@
 import { unauthorized } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
 import { clientOfKey } from '../domain/clients.ts'
+import { activeAt, type Maintenance } from '../domain/maintenance.ts'
 import { redact } from '../privacy/redact.ts'
 import type { Actor, CredentialKind, Role } from './can.ts'
 import { minRole } from './can.ts'
@@ -38,6 +39,9 @@ export type Principal = {
   // The client making this request, as the journal names it (domain/clients.ts): the web, the agent of a
   // short key, the app of a connection, or the program behind this request. Kept with what it writes.
   client?: string | null
+  // The maintenance under way, read with the key (no extra query): writes are refused while it lasts, and
+  // reads leave no trail (spec B7 C12).
+  maintenance?: Maintenance | null
 }
 
 export const actorOf = (p: Principal): Actor => ({
@@ -128,6 +132,7 @@ export async function resolveKey(
   const r = await db.one(
     `SELECT c.*, a.kind AS a_kind, a.name AS a_name, a.email, a.is_admin, a.can_create_brains, a.can_invite,
             a.status, p.revoked_at AS p_revoked_at, p.expires_at AS p_expires_at, i.key_epoch, i.public_url, i.rate_limit,
+            i.maintenance_until, i.maintenance_reason,
             g.revoked_at AS g_revoked_at, g.last_used_at AS g_last_used_at, g.expires_max AS g_expires_max,
             g.client_name AS g_client_name
        FROM credentials c JOIN accounts a ON a.id = c.account_id
@@ -165,19 +170,21 @@ export async function resolveKey(
     )
   }
   // Last use and client, at most once a minute; a web session lives 14 days from its last use, and a
-  // connection is in use while its key is.
-  if (r.kind === 'app') {
+  // connection is in use while its key is. Not during maintenance: reads then write nothing (C12).
+  const maintenance = activeAt(r, now)
+  if (r.kind === 'app' && !maintenance) {
     await db.query(
       "UPDATE oauth_grants SET last_used_at = $2 WHERE id = $1 AND last_used_at < $2::timestamptz - interval '60 seconds'",
       [r.grant_id, now],
     )
   }
-  await db.query(
-    `UPDATE credentials SET last_used_at = $2, last_client = coalesce($3, last_client),
+  if (!maintenance)
+    await db.query(
+      `UPDATE credentials SET last_used_at = $2, last_client = coalesce($3, last_client),
             expires_at = CASE WHEN kind = 'web' THEN $2::timestamptz + make_interval(days => $4) ELSE expires_at END
       WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < $2::timestamptz - interval '60 seconds')`,
-    [r.id, now, conn?.userAgent ? redact(conn.userAgent).text.slice(0, 200) : null, WEB_SESSION_DAYS],
-  )
+      [r.id, now, conn?.userAgent ? redact(conn.userAgent).text.slice(0, 200) : null, WEB_SESSION_DAYS],
+    )
   return {
     accountId: String(r.account_id),
     kind: r.a_kind as 'person' | 'service',
@@ -212,6 +219,7 @@ export async function resolveKey(
       program: conn?.userAgent || r.last_client,
       name: r.name,
     }),
+    maintenance,
   }
 }
 

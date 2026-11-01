@@ -66,6 +66,8 @@ export async function closeIdle(db: Db, now: Date): Promise<number> {
     const rows = await tx.query(
       `UPDATE sessions SET status = 'closed_no_summary', closed_at = $1
         WHERE status = 'open' AND last_activity_at <= $1::timestamptz - interval '24 hours'
+          -- Not during maintenance (spec B7 C12): the sweep waits for the next round.
+          AND NOT EXISTS (SELECT 1 FROM installation WHERE maintenance_until > $1)
         RETURNING id, brain_id`,
       [now],
     )

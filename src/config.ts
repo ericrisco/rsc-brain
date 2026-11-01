@@ -9,6 +9,8 @@ export type Config = {
   secret: string | undefined
   // Proxies in front of Brain whose X-Forwarded-Proto / X-Forwarded-For are believed.
   trustedProxies: string[]
+  // The folder of the copies (in the container, /backups); unset, nothing is said about its free space.
+  backups: string | undefined
 }
 
 export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -42,5 +44,6 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
+    backups: env.RSC_BRAIN_BACKUPS || undefined,
   }
 }

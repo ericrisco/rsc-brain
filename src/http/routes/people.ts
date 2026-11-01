@@ -65,9 +65,12 @@ export const peopleRoutes: Route[] = [
     return { body: { revoked: r.params.id } }
   }),
   // The invitation page: the token travels in the body, never in an address that logs keep.
-  publicRoute('POST /v1/invitations/look', async (r) => ({
-    body: { invitation: await lookInvitation(r.db, r.clock, obj(r.body).token) },
-  })),
+  publicRoute(
+    'POST /v1/invitations/look',
+    async (r) => ({ body: { invitation: await lookInvitation(r.db, r.clock, obj(r.body).token) } }),
+    // It only reads the invitation: the maintenance gate lets it through.
+    { maintenance: 'reads' },
+  ),
   publicRoute('POST /v1/invitations/accept', async (r) => {
     fromWeb(r)
     const b = obj(r.body)

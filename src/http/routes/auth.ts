@@ -106,9 +106,13 @@ export const authRoutes: Route[] = [
     }
   }),
   // The token travels in the body, never in the address (it would land in logs).
-  publicRoute('POST /v1/auth/reset/look', async (r) => ({
-    body: await lookReset(r.db, r.clock, obj(r.body).token),
-  })),
+  publicRoute(
+    'POST /v1/auth/reset/look',
+    async (r) => ({ body: await lookReset(r.db, r.clock, obj(r.body).token) }),
+    {
+      maintenance: 'reads',
+    },
+  ),
   publicRoute('POST /v1/auth/reset/confirm', async (r) => {
     const b = obj(r.body)
     await confirmReset(r.db, r.clock, r.conn, { token: b.token, password: b.password })

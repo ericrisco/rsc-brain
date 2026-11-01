@@ -51,7 +51,11 @@ export const brainRoutes: Route[] = [
     await unlinkRepo(ctxOf(r), r.params.slug as string, obj(r.body).repo)
     return { body: { unlinked: true } }
   }),
-  route('POST /v1/resolve', async (r) => ({ body: await resolveRepo(ctxOf(r), obj(r.body).repos) })),
+  // It only looks the repositories up: the maintenance gate lets it through.
+  {
+    ...route('POST /v1/resolve', async (r) => ({ body: await resolveRepo(ctxOf(r), obj(r.body).repos) })),
+    maintenance: 'reads',
+  },
   route('DELETE /v1/brains/:slug', async (r) => {
     await deleteBrain(ctxOf(r), r.params.slug as string, str(obj(r.body), 'confirm') ?? '')
     return { body: { deleted: r.params.slug } }

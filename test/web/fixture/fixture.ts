@@ -3315,7 +3315,8 @@ export async function startFixture(
         })
         return res.end()
       }
-      if (url.pathname === '/v1/health') return send(res, { status: 200, body: { ok: true } })
+      if (url.pathname === '/v1/health')
+        return send(res, { status: 200, body: { ok: true, database: 'ok', maintenance: false } })
 
       const sid = String(req.headers['x-fixture-scenario'] ?? c.fixture_scenario ?? '')
       const s = scenarios.get(sid) ?? fallback
