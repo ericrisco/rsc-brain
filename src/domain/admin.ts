@@ -23,7 +23,9 @@ export async function listAccounts(ctx: Ctx) {
   const rows = await ctx.db.query(
     `SELECT a.*, (SELECT max(last_used_at) FROM credentials c WHERE c.account_id = a.id) AS last_seen,
             (SELECT count(*)::int FROM credentials c WHERE c.account_id = a.id AND c.kind = 'main' AND c.revoked_at IS NULL) AS main_keys,
-            (SELECT count(*)::int FROM memberships m WHERE m.account_id = a.id) AS brains
+            (SELECT count(*)::int FROM memberships m WHERE m.account_id = a.id) AS brains,
+            (SELECT coalesce(json_agg(json_build_object('slug', b.slug, 'name', b.name, 'role', m.role) ORDER BY b.slug), '[]')
+               FROM memberships m JOIN brains b ON b.id = m.brain_id WHERE m.account_id = a.id) AS roles
        FROM accounts a ORDER BY a.kind, lower(a.name)`,
   )
   return rows.map((a) => ({
@@ -37,6 +39,8 @@ export async function listAccounts(ctx: Ctx) {
     status: a.status === 'active' ? 'active' : 'removed',
     secondFactor: a.totp_secret != null,
     brains: Number(a.brains),
+    // Its role in each brain: the administration sees the brains' names, never their content.
+    roles: a.roles as Array<{ slug: string; name: string; role: Role }>,
     ...(a.kind === 'service' ? { mainKeys: Number(a.main_keys) } : {}),
     lastSeenAt: a.last_seen == null ? null : (a.last_seen as Date).toISOString(),
     createdAt: (a.created_at as Date).toISOString(),
@@ -325,7 +329,7 @@ export async function newMainKey(ctx: Ctx, serviceId: string, name: unknown): Pr
       serviceId,
     ])
     if (!a) throw notFound('service account')
-    if (a.status !== 'active') throw invalid('This service account was removed.', 'Reactivate it first.')
+    if (a.status !== 'active') throw invalid('This service account is deactivated.', 'Reactivate it first.')
     const open = await db.one<{ n: number }>(
       "SELECT count(*)::int AS n FROM credentials WHERE account_id = $1 AND kind = 'main' AND revoked_at IS NULL",
       [serviceId],
@@ -349,7 +353,11 @@ export async function accountKeys(ctx: Ctx, accountId: string) {
   const a = await ctx.db.one('SELECT id FROM accounts WHERE id = $1', [accountId])
   if (!a) throw notFound('account')
   const rows = await ctx.db.query(
-    `SELECT c.*, (SELECT count(*)::int FROM credentials s WHERE s.parent_id = c.id AND s.revoked_at IS NULL AND s.expires_at > $2) AS live_short
+    `SELECT c.*, (SELECT count(*)::int FROM credentials s WHERE s.parent_id = c.id AND s.revoked_at IS NULL AND s.expires_at > $2) AS live_short,
+            (SELECT coalesce(array_agg(x.ref ORDER BY x.ref), '{}') FROM (
+               SELECT DISTINCT s.ref FROM credentials s
+                WHERE s.parent_id = c.id AND s.revoked_at IS NULL AND s.expires_at > $2 AND s.ref IS NOT NULL
+                ORDER BY s.ref LIMIT 20) x) AS live_refs
        FROM credentials c WHERE c.account_id = $1 AND c.kind IN ('token', 'main')
       ORDER BY c.created_at DESC LIMIT 200`,
     [accountId, ctx.clock()],
@@ -375,7 +383,10 @@ export function keyView(k: Row, now: Date) {
     lastUsedAt: k.last_used_at == null ? null : (k.last_used_at as Date).toISOString(),
     lastClient: k.last_client == null ? null : String(k.last_client),
     status: ended ?? 'active',
-    ...(k.kind === 'main' ? { liveShortKeys: Number(k.live_short ?? 0) } : {}),
+    // The references its live short keys carry (stored redacted), so the administration sees what runs.
+    ...(k.kind === 'main'
+      ? { liveShortKeys: Number(k.live_short ?? 0), liveShortRefs: (k.live_refs as string[] | null) ?? [] }
+      : {}),
   }
 }
 

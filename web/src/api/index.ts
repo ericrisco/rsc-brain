@@ -1,5 +1,7 @@
 // The client the screens use: the browser's fetch, and sign-in when a session ends.
 import { signal } from '@preact/signals'
+import { leftAdmin } from '../lib/flags.ts'
+import { textDrafts } from '../lib/settings.ts'
 import { helpOpen, searchOpen } from '../shell/keys.ts'
 import { createClient } from './client.ts'
 import { clearDrafts } from './draft.ts'
@@ -17,6 +19,8 @@ export const sessionEnded = signal(false)
 export function forgetSession(): void {
   resetResources()
   if (typeof sessionStorage !== 'undefined') clearDrafts(sessionStorage)
+  textDrafts.clearAll()
+  leftAdmin.value = false
   searchOpen.value = false
   helpOpen.value = false
 }

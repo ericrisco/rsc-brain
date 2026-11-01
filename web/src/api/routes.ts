@@ -79,6 +79,26 @@ export const ROUTE_TABLE = {
   returnProposal: { route: 'POST /v1/proposals/{id}/return' },
   // Health (PR23).
   wikiHealth: { route: 'GET /v1/brains/{slug}/wiki/health' },
+  // A brain's settings (PR25a).
+  wikiSettings: { route: 'GET /v1/brains/{slug}/wiki/settings' },
+  saveWikiSettings: { route: 'PUT /v1/brains/{slug}/wiki/settings' },
+  addMember: { route: 'POST /v1/brains/{slug}/members' },
+  setMemberRole: { route: 'PUT /v1/brains/{slug}/members/{account}' },
+  removeMember: { route: 'DELETE /v1/brains/{slug}/members/{account}' },
+  repos: { route: 'GET /v1/brains/{slug}/repos' },
+  linkRepo: { route: 'POST /v1/brains/{slug}/repos' },
+  unlinkRepo: { route: 'DELETE /v1/brains/{slug}/repos' },
+  archiveBrain: { route: 'POST /v1/brains/{slug}/archive' },
+  unarchiveBrain: { route: 'POST /v1/brains/{slug}/unarchive' },
+  deleteBrain: { route: 'DELETE /v1/brains/{slug}' },
+  // The administration of people and service accounts (PR25a).
+  updateAccount: { route: 'PATCH /v1/admin/accounts/{id}' },
+  removeAccount: { route: 'POST /v1/admin/accounts/{id}/remove' },
+  restoreAccount: { route: 'POST /v1/admin/accounts/{id}/restore' },
+  accountKeys: { route: 'GET /v1/admin/accounts/{id}/keys' },
+  createService: { route: 'POST /v1/admin/services' },
+  newMainKey: { route: 'POST /v1/admin/services/{id}/keys' },
+  revokeKey: { route: 'DELETE /v1/keys/{id}' },
 } as const satisfies Record<string, Op>
 
 export type OpName = keyof typeof ROUTE_TABLE

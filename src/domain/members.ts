@@ -109,12 +109,19 @@ async function accountOf(db: Db, ref: unknown) {
     )
   }
   if (a.status !== 'active') {
-    throw invalid('That account was removed.', 'The administration can reactivate it first.')
+    throw invalid('That account was deactivated.', 'The administration can reactivate it first.')
   }
   return a
 }
 
-export async function setMember(ctx: Ctx, slug: string, input: { account: unknown; role: unknown }) {
+// `adding`: the add form (POST): someone already in the brain is refused, so adding never changes a role
+// (yours included); roles change through the role route (PUT).
+export async function setMember(
+  ctx: Ctx,
+  slug: string,
+  input: { account: unknown; role: unknown },
+  adding = false,
+) {
   if (!ROLES.includes(input.role as Role)) {
     throw invalid('"role" is curator, contributor or reader.', 'Choose one of the three.')
   }
@@ -130,6 +137,13 @@ export async function setMember(ctx: Ctx, slug: string, input: { account: unknow
       'SELECT role FROM memberships WHERE brain_id = $1 AND account_id = $2',
       [brainId, a.id],
     )
+    if (adding && before) {
+      throw conflict(
+        'already_member',
+        `${a.name} is already a ${before.role} of "${slug}" — change their role in the list.`,
+        `Change the role with PUT /v1/brains/${slug}/members/${a.id}.`,
+      )
+    }
     if (before?.role === 'curator' && role !== 'curator') await lastCuratorCheck(db, brainId, a.id, slug)
     await addMember(db, brainId, a.id, role, ctx.clock())
     if (role === 'curator') {

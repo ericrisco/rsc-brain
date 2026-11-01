@@ -105,11 +105,22 @@ describe('brains over HTTP', { skip: skipPg }, () => {
 
   it('only the administration deletes, typing the name', async () => {
     await w.member('company', ana.id, 'curator')
-    assert.equal((await w.call(ana.key, 'DELETE', '/v1/brains/company', { confirm: 'company' })).status, 403)
-    const noConfirm = await w.call(eric.key, 'DELETE', '/v1/brains/company', {})
+    // Deleting is done in the web (fix of PR25a): a curator there is refused, and so is any token.
+    const anaWeb = await w.web(ana.id)
+    assert.equal(
+      (await w.callWeb(anaWeb, 'DELETE', '/v1/brains/company', { confirm: 'company' })).status,
+      403,
+    )
+    const byKey = await w.call(eric.key, 'DELETE', '/v1/brains/company', { confirm: 'company' })
+    assert.deepEqual([byKey.status, byKey.body.error?.code], [403, 'web_only'])
+    const ericWeb = await w.web(eric.id)
+    const noConfirm = await w.callWeb(ericWeb, 'DELETE', '/v1/brains/company', {})
     assert.equal(noConfirm.status, 400)
     assert.match(noConfirm.body.error?.howToProceed ?? '', /"confirm": "company"/)
-    assert.equal((await w.call(eric.key, 'DELETE', '/v1/brains/company', { confirm: 'company' })).status, 200)
+    assert.equal(
+      (await w.callWeb(ericWeb, 'DELETE', '/v1/brains/company', { confirm: 'company' })).status,
+      200,
+    )
     assert.equal((await w.call(eric.key, 'GET', '/v1/brains/company')).status, 404)
     const trail = await w.db.query("SELECT action, outcome FROM audit WHERE target = 'company' ORDER BY id")
     assert.ok(trail.some((r) => r.action === 'brain.delete' && r.outcome === 'ok'))
@@ -192,7 +203,8 @@ describe('brains over HTTP', { skip: skipPg }, () => {
     const k = (
       await w.call(svc.key, 'POST', '/v1/keys/short', { writeBrain: 'doomed', ref: 'r', ttlMinutes: 30 })
     ).body.key as { id: string; secret: string }
-    assert.equal((await w.call(eric.key, 'DELETE', '/v1/brains/doomed', { confirm: 'doomed' })).status, 200)
+    const ericWeb = await w.web(eric.id)
+    assert.equal((await w.callWeb(ericWeb, 'DELETE', '/v1/brains/doomed', { confirm: 'doomed' })).status, 200)
     assert.equal((await w.call(k.secret, 'GET', '/v1/me')).body.error?.code, 'key_revoked')
   })
 })

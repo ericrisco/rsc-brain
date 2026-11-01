@@ -8,6 +8,7 @@ import { api, goTo } from './api/index.ts'
 import { signInPath } from './lib/nav.ts'
 import { useScreenTitle } from './lib/screen.ts'
 import { Activity } from './screens/Activity.tsx'
+import { AdminInvitations, AdminPeople, AdminServices } from './screens/admin/Admin.tsx'
 import { Brain, brainResource } from './screens/Brain.tsx'
 import { Connect } from './screens/Connect.tsx'
 import { HealthScreen } from './screens/Health.tsx'
@@ -25,6 +26,7 @@ import { Profile } from './screens/Profile.tsx'
 import { ProposalsInbox } from './screens/proposals/Inbox.tsx'
 import { ProposalScreen } from './screens/proposals/Proposal.tsx'
 import { Reset } from './screens/Reset.tsx'
+import { BrainSettings } from './screens/Settings.tsx'
 import { Setup } from './screens/Setup.tsx'
 import { SignIn } from './screens/SignIn.tsx'
 import { WikiDecisions } from './screens/wiki/Decisions.tsx'
@@ -121,6 +123,24 @@ function ActivityPage({ slug }: { slug?: string }) {
 function HealthPage({ slug }: { slug?: string }) {
   return <HealthScreen key={slug} slug={slug ?? ''} />
 }
+function SettingsPage({ slug }: { slug?: string }) {
+  return <BrainSettings key={slug} slug={slug ?? ''} tab="members" />
+}
+function SettingsAgentsPage({ slug }: { slug?: string }) {
+  return <BrainSettings key={slug} slug={slug ?? ''} tab="agents" />
+}
+function SettingsHealthPage({ slug }: { slug?: string }) {
+  return <BrainSettings key={slug} slug={slug ?? ''} tab="health" />
+}
+function SettingsArchivePage({ slug }: { slug?: string }) {
+  return <BrainSettings key={slug} slug={slug ?? ''} tab="archive" />
+}
+// The administration starts with its people.
+function AdminHome() {
+  const { route } = useLocation()
+  useEffect(() => route('/admin/people', true), [])
+  return null
+}
 
 function SignedIn() {
   const { path, url, route } = useLocation()
@@ -190,7 +210,15 @@ function SignedIn() {
           <Route path="/b/:slug/journal/about" component={AboutPage} />
           <Route path="/b/:slug/activity" component={ActivityPage} />
           <Route path="/b/:slug/health" component={HealthPage} />
+          <Route path="/b/:slug/settings" component={SettingsPage} />
+          <Route path="/b/:slug/settings/agents" component={SettingsAgentsPage} />
+          <Route path="/b/:slug/settings/health" component={SettingsHealthPage} />
+          <Route path="/b/:slug/settings/archive" component={SettingsArchivePage} />
           <Route path="/people" component={People} />
+          <Route path="/admin" component={AdminHome} />
+          <Route path="/admin/people" component={AdminPeople} />
+          <Route path="/admin/invitations" component={AdminInvitations} />
+          <Route path="/admin/services" component={AdminServices} />
           <Route path="/profile" component={Profile} />
           <Route path="/profile/tokens" component={Profile} />
           <Route path="/connect" component={Connect} />

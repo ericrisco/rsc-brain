@@ -28,6 +28,25 @@ const obj = (properties: Record<string, Schema>, optional: string[] = []): Schem
   required: Object.keys(properties).filter((k) => !optional.includes(k)),
 })
 const NEXT = nul(s('The value to ask for the next page with; null on the last page.'))
+const DATE = s('When.', { format: 'date-time' })
+const WIKI_SETTINGS = obj({
+  guide: s('The compile guide in use.'),
+  guideDefault: s('The default compile guide.'),
+  customGuide: b('The guide was written for this brain (not the default).'),
+  mapIntro: s('The intro of the wiki map.'),
+  usageNote: s('The note that opens every start-up context.'),
+  usageNoteDefault: s('The default usage note (empty: none).'),
+  meaningExcluded: b('Left out of meaning search.'),
+  staleDays: n('Days after which a page with new entries counts as stale.'),
+  longChars: n('Characters after which a page counts as long.'),
+  maintenanceEvery: n('Approvals between maintenance suggestions.'),
+  approvalsSince: n('Approvals since the last maintenance suggestion.'),
+})
+const MEMBER_SET = obj({
+  accountId: s('Account id.'),
+  name: s('Name.'),
+  role: s('reader, contributor or curator.'),
+})
 
 const BRAIN = obj({
   id: s('Its id (brn_…).'),
@@ -1135,6 +1154,10 @@ const HAND: Record<string, Op> = {
           canCreateBrains: b('May create brains.'),
           status: s('active or removed.'),
           brains: n('Brains it is a member of.'),
+          roles: list(
+            obj({ slug: s('A brain.'), name: s('Its name.'), role: s('reader, contributor or curator.') }),
+            'Its role in each brain.',
+          ),
           lastSeenAt: nul(s('Last use of any of its keys.', { format: 'date-time' })),
           createdAt: s('When.', { format: 'date-time' }),
         }),
@@ -1536,6 +1559,187 @@ const HAND: Record<string, Op> = {
       },
       ['name', 'curatorsInvite', 'rateLimit'],
     ),
+  },
+  // The settings of a brain and the administration of people and service accounts (B6 PR25a).
+  'GET /v1/brains/{slug}/wiki/settings': {
+    summary:
+      'The settings of a brain: compile guide, usage note, meaning search and health thresholds, with the default texts (G11). Members read them.',
+    reply: WIKI_SETTINGS,
+  },
+  'PUT /v1/brains/{slug}/wiki/settings': {
+    summary:
+      'Change the settings of a brain (curators, in the rsc-brain web). With "base" (each field as you read it), a save of a field someone changed since is refused (settings_changed, with "current"); fields not sent are never touched.',
+    body: obj(
+      {
+        base: {
+          type: 'object',
+          description:
+            'What each field you change was when you read it ({"staleDays": 90}; the guide is null while it is the default). Leave it out to save regardless.',
+        },
+        guide: nul(s('The compile guide; null for the default.')),
+        mapIntro: s('The intro of the wiki map.'),
+        usageNote: s('The note that opens every start-up context (at most 2 000 characters).'),
+        meaningExcluded: b('Leave this brain out of meaning search (its vectors are deleted).'),
+        staleDays: n('Days after which a page with new entries counts as stale (1–3650).'),
+        longChars: n('Characters after which a page counts as long (1000–100000).'),
+        maintenanceEvery: n('Approvals between maintenance suggestions (1–1000).'),
+      },
+      [
+        'revision',
+        'guide',
+        'mapIntro',
+        'usageNote',
+        'meaningExcluded',
+        'staleDays',
+        'longChars',
+        'maintenanceEvery',
+      ],
+    ),
+    reply: {
+      ...WIKI_SETTINGS,
+      properties: {
+        ...(WIKI_SETTINGS.properties as Schema),
+        unchanged: b('Only a base was sent and it still holds: nothing was changed.'),
+      },
+    },
+  },
+  'POST /v1/brains/{slug}/members': {
+    summary: 'Add a person or service account that already has an account (curators, or the administration).',
+    status: 201,
+    body: obj({ account: s('An account id or an email.'), role: s('reader, contributor or curator.') }),
+    reply: obj({ member: MEMBER_SET }),
+  },
+  'PUT /v1/brains/{slug}/members/{account}': {
+    summary: 'Change the role of a member. A brain always keeps a curator (last_curator).',
+    body: obj({ role: s('reader, contributor or curator.') }),
+    reply: obj({ member: MEMBER_SET }),
+  },
+  'DELETE /v1/brains/{slug}/members/{account}': {
+    summary: 'Remove a member (or leave). A brain always keeps a curator (last_curator).',
+    reply: obj({ removed: s('The account id.') }),
+  },
+  'GET /v1/brains/{slug}/repos': {
+    summary: 'The repository addresses linked to a brain, as brain_resolve matches them.',
+    reply: obj({
+      repos: list(obj({ repo: s('The address as it matches: host and path.'), linkedAt: DATE })),
+    }),
+  },
+  'POST /v1/brains/{slug}/repos': {
+    summary: 'Link a repository address to a brain (curators, in the rsc-brain web).',
+    status: 201,
+    body: obj({ repo: s('A remote, such as https://github.com/org/repo or git@github.com:org/repo.') }),
+    reply: obj({ repo: s('The address as it matches: host and path.') }),
+  },
+  'DELETE /v1/brains/{slug}/repos': {
+    summary: 'Unlink a repository address from a brain (curators, in the rsc-brain web).',
+    body: obj({ repo: s('The address, as linked or as a remote.') }),
+    reply: obj({ unlinked: b('Done.') }),
+  },
+  'POST /v1/brains/{slug}/archive': {
+    summary: 'Archive a brain (curators): it becomes read-only until unarchived.',
+    reply: obj({ brain: BRAIN }),
+  },
+  'POST /v1/brains/{slug}/unarchive': {
+    summary: 'Unarchive a brain (curators).',
+    reply: obj({ brain: BRAIN }),
+  },
+  'DELETE /v1/brains/{slug}': {
+    summary: 'Delete a brain and everything in it (administration), typing its name in "confirm".',
+    body: obj({ confirm: s("The brain's name (slug).") }),
+    reply: obj({ deleted: s('The slug.') }),
+  },
+  'PATCH /v1/admin/accounts/{id}': {
+    summary:
+      'Make an account an administrator or not, and let it create brains or not (administration). The installation always keeps an administrator (last_admin).',
+    body: obj(
+      {
+        isAdmin: b('An administrator.'),
+        canCreateBrains: b('May create brains.'),
+        canInvite: b('A service account may name a first curator by email.'),
+      },
+      ['isAdmin', 'canCreateBrains', 'canInvite'],
+    ),
+    reply: obj({
+      account: obj({
+        id: s('Account id.'),
+        isAdmin: b('An administrator.'),
+        canCreateBrains: b('May create brains.'),
+        canInvite: b('May name a first curator by email.'),
+      }),
+    }),
+  },
+  'POST /v1/admin/accounts/{id}/remove': {
+    summary:
+      'Deactivate an account: its sessions, tokens, connections and keys end at once; what it wrote stays (administration).',
+    reply: obj({
+      removed: b('Done.'),
+      keysRevoked: n('Keys revoked now.'),
+      brainsWithoutCurator: list(s('A brain left without an active curator.')),
+    }),
+  },
+  'POST /v1/admin/accounts/{id}/restore': {
+    summary: 'Reactivate an account; its old keys stay revoked (administration).',
+    reply: obj({ restored: b('Done.') }),
+  },
+  'GET /v1/admin/accounts/{id}/keys': {
+    summary: 'The tokens and main keys of an account, never their secret (administration).',
+    reply: obj({
+      keys: list(
+        obj(
+          {
+            id: s('Key id.'),
+            kind: s('token or main.'),
+            name: s('Its name.'),
+            last4: s('Its last 4 characters.'),
+            perm: s('read or write.'),
+            createdAt: DATE,
+            expiresAt: nul(s('When it ends.', { format: 'date-time' })),
+            lastUsedAt: nul(s('Last request.', { format: 'date-time' })),
+            lastClient: nul(s('The client of its last request.')),
+            status: s('active, expired or revoked.', { enum: ['active', 'expired', 'revoked'] }),
+            liveShortKeys: n('Main keys: short keys it minted that still work.'),
+            liveShortRefs: list(
+              s('A reference.'),
+              'Main keys: the references of those short keys (up to 20).',
+            ),
+          },
+          ['liveShortKeys', 'liveShortRefs'],
+        ),
+      ),
+    }),
+  },
+  'POST /v1/admin/services': {
+    summary:
+      'Create a service account with its brains (contributor or reader) and its main key, shown only in this answer (administration).',
+    status: 201,
+    body: obj(
+      {
+        name: s('Its name.'),
+        brains: list(obj({ slug: s('A brain.'), role: s('contributor or reader.') })),
+        canCreateBrains: b('May create brains.'),
+        canInvite: b('May name a first curator by email.'),
+      },
+      ['brains', 'canCreateBrains', 'canInvite'],
+    ),
+    reply: obj({
+      account: obj({ id: s('Account id.') }),
+      key: obj({ id: s('Key id.'), secret: s('The main key. Shown only in this answer.') }),
+      message: s('Copy it now.'),
+    }),
+  },
+  'POST /v1/admin/services/{id}/keys': {
+    summary:
+      'A new main key for a service account, to rotate without a cut (at most 2 at once); shown only in this answer (administration).',
+    status: 201,
+    body: obj({ name: s('Its name.') }, ['name']),
+    reply: obj({
+      key: obj({ id: s('Key id.'), secret: s('The main key. Shown only in this answer.') }),
+      message: s('Copy it now.'),
+    }),
+  },
+  'DELETE /v1/keys/{id}': {
+    summary: 'Revoke a key: your own, or any as the administration. A main key takes its short keys with it.',
+    reply: obj({ revoked: s('The key id.') }),
   },
 }
 

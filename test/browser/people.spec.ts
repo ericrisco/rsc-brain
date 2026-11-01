@@ -116,7 +116,13 @@ test.describe('reset links', () => {
     baseURL,
   }) => {
     await scenario(context, baseURL as string, 'signed-in')
+    // Reset links moved with the people to the administration (PR25a); People points there.
     await page.goto('/people')
+    await page
+      .getByRole('region', { name: 'People in this installation' })
+      .getByRole('link', { name: 'Administration › People' })
+      .click()
+    await expect(page).toHaveURL(/\/admin\/people$/)
     const ana = page
       .getByRole('region', { name: 'People in this installation' })
       .getByRole('listitem')
@@ -211,7 +217,7 @@ test.describe('links in view (P1, P2, P3)', () => {
 
   test('P1: a reset link shows by the person, in view, focused', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in')
-    await page.goto('/people')
+    await page.goto('/admin/people')
     const ana = page
       .getByRole('region', { name: 'People in this installation' })
       .getByRole('listitem')
@@ -235,8 +241,9 @@ test.describe('links in view (P1, P2, P3)', () => {
     })
     await bo.getByRole('button', { name: 'New link for bo@example.test' }).click()
     await expect(page.getByText('/invite#token=')).toHaveCount(1)
+    // One new link a minute: a second press soon after says so, and the link shown still works.
     await bo.getByRole('button', { name: 'New link for bo@example.test' }).click()
-    // The first link stopped working: only the new one is shown.
+    await expect(bo.getByRole('alert')).toContainText('less than a minute ago')
     await expect(page.getByText('/invite#token=')).toHaveCount(1)
     await bo.getByRole('button', { name: 'Withdraw invitation for bo@example.test' }).click()
     await page

@@ -76,9 +76,37 @@ const SHAPES: Record<string, Record<string, string[]>> = {
       'canCreateBrains',
       'status',
       'brains',
+      'roles',
       'lastSeenAt',
       'createdAt',
     ],
+  },
+  // Brain settings and the administration of service accounts (B6 PR25a, G11).
+  'GET /v1/brains/{slug}/wiki/settings': {
+    '': [
+      'guide',
+      'guideDefault',
+      'customGuide',
+      'usageNote',
+      'usageNoteDefault',
+      'meaningExcluded',
+      'staleDays',
+      'longChars',
+      'maintenanceEvery',
+    ],
+  },
+  'PUT /v1/brains/{slug}/wiki/settings': {
+    '': ['guide', 'customGuide', 'usageNote', 'meaningExcluded'],
+  },
+  'GET /v1/admin/accounts/{id}/keys': {
+    'keys[]': ['id', 'kind', 'name', 'last4', 'createdAt', 'lastUsedAt', 'status'],
+  },
+  'POST /v1/admin/services': {
+    '': ['account', 'key'],
+    key: ['id', 'secret'],
+  },
+  'POST /v1/admin/services/{id}/keys': {
+    key: ['id', 'secret'],
   },
   'POST /v1/admin/accounts/{id}/reset-link': {
     '': ['link', 'expiresAt'],
@@ -785,6 +813,28 @@ describe('the v1 contract', { skip: skipPg }, () => {
     assert.equal(link.status, 201, link.text)
     out['POST /v1/admin/accounts/{id}/reset-link'] = link.body
     out['GET /v1/admin/brains'] = (await w.callWeb(web, 'GET', '/v1/admin/brains')).body
+    const service = await w.callWeb(web, 'POST', '/v1/admin/services', {
+      name: 'Contract runner',
+      brains: [{ slug: 'contract', role: 'contributor' }],
+    })
+    assert.equal(service.status, 201, service.text)
+    out['POST /v1/admin/services'] = service.body
+    const sid = String((service.body.account as Json).id)
+    const rotated = await w.callWeb(web, 'POST', `/v1/admin/services/${sid}/keys`, { name: 'next' })
+    assert.equal(rotated.status, 201, rotated.text)
+    out['POST /v1/admin/services/{id}/keys'] = rotated.body
+    out['GET /v1/admin/accounts/{id}/keys'] = (
+      await w.callWeb(web, 'GET', `/v1/admin/accounts/${sid}/keys`)
+    ).body
+    const ericWeb = await w.web(eric.id)
+    const read = await w.callWeb(ericWeb, 'GET', '/v1/brains/contract/wiki/settings')
+    out['GET /v1/brains/{slug}/wiki/settings'] = read.body
+    out['PUT /v1/brains/{slug}/wiki/settings'] = (
+      await w.callWeb(ericWeb, 'PUT', '/v1/brains/contract/wiki/settings', {
+        usageNote: 'Contract note.',
+        base: { usageNote: read.body.usageNote },
+      })
+    ).body
     return out
   }
 
@@ -1141,6 +1191,50 @@ describe('the v1 contract', { skip: skipPg }, () => {
         next: 'a newer passphrase',
       }),
     )
+    // Brain settings and the administration (PR25a): the last curator and the last administrator stay; a
+    // third main key waits for an old one to go; settings saved on a revision someone moved on.
+    const solo = await withPassword('Solo')
+    const soloWeb = await w.web(solo.id)
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'solo', purpose: 'One curator.' })
+    await w.member('solo', solo.id, 'curator')
+    await w.member('solo', eric.id, 'reader')
+    await add(
+      'last_curator',
+      w.callWeb(soloWeb, 'PUT', `/v1/brains/solo/members/${solo.id}`, { role: 'reader' }),
+    )
+    await add('last_curator', w.callWeb(soloWeb, 'DELETE', `/v1/brains/solo/members/${solo.id}`))
+    const readFirst = await w.callWeb(soloWeb, 'GET', '/v1/brains/solo/wiki/settings')
+    await w.callWeb(soloWeb, 'PUT', '/v1/brains/solo/wiki/settings', { staleDays: 12 })
+    await add(
+      'settings_changed',
+      w.callWeb(soloWeb, 'PUT', '/v1/brains/solo/wiki/settings', {
+        staleDays: 13,
+        base: { staleDays: readFirst.body.staleDays },
+      }),
+    )
+    const svc = await w.callWeb(bossWeb, 'POST', '/v1/admin/services', { name: 'Two keys' })
+    const svcId = String((svc.body.account as Json).id)
+    await w.callWeb(bossWeb, 'POST', `/v1/admin/services/${svcId}/keys`, {})
+    await add(
+      'already_member',
+      w.callWeb(soloWeb, 'POST', '/v1/brains/solo/members', { account: eric.id, role: 'curator' }),
+    )
+    const slow = await w.callWeb(bossWeb, 'POST', '/v1/invitations', {
+      emails: ['slow-contract@example.com'],
+    })
+    const slowId = String((slow.body.invitations as Json[])[0]?.id)
+    await w.callWeb(bossWeb, 'POST', `/v1/invitations/${slowId}/resend`)
+    await add('too_soon', w.callWeb(bossWeb, 'POST', `/v1/invitations/${slowId}/resend`))
+    await add('too_many_main_keys', w.callWeb(bossWeb, 'POST', `/v1/admin/services/${svcId}/keys`, {}))
+    // Every other administrator steps down; the last one cannot.
+    const admins = (await w.callWeb(bossWeb, 'GET', '/v1/admin/accounts')).body.accounts as Json[]
+    for (const a of admins)
+      if (a.isAdmin && a.id !== boss.id)
+        await w.db.query('UPDATE accounts SET is_admin = false WHERE id = $1', [a.id])
+    await add('last_admin', w.callWeb(bossWeb, 'PATCH', `/v1/admin/accounts/${boss.id}`, { isAdmin: false }))
+    for (const a of admins)
+      if (a.isAdmin && a.id !== boss.id)
+        await w.db.query('UPDATE accounts SET is_admin = true WHERE id = $1', [a.id])
     await add('no_logo', w.raw('GET', '/v1/branding/logo'))
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))
     await add('setup_done', w.raw('GET', '/v1/setup'))

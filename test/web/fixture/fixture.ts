@@ -9,6 +9,8 @@ import { randomBytes } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
+import { repoKey } from '../../../src/domain/repos.ts'
+import { DEFAULT_GUIDE } from '../../../src/domain/wiki/pages.ts'
 import { answerWeb, openWeb } from '../../../src/http/web.ts'
 import { AGENT_IDS, type AgentId, connectKit } from '../../../src/mcp/kit.ts'
 import { type GenPage, generate } from '../../../web/test/data/generate.ts'
@@ -69,6 +71,9 @@ export type Screen =
   | 'tokens'
   | 'apps'
   | 'notify'
+  | 'settings'
+  | 'repos'
+  | 'keys'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
 // alone: the administrator the setup made, the only person in the installation.
@@ -86,6 +91,8 @@ type Account = {
   alone?: boolean
   canCreate?: boolean
   joined?: boolean
+  // Deactivated by the administration (B4): it cannot sign in; what it wrote stays.
+  removed?: boolean
 }
 type Brain = ReturnType<typeof brain>
 type Invitation = {
@@ -142,6 +149,50 @@ type Scen = {
   notify: Map<string, boolean>
   totpPending: Set<string>
   made: number
+  // Brain settings and the administration (PR25a): the members of each brain once read or changed, the
+  // role changes made meanwhile (by "account:brain"; null: no longer a member), linked repositories, the
+  // settings of each brain, service accounts and their main keys.
+  members: Map<string, FxMember[]>
+  roleChanges: Map<string, string | null>
+  repos: Map<string, Array<{ repo: string; linkedAt: string }>>
+  settings: Map<string, FxSettings>
+  services: FxService[]
+  keys: FxKey[]
+  // When each invitation last got a new link (one a minute).
+  resent: Map<string, number>
+}
+
+type FxMember = { accountId: string; kind: string; name: string; email: string | null; role: string }
+type FxSettings = {
+  guide: string | null
+  mapIntro: string
+  usageNote: string
+  meaningExcluded: boolean
+  staleDays: number
+  longChars: number
+  maintenanceEvery: number
+  approvalsSince: number
+}
+type FxService = {
+  id: string
+  name: string
+  removed: boolean
+  canCreate: boolean
+  roles: Array<{ slug: string; role: string }>
+  createdAt: string
+  lastSeenAt: string | null
+}
+type FxKey = {
+  account: string
+  id: string
+  name: string
+  last4: string
+  createdAt: string
+  lastUsedAt: string | null
+  lastClient: string | null
+  revoked: boolean
+  liveShortKeys: number
+  liveShortRefs: string[]
 }
 
 type FxToken = {
@@ -486,6 +537,47 @@ function freshScenario(id: string, preset: Preset): Scen {
     notify: new Map(),
     totpPending: new Set(),
     made: 0,
+    members: new Map(),
+    roleChanges: new Map(),
+    resent: new Map(),
+    repos: new Map([
+      ['growth', [{ repo: 'github.com/acme/growth-site', linkedAt: '2026-10-02T10:00:00.000Z' }]],
+    ]),
+    settings: new Map(),
+    services: [
+      {
+        id: 'acc_svc_factory',
+        name: 'Factory runner',
+        removed: false,
+        canCreate: false,
+        roles: [{ slug: 'growth', role: 'contributor' }],
+        createdAt: '2026-09-10T10:00:00.000Z',
+        lastSeenAt: '2026-10-29T09:30:00.000Z',
+      },
+      {
+        id: 'acc_svc_old',
+        name: 'Old importer',
+        removed: true,
+        canCreate: false,
+        roles: [],
+        createdAt: '2026-05-10T10:00:00.000Z',
+        lastSeenAt: '2026-06-01T10:00:00.000Z',
+      },
+    ],
+    keys: [
+      {
+        account: 'acc_svc_factory',
+        id: 'crd_main_factory',
+        name: 'main',
+        last4: 'F4ct',
+        createdAt: '2026-09-10T10:00:00.000Z',
+        lastUsedAt: '2026-10-29T09:30:00.000Z',
+        lastClient: 'rsc-factory/0.3.0',
+        revoked: false,
+        liveShortKeys: 3,
+        liveShortRefs: ['run r_8kq2, step 3', 'run r_9zz1'],
+      },
+    ],
   }
   if (preset === 'alone') {
     s.accounts.push({
@@ -980,6 +1072,21 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           'This invitation was already used or withdrawn.',
           'Invite the email again if it still needs access.',
         )
+      const wait = Math.ceil(((s.resent.get(inv.id) ?? 0) + 60_000 - Date.now()) / 1000)
+      if (wait > 0)
+        return {
+          status: 429,
+          headers: { 'retry-after': String(wait) },
+          body: {
+            error: {
+              code: 'too_soon',
+              message: 'A new link for this invitation was made less than a minute ago.',
+              howToProceed: `Wait ${wait} s, then make another; the last link still works.`,
+              retryAfter: wait,
+            },
+          },
+        }
+      s.resent.set(inv.id, Date.now())
       inv.status = 'pending'
       inv.expiresAt = '2026-11-01T10:00:00.000Z'
       return { status: 200, body: { invitation: invited(s, inv) } }
@@ -1226,28 +1333,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
     screen: 'people',
     run: ({ s, who }) => {
       if (!who?.isAdmin) return ADMIN_ONLY
-      const seen = who.alone ? s.accounts.filter((a) => a === who || a.joined) : s.accounts
-      return {
-        status: 200,
-        body: {
-          accounts: seen.map((a) => ({
-            id: a.id,
-            kind: 'person',
-            name: a.name,
-            email: a.email,
-            isAdmin: a.isAdmin,
-            canCreateBrains: a.isAdmin || Boolean(a.canCreate),
-            canInvite: false,
-            status: 'active',
-            secondFactor: a.totp,
-            brains: a.alone
-              ? s.brains.filter((b) => s.life.has(b.slug) && !BRAINS().some((x) => x.slug === b.slug)).length
-              : 3,
-            lastSeenAt: a === who ? AT : a.id === 'acc_ana' ? '2026-10-28T08:00:00.000Z' : null,
-            createdAt: '2026-10-01T10:00:00.000Z',
-          })),
-        },
-      }
+      return { status: 200, body: { accounts: adminAccounts(s, who) } }
     },
   },
   'POST /v1/admin/accounts/{id}/reset-link': {
@@ -1280,6 +1366,572 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
           })),
         },
       }
+    },
+  },
+  // A brain's settings (PR25a, G11): any member reads them; a curator saves them, on the revision read.
+  'GET /v1/brains/{slug}/wiki/settings': {
+    screen: 'settings',
+    run: (c) => {
+      const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+      if (!b) return NO_BRAIN
+      return { status: 200, body: settingsView(settingsOf(c.s, b.slug)) }
+    },
+  },
+  'PUT /v1/brains/{slug}/wiki/settings': {
+    run: (c) => {
+      const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+      if (!b) return NO_BRAIN
+      if (!c.web)
+        return err(
+          403,
+          'web_only',
+          'Deciding about the wiki is done in the rsc-brain web, signed in as a person.',
+          'Open the rsc-brain web.',
+        )
+      if (b.role !== 'curator')
+        return err(
+          403,
+          'forbidden',
+          `This needs the curator role in the brain; you are ${b.role}.`,
+          'Ask a curator of the brain (Eric) for the curator role.',
+        )
+      if (b.status === 'archived') return ARCHIVED
+      const x = settingsOf(c.s, b.slug)
+      const body = c.body
+      const FIELDS = [
+        'guide',
+        'mapIntro',
+        'usageNote',
+        'meaningExcluded',
+        'staleDays',
+        'longChars',
+        'maintenanceEvery',
+      ]
+      const base = body.base
+      if (
+        base !== undefined &&
+        (typeof base !== 'object' ||
+          base === null ||
+          Array.isArray(base) ||
+          Object.keys(base).some((k) => !FIELDS.includes(k)))
+      )
+        return err(
+          400,
+          'invalid_request',
+          '"base" holds what each field was when you read it.',
+          'Fix "base".',
+        )
+      if (base) {
+        const moved = Object.entries(base as Record<string, unknown>)
+          .filter(([k, v]) => x[k as keyof FxSettings] !== v)
+          .map(([k]) => k)
+        if (moved.length)
+          return {
+            status: 409,
+            body: {
+              error: {
+                code: 'settings_changed',
+                message: `Someone changed ${moved.join(', ')} of "${b.slug}" since you read ${moved.length === 1 ? 'it' : 'them'}.`,
+                howToProceed:
+                  'Read the current values in "current", then save your change again on top of them.',
+                current: settingsView(x),
+              },
+            },
+          }
+      }
+      const range = (k: 'staleDays' | 'longChars' | 'maintenanceEvery', min: number, max: number) => {
+        const v = body[k]
+        return v === undefined || (Number.isSafeInteger(v) && (v as number) >= min && (v as number) <= max)
+          ? null
+          : err(400, 'invalid_request', `"${k}" goes from ${min} to ${max}.`, `Fix "${k}".`)
+      }
+      const bad =
+        range('staleDays', 1, 3650) ?? range('longChars', 1000, 100000) ?? range('maintenanceEvery', 1, 1000)
+      if (bad) return bad
+      // Only a base: nothing changed; what the person sees is still what is there.
+      if (base && FIELDS.every((k) => body[k] === undefined))
+        return { status: 200, body: { ...settingsView(x), unchanged: true } }
+      if (typeof body.usageNote === 'string' && body.usageNote.trim().length > 2000)
+        return err(400, 'invalid_request', 'The usage note has at most 2 000 characters.', 'Shorten it.')
+      if (body.guide === null) x.guide = null
+      else if (typeof body.guide === 'string') {
+        const g = body.guide.trim()
+        if (!g || g.length > 20000)
+          return err(
+            400,
+            'invalid_request',
+            'The guide has 1 to 20 000 characters.',
+            'Shorten it, or send null to go back to the default.',
+          )
+        x.guide = g === DEFAULT_GUIDE.trim() ? null : g
+      }
+      if (typeof body.usageNote === 'string') x.usageNote = body.usageNote.trim()
+      if (typeof body.meaningExcluded === 'boolean') x.meaningExcluded = body.meaningExcluded
+      for (const k of ['staleDays', 'longChars', 'maintenanceEvery'] as const)
+        if (typeof body[k] === 'number') x[k] = body[k] as number
+      return { status: 200, body: settingsView(x) }
+    },
+  },
+  'POST /v1/brains/{slug}/members': {
+    run: (c) => {
+      const m = manages(c)
+      if ('status' in m) return m
+      const slug = m.brain.slug
+      const role = String(c.body.role ?? '')
+      if (!['reader', 'contributor', 'curator'].includes(role))
+        return err(
+          400,
+          'invalid_request',
+          '"role" is curator, contributor or reader.',
+          'Choose one of the three.',
+        )
+      const ref = String(c.body.account ?? '')
+        .trim()
+        .toLowerCase()
+      const person = c.s.accounts.find((a) => !a.alone && (a.id === ref || a.email === ref))
+      const service = c.s.services.find((v) => v.id === ref)
+      if (!person && !service)
+        return err(
+          400,
+          'invalid_request',
+          'There is no account with that id or email.',
+          'Only people who already have an account can be added; the administration invites new ones.',
+        )
+      if (person?.removed || service?.removed)
+        return err(
+          400,
+          'invalid_request',
+          'That account was deactivated.',
+          'The administration can reactivate it first.',
+        )
+      if (service && role === 'curator')
+        return err(
+          400,
+          'invalid_request',
+          'A service account is never a curator.',
+          'Give it the contributor or reader role.',
+        )
+      const list = membersOf(c.s, slug)
+      const id = (person?.id ?? service?.id) as string
+      const had = list.find((x) => x.accountId === id)
+      if (had)
+        return err(
+          409,
+          'already_member',
+          `${had.name} is already a ${had.role} of "${slug}" — change their role in the list.`,
+          `Change the role with PUT /v1/brains/${slug}/members/${id}.`,
+        )
+      list.push({
+        accountId: id,
+        kind: person ? 'person' : 'service',
+        name: (person?.name ?? service?.name) as string,
+        email: person?.email ?? null,
+        role,
+      })
+      c.s.roleChanges.set(`${id}:${slug}`, role)
+      return {
+        status: 201,
+        body: { member: { accountId: id, name: (person?.name ?? service?.name) as string, role } },
+      }
+    },
+  },
+  'PUT /v1/brains/{slug}/members/{account}': {
+    run: (c) => {
+      const m = manages(c)
+      if ('status' in m) return m
+      const slug = m.brain.slug
+      const role = String(c.body.role ?? '')
+      if (!['reader', 'contributor', 'curator'].includes(role))
+        return err(
+          400,
+          'invalid_request',
+          '"role" is curator, contributor or reader.',
+          'Choose one of the three.',
+        )
+      const list = membersOf(c.s, slug)
+      const had = list.find((x) => x.accountId === c.params.account)
+      if (!had)
+        return err(
+          400,
+          'invalid_request',
+          'There is no account with that id or email.',
+          'Only people who already have an account can be added; the administration invites new ones.',
+        )
+      if (had.kind === 'service' && role === 'curator')
+        return err(
+          400,
+          'invalid_request',
+          'A service account is never a curator.',
+          'Give it the contributor or reader role.',
+        )
+      if (
+        had.role === 'curator' &&
+        role !== 'curator' &&
+        list.filter((x) => x.role === 'curator').length === 1
+      )
+        return LAST_CURATOR(slug)
+      had.role = role
+      c.s.roleChanges.set(`${had.accountId}:${slug}`, role)
+      return { status: 200, body: { member: { accountId: had.accountId, name: had.name, role } } }
+    },
+  },
+  'DELETE /v1/brains/{slug}/members/{account}': {
+    run: (c) => {
+      const self = c.params.account === c.who?.id
+      const own = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+      const m = self ? (own ? { brain: own } : NO_BRAIN) : manages(c)
+      if ('status' in m) return m
+      const slug = m.brain.slug
+      const list = membersOf(c.s, slug)
+      const i = list.findIndex((x) => x.accountId === c.params.account)
+      const had = list[i]
+      if (!had)
+        return err(404, 'not_found', 'No member with that id is available to you.', 'Check the member id.')
+      if (had.role === 'curator' && list.filter((x) => x.role === 'curator').length === 1)
+        return LAST_CURATOR(slug)
+      list.splice(i, 1)
+      c.s.roleChanges.set(`${had.accountId}:${slug}`, null)
+      return { status: 200, body: { removed: had.accountId } }
+    },
+  },
+  'GET /v1/brains/{slug}/repos': {
+    screen: 'repos',
+    run: (c) => {
+      const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+      if (!b) return NO_BRAIN
+      return { status: 200, body: { repos: c.s.repos.get(b.slug) ?? [] } }
+    },
+  },
+  'POST /v1/brains/{slug}/repos': {
+    run: (c) => {
+      if (!c.web) return WEB_ONLY('Linking repositories')
+      const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+      if (!b) return NO_BRAIN
+      if (b.role !== 'curator')
+        return err(
+          400,
+          'invalid_request',
+          `Only curators of "${b.slug}" link repositories to it.`,
+          'Ask a curator of the brain.',
+        )
+      if (b.status === 'archived')
+        return err(
+          403,
+          'forbidden',
+          'This brain is archived, so no repository can be linked to it.',
+          'A curator of the brain can unarchive it first.',
+        )
+      const key = repoKey(c.body.repo)
+      if (!key)
+        return err(
+          400,
+          'invalid_request',
+          'That is not a repository address.',
+          'Use the full address, e.g. github.com/org/repo (or the output of "git remote get-url origin").',
+        )
+      const list = c.s.repos.get(b.slug) ?? []
+      if (!list.some((x) => x.repo === key)) list.push({ repo: key, linkedAt: NOW() })
+      list.sort((x, y) => x.repo.localeCompare(y.repo))
+      c.s.repos.set(b.slug, list)
+      return { status: 201, body: { repo: key } }
+    },
+  },
+  'DELETE /v1/brains/{slug}/repos': {
+    run: (c) => {
+      if (!c.web) return WEB_ONLY('Linking repositories')
+      const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+      if (!b) return NO_BRAIN
+      if (b.role !== 'curator')
+        return err(
+          400,
+          'invalid_request',
+          `Only curators of "${b.slug}" link repositories to it.`,
+          'Ask a curator of the brain.',
+        )
+      const key = repoKey(c.body.repo)
+      const list = c.s.repos.get(b.slug) ?? []
+      const i = list.findIndex((x) => x.repo === key)
+      if (i < 0)
+        return err(
+          404,
+          'not_found',
+          'No linked repository with that id is available to you.',
+          'Check the linked repository id.',
+        )
+      list.splice(i, 1)
+      return { status: 200, body: { unlinked: true } }
+    },
+  },
+  'POST /v1/brains/{slug}/archive': {
+    run: (c) => archiving(c, true),
+  },
+  'POST /v1/brains/{slug}/unarchive': {
+    run: (c) => archiving(c, false),
+  },
+  'DELETE /v1/brains/{slug}': {
+    run: (c) => {
+      if (!c.web) return WEB_ONLY('Deleting a brain')
+      if (!c.who?.isAdmin)
+        return err(
+          403,
+          'forbidden',
+          'Only the administration can delete a brain.',
+          'Ask the administration of this installation.',
+        )
+      const i = c.s.brains.findIndex((x) => x.slug === c.params.slug)
+      if (i < 0) return NO_BRAIN
+      if (c.body.confirm !== c.params.slug)
+        return err(
+          400,
+          'invalid_request',
+          'To delete a brain, type its name to confirm.',
+          `Send {"confirm": "${c.params.slug}"}.`,
+        )
+      c.s.brains.splice(i, 1)
+      return { status: 200, body: { deleted: c.params.slug } }
+    },
+  },
+  'PATCH /v1/admin/accounts/{id}': {
+    run: ({ s, who, params, body, web }) => {
+      if (!web) return WEB_ONLY('This')
+      if (!who?.isAdmin) return ADMIN_ONLY
+      for (const k of ['isAdmin', 'canCreateBrains', 'canInvite'])
+        if (body[k] !== undefined && typeof body[k] !== 'boolean')
+          return err(400, 'invalid_request', `"${k}" is true or false.`, `Fix "${k}".`)
+      const a = s.accounts.find((x) => x.id === params.id)
+      const v = s.services.find((x) => x.id === params.id)
+      if (!a && !v)
+        return err(404, 'not_found', 'No account with that id is available to you.', 'Check the account id.')
+      if (v) {
+        if (body.isAdmin === true)
+          return err(
+            400,
+            'invalid_request',
+            'A service account cannot be an administrator.',
+            'Choose a person.',
+          )
+        if (typeof body.canCreateBrains === 'boolean') v.canCreate = body.canCreateBrains
+        return {
+          status: 200,
+          body: { account: { id: v.id, isAdmin: false, canCreateBrains: v.canCreate, canInvite: false } },
+        }
+      }
+      const p = a as Account
+      const admins = s.accounts.filter((x) => x.isAdmin && !x.removed && x.id !== p.id).length
+      if (p.isAdmin && body.isAdmin === false && admins === 0) return LAST_ADMIN
+      if (typeof body.isAdmin === 'boolean') p.isAdmin = body.isAdmin
+      if (typeof body.canCreateBrains === 'boolean') p.canCreate = body.canCreateBrains
+      return {
+        status: 200,
+        body: {
+          account: {
+            id: p.id,
+            isAdmin: p.isAdmin,
+            canCreateBrains: p.isAdmin || Boolean(p.canCreate),
+            canInvite: false,
+          },
+        },
+      }
+    },
+  },
+  'POST /v1/admin/accounts/{id}/remove': {
+    run: ({ s, who, params, web }) => {
+      if (!web) return WEB_ONLY('This')
+      if (!who?.isAdmin) return ADMIN_ONLY
+      if (params.id === who.id)
+        return err(
+          400,
+          'invalid_request',
+          'You cannot remove your own account.',
+          'Ask another administrator.',
+        )
+      const a = s.accounts.find((x) => x.id === params.id)
+      const v = s.services.find((x) => x.id === params.id)
+      if (!a && !v)
+        return err(404, 'not_found', 'No account with that id is available to you.', 'Check the account id.')
+      if (a?.isAdmin && s.accounts.filter((x) => x.isAdmin && !x.removed && x.id !== a.id).length === 0)
+        return LAST_ADMIN
+      const orphan = s.brains
+        .filter((b) => {
+          const ms = membersOf(s, b.slug)
+          return (
+            ms.some((m) => m.accountId === params.id && m.role === 'curator') &&
+            ms.filter((m) => m.role === 'curator').length === 1
+          )
+        })
+        .map((b) => b.slug)
+      let keysRevoked = 0
+      if (a) {
+        if (!a.removed) keysRevoked = s.tokens.filter((t) => t.account === a.id).length
+        a.removed = true
+        for (const sid of [...s.sessions]) if (sid === `fx.${a.id}`) s.sessions.delete(sid)
+      }
+      if (v) {
+        for (const k of s.keys)
+          if (k.account === v.id && !k.revoked) {
+            k.revoked = true
+            k.liveShortKeys = 0
+            k.liveShortRefs = []
+            keysRevoked += 1
+          }
+        v.removed = true
+      }
+      return { status: 200, body: { removed: true, keysRevoked, brainsWithoutCurator: orphan } }
+    },
+  },
+  'POST /v1/admin/accounts/{id}/restore': {
+    run: ({ s, who, params, web }) => {
+      if (!web) return WEB_ONLY('This')
+      if (!who?.isAdmin) return ADMIN_ONLY
+      const a = s.accounts.find((x) => x.id === params.id)
+      const v = s.services.find((x) => x.id === params.id)
+      if (!a && !v)
+        return err(404, 'not_found', 'No account with that id is available to you.', 'Check the account id.')
+      if (a) a.removed = false
+      if (v) v.removed = false
+      return { status: 200, body: { restored: true } }
+    },
+  },
+  'GET /v1/admin/accounts/{id}/keys': {
+    screen: 'keys',
+    run: ({ s, who, params }) => {
+      if (!who?.isAdmin) return ADMIN_ONLY
+      if (!s.accounts.some((x) => x.id === params.id) && !s.services.some((x) => x.id === params.id))
+        return err(404, 'not_found', 'No account with that id is available to you.', 'Check the account id.')
+      return {
+        status: 200,
+        body: {
+          keys: s.keys
+            .filter((k) => k.account === params.id)
+            .map((k) => ({
+              id: k.id,
+              kind: 'main',
+              name: k.name,
+              last4: k.last4,
+              perm: 'write',
+              createdAt: k.createdAt,
+              expiresAt: null,
+              lastUsedAt: k.lastUsedAt,
+              lastClient: k.lastClient,
+              status: k.revoked ? 'revoked' : 'active',
+              liveShortKeys: k.liveShortKeys,
+              liveShortRefs: k.liveShortRefs,
+            })),
+        },
+      }
+    },
+  },
+  'POST /v1/admin/services': {
+    run: ({ s, who, body, web }) => {
+      if (!web) return WEB_ONLY('This')
+      if (!who?.isAdmin) return ADMIN_ONLY
+      const name = typeof body.name === 'string' ? body.name.trim() : ''
+      if (!name || name.length > 80)
+        return err(400, 'invalid_request', 'An account name has 1 to 80 characters.', 'Shorten the name.')
+      const brains = Array.isArray(body.brains)
+        ? (body.brains as Array<{ slug?: unknown; role?: unknown }>)
+        : []
+      for (const g of brains) {
+        if (typeof g?.slug !== 'string' || (g.role !== 'contributor' && g.role !== 'reader'))
+          return err(
+            400,
+            'invalid_request',
+            'A service account joins a brain as contributor or reader, never curator.',
+            'Give each brain a "slug" and a "role" of contributor or reader.',
+          )
+        if (!s.brains.some((b) => b.slug === g.slug)) return NO_BRAIN
+      }
+      s.made += 1
+      const id = `acc_svc_new${s.made}`
+      const roles = brains.map((g) => ({ slug: g.slug as string, role: g.role as string }))
+      s.services.push({
+        id,
+        name,
+        removed: false,
+        canCreate: body.canCreateBrains === true,
+        roles,
+        createdAt: NOW(),
+        lastSeenAt: null,
+      })
+      for (const r of roles) {
+        const list = s.members.get(r.slug)
+        if (list) list.push({ accountId: id, kind: 'service', name, email: null, role: r.role })
+      }
+      const secret = secretOf()
+      const keyId = `crd_main_new${s.made}`
+      s.keys.push({
+        account: id,
+        id: keyId,
+        name: 'main',
+        last4: secret.slice(-4),
+        createdAt: NOW(),
+        lastUsedAt: null,
+        lastClient: null,
+        revoked: false,
+        liveShortKeys: 0,
+        liveShortRefs: [],
+      })
+      return {
+        status: 201,
+        body: {
+          account: { id },
+          key: { id: keyId, secret },
+          message: 'Copy the key now: rsc-brain shows it only this once.',
+        },
+      }
+    },
+  },
+  'POST /v1/admin/services/{id}/keys': {
+    run: ({ s, who, params, body, web }) => {
+      if (!web) return WEB_ONLY('This')
+      if (!who?.isAdmin) return ADMIN_ONLY
+      const v = s.services.find((x) => x.id === params.id)
+      if (!v)
+        return err(
+          404,
+          'not_found',
+          'No service account with that id is available to you.',
+          'Check the service account id.',
+        )
+      if (v.removed)
+        return err(400, 'invalid_request', 'This service account is deactivated.', 'Reactivate it first.')
+      if (s.keys.filter((k) => k.account === v.id && !k.revoked).length >= 2)
+        return err(
+          409,
+          'too_many_main_keys',
+          'A service account has at most 2 main keys at once.',
+          'Revoke the old key once the program uses the new one, then make another.',
+        )
+      s.made += 1
+      const secret = secretOf()
+      const keyId = `crd_main_new${s.made}`
+      s.keys.unshift({
+        account: v.id,
+        id: keyId,
+        name: typeof body.name === 'string' && body.name.trim() ? body.name.trim() : 'main',
+        last4: secret.slice(-4),
+        createdAt: NOW(),
+        lastUsedAt: null,
+        lastClient: null,
+        revoked: false,
+        liveShortKeys: 0,
+        liveShortRefs: [],
+      })
+      return {
+        status: 201,
+        body: { key: { id: keyId, secret }, message: 'Copy the key now: rsc-brain shows it only this once.' },
+      }
+    },
+  },
+  'DELETE /v1/keys/{id}': {
+    run: ({ s, who, params }) => {
+      const k = s.keys.find((x) => x.id === params.id)
+      if (!k || !who?.isAdmin)
+        return err(404, 'not_found', 'No key with that id is available to you.', 'Check the key id.')
+      k.revoked = true
+      k.liveShortKeys = 0
+      k.liveShortRefs = []
+      return { status: 200, body: { revoked: k.id } }
     },
   },
   'GET /v1/brains/{slug}/wiki/map': {
@@ -1362,24 +2014,10 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
     screen: 'members',
     run: (c) =>
       inJournal(c, 'members', (_j, w) => {
-        const roleOf = (id: string) =>
-          brainsOf(c.s, c.s.accounts.find((a) => a.id === id) ?? null).find((b) => b.slug === c.params.slug)
-            ?.role
-        const listed = c.s.accounts
-          .filter((a) => !a.alone && roleOf(a.id))
-          .map((a) => ({
-            accountId: a.id,
-            kind: 'person',
-            name: a.name,
-            email: w.role === 'curator' ? a.email : null,
-            role: roleOf(a.id) as string,
-          }))
-        // Every brain of the fixture has a curator: Eric, where his own role says otherwise.
-        const members = listed.some((m) => m.role === 'curator')
-          ? listed
-          : listed.map((m) => (m.accountId === 'acc_eric' ? { ...m, role: 'curator' } : m))
-        const order = ['curator', 'contributor', 'reader']
-        members.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role))
+        const members = membersOf(c.s, c.params.slug as string).map((m) => ({
+          ...m,
+          email: w.role === 'curator' ? m.email : null,
+        }))
         return {
           status: 200,
           body: { members, former: [], pendingCurator: w.role === 'curator' ? null : false },
@@ -1720,6 +2358,24 @@ function healthOf(slug: string, st: State | undefined) {
 
 // Paths that need a session; the rest are public, as on the server.
 const PRIVATE = new Set([
+  'GET /v1/brains/{slug}/wiki/settings',
+  'PUT /v1/brains/{slug}/wiki/settings',
+  'POST /v1/brains/{slug}/members',
+  'PUT /v1/brains/{slug}/members/{account}',
+  'DELETE /v1/brains/{slug}/members/{account}',
+  'GET /v1/brains/{slug}/repos',
+  'POST /v1/brains/{slug}/repos',
+  'DELETE /v1/brains/{slug}/repos',
+  'POST /v1/brains/{slug}/archive',
+  'POST /v1/brains/{slug}/unarchive',
+  'DELETE /v1/brains/{slug}',
+  'PATCH /v1/admin/accounts/{id}',
+  'POST /v1/admin/accounts/{id}/remove',
+  'POST /v1/admin/accounts/{id}/restore',
+  'GET /v1/admin/accounts/{id}/keys',
+  'POST /v1/admin/services',
+  'POST /v1/admin/services/{id}/keys',
+  'DELETE /v1/keys/{id}',
   'POST /v1/auth/logout',
   'GET /v1/connect',
   'GET /v1/me',
@@ -1927,10 +2583,211 @@ function brainsOf(s: Scen, who: Account | null): Brain[] {
       const on = s.notify.get(`${who?.id}:${b.slug}`)
       return on === undefined ? b : { ...b, notifyProposals: on }
     })
-  if (who?.alone) return told(s.brains.filter((b) => !BRAINS().some((x) => x.slug === b.slug)))
-  if (who?.id === 'acc_ana') return told(s.brains.map((b) => ({ ...b, role: ANA_ROLES[b.slug] ?? b.role })))
-  return told(s.brains)
+  // A role changed (or a membership ended) in the settings of a brain.
+  const changed = (bs: Brain[]) =>
+    bs.flatMap((b) => {
+      const k = `${who?.id}:${b.slug}`
+      if (!s.roleChanges.has(k)) return [b]
+      const role = s.roleChanges.get(k)
+      return role ? [{ ...b, role }] : []
+    })
+  if (who?.alone) return told(changed(s.brains.filter((b) => !BRAINS().some((x) => x.slug === b.slug))))
+  if (who?.id === 'acc_ana')
+    return told(changed(s.brains.map((b) => ({ ...b, role: ANA_ROLES[b.slug] ?? b.role }))))
+  return told(changed(s.brains))
 }
+
+// The members of a brain as the fixture first shows them (each person with their role there, Eric a
+// curator wherever no one else is, and the service accounts the administration added), kept once read
+// so the settings can change them.
+function membersOf(s: Scen, slug: string): FxMember[] {
+  let m = s.members.get(slug)
+  if (m) return m
+  const roleOf = (id: string) =>
+    brainsOf(s, s.accounts.find((a) => a.id === id) ?? null).find((b) => b.slug === slug)?.role
+  const listed: FxMember[] = s.accounts
+    .filter((a) => !a.alone && !a.removed && roleOf(a.id))
+    .map((a) => ({
+      accountId: a.id,
+      kind: 'person',
+      name: a.name,
+      email: a.email,
+      role: roleOf(a.id) as string,
+    }))
+  const people = listed.some((x) => x.role === 'curator')
+    ? listed
+    : listed.map((x) => (x.accountId === 'acc_eric' ? { ...x, role: 'curator' } : x))
+  const services = s.services.flatMap((v) => {
+    const r = v.roles.find((x) => x.slug === slug)
+    return r && !v.removed
+      ? [{ accountId: v.id, kind: 'service', name: v.name, email: null, role: r.role }]
+      : []
+  })
+  const order = ['curator', 'contributor', 'reader']
+  m = [...people, ...services].sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role))
+  s.members.set(slug, m)
+  return m
+}
+
+// Who manages the members of a brain: its curators and the administration (B4); a member who is not a
+// curator is told why, and a stranger gets the 404 of a missing brain.
+function manages(c: Ctx): { brain: Brain } | Answer {
+  if (!c.web) return WEB_ONLY('Changing who is in a brain')
+  const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+  const exists = c.s.brains.find((x) => x.slug === c.params.slug)
+  if (b?.role === 'curator') return { brain: b }
+  if (c.who?.isAdmin && exists) return { brain: exists }
+  if (!b) return NO_BRAIN
+  return err(
+    403,
+    'forbidden',
+    `Only curators of "${b.slug}" change its members; you are ${b.role}.`,
+    'Ask a curator of the brain.',
+  )
+}
+
+const LAST_CURATOR = (slug: string) =>
+  err(
+    409,
+    'last_curator',
+    `This is the last curator of "${slug}"; a brain always keeps one.`,
+    'Make another member curator first, then change this one.',
+  )
+const LAST_ADMIN = err(
+  409,
+  'last_admin',
+  'This is the last administrator of the installation.',
+  'Make another person an administrator first.',
+)
+const WEB_ONLY = (what: string) =>
+  err(
+    403,
+    'web_only',
+    `${what} is done in the rsc-brain web, signed in as a person.`,
+    'Open the rsc-brain web. Keys of agents and programs cannot manage people or keys.',
+  )
+const ARCHIVED = err(
+  403,
+  'forbidden',
+  'This brain is archived, so it is read-only.',
+  'A curator of the brain can unarchive it (POST /v1/brains/:slug/unarchive).',
+)
+
+function settingsOf(s: Scen, slug: string): FxSettings {
+  let x = s.settings.get(slug)
+  if (!x) {
+    x = {
+      guide: null,
+      mapIntro: '',
+      usageNote: '',
+      meaningExcluded: false,
+      staleDays: 90,
+      longChars: 20000,
+      maintenanceEvery: 20,
+      approvalsSince: 3,
+    }
+    s.settings.set(slug, x)
+  }
+  return x
+}
+const settingsView = (x: FxSettings) => ({
+  guide: x.guide ?? DEFAULT_GUIDE,
+  guideDefault: DEFAULT_GUIDE,
+  customGuide: x.guide !== null,
+  mapIntro: x.mapIntro,
+  usageNote: x.usageNote,
+  usageNoteDefault: '',
+  meaningExcluded: x.meaningExcluded,
+  staleDays: x.staleDays,
+  longChars: x.longChars,
+  maintenanceEvery: x.maintenanceEvery,
+  approvalsSince: x.approvalsSince,
+})
+
+// Another curator changes the settings of a brain meanwhile (the conflict of a save).
+export function settingsBehind(s: Scen, slug: string, change: Partial<FxSettings>): void {
+  const x = settingsOf(s, slug)
+  Object.assign(x, change)
+}
+
+// A curator archives or unarchives a brain (B4: archiving is a curator's; deleting the administration's).
+function archiving(c: Ctx, archived: boolean): Answer {
+  const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+  if (!b) return NO_BRAIN
+  if (b.role !== 'curator')
+    return err(
+      403,
+      'forbidden',
+      `This needs the curator role in the brain; you are ${b.role}.`,
+      'Ask a curator of the brain (Eric) for the curator role.',
+    )
+  const row = c.s.brains.find((x) => x.slug === b.slug) as Brain
+  row.status = archived ? 'archived' : 'active'
+  const { role: _r, stats: _s, notifyProposals: _n, ...brain } = row
+  return { status: 200, body: { brain } }
+}
+
+// The accounts as the administration lists them: people with their role in each brain, then services.
+function adminAccounts(s: Scen, who: Account) {
+  const seen = who.alone ? s.accounts.filter((a) => a === who || a.joined) : s.accounts
+  const people = seen.map((a) => {
+    const roles = brainsOf(s, a).map((b) => ({ slug: b.slug, name: b.name, role: b.role }))
+    return {
+      id: a.id,
+      kind: 'person',
+      name: a.name,
+      email: a.email,
+      isAdmin: a.isAdmin,
+      canCreateBrains: a.isAdmin || Boolean(a.canCreate),
+      canInvite: false,
+      status: a.removed ? 'removed' : 'active',
+      secondFactor: a.totp,
+      brains: roles.length,
+      roles,
+      lastSeenAt: a === who ? AT : a.id === 'acc_ana' ? '2026-10-28T08:00:00.000Z' : null,
+      createdAt: '2026-10-01T10:00:00.000Z',
+    }
+  })
+  // Many people (paging and the filter of the administration).
+  if (s.states.get('people') === 'much-data')
+    for (let i = 1; i <= 45; i++)
+      people.push({
+        ...(people[1] ?? people[0]),
+        id: `acc_many${i}`,
+        name: `Person ${String(i).padStart(2, '0')}`,
+        email: `person${i}@example.test`,
+        isAdmin: false,
+        canCreateBrains: false,
+        roles: [],
+        brains: 0,
+      } as (typeof people)[number])
+  if (who.alone) return people
+  const services = s.services.map((v) => {
+    const roles = v.roles.flatMap((r) => {
+      const b = s.brains.find((x) => x.slug === r.slug)
+      return b ? [{ slug: b.slug, name: b.name, role: r.role }] : []
+    })
+    return {
+      id: v.id,
+      kind: 'service',
+      name: v.name,
+      email: null,
+      isAdmin: false,
+      canCreateBrains: v.canCreate,
+      canInvite: false,
+      status: v.removed ? 'removed' : 'active',
+      secondFactor: false,
+      brains: roles.length,
+      roles,
+      mainKeys: s.keys.filter((k) => k.account === v.id && !k.revoked).length,
+      lastSeenAt: v.lastSeenAt,
+      createdAt: v.createdAt,
+    }
+  })
+  return [...people, ...services]
+}
+
+const secretOf = () => `rscb_fx_${randomBytes(12).toString('hex')}`
 
 const CLIENTS = ['Claude Code', 'Codex', 'RSC Factory', 'Cursor']
 function sessionsOf(slug: string, n: number) {
@@ -2250,6 +3107,16 @@ export async function startFixture(
             ...(typeof b.to === 'string' ? { address: b.to } : {}),
           },
         )
+        return send(res, { status: 200, body: {} })
+      }
+      // Another curator saves the settings of a brain meanwhile (the conflict of a save, PR25a).
+      const settingsEdit = /^\/__fixture\/scenarios\/([\w]+)\/settings-edit$/.exec(url.pathname)
+      if (settingsEdit && method === 'POST') {
+        const s = scenarios.get(settingsEdit[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        const b = await bodyOf(req)
+        const { brain, ...change } = b
+        settingsBehind(s, String(brain ?? 'growth'), change as Partial<FxSettings>)
         return send(res, { status: 200, body: {} })
       }
       // Another person corrects a journal entry meanwhile (the conflict of an edit).

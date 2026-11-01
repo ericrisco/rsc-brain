@@ -8,7 +8,7 @@ import { allow, type Ctx, inBrain } from '../context.ts'
 import { lockMeaning } from '../meaning.ts'
 import { applyOps, type Revised } from './apply.ts'
 import { type Problem, readOp } from './model.ts'
-import { getPage, type PageReading, settingsOf, type WikiSettings } from './pages.ts'
+import { DEFAULT_GUIDE, getPage, type PageReading, settingsOf, type WikiSettings } from './pages.ts'
 import { problemsOf } from './proposals.ts'
 import { webOnly } from './review.ts'
 
@@ -63,6 +63,10 @@ export async function directChange(
 }
 
 export type SettingsInput = {
+  // What each field was when the person read it (G11, per-field compare-and-set): a save of a field
+  // someone changed since is refused with what is there now, so two curators editing at once never
+  // overwrite each other unseen; fields not sent are never touched. Left out, a save goes as before.
+  base?: Partial<Record<SettingsField, unknown>>
   guide?: string | null
   mapIntro?: string
   usageNote?: string
@@ -72,8 +76,44 @@ export type SettingsInput = {
   maintenanceEvery?: number
 }
 
-export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput): Promise<WikiSettings> {
-  const guide = s.guide === undefined || s.guide === null ? s.guide : redact(s.guide.trim()).text
+// The fields a person edits (not the count of approvals, which moves by itself).
+export const SETTINGS_FIELDS = [
+  'guide',
+  'mapIntro',
+  'usageNote',
+  'meaningExcluded',
+  'staleDays',
+  'longChars',
+  'maintenanceEvery',
+] as const
+export type SettingsField = (typeof SETTINGS_FIELDS)[number]
+
+// The settings as the brain's settings screen reads them (G11): the default texts beside the current ones.
+export type SettingsView = WikiSettings & { guideDefault: string; usageNoteDefault: string }
+export const USAGE_NOTE_DEFAULT = ''
+
+export function settingsView(s: WikiSettings): SettingsView {
+  return { ...s, guideDefault: DEFAULT_GUIDE, usageNoteDefault: USAGE_NOTE_DEFAULT }
+}
+
+// A field as stored and compared: the guide is null while it is the default.
+const stored = (s: WikiSettings, f: SettingsField): unknown =>
+  f === 'guide' ? (s.customGuide ? s.guide : null) : s[f]
+
+// Any member reads them: the guide and the note already reach every member's agents.
+export async function getWikiSettings(ctx: Ctx, slug: string): Promise<SettingsView> {
+  const { brain } = await inBrain(ctx, { slug })
+  return settingsView(await settingsOf(ctx.db, brain.id))
+}
+
+export async function setWikiSettings(
+  ctx: Ctx,
+  slug: string,
+  s: SettingsInput,
+): Promise<SettingsView & { unchanged?: true }> {
+  let guide = s.guide === undefined || s.guide === null ? s.guide : redact(s.guide.trim()).text
+  // The default text itself is the default: stored as null, so the brain follows it as it improves.
+  if (typeof guide === 'string' && guide === DEFAULT_GUIDE.trim()) guide = null
   const mapIntro = s.mapIntro === undefined ? undefined : redact(s.mapIntro.trim()).text
   const usageNote = s.usageNote === undefined ? undefined : redact(s.usageNote.trim()).text
   if (guide !== undefined && guide !== null && (!guide || guide.length > 20_000)) {
@@ -103,6 +143,21 @@ export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput):
     await db.query('INSERT INTO wiki_settings (brain_id) VALUES ($1) ON CONFLICT (brain_id) DO NOTHING', [
       brain.id,
     ])
+    if (s.base) {
+      // Saves of this brain's settings take turns from here, so two on the same value cannot both pass.
+      await db.query('SELECT 1 FROM wiki_settings WHERE brain_id = $1 FOR UPDATE', [brain.id])
+      const now = await settingsOf(db, brain.id)
+      const moved = (Object.keys(s.base) as SettingsField[]).filter((f) => stored(now, f) !== s.base?.[f])
+      if (moved.length) {
+        const e = conflict(
+          'settings_changed',
+          `Someone changed ${moved.join(', ')} of "${slug}" since you read ${moved.length === 1 ? 'it' : 'them'}.`,
+          'Read the current values in "current", then save your change again on top of them.',
+        )
+        e.current = settingsView(now)
+        throw e
+      }
+    }
     const sets: string[] = []
     const values: unknown[] = [brain.id]
     const set = (col: string, v: unknown) => {
@@ -117,6 +172,9 @@ export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput):
     set('stale_days', s.staleDays)
     set('long_chars', s.longChars)
     set('maintenance_every', s.maintenanceEvery)
+    // Only a base: the person changed nothing, and asks whether what they see is still what is there.
+    if (sets.length === 0 && s.base)
+      return { ...settingsView(await settingsOf(db, brain.id)), unchanged: true }
     if (sets.length === 0)
       throw invalid(
         'Nothing to change.',
@@ -128,7 +186,7 @@ export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput):
     // Excluding a brain from meaning search deletes its vectors now; nothing more of it is sent (CA8).
     if (s.meaningExcluded === true)
       await db.query('DELETE FROM meaning_vectors WHERE brain_id = $1', [brain.id])
-    return settingsOf(db, brain.id)
+    return settingsView(await settingsOf(db, brain.id))
   })
 }
 

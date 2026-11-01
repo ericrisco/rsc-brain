@@ -3,7 +3,7 @@
 // brains (each team links its own); a key is only told about the ones it can see.
 import { atLeast, type Role } from '../auth/can.ts'
 import { roleIn } from '../auth/principal.ts'
-import { invalid, notFound } from '../core/errors.ts'
+import { denied, invalid, notFound } from '../core/errors.ts'
 import { listBrains } from './brains.ts'
 import { type Ctx, inBrain, ok } from './context.ts'
 import { inWeb } from './guards.ts'
@@ -25,6 +25,11 @@ export function repoKey(v: unknown): string | null {
   if (typeof v !== 'string') return null
   let s = v.trim()
   if (!s || s.length > 500) return null
+  // A relative path is a folder, not an address.
+  if (s.startsWith('.')) return null
+  // Without a scheme nor a user (git@…), the first part must name a host: "org/repo" names none.
+  const bare = !/^[a-z][a-z0-9+.-]*:\/\//i.test(s) && !/^[^/@\s]+@/.test(s)
+  if (bare && !/^(localhost|[^/:]*\.[^/:]*)(:\d+)?\//i.test(s)) return null
   let scheme = 'ssh'
   // git@host:path has no port: in "git@host:2024/app", 2024 is the owner.
   const scp = /^[^/@\s]+@([^:/\s]+):(?!\/)(.+)$/.exec(s)
@@ -41,7 +46,7 @@ export function repoKey(v: unknown): string | null {
     .replace(/\.git$/i, '')
     .replace(/\/+/g, '/')
     .toLowerCase()
-  if (!/^[a-z0-9.-]+(:\d+)?\/\S+$/.test(s) || s.length > 300 || s.includes('..')) return null
+  if (!/^[a-z0-9][a-z0-9.-]*(:\d+)?\/\S+$/.test(s) || s.length > 300 || s.includes('..')) return null
   return s
 }
 
@@ -63,13 +68,21 @@ async function asCurator(ctx: Ctx, slug: string) {
   return brain
 }
 
+// An archived brain is read-only: no new link (agents could not write to it anyway). Unlinking stays.
+const ARCHIVED_LINK = () =>
+  denied(
+    'This brain is archived, so no repository can be linked to it.',
+    'A curator of the brain can unarchive it first.',
+  )
+
 export async function linkRepo(ctx: Ctx, slug: string, url: unknown) {
   const brain = await asCurator(ctx, slug)
+  if (brain.status === 'archived') throw ARCHIVED_LINK()
   const key = repoKey(url)
   if (!key) {
     throw invalid(
       'That is not a repository address.',
-      'Give its remote, such as https://github.com/org/repo.',
+      'Use the full address, e.g. github.com/org/repo (or the output of "git remote get-url origin").',
     )
   }
   // Linking is per brain: what other brains link is never shown, nor in the way.

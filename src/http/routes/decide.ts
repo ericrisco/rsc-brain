@@ -4,7 +4,14 @@
 
 import { invalid } from '../../core/errors.ts'
 import { approveProposal, returnProposal, reviewProposal } from '../../domain/wiki/decide.ts'
-import { directChange, maintenanceAsked, setWikiSettings } from '../../domain/wiki/direct.ts'
+import {
+  directChange,
+  getWikiSettings,
+  maintenanceAsked,
+  SETTINGS_FIELDS,
+  type SettingsField,
+  setWikiSettings,
+} from '../../domain/wiki/direct.ts'
 import { purgePageRevisions, purgeProposal } from '../../domain/wiki/purge.ts'
 import { bool, compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
@@ -78,17 +85,22 @@ export const decideRoutes: Route[] = [
       }),
     }
   }),
+  route('GET /v1/brains/:slug/wiki/settings', async (r) => ({
+    body: await getWikiSettings(ctxOf(r), r.params.slug as string),
+  })),
   route('PUT /v1/brains/:slug/wiki/settings', async (r) => {
     const b = obj(r.body)
     const guide = b.guide
     if (guide !== undefined && guide !== null && typeof guide !== 'string') {
       throw invalid('"guide" is text, or null for the default.', 'Fix "guide".')
     }
+    const base = baseOf(b.base)
     return {
       body: await setWikiSettings(
         ctxOf(r),
         r.params.slug as string,
         compact({
+          base,
           guide: guide as string | null | undefined,
           mapIntro: str(b, 'mapIntro'),
           usageNote: str(b, 'usageNote'),
@@ -129,3 +141,21 @@ export const decideRoutes: Route[] = [
     body: await purgeProposal(ctxOf(r), r.params.id as string, reqStr(obj(r.body), 'reason')),
   })),
 ]
+
+// "base": what each field was when the person read it, as {field: value}; only fields a person edits.
+function baseOf(v: unknown): Partial<Record<SettingsField, unknown>> | undefined {
+  if (v === undefined || v === null) return undefined
+  const bad = () =>
+    invalid(
+      `"base" holds what each field was when you read it, such as {"staleDays": 90}: ${SETTINGS_FIELDS.join(', ')}.`,
+      'Fix "base", or leave it out to save regardless.',
+    )
+  if (typeof v !== 'object' || Array.isArray(v)) throw bad()
+  const out: Partial<Record<SettingsField, unknown>> = {}
+  for (const [k, x] of Object.entries(v)) {
+    if (!(SETTINGS_FIELDS as readonly string[]).includes(k)) throw bad()
+    if (x !== null && !['string', 'number', 'boolean'].includes(typeof x)) throw bad()
+    out[k as SettingsField] = x
+  }
+  return out
+}

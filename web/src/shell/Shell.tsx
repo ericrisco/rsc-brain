@@ -56,6 +56,21 @@ function BrainLinks({ brain }: { brain: BrainNav }) {
     },
     { href: `${base}/activity`, label: T.shell.activity, here: path === `${base}/activity` },
     { href: `${base}/health`, label: T.shell.health, here: path === `${base}/health` },
+    // Only curators change a brain's settings (B4); the others are not offered the page.
+    ...(brain.role === 'curator'
+      ? [
+          {
+            href: `${base}/settings`,
+            label: T.shell.settings,
+            here:
+              path === `${base}/settings`
+                ? true
+                : path.startsWith(`${base}/settings/`)
+                  ? ('inside' as const)
+                  : false,
+          },
+        ]
+      : []),
   ]
   return (
     <nav class="nav" aria-label={T.shell.brainNav}>
@@ -154,6 +169,11 @@ function AccountMenu({ me }: { me: Me }) {
           {me.account.canInvite ? (
             <a href="/people" onClick={() => setOpen(false)}>
               <span>{T.shell.people}</span>
+            </a>
+          ) : null}
+          {me.account.isAdmin ? (
+            <a href="/admin/people" onClick={() => setOpen(false)}>
+              <span>{T.shell.admin}</span>
             </a>
           ) : null}
           <button
