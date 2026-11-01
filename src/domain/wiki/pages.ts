@@ -5,14 +5,8 @@ import { AppError, invalid } from '../../core/errors.ts'
 import type { Db, Row } from '../../db/db.ts'
 import { type Ctx, inBrain } from '../context.ts'
 import { decode, encode, PAGE, type Page as PageOf } from '../listing.ts'
-import {
-  type LinkKind,
-  PAGE_STATUSES,
-  PAGE_TYPES,
-  type PageStatus,
-  type PageType,
-  type Source,
-} from './model.ts'
+import { checkFilters } from './graph.ts'
+import type { LinkKind, PageStatus, PageType, Source } from './model.ts'
 
 export const pageNotFound = (address: string) =>
   new AppError(
@@ -518,42 +512,59 @@ export type PageListItem = {
 export type PageListQuery = {
   q?: string
   prefix?: string
+  // Only the pages at the level of `prefix` with no deeper part, as the graph gathers them.
+  loose?: boolean
   type?: string
   status?: string
   tag?: string
+  linkKind?: string
+  sort?: string
   cursor?: string
   limit?: number
 }
 
-// The cursor of the list: the last address given, so the next page starts after it.
+// The columns the list sorts by ("-" before one: the other way), each with its tie broken by address.
+const SORTS = {
+  address: 'p.address COLLATE "C"',
+  title: 'p.title COLLATE "C"',
+  type: 'p.type',
+  status: 'p.status',
+  in: 'in_n',
+  out: 'out_n',
+  updatedAt: 'p.updated_at',
+} as const
+export const PAGE_SORTS = Object.keys(SORTS) as (keyof typeof SORTS)[]
+
+// The cursor of the list: in address order, the last address given (the next page starts after it); in
+// any other order, how many came before ("#" and the number: no address starts with "#").
 const cursorOf = (address: string) => Buffer.from(address, 'utf8').toString('base64url')
-function addressFrom(cursor: string): string {
+function cursorFrom(cursor: string): { after: string } | { offset: number } {
   const a = Buffer.from(cursor, 'base64url').toString('utf8')
-  if (!a || a.length > 400) throw invalid('"cursor" is not one this list gave.', 'Use "next" unchanged.')
-  return a
+  if (/^#\d{1,7}$/.test(a)) return { offset: Number(a.slice(1)) }
+  if (!a || a.length > 400 || a.startsWith('#'))
+    throw invalid('"cursor" is not one this list gave.', 'Use "next" unchanged.')
+  return { after: a }
 }
 const likeText = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`)
 
-// The pages of a wiki by pages, in address order, with the number of pages linking in and out (spec B6,
-// plan §3.5 G9 in its minimal form: the `[[` autocomplete of the editor). Every status is listed; the
-// filters narrow it. Sorting and link kinds come with the graph (PR22).
+// The pages of a wiki by pages, with how many pages link in and out (spec B6 «Graph», plan §3.5 G9): the list
+// beside the graph and the `[[` autocomplete of the editor. Every status unless `status` (one or more) says
+// otherwise; the other filters are the graph's (a link kind: pages with a link of that kind, either way). The
+// counts are the graph's too: links between pages that exist and are not retired, worked out once for the
+// brain (never once a row). In address order unless `sort` says otherwise.
 export async function listPages(
   ctx: Ctx,
   slug: string,
   o: PageListQuery = {},
 ): Promise<PageOf<PageListItem>> {
-  if (o.type !== undefined && !(PAGE_TYPES as readonly string[]).includes(o.type))
-    throw invalid(`"type" is one of: ${PAGE_TYPES.join(', ')}.`, 'Fix "type".')
-  if (o.status !== undefined && !(PAGE_STATUSES as readonly string[]).includes(o.status))
-    throw invalid(`"status" is one of: ${PAGE_STATUSES.join(', ')}.`, 'Fix "status".')
-  for (const [k, v] of [
-    ['q', o.q],
-    ['prefix', o.prefix],
-    ['tag', o.tag],
-  ] as const) {
-    if (v !== undefined && v.length > 200)
-      throw invalid(`"${k}" has at most 200 characters.`, `Shorten "${k}".`)
-  }
+  checkFilters(o)
+  const desc = o.sort?.startsWith('-') ?? false
+  const column = (o.sort === undefined ? 'address' : o.sort.replace(/^-/, '')) as keyof typeof SORTS
+  if (!(PAGE_SORTS as string[]).includes(column))
+    throw invalid(
+      `"sort" is one of: ${PAGE_SORTS.join(', ')}, with "-" before it for the other way.`,
+      'Fix "sort".',
+    )
   const { brain } = await inBrain(ctx, { slug })
   const limit = o.limit ?? PAGE.default
   const params: unknown[] = [brain.id]
@@ -562,34 +573,69 @@ export async function listPages(
     return `$${params.length}`
   }
   const where = ['p.brain_id = $1']
-  if (o.q !== undefined) {
-    const like = p(`%${likeText(o.q)}%`)
+  // Words are trimmed, as the graph trims them; only spaces is no filter.
+  const words = o.q?.trim()
+  if (words) {
+    const like = p(`%${likeText(words)}%`)
     where.push(`(p.address ILIKE ${like} OR p.title ILIKE ${like})`)
   }
   if (o.prefix !== undefined)
     where.push(`(p.address = ${p(o.prefix)} OR p.address LIKE ${p(`${likeText(o.prefix)}/%`)})`)
+  if (o.loose) {
+    // The page at the prefix itself, or one part below it with no page that is not retired under it; every
+    // address with a page under it (each part of each address but the last) is worked out once, hashed.
+    const deeper = o.prefix === undefined ? '%/%' : `${likeText(o.prefix)}/%/%`
+    const self = o.prefix === undefined ? 'false' : `p.address = ${p(o.prefix)}`
+    where.push(
+      `(${self} OR (p.address NOT LIKE ${p(deeper)} AND p.address NOT IN (
+         SELECT array_to_string((string_to_array(c.address, '/'))[1:k], '/')
+           FROM pages c, generate_series(1, cardinality(string_to_array(c.address, '/')) - 1) k
+          WHERE c.brain_id = $1 AND c.status <> 'retired')))`,
+    )
+  }
   if (o.type !== undefined) where.push(`p.type = ${p(o.type)}`)
-  if (o.status !== undefined) where.push(`p.status = ${p(o.status)}`)
+  if (o.status !== undefined) where.push(`p.status = ANY(${p(o.status.split(','))}::text[])`)
   if (o.tag !== undefined) where.push(`${p(o.tag)} = ANY(p.tags)`)
+  if (o.linkKind !== undefined) {
+    // A semi-join on the set of pages with such a link (a hash, not a scan of the links for every page).
+    const k = p(o.linkKind)
+    where.push(
+      `p.id IN (SELECT from_page FROM l WHERE kind = ${k} UNION SELECT to_id FROM l WHERE kind = ${k})`,
+    )
+  }
   const filtered = where.join(' AND ')
-  const total = await ctx.db.one<{ n: number }>(`SELECT count(*)::int AS n FROM pages p WHERE ${filtered}`, [
-    ...params,
-  ])
-  const after = o.cursor === undefined ? null : addressFrom(o.cursor)
-  const page = after === null ? '' : ` AND p.address COLLATE "C" > ${p(after)}`
+  // Every link of the brain between two pages that exist and are not retired (a mention through any address
+  // the page it leads to ever had), once per kind: what the graph draws.
+  const links = `WITH l AS MATERIALIZED (
+      SELECT DISTINCT l.from_page, t.id AS to_id, l.kind
+        FROM page_links l
+        JOIN pages f ON f.id = l.from_page AND f.status <> 'retired'
+        LEFT JOIN page_addresses a ON l.to_page IS NULL AND a.brain_id = l.brain_id AND a.address = l.to_address
+        JOIN pages t ON t.id = coalesce(l.to_page, a.page_id) AND t.status <> 'retired'
+       WHERE l.brain_id = $1 AND t.id <> l.from_page)`
+  const total = await ctx.db.one<{ n: number }>(
+    `${links} SELECT count(*)::int AS n FROM pages p WHERE ${filtered}`,
+    [...params],
+  )
+  const c = o.cursor === undefined ? null : cursorFrom(o.cursor)
+  if (c && column === 'address' && !desc && !('after' in c))
+    throw invalid('"cursor" is not one this list gave.', 'Use "next" unchanged.')
+  if (c && (column !== 'address' || desc) && !('offset' in c))
+    throw invalid('"cursor" is not one this list gave.', 'Use "next" unchanged.')
+  const keyset = c && 'after' in c ? ` AND p.address COLLATE "C" > ${p(c.after)}` : ''
+  const offset = c && 'offset' in c ? c.offset : 0
+  const dir = desc ? 'DESC' : 'ASC'
+  const order =
+    column === 'address' ? `p.address COLLATE "C" ${dir}` : `${SORTS[column]} ${dir}, p.address COLLATE "C"`
   const rows = await ctx.db.query(
-    `SELECT p.address, p.title, p.type, p.status, p.tags, p.updated_at,
-            (SELECT count(DISTINCT coalesce(t.id, l.to_address))::int
-               FROM page_links l
-               LEFT JOIN page_addresses a ON l.to_page IS NULL AND a.brain_id = l.brain_id AND a.address = l.to_address
-               LEFT JOIN pages t ON t.id = coalesce(l.to_page, a.page_id)
-              WHERE l.from_page = p.id AND t.id IS DISTINCT FROM p.id) AS out_n,
-            (SELECT count(DISTINCT l.from_page)::int FROM page_links l
-              WHERE l.from_page <> p.id AND (l.to_page = p.id
-                 OR (l.to_page IS NULL AND l.brain_id = p.brain_id
-                     AND l.to_address IN (SELECT address FROM page_addresses WHERE page_id = p.id)))) AS in_n
-       FROM pages p WHERE ${filtered}${page}
-      ORDER BY p.address COLLATE "C" LIMIT ${p(limit + 1)}`,
+    `${links},
+     o AS (SELECT from_page AS id, count(DISTINCT to_id)::int AS n FROM l GROUP BY from_page),
+     i AS (SELECT to_id AS id, count(DISTINCT from_page)::int AS n FROM l GROUP BY to_id)
+     SELECT p.address, p.title, p.type, p.status, p.tags, p.updated_at,
+            coalesce(o.n, 0) AS out_n, coalesce(i.n, 0) AS in_n
+       FROM pages p LEFT JOIN o ON o.id = p.id LEFT JOIN i ON i.id = p.id
+      WHERE ${filtered}${keyset}
+      ORDER BY ${order} LIMIT ${p(limit + 1)} OFFSET ${p(offset)}`,
     params,
   )
   const items = rows.slice(0, limit).map(
@@ -605,5 +651,11 @@ export async function listPages(
     }),
   )
   const last = items.at(-1)
-  return { items, total: total?.n ?? 0, next: rows.length > limit && last ? cursorOf(last.address) : null }
+  const more = rows.length > limit && last
+  const next = !more
+    ? null
+    : column === 'address' && !desc
+      ? cursorOf(last.address)
+      : cursorOf(`#${offset + limit}`)
+  return { items, total: total?.n ?? 0, next }
 }

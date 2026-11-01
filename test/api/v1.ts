@@ -44,6 +44,7 @@ export const V1 = [
   'GET /v1/brains/{slug}/uncompiled',
   'GET /v1/brains/{slug}/wiki/compile',
   'GET /v1/brains/{slug}/wiki/decisions',
+  'GET /v1/brains/{slug}/wiki/graph',
   'GET /v1/brains/{slug}/wiki/guide',
   'GET /v1/brains/{slug}/wiki/health',
   'GET /v1/brains/{slug}/wiki/log',

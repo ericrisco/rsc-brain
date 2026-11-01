@@ -47,6 +47,7 @@ function BrainLinks({ brain }: { brain: BrainNav }) {
     },
     { href: `${base}/wiki/decisions`, label: T.shell.decisions, here: path === `${base}/wiki/decisions` },
     { href: `${base}/wiki/log`, label: T.shell.log, here: path === `${base}/wiki/log` },
+    { href: `${base}/wiki/graph`, label: T.shell.graph, here: path === `${base}/wiki/graph` },
     // Every screen of the journal is in the journal.
     {
       href: `${base}/journal`,

@@ -55,6 +55,8 @@ export type Reply = {
   status?: number
   body: unknown
   headers?: Record<string, string | string[]>
+  // Sent gzipped when it is big and the client accepts it.
+  compress?: boolean
   // Instead of a body: an event stream; the promise settles when the stream is over.
   stream?: (out: StreamOut) => Promise<void>
 }

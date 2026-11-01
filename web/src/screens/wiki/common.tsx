@@ -44,15 +44,16 @@ export function TypeTag({ type }: { type: string }) {
   return <span class="tag">{T.wiki.types[type] ?? type}</span>
 }
 
-// The filters of a screen, read from and written to its address (replacing the history entry).
+// The filters of a screen, read from and written to its address: replacing the history entry, or, for a move
+// the person may want to undo with Back (another group, a page in focus), adding one (`push`).
 export function useFilters<K extends string>(keys: readonly K[]) {
   const { path, query, route } = useLocation()
   const values = Object.fromEntries(keys.map((k) => [k, query[k] ?? ''])) as Record<K, string>
-  const set = (next: Partial<Record<K, string>>) => {
+  const set = (next: Partial<Record<K, string>>, o: { push?: boolean } = {}) => {
     const q = new URLSearchParams()
     for (const [k, v] of Object.entries({ ...query, ...next }) as [string, string][]) if (v) q.set(k, v)
     const qs = q.toString()
-    route(qs ? `${path}?${qs}` : path, true)
+    route(qs ? `${path}?${qs}` : path, !o.push)
   }
   const active = keys.some((k) => values[k])
   const clear = () => set(Object.fromEntries(keys.map((k) => [k, ''])) as Partial<Record<K, string>>)

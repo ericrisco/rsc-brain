@@ -3,6 +3,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
+import { gzipSync } from 'node:zlib'
 import { bearer, resolveKey, sessionCookie } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
@@ -183,24 +184,41 @@ function connOf(req: IncomingMessage, trusted: string[]): Conn {
 }
 
 // JSON by default; a reply that names its own content type (a page) is sent as it is.
+// A reply that asks for it (`compress`) travels gzipped when it passes 32 KB and the client accepts gzip
+// (plan §3.5 G10: the graph).
+export const COMPRESS_FROM = 32 * 1024
+const acceptsGzip = (header: string | undefined) =>
+  (header ?? '').split(',').some((part) => {
+    const [name, ...params] = part.trim().toLowerCase().split(';')
+    const q = params.map((x) => x.trim()).find((x) => x.startsWith('q='))
+    return name?.trim() === 'gzip' && (!q || Number(q.slice(2)) > 0)
+  })
+
 function send(
   res: ServerResponse,
   status: number,
   body: unknown,
   headers: Record<string, string | string[]> = {},
+  // The route compresses big answers (`compress`); whether this client takes gzip.
+  compress: { route: boolean; accepts: boolean } = { route: false, accepts: false },
 ): void {
   const raw = typeof body === 'string' && headers['content-type'] !== undefined
   const bounded = raw ? { text: body as string, cut: false } : boundJson(JSON.stringify(body))
   const text = bounded.text
+  const zipped =
+    compress.route && compress.accepts && Buffer.byteLength(text) > COMPRESS_FROM ? gzipSync(text) : null
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     ...headers,
     ...(bounded.cut ? { 'x-brain-cut': 'true' } : {}),
-    'content-length': Buffer.byteLength(text),
+    // A cache keeps the plain and the gzipped answer apart, whichever this client got.
+    ...(compress.route ? { vary: 'Accept-Encoding' } : {}),
+    ...(zipped ? { 'content-encoding': 'gzip' } : {}),
+    'content-length': zipped ? zipped.length : Buffer.byteLength(text),
   })
-  res.end(text)
+  res.end(zipped ?? text)
 }
 
 // An event stream: the headers go at once, then whatever the route writes, until it ends or the client
@@ -355,7 +373,10 @@ export function createHandler(deps: AppDeps) {
       const body = await readBody(req)
       const reply = await found.route.handler({ ...base, body, who })
       if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)
-      send(res, reply.status ?? 200, reply.body, reply.headers)
+      send(res, reply.status ?? 200, reply.body, reply.headers, {
+        route: Boolean(reply.compress),
+        accepts: acceptsGzip(req.headers['accept-encoding']),
+      })
     } catch (err) {
       // The standard sign-in's endpoints answer in the standard's shape, even for a malformed request.
       if (

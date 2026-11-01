@@ -39,6 +39,22 @@ for (const theme of ['dark', 'light'] as const) {
     await audit(page, `${theme} sign-in with an error`)
   })
 
+  // The graph (PR22): the canvas with its inspector open, and the list, in both themes.
+  test(`the graph and its list, ${theme}`, async ({ page, context, baseURL }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
+    await page.goto('/b/growth/wiki/graph')
+    await expect(page.locator('canvas.graph-canvas[data-settled]')).toHaveCount(1, { timeout: 20_000 })
+    await page.locator('canvas.graph-canvas').focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('link', { name: 'Open page' })).toBeVisible()
+    await page.getByText('Legend').click()
+    await audit(page, `${theme} graph`)
+    await page.getByRole('button', { name: 'List', exact: true }).click()
+    await expect(page.getByRole('table', { name: /Pages of the wiki/ }).locator('tbody tr')).toHaveCount(50)
+    await audit(page, `${theme} graph list`)
+  })
+
   test(`first run, ${theme}`, async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'fresh')
     await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
