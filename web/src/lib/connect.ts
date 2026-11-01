@@ -35,17 +35,43 @@ export function toAsk(o: {
   return o.tokenId ? ['tokens', 'apps'] : ['apps']
 }
 
+// The agents whose apps can be told by the name they declare; an app named after one of them belongs to that
+// agent's tab. Any other name counts for whichever tab is waiting (the message names the client anyway).
+const AGENT_NAMES: Array<[string, RegExp]> = [
+  ['claude-code', /claude[\s_-]?code/i],
+  ['codex', /codex/i],
+  ['opencode', /open[\s_-]?code/i],
+  ['cursor', /cursor/i],
+]
+const fits = (agent: string | undefined, name: string) => {
+  if (!agent) return true
+  const owner = AGENT_NAMES.find(([, re]) => re.test(name))?.[0]
+  return owner === undefined || owner === agent
+}
+
 export function checkOf(o: {
   tokenId: string | null
   knownApps: Set<string> | null
   tokens?: readonly TokenSeen[] | undefined
   apps?: readonly AppSeen[] | undefined
+  // When the check began (browser time): a request at or after it counts even for an app known before.
+  since?: number
+  // The tab's agent: an app named after another known agent is not this one.
+  agent?: string
 }): Check {
   const t = o.tokenId ? o.tokens?.find((x) => x.id === o.tokenId && x.lastUsedAt) : undefined
   if (t?.lastUsedAt)
     return { kind: 'connected', via: 'token', at: t.lastUsedAt, client: clientLabel(t.lastClient) }
   const known = o.knownApps
-  const a = known ? o.apps?.find((x) => !known.has(x.id) && x.lastRequestAt) : undefined
+  const since = o.since
+  const a = known
+    ? o.apps?.find(
+        (x) =>
+          x.lastRequestAt &&
+          fits(o.agent, x.name) &&
+          (!known.has(x.id) || (since !== undefined && Date.parse(x.lastRequestAt) >= since)),
+      )
+    : undefined
   if (a?.lastRequestAt) return { kind: 'connected', via: 'app', at: a.lastRequestAt, client: a.name }
   return { kind: 'waiting' }
 }
@@ -57,15 +83,22 @@ export type AgentCheck = {
   // The apps there when this check started (from its first answer); null until then.
   knownApps: Set<string> | null
   since: number
+  // The agent of the tab, to tell apps apart by the name they declare.
+  agent?: string
   found?: Extract<Check, { kind: 'connected' }>
 }
 
-export const startCheck = (now: number, tokenId: string | null = null): AgentCheck => ({
+export const startCheck = (now: number, tokenId: string | null = null, agent?: string): AgentCheck => ({
   kind: 'waiting',
   tokenId,
   knownApps: null,
   since: now,
+  ...(agent ? { agent } : {}),
 })
+
+// Waiting for 10 minutes stops the check, whether the asking worked or failed.
+export const expire = (c: AgentCheck, now: number): AgentCheck =>
+  c.kind === 'waiting' && now - c.since >= CHECK_STOP_MS ? { ...c, kind: 'stopped' } : c
 
 export const shouldPoll = (c: AgentCheck, env: { hidden: boolean; online: boolean }): boolean =>
   c.kind === 'waiting' && !env.hidden && env.online
@@ -76,11 +109,23 @@ export function afterPoll(
   now: number,
 ): AgentCheck {
   if (c.kind !== 'waiting') return c
-  const knownApps = c.knownApps ?? new Set(answer.apps.map((a) => a.id))
-  const found = checkOf({ tokenId: c.tokenId, knownApps, tokens: answer.tokens, apps: answer.apps })
+  // The apps that had already made requests when the check began; one approved but still silent is not
+  // known: its first request is what the check waits for (after «Check again» or a reload too).
+  const knownApps =
+    c.knownApps ??
+    new Set(
+      answer.apps.filter((a) => a.lastRequestAt && Date.parse(a.lastRequestAt) < c.since).map((a) => a.id),
+    )
+  const found = checkOf({
+    tokenId: c.tokenId,
+    knownApps,
+    tokens: answer.tokens,
+    apps: answer.apps,
+    since: c.since,
+    ...(c.agent ? { agent: c.agent } : {}),
+  })
   if (found.kind === 'connected') return { ...c, knownApps, kind: 'connected', found }
-  if (now - c.since >= CHECK_STOP_MS) return { ...c, knownApps, kind: 'stopped' }
-  return { ...c, knownApps }
+  return expire({ ...c, knownApps }, now)
 }
 
 export const tipsDue = (c: AgentCheck, now: number): boolean =>

@@ -365,6 +365,7 @@ export const T = {
     changing: 'Changing…',
     changed: (tokens: number, apps: number) =>
       `Password changed. Your other sessions are signed out. Your ${plural(tokens, 'token')} and ${plural(apps, 'connected app')} still work.`,
+    changedPlain: 'Password changed. Your other sessions are signed out.',
     codeField: 'Code from your authenticator app',
     keys: 'Revoke everything',
     keysLead: 'A new password does not stop your tokens and connected apps. To stop them all at once:',

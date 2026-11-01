@@ -311,6 +311,8 @@ describe('connections with the standard sign-in', { skip: skipPg }, () => {
     assert.ok(checked(reading, 'perm', 'read'))
     // An app that asks only to read gets Read.
     assert.ok(checked(await page(`rscb_session=${web}`, 'brain:read'), 'perm', 'read'))
+    // An app that asks for no scope at all gets Read: write is given only when asked for.
+    assert.ok(checked(await page(`rscb_session=${web}`, ''), 'perm', 'read'))
   })
 
   it('CA14: a return address that is not local and not encrypted is refused, and nothing is granted', async () => {

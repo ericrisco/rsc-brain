@@ -3,12 +3,13 @@
 // the optional reminder of Claude Code (`rsc-brain hook session-start` / `rsc-brain hook stop`).
 import assert from 'node:assert/strict'
 import { type ChildProcessWithoutNullStreams, execFileSync, spawn } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import http from 'node:http'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
+import { AGENT_IDS, connectKit } from '../../src/mcp/kit.ts'
 import { MODERN } from '../../src/mcp/server.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
@@ -783,4 +784,33 @@ describe('the connection kit', { skip: skipPg }, () => {
       assert.deepEqual((await w.call(svc.key, 'GET', '/v1/me/sessions')).body.items, [])
     })
   })
+})
+
+// PR24 second review: the block that saves a token, run as it is written. umask only shapes a new file; a
+// token file already there (from an older kit, or made by hand) keeps its mode, so the block sets 600 itself.
+describe('the block that saves a token, run in a shell', () => {
+  for (const id of AGENT_IDS) {
+    it(`${id}: leaves the token in a file only its owner can read, even one that was readable before`, async () => {
+      const kit = connectKit({ mcpUrl: 'http://localhost/mcp', brain: null, agent: id })
+      const a = kit.agents.find((x) => x.id === id)
+      const save = a?.token.blocks.find((b) => /read -rs/.test(b.text))
+      assert.ok(a && save, `${id}: a block that saves the token`)
+      const home = await mkdtemp(join(tmpdir(), 'rscb-kit-'))
+      try {
+        const file = join(home, a.tokenFile.replace(/^~\//, ''))
+        await mkdir(join(home, '.config/rsc-brain'), { recursive: true })
+        await writeFile(file, 'old\n')
+        await chmod(file, 0o644)
+        const out = execFileSync('bash', ['-c', save.text], {
+          env: { PATH: process.env.PATH ?? '', HOME: home },
+          input: 'rscb_test_token\n',
+        }).toString()
+        assert.match(out, /saved/)
+        assert.equal(await readFile(file, 'utf8'), 'rscb_test_token\n')
+        assert.equal((await stat(file)).mode & 0o777, 0o600)
+      } finally {
+        await rm(home, { recursive: true, force: true })
+      }
+    })
+  }
 })

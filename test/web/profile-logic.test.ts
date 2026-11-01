@@ -6,6 +6,7 @@ import {
   afterPoll,
   CHECK_STOP_MS,
   checkOf,
+  expire,
   fillToken,
   shouldPoll,
   startCheck,
@@ -18,6 +19,7 @@ import {
   groupKey,
   lastUseLabel,
   notifyRows,
+  passwordChanged,
   permLabel,
   tokenRequest,
 } from '../../web/src/lib/profile.ts'
@@ -212,7 +214,12 @@ describe('the live check of one agent, over time', () => {
     let c = startCheck(T0, 'crd_1')
     c = afterPoll(
       c,
-      { tokens: [], apps: [{ id: 'app_old', name: 'Cursor', lastUsedAt: '', lastRequestAt: 'x' }] },
+      {
+        tokens: [],
+        apps: [
+          { id: 'app_old', name: 'Cursor', lastUsedAt: '', lastRequestAt: new Date(T0 - 1000).toISOString() },
+        ],
+      },
       T0 + 2000,
     )
     assert.deepEqual([...(c.knownApps ?? [])], ['app_old'])
@@ -237,5 +244,75 @@ describe('the live check of one agent, over time', () => {
     const c = startCheck(T0)
     assert.equal(tipsDue(c, T0 + TIPS_AFTER_MS - 1), false)
     assert.equal(tipsDue(c, T0 + TIPS_AFTER_MS), true)
+  })
+  it('the review repro: an app approved before the check (no request yet) turns it green once it makes one', () => {
+    const t0 = Date.parse('2026-11-01T10:00:00.000Z')
+    const iso = (ms: number) => new Date(ms).toISOString()
+    let c = startCheck(t0)
+    c = afterPoll(c, { apps: [] }, t0 + 1000)
+    const unused = { id: 'g1', name: 'Claude Code', lastUsedAt: 'x', lastRequestAt: null as string | null }
+    c = afterPoll(c, { apps: [unused] }, t0 + 9 * 60_000)
+    c = afterPoll(c, { apps: [unused] }, t0 + CHECK_STOP_MS + 1)
+    assert.equal(c.kind, 'stopped')
+    // «Check again» (or a reload): the app is in the first answer now, still without a request.
+    const again = t0 + 11 * 60_000
+    let d = startCheck(again, c.tokenId)
+    d = afterPoll(d, { apps: [unused] }, again + 2000)
+    assert.equal(d.kind, 'waiting')
+    d = afterPoll(d, { apps: [{ ...unused, lastRequestAt: iso(again + 3000) }] }, again + 4000)
+    assert.equal(d.kind, 'connected')
+  })
+
+  it('an app that had made requests before the check counts only for a request after it began', () => {
+    const t0 = Date.parse('2026-11-01T10:00:00.000Z')
+    const iso = (ms: number) => new Date(ms).toISOString()
+    const cursor = { id: 'a1', name: 'Claude Code', lastUsedAt: 'x', lastRequestAt: iso(t0 - 60_000) }
+    let c = startCheck(t0)
+    c = afterPoll(c, { apps: [cursor] }, t0 + 1000)
+    assert.equal(c.kind, 'waiting', 'an old request is not this agent connecting')
+    c = afterPoll(c, { apps: [{ ...cursor, lastRequestAt: iso(t0 + 5000) }] }, t0 + 6000)
+    assert.equal(c.kind, 'connected')
+  })
+
+  it('an app named after another known agent does not turn this tab green; an unknown name does', () => {
+    const t0 = Date.parse('2026-11-01T10:00:00.000Z')
+    const iso = (ms: number) => new Date(ms).toISOString()
+    const app = (id: string, name: string) => ({ id, name, lastUsedAt: 'x', lastRequestAt: iso(t0 + 5000) })
+    let codex = startCheck(t0, null, 'codex')
+    codex = afterPoll(codex, { apps: [] }, t0 + 1000)
+    assert.equal(afterPoll(codex, { apps: [app('a', 'Claude Code')] }, t0 + 6000).kind, 'waiting')
+    assert.equal(afterPoll(codex, { apps: [app('b', 'Codex CLI')] }, t0 + 6000).kind, 'connected')
+    assert.equal(afterPoll(codex, { apps: [app('c', 'My MCP client')] }, t0 + 6000).kind, 'connected')
+  })
+
+  it('the 10-minute stop also applies when the asking fails', () => {
+    const t0 = 1_000_000
+    const c = startCheck(t0)
+    assert.equal(expire(c, t0 + CHECK_STOP_MS - 1).kind, 'waiting')
+    assert.equal(expire(c, t0 + CHECK_STOP_MS).kind, 'stopped')
+    const green = afterPoll(
+      startCheck(t0, 'crd_1'),
+      { tokens: [{ id: 'crd_1', lastUsedAt: 'x', lastClient: null }], apps: [] },
+      t0,
+    )
+    assert.equal(expire(green, t0 + CHECK_STOP_MS * 2), green)
+  })
+})
+
+describe('after a new password', () => {
+  it('counts the tokens and apps that still work: not the expired ones, not the ended ones', () => {
+    assert.equal(
+      passwordChanged(
+        [{ expired: false }, { expired: true }, { expired: false }],
+        [{ ended: false }, { ended: true }],
+      ),
+      'Password changed. Your other sessions are signed out. Your 2 tokens and 1 connected app still work.',
+    )
+  })
+
+  it('still says the password changed when the lists could not be read again', () => {
+    const plain = 'Password changed. Your other sessions are signed out.'
+    assert.equal(passwordChanged(undefined, [{ ended: false }]), plain)
+    assert.equal(passwordChanged([{ expired: false }], undefined), plain)
   })
 })

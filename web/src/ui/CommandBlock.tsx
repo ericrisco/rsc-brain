@@ -8,7 +8,15 @@ export type Block = { title: string; text: string; where?: string }
 // A file it goes in (".mcp.json", "~/.codex/config.toml"), as opposed to the terminal or a client's own box.
 const isFile = (where: string | undefined) => Boolean(where && /[./]/.test(where))
 
-export function CommandBlock({ block, copy = T.connect.copy }: { block: Block; copy?: string }) {
+export function CommandBlock({
+  block,
+  copy = T.connect.copy,
+  onCopy,
+}: {
+  block: Block
+  copy?: string
+  onCopy?: () => void
+}) {
   return (
     <div class="cmd-block">
       <p class="cmd-title">
@@ -23,7 +31,12 @@ export function CommandBlock({ block, copy = T.connect.copy }: { block: Block; c
       <pre class="command">
         <code>{block.text}</code>
       </pre>
-      <CopyButton text={block.text} label={copy} name={T.connect.copyNamed(block.title)} />
+      <CopyButton
+        text={block.text}
+        label={copy}
+        name={T.connect.copyNamed(block.title)}
+        {...(onCopy ? { onCopy } : {})}
+      />
     </div>
   )
 }

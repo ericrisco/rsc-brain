@@ -17,6 +17,7 @@ import {
   type AgentCheck,
   afterPoll,
   CHECK_EVERY_MS,
+  expire,
   fillToken,
   type KitBlock,
   shouldPoll,
@@ -54,7 +55,8 @@ const clock = (iso: string) =>
   new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 
 // The consent page of the standard sign-in starts from the brain this page names (a hint, not a grant: the
-// person still chooses there). Path /oauth only; gone in an hour.
+// person still chooses there). Left only when the person copies the standard command, the step that leads to
+// that page; never on loading this one. Path /oauth only; gone in an hour.
 function hintConsent(slug: string | null) {
   // biome-ignore lint/suspicious/noDocumentCookie: the one cookie API every browser has; the value is an escaped slug
   document.cookie = slug
@@ -77,6 +79,12 @@ function usePoll(agent: string | null, check: AgentCheck | null, update: (c: Age
       const c = current.current
       if (stopped || !c) return
       setNow(Date.now())
+      // Ten minutes stop the check whatever happened meanwhile (answers, failures, a hidden tab).
+      const late = expire(c, Date.now())
+      if (late !== c) {
+        update(late)
+        return
+      }
       if (shouldPoll(c, { hidden: document.hidden, online: online.value })) {
         try {
           const ask = toAsk({ tokenId: c.tokenId, knownApps: c.knownApps })
@@ -327,11 +335,13 @@ function Panel({
   agent,
   kit,
   tab,
+  slug,
   children,
 }: {
   agent: Agent
   kit: Kit
   tab: Tab
+  slug: string | null
   children: ComponentChildren
 }) {
   const c = T.connect
@@ -346,7 +356,7 @@ function Panel({
           <>
             <p class="muted">{c.standardLead}</p>
             {agent.signIn.blocks.map((b) => (
-              <CommandBlock key={b.title} block={b} />
+              <CommandBlock key={b.title} block={b} onCopy={() => hintConsent(slug)} />
             ))}
             <p class="how">{agent.signIn.note}</p>
           </>
@@ -386,10 +396,10 @@ export function Connect() {
   return <ConnectFor key={slug ?? ''} slug={slug} />
 }
 
-const freshTab = (): Tab => ({
+const freshTab = (agent: string): Tab => ({
   made: null,
   hidden: false,
-  check: startCheck(Date.now()),
+  check: startCheck(Date.now(), null, agent),
   error: null,
   pending: false,
 })
@@ -405,12 +415,12 @@ function ConnectFor({ slug }: { slug: string | null }) {
   const agent = kit?.agents.find((a) => a.id === at) ?? kit?.agents[0]
   const tab = agent ? (tabs[agent.id] ?? null) : null
   const patch = (id: string, f: (t: Tab) => Tab) =>
-    setTabs((all) => ({ ...all, [id]: f(all[id] ?? freshTab()) }))
+    setTabs((all) => ({ ...all, [id]: f(all[id] ?? freshTab(id)) }))
   // A tab's check starts when it is first shown.
   useEffect(() => {
-    if (agent && !tabs[agent.id]) setTabs((all) => (all[agent.id] ? all : { ...all, [agent.id]: freshTab() }))
+    if (agent && !tabs[agent.id])
+      setTabs((all) => (all[agent.id] ? all : { ...all, [agent.id]: freshTab(agent.id) }))
   }, [agent?.id])
-  useEffect(() => hintConsent(slug), [slug])
   // Put in the back/forward cache, the page forgets every token it shows.
   useEffect(() => {
     const forget = () =>
@@ -436,7 +446,7 @@ function ConnectFor({ slug }: { slug: string | null }) {
         },
       })
       // A new token: this tab's check starts again, waiting for this token.
-      patch(id, (t) => ({ ...t, made: m, pending: false, check: startCheck(Date.now(), m.token.id) }))
+      patch(id, (t) => ({ ...t, made: m, pending: false, check: startCheck(Date.now(), m.token.id, id) }))
       invalidate('profile:tokens')
     } catch (e) {
       patch(id, (t) => ({ ...t, pending: false, error: e as ApiError }))
@@ -471,13 +481,13 @@ function ConnectFor({ slug }: { slug: string | null }) {
               problem={poll.problem}
               now={poll.now}
               onAgain={() =>
-                patch(agent.id, (t) => ({ ...t, check: startCheck(Date.now(), t.check.tokenId) }))
+                patch(agent.id, (t) => ({ ...t, check: startCheck(Date.now(), t.check.tokenId, agent.id) }))
               }
             />
           ) : null}
           <AgentTabs agents={kit.agents} at={agent.id} onPick={setAt} />
           {tab ? (
-            <Panel key={agent.id} agent={agent} kit={kit} tab={tab}>
+            <Panel key={agent.id} agent={agent} kit={kit} tab={tab} slug={slug}>
               <TokenConnection
                 agent={agent}
                 brain={brain}

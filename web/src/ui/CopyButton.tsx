@@ -10,17 +10,21 @@ export function CopyButton({
   label,
   id,
   name,
+  onCopy,
 }: {
   text: string
   label: string
   id?: string
   name?: string
+  // Told when the person asks to copy (whether the clipboard took it or the text shows to copy by hand).
+  onCopy?: () => void
 }) {
   const [said, setSaid] = useState<string | null>(null)
   const [manual, setManual] = useState(false)
   const field = useRef<HTMLTextAreaElement>(null)
   const fieldId = useId()
   const copy = async () => {
+    onCopy?.()
     try {
       if (!navigator.clipboard?.writeText) throw new Error('no clipboard')
       await navigator.clipboard.writeText(text)

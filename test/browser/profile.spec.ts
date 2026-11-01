@@ -207,6 +207,40 @@ test('a wrong current password marks its field; the right one says what still wo
   await expect(pw.getByLabel('Current password')).not.toHaveAttribute('aria-invalid', 'true')
 })
 
+test('a new password is said even when the lists cannot be read again; an ended app is not counted', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/profile')
+  await expect(page.getByRole('region', { name: 'Connected apps' })).toBeVisible()
+  // The apps list now holds an ended app beside the working one.
+  let fail = false
+  await page.route('**/v1/me/apps', async (route) => {
+    if (fail)
+      return route.fulfill({
+        status: 503,
+        json: { error: { code: 'unavailable', message: 'Down.', howToProceed: 'Wait.' } },
+      })
+    const res = await route.fetch()
+    const body = (await res.json()) as { apps: Array<Record<string, unknown>> }
+    const first = body.apps[0] as Record<string, unknown>
+    body.apps.push({ ...first, id: 'gr_ended', ended: true })
+    return route.fulfill({ response: res, json: body })
+  })
+  const pw = page.getByRole('form', { name: 'Change your password' })
+  await pw.getByLabel('Current password').fill(PASSWORD)
+  await pw.getByLabel('New password').fill('a much longer passphrase')
+  await pw.getByRole('button', { name: 'Change password' }).click()
+  await expect(pw.getByRole('status')).toContainText('Your 2 tokens and 1 connected app still work.')
+  fail = true
+  await pw.getByLabel('Current password').fill('a much longer passphrase')
+  await pw.getByLabel('New password').fill('another long passphrase here')
+  await pw.getByRole('button', { name: 'Change password' }).click()
+  await expect(pw.getByRole('status')).toHaveText('Password changed. Your other sessions are signed out.')
+})
+
 test('with a second factor on, a new password asks for the code too', async ({ page, context, baseURL }) => {
   await scenario(context, baseURL as string, 'member')
   await page.goto('/profile')

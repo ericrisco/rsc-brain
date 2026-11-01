@@ -1,6 +1,7 @@
 // Profile as a person reads it (spec B6 «Profile»): what a token reaches and may do, when it was last
 // used and by what, the form of a new token checked before it is sent, the email notices by brain, and
 // the key of the second factor in groups people can type.
+import { T } from '../text.ts'
 import { ago, clientLabel } from './brains.ts'
 
 export function brainsLabel(t: { allBrains: boolean; brains: string[] | null }): string {
@@ -66,4 +67,14 @@ export function notifyRows(brains: readonly BrainNotice[]) {
 
 export function groupKey(secret: string): string {
   return (secret.match(/.{1,4}/g) ?? []).join(' ')
+}
+
+// After a new password: what still works, so the person can stop it too. Expired tokens and ended apps no
+// longer work, so they are not counted; when the lists could not be read again, the change is still said.
+export function passwordChanged(
+  tokens: readonly { expired: boolean }[] | undefined,
+  apps: readonly { ended: boolean }[] | undefined,
+): string {
+  if (!tokens || !apps) return T.profile.changedPlain
+  return T.profile.changed(tokens.filter((t) => !t.expired).length, apps.filter((a) => !a.ended).length)
 }

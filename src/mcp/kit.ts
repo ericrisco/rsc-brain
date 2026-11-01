@@ -66,7 +66,9 @@ const saveToken = (id: AgentId): Block => ({
     'Save the token in a file only you can read: run this, paste the token at the hidden prompt and press Enter (it never lands in your shell history)',
   where: 'terminal',
   format: 'shell',
-  text: `mkdir -p ~/.config/rsc-brain && (umask 077 && printf 'Token: ' && read -rs t && printf '%s\\n' "$t" > ${fileOf(id)} && echo saved)`,
+  // umask shapes only a new file; one already there keeps its mode, so the file is emptied and set to 600
+  // before the token goes in (never a moment with the token in a file others can read).
+  text: `mkdir -p ~/.config/rsc-brain && (umask 077 && printf 'Token: ' && read -rs t && : > ${fileOf(id)} && chmod 600 ${fileOf(id)} && printf '%s\\n' "$t" > ${fileOf(id)} && echo saved)`,
 })
 
 // The variable the config files read, loaded from that file.

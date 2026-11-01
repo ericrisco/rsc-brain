@@ -314,7 +314,7 @@ export async function consentBrains(db: Db, accountId: string) {
 
 // What the consent page starts from (PR24): the brain the web named («Connect your agent» for a brain
 // leaves a cookie hint), else the brains of the invitation the person joined with, else their only brain;
-// and read + write when the app asks for it and the person may write in what is chosen. A hint for a brain
+// and read + write only when the app asks for it and the person may write in what is chosen. A hint for a brain
 // the person is not in counts for nothing. The person still sees all of it and decides.
 export async function consentDefaults(
   db: Db,
@@ -333,7 +333,8 @@ export async function consentDefaults(
     chosen = brains.filter((b) => invited.has(b.id))
   }
   if (!chosen.length && brains.length === 1) chosen = brains
-  const asksWrite = !scope || scope.split(/\s+/).includes('brain:write')
+  // Write only when the app asks for it; an app that asks for nothing gets read.
+  const asksWrite = (scope ?? '').split(/\s+/).includes('brain:write')
   const mayWrite = chosen.length > 0 && chosen.every((b) => b.role !== 'reader')
   return { brainIds: new Set(chosen.map((b) => b.id)), perm: asksWrite && mayWrite ? 'write' : 'read' }
 }

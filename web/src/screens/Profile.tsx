@@ -17,6 +17,7 @@ import {
   groupKey,
   lastUseLabel,
   notifyRows,
+  passwordChanged,
   permLabel,
   TOKEN_DAYS,
   type TokenForm,
@@ -54,6 +55,7 @@ type App = {
   perm: string
   lastUsedAt: string
   endsAt: string
+  ended: boolean
 }
 type Made = { token: { id: string; secret: string; expiresAt: string }; note?: string }
 
@@ -672,15 +674,13 @@ function Password({ who }: { who: Me }) {
       setNext('')
       setCode('')
       // What still works after a new password: the tokens and apps the person may want to revoke too.
+      // A list that cannot be read again (a reload keeps the old data and sets its error) leaves the count
+      // out: an old count could be wrong. The password is changed all the same.
       const t = tokensResource()
       const a = appsResource()
       await Promise.all([t.reload(), a.reload()])
-      setDone(
-        P.changed(
-          (t.data.value?.tokens ?? []).filter((x) => !x.expired).length,
-          a.data.value?.apps.length ?? 0,
-        ),
-      )
+      const read = !t.error.value && !a.error.value
+      setDone(passwordChanged(read ? t.data.value?.tokens : undefined, read ? a.data.value?.apps : undefined))
     } catch (err) {
       setError(err as ApiError)
     } finally {

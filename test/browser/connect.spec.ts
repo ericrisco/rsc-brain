@@ -333,3 +333,21 @@ for (const theme of ['dark', 'light'] as const) {
     await audit('token', '.once')
   })
 }
+
+test('the consent hint is left only when the standard command is copied, never on loading the page', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/connect?brain=growth')
+  await expect(page.getByRole('tabpanel', { name: 'Claude Code' })).toBeVisible()
+  const hint = async () =>
+    (await context.cookies(`${baseURL}/oauth/authorize`)).find((c) => c.name === 'rscb_connect')
+  expect(await hint()).toBeUndefined()
+  await page
+    .getByRole('region', { name: 'Standard connection' })
+    .getByRole('button', { name: /^Copy: Add rsc-brain/ })
+    .click()
+  expect((await hint())?.value).toBe('growth')
+})
