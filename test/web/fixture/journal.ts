@@ -267,6 +267,8 @@ export function freshJournal(slug: string): Journal {
       author: ERIC,
       client: 'Claude Code',
       tags: ['intros', 'retention'],
+      // Its topic is the page Retention: «Entries about audience/retention» lists it.
+      topic: 'audience/retention',
       compiled: true,
       createdAt: at(14, 9),
     }),
@@ -507,7 +509,9 @@ export function sessionsOf(j: Journal, q: Q, liveFrom: string): Answer {
     ? Date.parse(q.get('to') as string) + ((q.get('to') as string).length === 10 ? 86_400_000 : 1)
     : null
   const uncompiled = q.get('uncompiled') === '1'
+  const agents = q.get('agents') === '1'
   const list = j.sessions
+    .filter((s) => !agents || !(s.day && s.client === 'web'))
     .filter((s) => !status || s.status === status)
     .filter((s) => !client || s.client === client)
     .filter((s) => !author || s.author.id === author)
@@ -569,7 +573,13 @@ const read = (e: FxEntry) => ({
 // The session an entry is in, named by its purpose.
 const sessionRef = (j: Journal, id: string) => {
   const s = j.sessions.find((x) => x.id === id)
-  return { id, purpose: s?.purpose ?? '', day: s?.day ?? null }
+  return {
+    id,
+    purpose: s?.purpose ?? '',
+    day: s?.day ?? null,
+    client: s?.client ?? null,
+    author: { id: s?.author.id ?? '', name: s?.author.name ?? '' },
+  }
 }
 
 export function entriesOf(j: Journal, q: Q): Answer {

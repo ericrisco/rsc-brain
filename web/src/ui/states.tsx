@@ -52,6 +52,12 @@ export function ErrorState({
           {T.states.tryAgain}
         </Button>
       ) : null}
+      {/* No access: one way out on every screen, besides whom to ask. */}
+      {v.kind === 'forbidden' ? (
+        <p>
+          <a href="/">{T.states.goHome}</a>
+        </p>
+      ) : null}
     </div>
   )
 }

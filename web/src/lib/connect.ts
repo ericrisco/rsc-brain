@@ -54,7 +54,8 @@ export function checkOf(o: {
   knownApps: Set<string> | null
   tokens?: readonly TokenSeen[] | undefined
   apps?: readonly AppSeen[] | undefined
-  // When the check began (browser time): a request at or after it counts even for an app known before.
+  // When the check began (on the server's clock when known): a request at or after it counts even for an
+  // app known before.
   since?: number
   // The tab's agent: an app named after another known agent is not this one.
   agent?: string
@@ -83,6 +84,9 @@ export type AgentCheck = {
   // The apps there when this check started (from its first answer); null until then.
   knownApps: Set<string> | null
   since: number
+  // The server's clock minus the browser's, from the first answer that says the server's time: request
+  // times are the server's, so the start of the check is read on its clock.
+  skew?: number
   // The agent of the tab, to tell apps apart by the name they declare.
   agent?: string
   found?: Extract<Check, { kind: 'connected' }>
@@ -105,27 +109,32 @@ export const shouldPoll = (c: AgentCheck, env: { hidden: boolean; online: boolea
 
 export function afterPoll(
   c: AgentCheck,
-  answer: { tokens?: readonly TokenSeen[] | undefined; apps: readonly AppSeen[] },
+  answer: { tokens?: readonly TokenSeen[] | undefined; apps: readonly AppSeen[]; now?: string | undefined },
   now: number,
 ): AgentCheck {
   if (c.kind !== 'waiting') return c
+  const told = answer.now ? Date.parse(answer.now) : Number.NaN
+  const skew = c.skew ?? (Number.isFinite(told) ? told - now : undefined)
+  // When the check began, on the server's clock when known.
+  const start = c.since + (skew ?? 0)
   // The apps that had already made requests when the check began; one approved but still silent is not
   // known: its first request is what the check waits for (after «Check again» or a reload too).
   const knownApps =
     c.knownApps ??
     new Set(
-      answer.apps.filter((a) => a.lastRequestAt && Date.parse(a.lastRequestAt) < c.since).map((a) => a.id),
+      answer.apps.filter((a) => a.lastRequestAt && Date.parse(a.lastRequestAt) < start).map((a) => a.id),
     )
   const found = checkOf({
     tokenId: c.tokenId,
     knownApps,
     tokens: answer.tokens,
     apps: answer.apps,
-    since: c.since,
+    since: start,
     ...(c.agent ? { agent: c.agent } : {}),
   })
-  if (found.kind === 'connected') return { ...c, knownApps, kind: 'connected', found }
-  return expire({ ...c, knownApps }, now)
+  const kept = { ...c, knownApps, ...(skew !== undefined ? { skew } : {}) }
+  if (found.kind === 'connected') return { ...kept, kind: 'connected', found }
+  return expire(kept, now)
 }
 
 export const tipsDue = (c: AgentCheck, now: number): boolean =>

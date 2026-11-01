@@ -65,10 +65,20 @@ export const nextKey = (kind: string) => `${kind}:${++made}`
 
 const ROLES = ['reader', 'contributor', 'curator'] as const
 
-const invitationsResource = () =>
-  resource<{ invitations: Invitation[] }>('people:invitations', () =>
-    api.call<{ invitations: Invitation[] }>('invitations'),
-  )
+// The first page of invitations of a status ('all' for every one); the rest come by «Show more» with the
+// server's cursor (spec B6 «Mucho dato»: never all at once).
+const INVITATIONS_PAGE = 20
+type InvitationsPage = { invitations: Invitation[]; next: string | null }
+const invitationsPage = (show: string, o: { cursor?: string; limit?: number } = {}) =>
+  api.call<InvitationsPage>('invitations', {
+    query: {
+      limit: String(o.limit ?? INVITATIONS_PAGE),
+      ...(show !== 'all' ? { status: show } : {}),
+      ...(o.cursor ? { cursor: o.cursor } : {}),
+    },
+  })
+const invitationsResource = (show: string) =>
+  resource<InvitationsPage>(`people:invitations:${show}`, () => invitationsPage(show))
 export const allBrainsResource = () =>
   resource<{ brains: AdminBrain[] }>('admin:brains', () => api.call<{ brains: AdminBrain[] }>('allBrains'))
 
@@ -218,7 +228,10 @@ function InviteForm({ who, links }: { who: Me; links: Links }) {
   const blocked = writeBlocked({ online: online.value, pending: false })
   return (
     <form class="form invite-form" aria-label={T.people.formTitle} onSubmit={submit} noValidate>
-      <h2>{T.people.formTitle}</h2>
+      {/* data-start: arriving on a tab of the administration, the keyboard lands here (lib/screen.ts). */}
+      <h2 tabIndex={-1} data-start>
+        {T.people.formTitle}
+      </h2>
       {!mail ? (
         <p class="alert warn">
           <span class="kind">{T.kind.warning}</span>
@@ -344,17 +357,63 @@ function Invitations({
   // The administration's list: shown by status (pending, expired, accepted, withdrawn).
   filter?: boolean
 }) {
-  const r = invitationsResource()
   const [show, setShow] = useState<(typeof SHOW)[number]>('all')
+  const r = invitationsResource(show)
   // Invitations may have been accepted since this list was loaded.
   useFresh(r)
   const [busy, setBusy] = useState<string | null>(null)
   const [said, setSaid] = useState<{ id: string; text: string; error?: boolean } | null>(null)
   const [asking, setAsking] = useState<Invitation | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
-  const all = r.data.value?.invitations
-  const list = all && show !== 'all' ? all.filter((i) => i.status === show) : all
   const p = T.people
+  // The pages after the first, for the first page they follow: a new first page (another status, a
+  // reload after an action) starts again from it.
+  const first = r.data.value
+  const [extra, setExtra] = useState<{
+    of: InvitationsPage
+    items: Invitation[]
+    next: string | null
+  } | null>(null)
+  const more = extra && extra.of === first ? extra : null
+  const list = first ? [...first.invitations, ...(more?.items ?? [])] : undefined
+  const next = more ? more.next : (first?.next ?? null)
+  const [moreBusy, setMoreBusy] = useState(false)
+  const [moreError, setMoreError] = useState<ApiError | null>(null)
+  // After «Show more», the keyboard goes to the first invitation just shown, every time (`n` makes each
+  // request new); with none new, to the count of the list.
+  const [land, setLand] = useState<{ at: number; n: number } | null>(null)
+  useEffect(() => {
+    if (!land) return
+    const row = document.querySelectorAll<HTMLElement>('li[data-invitation]')[land.at]
+    ;(row ?? document.getElementById('invitations-count'))?.focus()
+  }, [land])
+  const showMore = async () => {
+    if (!first || !next || moreBusy) return
+    const at = list?.length ?? 0
+    setMoreBusy(true)
+    setMoreError(null)
+    try {
+      const page = await invitationsPage(show, { cursor: next })
+      setExtra({ of: first, items: [...(more?.items ?? []), ...page.invitations], next: page.next })
+      setLand((l) => ({ at, n: (l?.n ?? 0) + 1 }))
+    } catch (e) {
+      setMoreError(e as ApiError)
+    } finally {
+      setMoreBusy(false)
+    }
+  }
+  // After an action, the same number of rows read again (the row acted on stays in view).
+  const refresh = async () => {
+    const count = list?.length ?? INVITATIONS_PAGE
+    await r.reload()
+    const fresh = r.data.value
+    if (!fresh || count <= fresh.invitations.length || !fresh.next) return
+    const page = await invitationsPage(show, {
+      cursor: fresh.next,
+      limit: Math.min(200, count - fresh.invitations.length),
+    })
+    setExtra({ of: fresh, items: page.invitations, next: page.next })
+  }
 
   const resend = async (inv: Invitation) => {
     setBusy(inv.id)
@@ -380,7 +439,7 @@ function Invitations({
             : {}),
         },
       ])
-      await r.reload()
+      await refresh()
     } catch (e) {
       const a = e as ApiError
       setSaid({ id: inv.id, text: `${a.message} ${a.howToProceed}`, error: true })
@@ -395,7 +454,7 @@ function Invitations({
     try {
       await api.call('inviteWithdraw', { path: { id: inv.id } })
       links.drop({ of: inv.id })
-      await r.reload()
+      await refresh()
       setSaid({ id: inv.id, text: p.withdrawn })
       // The row loses its buttons: the keyboard goes to the list, not to the top of the page.
       heading.current?.focus()
@@ -413,13 +472,17 @@ function Invitations({
       <h2 id="invitations-title" class="section-title" tabIndex={-1} ref={heading}>
         {p.listTitle}
       </h2>
-      {filter && all?.length ? (
+      {filter && (show !== 'all' || list?.length) ? (
         <div class="field inline-field">
           <label for="invitations-show">{T.admin.show}</label>
           <select
             id="invitations-show"
             value={show}
-            onChange={(e) => setShow(e.currentTarget.value as (typeof SHOW)[number])}
+            onChange={(e) => {
+              setShow(e.currentTarget.value as (typeof SHOW)[number])
+              setLand(null)
+              setMoreError(null)
+            }}
           >
             {SHOW.map((x) => (
               <option key={x} value={x}>
@@ -458,7 +521,7 @@ function Invitations({
           {list.map((inv) => {
             const open = inv.status === 'pending' || inv.status === 'expired'
             return (
-              <li key={inv.id} class="with-actions">
+              <li key={inv.id} class="with-actions" data-invitation tabIndex={-1}>
                 <div>
                   <p class="list-title">
                     <span class="mono">{inv.email}</span>{' '}
@@ -511,6 +574,19 @@ function Invitations({
           })}
         </ul>
       )}
+      {list?.length ? (
+        <p class="meta" id="invitations-count" role="status" tabIndex={-1}>
+          {next ? p.shownSoFar(list.length) : p.shownAll(list.length)}
+        </p>
+      ) : null}
+      {moreError ? <FormAlert error={moreError} /> : null}
+      {list && next ? (
+        <div class="actions">
+          <Button pending={moreBusy} pendingLabel={T.states.loading} onClick={() => void showMore()}>
+            {p.showMoreInvitations}
+          </Button>
+        </div>
+      ) : null}
       <Dialog open={asking !== null} title={p.withdrawTitle} onClose={() => setAsking(null)}>
         {asking ? (
           <>

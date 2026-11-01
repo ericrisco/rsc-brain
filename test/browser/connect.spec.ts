@@ -135,7 +135,6 @@ test('each agent has its own token and check: green for Claude Code, then Codex 
   await codex.getByRole('button', { name: 'Create a token' }).click()
   await expect(codex.getByRole('region', { name: 'Your new token' })).toBeVisible()
   await expect(check).toContainText('Waiting for your agent…')
-  await expect(codex.locator('[data-check-mini="waiting"]').first()).toBeVisible()
   await expect(codex).toContainText('RSC_BRAIN_TOKEN_CODEX')
   // Back on Claude Code, its green is still there.
   await page.getByRole('tab', { name: 'Claude Code' }).click()
@@ -350,4 +349,25 @@ test('the consent hint is left only when the standard command is copied, never o
     .getByRole('button', { name: /^Copy: Add rsc-brain/ })
     .click()
   expect((await hint())?.value).toBe('growth')
+})
+
+// Review of PR26: the live check reads request times on the server's clock (`now` of GET /v1/me/apps).
+// With the browser's clock 10 minutes ahead, Cursor (already connected) asking again after the check
+// began is seen at once; read on the browser's clock it would wait 10 minutes.
+test('a browser clock 10 minutes ahead: an app asking after the check began turns it green', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  const s = await scenario(context, baseURL as string, 'signed-in')
+  await page.clock.setSystemTime(Date.now() + 10 * 60_000)
+  await page.goto('/connect')
+  await page.getByRole('tablist', { name: 'Your agent' }).getByRole('tab', { name: 'Cursor' }).click()
+  const check = page.getByRole('region', { name: 'Live check' })
+  await expect(check).toContainText('Waiting for your agent…')
+  await page.waitForResponse((r) => r.url().endsWith('/v1/me/apps'))
+  await page.waitForResponse((r) => r.url().endsWith('/v1/me/apps'))
+  await expect(check).toContainText('Waiting for your agent…')
+  await agent(baseURL as string, s.id, { via: 'app-request', id: 'app_cursor' })
+  await expect(check).toContainText('Connected', { timeout: 6_000 })
 })

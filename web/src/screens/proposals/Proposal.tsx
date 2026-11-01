@@ -46,9 +46,9 @@ import { Button } from '../../ui/Button.tsx'
 import { Field } from '../../ui/Field.tsx'
 import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
 import { TextArea } from '../../ui/TextArea.tsx'
-import { entryHref } from '../journal/common.tsx'
 import { blockedNow, logHref, pageHref, useBrain, WikiHead } from '../wiki/common.tsx'
 import { BodyDiff, BodyLines, ListDiff, Words } from '../wiki/History.tsx'
+import { SourcePanel } from '../wiki/Page.tsx'
 import {
   type Decision,
   inboxHref,
@@ -57,6 +57,7 @@ import {
   proposalsChanged,
   type Review,
   reviewResource,
+  type SourceEntry,
 } from './data.ts'
 import { DecidedLine, proposer, ReadOnlyLine } from './Inbox.tsx'
 
@@ -190,8 +191,49 @@ const mine = (after: PageState | null, correction: Correction | undefined): Page
   return out
 }
 
-function Sources({ slug, op }: { slug: string; op: Op }) {
+// The entries a proposal cites, named by the review itself (CA4: an id means nothing to a person), so
+// looking at a proposal opens none of them (opening one is a read).
+type SourceNames = Map<string, SourceEntry>
+
+// An entry that keeps its words opens beside the proposal; one purged, or forgotten for a person who is
+// not a curator, keeps its place and says why it has no title (as the wiki page says it).
+function SourceEntryLine({
+  id,
+  named,
+  onOpen,
+}: {
+  id: string
+  named: SourceEntry | undefined
+  onOpen: () => void
+}) {
   const w = T.proposals
+  const gone =
+    named && named.state !== 'active' ? (
+      <span class="tag warn">
+        {named.state === 'forgotten' ? T.wiki.sourceForgotten : T.wiki.sourcePurged}
+      </span>
+    ) : null
+  if (!named?.title)
+    return (
+      <>
+        {w.sourceEntry} <span class="mono">{id}</span> {gone}
+      </>
+    )
+  return (
+    <>
+      {w.sourceEntry}{' '}
+      <button type="button" class="linkish" data-op-source={id} onClick={onOpen}>
+        {named.title}
+      </button>{' '}
+      {gone}
+    </>
+  )
+}
+
+// The sources of a change: an entry opens beside the proposal (the wiki page's side panel), which stays.
+function Sources({ slug, op, names }: { slug: string; op: Op; names: SourceNames }) {
+  const w = T.proposals
+  const [open, setOpen] = useState<string | null>(null)
   const list = Array.isArray(op.sources) ? (op.sources as NonNullable<PageState['sources']>) : null
   if (!list) return null
   return (
@@ -204,13 +246,11 @@ function Sources({ slug, op }: { slug: string; op: Op }) {
           {list.map((s) => (
             <li key={sourceKey(s)}>
               {'entryId' in s ? (
-                <>
-                  {w.sourceEntry} <span class="mono">{s.entryId}</span> ·{' '}
-                  <a href={entryHref(slug, s.entryId)}>
-                    {w.openSource}
-                    <span class="sr-only"> {s.entryId}</span>
-                  </a>
-                </>
+                <SourceEntryLine
+                  id={s.entryId}
+                  named={names.get(s.entryId)}
+                  onOpen={() => setOpen(s.entryId)}
+                />
               ) : (
                 <a href={s.url} target="_blank" rel="noopener noreferrer">
                   {s.title || s.url}
@@ -220,6 +260,20 @@ function Sources({ slug, op }: { slug: string; op: Op }) {
           ))}
         </ul>
       )}
+      {open ? (
+        <SourcePanel
+          key={open}
+          slug={slug}
+          id={open}
+          onClose={() => {
+            const back = open
+            setOpen(null)
+            requestAnimationFrame(() =>
+              document.querySelector<HTMLElement>(`[data-op-source="${CSS.escape(back)}"]`)?.focus(),
+            )
+          }}
+        />
+      ) : null}
     </div>
   )
 }
@@ -227,6 +281,7 @@ function Sources({ slug, op }: { slug: string; op: Op }) {
 type CardProps = {
   slug: string
   o: ReviewOp
+  names: SourceNames
   // The change of this proposal that makes the page this one is about, if one does.
   bornBy: number | null
   // The purges of the wiki the review shows: an edit made here carries it.
@@ -269,7 +324,19 @@ function NewPage({ page }: { page: PageState }) {
   )
 }
 
-function Card({ slug, o, bornBy, purges, act, choices, several, onChoose, onBase, onCorrect }: CardProps) {
+function Card({
+  slug,
+  o,
+  names,
+  bornBy,
+  purges,
+  act,
+  choices,
+  several,
+  onChoose,
+  onBase,
+  onCorrect,
+}: CardProps) {
   const w = T.proposals
   const n = o.index + 1
   const titleId = `op-${o.index}-title`
@@ -378,7 +445,7 @@ function Card({ slug, o, bornBy, purges, act, choices, several, onChoose, onBase
           <PageDiff a={o.before ?? {}} b={shown} />
         </div>
       )}
-      <Sources slug={slug} op={o.op} />
+      <Sources slug={slug} op={o.op} names={names} />
       {act && pending && editing ? (
         <form
           class="form op-edit"
@@ -437,8 +504,15 @@ function Card({ slug, o, bornBy, purges, act, choices, several, onChoose, onBase
         </form>
       ) : act && pending && (parts.length || oldBase(o, choices)) ? (
         <p class="actions op-actions">
+          {/* Each card's «Edit» names its change (several on one page read apart). */}
           {parts.length ? (
-            <button type="button" class="button secondary" ref={editButton} onClick={open}>
+            <button
+              type="button"
+              class="button secondary"
+              ref={editButton}
+              aria-label={w.editTitle(n)}
+              onClick={open}
+            >
               {w.edit}
             </button>
           ) : null}
@@ -584,6 +658,7 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
   const several = pendingOps.length > 1
   const b = blockers(review.ops, choices)
   const groups = groupsOf(review.ops)
+  const names: SourceNames = new Map((review.sourceEntries ?? []).map((e) => [e.id, e]))
   const chose = choices.selected.length > 0
   const waiting = (pendingList.data.value?.items ?? []).filter((x) => x.id !== id && x.status === 'pending')
   const backHref =
@@ -771,6 +846,7 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
                 key={i}
                 slug={slug}
                 o={o}
+                names={names}
                 purges={review.purges}
                 bornBy={
                   review.ops.find(

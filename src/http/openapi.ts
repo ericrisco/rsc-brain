@@ -277,6 +277,8 @@ const SESSION_REF = obj({
   id: s('Session id.'),
   purpose: s('What it was for; "implicit" for the session of a day.'),
   day: nul(s('The day of the session a key gets by writing without opening one.', { format: 'date' })),
+  client: nul(s('The client that opened it ("web" for a person working in the web).')),
+  author: obj({ id: s('Account id.'), name: s('Name.') }),
 })
 // A side of a conflict: the entry, who wrote it and with what, and its session.
 const CONFLICT_SIDE = {
@@ -458,6 +460,14 @@ const REVIEW = obj({
   warnings: list(WARNING, 'About the whole proposal.'),
   canDecide: b('Whether you may approve or return it (a curator of an active brain, in the web).'),
   purges: n('How many times text was purged from this wiki; a correction echoes it.'),
+  sourceEntries: list(
+    obj({
+      id: s('Entry id.'),
+      title: nul(s('Its title; null when it was purged, or forgotten and you are not a curator.')),
+      state: s('active, forgotten or purged.'),
+    }),
+    'The journal entries the operations cite, named without opening them (opening an entry is a read).',
+  ),
 })
 const DECISION = obj({
   proposal: PROPOSAL_NAMED,
@@ -968,10 +978,17 @@ const HAND: Record<string, Op> = {
         ),
         totp: nul(b('The account signs in with a second factor; null for any key but a web session.')),
       }),
-      installation: obj({
-        name: s('The name of the installation.'),
-        factoryUrl: nul(s('The address of RSC Factory, when the administration set one.')),
-      }),
+      installation: obj(
+        {
+          name: s('The name of the installation.'),
+          factoryUrl: nul(s('The address of RSC Factory, when the administration set one.')),
+          admins: list(
+            s('A name.'),
+            'The administrators to ask about the installation (up to 5); only for a web session.',
+          ),
+        },
+        ['admins'],
+      ),
       key: obj({
         id: s('Credential id.'),
         kind: s('web, token, app, main or short.'),
@@ -1060,6 +1077,9 @@ const HAND: Record<string, Op> = {
         }),
         'Most recently used first.',
       ),
+      now: s("The server's time when it answered: compare request times with this, not the client's clock.", {
+        format: 'date-time',
+      }),
     }),
   },
   'DELETE /v1/me/apps/{id}': {
@@ -1145,6 +1165,7 @@ const HAND: Record<string, Op> = {
           who: s('The account that opened it.'),
           client: nul(s('The agent or app of its key.')),
           purpose: s('What it is for.'),
+          day: nul(s('The day of a session a key got by writing without opening one; null otherwise.')),
           ref: nul(s('External reference.')),
           status: s('open, closed or closed_no_summary.'),
           entries: n('Entries written in it (its summary aside).'),
@@ -1197,7 +1218,13 @@ const HAND: Record<string, Op> = {
     reply: obj({ invitations: list(INVITED) }),
   },
   'GET /v1/invitations': {
-    summary: 'Invitations: all of them for the administration; a curator sees the ones they sent.',
+    summary:
+      'Invitations by pages, newest first: all of them for the administration; a curator sees the ones they sent and could still make.',
+    query: {
+      status: 'Only this status: pending, expired, used or revoked.',
+      cursor: 'The "next" of the previous page.',
+      limit: 'How many (default 50, at most 200).',
+    },
     reply: obj({
       invitations: list(
         obj({
@@ -1213,6 +1240,7 @@ const HAND: Record<string, Op> = {
           expiresAt: s('Until when it works.', { format: 'date-time' }),
         }),
       ),
+      next: nul(s('The cursor of the next page; null on the last one.')),
     }),
   },
   'POST /v1/invitations/{id}/resend': {
@@ -1316,6 +1344,7 @@ const HAND: Record<string, Op> = {
       from: 'Active on or after this day (or ISO instant).',
       to: 'Opened on or before this day (or ISO instant).',
       uncompiled: '1 for sessions with entries no proposal has gathered yet.',
+      agents: '1 for the sessions of agents and services only: not a person’s edits in the web.',
       cursor: 'The "next" of the previous page.',
       limit: 'At most this many (1–200).',
     },

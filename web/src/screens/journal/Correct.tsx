@@ -4,12 +4,12 @@
 // agent. Done when: the correction is saved and the person sees it as an entry. It goes first in the
 // context of the agents it touches. Pages and entries are picked by searching their words, never by
 // pasting an id. What is typed is kept in a draft of this tab, per person and brain, until it is sent.
-import { useEffect, useMemo, useState } from 'preact/hooks'
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import type { ApiError } from '../../api/client.ts'
 import { draft } from '../../api/draft.ts'
 import { api } from '../../api/index.ts'
-import { journalDraftKey } from '../../lib/journal.ts'
+import { correctionAbout, journalDraftKey } from '../../lib/journal.ts'
 import { pageHref } from '../../lib/markdown.ts'
 import { me } from '../../session.ts'
 import { T } from '../../text.ts'
@@ -17,6 +17,7 @@ import { Button } from '../../ui/Button.tsx'
 import { Field } from '../../ui/Field.tsx'
 import { FormAlert } from '../../ui/states.tsx'
 import { TextArea } from '../../ui/TextArea.tsx'
+import { brainResource } from '../Brain.tsx'
 import { blockedNow, useBrain, WikiHead } from '../wiki/common.tsx'
 import { comboOf, EntryList, type Lookup, SuggestList, useEntries, useSuggest } from '../wiki/Suggest.tsx'
 import { entryHref, JournalNav, roleAtLeast, sessionsHref, writable } from './common.tsx'
@@ -132,7 +133,11 @@ export function JournalCorrect({ slug }: { slug: string }) {
     const kept = store.read()
     if (kept && !fromEntry && !fromPage) return kept
     return {
-      about: fromEntry ? 'entry' : 'page',
+      about: correctionAbout({
+        fromEntry,
+        fromPage,
+        pages: brainResource(slug).data.value?.brain.stats.pages,
+      }),
       page: fromPage ? { address: fromPage, title: fromPage } : null,
       entry: fromEntry ? { id: fromEntry, title: fromEntry } : null,
       title: kept?.title ?? '',
@@ -179,6 +184,14 @@ export function JournalCorrect({ slug }: { slug: string }) {
       live = false
     }
   }, [fromPage])
+  // The brain arrived after the form was made: a wiki with no page yet starts on «nothing in particular»,
+  // unless the person already chose.
+  const pagesNow = brain?.stats.pages
+  const chose = useRef(false)
+  useEffect(() => {
+    if (!chose.current && f.about === 'page' && !f.page)
+      setFState((x) => ({ ...x, about: correctionAbout({ fromEntry, fromPage, pages: pagesNow }) }))
+  }, [pagesNow])
   if (!brain) return gate
   const j = T.journal
   const may = roleAtLeast(brain, 'contributor') && writable(brain)
@@ -261,7 +274,10 @@ export function JournalCorrect({ slug }: { slug: string }) {
                 name="about"
                 value={v}
                 checked={f.about === v}
-                onChange={() => setF({ ...f, about: v })}
+                onChange={() => {
+                  chose.current = true
+                  setF({ ...f, about: v })
+                }}
               />
               <span>{label}</span>
             </label>

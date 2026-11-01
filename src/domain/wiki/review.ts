@@ -159,6 +159,35 @@ export type Review = {
   warnings: Warning[]
   // The purges of the wiki so far: a correction echoes it (one written before a purge is refused).
   purges: number
+  // The journal entries the operations cite, named as a wiki page names its sources: the review
+  // carries them so nobody opens each entry to name it (opening one is a read). A forgotten entry
+  // keeps its words only for a curator; a purged one for nobody.
+  sourceEntries: SourceEntry[]
+}
+
+export type SourceEntry = { id: string; title: string | null; state: 'active' | 'forgotten' | 'purged' }
+
+async function sourceEntriesOf(db: Db, brainId: string, ops: Op[], curator: boolean): Promise<SourceEntry[]> {
+  const ids = [
+    ...new Set(
+      ops.flatMap((o) =>
+        'sources' in o && Array.isArray(o.sources)
+          ? o.sources.flatMap((s) => ('entryId' in s ? [s.entryId] : []))
+          : [],
+      ),
+    ),
+  ]
+  if (ids.length === 0) return []
+  // Only entries of the proposal's brain: an id from another brain names nothing here.
+  const rows = await db.query(
+    'SELECT id, title, state FROM entries WHERE id = ANY($1) AND brain_id = $2 ORDER BY id',
+    [ids, brainId],
+  )
+  return rows.map((r) => {
+    const state = r.state as SourceEntry['state']
+    const shown = state === 'active' || (state === 'forgotten' && curator)
+    return { id: String(r.id), title: shown ? String(r.title) : null, state }
+  })
 }
 
 function afterOf(o: Op, before: PageState | null): Partial<PageState> | null {
@@ -207,7 +236,7 @@ function afterOf(o: Op, before: PageState | null): Partial<PageState> | null {
   }
 }
 
-export async function buildReview(ctx: Ctx, row: Row): Promise<Review> {
+export async function buildReview(ctx: Ctx, row: Row, curator: boolean): Promise<Review> {
   const brainId = String(row.brain_id)
   const rows = await ctx.db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [row.id])
   const ops = rows.map(proposalOpOf)
@@ -258,5 +287,6 @@ export async function buildReview(ctx: Ctx, row: Row): Promise<Review> {
     purges,
     ops: reviewed,
     warnings: warnings.filter((w) => w.op === null),
+    sourceEntries: await sourceEntriesOf(ctx.db, brainId, plain, curator),
   }
 }

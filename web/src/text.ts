@@ -67,6 +67,10 @@ export const T = {
     offlineTitle: 'rsc-brain could not be reached',
     offlineLead: 'No answer came back: this device is offline, or the server is down.',
     forbiddenTitle: 'You cannot open this',
+    noBrain: 'This brain does not exist, or you are not one of its members.',
+    noBrainHow: 'Ask a curator of that brain to add you, or go back to your brains.',
+    askHow: 'Ask whoever sent you the link, or a curator of the brain, or go back to your brains.',
+    goHome: 'Go to your brains',
     signedOutTitle: 'Your session ended',
     clearFilters: 'Clear filters',
     filteredEmpty: 'No results for these filters.',
@@ -323,6 +327,7 @@ export const T = {
     perm: 'Permission',
     read: 'Read only',
     write: 'Read and write',
+    readerOnly: 'Read only: you are a reader in these brains, so a token cannot write there.',
     expires: 'Expires in',
     days: (n: number) => `${n} days`,
     create: 'Create token',
@@ -459,7 +464,8 @@ export const T = {
     today: "Today's sessions",
     noToday: 'No sessions today.',
     noTodayHow: 'Sessions appear here as soon as an agent works in this brain.',
-    untitled: 'No purpose given',
+    todayCapped: (n: number) => `The ${n} most recent of today.`,
+    allSessions: 'All sessions in the journal',
     entriesIn: (n: number) => plural(n, 'entry', 'entries'),
     status: { open: 'open', closed: 'closed', closed_no_summary: 'closed without summary' } as Record<
       string,
@@ -532,6 +538,9 @@ export const T = {
     copied: 'Done, I copied it',
     listTitle: 'Invitations',
     noInvitations: 'No invitations yet.',
+    showMoreInvitations: 'Show more invitations',
+    shownSoFar: (n: number) => `The newest ${n} invitations.`,
+    shownAll: (n: number) => (n === 1 ? 'The only invitation.' : `All ${n} invitations.`),
     status: { pending: 'pending', expired: 'expired', used: 'accepted', revoked: 'withdrawn' } as Record<
       string,
       string
@@ -548,7 +557,9 @@ export const T = {
     withdrawFor: (email: string) => `Withdraw invitation for ${email}`,
     withdrawn: 'Invitation withdrawn.',
     linkReady: (who: string[]) =>
-      `${who.length === 1 ? `Link for ${who[0]} is ready` : `Links for ${who.join(', ')} are ready`}: copy it now, it is shown only once.`,
+      who.length === 1
+        ? `Link for ${who[0]} is ready: copy it now, it is shown only once.`
+        : `Links for ${who.join(', ')} are ready: copy them now, each is shown only once.`,
     withdrawTitle: 'Withdraw the invitation?',
     withdrawLead: (email: string) =>
       `The link sent to ${email} stops working. You can invite them again later.`,
@@ -572,7 +583,8 @@ export const T = {
     title: 'Settings',
     lead: (brain: string) => `How ${brain} works: who is in it, what agents find it by and read first.`,
     cannot: (brain: string) => `Only curators of ${brain} change its settings.`,
-    cannotHow: (brain: string) => `Ask a curator of ${brain} for the curator role.`,
+    cannotHow: (brain: string, curators: string) =>
+      `Ask ${curators ? `a curator of ${brain} (${curators})` : `a curator of ${brain}`} for the curator role.`,
     saved: 'Saved.',
     save: 'Save',
     saving: 'Saving…',
@@ -713,7 +725,8 @@ export const T = {
     invitations: 'Invitations',
     services: 'Service accounts',
     cannot: 'Only the administration of this installation opens this.',
-    cannotHow: 'Ask an administrator.',
+    cannotHow: (admins: string[]) =>
+      admins.length ? `Ask an administrator (${admins.join(', ')}).` : 'Ask an administrator.',
     peopleLead:
       'Everyone with an account: their role in each brain, when they were last seen, and their rights.',
     inviteLink: 'Invite people',
@@ -864,7 +877,10 @@ export const T = {
     failuresLead: 'Mail that did not go, newest first. It is not sent again by itself.',
     noFailures: 'No failures: every recent mail went.',
     failureLine: (kind: string, to: string, when: string) => `${kind} to ${to} · ${when}`,
-    skipped: 'Not sent: mail was not set up',
+    skippedCount: (n: number) =>
+      n === 1
+        ? '1 mail was not sent because mail was not set up then.'
+        : `${n} mails were not sent because mail was not set up then.`,
     mailKinds: {
       invitation: 'Invitation',
       reset: 'Reset link',
@@ -1426,7 +1442,6 @@ export const T = {
     range: (from: number, to: number, total: number) => `${fmt(from)}–${fmt(to)} of ${plural(total, 'page')}`,
     previous: 'Previous',
     next: 'Next',
-    noRows: 'No pages match these filters.',
     hop: (n: number) => (n === 0 ? 'Focused' : plural(n, 'hop')),
     arrow: '→',
     otherPages: (prefix: string) => (prefix ? `Other pages in ${prefix}` : 'Other pages'),
@@ -1505,8 +1520,9 @@ export const T = {
     noSessionsLead:
       'Agents write here as they work: a session opens, entries arrive, a summary closes it. Connect an agent from the overview of this brain, then ask it to save what it learns.',
     toOverview: 'Go to the overview',
-    implicitSession: (day: string) => `Work without a session on ${day}`,
-    implicitNoDay: 'Work without a session',
+    unnamedWork: (client: string) => `Unnamed work · ${client}`,
+    webEdits: (person: string) => (person ? `Web edits · ${person}` : 'Web edits'),
+    anAgent: 'an agent',
     noPurpose: 'Session with no purpose given',
     entriesIn: (n: number) => plural(n, 'entry', 'entries'),
     stillOpen: 'Still open: the summary comes when it closes.',
@@ -1559,7 +1575,8 @@ export const T = {
     purgedTag: 'Purged',
     correctionNote: 'A person’s correction: agents get it first in their context.',
     stateForgotten: (who: string, d: string, why: string) => `Forgotten by ${who} on ${d}: ${why}`,
-    statePurged: 'Purged: its words are gone for good.',
+    statePurged:
+      'Purged: its text, its earlier versions and its place in search are removed. Copies quoted elsewhere (in a page, a proposal or a comment) are not.',
     relations: 'Relations',
     noRelations: 'No relations to other entries.',
     aForgottenEntry: 'an entry forgotten since',

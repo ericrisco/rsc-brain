@@ -31,6 +31,11 @@ export type ErrorView = {
 
 // 403 and 404 read the same on purpose: a brain you cannot read answers like one that does not exist
 // (constitution Brain P4); the server's own words say who to ask.
+// How to go on, as the server says it, unless it names an API route (written for programs): then the web's
+// own words.
+const API_WORDS = /\/v1\b|\b(GET|POST|PUT|PATCH|DELETE) \/|\bAPI\b/
+const forPeople = (how: string) => (API_WORDS.test(how) ? T.states.askHow : how)
+
 export function errorView(e: ApiError, online = true): ErrorView {
   if (e.code === 'offline' || !online)
     return {
@@ -41,14 +46,24 @@ export function errorView(e: ApiError, online = true): ErrorView {
       howToProceed: e.howToProceed,
       retry: true,
     }
-  if (e.status === 403 || e.status === 404)
+  if (e.status === 403 || e.status === 404) {
+    // A brain one is not in reads the same as one that does not exist, in the web's words.
+    if (e.code === 'brain_not_found')
+      return {
+        kind: 'forbidden',
+        title: T.states.forbiddenTitle,
+        message: T.states.noBrain,
+        howToProceed: T.states.noBrainHow,
+        retry: false,
+      }
     return {
       kind: 'forbidden',
       title: T.states.forbiddenTitle,
       message: e.message,
-      howToProceed: e.howToProceed,
+      howToProceed: forPeople(e.howToProceed),
       retry: false,
     }
+  }
   return {
     kind: 'error',
     title: T.states.errorTitle,

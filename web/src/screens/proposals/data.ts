@@ -47,7 +47,10 @@ export type Review = {
   warnings: ReviewOp['warnings']
   canDecide: boolean
   purges: number
+  // The entries the operations cite, named without opening them (opening one is a read).
+  sourceEntries: SourceEntry[]
 }
+export type SourceEntry = { id: string; title: string | null; state: 'active' | 'forgotten' | 'purged' }
 export type Decision = {
   proposal: ProposalView
   ops: Array<{ index: number; status: string }>

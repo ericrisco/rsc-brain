@@ -161,7 +161,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
       },
       reminder: {
         kind: 'hooks',
-        note: `At the start of a session the hook brings the context of the brain linked to the repository; when Claude stops with a brain session still open, it asks once for the summary. The hooks need the rsc-brain command and a token in ${fileOf('claude-code')} (the token connection saves it there). They never block your work when rsc-brain does not answer.`,
+        note: `At the start of a session the hook brings the context of the brain linked to the repository; when Claude stops with a brain session still open, it asks once for the summary. The hooks need the rsc-brain command and a token in ${fileOf('claude-code')} (the token connection saves it there). They never block your work when rsc-brain does not answer. The rsc-brain command is not published yet: it comes with the installation release; until then it runs only from a copy of rsc-brain's source (node dist/cli/main.js). Claude Code connects without it, by the standard connection above.`,
         blocks: [
           {
             title: 'Add to ~/.claude/settings.json (or .claude/settings.json in a project)',
@@ -323,7 +323,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
       name: 'Other agents',
       signIn: null,
       token: {
-        note: `If your agent speaks MCP over HTTP, give it the address and the header "Authorization: Bearer <token>". If it only starts local MCP programs, use the bridge: it runs on your machine and connects to rsc-brain with your token (from ${TOKEN_FILE}, or ${TOKEN_ENV} when no file is given).`,
+        note: `If your agent speaks MCP over HTTP, give it the address and the header "Authorization: Bearer <token>". If it only starts local MCP programs, use the bridge: it runs on your machine and connects to rsc-brain with your token (from ${TOKEN_FILE}, or ${TOKEN_ENV} when no file is given). The bridge is the rsc-brain command, which is not published yet (it comes with the installation release); an agent that speaks HTTP connects without it, by "Remote MCP over HTTP" below.`,
         blocks: [
           saveToken('other'),
           {

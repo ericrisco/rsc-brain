@@ -8,7 +8,8 @@ import { useEffect, useRef } from 'preact/hooks'
 import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
-import { clientLabel } from '../lib/brains.ts'
+import { clientLabel, todayCapped } from '../lib/brains.ts'
+import { sessionLabel } from '../lib/journal.ts'
 import { useLive } from '../live/follow.ts'
 import { online } from '../session.ts'
 import { connectHref } from '../shell/dialogs.ts'
@@ -27,6 +28,8 @@ type Session = {
   who: string
   client: string | null
   purpose: string
+  // The day of the session a key gets by writing without opening one; null for one opened with a purpose.
+  day: string | null
   ref: string | null
   status: string
   entries: number
@@ -164,7 +167,7 @@ function Today({ slug, sessions }: { slug: string; sessions: Session[] }) {
           {sessions.map((s) => (
             <li key={s.id}>
               <p class="list-title">
-                <a href={sessionHref(slug, s.id)}>{s.purpose || o.untitled}</a>
+                <a href={sessionHref(slug, s.id)}>{sessionLabel(s)}</a>
               </p>
               <p class="meta">
                 {[clientLabel(s.client), s.who, o.entriesIn(s.entries)].filter(Boolean).join(' · ')}
@@ -186,6 +189,12 @@ function Today({ slug, sessions }: { slug: string; sessions: Session[] }) {
           ))}
         </ul>
       )}
+      {todayCapped(sessions.length) ? (
+        <p class="meta">
+          {o.todayCapped(sessions.length)}{' '}
+          <a href={`/b/${encodeURIComponent(slug)}/journal`}>{o.allSessions}</a>
+        </p>
+      ) : null}
     </section>
   )
 }

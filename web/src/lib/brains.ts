@@ -23,14 +23,19 @@ export function slugOf(name: string): string {
 
 type Waiting = { slug: string; role: string; stats: { pendingProposals: number } }
 
-// The proposals waiting for me: those of the brains I curate (only a curator decides, spec B2). With
-// one brain waiting, the count leads to its inbox; with more, to home, where each card says how many.
+// The proposals waiting for me: those of the brains I curate (only a curator decides, spec B2). The count
+// leads to an inbox: the first brain with proposals waiting (each card on home names its own).
 export function toReview(brains: readonly Waiting[]): { count: number; href: string } {
   const mine = brains.filter((b) => b.role === 'curator' && b.stats.pendingProposals > 0)
   const count = mine.reduce((n, b) => n + b.stats.pendingProposals, 0)
-  const only = mine.length === 1 ? mine[0] : undefined
-  return { count, href: only ? `/b/${encodeURIComponent(only.slug)}/proposals` : '/' }
+  const first = mine[0]
+  return { count, href: first ? `/b/${encodeURIComponent(first.slug)}/proposals` : '/' }
 }
+
+// How many of today's sessions the overview gets at most: the server's TODAY_SESSIONS
+// (src/domain/overview.ts; a node test keeps them equal). At that many, there may be more.
+export const TODAY_SHOWN = 20
+export const todayCapped = (n: number): boolean => n >= TODAY_SHOWN
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 

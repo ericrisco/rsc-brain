@@ -27,7 +27,8 @@ export type Me = {
     totp: boolean | null
   }
   key: { id: string; kind: string; perm: string }
-  installation: { name: string; factoryUrl: string | null }
+  // admins: whom to ask about the installation (names; older servers send none).
+  installation: { name: string; factoryUrl: string | null; admins?: string[] }
 }
 
 export const branding = () => resource<Branding>('branding', () => api.call<Branding>('branding'))

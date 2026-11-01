@@ -699,8 +699,11 @@ function EditForm({ slug, reading }: { slug: string; reading: Reading }) {
         })
         return
       }
-      if (err.code === 'page_changed' && err.current) setConflict(err.current as Reading)
-      else if (err.code === 'page_not_found') setGone(true)
+      if (err.code === 'page_changed' && err.current) {
+        setConflict(err.current as Reading)
+        // The page as it is now: its header says their revision (the form keeps mine until I choose).
+        pageChanged(slug, err.current as Reading)
+      } else if (err.code === 'page_not_found') setGone(true)
       else setError(err)
       return
     }

@@ -494,7 +494,8 @@ export function hit(xy: Float32Array, visible: Uint8Array, x: number, y: number,
 export type View = { scale: number; tx: number; ty: number }
 
 // The scale and shift that put every drawn item inside a canvas of w × h with `pad` around, centred.
-export function fit(xy: Float32Array, visible: Uint8Array, w: number, h: number, pad: number): View {
+// `top`: a band at the top kept free (the zoom buttons sit over the picture there).
+export function fit(xy: Float32Array, visible: Uint8Array, w: number, h: number, pad: number, top = 0): View {
   let x0 = Number.POSITIVE_INFINITY
   let y0 = Number.POSITIVE_INFINITY
   let x1 = Number.NEGATIVE_INFINITY
@@ -508,7 +509,31 @@ export function fit(xy: Float32Array, visible: Uint8Array, w: number, h: number,
     if (y < y0) y0 = y
     if (y > y1) y1 = y
   }
-  if (x0 === Number.POSITIVE_INFINITY) return { scale: 1, tx: w / 2, ty: h / 2 }
-  const scale = Math.min(2, (w - 2 * pad) / Math.max(x1 - x0, 1e-9), (h - 2 * pad) / Math.max(y1 - y0, 1e-9))
-  return { scale, tx: w / 2 - ((x0 + x1) / 2) * scale, ty: h / 2 - ((y0 + y1) / 2) * scale }
+  // What is left under the band; never less than a sliver, so a tiny canvas still draws.
+  const band = Math.min(top, Math.max(0, h - 2 * pad - 40))
+  const mid = band + (h - band) / 2
+  if (x0 === Number.POSITIVE_INFINITY) return { scale: 1, tx: w / 2, ty: mid }
+  const scale = Math.min(
+    2,
+    (w - 2 * pad) / Math.max(x1 - x0, 1e-9),
+    (h - band - 2 * pad) / Math.max(y1 - y0, 1e-9),
+  )
+  return { scale, tx: w / 2 - ((x0 + x1) / 2) * scale, ty: mid - ((y0 + y1) / 2) * scale }
+}
+
+// The shape code of a group box, and its radius in pixels by how many pages it holds (render.ts draws them).
+export const GROUP_SHAPE = 255
+export const groupRadius = (count: number) => Math.min(28, 7 + 1.1 * Math.sqrt(count))
+
+// The pad around what is fitted: room for the biggest group box drawn whole (a box is sized in pixels, not
+// by the zoom), and never less than 48 px.
+export function fitPad(
+  sc: { n: number; shape: Uint8Array; count: ArrayLike<number>; byGroups: boolean },
+  fitted: Uint8Array,
+): number {
+  let reach = 0
+  for (let i = 0; i < sc.n; i++)
+    if (fitted[i] && sc.shape[i] === GROUP_SHAPE)
+      reach = Math.max(reach, groupRadius(sc.count[i] as number) * (sc.byGroups ? 1 : 0.6))
+  return 24 + Math.max(24, reach)
 }

@@ -45,6 +45,10 @@ real server and the PostgreSQL in `RSC_BRAIN_PG_URL`; `verify.sh` runs it when t
 and says why it skipped it otherwise. `node test/web/fixture/main.ts` starts the fixture on port 4173 to
 walk the web by hand: open `/__fixture/use?preset=signed-in` (or `fresh`, `signed-out`, `insecure`).
 
+More on the web, its layers of tests and the rules of its fixture: [web/README.md](web/README.md).
+Browsers refuse some ports outright (4190, 6000, 6566, 10080 and the rest of the Fetch standard's «bad
+ports»): an installation on one of them answers `curl` but not the web, the bridge or the hooks.
+
 ## Search by meaning (optional)
 
 Off by default; search by words works without it. The server offers a provider when its setting is

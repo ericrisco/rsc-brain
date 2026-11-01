@@ -5,6 +5,7 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useId, useState } from 'preact/hooks'
 import { api } from '../../api/index.ts'
+import { stepActive } from '../../lib/wiki.ts'
 import { T } from '../../text.ts'
 
 export type PageItem = { address: string; title: string; status: string }
@@ -15,6 +16,8 @@ function useLookup<T>(load: (q: string) => Promise<T[]>, deps: unknown[], o: { f
   const [query, setQuery] = useState<string | null>(null)
   const [items, setItems] = useState<T[]>([])
   const [active, setActive] = useState(-1)
+  // The first answer chosen at once, not yet by the arrows.
+  const [auto, setAuto] = useState(false)
   const id = useId()
   useEffect(() => {
     if (query === null) {
@@ -30,6 +33,7 @@ function useLookup<T>(load: (q: string) => Promise<T[]>, deps: unknown[], o: { f
           setItems(found)
           // Otherwise nothing is chosen until the arrows choose it (Enter keeps its meaning in the field).
           setActive(o.first && found.length ? 0 : -1)
+          setAuto(Boolean(o.first && found.length))
         },
         () => live && setItems([]),
       )
@@ -56,9 +60,10 @@ function useLookup<T>(load: (q: string) => Promise<T[]>, deps: unknown[], o: { f
         return true
       }
       if (!items.length) return false
-      if (e.key === 'ArrowDown') setActive((active + 1) % items.length)
-      else if (e.key === 'ArrowUp') setActive((active - 1 + items.length) % items.length)
-      else if ((e.key === 'Enter' || e.key === 'Tab') && active >= 0) pick(items[active] as T)
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        setActive(stepActive({ active, length: items.length, key: e.key, auto }))
+        setAuto(false)
+      } else if ((e.key === 'Enter' || e.key === 'Tab') && active >= 0) pick(items[active] as T)
       else return false
       return true
     },

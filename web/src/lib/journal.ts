@@ -135,15 +135,19 @@ export function relateBody(choice: RelateChoice, here: string, other: string) {
   return { from: here, to: other, kind: choice }
 }
 
-// A session in a line: its purpose; the session a key gets by writing without opening one has none.
-// Its day may come as a day (2026-10-29) or as an instant; anything else is not shown as a date.
-export function sessionLabel(s: { purpose: string; day: string | null }): string {
+// A session in a line: its purpose. The session a key gets by writing without opening one has none: it is
+// «Unnamed work · <client>», and the one the web keeps for a person's edits is «Web edits · <person>», the
+// same everywhere it is named.
+export function sessionLabel(s: {
+  purpose: string
+  day: string | null
+  client?: string | null
+  author?: { name: string } | null
+  who?: string
+}): string {
   if (s.day) {
-    const day = /^\d{4}-\d{2}-\d{2}/.exec(s.day)?.[0]
-    const at = day ? new Date(`${day}T00:00:00.000Z`) : null
-    return at && !Number.isNaN(at.getTime())
-      ? T.journal.implicitSession(T.date(at.toISOString()))
-      : T.journal.implicitNoDay
+    if (s.client === 'web') return T.journal.webEdits(s.author?.name ?? s.who ?? '')
+    return T.journal.unnamedWork(clientLabel(s.client) ?? T.journal.anAgent)
   }
   return s.purpose.trim() || T.journal.noPurpose
 }
@@ -189,4 +193,16 @@ export function journalDraftKey(account: string, slug: string, what: string): st
     h = Math.imul(h, 0x01000193) >>> 0
   }
   return `journal.${h.toString(16).padStart(8, '0')}`
+}
+
+// What a new correction is about at first: what the person came from; else a page, unless the wiki has
+// none yet (a new brain), where a page could not be picked and «nothing in particular» is the way through.
+export function correctionAbout(o: {
+  fromEntry: string
+  fromPage: string
+  pages: number | undefined
+}): 'entry' | 'page' | 'nothing' {
+  if (o.fromEntry) return 'entry'
+  if (o.fromPage) return 'page'
+  return o.pages === 0 ? 'nothing' : 'page'
 }

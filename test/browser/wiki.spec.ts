@@ -110,7 +110,7 @@ test.describe('the map', () => {
   test('a brain the person cannot read says so and who to ask', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in', { brain: 'forbidden' })
     await page.goto('/b/growth/wiki')
-    await expect(page.getByRole('alert')).toContainText('ask a curator of that brain to add you')
+    await expect(page.getByRole('alert')).toContainText('Ask a curator of that brain to add you')
   })
 })
 

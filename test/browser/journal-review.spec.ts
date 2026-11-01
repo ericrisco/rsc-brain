@@ -41,7 +41,7 @@ test('the overview leads to what it counts', async ({ page, context, baseURL }) 
     `${J}/sessions/ses_growth001`,
   )
   // A session without a purpose opens too, named in words.
-  await expect(today.getByRole('link', { name: 'No purpose given' })).toHaveAttribute(
+  await expect(today.getByRole('link', { name: 'Unnamed work · an API client' })).toHaveAttribute(
     'href',
     `${J}/sessions/ses_growth003`,
   )

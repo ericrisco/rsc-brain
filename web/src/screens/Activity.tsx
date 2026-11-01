@@ -96,13 +96,16 @@ function SessionList({
 
 function Sessions({ slug, factoryUrl }: { slug: string; factoryUrl: string | null }) {
   const a = T.activity
-  const r = sessionsResource(slug, { status: 'open' })
+  // Agents' and services' sessions, filtered by the server (so a page and its total count only those);
+  // the web's own edits show in the feed, not here.
+  const r = sessionsResource(slug, { status: 'open', agents: '1' })
   useFresh(r)
   const list = r.data.value
   const now = Date.now()
   const quiet = (s: SessionView) => now - Date.parse(s.lastActivityAt) > QUIET_MS
-  const active = list?.items.filter((s) => !quiet(s)) ?? []
-  const idle = list?.items.filter(quiet) ?? []
+  const open = list?.items ?? []
+  const active = open.filter((s) => !quiet(s))
+  const idle = open.filter(quiet)
   return (
     <div class="act-sessions">
       <section aria-labelledby="act-sessions-title">

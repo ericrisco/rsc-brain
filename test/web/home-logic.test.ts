@@ -2,8 +2,22 @@
 // kept out of the screens so it is tested on its own (plan §2: the .tsx files only paint).
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { ago, clientLabel, slugOf, toReview } from '../../web/src/lib/brains.ts'
+import { TODAY_SESSIONS } from '../../src/domain/overview.ts'
+import { ago, clientLabel, slugOf, TODAY_SHOWN, todayCapped, toReview } from '../../web/src/lib/brains.ts'
 import { emailsOf, firstPersonAlone } from '../../web/src/lib/people.ts'
+
+// PR26: the overview shows the newest sessions of today, as many as the server sends; at that many there
+// may be more, and the overview leads to the journal for the rest.
+describe("today's sessions", () => {
+  it('the web knows how many the server sends at most', () => {
+    assert.equal(TODAY_SHOWN, TODAY_SESSIONS)
+  })
+  it('at the cap there may be more; under it, the list is whole', () => {
+    assert.equal(todayCapped(TODAY_SESSIONS), true)
+    assert.equal(todayCapped(TODAY_SESSIONS - 1), false)
+    assert.equal(todayCapped(0), false)
+  })
+})
 
 describe('a brain address from its name', () => {
   it('lowercase words joined by single hyphens, as the server accepts', () => {
@@ -29,7 +43,11 @@ describe('what waits for me', () => {
       count: 2,
       href: '/b/a/proposals',
     })
-    assert.deepEqual(toReview([b('a', 'curator', 2), b('c', 'curator', 1)]), { count: 3, href: '/' })
+    // The final review of B6: with several waiting, the count leads to the first brain with proposals.
+    assert.deepEqual(toReview([b('a', 'curator', 2), b('c', 'curator', 1)]), {
+      count: 3,
+      href: '/b/a/proposals',
+    })
     assert.deepEqual(toReview([b('a', 'contributor', 4)]), { count: 0, href: '/' })
     assert.deepEqual(toReview([]), { count: 0, href: '/' })
   })
@@ -100,5 +118,20 @@ describe('the client of a session, in words', () => {
     assert.equal(clientLabel(null), null)
     assert.equal(clientLabel(''), null)
     assert.ok((clientLabel('x'.repeat(200)) ?? '').length <= 40)
+  })
+})
+
+// The final review of B6: links for several people are «them», shown once each.
+describe('the words when invitation links are ready', () => {
+  it('one link is «it»; several are «them»', async () => {
+    const { T } = await import('../../web/src/text.ts')
+    assert.equal(
+      T.people.linkReady(['ana@x.test']),
+      'Link for ana@x.test is ready: copy it now, it is shown only once.',
+    )
+    assert.equal(
+      T.people.linkReady(['ana@x.test', 'bo@x.test']),
+      'Links for ana@x.test, bo@x.test are ready: copy them now, each is shown only once.',
+    )
   })
 })

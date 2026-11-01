@@ -17,6 +17,7 @@ import { type Ctx, ok } from './context.ts'
 import { emailOf, inWeb } from './guards.ts'
 import { type ConnFacts, installation, requireSecure } from './installation.ts'
 import { mintWebSession } from './keys.ts'
+import { decode, encode, limitOf } from './listing.ts'
 
 export const INVITE_HOURS = 72
 export const MAX_EMAILS = 50
@@ -320,43 +321,65 @@ export type InvitationListed = {
   expiresAt: string
 }
 
-// The administration sees every invitation; a curator who may invite sees the ones they sent.
-export async function listInvitations(ctx: Ctx): Promise<InvitationListed[]> {
+export const INVITATION_STATUSES = ['pending', 'expired', 'used', 'revoked'] as const
+export type InvitationStatus = (typeof INVITATION_STATUSES)[number]
+
+// The status of an invitation, as SQL (the same order of checks as the list shows it).
+const STATUS_SQL = `CASE WHEN i.used_at IS NOT NULL THEN 'used'
+  WHEN i.revoked_at IS NOT NULL THEN 'revoked'
+  WHEN i.expires_at <= $3 THEN 'expired' ELSE 'pending' END`
+
+// The administration sees every invitation; a curator who may invite sees the ones they sent and could
+// still make today (inReach, as SQL). By pages, newest first, with a cursor (created_at, id) and an
+// optional status, in one query: the brains' names are joined, never read row by row.
+export async function listInvitations(
+  ctx: Ctx,
+  o: { status?: string | null; cursor?: string | null; limit?: string | null } = {},
+): Promise<{ invitations: InvitationListed[]; next: string | null }> {
   inWeb(ctx, 'Managing invitations')
   const admin = ctx.who.isAdmin && ctx.who.kind === 'person'
+  const status = o.status || null
+  if (status !== null && !(INVITATION_STATUSES as readonly string[]).includes(status))
+    throw invalid(
+      `There is no invitation status "${status}".`,
+      `Use one of: ${INVITATION_STATUSES.join(', ')}.`,
+    )
+  const c = decode(o.cursor ?? undefined)
+  const limit = limitOf(o.limit)
+  const now = ctx.clock()
   const rows = await ctx.db.query(
-    `SELECT i.*, a.name AS by_name FROM invitations i JOIN accounts a ON a.id = i.invited_by
-      WHERE ($1 OR i.invited_by = $2) ORDER BY i.created_at DESC LIMIT 500`,
-    [admin, ctx.who.accountId],
+    `SELECT i.id, i.email, i.is_admin, i.created_at, i.expires_at, a.name AS by_name, ${STATUS_SQL} AS status,
+            COALESCE((SELECT jsonb_agg(jsonb_build_object('slug', b.slug, 'role', g.value->>'role') ORDER BY g.ordinality)
+                        FROM jsonb_array_elements(i.grants) WITH ORDINALITY g
+                        JOIN brains b ON b.id = g.value->>'brainId'), '[]'::jsonb) AS brains
+       FROM invitations i JOIN accounts a ON a.id = i.invited_by
+      WHERE ($1 OR (i.invited_by = $2 AND NOT i.is_admin AND NOT i.can_create_brains
+                    AND NOT EXISTS (
+                      SELECT 1 FROM jsonb_array_elements(i.grants) g
+                       WHERE NOT EXISTS (
+                         SELECT 1 FROM memberships m JOIN accounts me ON me.id = m.account_id
+                          WHERE m.brain_id = g->>'brainId' AND m.account_id = $2
+                            AND m.role = 'curator' AND me.status = 'active'))))
+        AND ($4::text IS NULL OR ${STATUS_SQL} = $4)
+        AND ($5::timestamptz IS NULL OR (i.created_at, i.id) < ($5, $6))
+      ORDER BY i.created_at DESC, i.id DESC LIMIT $7`,
+    [admin, ctx.who.accountId, now, status, c?.at ?? null, c?.id ?? '', limit + 1],
   )
-  const now = ctx.clock().getTime()
-  const out: InvitationListed[] = []
-  for (const r of rows) {
-    if (!(await inReach(ctx, ctx.db, r))) continue
-    const grants = r.grants as Grant[]
-    const names = await brainNames(ctx.db, grants)
-    out.push({
+  const page = rows.slice(0, limit)
+  const last = page.at(-1)
+  return {
+    invitations: page.map((r) => ({
       id: String(r.id),
       email: String(r.email),
-      status:
-        r.used_at != null
-          ? 'used'
-          : r.revoked_at != null
-            ? 'revoked'
-            : (r.expires_at as Date).getTime() <= now
-              ? 'expired'
-              : 'pending',
-      brains: grants.flatMap((g) => {
-        const b = names.get(g.brainId)
-        return b ? [{ slug: b.slug, role: g.role }] : []
-      }),
+      status: r.status as InvitationStatus,
+      brains: r.brains as Array<{ slug: string; role: Role }>,
       isAdmin: Boolean(r.is_admin),
       invitedBy: String(r.by_name),
       createdAt: (r.created_at as Date).toISOString(),
       expiresAt: (r.expires_at as Date).toISOString(),
-    })
+    })),
+    next: rows.length > limit && last ? encode(last.created_at as Date, String(last.id)) : null,
   }
-  return out
 }
 
 // A curator reaches an invitation only while it is still one they could make today: theirs, no

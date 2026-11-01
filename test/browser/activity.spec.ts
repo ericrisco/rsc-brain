@@ -188,7 +188,7 @@ test('states: empty says what will appear; no access says who to ask; sessions f
   await expect(page.locator('.live-state')).toHaveText('Live')
   await s.state('brain', 'forbidden')
   await page.goto('/b/growth/activity')
-  await expect(page.getByRole('alert')).toContainText('ask a curator of that brain to add you')
+  await expect(page.getByRole('alert')).toContainText('Ask a curator of that brain to add you')
 })
 
 test('320 px and dark: nothing scrolls sideways, pause and filters reachable by keyboard', async ({

@@ -407,3 +407,15 @@ export function draftKeyOf(account: string, slug: string, page: string): string 
 // content: the edit moves on to it. If the content changed too, someone else edited: it does not.
 export const canRebase = (base: Editable, now: Editable) =>
   editChanges({ ...base, revision: 0 }, now) === null
+
+// The next chosen item of a list of suggestions under the arrows. `auto`: the first was chosen at once (so
+// Enter takes it), not by the arrows: the first ArrowDown stays on it.
+export function stepActive(o: {
+  active: number
+  length: number
+  key: 'ArrowDown' | 'ArrowUp'
+  auto: boolean
+}): number {
+  if (o.key === 'ArrowDown') return o.auto && o.active === 0 ? 0 : (o.active + 1) % o.length
+  return (o.active - 1 + o.length) % o.length
+}

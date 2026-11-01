@@ -15,7 +15,7 @@ test.describe('audit: times and days where the person is', () => {
     context,
     baseURL,
   }) => {
-    await scenario(context, baseURL as string, 'signed-in')
+    await scenario(context, baseURL as string, 'signed-in', { 'admin-audit': 'much-data' })
     await page.goto('/admin/audit')
     await expect(page.getByText('Days and times are in your time zone (Europe/Madrid).')).toBeVisible()
     await expect(rows(page).filter({ hasText: 'line 11' })).toContainText('29 Oct 2026, 00:30')
@@ -34,7 +34,7 @@ test.describe('audit: at UTC+14', () => {
     context,
     baseURL,
   }) => {
-    await scenario(context, baseURL as string, 'signed-in')
+    await scenario(context, baseURL as string, 'signed-in', { 'admin-audit': 'much-data' })
     await page.goto('/admin/audit')
     await expect(rows(page).filter({ hasText: 'line 11' })).toContainText('29 Oct 2026, 13:30')
     await page.getByLabel('From').fill('2026-10-29')
@@ -52,7 +52,7 @@ test.describe('audit: the download is the view', () => {
     context,
     baseURL,
   }) => {
-    await scenario(context, baseURL as string, 'signed-in')
+    await scenario(context, baseURL as string, 'signed-in', { 'admin-audit': 'much-data' })
     await page.goto('/admin/audit')
     await expect(rows(page)).toHaveCount(100)
     const first = (await rows(page).first().getAttribute('id'))?.replace('audit-', '')
@@ -94,7 +94,10 @@ test.describe('mail: a new server needs its password again', () => {
     await page.goto('/admin/email')
     const failures = page.getByRole('region', { name: 'Recent send failures' })
     await expect(failures).toContainText('timeout')
-    await expect(failures).toContainText('Not sent: mail was not set up')
+    // The final review of B6: mail not sent because it was not set up is not a send failure; it is said
+    // apart, once, by how many.
+    await expect(failures.getByRole('listitem').filter({ hasText: 'dan@example.test' })).toHaveCount(0)
+    await expect(failures).toContainText('1 mail was not sent because mail was not set up then.')
   })
 })
 
@@ -166,7 +169,7 @@ test.describe('second review: an empty view, and why meaning search went off', (
     context,
     baseURL,
   }) => {
-    await scenario(context, baseURL as string, 'signed-in')
+    await scenario(context, baseURL as string, 'signed-in', { 'admin-audit': 'much-data' })
     await page.goto('/admin/audit')
     await page.getByLabel('Action').fill('nothing.')
     const read = page.waitForResponse(

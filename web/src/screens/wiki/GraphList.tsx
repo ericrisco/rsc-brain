@@ -31,6 +31,7 @@ export function GraphList({
   onInspect,
   onFocus,
   onOpenGroup,
+  onClear,
   selected,
 }: {
   slug: string
@@ -52,6 +53,8 @@ export function GraphList({
   onInspect: (t: Target) => void
   onFocus: (address: string, hops: 1 | 2) => void
   onOpenGroup: (prefix: string, loose?: boolean) => void
+  // Filters that match nothing: the list says so and offers to clear them, as every list does.
+  onClear: () => void
   selected: string | null
 }) {
   const g = T.graph
@@ -93,6 +96,7 @@ export function GraphList({
           setSort={setSort}
           onInspect={onInspect}
           onFocus={onFocus}
+          onClear={onClear}
           selected={selected}
         />
       )}
@@ -352,6 +356,7 @@ function PagesTable({
   setSort,
   onInspect,
   onFocus,
+  onClear,
   selected,
 }: {
   slug: string
@@ -361,6 +366,7 @@ function PagesTable({
   setSort: (sort: string) => void
   onInspect: (t: Target) => void
   onFocus: (address: string, hops: 1 | 2) => void
+  onClear: () => void
   selected: string | null
 }) {
   const g = T.graph
@@ -473,7 +479,9 @@ function PagesTable({
       </div>
       {!data && r.loading.value ? <Skeleton rows={5} /> : null}
       {!data && r.error.value ? <ErrorState error={r.error.value} onRetry={() => void r.reload()} /> : null}
-      {data && data.items.length === 0 ? <Empty title={filtering ? g.noRows : g.noPagesYet} /> : null}
+      {data && data.items.length === 0 ? (
+        <Empty title={g.noPagesYet} filtered={filtering} onClear={onClear} />
+      ) : null}
       {paged && data ? (
         <nav class="pager" id="graph-pager" tabIndex={-1} aria-label={g.pager}>
           <button

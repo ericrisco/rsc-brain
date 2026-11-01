@@ -59,6 +59,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     'invitations[]': ['id', 'email', 'link', 'expiresAt', 'mailed', 'mailError'],
   },
   'GET /v1/invitations': {
+    '': ['invitations', 'next'],
     'invitations[]': ['id', 'email', 'status', 'brains', 'isAdmin', 'invitedBy', 'createdAt', 'expiresAt'],
   },
   'POST /v1/invitations/{id}/resend': {
@@ -156,7 +157,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   'GET /v1/entries/{id}': {
     // Review of PR20: the session it is in, named by its purpose.
     '': ['entry', 'relations', 'session'],
-    session: ['id', 'purpose', 'day'],
+    session: ['id', 'purpose', 'day', 'client', 'author'],
     entry: [
       'id',
       'brainId',
@@ -238,8 +239,9 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     counts: ['pending', 'approved', 'partially_approved', 'returned', 'withdrawn', 'superseded'],
   },
   'GET /v1/proposals/{id}/review': {
-    '': ['proposal', 'fingerprint', 'ops', 'warnings', 'canDecide', 'purges'],
+    '': ['proposal', 'fingerprint', 'ops', 'warnings', 'canDecide', 'purges', 'sourceEntries'],
     proposal: ['id', 'title', 'reason', 'status', 'old', 'agent', 'authorName', 'decidedByName', 'collected'],
+    'sourceEntries[]': ['id', 'title', 'state'],
     'ops[]': ['index', 'op', 'status', 'corrected', 'before', 'after', 'dependsOn', 'stale', 'warnings'],
   },
   'POST /v1/proposals/{id}/approve': {
@@ -320,6 +322,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   },
   'DELETE /v1/me/tokens/{id}': { '': ['revoked'] },
   'GET /v1/me/apps': {
+    '': ['apps', 'now'],
     'apps[]': [
       'id',
       'name',

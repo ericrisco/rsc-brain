@@ -1221,6 +1221,16 @@ dialog::backdrop {
   font: 550 13px var(--sans);
 }
 
+/* Its own link over the card's (the whole card opens the brain; this opens its inbox), 24 px high. */
+.review-link {
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+  min-height: 24px;
+  line-height: 24px;
+  color: inherit;
+}
+
 .callout {
   display: flex;
   flex-wrap: wrap;
@@ -3433,6 +3443,13 @@ dialog.search-dialog {
   overflow-wrap: anywhere;
 }
 
+/* A page link here is a target of at least 24 px high, even when its long title wraps (WCAG 2.5.8). */
+.health-page-link {
+  display: inline-block;
+  min-height: 24px;
+  line-height: 24px;
+}
+
 .health-compare {
   justify-self: start;
 }
@@ -3510,21 +3527,6 @@ dialog.search-dialog {
 
 .check-word.ok {
   color: var(--accent);
-}
-
-/* The same check, short, beside the configuration. */
-.check-mini {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-  padding: 8px 12px;
-  background: var(--surface);
-  border-radius: var(--radius);
-}
-
-.check-mini .check-word {
-  font-size: 14px;
 }
 
 .tips {

@@ -16,12 +16,14 @@ import {
 } from '../../web/src/lib/connect.ts'
 import {
   brainsLabel,
+  effectivePerm,
   groupKey,
   lastUseLabel,
   notifyRows,
   passwordChanged,
   permLabel,
   tokenRequest,
+  writeAllowed,
 } from '../../web/src/lib/profile.ts'
 
 const NOW = new Date('2026-11-01T12:00:00.000Z')
@@ -230,6 +232,37 @@ describe('the live check of one agent, over time', () => {
     // Green stays green: a later answer, even past 10 minutes, changes nothing.
     assert.equal(afterPoll(c, { tokens: [], apps: [] }, T0 + CHECK_STOP_MS * 2), c)
   })
+  // PR26 (pending from the review of PR24): the check compared the server's request times with the
+  // browser's clock. The server says its time (`now`) with the apps; the check reads every time on it.
+  it('a browser clock 10 minutes behind: an app already in use before the check is not new', () => {
+    const SKEW = 10 * 60_000
+    const serverT0 = T0 + SKEW
+    let c = startCheck(T0)
+    const busy = {
+      id: 'app_busy',
+      name: 'Some tool',
+      lastUsedAt: '',
+      lastRequestAt: new Date(serverT0 - 1000).toISOString(),
+    }
+    c = afterPoll(c, { apps: [busy], now: new Date(serverT0 + 500).toISOString() }, T0 + 500)
+    assert.equal(c.kind, 'waiting', 'in use before the check began, by the server clock')
+  })
+  it('a browser clock 10 minutes ahead: a known app asking after the check began is seen at once', () => {
+    const SKEW = -10 * 60_000
+    const serverT0 = T0 + SKEW
+    let c = startCheck(T0)
+    const old = {
+      id: 'app_old',
+      name: 'Codex',
+      lastUsedAt: '',
+      lastRequestAt: new Date(serverT0 - 60_000).toISOString(),
+    }
+    c = afterPoll(c, { apps: [old], now: new Date(serverT0 + 500).toISOString() }, T0 + 500)
+    assert.equal(c.kind, 'waiting')
+    const asked = { ...old, lastRequestAt: new Date(serverT0 + 2000).toISOString() }
+    c = afterPoll(c, { apps: [asked], now: new Date(serverT0 + 2500).toISOString() }, T0 + 2500)
+    assert.equal(c.kind, 'connected')
+  })
   it('stops after 10 minutes of waiting, until asked to check again', () => {
     let c = startCheck(T0)
     c = afterPoll(c, { apps: [] }, T0 + CHECK_STOP_MS - 1)
@@ -314,5 +347,29 @@ describe('after a new password', () => {
     const plain = 'Password changed. Your other sessions are signed out.'
     assert.equal(passwordChanged(undefined, [{ ended: false }]), plain)
     assert.equal(passwordChanged([{ expired: false }], undefined), plain)
+  })
+})
+
+// The final review of B6: a token never says more than its owner may do. A reader in every brain it
+// reaches cannot pick «Read and write», and a token's permission is shown as it works (capped by role).
+describe('a token’s permission, capped by the person’s roles', () => {
+  const roles = new Map([
+    ['growth', 'reader'],
+    ['support', 'contributor'],
+  ])
+  it('write may be picked only where the person writes', () => {
+    assert.equal(writeAllowed({ scope: 'some', brains: ['growth'] }, roles), false)
+    assert.equal(writeAllowed({ scope: 'some', brains: ['growth', 'support'] }, roles), true)
+    assert.equal(writeAllowed({ scope: 'all', brains: [] }, roles), true)
+    assert.equal(writeAllowed({ scope: 'all', brains: [] }, new Map([['growth', 'reader']])), false)
+  })
+  it('a write token over brains the person only reads works as read', () => {
+    assert.equal(effectivePerm({ perm: 'write', allBrains: false, brains: ['growth'] }, roles), 'read')
+    assert.equal(effectivePerm({ perm: 'write', allBrains: false, brains: ['support'] }, roles), 'write')
+    assert.equal(
+      effectivePerm({ perm: 'write', allBrains: true, brains: null }, new Map([['growth', 'reader']])),
+      'read',
+    )
+    assert.equal(effectivePerm({ perm: 'read', allBrains: true, brains: null }, roles), 'read')
   })
 })

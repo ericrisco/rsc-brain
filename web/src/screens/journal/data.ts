@@ -76,7 +76,14 @@ export type Revision = {
   authorName: string
   createdAt: string
 }
-export type SessionRef = { id: string; purpose: string; day: string | null }
+// With its client and author, so it is named as everywhere else (lib/journal.ts, sessionLabel).
+export type SessionRef = {
+  id: string
+  purpose: string
+  day: string | null
+  client: string | null
+  author: { id: string; name: string }
+}
 export type EntryReading = {
   entry: EntryRead
   session: SessionRef

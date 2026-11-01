@@ -181,11 +181,16 @@ function Card({ b }: { b: BrainRow }) {
       <p class="purpose">{b.purpose || <span class="muted">{T.brain.noPurpose}</span>}</p>
       <p class="meta">{T.home.size(b.stats.pages, b.stats.entries)}</p>
       <p class={waiting && b.role === 'curator' ? 'review' : 'meta'}>
-        {!waiting
-          ? T.home.nothingToReview
-          : b.role === 'curator'
-            ? T.home.toReview(waiting)
-            : T.home.waiting(waiting)}
+        {!waiting ? (
+          T.home.nothingToReview
+        ) : b.role === 'curator' ? (
+          // To the brain's inbox: what waits is one click away.
+          <a class="review-link" href={`/b/${encodeURIComponent(b.slug)}/proposals`}>
+            {T.home.toReview(waiting)}
+          </a>
+        ) : (
+          T.home.waiting(waiting)
+        )}
       </p>
       <p class="meta">{when ? T.home.lastActivity(when) : T.home.noActivity}</p>
     </li>

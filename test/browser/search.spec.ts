@@ -5,6 +5,12 @@ import { expect, noSideScroll, scenario, test } from './fixture.ts'
 
 const dialog = (page: import('@playwright/test').Page) => page.getByRole('dialog', { name: 'Search' })
 
+// Ctrl+K is heard once the signed-in shell is drawn (its keys on): pressed before, it reaches nothing.
+const signedInShell = async (page: import('@playwright/test').Page) => {
+  await expect(page.getByRole('heading', { level: 1, name: 'Your brains' })).toBeVisible()
+  await page.locator('html[data-keys="on"]').waitFor({ state: 'attached' })
+}
+
 test('inside a brain it searches that brain; each result says why', async ({ page, context, baseURL }) => {
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto('/b/growth')
@@ -131,6 +137,7 @@ test('outside a brain it searches all my brains; much data shows more on request
 }) => {
   await scenario(context, baseURL as string, 'signed-in', { search: 'much-data' })
   await page.goto('/')
+  await signedInShell(page)
   await page.keyboard.press('Control+k')
   const d = dialog(page)
   await expect(d.getByRole('radio')).toHaveCount(0)
@@ -145,6 +152,7 @@ test('outside a brain it searches all my brains; much data shows more on request
 test('an error says what happened and keeps the words', async ({ page, context, baseURL }) => {
   const s = await scenario(context, baseURL as string, 'signed-in', { search: 'error' })
   await page.goto('/')
+  await signedInShell(page)
   await page.keyboard.press('Control+k')
   const d = dialog(page)
   await d.getByLabel('Search for').fill('retention')
@@ -164,6 +172,7 @@ test('«Show more» pages the words that were searched, not what the field says 
 }) => {
   await scenario(context, baseURL as string, 'signed-in', { search: 'much-data' })
   await page.goto('/')
+  await signedInShell(page)
   await page.keyboard.press('Control+k')
   const d = dialog(page)
   await d.getByLabel('Search for').fill('intro')

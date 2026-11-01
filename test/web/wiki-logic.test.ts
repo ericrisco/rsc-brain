@@ -17,6 +17,7 @@ import {
   parseTags,
   pickPair,
   sourceKey,
+  stepActive,
   wordDiff,
 } from '../../web/src/lib/wiki.ts'
 
@@ -203,5 +204,18 @@ describe('after a link or a status changed by the same curator', () => {
   it('but not when someone else changed the content meanwhile', () => {
     assert.equal(canRebase(base, { ...base, body: 'Other.' }), false)
     assert.equal(canRebase(base, { ...base, sources: [] }), false)
+  })
+})
+
+// The final review of B6: in the `[[` list the first answer is chosen at once (Enter takes it), and the
+// first ArrowDown stays on it, as if the arrows had chosen it; only then do they move.
+describe('moving through a list of suggestions', () => {
+  it('the first ArrowDown on a chosen-at-once first answer stays on it', () => {
+    assert.equal(stepActive({ active: 0, length: 5, key: 'ArrowDown', auto: true }), 0)
+    assert.equal(stepActive({ active: 0, length: 5, key: 'ArrowDown', auto: false }), 1)
+    assert.equal(stepActive({ active: -1, length: 5, key: 'ArrowDown', auto: false }), 0)
+    assert.equal(stepActive({ active: 4, length: 5, key: 'ArrowDown', auto: false }), 0)
+    assert.equal(stepActive({ active: 0, length: 5, key: 'ArrowUp', auto: true }), 4)
+    assert.equal(stepActive({ active: 0, length: 5, key: 'ArrowUp', auto: false }), 4)
   })
 })

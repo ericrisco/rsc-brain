@@ -370,8 +370,11 @@ function TestMail({ who }: { who: Me }) {
   const configured = r.data.value?.configured ?? false
   return (
     <Part id="test" title={A.testTitle}>
+      {/* Failed to load: the settings above say so and offer to try again; nothing waits here forever. */}
       {!r.data.value ? (
-        <Skeleton rows={1} />
+        r.error.value ? null : (
+          <Skeleton rows={1} />
+        )
       ) : (
         <form
           class="settings-form"
@@ -437,22 +440,28 @@ function Failures() {
         ) : (
           <Skeleton rows={2} />
         )
-      ) : m.failures.length === 0 ? (
+      ) : m.failures.every((l) => l.status === 'skipped') ? (
         <p class="meta" data-state="empty">
           {A.noFailures}
         </p>
       ) : (
         <ul class="list compact">
-          {m.failures.map((l, i) => (
-            <li key={`${l.at}-${i}`}>
-              <p class="list-title">
-                {A.failureLine(A.mailKinds[l.kind] ?? l.kind, l.to, ago(l.at) ?? T.date(l.at))}
-              </p>
-              <p class="meta">{l.status === 'skipped' ? A.skipped : (l.error ?? A.testFailed)}</p>
-            </li>
-          ))}
+          {m.failures
+            .filter((l) => l.status !== 'skipped')
+            .map((l, i) => (
+              <li key={`${l.at}-${i}`}>
+                <p class="list-title">
+                  {A.failureLine(A.mailKinds[l.kind] ?? l.kind, l.to, ago(l.at) ?? T.date(l.at))}
+                </p>
+                <p class="meta">{l.error ?? A.testFailed}</p>
+              </li>
+            ))}
         </ul>
       )}
+      {/* Mail that never left because mail was not set up is not a failure of the mail server: said apart. */}
+      {m?.failures.some((l) => l.status === 'skipped') ? (
+        <p class="meta">{A.skippedCount(m.failures.filter((l) => l.status === 'skipped').length)}</p>
+      ) : null}
     </Part>
   )
 }

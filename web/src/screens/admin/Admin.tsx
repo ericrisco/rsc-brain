@@ -108,7 +108,11 @@ export function AdminFrame({ children }: { children: (who: Me) => ComponentChild
           <span class="kind">{T.kind.noAccess}</span>
           <h2>{T.states.forbiddenTitle}</h2>
           <p>{left || leftAdmin.value ? A.leftAdmin : A.cannot}</p>
-          <p class="how">{left || leftAdmin.value ? A.leftAdminHow : A.cannotHow}</p>
+          <p class="how">
+            {left || leftAdmin.value
+              ? A.leftAdminHow
+              : A.cannotHow(me().data.value?.installation.admins ?? [])}
+          </p>
         </div>
       )}
     </div>
@@ -253,7 +257,7 @@ function PeopleList({ who }: { who: Me }) {
 
   return (
     <section aria-labelledby="accounts-title">
-      <h2 id="accounts-title" class="section-title flush">
+      <h2 id="accounts-title" class="section-title flush" tabIndex={-1} data-start>
         {T.people.peopleTitle}
       </h2>
       <p class="muted">
@@ -661,7 +665,9 @@ function NewService({ onMade }: { onMade: (s: Shown) => void }) {
         }
       }}
     >
-      <h2>{A.newService}</h2>
+      <h2 tabIndex={-1} data-start>
+        {A.newService}
+      </h2>
       <FormAlert error={error} />
       <Field
         id="service-name"

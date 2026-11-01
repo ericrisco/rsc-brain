@@ -23,6 +23,28 @@ export function lastUseLabel(
   return by ? `Used ${when} by ${by}` : `Used ${when}`
 }
 
+// A token works with the person's role in each brain (B4): «write» means something only where the person
+// writes. `roles`: the person's role in each of their brains, by slug.
+const writes = (role: string | undefined) => role === 'contributor' || role === 'curator'
+
+export function writeAllowed(
+  f: { scope: 'all' | 'some'; brains: readonly string[] },
+  roles: ReadonlyMap<string, string>,
+): boolean {
+  const slugs = f.scope === 'all' ? [...roles.keys()] : f.brains
+  return slugs.some((s) => writes(roles.get(s)))
+}
+
+// What a token can do, as it works: a write token over brains the person only reads works as read.
+export function effectivePerm(
+  t: { perm: string; allBrains: boolean; brains: readonly string[] | null },
+  roles: ReadonlyMap<string, string>,
+): 'read' | 'write' {
+  if (t.perm !== 'write') return 'read'
+  const slugs = t.allBrains ? [...roles.keys()] : (t.brains ?? [])
+  return slugs.some((s) => writes(roles.get(s))) ? 'write' : 'read'
+}
+
 export const TOKEN_DAYS = [30, 90, 365] as const
 
 export type TokenForm = {

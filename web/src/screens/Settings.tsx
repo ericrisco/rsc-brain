@@ -42,6 +42,7 @@ import { writeBlocked } from '../ui/state.ts'
 import { ErrorState, FormAlert, Skeleton } from '../ui/states.tsx'
 import { TextArea } from '../ui/TextArea.tsx'
 import { brainResource } from './Brain.tsx'
+import { curatorNames } from './journal/data.ts'
 
 const S = T.settings
 
@@ -1173,7 +1174,7 @@ export function BrainSettings({ slug, tab }: { slug: string; tab: SettingsTab })
           <span class="kind">{T.kind.noAccess}</span>
           <h2>{T.states.forbiddenTitle}</h2>
           <p>{S.cannot(brain.name)}</p>
-          <p class="how">{S.cannotHow(brain.name)}</p>
+          <p class="how">{S.cannotHow(brain.name, curatorNames(brain.slug))}</p>
         </div>
       </>
     )

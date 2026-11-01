@@ -49,7 +49,14 @@ export const peopleRoutes: Route[] = [
     })
     return { status: 201, body: { invitations } }
   }),
-  route('GET /v1/invitations', async (r) => ({ body: { invitations: await listInvitations(ctxOf(r)) } })),
+  // By pages (cursor, limit) and status, on the server.
+  route('GET /v1/invitations', async (r) => ({
+    body: await listInvitations(ctxOf(r), {
+      status: r.query.get('status'),
+      cursor: r.query.get('cursor'),
+      limit: r.query.get('limit'),
+    }),
+  })),
   route('POST /v1/invitations/:id/resend', async (r) => ({
     body: { invitation: await resendInvitation(ctxOf(r), r.params.id as string) },
   })),
@@ -133,7 +140,10 @@ export const peopleRoutes: Route[] = [
     return { body: { revoked: r.params.id } }
   }),
   route('POST /v1/me/revoke-all', async (r) => ({ body: await revokeAll(ctxOf(r)) })),
-  route('GET /v1/me/apps', async (r) => ({ body: { apps: await listApps(ctxOf(r)) } })),
+  // `now`: the server's time, so a client compares the request times with this clock, not its own.
+  route('GET /v1/me/apps', async (r) => ({
+    body: { apps: await listApps(ctxOf(r)), now: new Date().toISOString() },
+  })),
   route('DELETE /v1/me/apps/:id', async (r) => {
     await revokeApp(ctxOf(r), r.params.id as string)
     return { body: { revoked: r.params.id } }

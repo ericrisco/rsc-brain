@@ -21,6 +21,8 @@ export type AdminScen = {
   mail: boolean
   accounts: Array<{ id: string; name: string; email: string }>
   brains: Array<{ slug: string }>
+  // The states forced on the scenario's screens.
+  states: ReadonlyMap<string, string>
 }
 export type AdminCtx = {
   s: AdminScen
@@ -123,11 +125,13 @@ function seedAudit(s: AdminScen): Row[] {
   const brains = s.brains.length ? s.brains.map((b) => b.slug) : ['growth']
   // Hourly from 10:30 UTC on 29 October back: line 11 is at 23:30 UTC on the 28th (00:30 in Madrid).
   const start = Date.parse('2026-10-29T10:30:00.000Z')
-  return Array.from({ length: 230 }, (_, i) => {
+  // A few pages only in the «much-data» state of the audit (230 lines); otherwise 60, one page.
+  const n = s.states.get('admin-audit') === 'much-data' ? 230 : 60
+  return Array.from({ length: n }, (_, i) => {
     const who = people[i % people.length] as { id: string; name: string }
     const action = ACTIONS[i % ACTIONS.length] as string
     return {
-      id: String(1000 + 230 - i),
+      id: String(1000 + n - i),
       at: new Date(start - i * 3_600_000).toISOString(),
       actor: { id: who.id, name: who.name },
       key: `crd_web${i % 3}`,
@@ -447,7 +451,15 @@ export const ADMIN_OPS: Record<string, Op> = {
   },
   'GET /v1/admin/mail': {
     screen: 'admin-email',
-    run: admin(({ s }) => ({ status: 200, body: mailView(fxOf(s)) })),
+    // Empty: mail never set up, so nothing has failed either.
+    run: admin(({ s }) =>
+      s.states.get('admin-email') === 'empty'
+        ? {
+            status: 200,
+            body: { ...mailView(fxOf(s)), configured: false, settings: null, recent: [], failures: [] },
+          }
+        : { status: 200, body: mailView(fxOf(s)) },
+    ),
   },
   'PUT /v1/admin/mail': {
     screen: 'admin-email',

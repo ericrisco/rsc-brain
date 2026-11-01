@@ -96,11 +96,12 @@ function usePoll(agent: string | null, check: AgentCheck | null, update: (c: Age
               : Promise.resolve(undefined),
             api.call<{
               apps: Array<{ id: string; name: string; lastUsedAt: string; lastRequestAt: string | null }>
+              now?: string
             }>('apps'),
           ])
           if (stopped) return
           setProblem(null)
-          const next = afterPoll(c, { tokens: tokens?.tokens, apps: apps.apps }, Date.now())
+          const next = afterPoll(c, { tokens: tokens?.tokens, apps: apps.apps, now: apps.now }, Date.now())
           if (next.kind === 'connected') invalidate('profile:')
           update(next)
           if (next.kind !== 'waiting') return
@@ -199,16 +200,6 @@ function LiveCheck({
   )
 }
 
-// The same check, short, beside the configuration: at 320 px the one above is out of sight while configuring.
-function MiniCheck({ agent, check }: { agent: Agent; check: AgentCheck }) {
-  return (
-    <p class="check-mini" data-check-mini={check.kind}>
-      <span class="muted">{T.connect.liveFor(agent.name)}: </span>
-      <CheckWord check={check} />
-    </p>
-  )
-}
-
 // Tabs with a roving keyboard: Tab enters the selected one; the arrows, Home and End move and select.
 function AgentTabs({ agents, at, onPick }: { agents: Agent[]; at: string; onPick: (id: string) => void }) {
   const list = useRef<HTMLDivElement>(null)
@@ -297,7 +288,6 @@ function TokenConnection({
           {fillToken(agent.token.blocks, placeholder, made.token.secret).map((b) => (
             <CommandBlock key={b.title} block={b} />
           ))}
-          <MiniCheck agent={agent} check={tab.check} />
           <div class="actions">
             <Button kind="primary" onClick={onDone}>
               {c.done}
@@ -334,20 +324,17 @@ function TokenConnection({
 function Panel({
   agent,
   kit,
-  tab,
   slug,
   children,
 }: {
   agent: Agent
   kit: Kit
-  tab: Tab
   slug: string | null
   children: ComponentChildren
 }) {
   const c = T.connect
   return (
     <div class="agent-panel" role="tabpanel" id={`panel-${agent.id}`} aria-labelledby={`tab-${agent.id}`}>
-      <MiniCheck agent={agent} check={tab.check} />
       <section class="kit-part" aria-labelledby={`standard-${agent.id}`}>
         <h3 id={`standard-${agent.id}`} class="part-title">
           {c.standard} {agent.signIn ? <span class="tag ok">{c.recommended}</span> : null}
@@ -474,6 +461,20 @@ function ConnectFor({ slug }: { slug: string | null }) {
         )
       ) : (
         <>
+          <AgentTabs agents={kit.agents} at={agent.id} onPick={setAt} />
+          {tab ? (
+            <Panel key={agent.id} agent={agent} kit={kit} slug={slug}>
+              <TokenConnection
+                agent={agent}
+                brain={brain}
+                placeholder={kit.tokenPlaceholder}
+                tab={tab}
+                onCreate={() => void create()}
+                onDone={() => patch(agent.id, (t) => ({ ...t, made: null, hidden: true }))}
+              />
+            </Panel>
+          ) : null}
+          {/* Once, after the steps: what the person does last is look here (the final review of B6). */}
           {tab ? (
             <LiveCheck
               agent={agent}
@@ -484,19 +485,6 @@ function ConnectFor({ slug }: { slug: string | null }) {
                 patch(agent.id, (t) => ({ ...t, check: startCheck(Date.now(), t.check.tokenId, agent.id) }))
               }
             />
-          ) : null}
-          <AgentTabs agents={kit.agents} at={agent.id} onPick={setAt} />
-          {tab ? (
-            <Panel key={agent.id} agent={agent} kit={kit} tab={tab} slug={slug}>
-              <TokenConnection
-                agent={agent}
-                brain={brain}
-                placeholder={kit.tokenPlaceholder}
-                tab={tab}
-                onCreate={() => void create()}
-                onDone={() => patch(agent.id, (t) => ({ ...t, made: null, hidden: true }))}
-              />
-            </Panel>
           ) : null}
         </>
       )}
