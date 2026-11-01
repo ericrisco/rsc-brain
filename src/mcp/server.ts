@@ -2,8 +2,10 @@
 // clients (2026-07-28) send their version and identity in every request and may ask server/discover;
 // older ones (2025-11-25, 2025-06-18) start with initialize. Every answer is one JSON object. A tool call
 // runs the same /v1 route a program would, with the same key.
+
 import { bearer, resolveKey } from '../auth/principal.ts'
 import { AppError, invalid } from '../core/errors.ts'
+import { VERSION } from '../core/version.ts'
 import { installation } from '../domain/installation.ts'
 import { CUT_HOW, head, MAX_REPLY_CHARS } from '../http/bounds.ts'
 import { match, type PublicReq, type Reply, type Route } from '../http/router.ts'
@@ -18,7 +20,7 @@ export const SUPPORTED = [MODERN, ...LEGACY]
 // One limit for the API and the MCP endpoint.
 export { MAX_REPLY_CHARS }
 
-const SERVER_INFO = { name: 'rsc-brain', title: 'rsc-brain', version: '0.1.0' }
+const SERVER_INFO = { name: 'rsc-brain', title: 'rsc-brain', version: VERSION }
 const CAPABILITIES = { tools: { listChanged: false }, prompts: { listChanged: false } }
 
 type Msg = { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: Record<string, unknown> }

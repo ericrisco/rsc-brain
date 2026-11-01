@@ -4,12 +4,27 @@
 import { useEffect, useId, useRef, useState } from 'preact/hooks'
 import { T } from '../text.ts'
 
-export function CopyButton({ text, label, id }: { text: string; label: string; id?: string }) {
+// `name`: what a screen reader hears when the visible label alone («Copy») would not say what is copied.
+export function CopyButton({
+  text,
+  label,
+  id,
+  name,
+  onCopy,
+}: {
+  text: string
+  label: string
+  id?: string
+  name?: string
+  // Told when the person asks to copy (whether the clipboard took it or the text shows to copy by hand).
+  onCopy?: () => void
+}) {
   const [said, setSaid] = useState<string | null>(null)
   const [manual, setManual] = useState(false)
   const field = useRef<HTMLTextAreaElement>(null)
   const fieldId = useId()
   const copy = async () => {
+    onCopy?.()
     try {
       if (!navigator.clipboard?.writeText) throw new Error('no clipboard')
       await navigator.clipboard.writeText(text)
@@ -27,7 +42,7 @@ export function CopyButton({ text, label, id }: { text: string; label: string; i
   }, [manual, text])
   return (
     <span class="copy">
-      <button type="button" class="button" id={id} onClick={() => void copy()}>
+      <button type="button" class="button" id={id} aria-label={name} onClick={() => void copy()}>
         {label}
       </button>
       <span role="status" class="meta">

@@ -3,8 +3,11 @@
 // works. The web page «connect your agent» (B6) shows it and fills the token placeholder once, when
 // the person creates a token there; the server never puts a secret in the kit.
 //
-// Config files read the token from the environment (RSC_BRAIN_TOKEN), so a file shared in a
-// repository never holds it; only the line that sets the variable carries the placeholder.
+// Config files read the token from the environment, so a file shared in a repository never holds it. The
+// token never goes on a command line either (it would stay in the shell history): it is pasted at a hidden
+// prompt into a file only the person can read, and the shell loads the variable from that file. Each agent
+// has its own variable and file, so connecting a second agent never overwrites the first one's token. Only
+// a text to paste into an app's own settings carries the placeholder, which the web fills once.
 import { AppError } from '../core/errors.ts'
 import { SAFE_URL } from '../core/urls.ts'
 
@@ -26,6 +29,9 @@ export type Block = {
 export type AgentKit = {
   id: AgentId
   name: string
+  // The variable and the file of this agent's token.
+  tokenEnv: string
+  tokenFile: string
   signIn: { note: string; blocks: Block[] } | null
   token: { note: string; blocks: Block[] }
   reminder:
@@ -44,22 +50,35 @@ export type Kit = {
 
 const json = (v: unknown) => JSON.stringify(v, null, 2)
 
-// Sets the variable the config files read. The only block with the placeholder for most agents.
-const exportToken: Block = {
-  title: 'Put the token in your environment (your shell profile, for example ~/.zshrc)',
-  where: 'terminal',
-  format: 'shell',
-  text: `export ${TOKEN_ENV}="${TOKEN_PLACEHOLDER}"`,
+// Each agent's own variable and file (RSC_BRAIN_TOKEN and the usual file stay the bridge's).
+const ENV_OF: Record<AgentId, string> = {
+  'claude-code': `${TOKEN_ENV}_CLAUDE_CODE`,
+  codex: `${TOKEN_ENV}_CODEX`,
+  opencode: `${TOKEN_ENV}_OPENCODE`,
+  cursor: `${TOKEN_ENV}_CURSOR`,
+  other: TOKEN_ENV,
 }
+const fileOf = (id: AgentId) => (id === 'other' ? TOKEN_FILE : `~/.config/rsc-brain/${id}.token`)
 
-// The token in a file only you can read, for the bridge and the hooks of agents that do not pass your
-// shell environment to the programs they start.
-const tokenFile: Block = {
-  title: 'Keep the token in a file only you can read',
+// The token, pasted at a hidden prompt, into a file only you can read: never on a command line.
+const saveToken = (id: AgentId): Block => ({
+  title:
+    'Save the token in a file only you can read: run this, paste the token at the hidden prompt and press Enter (it never lands in your shell history)',
   where: 'terminal',
   format: 'shell',
-  text: `mkdir -p ~/.config/rsc-brain && (umask 077 && printf '%s\\n' '${TOKEN_PLACEHOLDER}' > ${TOKEN_FILE})`,
-}
+  // umask shapes only a new file; one already there keeps its mode, so the file is emptied and set to 600
+  // before the token goes in (never a moment with the token in a file others can read).
+  text: `mkdir -p ~/.config/rsc-brain && (umask 077 && printf 'Token: ' && read -rs t && : > ${fileOf(id)} && chmod 600 ${fileOf(id)} && printf '%s\\n' "$t" > ${fileOf(id)} && echo saved)`,
+})
+
+// The variable the config files read, loaded from that file.
+const loadToken = (id: AgentId): Block => ({
+  title:
+    'Load it in your shell: add this line to your shell profile (~/.zshrc or ~/.bashrc), then open a new terminal',
+  where: 'terminal',
+  format: 'shell',
+  text: `export ${ENV_OF[id]}="$(cat ${fileOf(id)})"`,
+})
 
 // What to tell agents without hooks, for their instructions file (spec B5 clarification: the
 // reminder is an invocable prompt plus this text).
@@ -88,6 +107,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
     o.brain ? ` It should answer from the brain "${o.brain}".` : ''
   }`
   const hookArgs = `--url ${url}`
+  const hookFile = `--token-file ${fileOf('claude-code')}`
   const instructions = (
     where: string,
   ): { kind: 'instructions'; note: string; prompt: string; blocks: Block[] } => ({
@@ -99,7 +119,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
     ],
   })
 
-  const agents: AgentKit[] = [
+  const agents: Array<Omit<AgentKit, 'tokenEnv' | 'tokenFile'>> = [
     // Claude Code. Sources (2026-10-30): https://code.claude.com/docs/en/mcp ("claude mcp add --transport
     // http <name> <url>", sign-in with /mcp or "claude mcp login"; .mcp.json {"type":"http","url",
     // "headers"} with ${VAR} expansion) and https://code.claude.com/docs/en/hooks (SessionStart with
@@ -108,27 +128,32 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
       id: 'claude-code',
       name: 'Claude Code',
       signIn: {
-        note: 'Add the address, then run /mcp in Claude Code (or "claude mcp login rsc-brain") and accept in your browser.',
+        note: 'Paste it in a terminal and press Enter: it adds rsc-brain and opens your browser to approve. Then start Claude Code. (Inside Claude Code, /mcp signs in too.)',
         blocks: [
           {
-            title: 'Add rsc-brain for all your projects',
+            title: 'Add rsc-brain for all your projects and sign in',
             where: 'terminal',
             format: 'shell',
-            text: `claude mcp add --transport http ${SERVER_NAME} ${url} --scope user`,
+            text: `claude mcp add --transport http ${SERVER_NAME} ${url} --scope user\nclaude mcp login ${SERVER_NAME}`,
           },
         ],
       },
       token: {
-        note: `Claude Code reads \${${TOKEN_ENV}} from your environment when it starts the connection.`,
+        note: `Claude Code reads \${${ENV_OF['claude-code']}} from your environment when it starts the connection.`,
         blocks: [
-          exportToken,
+          saveToken('claude-code'),
+          loadToken('claude-code'),
           {
             title: 'Add rsc-brain to a project (the file can be shared: it holds no token)',
             where: '.mcp.json',
             format: 'json',
             text: json({
               mcpServers: {
-                [SERVER_NAME]: { type: 'http', url, headers: { Authorization: `Bearer \${${TOKEN_ENV}}` } },
+                [SERVER_NAME]: {
+                  type: 'http',
+                  url,
+                  headers: { Authorization: `Bearer \${${ENV_OF['claude-code']}}` },
+                },
               },
             }),
           },
@@ -136,7 +161,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
       },
       reminder: {
         kind: 'hooks',
-        note: `At the start of a session the hook brings the context of the brain linked to the repository; when Claude stops with a brain session still open, it asks once for the summary. The hooks need the rsc-brain command and a token (${TOKEN_ENV} or ${TOKEN_FILE}). They never block your work when rsc-brain does not answer.`,
+        note: `At the start of a session the hook brings the context of the brain linked to the repository; when Claude stops with a brain session still open, it asks once for the summary. The hooks need the rsc-brain command and a token in ${fileOf('claude-code')} (the token connection saves it there). They never block your work when rsc-brain does not answer.`,
         blocks: [
           {
             title: 'Add to ~/.claude/settings.json (or .claude/settings.json in a project)',
@@ -150,14 +175,22 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
                     hooks: [
                       {
                         type: 'command',
-                        command: `rsc-brain hook session-start ${hookArgs}${o.brain ? ` --brain ${o.brain}` : ''}`,
+                        command: `rsc-brain hook session-start ${hookArgs}${o.brain ? ` --brain ${o.brain}` : ''} ${hookFile}`,
                         timeout: 15,
                       },
                     ],
                   },
                 ],
                 Stop: [
-                  { hooks: [{ type: 'command', command: `rsc-brain hook stop ${hookArgs}`, timeout: 15 }] },
+                  {
+                    hooks: [
+                      {
+                        type: 'command',
+                        command: `rsc-brain hook stop ${hookArgs} ${hookFile}`,
+                        timeout: 15,
+                      },
+                    ],
+                  },
                 ],
               },
             }),
@@ -185,14 +218,15 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
         ],
       },
       token: {
-        note: `Codex sends the value of ${TOKEN_ENV} as the bearer token.`,
+        note: `Codex sends the value of ${ENV_OF.codex} as the bearer token.`,
         blocks: [
-          exportToken,
+          saveToken('codex'),
+          loadToken('codex'),
           {
             title: 'Add to ~/.codex/config.toml',
             where: '~/.codex/config.toml',
             format: 'toml',
-            text: `[mcp_servers.${SERVER_NAME}]\nurl = "${url}"\nbearer_token_env_var = "${TOKEN_ENV}"`,
+            text: `[mcp_servers.${SERVER_NAME}]\nurl = "${url}"\nbearer_token_env_var = "${ENV_OF.codex}"`,
           },
         ],
       },
@@ -220,9 +254,10 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
         ],
       },
       token: {
-        note: `OpenCode reads {env:${TOKEN_ENV}} from your environment.`,
+        note: `OpenCode reads {env:${ENV_OF.opencode}} from your environment.`,
         blocks: [
-          exportToken,
+          saveToken('opencode'),
+          loadToken('opencode'),
           {
             title: 'Add to opencode.json',
             where: 'opencode.json',
@@ -234,7 +269,7 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
                   type: 'remote',
                   url,
                   oauth: false,
-                  headers: { Authorization: `Bearer {env:${TOKEN_ENV}}` },
+                  headers: { Authorization: `Bearer {env:${ENV_OF.opencode}}` },
                 },
               },
             }),
@@ -262,16 +297,17 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
         ],
       },
       token: {
-        note: `Cursor reads \${env:${TOKEN_ENV}} from your environment.`,
+        note: `Cursor reads \${env:${ENV_OF.cursor}} from your environment.`,
         blocks: [
-          exportToken,
+          saveToken('cursor'),
+          loadToken('cursor'),
           {
             title: 'Add to ~/.cursor/mcp.json (or .cursor/mcp.json in a project)',
             where: '.cursor/mcp.json',
             format: 'json',
             text: json({
               mcpServers: {
-                [SERVER_NAME]: { url, headers: { Authorization: `Bearer \${env:${TOKEN_ENV}}` } },
+                [SERVER_NAME]: { url, headers: { Authorization: `Bearer \${env:${ENV_OF.cursor}}` } },
               },
             }),
           },
@@ -287,9 +323,9 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
       name: 'Other agents',
       signIn: null,
       token: {
-        note: `If your agent speaks MCP over HTTP, give it the address and the header "Authorization: Bearer <token>". If it only starts local MCP programs, use the bridge: it runs on your machine and connects to rsc-brain with your token (from ${TOKEN_FILE} or ${TOKEN_ENV}).`,
+        note: `If your agent speaks MCP over HTTP, give it the address and the header "Authorization: Bearer <token>". If it only starts local MCP programs, use the bridge: it runs on your machine and connects to rsc-brain with your token (from ${TOKEN_FILE}, or ${TOKEN_ENV} when no file is given).`,
         blocks: [
-          tokenFile,
+          saveToken('other'),
           {
             title: 'Local MCP through the bridge',
             where: 'mcpServers',
@@ -315,10 +351,11 @@ export function connectKit(o: { mcpUrl: string; brain: string | null; agent?: Ag
       check,
     },
   ]
+  const all: AgentKit[] = agents.map((a) => ({ ...a, tokenEnv: ENV_OF[a.id], tokenFile: fileOf(a.id) }))
   return {
     mcpUrl: url,
     tokenEnv: TOKEN_ENV,
     tokenPlaceholder: TOKEN_PLACEHOLDER,
-    agents: o.agent ? agents.filter((a) => a.id === o.agent) : agents,
+    agents: o.agent ? all.filter((a) => a.id === o.agent) : all,
   }
 }

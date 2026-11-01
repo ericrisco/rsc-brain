@@ -66,6 +66,9 @@ export type Screen =
   | 'proposals'
   | 'proposal'
   | 'health'
+  | 'tokens'
+  | 'apps'
+  | 'notify'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
 // alone: the administrator the setup made, the only person in the installation.
@@ -132,7 +135,47 @@ type Scen = {
   inboxes: Map<string, P.Inbox>
   // The wiki of every brain is a seeded one of this many pages (the graph's load tests, CA5 and CA6).
   seeded?: Seeded
+  // The profile (PR24): personal tokens and connected apps by account, email notices by "account:brain",
+  // and a second factor being set up.
+  tokens: FxToken[]
+  apps: FxApp[]
+  notify: Map<string, boolean>
+  totpPending: Set<string>
+  made: number
 }
+
+type FxToken = {
+  account: string
+  id: string
+  expired: boolean
+  name: string
+  last4: string
+  perm: string
+  allBrains: boolean
+  brains: string[] | null
+  createdAt: string
+  expiresAt: string
+  expiresSoon: boolean
+  lastUsedAt: string | null
+  lastClient: string | null
+}
+type FxApp = {
+  account: string
+  id: string
+  name: string
+  nameNote: string
+  returnsTo: string
+  brains: string[]
+  perm: string
+  createdAt: string
+  lastUsedAt: string
+  lastRequestAt: string | null
+  endsAt: string
+  ended: boolean
+}
+const tokenView = ({ account: _a, ...t }: FxToken) => t
+const appView = ({ account: _a, ...a }: FxApp) => a
+const TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DP'
 
 type Follower = { brain: string; res: ServerResponse; viewer: { id: string; curator: boolean } }
 // Pack rule 7, as the server applies it: a curator gets everything; anyone else every change and proposal,
@@ -156,6 +199,12 @@ const err = (status: number, code: string, message: string, howToProceed: string
   status,
   body: { error: { code, message, howToProceed } },
 })
+const NOT_THE_CODE = err(
+  400,
+  'invalid_request',
+  'The code is not right.',
+  'Type the 6 digits your app shows now.',
+)
 const UNAUTHORIZED = err(
   401,
   'unauthorized',
@@ -371,6 +420,72 @@ function freshScenario(id: string, preset: Preset): Scen {
     wikis: new Map(),
     journals: new Map(),
     inboxes: new Map(),
+    tokens: [
+      {
+        account: 'acc_eric',
+        id: 'crd_tok_laptop',
+        expired: false,
+        name: 'Claude Code laptop',
+        last4: 'k3Qa',
+        perm: 'write',
+        allBrains: true,
+        brains: null,
+        createdAt: '2026-09-02T10:00:00.000Z',
+        expiresAt: '2026-12-01T10:00:00.000Z',
+        expiresSoon: false,
+        lastUsedAt: '2026-10-29T09:40:00.000Z',
+        lastClient: 'claude-code/2.1.3',
+      },
+      {
+        account: 'acc_eric',
+        id: 'crd_tok_ci',
+        expired: false,
+        name: 'CI reader',
+        last4: 'Zp09',
+        perm: 'read',
+        allBrains: false,
+        brains: ['growth', 'support'],
+        createdAt: '2026-08-05T10:00:00.000Z',
+        expiresAt: '2026-11-05T10:00:00.000Z',
+        expiresSoon: true,
+        lastUsedAt: null,
+        lastClient: null,
+      },
+      {
+        account: 'acc_eric',
+        id: 'crd_tok_old',
+        expired: true,
+        name: 'Old laptop',
+        last4: 'Q7dd',
+        perm: 'write',
+        allBrains: true,
+        brains: null,
+        createdAt: '2026-06-01T10:00:00.000Z',
+        expiresAt: '2026-08-30T10:00:00.000Z',
+        expiresSoon: false,
+        lastUsedAt: '2026-08-29T10:00:00.000Z',
+        lastClient: 'codex/0.40',
+      },
+    ],
+    apps: [
+      {
+        account: 'acc_eric',
+        id: 'app_cursor',
+        name: 'Cursor',
+        nameNote: 'Declared by the app, not verified.',
+        returnsTo: '127.0.0.1',
+        brains: ['growth'],
+        perm: 'write',
+        createdAt: '2026-10-01T10:00:00.000Z',
+        lastUsedAt: '2026-10-28T18:00:00.000Z',
+        lastRequestAt: '2026-10-28T18:00:00.000Z',
+        endsAt: '2027-01-26T18:00:00.000Z',
+        ended: false,
+      },
+    ],
+    notify: new Map(),
+    totpPending: new Set(),
+    made: 0,
   }
   if (preset === 'alone') {
     s.accounts.push({
@@ -878,11 +993,29 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       const slugs = Array.isArray(body.brains) ? (body.brains as string[]) : null
       if (slugs && !slugs.every((x) => brainsOf(s, who).some((b) => b.slug === x))) return NO_BRAIN
       const secret = `rscb_fixturetoken${String(Date.now()).padStart(26, '0')}`
+      s.made += 1
+      const id = `crd_fixture_token${s.made}`
+      const days = typeof body.days === 'number' ? body.days : 90
+      s.tokens.unshift({
+        account: who.id,
+        id,
+        expired: false,
+        name: String(body.name ?? ''),
+        last4: secret.slice(-4),
+        perm: String(body.perm ?? 'write'),
+        allBrains: !slugs,
+        brains: slugs,
+        createdAt: NOW(),
+        expiresAt: new Date(Date.now() + days * 86_400_000).toISOString(),
+        expiresSoon: false,
+        lastUsedAt: null,
+        lastClient: null,
+      })
       return {
         status: 201,
         body: {
           token: {
-            id: 'crd_fixture_token',
+            id,
             secret,
             last4: secret.slice(-4),
             expiresAt: '2027-01-27T10:00:00.000Z',
@@ -894,6 +1027,176 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
                 note: 'This token reaches every brain you are a member of, including brains you join later.',
               }),
         },
+      }
+    },
+  },
+  'GET /v1/me/tokens': {
+    screen: 'tokens',
+    run: ({ s, who }) => {
+      if (!who) return UNAUTHORIZED
+      const mine = s.tokens.filter((t) => t.account === who.id).map(tokenView)
+      if (s.states.get('tokens') === 'empty') return { status: 200, body: { tokens: [] } }
+      if (s.states.get('tokens') === 'much-data')
+        return {
+          status: 200,
+          body: {
+            tokens: [
+              ...mine,
+              ...Array.from({ length: 40 }, (_, i) => ({
+                ...(mine[0] ?? tokenView(s.tokens[0] as FxToken)),
+                id: `crd_tok_many${i}`,
+                name: `Agent ${i + 1}`,
+              })),
+            ],
+          },
+        }
+      return { status: 200, body: { tokens: mine } }
+    },
+  },
+  'DELETE /v1/me/tokens/{id}': {
+    run: ({ s, who, params }) => {
+      const t = s.tokens.find((x) => x.id === params.id && x.account === who?.id)
+      if (!t)
+        return err(404, 'not_found', 'No token with that id is available to you.', 'Check the token id.')
+      s.tokens = s.tokens.filter((x) => x !== t)
+      return { status: 200, body: { revoked: t.id } }
+    },
+  },
+  'GET /v1/me/apps': {
+    screen: 'apps',
+    run: ({ s, who }) => {
+      if (!who) return UNAUTHORIZED
+      if (s.states.get('apps') === 'empty') return { status: 200, body: { apps: [] } }
+      return { status: 200, body: { apps: s.apps.filter((a) => a.account === who.id).map(appView) } }
+    },
+  },
+  'DELETE /v1/me/apps/{id}': {
+    run: ({ s, who, params }) => {
+      const a = s.apps.find((x) => x.id === params.id && x.account === who?.id)
+      if (!a)
+        return err(
+          404,
+          'not_found',
+          'No connected app with that id is available to you.',
+          'Check the connected app id.',
+        )
+      s.apps = s.apps.filter((x) => x !== a)
+      return { status: 200, body: { revoked: a.id } }
+    },
+  },
+  'PUT /v1/brains/{slug}/notify': {
+    screen: 'notify',
+    run: ({ s, who, params, body }) => {
+      const b = brainsOf(s, who).find((x) => x.slug === params.slug)
+      if (!b || !who) return NO_BRAIN
+      if (typeof body.notifyProposals !== 'boolean')
+        return err(
+          400,
+          'invalid_request',
+          '"notifyProposals" is true or false.',
+          'Send {"notifyProposals": true}.',
+        )
+      if (b.role !== 'curator')
+        return err(
+          400,
+          'invalid_request',
+          'Only curators get notices of new proposals.',
+          'Ask a curator of the brain.',
+        )
+      s.notify.set(`${who.id}:${b.slug}`, body.notifyProposals)
+      return { status: 200, body: { notifyProposals: body.notifyProposals } }
+    },
+  },
+  'POST /v1/me/password': {
+    run: ({ who, body }) => {
+      if (!who) return UNAUTHORIZED
+      if (typeof body.current !== 'string' || !body.current)
+        return err(
+          400,
+          'invalid_request',
+          'Send your current password in "current".',
+          'Type the password you sign in with now.',
+        )
+      if (typeof body.next !== 'string' || body.next.length < 12 || body.next.length > 200) return SHORT
+      if (body.current === who.password && who.totp && body.code !== CODE)
+        return body.code
+          ? NOT_THE_CODE
+          : err(
+              400,
+              'invalid_request',
+              'This account has a second factor: send the code of the authenticator app in "code" too.',
+              'Type the 6 digits your app shows now.',
+            )
+      if (body.current !== who.password)
+        return err(
+          400,
+          'wrong_password',
+          'The current password is not right.',
+          'Type it again. Forgot it? Sign out and reset it from the sign-in page ("Forgot your password?").',
+        )
+      who.password = body.next
+      // Every other web session of the person ends; this one stays (the fixture keeps one per person).
+      return { status: 204, body: null }
+    },
+  },
+  'POST /v1/me/revoke-all': {
+    run: ({ s, who }) => {
+      if (!who) return UNAUTHORIZED
+      const tokens = s.tokens.filter((t) => t.account === who.id).length
+      const apps = s.apps.filter((a) => a.account === who.id).length
+      s.tokens = s.tokens.filter((t) => t.account !== who.id)
+      s.apps = s.apps.filter((a) => a.account !== who.id)
+      return { status: 200, body: { tokens, apps } }
+    },
+  },
+  'POST /v1/me/totp': {
+    run: ({ s, who, body }) => {
+      if (!who) return UNAUTHORIZED
+      if (who.totp && body.code !== CODE) return NOT_THE_CODE
+      s.totpPending.add(who.id)
+      return {
+        status: 200,
+        body: {
+          secret: TOTP_SECRET,
+          otpauthUrl: `otpauth://totp/${encodeURIComponent(`${s.name || 'rsc-brain'}:${who.email}`)}?secret=${TOTP_SECRET}&issuer=${encodeURIComponent(s.name || 'rsc-brain')}`,
+        },
+      }
+    },
+  },
+  'POST /v1/me/totp/confirm': {
+    run: ({ s, who, body }) => {
+      if (!who) return UNAUTHORIZED
+      if (!s.totpPending.has(who.id))
+        return err(400, 'invalid_request', 'There is no second factor being set up.', 'Start it first.')
+      if (body.code !== CODE) return NOT_THE_CODE
+      s.totpPending.delete(who.id)
+      who.totp = true
+      return { status: 200, body: { enabled: true } }
+    },
+  },
+  'DELETE /v1/me/totp': {
+    run: ({ who, body }) => {
+      if (!who) return UNAUTHORIZED
+      if (!who.totp) return { status: 200, body: { enabled: false } }
+      if (body.code !== CODE)
+        return err(
+          400,
+          'invalid_request',
+          'The code is not right.',
+          'Type the 6 digits your current app shows now.',
+        )
+      who.totp = false
+      return { status: 200, body: { enabled: false } }
+    },
+  },
+  'POST /v1/auth/logout-everywhere': {
+    run: ({ s, who }) => {
+      if (!who) return UNAUTHORIZED
+      const n = s.sessions.delete(`fx.${who.id}`) ? 1 : 0
+      return {
+        status: 200,
+        body: { signedOut: n },
+        headers: { 'set-cookie': 'rscb_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0' },
       }
     },
   },
@@ -1431,6 +1734,17 @@ const PRIVATE = new Set([
   'POST /v1/invitations/{id}/resend',
   'DELETE /v1/invitations/{id}',
   'POST /v1/me/tokens',
+  'GET /v1/me/tokens',
+  'DELETE /v1/me/tokens/{id}',
+  'GET /v1/me/apps',
+  'DELETE /v1/me/apps/{id}',
+  'PUT /v1/brains/{slug}/notify',
+  'POST /v1/me/password',
+  'POST /v1/me/revoke-all',
+  'POST /v1/me/totp',
+  'POST /v1/me/totp/confirm',
+  'DELETE /v1/me/totp',
+  'POST /v1/auth/logout-everywhere',
   'GET /v1/admin/accounts',
   'POST /v1/admin/accounts/{id}/reset-link',
   'GET /v1/admin/brains',
@@ -1608,9 +1922,14 @@ const ANA_ROLES: Record<string, string> = {
   'legal-archive': 'reader',
 }
 function brainsOf(s: Scen, who: Account | null): Brain[] {
-  if (who?.alone) return s.brains.filter((b) => !BRAINS().some((x) => x.slug === b.slug))
-  if (who?.id === 'acc_ana') return s.brains.map((b) => ({ ...b, role: ANA_ROLES[b.slug] ?? b.role }))
-  return s.brains
+  const told = (bs: Brain[]) =>
+    bs.map((b) => {
+      const on = s.notify.get(`${who?.id}:${b.slug}`)
+      return on === undefined ? b : { ...b, notifyProposals: on }
+    })
+  if (who?.alone) return told(s.brains.filter((b) => !BRAINS().some((x) => x.slug === b.slug)))
+  if (who?.id === 'acc_ana') return told(s.brains.map((b) => ({ ...b, role: ANA_ROLES[b.slug] ?? b.role })))
+  return told(s.brains)
 }
 
 const CLIENTS = ['Claude Code', 'Codex', 'RSC Factory', 'Cursor']
@@ -1829,6 +2148,10 @@ export async function startFixture(
   })
 
   const send = (res: ServerResponse, a: Answer) => {
+    if (a.status === 204) {
+      res.writeHead(204, { 'cache-control': 'no-store', ...(a.headers ?? {}) })
+      return res.end()
+    }
     const text = JSON.stringify(a.body)
     res.writeHead(a.status, {
       'content-type': 'application/json; charset=utf-8',
@@ -1980,6 +2303,43 @@ export async function startFixture(
         const inbox = inboxOf(s, brain)
         inbox.purges = (inbox.purges ?? 0) + 1
         emit(s, brain, 'wiki.changed', { target: { id: 'pg_intros', label: 'purge' } })
+        return send(res, { status: 200, body: {} })
+      }
+      // An agent reaches the installation: the newest token of the person makes its first request, or a
+      // connection made with the standard sign-in appears (the live check of «Connect your agent»).
+      const agent = /^\/__fixture\/scenarios\/([\w]+)\/agent$/.exec(url.pathname)
+      if (agent && method === 'POST') {
+        const s = scenarios.get(agent[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        const b = await bodyOf(req)
+        const account = String(b.account ?? 'acc_eric')
+        if (b.via === 'app') {
+          s.made += 1
+          s.apps.unshift({
+            account,
+            id: `app_fixture${s.made}`,
+            name: String(b.client ?? 'Claude Code'),
+            nameNote: 'Declared by the app, not verified.',
+            returnsTo: '127.0.0.1',
+            brains: s.brains.map((x) => x.slug),
+            perm: 'write',
+            createdAt: NOW(),
+            lastUsedAt: NOW(),
+            // requested: false is the moment of the code exchange, before the app's first request.
+            lastRequestAt: b.requested === false ? null : NOW(),
+            endsAt: new Date(Date.now() + 90 * 86_400_000).toISOString(),
+            ended: false,
+          })
+        } else if (b.via === 'app-request') {
+          const a = s.apps.find((x) => x.account === account && x.lastRequestAt === null)
+          if (!a) return send(res, { status: 404, body: {} })
+          a.lastRequestAt = NOW()
+        } else {
+          const t = s.tokens.find((x) => x.account === account)
+          if (!t) return send(res, { status: 404, body: {} })
+          t.lastUsedAt = NOW()
+          t.lastClient = String(b.client ?? 'claude-code/2.1.3')
+        }
         return send(res, { status: 200, body: {} })
       }
       // For a person walking the fixture by hand: /__fixture/use?preset=fresh&next=/setup

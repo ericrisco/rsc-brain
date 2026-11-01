@@ -1,7 +1,7 @@
 // Signing in (spec B4 «Entrar»): email and password, plus the code when the person has a second factor;
 // a brake after five failures in a row; signing out here or everywhere; resetting a password with a
 // single-use link; turning the second factor on and off.
-import { checkPassword, dummyHash, hashPassword, verifyPassword } from '../auth/password.ts'
+import { checkPassword, dummyHash, hashPassword, PASSWORD, verifyPassword } from '../auth/password.ts'
 import { hashSecret, newSecret } from '../auth/secrets.ts'
 import { checkTotp, newTotpSecret, otpauthUrl, stepOf } from '../auth/totp.ts'
 import { seal, unseal } from '../auth/vault.ts'
@@ -10,6 +10,7 @@ import { AppError, invalid, notFound, unauthorized } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
 import { audit } from './audit.ts'
 import type { Ctx } from './context.ts'
+import { inWeb } from './guards.ts'
 import { type ConnFacts, installation, requireSecure } from './installation.ts'
 import { mintWebSession } from './keys.ts'
 import { webOnly } from './wiki/review.ts'
@@ -30,13 +31,18 @@ export function brakeSeconds(failures: number): number {
   return Math.min(BRAKE.maxS, BRAKE.firstS * 2 ** (failures - BRAKE.after))
 }
 
-function braked(until: Date, now: Date): AppError {
+// Signing in may send the person to reset their password; inside the web (the profile) they are signed in
+// already, so the advice there is only to wait.
+const SIGN_IN_WAIT = 'Wait, then try again; or reset your password.'
+const PROFILE_WAIT = 'Wait, then try again.'
+
+function braked(until: Date, now: Date, how = SIGN_IN_WAIT): AppError {
   const s = Math.max(1, Math.ceil((until.getTime() - now.getTime()) / 1000))
   const err = new AppError(
     429,
     'too_many_attempts',
     `Too many failed attempts in a row. Try again in ${s} seconds (at ${until.toISOString().slice(11, 19)} UTC).`,
-    'Wait, then try again; or reset your password.',
+    how,
   )
   err.headers = { 'retry-after': String(s) }
   err.extra = { retryAfter: s }
@@ -67,12 +73,20 @@ async function attempt(db: Db, email: string, now: Date): Promise<Date | null> {
 }
 
 // After a refusal: if this attempt was the one that started the wait, say so with the time.
-async function refuse(db: Db, email: string, now: Date, plain: AppError): Promise<AppError> {
+async function refuse(
+  db: Db,
+  email: string,
+  now: Date,
+  plain: AppError,
+  how = SIGN_IN_WAIT,
+): Promise<AppError> {
   const r = await db.one<{ locked_until: Date | null }>(
     'SELECT locked_until FROM login_brakes WHERE email = $1',
     [email],
   )
-  return r?.locked_until && r.locked_until.getTime() > now.getTime() ? braked(r.locked_until, now) : plain
+  return r?.locked_until && r.locked_until.getTime() > now.getTime()
+    ? braked(r.locked_until, now, how)
+    : plain
 }
 
 const clearBrake = (db: Db, email: string) => db.query('DELETE FROM login_brakes WHERE email = $1', [email])
@@ -98,7 +112,7 @@ async function profileCode(
   const key = ctx.who.email ?? `account:${ctx.who.accountId}`
   const now = ctx.clock()
   const waiting = await attempt(ctx.db, key, now)
-  if (waiting) throw braked(waiting, now)
+  if (waiting) throw braked(waiting, now, PROFILE_WAIT)
   const step = checkTotp(
     openSeed(secret, sealed),
     String(code ?? ''),
@@ -111,6 +125,7 @@ async function profileCode(
       key,
       now,
       invalid('The code is not right.', 'Type the 6 digits your current app shows now.'),
+      PROFILE_WAIT,
     )
   }
   await clearBrake(ctx.db, key)
@@ -421,6 +436,101 @@ export async function confirmReset(
       action: 'auth.password_reset',
       outcome: 'ok',
       detail: `from ${conn.ip}`,
+    })
+  })
+}
+
+// A new password from the profile (spec B6 «Profile», plan G6): only in the web, with the current
+// password. A wrong one takes its turn at the brake of signing in (same email, same count), so a stolen
+// session cannot guess the password without end. The change ends every pending reset link and every other
+// web session of the person; this one stays, and tokens and connected apps are not sessions.
+export async function changePassword(
+  ctx: Ctx,
+  conn: ConnFacts,
+  secret: string | undefined,
+  input: { current: unknown; next: unknown; code?: unknown },
+): Promise<void> {
+  inWeb(ctx, 'Changing a password')
+  const current = typeof input.current === 'string' ? input.current : ''
+  if (!current || current.length > PASSWORD.max) {
+    throw invalid('Send your current password in "current".', 'Type the password you sign in with now.')
+  }
+  const next = checkPassword(input.next)
+  const key = ctx.who.email ?? `account:${ctx.who.accountId}`
+  const now = ctx.clock()
+  const waiting = await attempt(ctx.db, key, now)
+  if (waiting) throw braked(waiting, now, PROFILE_WAIT)
+  const a = await ctx.db.one<Row>(
+    'SELECT password_hash, totp_secret, totp_last_step FROM accounts WHERE id = $1',
+    [ctx.who.accountId],
+  )
+  if (!a?.password_hash || !(await verifyPassword(current, String(a.password_hash)))) {
+    await failedAudit(ctx.db, ctx.who.accountId, now, 'wrong current password', conn)
+    throw await refuse(
+      ctx.db,
+      key,
+      now,
+      new AppError(
+        400,
+        'wrong_password',
+        'The current password is not right.',
+        'Type it again. Forgot it? Sign out and reset it from the sign-in page ("Forgot your password?").',
+      ),
+      PROFILE_WAIT,
+    )
+  }
+  // With a second factor on, a stolen session and a known password are not enough: the code too, as
+  // to replace the factor. A missing or wrong code took its turn at the brake already.
+  if (a.totp_secret != null) {
+    const code = typeof input.code === 'string' ? input.code.trim() : ''
+    const step = code
+      ? checkTotp(
+          openSeed(secret, String(a.totp_secret)),
+          code,
+          now,
+          a.totp_last_step == null ? null : Number(a.totp_last_step),
+        )
+      : null
+    const used =
+      step !== null &&
+      (await ctx.db.one(
+        'UPDATE accounts SET totp_last_step = $2 WHERE id = $1 AND (totp_last_step IS NULL OR totp_last_step < $2) RETURNING id',
+        [ctx.who.accountId, step],
+      ))
+    if (!used) {
+      await failedAudit(ctx.db, ctx.who.accountId, now, code ? 'wrong code' : 'no code', conn)
+      throw await refuse(
+        ctx.db,
+        key,
+        now,
+        code
+          ? invalid('The code is not right, or was already used.', 'Type the 6 digits your app shows now.')
+          : invalid(
+              'This account has a second factor: send the code of the authenticator app in "code" too.',
+              'Type the 6 digits your app shows now.',
+            ),
+        PROFILE_WAIT,
+      )
+    }
+  }
+  const hash = await hashPassword(next)
+  await ctx.db.tx(async (tx) => {
+    await lockResets(tx, ctx.who.accountId)
+    await tx.query('UPDATE accounts SET password_hash = $2 WHERE id = $1', [ctx.who.accountId, hash])
+    await endResets(tx, ctx.who.accountId, now)
+    await clearBrake(tx, key)
+    const ended = await tx.query(
+      `UPDATE credentials SET revoked_at = $3 WHERE account_id = $1 AND kind = 'web' AND id <> $2
+          AND revoked_at IS NULL RETURNING id`,
+      [ctx.who.accountId, ctx.who.credential.id, now],
+    )
+    await audit(tx, {
+      at: now,
+      actorId: ctx.who.accountId,
+      credentialId: ctx.who.credential.id,
+      action: 'auth.password_change',
+      outcome: 'ok',
+      detail: `${ended.length} other session(s) ended`,
     })
   })
 }

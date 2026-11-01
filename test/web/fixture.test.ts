@@ -894,6 +894,92 @@ describe('the fixture API', () => {
     assert.ok(byType.total < g5000.total)
   })
 
+  it('the profile (PR24): tokens kept and revoked, apps, notices for curators, a new password, the second factor', async () => {
+    const s = fx.scenario('signed-in')
+    const o = { scenario: s.id, cookie: s.cookie }
+    const made = await call('POST', '/v1/me/tokens', {
+      ...o,
+      body: { name: 'Laptop', perm: 'read', allBrains: true },
+    })
+    assert.equal(made.status, 201)
+    const id = (made.body as { token: { id: string; secret: string } }).token.id
+    const listed = (await call('GET', '/v1/me/tokens', o)).body as { tokens: Array<Record<string, unknown>> }
+    assert.equal(listed.tokens[0]?.id, id)
+    assert.equal(listed.tokens[0]?.lastUsedAt, null)
+    // The list never carries the secret.
+    assert.ok(!JSON.stringify(listed).includes((made.body as { token: { secret: string } }).token.secret))
+    // An agent's first request with it (the live check).
+    await fetch(`${fx.url}/__fixture/scenarios/${s.id}/agent`, { method: 'POST', body: '{"via":"token"}' })
+    const used = (await call('GET', '/v1/me/tokens', o)).body as {
+      tokens: Array<{ lastUsedAt: string | null }>
+    }
+    assert.ok(used.tokens[0]?.lastUsedAt)
+    assert.equal((await call('DELETE', `/v1/me/tokens/${id}`, o)).status, 200)
+    assert.equal((await call('DELETE', `/v1/me/tokens/${id}`, o)).status, 404)
+    const apps = (await call('GET', '/v1/me/apps', o)).body as { apps: Array<{ id: string }> }
+    assert.equal(apps.apps.length, 1)
+    assert.equal((await call('DELETE', `/v1/me/apps/${apps.apps[0]?.id}`, o)).status, 200)
+    assert.equal((await call('DELETE', '/v1/me/apps/app_nope', o)).status, 404)
+    assert.deepEqual(
+      (await call('PUT', '/v1/brains/growth/notify', { ...o, body: { notifyProposals: true } })).body,
+      { notifyProposals: true },
+    )
+    const brains = (await call('GET', '/v1/brains', o)).body as {
+      brains: Array<{ slug: string; notifyProposals: boolean }>
+    }
+    assert.equal(brains.brains.find((b) => b.slug === 'growth')?.notifyProposals, true)
+    assert.equal(
+      (await call('PUT', '/v1/brains/support/notify', { ...o, body: { notifyProposals: true } })).status,
+      400,
+    )
+    const wrong = await call('POST', '/v1/me/password', {
+      ...o,
+      body: { current: 'nope nope nope', next: 'a newer passphrase' },
+    })
+    assert.equal(wrong.status, 400)
+    assert.equal(
+      (await call('POST', '/v1/me/password', { ...o, body: { current: fx.password, next: 'short' } })).status,
+      400,
+    )
+    assert.equal(
+      (
+        await call('POST', '/v1/me/password', {
+          ...o,
+          body: { current: fx.password, next: 'a newer passphrase' },
+        })
+      ).status,
+      204,
+    )
+    assert.equal((await call('POST', '/v1/me/totp/confirm', { ...o, body: { code: fx.code } })).status, 400)
+    const started = (await call('POST', '/v1/me/totp', { ...o, body: {} })).body as { secret: string }
+    assert.ok(started.secret)
+    assert.equal((await call('POST', '/v1/me/totp/confirm', { ...o, body: { code: '000000' } })).status, 400)
+    assert.deepEqual((await call('POST', '/v1/me/totp/confirm', { ...o, body: { code: fx.code } })).body, {
+      enabled: true,
+    })
+    assert.equal(
+      (await call('GET', '/v1/me', o)).body &&
+        ((await call('GET', '/v1/me', o)).body as { account: { totp: boolean } }).account.totp,
+      true,
+    )
+    assert.equal((await call('DELETE', '/v1/me/totp', { ...o, body: { code: '000000' } })).status, 400)
+    assert.deepEqual((await call('DELETE', '/v1/me/totp', { ...o, body: { code: fx.code } })).body, {
+      enabled: false,
+    })
+    for (const st of ['empty', 'much-data', 'error'] as const) {
+      s.set('tokens', st)
+      await call('GET', '/v1/me/tokens', o)
+    }
+    s.set('tokens', 'normal')
+    assert.deepEqual((await call('POST', '/v1/me/revoke-all', { ...o, body: {} })).body, {
+      tokens: 3,
+      apps: 0,
+    })
+    const out = await call('POST', '/v1/auth/logout-everywhere', { ...o, body: {} })
+    assert.deepEqual(out.body, { signedOut: 1 })
+    assert.equal((await call('GET', '/v1/me', o)).status, 401)
+  })
+
   it('every operation the fixture answers was checked against the description', () => {
     assert.deepEqual(
       [...fx.operations].filter((op) => !seen.has(op)),

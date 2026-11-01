@@ -8,6 +8,7 @@ import { runSetup, setupState } from '../../domain/installation.ts'
 import {
   adminResetLink,
   adminResetTotp,
+  changePassword,
   confirmReset,
   confirmTotp,
   disableTotp,
@@ -112,6 +113,12 @@ export const authRoutes: Route[] = [
     const b = obj(r.body)
     await confirmReset(r.db, r.clock, r.conn, { token: b.token, password: b.password })
     return { body: { reset: true } }
+  }),
+  // G6: a new password from the profile; nothing to say back.
+  route('POST /v1/me/password', async (r) => {
+    const b = obj(r.body)
+    await changePassword(ctxOf(r), r.conn, r.secret, { current: b.current, next: b.next, code: b.code })
+    return { status: 204, body: null }
   }),
   route('POST /v1/me/totp', async (r) => ({
     body: await startTotp(ctxOf(r), r.secret, (r.body as { code?: unknown } | undefined)?.code),

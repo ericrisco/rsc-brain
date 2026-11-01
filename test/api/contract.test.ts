@@ -240,6 +240,45 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   'POST /v1/auth/reset/confirm': {
     '': ['reset'],
   },
+  // The profile (spec B6, PR24): the fixture answers these in CI.
+  'GET /v1/me/tokens': {
+    'tokens[]': [
+      'id',
+      'expired',
+      'name',
+      'last4',
+      'perm',
+      'allBrains',
+      'brains',
+      'createdAt',
+      'expiresAt',
+      'expiresSoon',
+      'lastUsedAt',
+      'lastClient',
+    ],
+  },
+  'DELETE /v1/me/tokens/{id}': { '': ['revoked'] },
+  'GET /v1/me/apps': {
+    'apps[]': [
+      'id',
+      'name',
+      'nameNote',
+      'brains',
+      'perm',
+      'createdAt',
+      'lastUsedAt',
+      'lastRequestAt',
+      'endsAt',
+      'ended',
+    ],
+  },
+  'DELETE /v1/me/apps/{id}': { '': ['revoked'] },
+  'PUT /v1/brains/{slug}/notify': { '': ['notifyProposals'] },
+  'POST /v1/me/totp': { '': ['secret', 'otpauthUrl'] },
+  'POST /v1/me/totp/confirm': { '': ['enabled'] },
+  'DELETE /v1/me/totp': { '': ['enabled'] },
+  'POST /v1/auth/logout-everywhere': { '': ['signedOut'] },
+  'POST /v1/me/revoke-all': { '': ['tokens', 'apps'] },
   // The journal in the web (spec B6, PR20; plan G12): the fixture answers these in CI.
   'GET /v1/brains/{slug}/sessions': {
     // facets come with the first page only (not required by the description), and are pinned below.
@@ -599,6 +638,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       ...(await wiki(entryId)),
       ...(await journal()),
       ...(await inbox(entryId)),
+      ...(await profile()),
     }
     const paths = doc.paths as Record<string, Record<string, Json>>
     for (const [op, shape] of Object.entries(SHAPES)) {
@@ -673,6 +713,52 @@ describe('the v1 contract', { skip: skipPg }, () => {
       await w.raw('POST', '/v1/auth/reset/confirm', {
         body: { token: tokenOf(link.body.link), password: 'another long passphrase' },
       })
+    ).body
+    return out
+  }
+
+  // The profile of a person in the web (PR24): tokens, connected apps, notices, the second factor, a new
+  // password and signing out everywhere.
+  async function profile(): Promise<Record<string, Json>> {
+    const out: Record<string, Json> = {}
+    const pat = await withPassword('Pat')
+    await w.member('contract', pat.id, 'curator')
+    const web = await w.web(pat.id)
+    const made = await w.callWeb(web, 'POST', '/v1/me/tokens', {
+      name: 'Laptop',
+      perm: 'read',
+      allBrains: true,
+    })
+    assert.equal(made.status, 201, made.text)
+    const contract = await w.db.one<{ id: string }>("SELECT id FROM brains WHERE slug = 'contract'")
+    await w.app(pat.id, [String(contract?.id)])
+    out['GET /v1/me/tokens'] = (await w.callWeb(web, 'GET', '/v1/me/tokens')).body
+    out['GET /v1/me/apps'] = (await w.callWeb(web, 'GET', '/v1/me/apps')).body
+    const appId = String(((out['GET /v1/me/apps'].apps as Json[])[0] as Json).id)
+    out['DELETE /v1/me/apps/{id}'] = (await w.callWeb(web, 'DELETE', `/v1/me/apps/${appId}`)).body
+    const tokenId = String((made.body.token as Json).id)
+    out['DELETE /v1/me/tokens/{id}'] = (await w.callWeb(web, 'DELETE', `/v1/me/tokens/${tokenId}`)).body
+    out['PUT /v1/brains/{slug}/notify'] = (
+      await w.callWeb(web, 'PUT', '/v1/brains/contract/notify', { notifyProposals: true })
+    ).body
+    const started = await w.callWeb(web, 'POST', '/v1/me/totp')
+    out['POST /v1/me/totp'] = started.body
+    const seed = String(started.body.secret)
+    out['POST /v1/me/totp/confirm'] = (
+      await w.callWeb(web, 'POST', '/v1/me/totp/confirm', { code: totpAt(seed, stepOf(w.now)) })
+    ).body
+    w.advance(30_000)
+    out['DELETE /v1/me/totp'] = (
+      await w.callWeb(web, 'DELETE', '/v1/me/totp', { code: totpAt(seed, stepOf(w.now)) })
+    ).body
+    const changed = await w.callWeb(web, 'POST', '/v1/me/password', {
+      current: PW,
+      next: 'a newer passphrase',
+    })
+    assert.deepEqual([changed.status, changed.text], [204, ''])
+    out['POST /v1/me/revoke-all'] = (await w.callWeb(web, 'POST', '/v1/me/revoke-all', {})).body
+    out['POST /v1/auth/logout-everywhere'] = (
+      await w.callWeb(web, 'POST', '/v1/auth/logout-everywhere', {})
     ).body
     return out
   }
@@ -1045,6 +1131,14 @@ describe('the v1 contract', { skip: skipPg }, () => {
         fingerprint: await seen(chain),
         approve: [1],
         comment: 'Only the move.',
+      }),
+    )
+    // The profile (PR24): a wrong current password, said without signing out.
+    await add(
+      'wrong_password',
+      w.callWeb(await w.web(reader.id), 'POST', '/v1/me/password', {
+        current: 'not the password at all',
+        next: 'a newer passphrase',
       }),
     )
     await add('no_logo', w.raw('GET', '/v1/branding/logo'))

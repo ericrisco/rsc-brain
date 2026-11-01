@@ -1491,17 +1491,6 @@ dialog.wide-dialog {
   font-size: 13px;
 }
 
-.check {
-  padding-top: 12px;
-  border-top: 1px solid var(--rule);
-}
-
-/* biome-ignore lint/style/noDescendingSpecificity: the heading of the connect dialog, not of a step */
-.check h3 {
-  margin-bottom: 4px;
-  font: 550 14px var(--sans);
-}
-
 select,
 textarea {
   width: 100%;
@@ -3474,6 +3463,267 @@ dialog.search-dialog {
 
 @media (max-width: 767px) {
   .compare-pages {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── Connect your agent (PR24) ───────────────────────────────────────── */
+
+.connect {
+  display: grid;
+  gap: 16px;
+  max-width: 820px;
+}
+
+.connect > .title-row {
+  margin-bottom: 0;
+}
+
+/* The live check: one line that says where things stand, in words and with a mark (never colour alone). */
+.live-check {
+  padding: 14px 16px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.live-title {
+  margin-bottom: 6px;
+}
+
+.check-state {
+  display: grid;
+  gap: 4px;
+}
+
+.live-line {
+  margin: 0;
+}
+
+.check-word {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: 550 15px var(--sans);
+}
+
+.check-word.ok {
+  color: var(--accent);
+}
+
+/* The same check, short, beside the configuration. */
+.check-mini {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 8px 12px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.check-mini .check-word {
+  font-size: 14px;
+}
+
+.tips {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+}
+
+.tips-list {
+  display: grid;
+  gap: 4px;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+/* The key of the second factor as a QR code: dark on white whatever the theme, as scanners need. */
+.qr {
+  width: 176px;
+  height: 176px;
+  border-radius: 4px;
+}
+
+.check-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.check-dot.waiting {
+  background: transparent;
+  border: 2px solid var(--muted);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .check-dot.waiting {
+    animation: waiting 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes waiting {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.agent-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.agent-tabs [role="tab"] {
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--nav);
+  font: 14px var(--sans);
+  cursor: pointer;
+}
+
+.agent-tabs [role="tab"]:hover {
+  color: var(--text);
+}
+
+.agent-tabs [role="tab"][aria-selected="true"] {
+  color: var(--text);
+  font-weight: 550;
+  border-bottom-color: var(--text);
+}
+
+.agent-panel {
+  display: grid;
+  gap: 28px;
+  min-width: 0;
+}
+
+.kit-part {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.part-title {
+  margin: 0;
+  font: 550 15px var(--sans);
+}
+
+/* A long action ("Create a token and fill in the configuration") wraps on a phone instead of widening it. */
+.kit-part .actions .button {
+  max-width: 100%;
+  padding-block: 8px;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.3;
+}
+
+/* A token shown once: framed in the accent, the one place its secret appears. */
+.once {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+.said:empty {
+  display: none;
+}
+
+.said:focus {
+  outline: none;
+}
+
+/* ── Profile (PR24) ──────────────────────────────────────────────────── */
+
+.profile-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 40px;
+  align-items: start;
+}
+
+.profile-main,
+.profile-side {
+  display: grid;
+  gap: 40px;
+  min-width: 0;
+}
+
+.profile-part {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.flush {
+  margin-bottom: 0;
+}
+
+.profile-sub {
+  display: grid;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+
+.token-form {
+  padding: 18px 20px;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+
+.token-brains {
+  display: grid;
+  gap: 2px;
+  padding-left: 26px;
+}
+
+.confirm {
+  display: grid;
+  gap: 8px;
+  grid-column: 1 / -1;
+}
+
+.tag.ok {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.totp-key {
+  display: grid;
+  gap: 8px;
+}
+
+.totp-key .key code {
+  font: 550 16px / 1.5 var(--mono);
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1023px) {
+  .profile-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 479px) {
+  .list > li.with-actions:has(.confirm) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .list > li.with-actions {
     grid-template-columns: minmax(0, 1fr);
   }
 }

@@ -67,3 +67,21 @@ describe('the markdown renderer bundled into the web', () => {
     for (const f of js) assert.doesNotMatch(readFileSync(new URL(f, web), 'utf8'), /ArgumentParser/, f)
   })
 })
+
+// MIT and BSD ask that the copyright notice travel with every copy. The build writes the notices of the
+// libraries it bundles into dist/web/licences.txt, served at /licences.txt. The QR library (PR24) has no
+// licence file of its own; its notice sits in its source header, so the build carries it from there.
+describe('the licence notices of the bundled web', () => {
+  const file = new URL('dist/web/licences.txt', ROOT)
+  it('ship with the build, the QR library and the renderer included', {
+    skip: !existsSync(new URL('dist/web/', ROOT)),
+  }, () => {
+    assert.ok(existsSync(file), 'dist/web/licences.txt: run npm run build')
+    const text = readFileSync(file, 'utf8')
+    assert.match(text, /qrcode-generator@2\.0\.4 \(MIT\)/)
+    assert.match(text, /Copyright \(c\) 2009 Kazuhiko Arase/)
+    assert.match(text, /markdown-it@15\.0\.2 \(MIT\)/)
+    assert.match(text, /preact@\S+ \(MIT\)/)
+    assert.match(text, /Permission is hereby granted, free of charge/)
+  })
+})

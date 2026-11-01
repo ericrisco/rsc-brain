@@ -12,7 +12,7 @@ import { resource } from '../api/resource.ts'
 import { ago } from '../lib/brains.ts'
 import { firstPersonAlone } from '../lib/people.ts'
 import { branding, justJoined, justSetUp, type Me, me, online } from '../session.ts'
-import { connectFor, createOpen } from '../shell/dialogs.ts'
+import { connectHref, createOpen } from '../shell/dialogs.ts'
 import { useSignOut } from '../shell/signOut.ts'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
@@ -71,9 +71,9 @@ function ConnectCommand() {
         </pre>
         <div class="actions">
           <CopyButton text={command} label={T.home.copyCommand} />
-          <Button kind="quiet" onClick={() => (connectFor.value = { brain: null })}>
+          <a class="button quiet" href={connectHref(null)}>
             {T.home.otherAgents}
-          </Button>
+          </a>
         </div>
         <p class="how">{signIn.note}</p>
       </>
@@ -220,7 +220,9 @@ export function Home() {
           {data?.brains.length ? <span class="meta">{T.home.count(data.brains.length)}</span> : null}
         </div>
         <div class="actions">
-          <Button onClick={() => (connectFor.value = { brain: null })}>{T.connect.open}</Button>
+          <a class="button secondary" href={connectHref(null)}>
+            {T.connect.open}
+          </a>
           {canCreate && state === 'ready' ? (
             <Button kind="primary" onClick={() => (createOpen.value = true)}>
               {T.create.open}

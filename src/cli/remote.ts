@@ -41,11 +41,12 @@ export function apiBase(mcp: URL): string {
 
 const expand = (p: string) => (p === '~' || p.startsWith('~/') ? join(homedir(), p.slice(1)) : p)
 
-// RSC_BRAIN_TOKEN, else the file given, else the usual file when it exists. An explicit file that
-// cannot be read is an error; no token at all is null.
+// The file given, else RSC_BRAIN_TOKEN, else the usual file when it exists. A file named on the command
+// line wins over the environment: another agent's setup may have set RSC_BRAIN_TOKEN. An explicit file
+// that cannot be read is an error; no token at all is null.
 export function readToken(file: string | undefined): string | null {
   const env = process.env[TOKEN_ENV]?.trim()
-  if (env) return checked(env)
+  if (env && !file) return checked(env)
   const path = expand(file ?? TOKEN_FILE)
   if (!file && !existsSync(path)) return null
   let t: string

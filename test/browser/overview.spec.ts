@@ -34,10 +34,12 @@ test.describe('a new brain', () => {
     await expect(tip).toContainText('not in this version yet')
     await expect(tip.getByRole('button', { name: /Copy/ })).toBeVisible()
     await expect(steps).not.toContainText('Not available yet')
-    // The first step opens the connection kit, naming this brain.
-    await items.nth(0).getByRole('button', { name: 'Connect your agent' }).click()
-    await expect(page.getByRole('dialog', { name: 'Connect your agent' })).toContainText('onboarding')
-    await page.keyboard.press('Escape')
+    // The first step leads to «Connect your agent» for this brain, and back.
+    await items.nth(0).getByRole('link', { name: 'Connect your agent' }).click()
+    await expect(page).toHaveURL(/\/connect\?brain=onboarding$/)
+    await expect(page.getByRole('main')).toContainText('Onboarding')
+    await page.goBack()
+    await expect(items.nth(0)).toContainText('To do')
     // The agent writes; the page hears it.
     const url = page.url()
     await s.emit('onboarding')

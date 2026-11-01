@@ -4,6 +4,7 @@
 // person's current role, checked on every request.
 import { memberRole } from '../auth/principal.ts'
 import { brainNotFound, invalid, notFound } from '../core/errors.ts'
+import { endGrant } from './connections.ts'
 import { type Ctx, ok } from './context.ts'
 import { inWeb } from './guards.ts'
 import { mintPersonToken } from './keys.ts'
@@ -81,13 +82,15 @@ export async function listTokens(ctx: Ctx) {
   const rows = await ctx.db.query(
     `SELECT c.*, (SELECT coalesce(array_agg(b.slug ORDER BY b.slug), '{}') FROM brains b WHERE b.id = ANY(c.brain_ids)) AS slugs
        FROM credentials c
-      WHERE c.account_id = $1 AND c.kind = 'token' AND c.revoked_at IS NULL AND c.expires_at > $2
-      ORDER BY c.created_at DESC`,
+      WHERE c.account_id = $1 AND c.kind = 'token' AND c.revoked_at IS NULL
+      ORDER BY (c.expires_at <= $2), c.created_at DESC`,
     [ctx.who.accountId, now],
   )
   const soon = now.getTime() + EXPIRY_NOTICE_DAYS * 86_400_000
+  // Expired ones are listed too, marked (the profile groups them); revoked ones never.
   return rows.map((k) => ({
     id: String(k.id),
+    expired: (k.expires_at as Date).getTime() <= now.getTime(),
     name: String(k.name),
     last4: String(k.last4),
     perm: String(k.perm),
@@ -110,4 +113,31 @@ export async function revokeToken(ctx: Ctx, id: string) {
   )
   if (!r) throw notFound('token')
   await ok(ctx, 'token.revoke', null, id)
+}
+
+// «Revoke all tokens and apps» (profile): every personal token and every connected app of the person, in
+// one transaction and one line of the audit. Web sessions stay (that is «sign out everywhere»).
+export async function revokeAll(ctx: Ctx): Promise<{ tokens: number; apps: number }> {
+  inWeb(ctx, 'Revoking your tokens and apps')
+  const now = ctx.clock()
+  return ctx.db.tx(async (tx) => {
+    const tokens = await tx.query(
+      `UPDATE credentials SET revoked_at = $2 WHERE account_id = $1 AND kind = 'token' AND revoked_at IS NULL
+        RETURNING id`,
+      [ctx.who.accountId, now],
+    )
+    const grants = await tx.query(
+      'SELECT id FROM oauth_grants WHERE account_id = $1 AND revoked_at IS NULL',
+      [ctx.who.accountId],
+    )
+    for (const g of grants) await endGrant(tx, String(g.id), now)
+    await ok(
+      { ...ctx, db: tx },
+      'keys.revoke_all',
+      null,
+      ctx.who.accountId,
+      `${tokens.length} token(s), ${grants.length} app(s)`,
+    )
+    return { tokens: tokens.length, apps: grants.length }
+  })
 }

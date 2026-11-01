@@ -101,14 +101,18 @@ works, never save secrets, close with a summary.
 `GET /v1/connect` (any key) gives, for Claude Code, Codex, OpenCode, Cursor and other agents:
 
 - **Standard sign-in:** only the MCP address (`<your installation>/mcp`); the agent opens the browser.
-  Claude Code: `claude mcp add --transport http rsc-brain <address> --scope user`, then `/mcp`.
-  Codex: `codex mcp add rsc-brain --url <address>`, then `codex mcp login rsc-brain`. OpenCode:
-  a `remote` server in `opencode.json`. Cursor: `{"url": …}` in `.cursor/mcp.json`.
-- **With a token:** a config block per agent. The files read the token from the environment
-  (`RSC_BRAIN_TOKEN`), so a shared `.mcp.json` never holds it: Claude Code `.mcp.json`
-  (`"Authorization": "Bearer ${RSC_BRAIN_TOKEN}"`), Codex `~/.codex/config.toml`
-  (`url` + `bearer_token_env_var = "RSC_BRAIN_TOKEN"`), OpenCode `opencode.json`
-  (`{env:RSC_BRAIN_TOKEN}`), Cursor `.cursor/mcp.json` (`${env:RSC_BRAIN_TOKEN}`). The kit only
+  Claude Code: `claude mcp add --transport http rsc-brain <address> --scope user`, then
+  `claude mcp login rsc-brain`. Codex: `codex mcp add rsc-brain --url <address>`, then
+  `codex mcp login rsc-brain`. OpenCode: a `remote` server in `opencode.json`. Cursor: `{"url": …}` in
+  `.cursor/mcp.json`.
+- **With a token:** a config block per agent. The token is pasted at a hidden prompt into a file only you
+  can read (`~/.config/rsc-brain/<agent>.token`, mode 600), never on a command line. Each agent has a
+  variable of its own, loaded from that file, so two agents never overwrite one token, and a shared
+  `.mcp.json` never holds it: Claude Code `.mcp.json`
+  (`"Authorization": "Bearer ${RSC_BRAIN_TOKEN_CLAUDE_CODE}"`), Codex `~/.codex/config.toml`
+  (`url` + `bearer_token_env_var = "RSC_BRAIN_TOKEN_CODEX"`), OpenCode `opencode.json`
+  (`{env:RSC_BRAIN_TOKEN_OPENCODE}`), Cursor `.cursor/mcp.json` (`${env:RSC_BRAIN_TOKEN_CURSOR}`).
+  Other agents use `RSC_BRAIN_TOKEN` and `~/.config/rsc-brain/token`, the bridge's. The kit only
   carries a placeholder (`tokenPlaceholder`); the web fills it once, when you create the token there.
 - **The optional reminder:** for Claude Code, two hooks (below). Other agents get a text for their
   instructions file (`AGENTS.md`) and the server's `close_session` prompt.
@@ -119,7 +123,7 @@ works, never save secrets, close with a summary.
 ### The bridge, for agents that only start local MCP programs
 
 ```sh
-mkdir -p ~/.config/rsc-brain && (umask 077 && printf '%s\n' '<token>' > ~/.config/rsc-brain/token)
+mkdir -p ~/.config/rsc-brain && (umask 077 && printf 'Token: ' && read -rs t && : > ~/.config/rsc-brain/token && chmod 600 ~/.config/rsc-brain/token && printf '%s\n' "$t" > ~/.config/rsc-brain/token && echo saved)
 rsc-brain bridge --url https://brain.example.com/mcp
 ```
 
@@ -127,7 +131,7 @@ As a local MCP server: `{"command": "rsc-brain", "args": ["bridge", "--url", "<a
 "~/.config/rsc-brain/token"]}`. The bridge reads one JSON-RPC message per line on stdin and sends each to
 `/mcp` with the token and the headers the server checks; answers go to stdout, notifications get none.
 It speaks to modern clients and to older ones that start with `initialize`. The token comes from
-`RSC_BRAIN_TOKEN`, `--token-file`, or `~/.config/rsc-brain/token`; there is no option to pass it on the
+`--token-file`, else `RSC_BRAIN_TOKEN`, else `~/.config/rsc-brain/token`; there is no option to pass it on the
 command line, and it is never printed. Plain `http` is refused except to this machine. When rsc-brain does
 not answer, the request gets a JSON-RPC error that says so and how to proceed; the bridge keeps running.
 

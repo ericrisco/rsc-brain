@@ -271,6 +271,50 @@ describe('connections with the standard sign-in', { skip: skipPg }, () => {
     assert.match(page, /<span class="domain">evil\.example<\/span>/)
   })
 
+  it('PR24: the consent page starts from the brain of the invitation (or the one the web named) and the permission asked', async () => {
+    const redirect = 'http://127.0.0.1:9/cb'
+    const client = String((await register(redirect)).body.client_id)
+    const idOf = async (slug: string) =>
+      String((await w.db.one('SELECT id FROM brains WHERE slug = $1', [slug]))?.id)
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'gamma' })
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'delta' })
+    const nia = await w.person('Nia')
+    await w.member('gamma', nia.id, 'contributor')
+    await w.member('delta', nia.id, 'contributor')
+    await w.member('alpha', nia.id, 'reader')
+    // Nia joined through an invitation to gamma.
+    await w.db.query(
+      `INSERT INTO invitations (id, email, token_hash, grants, invited_by, created_at, expires_at, used_at, account_id)
+       VALUES ('inv_nia', 'nia@example.com', 'h-nia', $1, $2, $3, $3, $3, $4)`,
+      [JSON.stringify([{ brainId: await idOf('gamma'), role: 'contributor' }]), eric.id, w.now, nia.id],
+    )
+    const web = await w.web(nia.id)
+    const page = async (cookie: string, scope = 'brain:read brain:write') =>
+      (await get(`/oauth/authorize?${authzQuery(client, redirect, s256('v'.repeat(43)), { scope })}`, cookie))
+        .text
+    const checked = (html: string, name: string, value = 'on') =>
+      new RegExp(`name="${name}" value="${value}" checked`).test(html)
+    const plain = await page(`rscb_session=${web}`)
+    assert.ok(checked(plain, `brain_${await idOf('gamma')}`), 'the brain of the invitation is chosen')
+    assert.ok(!checked(plain, `brain_${await idOf('delta')}`))
+    assert.ok(checked(plain, 'perm', 'write'), 'read and write, as the app asked and her role allows')
+    // «Connect your agent» for a brain names it: that one, instead.
+    const named = await page(`rscb_session=${web}; rscb_connect=delta`)
+    assert.ok(checked(named, `brain_${await idOf('delta')}`))
+    assert.ok(!checked(named, `brain_${await idOf('gamma')}`))
+    // A brain she is not in is never chosen for her.
+    const stranger = await page(`rscb_session=${web}; rscb_connect=beta`)
+    assert.ok(checked(stranger, `brain_${await idOf('gamma')}`))
+    assert.doesNotMatch(stranger, new RegExp(await idOf('beta')))
+    // Capped by her role: a reader there gets Read.
+    const reading = await page(`rscb_session=${web}; rscb_connect=alpha`)
+    assert.ok(checked(reading, 'perm', 'read'))
+    // An app that asks only to read gets Read.
+    assert.ok(checked(await page(`rscb_session=${web}`, 'brain:read'), 'perm', 'read'))
+    // An app that asks for no scope at all gets Read: write is given only when asked for.
+    assert.ok(checked(await page(`rscb_session=${web}`, ''), 'perm', 'read'))
+  })
+
   it('CA14: a return address that is not local and not encrypted is refused, and nothing is granted', async () => {
     const r = await register('http://evil.example/cb')
     assert.deepEqual([r.status, r.body.error], [400, 'invalid_redirect_uri'])

@@ -32,6 +32,18 @@ export const ROUTE_TABLE = {
   resetLink: { route: 'POST /v1/admin/accounts/{id}/reset-link' },
   allBrains: { route: 'GET /v1/admin/brains' },
   createToken: { route: 'POST /v1/me/tokens' },
+  // The profile and «Connect your agent» (PR24).
+  tokens: { route: 'GET /v1/me/tokens' },
+  revokeToken: { route: 'DELETE /v1/me/tokens/{id}' },
+  apps: { route: 'GET /v1/me/apps' },
+  revokeApp: { route: 'DELETE /v1/me/apps/{id}' },
+  notify: { route: 'PUT /v1/brains/{slug}/notify' },
+  changePassword: { route: 'POST /v1/me/password' },
+  revokeAll: { route: 'POST /v1/me/revoke-all' },
+  totpStart: { route: 'POST /v1/me/totp' },
+  totpConfirm: { route: 'POST /v1/me/totp/confirm' },
+  totpDisable: { route: 'DELETE /v1/me/totp' },
+  logoutEverywhere: { route: 'POST /v1/auth/logout-everywhere' },
   // The wiki (PR19).
   wikiMap: { route: 'GET /v1/brains/{slug}/wiki/map' },
   wikiPages: { route: 'GET /v1/brains/{slug}/wiki/pages' },

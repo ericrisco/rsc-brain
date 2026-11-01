@@ -101,7 +101,7 @@ for (const theme of ['dark', 'light'] as const) {
 }
 
 // The screens of PR18: home empty with its first steps, the overview of a new brain, people with a link
-// shown, and their dialogs (create a brain, connect your agent, withdraw an invitation).
+// shown, «Connect your agent», and their dialogs (create a brain, withdraw an invitation).
 for (const theme of ['dark', 'light'] as const) {
   test(`home, overview and people (PR18), ${theme}`, async ({ page, context, baseURL }) => {
     // Six full axe audits in one walk: about 3 s alone, but past 30 s when eight workers share the
@@ -121,11 +121,11 @@ for (const theme of ['dark', 'light'] as const) {
     await audit(page, `${theme} overview first steps`)
     await page
       .getByRole('region', { name: 'First steps' })
-      .getByRole('button', { name: 'Connect your agent' })
+      .getByRole('link', { name: 'Connect your agent' })
       .click()
-    await expect(page.getByRole('dialog', { name: 'Connect your agent' })).toBeVisible()
+    await expect(page.getByRole('heading', { level: 1, name: 'Connect your agent' })).toBeVisible()
+    await expect(page.getByRole('tabpanel', { name: 'Claude Code' })).toBeVisible()
     await audit(page, `${theme} connect`)
-    await page.keyboard.press('Escape')
     await page.goto('/people')
     await page.getByLabel('Emails').fill('zoe@example.test')
     await page.getByRole('button', { name: 'Create invitation link' }).click()
