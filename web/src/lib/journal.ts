@@ -190,3 +190,15 @@ export function journalDraftKey(account: string, slug: string, what: string): st
   }
   return `journal.${h.toString(16).padStart(8, '0')}`
 }
+
+// What a new correction is about at first: what the person came from; else a page, unless the wiki has
+// none yet (a new brain), where a page could not be picked and «nothing in particular» is the way through.
+export function correctionAbout(o: {
+  fromEntry: string
+  fromPage: string
+  pages: number | undefined
+}): 'entry' | 'page' | 'nothing' {
+  if (o.fromEntry) return 'entry'
+  if (o.fromPage) return 'page'
+  return o.pages === 0 ? 'nothing' : 'page'
+}

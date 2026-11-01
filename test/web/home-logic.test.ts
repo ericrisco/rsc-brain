@@ -2,8 +2,22 @@
 // kept out of the screens so it is tested on its own (plan §2: the .tsx files only paint).
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { ago, clientLabel, slugOf, toReview } from '../../web/src/lib/brains.ts'
+import { TODAY_SESSIONS } from '../../src/domain/overview.ts'
+import { ago, clientLabel, slugOf, TODAY_SHOWN, todayCapped, toReview } from '../../web/src/lib/brains.ts'
 import { emailsOf, firstPersonAlone } from '../../web/src/lib/people.ts'
+
+// PR26: the overview shows the newest sessions of today, as many as the server sends; at that many there
+// may be more, and the overview leads to the journal for the rest.
+describe("today's sessions", () => {
+  it('the web knows how many the server sends at most', () => {
+    assert.equal(TODAY_SHOWN, TODAY_SESSIONS)
+  })
+  it('at the cap there may be more; under it, the list is whole', () => {
+    assert.equal(todayCapped(TODAY_SESSIONS), true)
+    assert.equal(todayCapped(TODAY_SESSIONS - 1), false)
+    assert.equal(todayCapped(0), false)
+  })
+})
 
 describe('a brain address from its name', () => {
   it('lowercase words joined by single hyphens, as the server accepts', () => {

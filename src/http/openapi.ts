@@ -1060,6 +1060,9 @@ const HAND: Record<string, Op> = {
         }),
         'Most recently used first.',
       ),
+      now: s("The server's time when it answered: compare request times with this, not the client's clock.", {
+        format: 'date-time',
+      }),
     }),
   },
   'DELETE /v1/me/apps/{id}': {

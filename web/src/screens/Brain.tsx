@@ -8,7 +8,7 @@ import { useEffect, useRef } from 'preact/hooks'
 import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
-import { clientLabel } from '../lib/brains.ts'
+import { clientLabel, todayCapped } from '../lib/brains.ts'
 import { useLive } from '../live/follow.ts'
 import { online } from '../session.ts'
 import { connectHref } from '../shell/dialogs.ts'
@@ -186,6 +186,12 @@ function Today({ slug, sessions }: { slug: string; sessions: Session[] }) {
           ))}
         </ul>
       )}
+      {todayCapped(sessions.length) ? (
+        <p class="meta">
+          {o.todayCapped(sessions.length)}{' '}
+          <a href={`/b/${encodeURIComponent(slug)}/journal`}>{o.allSessions}</a>
+        </p>
+      ) : null}
     </section>
   )
 }

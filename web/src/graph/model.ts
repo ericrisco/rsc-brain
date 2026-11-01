@@ -494,7 +494,8 @@ export function hit(xy: Float32Array, visible: Uint8Array, x: number, y: number,
 export type View = { scale: number; tx: number; ty: number }
 
 // The scale and shift that put every drawn item inside a canvas of w × h with `pad` around, centred.
-export function fit(xy: Float32Array, visible: Uint8Array, w: number, h: number, pad: number): View {
+// `top`: a band at the top kept free (the zoom buttons sit over the picture there).
+export function fit(xy: Float32Array, visible: Uint8Array, w: number, h: number, pad: number, top = 0): View {
   let x0 = Number.POSITIVE_INFINITY
   let y0 = Number.POSITIVE_INFINITY
   let x1 = Number.NEGATIVE_INFINITY
@@ -508,7 +509,14 @@ export function fit(xy: Float32Array, visible: Uint8Array, w: number, h: number,
     if (y < y0) y0 = y
     if (y > y1) y1 = y
   }
-  if (x0 === Number.POSITIVE_INFINITY) return { scale: 1, tx: w / 2, ty: h / 2 }
-  const scale = Math.min(2, (w - 2 * pad) / Math.max(x1 - x0, 1e-9), (h - 2 * pad) / Math.max(y1 - y0, 1e-9))
-  return { scale, tx: w / 2 - ((x0 + x1) / 2) * scale, ty: h / 2 - ((y0 + y1) / 2) * scale }
+  // What is left under the band; never less than a sliver, so a tiny canvas still draws.
+  const band = Math.min(top, Math.max(0, h - 2 * pad - 40))
+  const mid = band + (h - band) / 2
+  if (x0 === Number.POSITIVE_INFINITY) return { scale: 1, tx: w / 2, ty: mid }
+  const scale = Math.min(
+    2,
+    (w - 2 * pad) / Math.max(x1 - x0, 1e-9),
+    (h - band - 2 * pad) / Math.max(y1 - y0, 1e-9),
+  )
+  return { scale, tx: w / 2 - ((x0 + x1) / 2) * scale, ty: mid - ((y0 + y1) / 2) * scale }
 }

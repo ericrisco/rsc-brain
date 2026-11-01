@@ -21,6 +21,8 @@ export type AdminScen = {
   mail: boolean
   accounts: Array<{ id: string; name: string; email: string }>
   brains: Array<{ slug: string }>
+  // The states forced on the scenario's screens.
+  states: ReadonlyMap<string, string>
 }
 export type AdminCtx = {
   s: AdminScen
@@ -447,7 +449,15 @@ export const ADMIN_OPS: Record<string, Op> = {
   },
   'GET /v1/admin/mail': {
     screen: 'admin-email',
-    run: admin(({ s }) => ({ status: 200, body: mailView(fxOf(s)) })),
+    // Empty: mail never set up, so nothing has failed either.
+    run: admin(({ s }) =>
+      s.states.get('admin-email') === 'empty'
+        ? {
+            status: 200,
+            body: { ...mailView(fxOf(s)), configured: false, settings: null, recent: [], failures: [] },
+          }
+        : { status: 200, body: mailView(fxOf(s)) },
+    ),
   },
   'PUT /v1/admin/mail': {
     screen: 'admin-email',

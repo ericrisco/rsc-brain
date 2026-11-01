@@ -459,6 +459,8 @@ export const T = {
     today: "Today's sessions",
     noToday: 'No sessions today.',
     noTodayHow: 'Sessions appear here as soon as an agent works in this brain.',
+    todayCapped: (n: number) => `The ${n} most recent of today.`,
+    allSessions: 'All sessions in the journal',
     untitled: 'No purpose given',
     entriesIn: (n: number) => plural(n, 'entry', 'entries'),
     status: { open: 'open', closed: 'closed', closed_no_summary: 'closed without summary' } as Record<
@@ -1426,7 +1428,6 @@ export const T = {
     range: (from: number, to: number, total: number) => `${fmt(from)}–${fmt(to)} of ${plural(total, 'page')}`,
     previous: 'Previous',
     next: 'Next',
-    noRows: 'No pages match these filters.',
     hop: (n: number) => (n === 0 ? 'Focused' : plural(n, 'hop')),
     arrow: '→',
     otherPages: (prefix: string) => (prefix ? `Other pages in ${prefix}` : 'Other pages'),

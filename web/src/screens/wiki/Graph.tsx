@@ -106,6 +106,15 @@ function cleanFilters(v: Record<(typeof KEYS)[number], string>): Filters {
   }
 }
 
+// How long typing in the tag filter rests before it applies.
+const TAG_PAUSE_MS = 400
+
+// The zoom buttons sit this far from the top of the picture (.graph-tools in app.css).
+const TOOLS_TOP = 8
+// The picture's box: never shorter than this, and this far above the bottom of the window.
+const BOX_MIN = 220
+const BOX_GAP = 16
+
 const coarse = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 
 function GraphScreen({ slug }: { slug: string }) {
@@ -277,7 +286,8 @@ function GraphScreen({ slug }: { slug: string }) {
       setStartKey(v.focus ? `p:${v.focus}` : null)
       want(list ? '#graph-place' : 'canvas.graph-canvas')
     }
-    f.set({ focus: '', hops: '' })
+    // A step of its own, so Back goes into the focus again (replacing it left Back with nothing to show).
+    f.set({ focus: '', hops: '' }, { push: true })
   }
   // `asLoose`: the pages gathered at that level, not the group of that name.
   const openGroup = (prefix: string, asLoose = false) => {
@@ -288,6 +298,27 @@ function GraphScreen({ slug }: { slug: string }) {
     want('#graph-q')
     f.set({ q: '', type: '', status: '', tag: '', linkKind: '' })
   }
+  // The tag is matched whole, so it goes to the address (and the server) after a pause in typing, or at
+  // once when picked from the list or left: «q4» typed never asks for «q» first.
+  const [tagTyped, setTagTyped] = useState(v.tag)
+  const sentTag = useRef(v.tag)
+  const sendTag = (raw: string) => {
+    const tag = raw.trim()
+    sentTag.current = tag
+    if (tag !== v.tag) f.set({ tag })
+  }
+  useEffect(() => {
+    // Changed from elsewhere (Clear filters, Back): the box shows it.
+    if (v.tag !== sentTag.current) {
+      sentTag.current = v.tag
+      setTagTyped(v.tag)
+    }
+  }, [v.tag])
+  useEffect(() => {
+    if (tagTyped.trim() === sentTag.current) return
+    const t = setTimeout(() => sendTag(tagTyped), TAG_PAUSE_MS)
+    return () => clearTimeout(t)
+  }, [tagTyped])
   const setView = (to: 'graph' | 'list') => f.set({ view: to === 'list' ? 'list' : '' })
 
   const trail = group ? group.split('/').map((_, i, parts) => parts.slice(0, i + 1).join('/')) : []
@@ -437,9 +468,10 @@ function GraphScreen({ slug }: { slug: string }) {
                     id="graph-tag"
                     type="text"
                     list="graph-tags"
-                    value={v.tag}
+                    value={tagTyped}
                     aria-describedby="graph-tag-hint"
-                    onInput={(e) => f.set({ tag: (e.currentTarget as HTMLInputElement).value.trim() })}
+                    onInput={(e) => setTagTyped((e.currentTarget as HTMLInputElement).value)}
+                    onChange={(e) => sendTag((e.currentTarget as HTMLInputElement).value)}
                   />
                   <datalist id="graph-tags">
                     {tags.map((t) => (
@@ -567,6 +599,7 @@ function GraphScreen({ slug }: { slug: string }) {
         onInspect={(t) => select(keyOf(t))}
         onFocus={(a, h) => focusOn(a, h, { row: true })}
         onOpenGroup={openGroup}
+        onClear={clearFilters}
         selected={selected || null}
       />
     )
@@ -740,6 +773,11 @@ function GraphCanvas({
   const dpr = useRef(typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1)
   // How much of the canvas a phone's inspector covers: the picture fits in the rest.
   const inset = useRef(0)
+  // The zoom buttons over the top of the picture: what they cover, from the canvas top (they wrap when narrow).
+  // Read from an observer (never asked for in the middle of a task, CA6): 8 px from the top, then its height.
+  const tools = useRef<HTMLDivElement>(null)
+  const band = useRef(0)
+  const toolsBand = () => band.current
   const labels = useMemo(() => labelsOf(model, counts), [model, counts])
   const hubList = useMemo(() => hubs(model, nodes, HUBS), [model, nodes])
   const role = useMemo(() => roles(model), [model])
@@ -865,6 +903,7 @@ function GraphCanvas({
       bridges: s.bridgePairs,
       orphanLabel: s.orphans && s.focus < 0 ? T.graph.orphans(s.orphans) : '',
       inset: inset.current,
+      top: toolsBand(),
     }
     post({ type: 'state', state })
   }
@@ -953,7 +992,35 @@ function GraphCanvas({
     }
     const ro = new ResizeObserver(measure)
     ro.observe(el)
-    return () => ro.disconnect()
+    const t = tools.current
+    const tro = new ResizeObserver((entries) => {
+      const h = entries[entries.length - 1]?.borderBoxSize?.[0]?.blockSize ?? 0
+      const next = h ? Math.ceil(h) + TOOLS_TOP : 0
+      if (next === band.current) return
+      band.current = next
+      sendState()
+    })
+    if (t) tro.observe(t)
+    return () => {
+      ro.disconnect()
+      tro.disconnect()
+    }
+  }, [])
+
+  // The picture ends above the fold: the box takes the window's height left under it (at least a usable
+  // one). Measured after each drawing of the screen (what is above it may have grown: the focus line, the
+  // filters) and when the window changes size; written only when it changes.
+  const fitBox = () => {
+    const el = box.current
+    if (!el) return
+    const top = el.getBoundingClientRect().top + window.scrollY
+    const px = `${Math.max(BOX_MIN, Math.floor(window.innerHeight - top - BOX_GAP))}px`
+    if (el.style.height !== px) el.style.height = px
+  }
+  useLayoutEffect(fitBox)
+  useEffect(() => {
+    window.addEventListener('resize', fitBox)
+    return () => window.removeEventListener('resize', fitBox)
   }, [])
 
   // The pixel ratio changes when the window moves to another screen or the page is zoomed: paint sharp again.
@@ -1171,7 +1238,7 @@ function GraphCanvas({
     <section class="graph-section" aria-label={g.graphView}>
       <div class="graph-stage">
         <div class="graph-box" ref={box} data-scroll-x>
-          <div class="graph-tools">
+          <div class="graph-tools" ref={tools}>
             <button type="button" class="button quiet" onClick={() => zoom(1.25)} aria-keyshortcuts="+">
               {g.zoomIn}
             </button>

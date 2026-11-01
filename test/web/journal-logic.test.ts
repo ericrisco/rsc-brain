@@ -8,6 +8,7 @@ import {
   aboutOf,
   byline,
   conflictActions,
+  correctionAbout,
   dayOf,
   entryPowers,
   journalDraftKey,
@@ -290,5 +291,18 @@ describe('review of PR20', () => {
       'Set _id and call __init__, not this.',
     )
     assert.equal(plainText('Use ``a `b` _c_`` here'), 'Use a `b` _c_ here')
+  })
+})
+
+// PR26, the usage pass: in a new brain the form asked for a page that could not exist yet, and sending
+// put the keyboard on an empty picker. With no page in the wiki it starts on «Nothing in particular».
+describe('what a new correction is about, at first', () => {
+  it('what the person came from wins; then a page if the wiki has any; else nothing in particular', () => {
+    assert.equal(correctionAbout({ fromEntry: 'ent_1', fromPage: '', pages: 0 }), 'entry')
+    assert.equal(correctionAbout({ fromEntry: '', fromPage: 'a/b', pages: 0 }), 'page')
+    assert.equal(correctionAbout({ fromEntry: '', fromPage: '', pages: 12 }), 'page')
+    assert.equal(correctionAbout({ fromEntry: '', fromPage: '', pages: 0 }), 'nothing')
+    // Not known yet (the brain is loading): a page, as before.
+    assert.equal(correctionAbout({ fromEntry: '', fromPage: '', pages: undefined }), 'page')
   })
 })

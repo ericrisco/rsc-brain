@@ -370,8 +370,11 @@ function TestMail({ who }: { who: Me }) {
   const configured = r.data.value?.configured ?? false
   return (
     <Part id="test" title={A.testTitle}>
+      {/* Failed to load: the settings above say so and offer to try again; nothing waits here forever. */}
       {!r.data.value ? (
-        <Skeleton rows={1} />
+        r.error.value ? null : (
+          <Skeleton rows={1} />
+        )
       ) : (
         <form
           class="settings-form"

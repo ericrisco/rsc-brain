@@ -32,6 +32,11 @@ export function toReview(brains: readonly Waiting[]): { count: number; href: str
   return { count, href: only ? `/b/${encodeURIComponent(only.slug)}/proposals` : '/' }
 }
 
+// How many of today's sessions the overview gets at most: the server's TODAY_SESSIONS
+// (src/domain/overview.ts; a node test keeps them equal). At that many, there may be more.
+export const TODAY_SHOWN = 20
+export const todayCapped = (n: number): boolean => n >= TODAY_SHOWN
+
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 export function ago(iso: string | null, now: Date = new Date()): string | null {

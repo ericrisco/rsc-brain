@@ -143,6 +143,8 @@ export type State = {
   orphanLabel: string
   // The height at the bottom of the canvas a sheet covers (a phone's inspector): fit leaves it out.
   inset: number
+  // The band at the top the zoom buttons cover: fit draws below it.
+  top: number
 }
 
 export type Drawn = { view: View; active: [number, number] | null }
@@ -173,7 +175,15 @@ export class Renderer {
     const st = this.state
     const xy = st?.xy ?? this.layout
     if (!sc || !st || !xy || xy.length !== 2 * sc.n || st.width === 0 || st.height === 0) return null
-    const view = st.autoFit ? fit(xy, st.fit, st.width, Math.max(120, st.height - st.inset), 48) : st.view
+    // The pad holds the biggest box drawn whole: a group's box is sized in pixels, not by the zoom.
+    let reach = 0
+    if (st.autoFit)
+      for (let i = 0; i < sc.n; i++)
+        if (st.fit[i] && sc.shape[i] === GROUP_SHAPE)
+          reach = Math.max(reach, groupRadius(sc.count[i] as number) * (sc.byGroups ? 1 : 0.6))
+    const view = st.autoFit
+      ? fit(xy, st.fit, st.width, Math.max(120, st.height - st.inset), 24 + Math.max(24, reach), st.top)
+      : st.view
     const { palette, dpr } = st
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, st.width, st.height)

@@ -230,6 +230,37 @@ describe('the live check of one agent, over time', () => {
     // Green stays green: a later answer, even past 10 minutes, changes nothing.
     assert.equal(afterPoll(c, { tokens: [], apps: [] }, T0 + CHECK_STOP_MS * 2), c)
   })
+  // PR26 (pending from the review of PR24): the check compared the server's request times with the
+  // browser's clock. The server says its time (`now`) with the apps; the check reads every time on it.
+  it('a browser clock 10 minutes behind: an app already in use before the check is not new', () => {
+    const SKEW = 10 * 60_000
+    const serverT0 = T0 + SKEW
+    let c = startCheck(T0)
+    const busy = {
+      id: 'app_busy',
+      name: 'Some tool',
+      lastUsedAt: '',
+      lastRequestAt: new Date(serverT0 - 1000).toISOString(),
+    }
+    c = afterPoll(c, { apps: [busy], now: new Date(serverT0 + 500).toISOString() }, T0 + 500)
+    assert.equal(c.kind, 'waiting', 'in use before the check began, by the server clock')
+  })
+  it('a browser clock 10 minutes ahead: a known app asking after the check began is seen at once', () => {
+    const SKEW = -10 * 60_000
+    const serverT0 = T0 + SKEW
+    let c = startCheck(T0)
+    const old = {
+      id: 'app_old',
+      name: 'Codex',
+      lastUsedAt: '',
+      lastRequestAt: new Date(serverT0 - 60_000).toISOString(),
+    }
+    c = afterPoll(c, { apps: [old], now: new Date(serverT0 + 500).toISOString() }, T0 + 500)
+    assert.equal(c.kind, 'waiting')
+    const asked = { ...old, lastRequestAt: new Date(serverT0 + 2000).toISOString() }
+    c = afterPoll(c, { apps: [asked], now: new Date(serverT0 + 2500).toISOString() }, T0 + 2500)
+    assert.equal(c.kind, 'connected')
+  })
   it('stops after 10 minutes of waiting, until asked to check again', () => {
     let c = startCheck(T0)
     c = afterPoll(c, { apps: [] }, T0 + CHECK_STOP_MS - 1)

@@ -96,11 +96,12 @@ function usePoll(agent: string | null, check: AgentCheck | null, update: (c: Age
               : Promise.resolve(undefined),
             api.call<{
               apps: Array<{ id: string; name: string; lastUsedAt: string; lastRequestAt: string | null }>
+              now?: string
             }>('apps'),
           ])
           if (stopped) return
           setProblem(null)
-          const next = afterPoll(c, { tokens: tokens?.tokens, apps: apps.apps }, Date.now())
+          const next = afterPoll(c, { tokens: tokens?.tokens, apps: apps.apps, now: apps.now }, Date.now())
           if (next.kind === 'connected') invalidate('profile:')
           update(next)
           if (next.kind !== 'waiting') return

@@ -65,6 +65,7 @@ export const nextKey = (kind: string) => `${kind}:${++made}`
 
 const ROLES = ['reader', 'contributor', 'curator'] as const
 
+const INVITATIONS_PAGE = 20
 const invitationsResource = () =>
   resource<{ invitations: Invitation[] }>('people:invitations', () =>
     api.call<{ invitations: Invitation[] }>('invitations'),
@@ -355,6 +356,13 @@ function Invitations({
   const all = r.data.value?.invitations
   const list = all && show !== 'all' ? all.filter((i) => i.status === show) : all
   const p = T.people
+  // Accepted invitations stay: a long history comes 20 at a time (spec B6 «Mucho dato»). After «Show
+  // more», the keyboard goes to the first invitation just shown.
+  const [shown, setShown] = useState(INVITATIONS_PAGE)
+  const [moreAt, setMoreAt] = useState(0)
+  useEffect(() => {
+    if (moreAt) document.querySelectorAll<HTMLElement>('li[data-invitation]')[moreAt]?.focus()
+  }, [moreAt])
 
   const resend = async (inv: Invitation) => {
     setBusy(inv.id)
@@ -419,7 +427,10 @@ function Invitations({
           <select
             id="invitations-show"
             value={show}
-            onChange={(e) => setShow(e.currentTarget.value as (typeof SHOW)[number])}
+            onChange={(e) => {
+              setShow(e.currentTarget.value as (typeof SHOW)[number])
+              setShown(INVITATIONS_PAGE)
+            }}
           >
             {SHOW.map((x) => (
               <option key={x} value={x}>
@@ -455,10 +466,10 @@ function Invitations({
         )
       ) : (
         <ul class="list">
-          {list.map((inv) => {
+          {list.slice(0, shown).map((inv) => {
             const open = inv.status === 'pending' || inv.status === 'expired'
             return (
-              <li key={inv.id} class="with-actions">
+              <li key={inv.id} class="with-actions" data-invitation tabIndex={-1}>
                 <div>
                   <p class="list-title">
                     <span class="mono">{inv.email}</span>{' '}
@@ -511,6 +522,18 @@ function Invitations({
           })}
         </ul>
       )}
+      {list && list.length > shown ? (
+        <div class="actions">
+          <Button
+            onClick={() => {
+              setMoreAt(shown)
+              setShown(shown + INVITATIONS_PAGE)
+            }}
+          >
+            {T.admin.showMore(list.length - shown)}
+          </Button>
+        </div>
+      ) : null}
       <Dialog open={asking !== null} title={p.withdrawTitle} onClose={() => setAsking(null)}>
         {asking ? (
           <>

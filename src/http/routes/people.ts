@@ -133,7 +133,10 @@ export const peopleRoutes: Route[] = [
     return { body: { revoked: r.params.id } }
   }),
   route('POST /v1/me/revoke-all', async (r) => ({ body: await revokeAll(ctxOf(r)) })),
-  route('GET /v1/me/apps', async (r) => ({ body: { apps: await listApps(ctxOf(r)) } })),
+  // `now`: the server's time, so a client compares the request times with this clock, not its own.
+  route('GET /v1/me/apps', async (r) => ({
+    body: { apps: await listApps(ctxOf(r)), now: new Date().toISOString() },
+  })),
   route('DELETE /v1/me/apps/:id', async (r) => {
     await revokeApp(ctxOf(r), r.params.id as string)
     return { body: { revoked: r.params.id } }

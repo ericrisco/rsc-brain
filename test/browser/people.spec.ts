@@ -303,4 +303,22 @@ test.describe('links in view (P1, P2, P3)', () => {
     await expect(page.getByRole('status').filter({ hasText: 'Invitation withdrawn' })).toBeVisible()
     await expect(page.getByRole('heading', { level: 2, name: 'Invitations' })).toBeFocused()
   })
+
+  // PR26 (spec B6 «Mucho dato»): accepted invitations stay, so a long history comes by pages.
+  test('a long history of invitations comes 20 at a time; «Show more» puts the keyboard on the first new one', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', { people: 'much-data' })
+    await page.goto('/people')
+    const rows = page.getByRole('region', { name: 'Invitations' }).getByRole('listitem')
+    await expect(rows).toHaveCount(20)
+    await page.getByRole('button', { name: 'Show 20 more (28 left)' }).click()
+    await expect(rows).toHaveCount(40)
+    await expect(rows.nth(20)).toBeFocused()
+    await page.getByRole('button', { name: 'Show 8 more (8 left)' }).click()
+    await expect(rows).toHaveCount(48)
+    await expect(page.getByRole('button', { name: /^Show \d+ more/ })).toHaveCount(0)
+  })
 })

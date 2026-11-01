@@ -320,6 +320,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   },
   'DELETE /v1/me/tokens/{id}': { '': ['revoked'] },
   'GET /v1/me/apps': {
+    '': ['apps', 'now'],
     'apps[]': [
       'id',
       'name',

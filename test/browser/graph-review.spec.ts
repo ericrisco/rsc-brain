@@ -187,7 +187,7 @@ test('an empty wiki: the list says there are no pages yet, with no filters to tr
   await page.goto(`${GRAPH}?view=list`)
   await expect(page.getByRole('heading', { name: 'No pages yet' })).toBeVisible()
   await expect(page.getByLabel('Words', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('No pages match these filters.')).toHaveCount(0)
+  await expect(page.getByText('No results for these filters.')).toHaveCount(0)
 })
 
 test('a group above 2 000 pages opens by groups again; a group that cannot be split sends to the list', async ({

@@ -80,6 +80,7 @@ export type Screen =
   | 'admin-meaning'
   | 'admin-audit'
   | 'admin-system'
+  | 'connect'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
 // alone: the administrator the setup made, the only person in the installation.
@@ -111,6 +112,18 @@ type Invitation = {
   createdAt: string
   expiresAt: string
 }
+// A long history of invitations (the «much-data» state of People): accepted ones stay in the list.
+const manyInvitations = (): Invitation[] =>
+  Array.from({ length: 45 }, (_, i) => ({
+    id: `inv_many_${i}`,
+    email: `guest${i}@example.test`,
+    status: 'used' as const,
+    brains: [{ slug: 'growth', role: 'reader' }],
+    isAdmin: false,
+    invitedBy: 'Eric',
+    createdAt: '2026-09-01T10:00:00.000Z',
+    expiresAt: '2026-09-04T10:00:00.000Z',
+  }))
 // What has happened in a brain of the scenario (the overview's first steps, its numbers).
 type Life = { entries: number; agent: boolean }
 type Scen = {
@@ -869,6 +882,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   },
   // The server's own kit, built from the installation's public address.
   'GET /v1/connect': {
+    screen: 'connect',
     run: ({ s, query }) => {
       const agent = query.get('agent') || undefined
       if (agent !== undefined && !(AGENT_IDS as readonly string[]).includes(agent))
@@ -1017,7 +1031,9 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
     screen: 'people',
     run: ({ s, who }) => {
       if (!who?.isAdmin) return ONLY_ADMIN_INVITES
-      const list = s.states.get('people') === 'empty' ? [] : s.invitations
+      const st = s.states.get('people')
+      const list =
+        st === 'empty' ? [] : st === 'much-data' ? [...s.invitations, ...manyInvitations()] : s.invitations
       return { status: 200, body: { invitations: list } }
     },
   },
@@ -1182,8 +1198,9 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
     screen: 'apps',
     run: ({ s, who }) => {
       if (!who) return UNAUTHORIZED
-      if (s.states.get('apps') === 'empty') return { status: 200, body: { apps: [] } }
-      return { status: 200, body: { apps: s.apps.filter((a) => a.account === who.id).map(appView) } }
+      const now = new Date().toISOString()
+      if (s.states.get('apps') === 'empty') return { status: 200, body: { apps: [], now } }
+      return { status: 200, body: { apps: s.apps.filter((a) => a.account === who.id).map(appView), now } }
     },
   },
   'DELETE /v1/me/apps/{id}': {
@@ -1342,7 +1359,10 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
     screen: 'people',
     run: ({ s, who }) => {
       if (!who?.isAdmin) return ADMIN_ONLY
-      return { status: 200, body: { accounts: adminAccounts(s, who) } }
+      // Empty: no one but the administration looking (no service accounts yet).
+      const all = adminAccounts(s, who)
+      const accounts = s.states.get('people') === 'empty' ? all.filter((a) => a.id === who.id) : all
+      return { status: 200, body: { accounts } }
     },
   },
   'POST /v1/admin/accounts/{id}/reset-link': {

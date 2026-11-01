@@ -176,7 +176,7 @@ test('an empty wiki points to Proposals, and with words says no pages match', as
   await expect(main.getByRole('link', { name: 'Proposals' })).toBeVisible()
   await expect(main.locator('[data-state="empty"]')).not.toContainText(/graph/i)
   await page.goto(`${GRAPH}?view=list&q=zebra`)
-  await expect(page.getByText('No pages match')).toBeVisible()
+  await expect(page.getByText('No results for these filters.')).toBeVisible()
 })
 
 test('without OffscreenCanvas the page paints the graph itself', async ({ page, context, baseURL }) => {

@@ -408,4 +408,27 @@ describe('moving around', () => {
     const single = fit(new Float32Array([10, 10]), new Uint8Array([1]), 400, 300, 20)
     assert.equal(single.scale, 2)
   })
+  // PR26 (pending from PR22): the zoom buttons sit over the top of the picture, and the outer ring was cut
+  // at the top. A band reserved at the top keeps every drawn centre below it, and the pad around them.
+  it('leaves the band at the top free: every centre lands between it (plus the pad) and the bottom pad', () => {
+    const ring = new Float32Array(
+      Array.from({ length: 24 }, (_, i) => (i % 2 ? Math.sin : Math.cos)((i >> 1) * 0.5) * 100),
+    )
+    const on = new Uint8Array(12).fill(1)
+    for (const [w, h, top] of [
+      [320, 360, 48],
+      [1024, 600, 48],
+      [300, 400, 90],
+    ] as const) {
+      const f = fit(ring, on, w, h, 40, top)
+      for (let i = 0; i < 12; i++) {
+        const x = (ring[2 * i] as number) * f.scale + f.tx
+        const y = (ring[2 * i + 1] as number) * f.scale + f.ty
+        assert.ok(x >= 40 - 1e-6 && x <= w - 40 + 1e-6, `x ${x} in ${w}`)
+        assert.ok(y >= top + 40 - 1e-6 && y <= h - 40 + 1e-6, `y ${y} under a band of ${top} in ${h}`)
+      }
+    }
+    // A canvas too short for the band still draws something.
+    assert.ok(fit(ring, on, 300, 120, 40, 90).scale > 0)
+  })
 })
