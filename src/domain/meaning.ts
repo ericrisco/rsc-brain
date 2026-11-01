@@ -6,7 +6,7 @@ import { seal } from '../auth/vault.ts'
 import { AppError, invalid, notFound } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
 import { type Providers, SEND_CHARS } from '../meaning/providers.ts'
-import { applyStored, environmentOf, stored } from '../meaning/stored.ts'
+import { applyStored, environmentOf, keyOpens, stored } from '../meaning/stored.ts'
 import { audit } from './audit.ts'
 import type { Ctx } from './context.ts'
 import { webOnly } from './wiki/review.ts'
@@ -82,6 +82,19 @@ export const PROVIDERS = [
 ] as const
 type ProviderName = (typeof PROVIDERS)[number]['name']
 
+// The address of a provider from the server's environment is shown as scheme, host and port only: its path,
+// query or credentials may hold what the environment keeps to itself.
+function originOf(url: string | null | undefined): { url: string | null; hidden: boolean } {
+  if (!url) return { url: null, hidden: false }
+  try {
+    const u = new URL(url)
+    const origin = `${u.protocol}//${u.host}`
+    return { url: origin, hidden: url.replace(/\/+$/, '') !== origin }
+  } catch {
+    return { url: null, hidden: true }
+  }
+}
+
 async function providerViews(ctx: Ctx) {
   const st = await stored(ctx.db)
   const env = environmentOf(ctx.meaning ?? {})
@@ -89,15 +102,38 @@ async function providerViews(ctx: Ctx) {
     const set = p.name === 'openai' ? st.openaiKey !== null : st.ollamaUrl !== null
     const source = set ? 'settings' : env[p.name] ? 'environment' : null
     const live = ctx.meaning?.[p.name]
+    const fromEnv = p.needs === 'url' && !set ? originOf(env[p.name]?.url) : null
     return {
       name: p.name,
       label: p.label,
       needs: p.needs,
       source,
       last4: p.needs === 'key' ? (set ? st.openaiLast4 : (env[p.name]?.last4 ?? null)) : null,
-      url: p.needs === 'url' ? (set ? st.ollamaUrl : (env[p.name]?.url ?? null)) : null,
+      url: p.needs === 'url' ? (set ? st.ollamaUrl : (fromEnv?.url ?? null)) : null,
+      urlHidden: fromEnv?.hidden ?? false,
+      // Set here but sealed with another installation secret: it cannot be used; the environment's, if any, is.
+      unreadable: p.name === 'openai' && set && !keyOpens(ctx.mail?.secret, st.openaiKey),
       model: live?.model ?? null,
     }
+  })
+}
+
+// A new destination for the provider in use (another key, another address, or the environment's in place of
+// the web's) sends text where the warning did not say: meaning search goes off, and the acceptance with it.
+async function offForNewDestination(db: Db, ctx: Ctx, p: string, now: Date): Promise<void> {
+  const s = await meaningSettings(db)
+  if (!s.enabled || s.provider !== p) return
+  await db.query(
+    'UPDATE meaning_settings SET enabled = false, accepted_by = NULL, accepted_at = NULL, changed_at = $1 WHERE id = 1',
+    [now],
+  )
+  await audit(db, {
+    at: now,
+    actorId: ctx.who.accountId,
+    credentialId: ctx.who.credential.id,
+    action: 'meaning.disable',
+    outcome: 'ok',
+    detail: `${p}: its key or address changed; the warning must be accepted again`,
   })
 }
 
@@ -133,8 +169,10 @@ export async function setProvider(ctx: Ctx, name: string, input: { key?: unknown
         'Paste the whole key, without spaces.',
       )
     }
-    const sealed = seal(ctx.mail?.secret, key)
+    const sealed = seal(ctx.mail?.secret, key, 'meaning.openai')
     await ctx.db.tx(async (db) => {
+      await db.query('SELECT 1 FROM meaning_settings WHERE id = 1 FOR UPDATE')
+      await offForNewDestination(db, ctx, p, now)
       await db.query('UPDATE meaning_settings SET openai_key = $1, openai_key_last4 = $2 WHERE id = 1', [
         sealed,
         key.slice(-4),
@@ -171,6 +209,9 @@ export async function setProvider(ctx: Ctx, name: string, input: { key?: unknown
       )
     }
     await ctx.db.tx(async (db) => {
+      await db.query('SELECT 1 FROM meaning_settings WHERE id = 1 FOR UPDATE')
+      const was = (await stored(db)).ollamaUrl
+      if (was !== url) await offForNewDestination(db, ctx, p, now)
       await db.query('UPDATE meaning_settings SET ollama_url = $1 WHERE id = 1', [url])
       await audit(db, {
         at: now,
@@ -203,6 +244,8 @@ export async function removeProvider(ctx: Ctx, name: string) {
         'Turn meaning search off first, or set a new one in its place.',
       )
     }
+    // The environment's provider takes its place: another destination.
+    await offForNewDestination(db, ctx, p, now)
     await db.query(
       p === 'openai'
         ? 'UPDATE meaning_settings SET openai_key = NULL, openai_key_last4 = NULL WHERE id = 1'

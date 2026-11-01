@@ -277,7 +277,7 @@ describe('signing in', { skip: skipPg }, () => {
     const sealed = String(
       (await w.db.one('SELECT totp_pending FROM accounts WHERE id = $1', [dana.id]))?.totp_pending,
     )
-    assert.ok(sealed.startsWith('v1.') && !sealed.includes(secret))
+    assert.ok(sealed.startsWith('v2.') && !sealed.includes(secret))
   })
 
   it('review: attempts sent at once cannot slip past the brake', async () => {

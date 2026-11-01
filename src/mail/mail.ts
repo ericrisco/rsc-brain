@@ -5,7 +5,6 @@ import nodemailer from 'nodemailer'
 import { seal, unseal } from '../auth/vault.ts'
 import type { Clock } from '../core/clock.ts'
 import type { Db } from '../db/db.ts'
-import { redact } from '../privacy/redact.ts'
 
 // An image that travels inside the mail and is shown by its content id (cid:), never fetched from an address.
 export type Inline = { filename: string; content: Buffer; contentType: string; cid: string }
@@ -21,8 +20,8 @@ export type MailSettings = {
   secure: boolean
   user: string | null
   password: string | null // sealed
-  // Its last 4 characters, to name it without showing it (settings saved before PR25b have none).
-  passwordLast4?: string | null
+  // Raised at each new password: a save sees someone set another one meanwhile, without any part of it.
+  passwordVersion?: number
   from: Sender
 }
 
@@ -41,14 +40,17 @@ export async function storeMail(db: Db, s: MailSettings | null): Promise<void> {
   await db.query('UPDATE installation SET mail = $1 WHERE id = 1', [s ? JSON.stringify(s) : null])
 }
 
-export const sealPassword = (secret: string | undefined, password: string) => seal(secret, password)
+export const sealPassword = (secret: string | undefined, password: string) =>
+  seal(secret, password, 'mail.password')
 
 function smtp(s: MailSettings, secret: string | undefined): Transport {
   const t = nodemailer.createTransport({
     host: s.host,
     port: s.port,
     secure: s.secure,
-    ...(s.user ? { auth: { user: s.user, pass: s.password ? unseal(secret, s.password) : '' } } : {}),
+    ...(s.user
+      ? { auth: { user: s.user, pass: s.password ? unseal(secret, s.password, 'mail.password') : '' } }
+      : {}),
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,
     socketTimeout: 20_000,
@@ -109,6 +111,21 @@ export async function branded(db: Db, m: Message): Promise<Message> {
   return { ...m, html, attachments: logo ? [logo] : [] }
 }
 
+// Why a send failed, as a short category: what a mail server says can quote anything (its greeting, the
+// address, a token), so its words are neither stored nor shown.
+export function mailError(err: unknown): string {
+  const code = String((err as { code?: unknown })?.code ?? '')
+  const text = err instanceof Error ? err.message : String(err)
+  if (code === 'EAUTH' || /\b535\b|auth/i.test(text)) return 'auth failed'
+  if (code === 'ECONNREFUSED' || /ECONNREFUSED|connection refused/i.test(text)) return 'connection refused'
+  if (code === 'EDNS' || /ENOTFOUND|EAI_AGAIN/.test(text)) return 'server not found'
+  if (code === 'ETIMEDOUT' || code === 'ETIMEOUT' || /timed? ?out|greeting never/i.test(text))
+    return 'timeout'
+  if (code === 'ETLS' || /certificate|\bTLS\b|\bSSL\b|handshake/i.test(text)) return 'TLS'
+  if (code === 'EENVELOPE' || code === 'EMESSAGE' || /\b5\d\d\b/.test(text)) return 'rejected'
+  return 'failed'
+}
+
 // Sends one message, or says why it did not. Never throws.
 export async function send(
   db: Db,
@@ -132,12 +149,15 @@ export async function send(
   }
   try {
     const t = outbox?.transport ? outbox.transport(s) : smtp(s, outbox?.secret)
-    await t.send({ ...(await branded(db, m)), from: s.from })
+    const name =
+      s.from.name ||
+      (await db.one<{ name: string }>('SELECT name FROM installation WHERE id = 1'))?.name ||
+      'rsc-brain'
+    await t.send({ ...(await branded(db, m)), from: { name, address: s.from.address } })
     await log('sent')
     return { sent: true, error: null }
   } catch (err) {
-    // What a mail server says can quote what it was given: stored with secrets taken out.
-    const why = redact(err instanceof Error ? err.message : String(err)).text
+    const why = mailError(err)
     await log('failed', why)
     return { sent: false, error: why }
   }

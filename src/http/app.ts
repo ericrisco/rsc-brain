@@ -8,6 +8,7 @@ import { bearer, resolveKey, sessionCookie } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
+import { adminOnly } from '../domain/guards.ts'
 import { installation, setupDone } from '../domain/installation.ts'
 import type { Outbox } from '../mail/mail.ts'
 import { mcpRoutes } from '../mcp/server.ts'
@@ -94,32 +95,43 @@ ROUTES.push(
   })),
 )
 
+const tooLarge = (max: number) => {
+  const e = new AppError(
+    413,
+    'body_too_large',
+    `The request body is larger than ${Math.round(max / 1_048_576)} MB.`,
+    'Send a smaller request.',
+  )
+  // The rest of the body is not read: the connection ends with the answer, so it is never reused mid-body.
+  e.headers = { connection: 'close' }
+  return e
+}
+
+// Reads the body up to `max` bytes and not one more: a declared length over it is refused before reading,
+// and a body that passes it while it arrives is left unread from there (the stream is paused, not destroyed,
+// so the refusal still reaches the client).
 async function readBody(req: IncomingMessage, max = MAX_BODY): Promise<unknown> {
+  const declared = Number(req.headers['content-length'])
+  if (Number.isFinite(declared) && declared > max) throw tooLarge(max)
   const chunks: Buffer[] = []
   let size = 0
-  let over = false
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length
-    if (size > max) {
-      // What is over the limit is read and dropped, so the client is still sending when it reads the
-      // refusal; far beyond it, reading stops and the connection is cut.
-      over = true
-      chunks.length = 0
-      if (size > max * 4) break
-      continue
+  await new Promise<void>((resolve, reject) => {
+    const onData = (chunk: Buffer) => {
+      size += chunk.length
+      if (size > max) {
+        req.off('data', onData)
+        req.off('end', resolve)
+        req.pause()
+        chunks.length = 0
+        reject(tooLarge(max))
+        return
+      }
+      chunks.push(chunk)
     }
-    chunks.push(chunk as Buffer)
-  }
-  if (over) {
-    const e = new AppError(
-      413,
-      'body_too_large',
-      `The request body is larger than ${Math.round(max / 1_048_576)} MB.`,
-      'Send a smaller request.',
-    )
-    e.headers = { connection: 'close' }
-    throw e
-  }
+    req.on('data', onData)
+    req.on('end', resolve)
+    req.on('error', reject)
+  })
   if (size === 0) return undefined
   let parsed: unknown
   // Forms (the sign-in and consent pages, and the token endpoint of the standard sign-in) arrive
@@ -402,6 +414,8 @@ export function createHandler(deps: AppDeps) {
       }
       const who = await resolveKey(deps.db, key ?? cookie, deps.clock(), key ? 'bearer' : 'cookie', conn)
       rate.take(who.credential.id, who.rateLimit)
+      // A route only the administration uses refuses anyone else before reading a (large) body.
+      if (found.route.admin) adminOnly({ db: deps.db, clock: deps.clock, who })
       const body = await readBody(req, found.route.maxBody)
       const reply = await found.route.handler({ ...base, body, who })
       if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)

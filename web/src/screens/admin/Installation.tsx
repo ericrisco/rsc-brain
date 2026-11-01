@@ -32,11 +32,18 @@ import {
 } from './parts.tsx'
 
 const A = T.admin
+const PROVIDER_LABELS: Record<string, string> = { openai: 'OpenAI', ollama: 'Ollama' }
 
 function Limits({ account }: { account: string }) {
   const { r, base, pending, error, said, theirs, save, follow } = useInstallPart()
   const [v, setV] = useState<string | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
+  // Lowering the limit slows every key at once: asked first.
+  const [lowering, setLowering] = useState<number | null>(null)
+  const commit = (n: number) =>
+    void save({ rateLimit: n }).then((done) => {
+      if (done) adminDrafts.clear(account, 'rateLimit')
+    })
   useEffect(() => {
     if (base && v === null) setV(adminDrafts.get(account, 'rateLimit') ?? String(base.rateLimit))
     else
@@ -60,9 +67,9 @@ function Limits({ account }: { account: string }) {
                 document.getElementById('rate-limit')?.focus()
                 return
               }
-              void save({ rateLimit: Number(v) }).then((done) => {
-                if (done) adminDrafts.clear(account, 'rateLimit')
-              })
+              const n = Number(v)
+              if (n < base.rateLimit) setLowering(n)
+              else commit(n)
             }}
           >
             <FormAlert error={error} />
@@ -113,6 +120,25 @@ function Limits({ account }: { account: string }) {
           </form>
         ) : null}
       </PartBody>
+      <Dialog open={lowering !== null} title={A.lowerTitle} onClose={() => setLowering(null)}>
+        {base && lowering !== null ? <p>{A.lowerLead(base.rateLimit, lowering)}</p> : null}
+        <div class="actions">
+          <Button
+            kind="primary"
+            blocked={blocked()}
+            onClick={() => {
+              const n = lowering
+              setLowering(null)
+              if (n !== null) commit(n)
+            }}
+          >
+            {A.lower}
+          </Button>
+          <Button kind="quiet" onClick={() => setLowering(null)}>
+            {A.keepLimit}
+          </Button>
+        </div>
+      </Dialog>
     </Part>
   )
 }
@@ -157,7 +183,7 @@ function Service() {
             <dt>{A.meaningState}</dt>
             <dd>
               {s.meaning.enabled
-                ? `${A.meaningOn(s.meaning.provider ?? '', null)} ${s.meaning.progress ? progressLabel(s.meaning.progress) : ''}`
+                ? `${A.meaningOn(PROVIDER_LABELS[s.meaning.provider ?? ''] ?? s.meaning.provider ?? '', null)} ${s.meaning.progress ? progressLabel(s.meaning.progress) : ''}`
                 : A.meaningOff}
             </dd>
             <dt>{A.email}</dt>
@@ -300,9 +326,10 @@ function Name({ account }: { account: string }) {
                 return
               }
               void save({ name: v }).then((done) => {
+                // Saved or not (another administrator's name came back), the header shows the name there is now.
+                void branding().reload()
                 if (!done) return
                 adminDrafts.clear(account, 'name')
-                void branding().reload()
                 void me().reload()
               })
             }}
@@ -400,7 +427,7 @@ function Logo() {
           <div class="field">
             <label for="logo-file">{A.chooseLogo}</label>
             <span class="hint" id="logo-file-hint">
-              {A.logoLead}
+              {A.logoFileHint}
             </span>
             <input
               ref={input}

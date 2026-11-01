@@ -22,19 +22,27 @@ export const noVault = () =>
     'Set RSC_BRAIN_SECRET for the server (a long random value; the installer writes one), then try again.',
   )
 
-export function seal(secret: string | undefined, text: string): string {
+// What a sealed value is for. Each value is bound to its purpose (v2: the purpose is authenticated data), so a
+// value copied into another column (a mail password into the key of a meaning provider) does not open there.
+export type Purpose = 'mail.password' | 'meaning.openai' | 'account.totp'
+
+export function seal(secret: string | undefined, text: string, purpose: Purpose): string {
   if (!secret) throw noVault()
   const iv = randomBytes(12)
   const c = createCipheriv('aes-256-gcm', keyOf(secret), iv)
+  c.setAAD(Buffer.from(`rsc-brain:${purpose}`, 'utf8'))
   const body = Buffer.concat([c.update(text, 'utf8'), c.final()])
-  return `v1.${iv.toString('base64url')}.${c.getAuthTag().toString('base64url')}.${body.toString('base64url')}`
+  return `v2.${iv.toString('base64url')}.${c.getAuthTag().toString('base64url')}.${body.toString('base64url')}`
 }
 
-export function unseal(secret: string | undefined, sealed: string): string {
+// v1 (before purposes) still opens, for any purpose: seeds and passwords stored then keep working, and are
+// sealed as v2 the next time they are written.
+export function unseal(secret: string | undefined, sealed: string, purpose: Purpose): string {
   if (!secret) throw noVault()
   const [v, iv, tag, body] = sealed.split('.')
-  if (v !== 'v1' || !iv || !tag || body === undefined) throw new Error('Not a sealed value.')
+  if ((v !== 'v1' && v !== 'v2') || !iv || !tag || body === undefined) throw new Error('Not a sealed value.')
   const d = createDecipheriv('aes-256-gcm', keyOf(secret), Buffer.from(iv, 'base64url'))
+  if (v === 'v2') d.setAAD(Buffer.from(`rsc-brain:${purpose}`, 'utf8'))
   d.setAuthTag(Buffer.from(tag, 'base64url'))
   return Buffer.concat([d.update(Buffer.from(body, 'base64url')), d.final()]).toString('utf8')
 }

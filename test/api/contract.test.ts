@@ -133,11 +133,11 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   },
   'GET /v1/admin/mail': {
     '': ['configured', 'settings', 'base', 'recent', 'failures'],
-    settings: ['host', 'port', 'secure', 'user', 'hasPassword', 'passwordLast4', 'from'],
+    settings: ['host', 'port', 'secure', 'user', 'hasPassword', 'from'],
   },
   'GET /v1/admin/meaning': {
     '': ['enabled', 'provider', 'available', 'providers', 'warning', 'progress'],
-    'providers[]': ['name', 'label', 'needs', 'source', 'last4', 'url', 'model'],
+    'providers[]': ['name', 'label', 'needs', 'source', 'last4', 'url', 'urlHidden', 'unreadable', 'model'],
   },
   'GET /v1/admin/system': {
     '': ['version', 'startedAt', 'database', 'meaning', 'streams', 'mail'],

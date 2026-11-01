@@ -50,7 +50,8 @@ type Fx = {
     port: number
     secure: boolean
     user: string | null
-    password: string | null
+    password: boolean
+    version: number
     from: { name: string; address: string }
   } | null
   log: MailLine[]
@@ -119,7 +120,8 @@ const ACTIONS = [
 function seedAudit(s: AdminScen): Row[] {
   const people = s.accounts.length ? s.accounts : [{ id: 'acc_eric', name: 'Eric', email: '' }]
   const brains = s.brains.length ? s.brains.map((b) => b.slug) : ['growth']
-  const start = Date.parse('2026-10-29T10:00:00.000Z')
+  // Hourly from 10:30 UTC on 29 October back: line 11 is at 23:30 UTC on the 28th (00:30 in Madrid).
+  const start = Date.parse('2026-10-29T10:30:00.000Z')
   return Array.from({ length: 230 }, (_, i) => {
     const who = people[i % people.length] as { id: string; name: string }
     const action = ACTIONS[i % ACTIONS.length] as string
@@ -135,7 +137,7 @@ function seedAudit(s: AdminScen): Row[] {
           : null,
       target: i === 7 ? '=HYPERLINK("http://evil.example")' : `t_${i}`,
       outcome: i % 17 === 0 ? 'denied' : 'ok',
-      detail: i % 11 === 0 ? '+1 from a formula' : `line ${i}`,
+      detail: i % 13 === 5 ? '+1 from a formula' : `line ${i}`,
     }
   })
 }
@@ -152,8 +154,9 @@ export function fxOf(s: AdminScen): Fx {
             port: 587,
             secure: false,
             user: 'brain',
-            password: 'wxyz',
-            from: { name: s.name || 'rsc-brain', address: 'brain@example.test' },
+            password: true,
+            version: 1,
+            from: { name: '', address: 'brain@example.test' },
           }
         : null,
       log: [
@@ -162,7 +165,14 @@ export function fxOf(s: AdminScen): Fx {
           to: 'carla@example.test',
           kind: 'invitation',
           status: 'failed',
-          error: 'Greeting never received',
+          error: 'timeout',
+        },
+        {
+          at: '2026-10-29T08:40:00.000Z',
+          to: 'dan@example.test',
+          kind: 'invitation',
+          status: 'skipped',
+          error: 'mail is not set up',
         },
         {
           at: '2026-10-29T09:00:00.000Z',
@@ -251,7 +261,7 @@ function mailBase(f: Fx) {
     fromName: m?.from.name ?? null,
     fromAddress: m?.from.address ?? null,
     hasPassword: Boolean(m?.password),
-    passwordLast4: m?.password ?? null,
+    passwordVersion: m?.version ?? 0,
   }
 }
 function mailView(f: Fx) {
@@ -265,7 +275,7 @@ function mailView(f: Fx) {
           secure: f.mail.secure,
           user: f.mail.user,
           hasPassword: b.hasPassword,
-          passwordLast4: b.passwordLast4,
+
           from: f.mail.from,
         }
       : null,
@@ -298,6 +308,8 @@ function meaningView(s: AdminScen) {
         source: f.openai ? 'settings' : null,
         last4: f.openai?.last4 ?? null,
         url: null,
+        urlHidden: false,
+        unreadable: false,
         model: f.openai ? 'text-embedding-3-small@256' : null,
       },
       {
@@ -307,6 +319,8 @@ function meaningView(s: AdminScen) {
         source: f.ollama ? 'settings' : null,
         last4: null,
         url: f.ollama?.url ?? null,
+        urlHidden: false,
+        unreadable: false,
         model: f.ollama ? 'nomic-embed-text' : null,
       },
     ],
@@ -340,7 +354,8 @@ function auditRows(c: AdminCtx): Row[] | Answer {
       (!q.get('brain') || r.brain === q.get('brain')) &&
       (!q.get('outcome') || r.outcome === q.get('outcome')) &&
       (from === null || Date.parse(r.at) >= from) &&
-      (to === null || Date.parse(r.at) < to),
+      (to === null || Date.parse(r.at) < to) &&
+      (!q.get('upTo') || Number(r.id) <= Number(q.get('upTo'))),
   )
 }
 
@@ -447,7 +462,7 @@ export const ADMIN_OPS: Record<string, Op> = {
           'fromName',
           'fromAddress',
           'hasPassword',
-          'passwordLast4',
+          'passwordVersion',
         ]
         if (baseProblem(b.base, fields))
           return invalid('"base" is the "base" of GET /v1/admin/mail.', 'Send it as you read it.')
@@ -466,21 +481,27 @@ export const ADMIN_OPS: Record<string, Op> = {
           const moved = Object.keys(base).filter((k) => was[k] !== base[k])
           if (moved.length) return changed(moved, mailView(f))
         }
-        const keep = b.password === undefined
+        const typed = typeof b.password === 'string' && b.password !== ''
+        const keep = b.password === undefined || (!typed && !f.mail?.password)
+        const user = typeof b.user === 'string' && b.user ? b.user : null
+        if (
+          keep &&
+          f.mail?.password &&
+          (f.mail.host !== host || f.mail.port !== port || f.mail.user !== user)
+        )
+          return invalid(
+            'The mail password belongs to the server, port and user it was set for.',
+            'Type the password again for the new server (or remove it, if the new one needs none).',
+          )
+        const version = f.mail?.version ?? 0
         const next = {
           host,
           port,
           secure: b.secure === true,
-          user: typeof b.user === 'string' && b.user ? b.user : null,
-          password: keep
-            ? (f.mail?.password ?? null)
-            : typeof b.password === 'string' && b.password
-              ? b.password.slice(-4)
-              : null,
-          from: {
-            name: (typeof b.fromName === 'string' && b.fromName.trim()) || c.s.name || 'rsc-brain',
-            address: from,
-          },
+          user,
+          password: keep ? Boolean(f.mail?.password) : typed,
+          version: keep ? version : version + 1,
+          from: { name: typeof b.fromName === 'string' ? b.fromName.trim() : '', address: from },
         }
         const before = f.mail
         f.mail = next
@@ -515,7 +536,7 @@ export const ADMIN_OPS: Record<string, Op> = {
           return err(409, 'mail_not_set_up', 'Mail is not set up.', 'Save the mail settings first.')
         const to = typeof c.body.to === 'string' && c.body.to ? c.body.to : (c.who?.email ?? '')
         const down = f.mail.host.startsWith('down.')
-        const error = down ? `getaddrinfo ENOTFOUND ${f.mail.host}` : null
+        const error = down ? 'server not found' : null
         f.log.unshift({
           at: new Date().toISOString(),
           to,
@@ -609,6 +630,11 @@ export const ADMIN_OPS: Record<string, Op> = {
             'No meaning provider with that id is available to you.',
             'Check the meaning provider id.',
           )
+        // A new destination for the provider in use: off, and the warning to accept again.
+        if (f.meaning.enabled && f.meaning.provider === name) {
+          f.meaning = { ...f.meaning, enabled: false, acceptedAt: null }
+          audited(c, 'meaning.disable', `${name}: its key or address changed`)
+        }
         audited(c, 'meaning.provider', `${name}: set`)
         return { status: 200, body: meaningView(c.s) }
       },

@@ -255,5 +255,6 @@ function filters(r: Req): AuditFilters {
     from: g('from'),
     to: g('to'),
     before: g('before'),
+    upTo: g('upTo'),
   }
 }

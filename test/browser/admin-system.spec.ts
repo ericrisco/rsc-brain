@@ -77,7 +77,7 @@ test.describe('administration: email', () => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/admin/email')
     const pw = page.getByRole('group', { name: 'Password' })
-    await expect(pw).toContainText('Keep the current one (Set, ends in …wxyz)')
+    await expect(pw).toContainText('Keep the current one (set)')
     await expect(pw.getByRole('radio', { name: /Keep the current one/ })).toBeChecked()
     // Typing a new password needs choosing to; the box is a password box and starts empty.
     await pw.getByRole('radio', { name: 'Use a new one' }).check()
@@ -89,7 +89,7 @@ test.describe('administration: email', () => {
     await page.getByRole('button', { name: 'Save mail settings' }).click()
     expect((await put).postDataJSON().password).toBe('another-secret-9876')
     await expect(status(page, 'Mail settings saved.')).toBeFocused()
-    await expect(pw).toContainText('Set, ends in …9876')
+    await expect(pw).toContainText('Keep the current one (set)')
     await expect(page.getByLabel('New password')).toHaveCount(0)
     await expect(page.locator('body')).not.toContainText('another-secret')
   })
@@ -111,7 +111,7 @@ test.describe('administration: email', () => {
   }) => {
     const s = await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/admin/email')
-    await page.getByLabel('Port', { exact: true }).fill('2525')
+    await page.getByLabel('Send as (name)').fill('Acme mail')
     await fetch(`${baseURL}/__fixture/scenarios/${s.id}/admin-edit`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -120,7 +120,7 @@ test.describe('administration: email', () => {
     await page.getByRole('button', { name: 'Save mail settings' }).click()
     await expect(page.getByRole('alert')).toContainText('Someone changed this while you edited it.')
     await expect(page.getByLabel('Mail server')).toHaveValue('smtp.theirs.test')
-    await expect(page.getByLabel('Port', { exact: true })).toHaveValue('2525')
+    await expect(page.getByLabel('Send as (name)')).toHaveValue('Acme mail')
     await notOnBody(page)
     await page.getByRole('button', { name: 'Save mail settings' }).click()
     await expect(status(page, 'Mail settings saved.')).toBeVisible()
@@ -134,16 +134,21 @@ test.describe('administration: email', () => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/admin/email')
     const failures = page.getByRole('region', { name: 'Recent send failures' })
-    await expect(failures).toContainText('Greeting never received')
+    await expect(failures).toContainText('timeout')
     await expect(page.getByLabel('Send a test email to')).toHaveValue('eric@example.test')
     await page.getByRole('button', { name: 'Send test email' }).click()
     await expect(status(page, 'Sent to eric@example.test')).toBeFocused()
     await page.getByLabel('Mail server').fill('down.example.test')
+    // Another server: the password goes with it.
+    await page.getByRole('radio', { name: 'Use a new one' }).check()
+    await page.getByLabel('New password').fill('down-server-password')
     await page.getByRole('button', { name: 'Save mail settings' }).click()
     await expect(status(page, 'Mail settings saved.')).toBeVisible()
     await page.getByRole('button', { name: 'Send test email' }).click()
-    await expect(page.getByRole('alert').filter({ hasText: 'It did not go' })).toContainText('ENOTFOUND')
-    await expect(failures.getByRole('listitem').first()).toContainText('ENOTFOUND down.example.test')
+    await expect(page.getByRole('alert').filter({ hasText: 'It did not go' })).toContainText(
+      'server not found',
+    )
+    await expect(failures.getByRole('listitem').first()).toContainText('server not found')
   })
 
   test('removing the mail settings asks first, and says what stops', async ({ page, context, baseURL }) => {
@@ -338,7 +343,9 @@ test.describe('administration: branding', () => {
   }) => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/admin/branding')
-    await expect(page.getByText('No logo: the RSC mark is shown.')).toBeVisible()
+    await expect(
+      page.getByText('No logo: the header shows the RSC mark, and emails show the name only.'),
+    ).toBeVisible()
     const file = page.getByLabel('Choose a logo')
     await file.setInputFiles({ name: 'logo.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg/>') })
     await expect(page.getByText(/SVG is not accepted/)).toBeVisible()
@@ -360,7 +367,9 @@ test.describe('administration: branding', () => {
       .getByRole('dialog', { name: 'Remove the logo?' })
       .getByRole('button', { name: 'Remove the logo' })
       .click()
-    await expect(status(page, 'Logo removed. The RSC mark is shown again.')).toBeFocused()
+    await expect(
+      status(page, 'Logo removed. The header shows the RSC mark; emails show the name only.'),
+    ).toBeFocused()
     await expect(page.locator('header .brand img')).toHaveCount(0)
   })
 })

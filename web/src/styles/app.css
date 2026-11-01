@@ -4019,3 +4019,27 @@ input[type="date"]:focus {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* Fixes of PR25b: the file picker looks like the other controls; the audit's time zone spans the filters. */
+input[type="file"] {
+  max-width: 100%;
+  font: 14px var(--sans);
+  color: var(--muted);
+}
+
+input[type="file"]::file-selector-button {
+  min-height: 36px;
+  margin-right: 12px;
+  padding: 0 14px;
+  background: var(--raised, var(--surface));
+  color: var(--text);
+  border: 1px solid var(--field-line);
+  border-radius: 999px;
+  font: 550 14px var(--sans);
+  cursor: pointer;
+}
+
+.audit-zone {
+  grid-column: 1 / -1;
+  margin: 0 0 4px;
+}

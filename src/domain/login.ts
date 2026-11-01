@@ -235,7 +235,7 @@ export async function signIn(
 // A seed sealed with another installation secret cannot be read: say so, not "internal error".
 function openSeed(secret: string | undefined, sealed: string): string {
   try {
-    return unseal(secret, sealed)
+    return unseal(secret, sealed, 'account.totp')
   } catch (err) {
     if (err instanceof AppError) throw err
     throw new AppError(
@@ -550,7 +550,7 @@ export async function startTotp(ctx: Ctx, secret: string | undefined, code?: unk
   const s = newTotpSecret()
   await ctx.db.query('UPDATE accounts SET totp_pending = $2 WHERE id = $1', [
     ctx.who.accountId,
-    seal(secret, s),
+    seal(secret, s, 'account.totp'),
   ])
   const name = (await installation(ctx.db)).name || 'rsc-brain'
   return { secret: s, otpauthUrl: otpauthUrl(s, ctx.who.email ?? ctx.who.name, name) }

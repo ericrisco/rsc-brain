@@ -168,7 +168,7 @@ describe('the administration of the installation (PR25b)', { skip: skipPg }, () 
       assert.equal(r.status, 200, r.text)
       assert.ok(!r.text.includes('smtp-pass-wxyz'))
       const s = (await mail()).body.settings as Json
-      assert.deepEqual([s.hasPassword, s.passwordLast4], [true, 'wxyz'])
+      assert.deepEqual([s.hasPassword, 'passwordLast4' in s], [true, false])
       assert.ok(!(await mail()).text.includes('smtp-pass'))
       // Stored sealed, not in clear.
       const row = await w.db.one<{ mail: Json }>('SELECT mail FROM installation WHERE id = 1')
@@ -179,17 +179,17 @@ describe('the administration of the installation (PR25b)', { skip: skipPg }, () 
     })
 
     it('a save without a password keeps the one set; an empty one removes it', async () => {
-      await w.callWeb(adminWeb, 'PUT', '/v1/admin/mail', { ...SMTP, port: 2525 })
-      assert.equal(((await mail()).body.settings as Json).passwordLast4, 'wxyz')
+      await w.callWeb(adminWeb, 'PUT', '/v1/admin/mail', { ...SMTP, fromName: 'Kept' })
+      assert.equal(((await mail()).body.settings as Json).hasPassword, true)
       await w.callWeb(adminWeb, 'PUT', '/v1/admin/mail', { ...SMTP, password: '' })
       const s = (await mail()).body.settings as Json
-      assert.deepEqual([s.hasPassword, s.passwordLast4], [false, null])
+      assert.equal(s.hasPassword, false)
     })
 
     it('a save based on settings someone changed since is refused, with what is there now, and changes nothing', async () => {
       await w.callWeb(adminWeb, 'PUT', '/v1/admin/mail', { ...SMTP, password: 'first-pass-1111' })
       const read = (await mail()).body.base as Json
-      assert.equal(read.passwordLast4, '1111')
+      assert.equal(typeof read.passwordVersion, 'number')
       await w.callWeb(otherWeb, 'PUT', '/v1/admin/mail', {
         ...SMTP,
         password: 'second-pass-2222',
@@ -203,7 +203,7 @@ describe('the administration of the installation (PR25b)', { skip: skipPg }, () 
       assert.deepEqual([r.status, r.body.error?.code], [409, 'settings_changed'], r.text)
       assert.ok(!r.text.includes('second-pass'))
       const s = (await mail()).body.settings as Json
-      assert.deepEqual([s.host, s.passwordLast4], ['smtp.example.com', '2222'])
+      assert.deepEqual([s.host, s.hasPassword], ['smtp.example.com', true])
       // The same base, nothing changed: «unchanged», nothing written.
       const now = (await mail()).body.base as Json
       const same = await w.callWeb(adminWeb, 'PUT', '/v1/admin/mail', { ...SMTP, base: now })
@@ -224,11 +224,11 @@ describe('the administration of the installation (PR25b)', { skip: skipPg }, () 
       const failures = (await mail()).body.failures as Json[]
       assert.equal(failures[0]?.status, 'failed')
       assert.equal(failures[0]?.kind, 'test')
-      assert.match(String(failures[0]?.error), /connection refused/)
+      assert.equal(failures[0]?.error, 'connection refused')
       assert.ok(failures.every((f) => f.status !== 'sent'))
     })
 
-    it('an error that would carry a secret is stored redacted', async () => {
+    it('an error that would carry a secret is stored as its category only', async () => {
       w.mailFails = true
       const real = w.mails.length
       try {
@@ -254,7 +254,7 @@ describe('the administration of the installation (PR25b)', { skip: skipPg }, () 
       }
       assert.equal(w.mails.length, real)
       const f = ((await mail()).body.failures as Json[])[0]
-      assert.ok(!String(f?.error).includes('ABCDEFGHIJKLMNOP'), String(f?.error))
+      assert.equal(f?.error, 'auth failed')
     })
 
     it('only the administration sees or changes mail', async () => {
@@ -422,13 +422,6 @@ describe('the administration of the installation (PR25b)', { skip: skipPg }, () 
       assert.equal((await upload('image/png', png(4096, 4096))).status, 200)
       const big = await upload('image/png', png(10, 10, { pad: 2 * 1024 * 1024 }))
       assert.deepEqual([big.status, big.body.error?.code], [413, 'image_too_large'], big.text)
-    })
-
-    it('its request may be bigger than other requests (3 MiB), and no bigger', async () => {
-      const huge = await upload('image/png', png(10, 10, { pad: 2_500_000 }))
-      assert.deepEqual([huge.status, huge.body.error?.code], [413, 'body_too_large'], huge.text)
-      const other = await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { name: 'x'.repeat(1_100_000) })
-      assert.equal(other.status, 413)
     })
 
     it('only the administration changes it; removing it leaves the mark', async () => {

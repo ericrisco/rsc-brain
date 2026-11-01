@@ -17,6 +17,7 @@ export type AuditFilters = {
   from?: string | undefined // ISO time, inclusive
   to?: string | undefined // ISO time, exclusive
   before?: string | undefined // the id of the last row of the previous page
+  upTo?: string | undefined // the id of the newest row a view showed: nothing newer (the download of that view)
 }
 
 function timeOf(v: string | undefined, field: string): Date | undefined {
@@ -56,6 +57,11 @@ async function query(ctx: Ctx, f: AuditFilters, brainId: string | null, limit: n
   const to = timeOf(f.to, 'to')
   if (from) where.push(`a.at >= ${p(from)}`)
   if (to) where.push(`a.at < ${p(to)}`)
+  if (f.upTo) {
+    if (!/^\d{1,18}$/.test(f.upTo))
+      throw invalid('"upTo" is the id of a row.', 'Use the id of the first line the view shows.')
+    where.push(`a.id <= ${p(f.upTo)}`)
+  }
   if (f.before) {
     if (!/^\d{1,18}$/.test(f.before))
       throw invalid('"before" is the id of a row.', 'Use the "next" value of the previous page.')

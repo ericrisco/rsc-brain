@@ -478,8 +478,9 @@ export function keyView(k: Row, now: Date) {
   }
 }
 
-// Mail: the account that sends. The password is sealed with the installation secret and never shown: the
-// administration sees whether one is set and its last 4 characters.
+// Mail: the account that sends. The password is sealed with the installation secret and never shown, not even
+// in part: the administration sees whether one is set. A version number, raised at each new password, lets a
+// save see that someone set another one meanwhile (whatever its characters).
 const MAIL_FIELDS = [
   'configured',
   'host',
@@ -489,11 +490,11 @@ const MAIL_FIELDS = [
   'fromName',
   'fromAddress',
   'hasPassword',
-  'passwordLast4',
+  'passwordVersion',
 ] as const
 type MailField = (typeof MAIL_FIELDS)[number]
 
-// What the mail form shows, as a save compares it (the password by whether it is set and its last 4).
+// What the mail form shows, as a save compares it (the password by whether it is set and its version).
 function mailBase(s: MailSettings | null): Record<MailField, unknown> {
   return {
     configured: s !== null,
@@ -504,7 +505,7 @@ function mailBase(s: MailSettings | null): Record<MailField, unknown> {
     fromName: s?.from.name ?? null,
     fromAddress: s?.from.address ?? null,
     hasPassword: Boolean(s?.password),
-    passwordLast4: s?.password ? (s.passwordLast4 ?? null) : null,
+    passwordVersion: s?.passwordVersion ?? 0,
   }
 }
 
@@ -537,7 +538,6 @@ async function mailView(db: Ctx['db']) {
           secure: s.secure,
           user: s.user,
           hasPassword: base.hasPassword as boolean,
-          passwordLast4: base.passwordLast4 as string | null,
           from: s.from,
         }
       : null,
@@ -594,11 +594,9 @@ export async function setMail(
     throw invalid('"password" is text.', 'Fix "password".')
   }
   // Sealed before the transaction: a missing installation secret refuses before anything is read.
-  const sealed =
-    typeof input.password === 'string' && input.password !== ''
-      ? { password: sealPassword(ctx.mail?.secret, input.password), last4: input.password.slice(-4) }
-      : null
-  const name = fromName || (await installation(ctx.db)).name || 'rsc-brain'
+  // Sealed before the transaction: a missing installation secret refuses before anything is read.
+  const typed = typeof input.password === 'string' && input.password !== '' ? input.password : null
+  const sealed = typed ? sealPassword(ctx.mail?.secret, typed) : null
   return ctx.db.tx(async (db) => {
     // Saves of the mail settings take turns, so two on the same base cannot both pass.
     await db.query('SELECT 1 FROM installation WHERE id = 1 FOR UPDATE')
@@ -608,15 +606,29 @@ export async function setMail(
       const moved = (Object.keys(base) as MailField[]).filter((f) => was[f] !== base[f])
       if (moved.length) throw settingsChanged(moved, await mailView(db))
     }
-    const keep = input.password === undefined
+    // Removing a password that is not there is no change.
+    const keep = input.password === undefined || (!typed && !before?.password)
+    // The password set belongs to a server, port and account: sending it to another needs it typed again.
+    if (
+      keep &&
+      before?.password &&
+      (before.host !== host || before.port !== port || (before.user ?? null) !== (user as string | null))
+    ) {
+      throw invalid(
+        'The mail password belongs to the server, port and user it was set for.',
+        'Type the password again for the new server (or remove it, if the new one needs none).',
+      )
+    }
+    const version = before?.passwordVersion ?? 0
     const s: MailSettings = {
       host,
       port,
       secure: input.secure === true,
       user: user as string | null,
-      password: keep ? (before?.password ?? null) : (sealed?.password ?? null),
-      passwordLast4: keep ? (before?.passwordLast4 ?? null) : (sealed?.last4 ?? null),
-      from: { name, address: fromAddress },
+      password: keep ? (before?.password ?? null) : sealed,
+      passwordVersion: keep ? version : version + 1,
+      // Empty: the name of the installation when sending, so a rename applies.
+      from: { name: fromName, address: fromAddress },
     }
     const same = before !== null && keep && JSON.stringify(mailBase(s)) === JSON.stringify(was)
     if (same) return { ...(await mailView(db)), ...(base ? { unchanged: true as const } : {}) }

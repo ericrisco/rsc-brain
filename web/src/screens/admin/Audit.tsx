@@ -7,7 +7,7 @@ import { useEffect, useState } from 'preact/hooks'
 import type { ApiError } from '../../api/client.ts'
 import { api } from '../../api/index.ts'
 import { resource } from '../../api/resource.ts'
-import { type AuditFilters, auditExportHref, auditQuery } from '../../lib/admin.ts'
+import { type AuditFilters, auditExportHref, auditQuery, localWhen, localZone } from '../../lib/admin.ts'
 import type { AdminAccount } from '../../lib/settings.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
@@ -100,6 +100,7 @@ function Screen() {
       >
         <fieldset class="audit-filters">
           <legend>{A.filter}</legend>
+          <p class="hint audit-zone">{A.zone(localZone())}</p>
           <div class="field">
             <label for="audit-who">{A.who}</label>
             <select id="audit-who" value={typed.actor} onChange={(e) => set('actor', e.currentTarget.value)}>
@@ -184,7 +185,11 @@ function Screen() {
         </div>
       </form>
       <p class="download">
-        <a class="button secondary" href={auditExportHref(auditQuery(applied))} download>
+        <a
+          class="button secondary"
+          href={auditExportHref(auditQuery(applied), rows?.[0]?.id ?? null)}
+          download
+        >
           {A.download}
         </a>
       </p>
@@ -230,7 +235,9 @@ function Screen() {
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id} id={`audit-${r.id}`} tabIndex={-1}>
-                    <td>{T.date(r.at)}</td>
+                    <td>
+                      <time dateTime={r.at}>{localWhen(r.at)}</time>
+                    </td>
                     <td>{r.actor?.name ?? r.actor?.id ?? '—'}</td>
                     <td class="mono">{r.action}</td>
                     <td>{r.brain ?? '—'}</td>

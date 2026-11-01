@@ -11,10 +11,12 @@ import {
   factoryProblem,
   type InstallationRead,
   installationSave,
+  localWhen,
   logoProblem,
   type MailBase,
   mailProblems,
   mailSave,
+  passwordAgain,
   progressLabel,
   rateProblem,
   secretLabel,
@@ -56,9 +58,10 @@ describe('installation settings: each field saved on what was read', () => {
 })
 
 describe('what a field says before anything is sent', () => {
-  it('the limit per key is a whole number within the bounds the server gives', () => {
+  it('the limit per key is a whole number within the bounds the server gives (both included)', () => {
     assert.equal(rateProblem('600', 60, 10000), null)
     assert.equal(rateProblem('60', 60, 10000), null)
+    assert.equal(rateProblem('10000', 60, 10000), null)
     for (const bad of ['', '59', '10001', '1.5', 'many', '-1']) {
       assert.match(rateProblem(bad, 60, 10000) ?? '', /60.+10,000/, bad)
     }
@@ -121,7 +124,7 @@ describe('mail: a save on what was read; the password only when it changes', () 
     fromName: 'Acme',
     fromAddress: 'brain@example.com',
     hasPassword: true,
-    passwordLast4: 'wxyz',
+    passwordVersion: 3,
   }
   const form = {
     host: ' smtp.example.com ',
@@ -140,6 +143,26 @@ describe('mail: a save on what was read; the password only when it changes', () 
     assert.equal(keep.port, 587)
     assert.equal(mailSave(base, form, { mode: 'replace', value: 'new-pass' }).password, 'new-pass')
     assert.equal(mailSave(base, form, { mode: 'remove', value: '' }).password, '')
+  })
+
+  it('another server, port or user with the password kept: it must be typed again (or removed)', () => {
+    const keep = { mode: 'keep' as const, value: '' }
+    assert.equal(passwordAgain(base, form, keep), false)
+    assert.equal(passwordAgain(base, { ...form, host: 'smtp.other.example' }, keep), true)
+    assert.equal(passwordAgain(base, { ...form, port: '465' }, keep), true)
+    assert.equal(passwordAgain(base, { ...form, user: 'else' }, keep), true)
+    assert.equal(
+      passwordAgain(base, { ...form, host: 'smtp.other.example' }, { mode: 'replace', value: 'x' }),
+      false,
+    )
+    assert.equal(
+      passwordAgain(base, { ...form, host: 'smtp.other.example' }, { mode: 'remove', value: '' }),
+      false,
+    )
+    assert.equal(
+      passwordAgain({ ...base, hasPassword: false }, { ...form, host: 'smtp.other.example' }, keep),
+      false,
+    )
   })
 
   it('an empty user is none', () => {
@@ -178,18 +201,25 @@ describe('the audit: the view and the download ask for the same rows', () => {
       from: '2026-10-01',
       to: '',
     })
-    const href = auditExportHref({ ...q, before: '123' })
+    const href = auditExportHref({ ...q, brain: 'growth', before: '123' }, '977')
     const u = new URL(href, 'http://x')
     assert.equal(u.pathname, '/v1/admin/audit/export')
-    assert.deepEqual(Object.fromEntries(u.searchParams), q)
+    assert.deepEqual(Object.fromEntries(u.searchParams), { ...q, brain: 'growth', upTo: '977' })
+    assert.equal(new URL(auditExportHref({}, null), 'http://x').search, '')
+  })
+
+  it("a line's time where the person is: date and time, in the same zone as the day filters", () => {
+    const at = '2026-10-28T23:30:00.000Z'
+    assert.equal(localWhen(at, 'Europe/Madrid'), '29 Oct 2026, 00:30')
+    assert.equal(localWhen(at, 'Pacific/Kiritimati'), '29 Oct 2026, 13:30')
+    assert.equal(localWhen(at, 'UTC'), '28 Oct 2026, 23:30')
   })
 })
 
 describe('naming what is secret, and progress', () => {
-  it('a secret by whether it is set and its last 4, never more', () => {
-    assert.equal(secretLabel(true, 'wxyz'), 'Set, ends in …wxyz')
-    assert.equal(secretLabel(true, null), 'Set')
-    assert.equal(secretLabel(false, null), 'Not set')
+  it('the mail password only by whether it is set: no part of it', () => {
+    assert.equal(secretLabel(true), 'Set')
+    assert.equal(secretLabel(false), 'Not set')
   })
 
   it('processing says how far it got, in words', () => {

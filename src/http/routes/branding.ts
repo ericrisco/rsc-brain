@@ -10,6 +10,15 @@ import { obj } from '../input.ts'
 import { publicRoute, type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
+// If-None-Match as caches send it: a list, weak (W/) or strong, or "*".
+export function etagMatches(header: string | undefined, sha: string): boolean {
+  if (!header) return false
+  return header.split(',').some((t) => {
+    const v = t.trim().replace(/^W\//, '')
+    return v === '*' || v === `"${sha}"`
+  })
+}
+
 export const brandingRoutes: Route[] = [
   publicRoute(
     'GET /v1/branding',
@@ -49,7 +58,7 @@ export const brandingRoutes: Route[] = [
         'cache-control': 'no-cache',
         etag,
       }
-      if (r.headers['if-none-match'] === etag) return { status: 304, body: null, headers }
+      if (etagMatches(r.headers['if-none-match'], logo.sha256)) return { status: 304, body: null, headers }
       return { body: logo.bytes, headers }
     },
     { beforeSetup: true },
@@ -60,6 +69,7 @@ export const brandingRoutes: Route[] = [
       return { body: await setLogo(ctxOf(r), { contentType: b.contentType, data: b.data }) }
     }),
     maxBody: LOGO_MAX_BODY,
+    admin: true,
   },
   route('DELETE /v1/admin/branding/logo', async (r) => ({ body: await removeLogo(ctxOf(r)) })),
 ]

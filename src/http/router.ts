@@ -76,6 +76,8 @@ export type Route = {
   beforeSetup?: boolean
   // A body bigger than the usual 1 MiB is accepted, up to this many bytes (the logo, plan §0).
   maxBody?: number
+  // Only the administration (web): checked before the body is read.
+  admin?: boolean
 }
 
 export function publicRoute(

@@ -1226,7 +1226,7 @@ describe('the fixture API', () => {
       base: unknown
       settings: Record<string, unknown>
     }
-    assert.equal(mail.settings.passwordLast4, 'wxyz')
+    assert.equal(mail.settings.hasPassword, true)
     const put = await call('PUT', '/v1/admin/mail', {
       ...o,
       body: {

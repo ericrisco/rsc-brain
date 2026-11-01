@@ -15,6 +15,7 @@ import {
   mailProblems,
   mailSave,
   type PasswordChoice,
+  passwordAgain,
   secretLabel,
 } from '../../lib/admin.ts'
 import { ago } from '../../lib/brains.ts'
@@ -130,10 +131,17 @@ function Server({ account }: { account: string }) {
               if (pending || !online.value) return
               const p = mailProblems(f)
               if (pw.mode === 'replace' && !pw.value) p.password = A.newPasswordHint
+              if (passwordAgain(read.base, f, pw)) p.passwordAgain = A.passwordAgain
               setProblems(p)
-              const first = ['host', 'port', 'fromAddress', 'password'].find((k) => p[k])
+              const first = ['host', 'port', 'fromAddress', 'password', 'passwordAgain'].find((k) => p[k])
               if (first) {
-                document.getElementById(first === 'password' ? 'mail-new-password' : `mail-${first}`)?.focus()
+                const to =
+                  first === 'password'
+                    ? 'mail-new-password'
+                    : first === 'passwordAgain'
+                      ? 'mail-pw-new'
+                      : `mail-${first}`
+                document.getElementById(to)?.focus()
                 return
               }
               setPending(true)
@@ -172,8 +180,7 @@ function Server({ account }: { account: string }) {
                     {A.port}: <strong>{theirs.settings?.port ?? '—'}</strong>
                   </li>
                   <li>
-                    {A.password}:{' '}
-                    <strong>{secretLabel(theirs.base.hasPassword, theirs.base.passwordLast4)}</strong>
+                    {A.password}: <strong>{secretLabel(theirs.base.hasPassword)}</strong>
                   </li>
                   <li>
                     {A.fromAddress}: <strong>{theirs.settings?.from.address ?? '—'}</strong>
@@ -220,6 +227,11 @@ function Server({ account }: { account: string }) {
             />
             <fieldset class="choices">
               <legend>{A.password}</legend>
+              {problems.passwordAgain ? (
+                <p class="problem" id="mail-pw-again" role="alert">
+                  {problems.passwordAgain}
+                </p>
+              ) : null}
               <div class="pick">
                 <input
                   type="radio"
@@ -228,9 +240,7 @@ function Server({ account }: { account: string }) {
                   checked={pw.mode === 'keep'}
                   onChange={() => setPw({ mode: 'keep', value: '' })}
                 />
-                <label for="mail-pw-keep">
-                  {pwSet ? A.keepPassword(secretLabel(true, read.base.passwordLast4)) : A.noPassword}
-                </label>
+                <label for="mail-pw-keep">{pwSet ? A.keepPassword : A.noPassword}</label>
               </div>
               <div class="pick">
                 <input
@@ -238,7 +248,10 @@ function Server({ account }: { account: string }) {
                   name="mail-pw"
                   id="mail-pw-new"
                   checked={pw.mode === 'replace'}
-                  onChange={() => setPw({ mode: 'replace', value: '' })}
+                  onChange={() => {
+                    setPw({ mode: 'replace', value: '' })
+                    setProblems({ ...problems, passwordAgain: undefined })
+                  }}
                 />
                 <label for="mail-pw-new">{A.newPassword}</label>
               </div>
@@ -249,7 +262,10 @@ function Server({ account }: { account: string }) {
                     name="mail-pw"
                     id="mail-pw-remove"
                     checked={pw.mode === 'remove'}
-                    onChange={() => setPw({ mode: 'remove', value: '' })}
+                    onChange={() => {
+                      setPw({ mode: 'remove', value: '' })
+                      setProblems({ ...problems, passwordAgain: undefined })
+                    }}
                   />
                   <label for="mail-pw-remove">{A.removePassword}</label>
                 </div>
@@ -372,7 +388,10 @@ function TestMail({ who }: { who: Me }) {
               })
               if (out.sent) said.say(A.testSent(to.trim() || (who.account.email ?? '')), true)
               else
-                setFailed({ message: `${A.testFailed} ${out.error ?? ''}`.trim(), howToProceed: A.mailLead })
+                setFailed({
+                  message: out.error ? A.testFailedWhy(out.error) : A.testFailed,
+                  howToProceed: A.mailLead,
+                })
               await r.reload()
             } catch (x) {
               setFailed(x as ApiError)
@@ -382,7 +401,14 @@ function TestMail({ who }: { who: Me }) {
           }}
         >
           <FormAlert error={failed} />
-          <Field id="mail-test-to" label={A.testTo} type="email" value={to} onValue={setTo} />
+          <Field
+            id="mail-test-to"
+            label={A.testTo}
+            hint={A.testUsesSaved}
+            type="email"
+            value={to}
+            onValue={setTo}
+          />
           <Said text={said.said} id="test-said" focus={said.focus} />
           <div class="actions">
             <Button

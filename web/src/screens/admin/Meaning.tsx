@@ -29,6 +29,8 @@ type Provider = {
   source: 'settings' | 'environment' | null
   last4: string | null
   url: string | null
+  urlHidden: boolean
+  unreadable: boolean
   model: string | null
 }
 type Meaning = {
@@ -137,7 +139,13 @@ function ProviderPart({ p, onSaid }: { p: Provider; onSaid: (t: string) => void 
       <h3 id={`${id}-title`} class="part-title">
         {p.label}
       </h3>
-      <p class="meta">{key ? A.keyIs(A.keyFrom(p.source, p.last4)) : A.addressLine(p.source, p.url)}</p>
+      <p class="meta">
+        {key
+          ? p.unreadable
+            ? `${A.keyIs(A.unreadable)}${p.model ? ` ${A.envUsed}` : ''}`
+            : A.keyIs(A.keyFrom(p.source, p.last4))
+          : `${A.addressLine(p.source, p.url)}${p.urlHidden ? A.pathHidden : ''}`}
+      </p>
       <form
         class="settings-form"
         noValidate
@@ -154,12 +162,16 @@ function ProviderPart({ p, onSaid }: { p: Provider; onSaid: (t: string) => void 
           setPending(true)
           setError(null)
           try {
-            r.data.value = await api.call<Meaning>('setProvider', {
+            const was = r.data.value
+            const now = await api.call<Meaning>('setProvider', {
               path: { name: p.name },
               body: key ? { key: t } : { url: t },
             })
+            r.data.value = now
             setV('')
-            onSaid(key ? A.keySaved(p.label) : A.addressSaved(p.label))
+            // The provider in use changed: the server turned meaning search off until the warning is accepted again.
+            const off = was?.enabled && was.provider === p.name && !now.enabled
+            onSaid(off ? A.offAfterChange(p.label) : key ? A.keySaved(p.label) : A.addressSaved(p.label))
           } catch (x) {
             setError(x as ApiError)
           } finally {
@@ -217,9 +229,14 @@ function ProviderPart({ p, onSaid }: { p: Provider; onSaid: (t: string) => void 
               setPending(true)
               setAskError(null)
               try {
-                r.data.value = await api.call<Meaning>('removeProvider', { path: { name: p.name } })
+                const was = r.data.value
+                const now = await api.call<Meaning>('removeProvider', { path: { name: p.name } })
+                r.data.value = now
                 setAsking(false)
-                onSaid(key ? A.keyRemoved(p.label) : A.addressRemoved(p.label))
+                const off = was?.enabled && was.provider === p.name && !now.enabled
+                onSaid(
+                  off ? A.offAfterChange(p.label) : key ? A.keyRemoved(p.label) : A.addressRemoved(p.label),
+                )
               } catch (x) {
                 setAskError(x as ApiError)
               } finally {
@@ -288,7 +305,7 @@ function TurnOn({ m, onSaid }: { m: Meaning; onSaid: (t: string) => void }) {
                   value={p.name}
                   checked={choice === p.name}
                   disabled={!ready || inUse}
-                  aria-describedby={!ready ? `turn-on-${p.name}-why` : undefined}
+                  aria-describedby={!ready || inUse ? `turn-on-${p.name}-why` : undefined}
                   onChange={() => {
                     // A new choice needs its own acceptance: the warning names the provider. Reset here, in
                     // the same step, so a box ticked right after is never undone by a late effect.
@@ -300,9 +317,9 @@ function TurnOn({ m, onSaid }: { m: Meaning; onSaid: (t: string) => void }) {
                   {p.label}
                   {p.model ? ` (${p.model})` : ''}
                 </label>
-                {!ready ? (
+                {!ready || inUse ? (
                   <span class="reason" id={`turn-on-${p.name}-why`}>
-                    {A.providerNeeds(p.needs)}
+                    {inUse ? A.inUse : A.providerNeeds(p.needs)}
                   </span>
                 ) : null}
               </div>

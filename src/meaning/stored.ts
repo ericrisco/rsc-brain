@@ -35,19 +35,27 @@ export async function stored(db: Db): Promise<Stored> {
   }
 }
 
-// Makes the live set what the environment and the settings say now. A key that cannot be opened (another
-// installation secret) leaves that provider out rather than failing the server.
+// Whether the stored key opens with this installation's secret (another secret, or a value that was not
+// sealed for this place, does not).
+export function keyOpens(secret: string | undefined, sealed: string | null): boolean {
+  if (!sealed) return false
+  try {
+    unseal(secret, sealed, 'meaning.openai')
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Makes the live set what the environment and the settings say now: what the web set wins over the
+// environment. A stored key that cannot be opened leaves the environment's provider in place (the screen says
+// the stored key cannot be read) rather than failing the server.
 export async function applyStored(db: Db, live: Providers, secret: string | undefined): Promise<void> {
   const env = environmentOf(live)
   const s = await stored(db)
   for (const k of Object.keys(live)) delete live[k]
   Object.assign(live, env)
-  if (s.openaiKey && secret) {
-    try {
-      live.openai = openai(unseal(secret, s.openaiKey))
-    } catch {
-      delete live.openai
-    }
-  }
+  if (s.openaiKey && keyOpens(secret, s.openaiKey))
+    live.openai = openai(unseal(secret, s.openaiKey, 'meaning.openai'))
   if (s.ollamaUrl) live.ollama = ollama(s.ollamaUrl)
 }

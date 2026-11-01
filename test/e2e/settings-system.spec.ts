@@ -220,6 +220,8 @@ test('the audit: the download holds exactly the lines of the filtered view, ever
   const rows = admin.getByRole('table', { name: 'Audit lines' }).locator('tbody tr')
   await expect(rows).toHaveCount(100)
   const more = admin.getByRole('button', { name: 'Show 100 more' })
+  // More than a page: the button is there before the loop asks.
+  await expect(more).toBeVisible()
   while (await more.isVisible()) {
     const before = await rows.count()
     await more.click()
@@ -231,6 +233,8 @@ test('the audit: the download holds exactly the lines of the filtered view, ever
     .getByRole('link', { name: 'Download these lines (CSV)' })
     .getAttribute('href')) as string
   const csv = await (await admin.request.get(href)).text()
+  // The file is that view: a second download, after the first was itself recorded, is the same file.
+  expect(await (await admin.request.get(href)).text()).toBe(csv)
   const inFile = csv
     .trim()
     .split('\r\n')
@@ -246,7 +250,8 @@ test('email: settings saved in the web, the password never shown; a test mail ca
   await admin.getByLabel('New password').fill('e2e-mail-secret-4321')
   await admin.getByRole('button', { name: 'Save mail settings' }).click()
   await expect(admin.getByRole('status').filter({ hasText: 'Mail settings saved.' })).toBeFocused()
-  await expect(admin.getByRole('group', { name: 'Password' })).toContainText('Set, ends in …4321')
+  await expect(admin.getByRole('group', { name: 'Password' })).toContainText('Keep the current one (set)')
+  await expect(admin.locator('body')).not.toContainText('4321')
   const read = await (await admin.request.get('/v1/admin/mail')).text()
   expect(read).not.toContain('e2e-mail-secret')
   await admin.reload()
@@ -258,13 +263,16 @@ test('email: settings saved in the web, the password never shown; a test mail ca
   expect(m.text).toContain('Mail works.')
   // A server that cannot be reached: the test says why, and the failure is listed.
   await admin.getByLabel('Mail server').fill('down.e2e.test')
+  // Another server: its password is typed again.
+  await admin.getByRole('group', { name: 'Password' }).getByRole('radio', { name: 'Use a new one' }).check()
+  await admin.getByLabel('New password').fill('down-server-password')
   await admin.getByRole('button', { name: 'Save mail settings' }).click()
   await expect(admin.getByRole('status').filter({ hasText: 'Mail settings saved.' })).toBeVisible()
   await admin.getByRole('button', { name: 'Send test email' }).click()
-  await expect(admin.getByRole('alert').filter({ hasText: 'It did not go.' })).toContainText(
-    'ENOTFOUND down.e2e.test',
+  await expect(admin.getByRole('alert').filter({ hasText: 'It did not go' })).toContainText(
+    'server not found',
   )
   await expect(
     admin.getByRole('region', { name: 'Recent send failures' }).getByRole('listitem').first(),
-  ).toContainText('ENOTFOUND down.e2e.test')
+  ).toContainText('server not found')
 })

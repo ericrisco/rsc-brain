@@ -93,7 +93,7 @@ export type MailBase = {
   fromName: string | null
   fromAddress: string | null
   hasPassword: boolean
-  passwordLast4: string | null
+  passwordVersion: number
 }
 // The password field: keep the one set, type a new one, or remove it.
 export type PasswordChoice = { mode: 'keep' | 'replace' | 'remove'; value: string }
@@ -113,6 +113,14 @@ export function mailProblems(
   if (!EMAIL.test(f.fromAddress.trim()))
     out.fromAddress = 'The email mail is sent from, such as brain@example.com.'
   return out
+}
+
+// The password set belongs to its server, port and user: changing any of them while keeping it is refused by
+// the server, so the screen asks for it first.
+export function passwordAgain(base: MailBase, f: MailForm, pw: PasswordChoice): boolean {
+  if (!base.hasPassword || pw.mode !== 'keep') return false
+  const port = num(f.port)
+  return f.host.trim() !== base.host || port !== base.port || (f.user.trim() || null) !== (base.user ?? null)
 }
 
 export function mailSave(base: MailBase, f: MailForm, pw: PasswordChoice): Record<string, unknown> {
@@ -171,19 +179,30 @@ export function auditQuery(f: AuditFilters): AuditQuery {
 }
 
 // The download asks for exactly the rows of the view: the same filters, all pages (never a page cursor).
-export function auditExportHref(q: AuditQuery & { before?: string }): string {
+// `upTo`: the first line the view shows, so lines that came after the view are not in the file.
+export function auditExportHref(q: AuditQuery & { before?: string }, upTo: string | null): string {
   const p = new URLSearchParams()
   for (const k of ['actor', 'action', 'brain', 'outcome', 'from', 'to'] as const) {
     const v = q[k]
     if (v) p.set(k, v)
   }
+  if (upTo) p.set('upTo', upTo)
   const s = p.toString()
   return `/v1/admin/audit/export${s ? `?${s}` : ''}`
 }
 
-export function secretLabel(set: boolean, last4: string | null): string {
-  if (!set) return 'Not set'
-  return last4 ? `Set, ends in …${last4}` : 'Set'
+export function secretLabel(set: boolean): string {
+  return set ? 'Set' : 'Not set'
+}
+
+// The zone the person is in: the audit's days are filtered and its times shown in it.
+export const localZone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone
+
+export function localWhen(iso: string, timeZone: string = localZone()): string {
+  const d = new Date(iso)
+  const day = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone })
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone })
+  return `${day}, ${time}`
 }
 
 export function progressLabel(p: { done: number; total: number }): string {
