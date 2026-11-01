@@ -80,6 +80,8 @@ export type EventRow = {
   sessionRef: string | null
   // Who a short key acted for (Factory runs agents for people).
   onBehalf: { id: string; name: string } | null
+  // A closed session: its summary entry (the label is its title), so a later forget of it can be matched.
+  summaryEntryId: string | null
 }
 
 // Who follows a brain, and so which of its events they get (pack rule 7, the same rule as the trail of
@@ -111,7 +113,7 @@ export function labelFor(
 // an entry was written in, for the writing itself; a later change by someone else (entry.changed) happened
 // outside that session and carries none.
 const SELECT = `SELECT e.*, b.slug, a.name AS account_name, coalesce(en.state, sm.state) AS target_state,
-                       se.ref AS session_ref, cr.on_behalf_id, ob.name AS on_behalf_name
+                       se.ref AS session_ref, sm.id AS summary_entry_id, cr.on_behalf_id, ob.name AS on_behalf_name
                   FROM events e JOIN brains b ON b.id = e.brain_id LEFT JOIN accounts a ON a.id = e.account_id
                   LEFT JOIN entries en ON en.id = e.target_id
                   LEFT JOIN sessions se
@@ -139,6 +141,7 @@ const rowOf = (r: Row): EventRow => ({
   client: r.client == null ? null : String(r.client),
   targetState: r.target_state == null ? null : String(r.target_state),
   sessionRef: r.session_ref == null ? null : String(r.session_ref),
+  summaryEntryId: r.summary_entry_id == null ? null : String(r.summary_entry_id),
   onBehalf:
     r.on_behalf_id == null ? null : { id: String(r.on_behalf_id), name: String(r.on_behalf_name ?? '') },
 })

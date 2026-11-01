@@ -77,6 +77,32 @@ describe('the client of a key, from the database', { skip: skipPg }, () => {
     assert.doesNotMatch(String(red), /0123456789abcdefghij/)
   })
 
+  it('a key named with a secret, and a program that says one, are stored redacted', async () => {
+    const eric = await w.person('Lia')
+    const factory = await w.service('Runner')
+    assert.equal((await w.call(eric.key, 'POST', '/v1/brains', { slug: 'keyed' })).status, 201)
+    await w.member('keyed', factory.id, 'contributor')
+    const made = await w.call(factory.key, 'POST', '/v1/keys/short', {
+      writeBrain: 'keyed',
+      perm: 'write',
+      ref: 'job-1',
+      ttlMinutes: 30,
+      name: `job ${SECRET}`,
+    })
+    assert.equal(made.status, 201, made.text)
+    const key = String((made.body as { key: { secret: string } }).key.secret)
+    const used = await w.raw('GET', '/v1/brains/keyed', {
+      headers: { authorization: `Bearer ${key}`, 'user-agent': `curl ${SECRET}` },
+    })
+    assert.equal(used.status, 200, used.text)
+    const row = await w.db.one<{ name: string; last_client: string }>(
+      'SELECT name, last_client FROM credentials WHERE id = $1',
+      [(made.body as { key: { id: string } }).key.id],
+    )
+    assert.ok(row?.last_client, 'the program is remembered')
+    assert.doesNotMatch(`${row?.name} ${row?.last_client}`, /0123456789abcdefghij/)
+  })
+
   it('migration 0018 redacts what was stored before: key names and agents, app names, and stored clients', async () => {
     const eric = await w.person('Ana')
     await w.db.query(
@@ -94,15 +120,48 @@ describe('the client of a key, from the database', { skip: skipPg }, () => {
       `INSERT INTO events (brain_id, at, kind, label, client) VALUES ($1, now(), 'entry.saved', 'x', $2)`,
       [brain.id, `bot ${SECRET}`],
     )
+    // A session and an entry written by a program that said a secret.
+    const e = await w.call(eric.key, 'POST', '/v1/brains/mig/entries', {
+      type: 'note',
+      title: 'Seeded',
+      content: 'Seeded.',
+    })
+    assert.equal(e.status, 201, e.text)
+    await w.db.query('UPDATE sessions SET client = $2 WHERE brain_id = $1', [brain.id, `cli ${SECRET}`])
+    await w.db.query('UPDATE entries SET client = $2 WHERE brain_id = $1', [brain.id, `cli ${SECRET}`])
+    // An app and a connection named with a secret before names were redacted.
+    await w.db.query(
+      `INSERT INTO oauth_clients (client_id, kind, name, redirect_uris, created_at)
+       VALUES ('dcr_old', 'dcr', $1, ARRAY['http://127.0.0.1/cb'], now())`,
+      [`Notes ${SECRET}`],
+    )
+    await w.db.query(
+      `INSERT INTO oauth_grants (id, client_id, client_name, redirect_host, account_id, brain_ids, perm, refresh_hash,
+                                 epoch, created_at, last_used_at, expires_max)
+       VALUES ('app_old', 'dcr_old', $1, '127.0.0.1', $2, ARRAY[$3], 'read', 'hash-app-old', 1, now(), now(),
+               now() + interval '1 day')`,
+      [`Notes ${SECRET}`, eric.id, brain.id],
+    )
     const step = STEPS.find((x) => x.id === '0018_redact_clients')
     assert.ok(step, 'the step is known to the migrator')
     await w.db.tx((t) => (step as { run: (d: Db) => Promise<void> }).run(t))
     const left = await w.db.query(
-      `SELECT 1 FROM credentials WHERE name LIKE $1 OR agent LIKE $1 OR last_client LIKE $1
-       UNION ALL SELECT 1 FROM events WHERE client LIKE $1`,
+      `SELECT 'credentials.name' AS c FROM credentials WHERE name LIKE $1
+       UNION ALL SELECT 'credentials.agent' FROM credentials WHERE agent LIKE $1
+       UNION ALL SELECT 'credentials.last_client' FROM credentials WHERE last_client LIKE $1
+       UNION ALL SELECT 'events.client' FROM events WHERE client LIKE $1
+       UNION ALL SELECT 'sessions.client' FROM sessions WHERE client LIKE $1
+       UNION ALL SELECT 'entries.client' FROM entries WHERE client LIKE $1
+       UNION ALL SELECT 'oauth_clients.name' FROM oauth_clients WHERE name LIKE $1
+       UNION ALL SELECT 'oauth_grants.client_name' FROM oauth_grants WHERE client_name LIKE $1`,
       ['%0123456789abcdefghij%'],
     )
-    assert.equal(left.length, 0)
+    assert.deepEqual(left, [])
+    // What was redacted keeps what was not secret.
+    const kept = await w.db.one<{ name: string }>(
+      "SELECT name FROM oauth_clients WHERE client_id = 'dcr_old'",
+    )
+    assert.match(String(kept?.name), /^Notes /)
     // Applied once, and recorded like the SQL migrations (running again changes nothing).
     assert.deepEqual(await migrate(w.db), [])
     const rec = await w.db.one("SELECT id FROM schema_migrations WHERE id = '0018_redact_clients'")

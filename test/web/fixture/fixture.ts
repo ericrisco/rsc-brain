@@ -1731,6 +1731,7 @@ async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
 export type EmitOptions = {
   who?: { id: string; name: string } | null
   sessionRef?: string | null
+  summaryEntryId?: string | null
   onBehalf?: { id: string; name: string } | null
   target?: { id: string; label: string }
   client?: string | null
@@ -1776,6 +1777,7 @@ function emit(s: Scen, slug: string, kind: string, o: EmitOptions = {}): void {
     client: o.client === undefined ? 'claude-code' : o.client,
     sessionRef: o.sessionRef ?? null,
     onBehalf: o.onBehalf ?? null,
+    summaryEntryId: kind === 'session.closed' ? (o.summaryEntryId ?? null) : null,
   }
   const frame = `id: ${s.seq}\ndata: ${JSON.stringify(event)}\n\n`
   const line = { seq: s.seq, brain: slug, frame, kind, who: who?.id ?? null }
@@ -1881,6 +1883,7 @@ export async function startFixture(
         if (b.ref !== undefined) o.ref = b.ref as string | null
         if (b.query !== undefined) o.query = b.query as string | null
         if (b.sessionRef !== undefined) o.sessionRef = b.sessionRef as string | null
+        if (b.summaryEntryId !== undefined) o.summaryEntryId = b.summaryEntryId as string | null
         if (b.onBehalf !== undefined) o.onBehalf = b.onBehalf as { id: string; name: string } | null
         emit(s, String(b.brain), String(b.kind ?? 'entry.saved'), o)
         return send(res, { status: 200, body: {} })

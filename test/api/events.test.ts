@@ -612,6 +612,8 @@ describe('the event stream of a brain', { skip: skipPg }, () => {
     }
     const bobs = await closedFor(bob.key)
     assert.equal(bobs.data.target?.label ?? null, null)
+    // The closing names its summary entry, so a forget heard live can blank a row already shown.
+    assert.equal((bobs.data as { summaryEntryId?: string }).summaryEntryId, eid)
     assert.doesNotMatch(bobs.raw, /SUMMARY-SECRET-TITLE/)
     assert.equal((await closedFor(eric.key)).data.target?.label, 'SUMMARY-SECRET-TITLE')
     // Forget and recover say what happened, never the title, and are not "edits".

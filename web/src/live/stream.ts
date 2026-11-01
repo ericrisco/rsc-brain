@@ -21,6 +21,8 @@ export type LiveEvent = {
   // The reference of the session it happened in, and who an agent's short key acted for.
   sessionRef: string | null
   onBehalf: { id: string; name: string } | null
+  // A closed session: its summary entry, whose title is the label (a forget of it blanks the row).
+  summaryEntryId: string | null
 }
 
 export type SourceLike = {
@@ -85,6 +87,7 @@ function eventOf(data: string): LiveEvent | null {
       query: typeof e.query === 'string' ? e.query : null,
       client: typeof e.client === 'string' ? e.client : null,
       sessionRef: typeof e.sessionRef === 'string' ? e.sessionRef : null,
+      summaryEntryId: typeof e.summaryEntryId === 'string' ? e.summaryEntryId : null,
       onBehalf:
         e.onBehalf && typeof e.onBehalf.name === 'string'
           ? { id: String(e.onBehalf.id), name: e.onBehalf.name }

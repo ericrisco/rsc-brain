@@ -341,6 +341,15 @@ test('a forget heard live takes the title off the rows already shown, for a memb
   await s.emit('growth', 'entry.changed', { target: { id: 'ent_secret', label: 'forgotten' } })
   await expect(feed(page).first()).toContainText('forgot an entry')
   await expect(page.getByText('Secret-title-here')).toHaveCount(0)
+  // A closed session whose summary is then forgotten loses the summary's title too.
+  await s.emit('growth', 'session.closed', {
+    target: { id: 'ses_sum', label: 'Summary-title-here' },
+    summaryEntryId: 'ent_sum',
+  })
+  await expect(feed(page).filter({ hasText: 'Summary-title-here' })).toHaveCount(1)
+  await s.emit('growth', 'entry.changed', { target: { id: 'ent_sum', label: 'forgotten' } })
+  await expect(feed(page).first()).toContainText('forgot an entry')
+  await expect(page.getByText('Summary-title-here')).toHaveCount(0)
   // A session closed with a summary it may no longer see: said without a title.
   await s.emit('growth', 'session.closed', { target: { id: 'ses_x', label: null } as never })
   await expect(feed(page).first()).toContainText('closed a session')

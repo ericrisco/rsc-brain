@@ -152,7 +152,8 @@ export function factoryRunHref(
 
 // A forget heard live (entry.changed «forgotten») takes the title off the rows already shown for that entry,
 // for anyone but a curator, as the server does for what it sends after (pack rule 7, the journal's rule). A
-// recovery heard after it gives the title back. Newest first.
+// recovery heard after it gives the title back. A closed session's label is its summary's title: the row
+// goes blank when its summary entry is forgotten. Newest first.
 export function hideForgotten(events: readonly LiveEvent[], curator: boolean): LiveEvent[] {
   if (curator) return [...events]
   const gone = new Set<string>()
@@ -164,6 +165,7 @@ export function hideForgotten(events: readonly LiveEvent[], curator: boolean): L
       if (!gone.has(id) && !back.has(id)) (e.target?.label === 'forgotten' ? gone : back).add(id)
       return e
     }
-    return gone.has(id) && e.target ? { ...e, target: { ...e.target, label: null } } : e
+    const entry = e.kind === 'session.closed' ? e.summaryEntryId : id
+    return entry && gone.has(entry) && e.target ? { ...e, target: { ...e.target, label: null } } : e
   })
 }

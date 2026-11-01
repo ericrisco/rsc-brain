@@ -30,6 +30,7 @@ type Scenario = {
 export type EmitOptions = {
   who?: { id: string; name: string } | null
   sessionRef?: string | null
+  summaryEntryId?: string | null
   onBehalf?: { id: string; name: string } | null
   target?: { id: string; label: string }
   client?: string | null

@@ -4,7 +4,7 @@
 // database that already has a migration this code does not know is from a newer release: refuse.
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { redact } from '../privacy/redact.ts'
+import { mayHoldSecret, redact } from '../privacy/redact.ts'
 import type { Db } from './db.ts'
 
 const LOCK = 7_310_420_001 // any constant shared by every migrator of this product
@@ -28,24 +28,39 @@ export type Step = { id: string; run: (db: Db) => Promise<void> }
 // Review of PR23 (S1): key names and agents, app names and the clients stored from them were kept as given,
 // and one may carry a pasted secret. They are redacted with the same rules as everything stored; what is
 // written from now on is redacted on the way in.
+// On a large installation it never holds a table in memory: SQL picks only the rows that may hold a secret,
+// a thousand at a time in key order, and each change is written by
+// key. It runs inside the migrator's one transaction, so an upgrade applies it whole or not at all; memory
+// stays at one batch whatever the size of the table.
+export const REDACT_BATCH = 1000
+const STORED_CLIENTS: Array<{ table: string; key: string; start: string; column: string; max: number }> = [
+  { table: 'credentials', key: 'id', start: '', column: 'name', max: 80 },
+  { table: 'credentials', key: 'id', start: '', column: 'agent', max: 80 },
+  { table: 'credentials', key: 'id', start: '', column: 'last_client', max: 200 },
+  { table: 'oauth_clients', key: 'client_id', start: '', column: 'name', max: 120 },
+  { table: 'oauth_grants', key: 'id', start: '', column: 'client_name', max: 200 },
+  { table: 'events', key: 'id', start: '0', column: 'client', max: 200 },
+  { table: 'sessions', key: 'id', start: '', column: 'client', max: 200 },
+  { table: 'entries', key: 'id', start: '', column: 'client', max: 200 },
+]
+
 async function redactStoredClients(db: Db): Promise<void> {
-  const columns: Array<[string, string, number]> = [
-    ['credentials', 'name', 80],
-    ['credentials', 'agent', 80],
-    ['credentials', 'last_client', 200],
-    ['oauth_grants', 'client_name', 200],
-    ['events', 'client', 200],
-    ['sessions', 'client', 200],
-    ['entries', 'client', 200],
-  ]
-  for (const [table, column, max] of columns) {
-    const rows = await db.query<{ k: string; v: string }>(
-      `SELECT ctid::text AS k, ${column} AS v FROM ${table} WHERE ${column} IS NOT NULL`,
-    )
-    for (const r of rows) {
-      const clean = redact(r.v).text.slice(0, max)
-      if (clean !== r.v)
-        await db.query(`UPDATE ${table} SET ${column} = $2 WHERE ctid = $1::tid`, [r.k, clean])
+  for (const { table, key, start, column, max } of STORED_CLIENTS) {
+    let after = start
+    for (;;) {
+      const rows = await db.query<{ k: string; v: string }>(
+        `SELECT ${key}::text AS k, ${column} AS v FROM ${table}
+          WHERE ${key} > $1 AND ${column} IS NOT NULL AND ${mayHoldSecret(column)}
+          ORDER BY ${key} LIMIT ${REDACT_BATCH}`,
+        [after],
+      )
+      for (const r of rows) {
+        const clean = redact(r.v).text.slice(0, max)
+        if (clean !== r.v)
+          await db.query(`UPDATE ${table} SET ${column} = $2 WHERE ${key} = $1`, [r.k, clean])
+      }
+      if (rows.length < REDACT_BATCH) break
+      after = String(rows[rows.length - 1]?.k)
     }
   }
 }

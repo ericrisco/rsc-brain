@@ -55,6 +55,20 @@ const RULES: Rule[] = [
 
 export type Redacted = { text: string; redactions: number }
 
+// The names of the rules, so a test can require a sample of each one (see mayHoldSecret).
+export const RULE_NAMES: readonly string[] = RULES.map((r) => r.name)
+
+// A cheap SQL test that is true of every text redact() would change, and false of most ordinary text, to
+// find the rows worth redacting in a large table without reading each one. It must never miss: every token
+// rule above matches 15 or more characters of [A-Za-z0-9_-] in a row (the shortest, slack, is "xoxb-" and
+// 10 more), except the JWT, which starts with "eyJ"; every other rule has a literal word (private marks and
+// keys, "://", "authorization", or a key word of the assignments). A new rule must keep this true: the
+// tests run a minimal sample of every rule through it.
+export function mayHoldSecret(column: string): string {
+  return `(${column} ~ '[A-Za-z0-9_-]{15}' OR ${column} ~ 'eyJ'
+    OR ${column} ~* '<private|-----begin|://|authorization|key|secret|token|passw|pwd')`
+}
+
 function removePrivate(text: string): { text: string; count: number } {
   let count = 0
   let out = text.replace(/<private\b[^>]{0,200}>[\s\S]*?<\/private>/gi, () => {

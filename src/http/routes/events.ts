@@ -42,6 +42,9 @@ export function eventOf(e: EventRow, v: Pick<Viewer, 'curator'> = { curator: fal
     // Review of PR23: the reference of its session, and who an agent's short key acted for.
     sessionRef: e.sessionRef,
     onBehalf: e.onBehalf,
+    // Third review of PR23: a closed session names its summary entry, so a client that hears the entry
+    // forgotten can blank the row it already shows.
+    summaryEntryId: e.summaryEntryId,
   }
 }
 

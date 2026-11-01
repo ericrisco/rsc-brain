@@ -244,6 +244,9 @@ export const EVENT = obj(
     ),
     sessionRef: nul(s('The external reference of the session it happened in.')),
     onBehalf: nul(obj({ id: s('Account id.'), name: s('Account name.') })),
+    summaryEntryId: nul(
+      s('For session.closed: the summary entry whose title is the label (a forget of it hides the title).'),
+    ),
   },
   [],
 )

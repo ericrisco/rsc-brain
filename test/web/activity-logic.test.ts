@@ -35,6 +35,7 @@ const ev = (kind: string, o: Partial<LiveEvent> = {}): LiveEvent => ({
   client: 'claude-code',
   sessionRef: null,
   onBehalf: null,
+  summaryEntryId: null,
   ...o,
 })
 
@@ -200,6 +201,29 @@ describe('activity, review of PR23', () => {
     assert.equal(hideForgotten(back, false)[3]?.target?.label, 'Secret title')
     // A closed session without its summary's title reads as closing a session.
     assert.equal(describeEvent(ev('session.closed', { target: { id: 'ses_1', label: null } })).what, null)
+  })
+
+  it("a forget heard live blanks a closed session's row whose summary it was, for a non-curator", () => {
+    const rows = [
+      ev('entry.changed', { id: '3', target: { id: 'ent_sum', label: 'forgotten' } }),
+      ev('session.closed', {
+        id: '2',
+        target: { id: 'ses_2', label: 'Other summary' },
+        summaryEntryId: 'ent_other',
+      }),
+      ev('session.closed', {
+        id: '1',
+        target: { id: 'ses_1', label: 'Summary title' },
+        summaryEntryId: 'ent_sum',
+      }),
+    ]
+    const shown = hideForgotten(rows, false)
+    assert.equal(shown[2]?.target?.label, null)
+    assert.equal(shown[2]?.target?.id, 'ses_1')
+    assert.equal(shown[1]?.target?.label, 'Other summary')
+    assert.equal(hideForgotten(rows, true)[2]?.target?.label, 'Summary title')
+    const back = [ev('entry.changed', { id: '4', target: { id: 'ent_sum', label: 'recovered' } }), ...rows]
+    assert.equal(hideForgotten(back, false)[3]?.target?.label, 'Summary title')
   })
 
   it('a row of an agent acting for someone names them', () => {

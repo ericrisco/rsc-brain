@@ -394,6 +394,61 @@ describe('connections with the standard sign-in', { skip: skipPg }, () => {
     assert.equal(after.json().error, 'invalid_grant')
   })
 
+  it('an app that names itself with a secret never gets it stored: not as the app, the connection, its key or the audit', async () => {
+    const SECRET = 'sk-live-0123456789abcdefghijklmnopqrstuv'
+    const leaked = '%0123456789abcdefghij%'
+    const redirect = 'http://127.0.0.1:43126/cb'
+    const reg = await register(redirect, `Notes ${SECRET}`)
+    assert.equal(reg.status, 201, JSON.stringify(reg.body))
+    const client = String(reg.body.client_id)
+    assert.doesNotMatch(String(reg.body.client_name), /0123456789abcdefghij/)
+    const verifier = randomBytes(40).toString('base64url')
+    const { code, page } = await consent(client, redirect, verifier, { brains: ['alpha'], perm: 'read' })
+    assert.doesNotMatch(page, /0123456789abcdefghij/)
+    const t = await exchange({ code, code_verifier: verifier, redirect_uri: redirect, client_id: client })
+    assert.equal(t.status, 200, t.text)
+    const stored = await w.db.query(
+      `SELECT 'client' AS t FROM oauth_clients WHERE name LIKE $1
+       UNION ALL SELECT 'grant' FROM oauth_grants WHERE client_name LIKE $1
+       UNION ALL SELECT 'key' FROM credentials WHERE name LIKE $1
+       UNION ALL SELECT 'audit' FROM audit WHERE detail LIKE $1`,
+      [leaked],
+    )
+    assert.deepEqual(stored, [])
+    // A connection stored before names were redacted: its next key is still named clean.
+    await w.db.query('UPDATE oauth_grants SET client_name = $2 WHERE client_id = $1', [
+      client,
+      `Notes ${SECRET}`,
+    ])
+    const next = await form('/oauth/token', {
+      grant_type: 'refresh_token',
+      refresh_token: t.json().refresh_token,
+      client_id: client,
+    })
+    assert.equal(next.status, 200, next.text)
+    assert.deepEqual(await w.db.query('SELECT 1 FROM credentials WHERE name LIKE $1', [leaked]), [])
+    // An app stored before names were redacted: a new connection to it copies its name clean.
+    await w.db.query("UPDATE oauth_grants SET client_name = 'Notes' WHERE client_id = $1", [client])
+    await w.db.query('UPDATE oauth_clients SET name = $2 WHERE client_id = $1', [client, `Notes ${SECRET}`])
+    const v2 = randomBytes(40).toString('base64url')
+    const again = await consent(client, redirect, v2, { brains: ['alpha'], perm: 'read' })
+    const t2 = await exchange({
+      code: again.code,
+      code_verifier: v2,
+      redirect_uri: redirect,
+      client_id: client,
+    })
+    assert.equal(t2.status, 200, t2.text)
+    assert.deepEqual(
+      await w.db.query(
+        `SELECT 1 FROM oauth_grants WHERE client_name LIKE $1 UNION ALL SELECT 1 FROM audit WHERE detail LIKE $1
+         UNION ALL SELECT 1 FROM credentials WHERE name LIKE $1`,
+        [leaked],
+      ),
+      [],
+    )
+  })
+
   it('CA29: a connection unused for 90 days asks to sign in again; an access key lasts an hour', async () => {
     const redirect = 'http://127.0.0.1:43126/cb'
     const client = String((await register(redirect)).body.client_id)
