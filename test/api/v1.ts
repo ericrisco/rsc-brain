@@ -5,8 +5,10 @@
 export const V1 = [
   'DELETE /v1/admin/accounts/{id}/totp',
   'DELETE /v1/admin/apps/{id}',
+  'DELETE /v1/admin/branding/logo',
   'DELETE /v1/admin/mail',
   'DELETE /v1/admin/meaning',
+  'DELETE /v1/admin/meaning/providers/{name}',
   'DELETE /v1/brains/{slug}',
   'DELETE /v1/brains/{slug}/members/{account}',
   'DELETE /v1/brains/{slug}/repos',
@@ -24,6 +26,7 @@ export const V1 = [
   'GET /v1/admin/mail',
   'GET /v1/admin/meaning',
   'GET /v1/admin/settings',
+  'GET /v1/admin/system',
   'GET /v1/brains',
   'GET /v1/brains/{slug}',
   'GET /v1/brains/{slug}/audit',
@@ -126,8 +129,10 @@ export const V1 = [
   'POST /v1/sessions/{id}/end',
   'POST /v1/sessions/{id}/summary',
   'POST /v1/setup',
+  'PUT /v1/admin/branding/logo',
   'PUT /v1/admin/mail',
   'PUT /v1/admin/meaning',
+  'PUT /v1/admin/meaning/providers/{name}',
   'PUT /v1/admin/settings',
   'PUT /v1/brains/{slug}/members/{account}',
   'PUT /v1/brains/{slug}/notify',
@@ -187,6 +192,13 @@ export const ERROR_STATUS: Record<string, number> = {
   // Fixes of PR25a: adding someone already in the brain; a new invitation link sooner than a minute.
   already_member: 409,
   too_soon: 429,
+  // The rest of the administration (PR25b): a logo that is not a PNG, JPEG or WebP within bounds, or too big;
+  // the key of the meaning provider in use.
+  invalid_image: 422,
+  image_too_large: 413,
+  provider_in_use: 409,
+  // A test mail before mail is set up.
+  mail_not_set_up: 409,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }

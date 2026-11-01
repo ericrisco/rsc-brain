@@ -1,8 +1,10 @@
 // Spec B5 «Errores, límites y recibos»: 600 requests per minute per key by default, refused with when
 // to retry (CA14); the same refusal on the MCP endpoint in its own shape (CA9); the administration
-// adjusts the limit in the settings.
+// adjusts the limit in the settings, between sensible bounds (B6 PR25b: 60 to 10 000). The tests of the
+// limiter itself set tiny limits straight in the database, below what the settings accept.
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
+import { MAX_RATE_LIMIT, MIN_RATE_LIMIT } from '../../src/domain/installation.ts'
 import { MODERN } from '../../src/mcp/server.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
@@ -18,6 +20,7 @@ describe('the rate limit per key', { skip: skipPg }, () => {
     adminWeb = await w.web(admin.id)
   })
   after(async () => w.close())
+  const limitTo = (n: number) => w.db.query('UPDATE installation SET rate_limit = $1 WHERE id = 1', [n])
 
   const mcpList = (key: string) =>
     w.raw('POST', '/mcp', {
@@ -66,8 +69,7 @@ describe('the rate limit per key', { skip: skipPg }, () => {
   })
 
   it('CA9: on the MCP endpoint the refusal comes as JSON-RPC, with what happened and how to proceed', async () => {
-    const set = await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: 3 })
-    assert.equal(set.status, 200, set.text)
+    await limitTo(3)
     try {
       const agent = await w.person('Agent')
       for (let i = 0; i < 3; i += 1) assert.equal((await mcpList(agent.key)).status, 200)
@@ -81,25 +83,26 @@ describe('the rate limit per key', { skip: skipPg }, () => {
       assert.equal(err.data.retryAfter, 60)
     } finally {
       w.advance(60_000)
-      await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: 600 })
+      await limitTo(600)
     }
   })
 
   it('the administration adjusts the limit in the settings; only the administration, only sensible values', async () => {
     const before = await w.callWeb(adminWeb, 'GET', '/v1/admin/settings')
     assert.equal(before.body.rateLimit, 600)
-    for (const bad of [0, -1, 1.5, 'many', 1_000_001]) {
+    for (const bad of [0, -1, 1.5, 'many', 2, MIN_RATE_LIMIT - 1, MAX_RATE_LIMIT + 1, 1_000_001]) {
       const r = await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: bad })
       assert.equal(r.status, 400, `${bad}: ${r.text}`)
       assert.equal(r.body.error?.code, 'invalid_request')
     }
     const nobody = await w.person('Nobody')
     assert.equal(
-      (await w.callWeb(await w.web(nobody.id), 'PUT', '/v1/admin/settings', { rateLimit: 2 })).status,
+      (await w.callWeb(await w.web(nobody.id), 'PUT', '/v1/admin/settings', { rateLimit: 120 })).status,
       403,
     )
-    const set = await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: 2 })
-    assert.equal(set.body.rateLimit, 2)
+    const set = await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: MIN_RATE_LIMIT })
+    assert.equal(set.body.rateLimit, MIN_RATE_LIMIT)
+    await limitTo(2)
     try {
       const k = await w.person('Kay')
       assert.equal((await w.call(k.key, 'GET', '/v1/me')).status, 200)
@@ -109,7 +112,7 @@ describe('the rate limit per key', { skip: skipPg }, () => {
       assert.match(r.body.error?.message ?? '', /2 requests per minute/)
     } finally {
       w.advance(60_000)
-      await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: 600 })
+      await limitTo(600)
     }
   })
 
@@ -120,7 +123,7 @@ describe('the rate limit per key', { skip: skipPg }, () => {
       assert.equal((await w.call(k.key, 'GET', '/v1/me')).status, 200)
       w.advance(10_000)
     }
-    await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: 2 })
+    await limitTo(2)
     try {
       const r = await w.raw('GET', '/v1/me', { headers: { authorization: `Bearer ${k.key}` } })
       assert.equal(r.status, 429)
@@ -133,12 +136,12 @@ describe('the rate limit per key', { skip: skipPg }, () => {
       assert.equal((await w.call(k.key, 'GET', '/v1/me')).status, 200)
     } finally {
       w.advance(60_000)
-      await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: 600 })
+      await limitTo(600)
     }
   })
 
   it('a refused request does not count: a client that keeps knocking gets in once the minute has passed', async () => {
-    await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: 2 })
+    await limitTo(2)
     try {
       const k = await w.person('Knock')
       await w.call(k.key, 'GET', '/v1/me')
@@ -151,7 +154,7 @@ describe('the rate limit per key', { skip: skipPg }, () => {
       assert.equal((await w.call(k.key, 'GET', '/v1/me')).status, 200)
     } finally {
       w.advance(60_000)
-      await w.callWeb(adminWeb, 'PUT', '/v1/admin/settings', { rateLimit: 600 })
+      await limitTo(600)
     }
   })
 })

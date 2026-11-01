@@ -5,8 +5,11 @@ import nodemailer from 'nodemailer'
 import { seal, unseal } from '../auth/vault.ts'
 import type { Clock } from '../core/clock.ts'
 import type { Db } from '../db/db.ts'
+import { redact } from '../privacy/redact.ts'
 
-export type Message = { to: string; subject: string; text: string }
+// An image that travels inside the mail and is shown by its content id (cid:), never fetched from an address.
+export type Inline = { filename: string; content: Buffer; contentType: string; cid: string }
+export type Message = { to: string; subject: string; text: string; html?: string; attachments?: Inline[] }
 export type Sender = { name: string; address: string }
 
 // What actually delivers a message. The server builds an SMTP one from the settings; tests pass their own.
@@ -18,6 +21,8 @@ export type MailSettings = {
   secure: boolean
   user: string | null
   password: string | null // sealed
+  // Its last 4 characters, to name it without showing it (settings saved before PR25b have none).
+  passwordLast4?: string | null
   from: Sender
 }
 
@@ -56,9 +61,52 @@ function smtp(s: MailSettings, secret: string | undefined): Transport {
         to: { name: '', address: m.to },
         subject: m.subject,
         text: m.text,
+        ...(m.html ? { html: m.html } : {}),
+        ...(m.attachments?.length ? { attachments: m.attachments } : {}),
       })
     },
   }
+}
+
+export const LOGO_CID = 'logo@rsc-brain'
+
+const esc = (t: string) =>
+  t
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
+// Every mail carries the name and logo of the installation (spec B6 CA18, plan G15): the text as it is, and
+// beside it the same text in HTML under the logo, attached inline. Nothing in it is fetched from an address,
+// so opening a mail tells no server that it was read. Links are http(s) only, written from escaped text.
+export async function branded(db: Db, m: Message): Promise<Message> {
+  const r = await db.one<{ name: string; logo: Buffer | null; logo_type: string | null }>(
+    'SELECT name, logo, logo_type FROM installation WHERE id = 1',
+  )
+  const name = r?.name?.trim() || 'rsc-brain'
+  const logo: Inline | null =
+    r?.logo && r.logo_type
+      ? {
+          filename: `logo.${r.logo_type.split('/')[1] ?? 'png'}`,
+          content: r.logo,
+          contentType: r.logo_type,
+          cid: LOGO_CID,
+        }
+      : null
+  const body = esc(m.text).replace(/https?:\/\/[^\s<>"]+/g, (u) => `<a href="${u}">${u}</a>`)
+  const html = [
+    '<!doctype html><html><body style="margin:0;padding:24px;font-family:system-ui,sans-serif;color:#1b1d22;background:#ffffff">',
+    '<p style="margin:0 0 20px;font-size:18px;font-weight:600">',
+    logo
+      ? `<img src="cid:${LOGO_CID}" alt="" height="32" style="height:32px;width:auto;vertical-align:middle;margin-right:10px">`
+      : '',
+    `${esc(name)}</p>`,
+    `<div style="white-space:pre-wrap;font-size:15px;line-height:1.5">${body}</div>`,
+    '</body></html>',
+  ].join('')
+  return { ...m, html, attachments: logo ? [logo] : [] }
 }
 
 // Sends one message, or says why it did not. Never throws.
@@ -84,11 +132,12 @@ export async function send(
   }
   try {
     const t = outbox?.transport ? outbox.transport(s) : smtp(s, outbox?.secret)
-    await t.send({ ...m, from: s.from })
+    await t.send({ ...(await branded(db, m)), from: s.from })
     await log('sent')
     return { sent: true, error: null }
   } catch (err) {
-    const why = err instanceof Error ? err.message : String(err)
+    // What a mail server says can quote what it was given: stored with secrets taken out.
+    const why = redact(err instanceof Error ? err.message : String(err)).text
     await log('failed', why)
     return { sent: false, error: why }
   }

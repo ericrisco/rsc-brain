@@ -7,6 +7,7 @@ import { after, before, describe, it } from 'node:test'
 import { hashPassword } from '../../src/auth/password.ts'
 import { stepOf, totpAt } from '../../src/auth/totp.ts'
 import { ROUTES } from '../../src/http/app.ts'
+import { png, SVG } from '../helpers/images.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type Call, type World, world } from '../helpers/world.ts'
 import { ERROR_STATUS, V1 } from './v1.ts'
@@ -113,6 +114,38 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   },
   'GET /v1/admin/brains': {
     'brains[]': ['slug', 'name', 'status', 'members', 'curators', 'pendingCurator', 'youAreMember'],
+  },
+  // The rest of the administration (PR25b): G4, mail, meaning search, G14, G3.
+  'GET /v1/admin/settings': {
+    '': [
+      'name',
+      'publicUrl',
+      'curatorsInvite',
+      'rateLimit',
+      'rateLimitDefault',
+      'rateLimitMin',
+      'rateLimitMax',
+      'factoryUrl',
+    ],
+  },
+  'PUT /v1/admin/settings': {
+    '': ['name', 'rateLimit', 'factoryUrl'],
+  },
+  'GET /v1/admin/mail': {
+    '': ['configured', 'settings', 'base', 'recent', 'failures'],
+    settings: ['host', 'port', 'secure', 'user', 'hasPassword', 'passwordLast4', 'from'],
+  },
+  'GET /v1/admin/meaning': {
+    '': ['enabled', 'provider', 'available', 'providers', 'warning', 'progress'],
+    'providers[]': ['name', 'label', 'needs', 'source', 'last4', 'url', 'model'],
+  },
+  'GET /v1/admin/system': {
+    '': ['version', 'startedAt', 'database', 'meaning', 'streams', 'mail'],
+    database: ['ok', 'migration'],
+    streams: ['open', 'max'],
+  },
+  'PUT /v1/admin/branding/logo': {
+    logo: ['url', 'updatedAt'],
   },
   'POST /v1/brains/{slug}/sessions': {
     session: ['id', 'brainId', 'purpose', 'ref', 'status', 'openedAt', 'closedAt'],
@@ -826,6 +859,26 @@ describe('the v1 contract', { skip: skipPg }, () => {
     out['GET /v1/admin/accounts/{id}/keys'] = (
       await w.callWeb(web, 'GET', `/v1/admin/accounts/${sid}/keys`)
     ).body
+    const settings = await w.callWeb(web, 'GET', '/v1/admin/settings')
+    out['GET /v1/admin/settings'] = settings.body
+    out['PUT /v1/admin/settings'] = (
+      await w.callWeb(web, 'PUT', '/v1/admin/settings', { base: { rateLimit: settings.body.rateLimit } })
+    ).body
+    await w.callWeb(web, 'PUT', '/v1/admin/mail', {
+      host: 'smtp.example.com',
+      fromAddress: 'brain@example.com',
+      password: 'contract-pass',
+    })
+    out['GET /v1/admin/mail'] = (await w.callWeb(web, 'GET', '/v1/admin/mail')).body
+    out['GET /v1/admin/meaning'] = (await w.callWeb(web, 'GET', '/v1/admin/meaning')).body
+    out['GET /v1/admin/system'] = (await w.callWeb(web, 'GET', '/v1/admin/system')).body
+    const logo = await w.callWeb(web, 'PUT', '/v1/admin/branding/logo', {
+      contentType: 'image/png',
+      data: png(8, 8).toString('base64'),
+    })
+    assert.equal(logo.status, 200, logo.text)
+    out['PUT /v1/admin/branding/logo'] = logo.body
+    await w.callWeb(web, 'DELETE', '/v1/admin/branding/logo')
     const ericWeb = await w.web(eric.id)
     const read = await w.callWeb(ericWeb, 'GET', '/v1/brains/contract/wiki/settings')
     out['GET /v1/brains/{slug}/wiki/settings'] = read.body
@@ -1236,6 +1289,19 @@ describe('the v1 contract', { skip: skipPg }, () => {
       if (a.isAdmin && a.id !== boss.id)
         await w.db.query('UPDATE accounts SET is_admin = true WHERE id = $1', [a.id])
     await add('no_logo', w.raw('GET', '/v1/branding/logo'))
+    // The logo (G3) and the key of the meaning provider in use (PR25b).
+    const logo = (contentType: string, data: Buffer) =>
+      w.callWeb(bossWeb, 'PUT', '/v1/admin/branding/logo', { contentType, data: data.toString('base64') })
+    await add('invalid_image', logo('image/svg+xml', SVG))
+    await add('image_too_large', logo('image/png', png(4, 4, { pad: 2_200_000 })))
+    await w.callWeb(bossWeb, 'PUT', '/v1/admin/meaning/providers/openai', {
+      key: 'sk-contract-0123456789abcdef',
+    })
+    await w.callWeb(bossWeb, 'PUT', '/v1/admin/meaning', { provider: 'openai', accept: true })
+    await add('provider_in_use', w.callWeb(bossWeb, 'DELETE', '/v1/admin/meaning/providers/openai'))
+    await w.callWeb(bossWeb, 'DELETE', '/v1/admin/meaning')
+    await w.callWeb(bossWeb, 'DELETE', '/v1/admin/mail')
+    await add('mail_not_set_up', w.callWeb(bossWeb, 'POST', '/v1/admin/mail/test', {}))
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))
     await add('setup_done', w.raw('GET', '/v1/setup'))
     await add(

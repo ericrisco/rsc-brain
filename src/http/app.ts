@@ -38,6 +38,7 @@ import { meaningRoutes } from './routes/meaning.ts'
 import { oauthRoutes } from './routes/oauth.ts'
 import { peopleRoutes } from './routes/people.ts'
 import { recallRoutes } from './routes/recall.ts'
+import { systemRoutes } from './routes/system.ts'
 import { wikiRoutes } from './routes/wiki.ts'
 import { answerWeb, openWeb } from './web.ts'
 
@@ -82,6 +83,7 @@ export const ROUTES: Route[] = [
   ...eventRoutes,
   ...connectRoutes,
   ...brandingRoutes,
+  ...systemRoutes,
 ]
 // The MCP endpoint calls the same routes a program would (spec B5 parity).
 ROUTES.push(...mcpRoutes(() => ROUTES))
@@ -92,20 +94,31 @@ ROUTES.push(
   })),
 )
 
-async function readBody(req: IncomingMessage): Promise<unknown> {
+async function readBody(req: IncomingMessage, max = MAX_BODY): Promise<unknown> {
   const chunks: Buffer[] = []
   let size = 0
+  let over = false
   for await (const chunk of req) {
     size += (chunk as Buffer).length
-    if (size > MAX_BODY) {
-      throw new AppError(
-        413,
-        'body_too_large',
-        'The request body is larger than 1 MB.',
-        'Send a smaller request.',
-      )
+    if (size > max) {
+      // What is over the limit is read and dropped, so the client is still sending when it reads the
+      // refusal; far beyond it, reading stops and the connection is cut.
+      over = true
+      chunks.length = 0
+      if (size > max * 4) break
+      continue
     }
     chunks.push(chunk as Buffer)
+  }
+  if (over) {
+    const e = new AppError(
+      413,
+      'body_too_large',
+      `The request body is larger than ${Math.round(max / 1_048_576)} MB.`,
+      'Send a smaller request.',
+    )
+    e.headers = { connection: 'close' }
+    throw e
   }
   if (size === 0) return undefined
   let parsed: unknown
@@ -203,9 +216,20 @@ function send(
   compress: { route: boolean; accepts: boolean } = { route: false, accepts: false },
 ): void {
   // Nothing to say back (a password changed): no body at all, as 204 requires.
-  if (status === 204) {
-    res.writeHead(204, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...headers })
+  if (status === 204 || status === 304) {
+    res.writeHead(status, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...headers })
     res.end()
+    return
+  }
+  // Bytes (the logo) go as they are, with the headers the route gave.
+  if (Buffer.isBuffer(body)) {
+    res.writeHead(status, {
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      ...headers,
+      'content-length': body.length,
+    })
+    res.end(body)
     return
   }
   const raw = typeof body === 'string' && headers['content-type'] !== undefined
@@ -287,6 +311,7 @@ export function createHandler(deps: AppDeps) {
   const timings = { ...EVENT_TIMINGS, ...(deps.events ?? {}) }
   const hub = eventHub(deps.db, timings, log)
   const web = deps.web === false ? null : openWeb(deps.web ?? WEB_ROOT)
+  const startedAt = deps.clock()
   // Once the first-time setup is done it stays done: no need to ask the database again.
   let ready = false
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -358,6 +383,7 @@ export function createHandler(deps: AppDeps) {
         rate,
         hub,
         timings,
+        startedAt,
       }
       if (found.route.public) {
         // A page that a browser posts to checks its own origin; JSON callers send no cookie here.
@@ -376,7 +402,7 @@ export function createHandler(deps: AppDeps) {
       }
       const who = await resolveKey(deps.db, key ?? cookie, deps.clock(), key ? 'bearer' : 'cookie', conn)
       rate.take(who.credential.id, who.rateLimit)
-      const body = await readBody(req)
+      const body = await readBody(req, found.route.maxBody)
       const reply = await found.route.handler({ ...base, body, who })
       if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)
       send(res, reply.status ?? 200, reply.body, reply.headers, {

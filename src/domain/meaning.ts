@@ -2,9 +2,11 @@
 // turns it on in the web, choosing a provider and accepting that text is sent to it. A curator can
 // exclude a brain: its vectors go and nothing more of it is sent. While existing text is processed,
 // what is not processed yet is still found by words; a provider that fails never fails a search.
-import { AppError, invalid } from '../core/errors.ts'
+import { seal } from '../auth/vault.ts'
+import { AppError, invalid, notFound } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
 import { type Providers, SEND_CHARS } from '../meaning/providers.ts'
+import { applyStored, environmentOf, stored } from '../meaning/stored.ts'
 import { audit } from './audit.ts'
 import type { Ctx } from './context.ts'
 import { webOnly } from './wiki/review.ts'
@@ -72,15 +74,151 @@ export async function meaningProgress(db: Db, s: MeaningSettings): Promise<{ don
   return { done: r?.done ?? 0, total: r?.total ?? 0 }
 }
 
+// The providers this installation knows, and where each one's key or address comes from: set in the web
+// ("settings"), the server's environment, or nowhere yet. A key is named by its last 4 characters only.
+export const PROVIDERS = [
+  { name: 'openai', label: 'OpenAI', needs: 'key' },
+  { name: 'ollama', label: 'Ollama', needs: 'url' },
+] as const
+type ProviderName = (typeof PROVIDERS)[number]['name']
+
+async function providerViews(ctx: Ctx) {
+  const st = await stored(ctx.db)
+  const env = environmentOf(ctx.meaning ?? {})
+  return PROVIDERS.map((p) => {
+    const set = p.name === 'openai' ? st.openaiKey !== null : st.ollamaUrl !== null
+    const source = set ? 'settings' : env[p.name] ? 'environment' : null
+    const live = ctx.meaning?.[p.name]
+    return {
+      name: p.name,
+      label: p.label,
+      needs: p.needs,
+      source,
+      last4: p.needs === 'key' ? (set ? st.openaiLast4 : (env[p.name]?.last4 ?? null)) : null,
+      url: p.needs === 'url' ? (set ? st.ollamaUrl : (env[p.name]?.url ?? null)) : null,
+      model: live?.model ?? null,
+    }
+  })
+}
+
 export async function getMeaning(ctx: Ctx) {
   adminInWeb(ctx)
   const s = await meaningSettings(ctx.db)
   return {
     ...s,
     available: Object.keys(ctx.meaning ?? {}),
+    providers: await providerViews(ctx),
     warning: WARNING,
     progress: s.enabled ? await meaningProgress(ctx.db, s) : null,
   }
+}
+
+function providerOf(name: string): ProviderName {
+  const p = PROVIDERS.find((x) => x.name === name)
+  if (!p) throw notFound('meaning provider')
+  return p.name
+}
+
+// The key of a paid provider, or the address of a local one, set from the web. The key is sealed with the
+// installation secret and never given back; the audit says it was set, never what it is.
+export async function setProvider(ctx: Ctx, name: string, input: { key?: unknown; url?: unknown }) {
+  adminInWeb(ctx)
+  const p = providerOf(name)
+  const now = ctx.clock()
+  if (p === 'openai') {
+    const key = input.key
+    if (typeof key !== 'string' || key.length < 20 || key.length > 300 || /\s/.test(key)) {
+      throw invalid(
+        '"key" is the API key of the provider, as it gave it.',
+        'Paste the whole key, without spaces.',
+      )
+    }
+    const sealed = seal(ctx.mail?.secret, key)
+    await ctx.db.tx(async (db) => {
+      await db.query('UPDATE meaning_settings SET openai_key = $1, openai_key_last4 = $2 WHERE id = 1', [
+        sealed,
+        key.slice(-4),
+      ])
+      await audit(db, {
+        at: now,
+        actorId: ctx.who.accountId,
+        credentialId: ctx.who.credential.id,
+        action: 'meaning.provider',
+        outcome: 'ok',
+        detail: `${p}: key set`,
+      })
+    })
+  } else {
+    const url = typeof input.url === 'string' ? input.url.trim().replace(/\/+$/, '') : ''
+    let u: URL | null = null
+    try {
+      u = new URL(url)
+    } catch {
+      u = null
+    }
+    if (
+      !u ||
+      (u.protocol !== 'http:' && u.protocol !== 'https:') ||
+      u.username ||
+      u.password ||
+      u.search ||
+      u.hash ||
+      url.length > 300
+    ) {
+      throw invalid(
+        '"url" is the address of the provider, such as http://localhost:11434.',
+        'Give a plain http or https address.',
+      )
+    }
+    await ctx.db.tx(async (db) => {
+      await db.query('UPDATE meaning_settings SET ollama_url = $1 WHERE id = 1', [url])
+      await audit(db, {
+        at: now,
+        actorId: ctx.who.accountId,
+        credentialId: ctx.who.credential.id,
+        action: 'meaning.provider',
+        outcome: 'ok',
+        detail: `${p}: address set to ${url}`,
+      })
+    })
+  }
+  if (ctx.meaning) await applyStored(ctx.db, ctx.meaning, ctx.mail?.secret)
+  return getMeaning(ctx)
+}
+
+// Removing what was set from the web brings back what the environment has, if anything. The provider in use
+// cannot lose its key while meaning search is on: turning it off comes first, so it is never on and silent.
+export async function removeProvider(ctx: Ctx, name: string) {
+  adminInWeb(ctx)
+  const p = providerOf(name)
+  const now = ctx.clock()
+  await ctx.db.tx(async (db) => {
+    await db.query('SELECT 1 FROM meaning_settings WHERE id = 1 FOR UPDATE')
+    const s = await meaningSettings(db)
+    if (s.enabled && s.provider === p && !environmentOf(ctx.meaning ?? {})[p]) {
+      throw new AppError(
+        409,
+        'provider_in_use',
+        `Meaning search is on with ${p}: without its ${p === 'openai' ? 'key' : 'address'} it would stop.`,
+        'Turn meaning search off first, or set a new one in its place.',
+      )
+    }
+    await db.query(
+      p === 'openai'
+        ? 'UPDATE meaning_settings SET openai_key = NULL, openai_key_last4 = NULL WHERE id = 1'
+        : 'UPDATE meaning_settings SET ollama_url = NULL WHERE id = 1',
+    )
+    await audit(db, {
+      at: now,
+      actorId: ctx.who.accountId,
+      credentialId: ctx.who.credential.id,
+      action: 'meaning.provider',
+      outcome: 'ok',
+      detail: `${p}: removed`,
+    })
+  })
+  if (ctx.meaning) await applyStored(ctx.db, ctx.meaning, ctx.mail?.secret)
+  return getMeaning(ctx)
 }
 
 // Turning it on, or changing provider, needs the warning accepted in the same request (CA7). A new
@@ -94,7 +232,7 @@ export async function enableMeaning(ctx: Ctx, input: { provider: string; accept:
       `The provider "${input.provider}" is not configured in this installation.`,
       names.length
         ? `Use one of: ${names.join(', ')}.`
-        : 'Set RSC_BRAIN_OPENAI_KEY or RSC_BRAIN_OLLAMA_URL for the server, then try again.',
+        : 'Set a key or address in Admin › Meaning search (or RSC_BRAIN_OPENAI_KEY or RSC_BRAIN_OLLAMA_URL for the server), then try again.',
     )
   }
   if (input.accept !== true) {

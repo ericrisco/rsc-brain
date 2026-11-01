@@ -1196,6 +1196,124 @@ describe('the fixture API', () => {
     )
   })
 
+  it('the rest of the administration (PR25b): settings, mail, meaning search, audit, system, logo', async () => {
+    const admin = fx.scenario('signed-in')
+    const o = { scenario: admin.id, cookie: 'rscb_session=fx.acc_eric' }
+    const code = (a: Ans) => (a.body as { error?: { code: string } }).error?.code
+    // The installation's settings, field by field.
+    const read = (await call('GET', '/v1/admin/settings', o)).body as Record<string, unknown>
+    assert.equal(read.rateLimit, 600)
+    const saved = await call('PUT', '/v1/admin/settings', {
+      ...o,
+      body: { base: { factoryUrl: null }, factoryUrl: 'https://factory.example.test' },
+    })
+    assert.equal((saved.body as Record<string, unknown>).factoryUrl, 'https://factory.example.test')
+    assert.equal(
+      code(
+        await call('PUT', '/v1/admin/settings', {
+          ...o,
+          body: { base: { factoryUrl: null }, factoryUrl: null },
+        }),
+      ),
+      'settings_changed',
+    )
+    assert.equal(
+      code(await call('PUT', '/v1/admin/settings', { ...o, body: { rateLimit: 5 } })),
+      'invalid_request',
+    )
+    // Mail: the password never comes back; a test; its failures.
+    const mail = (await call('GET', '/v1/admin/mail', o)).body as {
+      base: unknown
+      settings: Record<string, unknown>
+    }
+    assert.equal(mail.settings.passwordLast4, 'wxyz')
+    const put = await call('PUT', '/v1/admin/mail', {
+      ...o,
+      body: {
+        base: mail.base,
+        host: 'down.example.test',
+        port: 587,
+        fromAddress: 'brain@example.test',
+        password: 'new-secret-abcd',
+      },
+    })
+    assert.ok(!JSON.stringify(put.body).includes('new-secret'))
+    const test = await call('POST', '/v1/admin/mail/test', { ...o, body: {} })
+    assert.equal((test.body as { sent: boolean }).sent, false)
+    assert.equal((await call('DELETE', '/v1/admin/mail', o)).status, 200)
+    assert.equal(code(await call('POST', '/v1/admin/mail/test', { ...o, body: {} })), 'mail_not_set_up')
+    // Meaning search: a key set, on, in use, off.
+    assert.equal(
+      code(await call('PUT', '/v1/admin/meaning', { ...o, body: { provider: 'openai', accept: true } })),
+      'invalid_request',
+    )
+    await call('PUT', '/v1/admin/meaning/providers/openai', {
+      ...o,
+      body: { key: 'sk-fixture-0123456789abcd' },
+    })
+    await call('PUT', '/v1/admin/meaning/providers/ollama', { ...o, body: { url: 'http://localhost:11434' } })
+    assert.equal(
+      code(await call('PUT', '/v1/admin/meaning/providers/openai', { ...o, body: { key: 'short' } })),
+      'invalid_request',
+    )
+    assert.equal(
+      (await call('PUT', '/v1/admin/meaning', { ...o, body: { provider: 'openai', accept: true } })).status,
+      200,
+    )
+    assert.equal((await call('GET', '/v1/admin/meaning', o)).status, 200)
+    assert.equal(code(await call('DELETE', '/v1/admin/meaning/providers/openai', o)), 'provider_in_use')
+    assert.equal((await call('DELETE', '/v1/admin/meaning', o)).status, 200)
+    assert.equal((await call('DELETE', '/v1/admin/meaning/providers/ollama', o)).status, 200)
+    // The audit, paged, and its download.
+    const first = (await call('GET', '/v1/admin/audit?action=member.', o)).body as {
+      items: unknown[]
+      next: string | null
+    }
+    assert.ok(first.items.length > 0)
+    const res = await fetch(`${fx.url}/v1/admin/audit/export?action=member.`, {
+      headers: { 'x-fixture-scenario': admin.id, cookie: o.cookie },
+    })
+    assert.match(String(res.headers.get('content-type')), /text\/csv/)
+    assert.equal((await res.text()).trim().split('\r\n').length - 1, first.items.length)
+    seen.add('GET /v1/admin/audit/export')
+    assert.equal((await call('GET', '/v1/admin/system', o)).status, 200)
+    // The logo.
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC',
+      'base64',
+    )
+    assert.equal(
+      code(
+        await call('PUT', '/v1/admin/branding/logo', {
+          ...o,
+          body: { contentType: 'image/svg+xml', data: 'PHN2Zz4=' },
+        }),
+      ),
+      'invalid_image',
+    )
+    const logo = await call('PUT', '/v1/admin/branding/logo', {
+      ...o,
+      body: { contentType: 'image/png', data: png.toString('base64') },
+    })
+    const url = (logo.body as { logo: { url: string } }).logo.url
+    assert.equal(((await call('GET', '/v1/branding', o)).body as { logo: { url: string } }).logo.url, url)
+    const img = await fetch(`${fx.url}${url}`, { headers: { 'x-fixture-scenario': admin.id } })
+    assert.equal(img.headers.get('content-type'), 'image/png')
+    assert.equal(img.headers.get('x-content-type-options'), 'nosniff')
+    assert.equal((await call('DELETE', '/v1/admin/branding/logo', o)).status, 200)
+    // Not the administration: refused.
+    const member = fx.scenario('member')
+    const ana = { scenario: member.id, cookie: 'rscb_session=fx.acc_ana' }
+    for (const [m, p] of [
+      ['GET', '/v1/admin/settings'],
+      ['GET', '/v1/admin/mail'],
+      ['GET', '/v1/admin/meaning'],
+      ['GET', '/v1/admin/audit'],
+      ['GET', '/v1/admin/system'],
+    ] as const)
+      assert.equal(code(await call(m, p, ana)), 'forbidden', p)
+  })
+
   it('every operation the fixture answers was checked against the description', () => {
     assert.deepEqual(
       [...fx.operations].filter((op) => !seen.has(op)),

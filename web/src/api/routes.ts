@@ -98,6 +98,24 @@ export const ROUTE_TABLE = {
   accountKeys: { route: 'GET /v1/admin/accounts/{id}/keys' },
   createService: { route: 'POST /v1/admin/services' },
   newMainKey: { route: 'POST /v1/admin/services/{id}/keys' },
+  // The rest of the administration (PR25b).
+  installSettings: { route: 'GET /v1/admin/settings' },
+  saveInstallSettings: { route: 'PUT /v1/admin/settings' },
+  mail: { route: 'GET /v1/admin/mail' },
+  saveMail: { route: 'PUT /v1/admin/mail' },
+  removeMail: { route: 'DELETE /v1/admin/mail' },
+  testMail: { route: 'POST /v1/admin/mail/test' },
+  meaning: { route: 'GET /v1/admin/meaning' },
+  meaningOn: { route: 'PUT /v1/admin/meaning' },
+  meaningOff: { route: 'DELETE /v1/admin/meaning' },
+  setProvider: { route: 'PUT /v1/admin/meaning/providers/{name}' },
+  removeProvider: { route: 'DELETE /v1/admin/meaning/providers/{name}' },
+  auditLines: { route: 'GET /v1/admin/audit' },
+  // Reached by a plain link (a download), not through the client; listed so the table covers it.
+  auditExport: { route: 'GET /v1/admin/audit/export' },
+  system: { route: 'GET /v1/admin/system' },
+  uploadLogo: { route: 'PUT /v1/admin/branding/logo' },
+  removeLogo: { route: 'DELETE /v1/admin/branding/logo' },
   revokeKey: { route: 'DELETE /v1/keys/{id}' },
 } as const satisfies Record<string, Op>
 

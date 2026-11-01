@@ -1,10 +1,14 @@
 // Providers of meaning (spec B3): they turn texts into vectors. A paid one (OpenAI, small embeddings
-// model) and a local one without a key (Ollama). Which ones exist comes from the environment; keys are
-// never stored in the database. Every vector comes back normalised to length 1.
+// model) and a local one without a key (Ollama). They come from the environment, or from the settings the
+// administration saves in the web (src/meaning/stored.ts: the key sealed, never given back). Every vector
+// comes back normalised to length 1.
 
 export type Provider = {
   name: string
   model: string
+  // To name a provider's key without showing it, and a local provider's address (Admin › Meaning search).
+  last4?: string
+  url?: string
   embed(texts: string[], o: { signal: AbortSignal }): Promise<number[][]>
 }
 
@@ -44,6 +48,7 @@ export function openai(key: string, model = 'text-embedding-3-small', dimensions
   return {
     name: 'openai',
     model: `${model}@${dimensions}`,
+    last4: key.slice(-4),
     async embed(texts, { signal }) {
       const out = await post(
         'https://api.openai.com/v1/embeddings',
@@ -65,6 +70,7 @@ export function ollama(baseUrl: string, model = 'nomic-embed-text'): Provider {
   return {
     name: 'ollama',
     model,
+    url: baseUrl,
     async embed(texts, { signal }) {
       const out = await post(`${baseUrl.replace(/\/+$/, '')}/api/embed`, { model, input: texts }, {}, signal)
       return vectors(out.embeddings, texts.length)

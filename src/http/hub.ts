@@ -45,6 +45,8 @@ export type Subscription = {
 export type EventHub = {
   // A place for one more stream of this key, or a refusal; the function gives the place back.
   admit(keyId: string): () => void
+  // How many streams are open now, and how many the installation serves (Admin › Backups & system).
+  streams(): { open: number; max: number }
   subscribe(brainId: string, push: (rows: EventRow[]) => void): Promise<Subscription>
 }
 
@@ -117,6 +119,7 @@ export function eventHub(db: Db, t: EventTimings, log: (line: string) => void): 
   const open = new Map<string, number>()
   let openTotal = 0
   return {
+    streams: () => ({ open: openTotal, max: t.total }),
     admit(keyId) {
       if ((open.get(keyId) ?? 0) >= t.perKey) {
         throw new AppError(

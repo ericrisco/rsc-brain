@@ -231,9 +231,11 @@ export const peopleRoutes: Route[] = [
     const b = obj(r.body)
     return {
       body: await updateSettings(ctxOf(r), {
+        base: b.base,
         name: b.name,
         curatorsInvite: b.curatorsInvite,
         rateLimit: b.rateLimit,
+        factoryUrl: b.factoryUrl,
       }),
     }
   }),

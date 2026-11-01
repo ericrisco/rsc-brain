@@ -13,6 +13,8 @@ type Op = {
   stream?: boolean
   // The answer is an image, not JSON (the logo of the installation).
   image?: boolean
+  // The answer is CSV (the download of the audit).
+  csv?: boolean
   query?: Record<string, string>
 }
 
@@ -46,6 +48,81 @@ const MEMBER_SET = obj({
   accountId: s('Account id.'),
   name: s('Name.'),
   role: s('reader, contributor or curator.'),
+})
+
+const INSTALLATION_SETTINGS = obj({
+  name: s('Name.'),
+  publicUrl: nul(s('Address.')),
+  curatorsInvite: b('Curators may invite.'),
+  rateLimit: n('Requests per minute of each key.'),
+  rateLimitDefault: n('The limit when none was set (600).'),
+  rateLimitMin: n('The lowest limit accepted.'),
+  rateLimitMax: n('The highest limit accepted.'),
+  factoryUrl: nul(s('The address of RSC Factory: runs referred to by a session open there.')),
+})
+const MAIL_LINE = obj({
+  at: s('When.', { format: 'date-time' }),
+  to: s('To whom.'),
+  kind: s('invitation, reset, token_expiry, proposal, notice or test.'),
+  status: s('sent, failed or skipped (mail not set up).'),
+  error: nul(s('Why it did not go.')),
+})
+const MAIL = obj({
+  configured: b('Mail is set up.'),
+  settings: {
+    ...obj({
+      host: s('The mail server.'),
+      port: n('Its port.'),
+      secure: b('TLS from the start.'),
+      user: nul(s('The account on the mail server.')),
+      hasPassword: b('A password is set (it is never given back).'),
+      passwordLast4: nul(s('Its last 4 characters, when known.')),
+      from: obj({ name: s('Sent as.'), address: s('Sent from.') }),
+    }),
+    type: ['object', 'null'],
+  },
+  base: {
+    type: 'object',
+    description: 'What a save compares: send it back as "base" with the settings you change.',
+  },
+  recent: list(MAIL_LINE, 'The last 50 mails.'),
+  failures: list(MAIL_LINE, 'The last 20 that did not go.'),
+})
+const MEANING = obj({
+  enabled: b('Meaning search is on.'),
+  provider: nul(s('Its provider.')),
+  model: nul(s('Its model.')),
+  acceptedBy: nul(s('Who accepted the warning (account id).')),
+  acceptedAt: nul(s('When.', { format: 'date-time' })),
+  available: list(s('A provider name.'), 'Providers it can use now.'),
+  providers: list(
+    obj({
+      name: s('openai or ollama.'),
+      label: s('Its name to show.'),
+      needs: s('key or url.'),
+      source: nul(s('settings (set in the web), environment, or null: not set.')),
+      last4: nul(s('The last 4 characters of its key.')),
+      url: nul(s('The address of a local provider.')),
+      model: nul(s('The model it uses.')),
+    }),
+  ),
+  warning: s('What turning it on means.'),
+  progress: nul(obj({ done: n('Texts with their meaning.'), total: n('Texts to process.') })),
+})
+const AUDIT_ROW = obj({
+  id: s('Row id.'),
+  at: s('When.', { format: 'date-time' }),
+  actor: { ...obj({ id: s('Account id.'), name: nul(s('Name.')) }), type: ['object', 'null'] },
+  key: nul(s('The key used.')),
+  action: s('What was done.'),
+  brain: nul(s('The brain (slug).')),
+  target: nul(s('What it was done to.')),
+  outcome: s('ok or denied.'),
+  detail: s('More about it.'),
+})
+const LOGO_REF = obj({
+  url: s('Where the logo is (GET /v1/branding/logo, with a version).'),
+  updatedAt: s('When it last changed.', { format: 'date-time' }),
 })
 
 const BRAIN = obj({
@@ -773,13 +850,13 @@ const HAND: Record<string, Op> = {
       'The name and logo of the installation, and whether the first-time setup is still to do (no key; answers before the setup).',
     reply: obj({
       name: s('The name of the installation; empty until the first-time setup.'),
-      logo: nul({
+      logo: {
         ...obj({
           url: s('Where the logo is (GET /v1/branding/logo).'),
           updatedAt: s('When it last changed.', { format: 'date-time' }),
         }),
         type: ['object', 'null'],
-      }),
+      },
       setupRequired: b('The first-time setup is still to do: the web leads to it.'),
       canSendMail: b(
         'The installation can send email (reset links, invitations); without it an administrator makes reset links by hand.',
@@ -1183,10 +1260,10 @@ const HAND: Record<string, Op> = {
           status: s('active or archived.'),
           members: n('How many members.'),
           curators: list(obj({ id: s('Account id.'), name: s('Name.') })),
-          pendingCurator: nul({
+          pendingCurator: {
             ...obj({ email: s('Email invited as first curator.'), invitationId: nul(s('Its invitation.')) }),
             type: ['object', 'null'],
-          }),
+          },
           youAreMember: b('You are a member (only members read it).'),
         }),
       ),
@@ -1542,23 +1619,152 @@ const HAND: Record<string, Op> = {
   },
   'GET /v1/admin/settings': {
     summary: 'The settings of the installation (administration).',
-    reply: obj({
-      name: s('Name.'),
-      publicUrl: nul(s('Address.')),
-      curatorsInvite: b('Curators may invite.'),
-      rateLimit: n('Requests per minute of each key.'),
-    }),
+    reply: INSTALLATION_SETTINGS,
   },
   'PUT /v1/admin/settings': {
-    summary: 'Change the settings of the installation (administration).',
+    summary:
+      'Change the settings of the installation (administration). With "base" (each field as you read it), a save of a field someone changed since is refused (settings_changed, with "current"); only a base asks whether it is still so ("unchanged": true).',
     body: obj(
       {
-        name: s('Name.'),
+        base: {
+          type: 'object',
+          description: 'What each field was when you read it: name, curatorsInvite, rateLimit, factoryUrl.',
+        },
+        name: s('Name (1–80 characters).'),
         curatorsInvite: b('Curators may invite.'),
-        rateLimit: n('Requests per minute of each key (1–100000).'),
+        rateLimit: n('Requests per minute of each key (60–10000).'),
+        factoryUrl: nul(s('The address of RSC Factory: https (or http on this machine); null for none.')),
       },
-      ['name', 'curatorsInvite', 'rateLimit'],
+      ['base', 'name', 'curatorsInvite', 'rateLimit', 'factoryUrl'],
     ),
+    reply: {
+      ...INSTALLATION_SETTINGS,
+      properties: {
+        ...(INSTALLATION_SETTINGS.properties as Schema),
+        unchanged: b('Only a base was sent and it still holds: nothing was written.'),
+      },
+    },
+  },
+  // The rest of the administration (B6 PR25b): mail, meaning search, the health of the service, the logo.
+  'GET /v1/admin/mail': {
+    summary:
+      'The mail settings (the password never: whether it is set and its last 4), recent mail and failures.',
+    reply: MAIL,
+  },
+  'PUT /v1/admin/mail': {
+    summary:
+      'Save the mail settings (administration). "password": left out keeps it, empty removes it; it is sealed and never given back. With "base" (as GET gives it), a save on settings someone changed since is refused (settings_changed).',
+    body: obj(
+      {
+        base: { type: 'object', description: 'The "base" of GET /v1/admin/mail, as you read it.' },
+        host: s('The mail server.'),
+        port: n('Its port (587, or 465 with secure).'),
+        secure: b('TLS from the start (port 465).'),
+        user: nul(s('The account on the mail server.')),
+        password: nul(s('Its password; sealed, never given back.')),
+        fromName: s('The name mail is sent as.'),
+        fromAddress: s('The address mail is sent from.'),
+      },
+      ['base', 'port', 'secure', 'user', 'password', 'fromName'],
+    ),
+    reply: { ...MAIL, properties: { ...(MAIL.properties as Schema), unchanged: b('Nothing was written.') } },
+  },
+  'DELETE /v1/admin/mail': {
+    summary: 'Remove the mail settings: no mail goes until they are saved again.',
+    reply: MAIL,
+  },
+  'POST /v1/admin/mail/test': {
+    summary: 'Send a test mail (to you, or to "to").',
+    reply: obj({ sent: b('It went.'), error: nul(s('Why it did not.')) }),
+  },
+  'GET /v1/admin/meaning': {
+    summary:
+      'Meaning search: on or off, its provider, the providers known, the warning and the progress (web).',
+    reply: MEANING,
+  },
+  'PUT /v1/admin/meaning': {
+    summary:
+      'Turn meaning search on with a provider; the warning must be accepted in the same request (web).',
+    body: obj({ provider: s('A provider of "available".'), accept: b('The warning is accepted.') }),
+    reply: MEANING,
+  },
+  'DELETE /v1/admin/meaning': {
+    summary: 'Turn meaning search off (web).',
+    reply: MEANING,
+  },
+  'PUT /v1/admin/meaning/providers/{name}': {
+    summary:
+      'Set the key (openai) or the address (ollama) of a provider from the web; a key is sealed and never given back (web).',
+    body: obj({ key: s('The API key of a paid provider.'), url: s('The address of a local provider.') }, [
+      'key',
+      'url',
+    ]),
+    reply: MEANING,
+  },
+  'DELETE /v1/admin/meaning/providers/{name}': {
+    summary:
+      "Remove what was set from the web for a provider (the environment's comes back). 409 provider_in_use while meaning search uses it (web).",
+    reply: MEANING,
+  },
+  'GET /v1/admin/audit': {
+    summary: 'The audit of the installation, newest first, 100 a page (administration).',
+    query: {
+      action: 'An action, or a group ending in "." (such as "member.").',
+      actor: 'An account id.',
+      brain: 'A brain slug.',
+      outcome: 'ok or denied.',
+      from: 'From this time (inclusive).',
+      to: 'Up to this time (exclusive).',
+      before: 'The "next" of the previous page.',
+    },
+    reply: obj({ items: list(AUDIT_ROW), next: NEXT }),
+  },
+  'GET /v1/admin/audit/export': {
+    summary:
+      'The same rows as GET /v1/admin/audit with the same filters, all of them (up to 100 000), as CSV. No cell starts a formula. X-Audit-Truncated says when more were left out.',
+    query: {
+      action: 'As in GET /v1/admin/audit.',
+      actor: 'As in GET /v1/admin/audit.',
+      brain: 'As in GET /v1/admin/audit.',
+      outcome: 'As in GET /v1/admin/audit.',
+      from: 'As in GET /v1/admin/audit.',
+      to: 'As in GET /v1/admin/audit.',
+    },
+    csv: true,
+  },
+  'GET /v1/admin/system': {
+    summary:
+      'The health of the service (administration): version, start, database, meaning search, streams, mail.',
+    reply: obj({
+      version: s('The version of rsc-brain.'),
+      startedAt: s('When this process started.', { format: 'date-time' }),
+      database: obj({ ok: b('It answers.'), migration: nul(s('The last migration applied.')) }),
+      meaning: obj({
+        enabled: b('Meaning search is on.'),
+        provider: nul(s('Its provider.')),
+        progress: nul(obj({ done: n('Texts with their meaning.'), total: n('Texts to process.') })),
+      }),
+      streams: obj({ open: n('Event streams open now.'), max: n('Event streams it serves at once.') }),
+      mail: obj({
+        configured: b('Mail is set up.'),
+        lastFailureAt: nul(s('The last mail that failed.', { format: 'date-time' })),
+      }),
+    }),
+  },
+  'PUT /v1/admin/branding/logo': {
+    summary:
+      'Upload the logo (administration): a PNG, JPEG or WebP (never SVG), its type read from the bytes, at most 2 MB and 4096 px a side; the request may be up to 3 MiB. 413 image_too_large; 422 invalid_image.',
+    body: obj({
+      contentType: s('image/png, image/jpeg or image/webp.', {
+        enum: ['image/png', 'image/jpeg', 'image/webp'],
+      }),
+      data: s('The image, as base64.'),
+    }),
+    reply: obj({ logo: LOGO_REF }),
+  },
+  'DELETE /v1/admin/branding/logo': {
+    summary: 'Remove the logo: the web shows the RSC mark again.',
+    reply: obj({ logo: { type: 'null' } }),
   },
   // The settings of a brain and the administration of people and service accounts (B6 PR25a).
   'GET /v1/brains/{slug}/wiki/settings': {
@@ -1810,15 +2016,20 @@ export function openapi(routes: Route[], serverUrl: string | null): Schema {
                 ]),
               ),
             }
-          : hand?.stream
+          : hand?.csv
             ? {
-                description: 'A stream of events: "id:", "event:" and "data:" lines; "data" is an Event.',
-                content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/Event' } } },
+                description: 'A CSV file, one row per audit line.',
+                content: { 'text/csv': { schema: { type: 'string' } } },
               }
-            : {
-                description: hand ? 'Success.' : 'Success (201 when something was created).',
-                content: { 'application/json': { schema: hand?.reply ?? { type: 'object' } } },
-              }
+            : hand?.stream
+              ? {
+                  description: 'A stream of events: "id:", "event:" and "data:" lines; "data" is an Event.',
+                  content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/Event' } } },
+                }
+              : {
+                  description: hand ? 'Success.' : 'Success (201 when something was created).',
+                  content: { 'application/json': { schema: hand?.reply ?? { type: 'object' } } },
+                }
     const op: Schema = {
       operationId: operationId(o.method, o.path),
       summary: hand?.summary ?? `${o.method} ${o.path}`,

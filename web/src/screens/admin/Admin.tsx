@@ -63,11 +63,17 @@ const TABS = [
   { href: '/admin/people', label: A.people },
   { href: '/admin/invitations', label: A.invitations },
   { href: '/admin/services', label: A.services },
+  { href: '/admin/email', label: A.email },
+  { href: '/admin/meaning', label: A.meaning },
+  { href: '/admin/limits', label: A.limits },
+  { href: '/admin/audit', label: A.audit },
+  { href: '/admin/system', label: A.system },
+  { href: '/admin/branding', label: A.branding },
 ]
 
 // The frame of every page of the administration: its title, its sections, and the way out for whoever
 // is not an administrator (spec B6 «Sin permiso»: why, and whom to ask).
-function AdminFrame({ children }: { children: (who: Me) => ComponentChildren }) {
+export function AdminFrame({ children }: { children: (who: Me) => ComponentChildren }) {
   const { path } = useLocation()
   const who = me().data.value
   // «You removed your own administrator rights» is said once, then the flag is gone.
@@ -111,7 +117,7 @@ function AdminFrame({ children }: { children: (who: Me) => ComponentChildren }) 
 
 // What a change says, announced; `focus` bumps to take the keyboard there once drawn (the control pressed
 // may be gone or changed), so it never falls to the page.
-function Said({ text, focus = 0 }: { text: string | null; focus?: number }) {
+export function Said({ text, focus = 0 }: { text: string | null; focus?: number }) {
   useEffect(() => {
     if (focus) document.getElementById('admin-said')?.focus()
   }, [focus])
@@ -122,7 +128,7 @@ function Said({ text, focus = 0 }: { text: string | null; focus?: number }) {
   )
 }
 
-function useSaid() {
+export function useSaid() {
   const [said, setSaid] = useState<string | null>(null)
   const [focus, setFocus] = useState(0)
   return {

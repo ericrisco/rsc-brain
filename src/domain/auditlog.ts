@@ -105,10 +105,11 @@ export async function brainAudit(ctx: Ctx, slug: string, f: AuditFilters) {
   return { items: page, next: more ? (page.at(-1)?.id ?? null) : null }
 }
 
-// A cell a spreadsheet must not run as a formula.
-const cell = (v: string | null) => {
+// A cell a spreadsheet must not run as a formula: one that starts with = + - @, a tab or a carriage return,
+// also after spaces or line breaks (some spreadsheets skip them), starts with a quote that makes it text.
+export const csvCell = (v: string | null) => {
   let s = v ?? ''
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
+  if (/^\s*[=+\-@]/.test(s) || /^[\t\r]/.test(s)) s = `'${s}`
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
@@ -140,7 +141,7 @@ export async function exportAudit(ctx: Ctx, f: AuditFilters): Promise<{ csv: str
       r.outcome,
       r.detail,
     ]
-      .map((v) => cell(v))
+      .map((v) => csvCell(v))
       .join(','),
   )
   return { csv: `${[head, ...lines].join('\r\n')}\r\n`, truncated }
