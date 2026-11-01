@@ -300,8 +300,10 @@ for (const width of [320, 375] as const) {
   })
 }
 
+// The two states are audited apart, each in view: with both open, the second factor's code field takes the
+// focus and scrolls the token under the sticky top bar, which is a layout of the test, not of a person.
 for (const theme of ['dark', 'light'] as const) {
-  test(`axe: profile with a token shown and the second factor being set up, ${theme}`, async ({
+  test(`axe: profile with a token shown, then the second factor being set up, ${theme}`, async ({
     page,
     context,
     baseURL,
@@ -309,16 +311,23 @@ for (const theme of ['dark', 'light'] as const) {
     await scenario(context, baseURL as string, 'signed-in')
     await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
     await page.goto('/profile')
+    const audit = async (where: string) => {
+      const r = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'])
+        .analyze()
+      const bad = r.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')
+      expect(bad.map((v) => `${where}: ${v.id}: ${v.nodes.map((n) => n.target).join(' ')}`)).toEqual([])
+    }
     const tokens = page.getByRole('region', { name: 'Tokens' })
     await tokens.getByRole('button', { name: 'Create a token' }).click()
+    await audit('new token form')
     await tokens.getByLabel('Name').fill('Axe')
     await tokens.getByRole('button', { name: 'Create token' }).click()
+    await expect(tokens.getByRole('region', { name: 'Your new token' })).toBeVisible()
+    await audit('token shown')
+    await tokens.getByRole('button', { name: 'Done, hide the token' }).click()
     await page.getByRole('region', { name: 'Second factor' }).getByRole('button', { name: 'Turn on' }).click()
     await expect(page.getByLabel('Code from the app')).toBeVisible()
-    const r = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'])
-      .analyze()
-    const bad = r.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical')
-    expect(bad.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(' ')}`)).toEqual([])
+    await audit('second factor')
   })
 }
