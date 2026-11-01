@@ -17,6 +17,7 @@ export type AuditFilters = {
   from?: string | undefined // ISO time, inclusive
   to?: string | undefined // ISO time, exclusive
   before?: string | undefined // the id of the last row of the previous page
+  upTo?: string | undefined // the id of the newest row a view showed: nothing newer (the download of that view)
 }
 
 function timeOf(v: string | undefined, field: string): Date | undefined {
@@ -56,6 +57,11 @@ async function query(ctx: Ctx, f: AuditFilters, brainId: string | null, limit: n
   const to = timeOf(f.to, 'to')
   if (from) where.push(`a.at >= ${p(from)}`)
   if (to) where.push(`a.at < ${p(to)}`)
+  if (f.upTo) {
+    if (!/^\d{1,18}$/.test(f.upTo))
+      throw invalid('"upTo" is the id of a row.', 'Use the id of the first line the view shows.')
+    where.push(`a.id <= ${p(f.upTo)}`)
+  }
   if (f.before) {
     if (!/^\d{1,18}$/.test(f.before))
       throw invalid('"before" is the id of a row.', 'Use the "next" value of the previous page.')
@@ -88,10 +94,13 @@ const view = (r: Row) => ({
 
 export async function readAudit(ctx: Ctx, f: AuditFilters) {
   adminOnly(ctx)
+  // The newest line there is as the view is read, taken first: the download of this view (even an empty one)
+  // is pinned to it with "upTo", so lines written after the view are not in the file.
+  const top = await ctx.db.one<{ id: string | null }>('SELECT max(id)::text AS id FROM audit')
   const items = await query(ctx, f, null, AUDIT_PAGE + 1)
   const more = items.length > AUDIT_PAGE
   const page = items.slice(0, AUDIT_PAGE)
-  return { items: page, next: more ? (page.at(-1)?.id ?? null) : null }
+  return { items: page, next: more ? (page.at(-1)?.id ?? null) : null, upTo: top?.id ?? '0' }
 }
 
 // A curator sees the audit of their brain.
@@ -105,10 +114,11 @@ export async function brainAudit(ctx: Ctx, slug: string, f: AuditFilters) {
   return { items: page, next: more ? (page.at(-1)?.id ?? null) : null }
 }
 
-// A cell a spreadsheet must not run as a formula.
-const cell = (v: string | null) => {
+// A cell a spreadsheet must not run as a formula: one that starts with = + - @, a tab or a carriage return,
+// also after spaces or line breaks (some spreadsheets skip them), starts with a quote that makes it text.
+export const csvCell = (v: string | null) => {
   let s = v ?? ''
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
+  if (/^\s*[=+\-@]/.test(s) || /^[\t\r]/.test(s)) s = `'${s}`
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
 }
 
@@ -140,7 +150,7 @@ export async function exportAudit(ctx: Ctx, f: AuditFilters): Promise<{ csv: str
       r.outcome,
       r.detail,
     ]
-      .map((v) => cell(v))
+      .map((v) => csvCell(v))
       .join(','),
   )
   return { csv: `${[head, ...lines].join('\r\n')}\r\n`, truncated }

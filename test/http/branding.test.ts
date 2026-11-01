@@ -1,7 +1,7 @@
 // Spec B6 «Admin › Branding» and plan §3.5 G1, G2: the name and logo of the installation are public — the
 // sign-in page and an invitation show them before anyone has a key — and they answer before the
-// first-time setup, so the web can lead to it. Uploading a logo arrives with G3 (plan T045): until then
-// there is no logo, and the logo address says so with a way out.
+// first-time setup, so the web can lead to it. Without a logo (G3 uploads one: test/accounts/admin-system.test.ts),
+// the logo address says so with a way out.
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { skipPg } from '../helpers/pg.ts'

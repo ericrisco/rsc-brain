@@ -128,8 +128,8 @@ export async function whoAmI(ctx: Ctx) {
       ref: w.credential.ref,
       agent: w.credential.agent,
     },
-    // The address of RSC Factory arrives with the settings of the administration (plan G4, PR25).
-    installation: { name: inst.name, factoryUrl: null as string | null },
+    // The address of RSC Factory the administration set (plan G4): a run's reference opens there (CA9).
+    installation: { name: inst.name, factoryUrl: inst.factoryUrl },
   }
 }
 

@@ -14,6 +14,7 @@ import { DEFAULT_GUIDE } from '../../../src/domain/wiki/pages.ts'
 import { answerWeb, openWeb } from '../../../src/http/web.ts'
 import { AGENT_IDS, type AgentId, connectKit } from '../../../src/mcp/kit.ts'
 import { type GenPage, generate } from '../../../web/test/data/generate.ts'
+import { ADMIN_OPS, ADMIN_PRIVATE, adminBehind, brandingLogo, logoAnswer } from './admin.ts'
 import * as G from './graph.ts'
 import * as J from './journal.ts'
 import * as P from './proposals.ts'
@@ -74,6 +75,11 @@ export type Screen =
   | 'settings'
   | 'repos'
   | 'keys'
+  | 'admin-settings'
+  | 'admin-email'
+  | 'admin-meaning'
+  | 'admin-audit'
+  | 'admin-system'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
 // alone: the administrator the setup made, the only person in the installation.
@@ -235,7 +241,7 @@ const LOOKS = ['search', 'read']
 const sees = (v: Follower['viewer'], e: { kind: string; who: string | null }) =>
   v.curator || !LOOKS.includes(e.kind) || e.who === v.id
 
-type Answer = { status: number; body: unknown; headers?: Record<string, string> }
+type Answer = { status: number; body: unknown; headers?: Record<string, string>; raw?: Buffer | string }
 type Ctx = {
   s: Scen
   params: Record<string, string>
@@ -601,15 +607,18 @@ const sessionCookie = (a: Account) => `rscb_session=fx.${a.id}; Path=/; HttpOnly
 
 // The operations the fixture answers, in the server's own words where the server has words.
 const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
+  // The rest of the administration (PR25b), in its own module.
+  ...(ADMIN_OPS as unknown as Record<string, { screen?: Screen; run: (c: Ctx) => Answer }>),
   'GET /v1/branding': {
     screen: 'branding',
     run: ({ s }) => ({
       status: 200,
-      body: { name: s.name, logo: null, setupRequired: !s.setupDone, canSendMail: s.mail },
+      body: { name: s.name, logo: brandingLogo(s), setupRequired: !s.setupDone, canSendMail: s.mail },
     }),
   },
   'GET /v1/branding/logo': {
-    run: () =>
+    run: ({ s }) =>
+      logoAnswer(s) ??
       err(
         404,
         'no_logo',
@@ -2358,6 +2367,7 @@ function healthOf(slug: string, st: State | undefined) {
 
 // Paths that need a session; the rest are public, as on the server.
 const PRIVATE = new Set([
+  ...ADMIN_PRIVATE,
   'GET /v1/brains/{slug}/wiki/settings',
   'PUT /v1/brains/{slug}/wiki/settings',
   'POST /v1/brains/{slug}/members',
@@ -3009,6 +3019,14 @@ export async function startFixture(
       res.writeHead(204, { 'cache-control': 'no-store', ...(a.headers ?? {}) })
       return res.end()
     }
+    if (a.raw !== undefined) {
+      res.writeHead(a.status, {
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+        ...(a.headers ?? {}),
+      })
+      return res.end(a.raw)
+    }
     const text = JSON.stringify(a.body)
     res.writeHead(a.status, {
       'content-type': 'application/json; charset=utf-8',
@@ -3107,6 +3125,14 @@ export async function startFixture(
             ...(typeof b.to === 'string' ? { address: b.to } : {}),
           },
         )
+        return send(res, { status: 200, body: {} })
+      }
+      // Another administrator saves the installation's settings or mail meanwhile (PR25b).
+      const adminEdit = /^\/__fixture\/scenarios\/([\w]+)\/admin-edit$/.exec(url.pathname)
+      if (adminEdit && method === 'POST') {
+        const s = scenarios.get(adminEdit[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        adminBehind(s, await bodyOf(req))
         return send(res, { status: 200, body: {} })
       }
       // Another curator saves the settings of a brain meanwhile (the conflict of a save, PR25a).

@@ -34,8 +34,10 @@ const handler = createHandler({
   clock: () => new Date(),
   secret: 'e2e-secret-of-at-least-thirty-two-characters',
   web: DIST_WEB,
-  mailTransport: () => ({
+  // A mail server that cannot be reached is one whose name starts with "down." (the failures of Admin › Email).
+  mailTransport: (settings) => ({
     async send(m) {
+      if (settings.host.startsWith('down.')) throw new Error(`getaddrinfo ENOTFOUND ${settings.host}`)
       mails.push(m)
     },
   }),

@@ -40,6 +40,8 @@ export type PublicReq = {
   // The live feed of events, and its rhythm (spec B5 «Flujo de eventos»).
   hub: EventHub
   timings: EventTimings
+  // When this process started serving (Admin › Backups & system).
+  startedAt: Date
 }
 export type Req = PublicReq & { who: Principal }
 // A stream the server keeps writing to (Server-Sent Events) until the client leaves or `end` is called.
@@ -72,6 +74,10 @@ export type Route = {
   public?: (r: PublicReq) => Promise<Reply>
   // Answers before the first-time setup is done.
   beforeSetup?: boolean
+  // A body bigger than the usual 1 MiB is accepted, up to this many bytes (the logo, plan §0).
+  maxBody?: number
+  // Only the administration (web): checked before the body is read.
+  admin?: boolean
 }
 
 export function publicRoute(

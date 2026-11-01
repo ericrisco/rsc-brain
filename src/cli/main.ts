@@ -2,6 +2,7 @@
 // rsc-brain command line. Each command says what it did, or what to do when it cannot.
 import { createServer } from 'node:http'
 import { parseArgs } from 'node:util'
+import { resealV1 } from '../auth/reseal.ts'
 import { readConfig } from '../config.ts'
 import { systemClock } from '../core/clock.ts'
 import { AppError } from '../core/errors.ts'
@@ -17,6 +18,7 @@ import { closeIdle } from '../domain/sessions.ts'
 import { foldTrail } from '../domain/trail.ts'
 import { createHandler } from '../http/app.ts'
 import { providersFromEnv } from '../meaning/providers.ts'
+import { applyStored } from '../meaning/stored.ts'
 import { runBridge } from './bridge.ts'
 import { sessionStart, stop } from './hooks.ts'
 import { mcpAddress, NO_TOKEN, readToken, UsageError } from './remote.ts'
@@ -78,9 +80,13 @@ async function main(argv: string[]): Promise<number> {
     const cfg = readConfig()
     const db = openPool(cfg.databaseUrl)
     await migrate(db)
-    // Providers of meaning come from the environment; meaning search stays off until the
-    // administration turns it on in the web (spec B3).
+    // What was sealed before purposes is sealed again, bound to its column (once; logged).
+    const resealed = await resealV1(db, cfg.secret)
+    if (resealed) out(`Sealed ${resealed} stored secret(s) again in the current format.\n`)
+    // Providers of meaning come from the environment, and from what the administration set in the web;
+    // meaning search stays off until the administration turns it on there (spec B3).
     const meaning = providersFromEnv()
+    await applyStored(db, meaning, cfg.secret)
     const server = createServer(
       createHandler({
         db,

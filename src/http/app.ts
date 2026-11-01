@@ -8,6 +8,7 @@ import { bearer, resolveKey, sessionCookie } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
+import { adminOnly } from '../domain/guards.ts'
 import { installation, setupDone } from '../domain/installation.ts'
 import type { Outbox } from '../mail/mail.ts'
 import { mcpRoutes } from '../mcp/server.ts'
@@ -38,6 +39,7 @@ import { meaningRoutes } from './routes/meaning.ts'
 import { oauthRoutes } from './routes/oauth.ts'
 import { peopleRoutes } from './routes/people.ts'
 import { recallRoutes } from './routes/recall.ts'
+import { systemRoutes } from './routes/system.ts'
 import { wikiRoutes } from './routes/wiki.ts'
 import { answerWeb, openWeb } from './web.ts'
 
@@ -82,6 +84,7 @@ export const ROUTES: Route[] = [
   ...eventRoutes,
   ...connectRoutes,
   ...brandingRoutes,
+  ...systemRoutes,
 ]
 // The MCP endpoint calls the same routes a program would (spec B5 parity).
 ROUTES.push(...mcpRoutes(() => ROUTES))
@@ -92,21 +95,43 @@ ROUTES.push(
   })),
 )
 
-async function readBody(req: IncomingMessage): Promise<unknown> {
+const tooLarge = (max: number) => {
+  const e = new AppError(
+    413,
+    'body_too_large',
+    `The request body is larger than ${Math.round(max / 1_048_576)} MB.`,
+    'Send a smaller request.',
+  )
+  // The rest of the body is not read: the connection ends with the answer, so it is never reused mid-body.
+  e.headers = { connection: 'close' }
+  return e
+}
+
+// Reads the body up to `max` bytes and not one more: a declared length over it is refused before reading,
+// and a body that passes it while it arrives is left unread from there (the stream is paused, not destroyed,
+// so the refusal still reaches the client).
+async function readBody(req: IncomingMessage, max = MAX_BODY): Promise<unknown> {
+  const declared = Number(req.headers['content-length'])
+  if (Number.isFinite(declared) && declared > max) throw tooLarge(max)
   const chunks: Buffer[] = []
   let size = 0
-  for await (const chunk of req) {
-    size += (chunk as Buffer).length
-    if (size > MAX_BODY) {
-      throw new AppError(
-        413,
-        'body_too_large',
-        'The request body is larger than 1 MB.',
-        'Send a smaller request.',
-      )
+  await new Promise<void>((resolve, reject) => {
+    const onData = (chunk: Buffer) => {
+      size += chunk.length
+      if (size > max) {
+        req.off('data', onData)
+        req.off('end', resolve)
+        req.pause()
+        chunks.length = 0
+        reject(tooLarge(max))
+        return
+      }
+      chunks.push(chunk)
     }
-    chunks.push(chunk as Buffer)
-  }
+    req.on('data', onData)
+    req.on('end', resolve)
+    req.on('error', reject)
+  })
   if (size === 0) return undefined
   let parsed: unknown
   // Forms (the sign-in and consent pages, and the token endpoint of the standard sign-in) arrive
@@ -203,9 +228,20 @@ function send(
   compress: { route: boolean; accepts: boolean } = { route: false, accepts: false },
 ): void {
   // Nothing to say back (a password changed): no body at all, as 204 requires.
-  if (status === 204) {
-    res.writeHead(204, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...headers })
+  if (status === 204 || status === 304) {
+    res.writeHead(status, { 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', ...headers })
     res.end()
+    return
+  }
+  // Bytes (the logo) go as they are, with the headers the route gave.
+  if (Buffer.isBuffer(body)) {
+    res.writeHead(status, {
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+      ...headers,
+      'content-length': body.length,
+    })
+    res.end(body)
     return
   }
   const raw = typeof body === 'string' && headers['content-type'] !== undefined
@@ -287,9 +323,12 @@ export function createHandler(deps: AppDeps) {
   const timings = { ...EVENT_TIMINGS, ...(deps.events ?? {}) }
   const hub = eventHub(deps.db, timings, log)
   const web = deps.web === false ? null : openWeb(deps.web ?? WEB_ROOT)
+  const startedAt = deps.clock()
   // Once the first-time setup is done it stays done: no need to ask the database again.
   let ready = false
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    // Whether the body was read: a refusal sent before it (or instead of it) closes the connection.
+    let bodyRead = false
     try {
       const url = new URL(req.url ?? '/', 'http://localhost')
       const method = req.method ?? 'GET'
@@ -358,10 +397,13 @@ export function createHandler(deps: AppDeps) {
         rate,
         hub,
         timings,
+        startedAt,
       }
       if (found.route.public) {
         // A page that a browser posts to checks its own origin; JSON callers send no cookie here.
-        const reply = await found.route.public({ ...base, body: await readBody(req) })
+        const body = await readBody(req)
+        bodyRead = true
+        const reply = await found.route.public({ ...base, body })
         return send(res, reply.status ?? 200, reply.body, reply.headers)
       }
       // A cookie-borne write must come from the web itself: a page elsewhere cannot add this header
@@ -376,7 +418,10 @@ export function createHandler(deps: AppDeps) {
       }
       const who = await resolveKey(deps.db, key ?? cookie, deps.clock(), key ? 'bearer' : 'cookie', conn)
       rate.take(who.credential.id, who.rateLimit)
-      const body = await readBody(req)
+      // A route only the administration uses refuses anyone else before reading a (large) body.
+      if (found.route.admin) adminOnly({ db: deps.db, clock: deps.clock, who })
+      const body = await readBody(req, found.route.maxBody)
+      bodyRead = true
       const reply = await found.route.handler({ ...base, body, who })
       if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)
       send(res, reply.status ?? 200, reply.body, reply.headers, {
@@ -384,6 +429,16 @@ export function createHandler(deps: AppDeps) {
         accepts: acceptsGzip(req.headers['accept-encoding']),
       })
     } catch (err) {
+      // A refusal before the body was read (401, 403, 404, 413…): the rest of it is never read, so the
+      // connection ends. The answer goes first; the socket is let go a moment after it is sent, so the client
+      // reads the refusal before the connection drops.
+      const unread =
+        !bodyRead &&
+        (Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'] !== undefined)
+      if (unread && !res.headersSent) {
+        res.setHeader('connection', 'close')
+        res.once('finish', () => setTimeout(() => req.socket.destroy(), 100).unref())
+      }
       // The standard sign-in's endpoints answer in the standard's shape, even for a malformed request.
       if (
         err instanceof AppError &&

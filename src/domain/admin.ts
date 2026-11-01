@@ -3,7 +3,6 @@
 // content), joining one as a member, the settings and the mail.
 import type { Role } from '../auth/can.ts'
 import { memberRole } from '../auth/principal.ts'
-import { noVault } from '../auth/vault.ts'
 import { AppError, brainNotFound, conflict, invalid, notFound } from '../core/errors.ts'
 import type { Row } from '../db/db.ts'
 import { type MailSettings, mailSettings, sealPassword, send, storeMail } from '../mail/mail.ts'
@@ -12,7 +11,14 @@ import { addMember } from './brains.ts'
 import { type Ctx, ok } from './context.ts'
 import { joinAsAdmin } from './curation.ts'
 import { adminOnly, EMAIL, emailOf } from './guards.ts'
-import { DEFAULT_RATE_LIMIT, installation, MAX_RATE_LIMIT } from './installation.ts'
+import {
+  DEFAULT_RATE_LIMIT,
+  factoryUrlOf,
+  type Installation,
+  installation,
+  MAX_RATE_LIMIT,
+  MIN_RATE_LIMIT,
+} from './installation.ts'
 import { type Minted, mintMainKey } from './keys.ts'
 import { curatorsOf, notify } from './notices.ts'
 
@@ -229,44 +235,126 @@ export async function joinBrain(ctx: Ctx, slug: string) {
   return { joined, role: (await memberRole(ctx.db, b.id, ctx.who.accountId)) as Role }
 }
 
-export async function getSettings(ctx: Ctx) {
-  adminOnly(ctx)
-  const i = await installation(ctx.db)
-  return { name: i.name, publicUrl: i.publicUrl, curatorsInvite: i.curatorsInvite, rateLimit: i.rateLimit }
+// The settings of the installation, as the administration reads and saves them: each field compared on
+// save with the value it was read at (per-field compare-and-set), like a brain's settings.
+const INSTALLATION_FIELDS = ['name', 'curatorsInvite', 'rateLimit', 'factoryUrl'] as const
+type InstallationField = (typeof INSTALLATION_FIELDS)[number]
+
+function settingsView(i: Installation) {
+  return {
+    name: i.name,
+    publicUrl: i.publicUrl,
+    curatorsInvite: i.curatorsInvite,
+    rateLimit: i.rateLimit,
+    rateLimitDefault: DEFAULT_RATE_LIMIT,
+    rateLimitMin: MIN_RATE_LIMIT,
+    rateLimitMax: MAX_RATE_LIMIT,
+    factoryUrl: i.factoryUrl,
+  }
 }
 
-// rateLimit: the requests per minute each key may make (spec B5).
+export async function getSettings(ctx: Ctx) {
+  adminOnly(ctx)
+  return settingsView(await installation(ctx.db))
+}
+
+// What every field was when the person read it: a plain object of known fields, or nothing.
+export function baseOf<K extends string>(
+  v: unknown,
+  fields: readonly K[],
+): Partial<Record<K, unknown>> | undefined {
+  if (v === undefined) return undefined
+  if (
+    v === null ||
+    typeof v !== 'object' ||
+    Array.isArray(v) ||
+    Object.keys(v).some((k) => !(fields as readonly string[]).includes(k))
+  ) {
+    throw invalid(
+      `"base" holds what each field was when you read it: ${fields.join(', ')}.`,
+      'Send the values you read, or leave "base" out.',
+    )
+  }
+  return v as Partial<Record<K, unknown>>
+}
+
+const settingsChanged = (moved: string[], current: unknown) => {
+  const e = conflict(
+    'settings_changed',
+    `Someone changed ${moved.join(', ')} since you read ${moved.length === 1 ? 'it' : 'them'}.`,
+    'Read the current values in "current", then save your change again on top of them.',
+  )
+  e.current = current
+  return e
+}
+
+// rateLimit: the requests per minute each key may make (spec B5). factoryUrl: where runs of RSC Factory
+// open (plan G4). `base`: what each field was when read; a field someone changed since refuses the whole
+// save (409 with the values now); only a base, nothing to change, asks whether it is still so.
 export async function updateSettings(
   ctx: Ctx,
-  input: { name?: unknown; curatorsInvite?: unknown; rateLimit?: unknown },
+  input: {
+    base?: unknown
+    name?: unknown
+    curatorsInvite?: unknown
+    rateLimit?: unknown
+    factoryUrl?: unknown
+  },
 ) {
   adminOnly(ctx)
+  const base = baseOf(input.base, INSTALLATION_FIELDS)
   if (input.curatorsInvite !== undefined && typeof input.curatorsInvite !== 'boolean') {
     throw invalid('"curatorsInvite" is true or false.', 'Fix "curatorsInvite".')
   }
   const limit = input.rateLimit
   if (
     limit !== undefined &&
-    (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > MAX_RATE_LIMIT)
+    (typeof limit !== 'number' ||
+      !Number.isInteger(limit) ||
+      limit < MIN_RATE_LIMIT ||
+      limit > MAX_RATE_LIMIT)
   ) {
     throw invalid(
-      `"rateLimit" is the requests per minute of each key: a whole number from 1 to ${MAX_RATE_LIMIT}.`,
+      `"rateLimit" is the requests per minute of each key: a whole number from ${MIN_RATE_LIMIT} to ${MAX_RATE_LIMIT}.`,
       `Fix "rateLimit" (the default is ${DEFAULT_RATE_LIMIT}).`,
     )
   }
-  if (limit !== undefined) {
-    await ctx.db.query('UPDATE installation SET rate_limit = $1 WHERE id = 1', [limit])
-  }
+  let name: string | undefined
   if (input.name !== undefined) {
-    const n = typeof input.name === 'string' ? input.name.trim() : ''
-    if (!n || n.length > 80) throw invalid('The installation name has 1 to 80 characters.', 'Shorten it.')
-    await ctx.db.query('UPDATE installation SET name = $1 WHERE id = 1', [n])
+    name = typeof input.name === 'string' ? input.name.trim() : ''
+    if (!name || name.length > 80)
+      throw invalid('The installation name has 1 to 80 characters.', 'Shorten it.')
   }
-  if (input.curatorsInvite !== undefined) {
-    await ctx.db.query('UPDATE installation SET curators_invite = $1 WHERE id = 1', [input.curatorsInvite])
-  }
-  await ok(ctx, 'settings.update', null, 'installation', JSON.stringify(input).slice(0, 300))
-  return getSettings(ctx)
+  const factoryUrl = input.factoryUrl === undefined ? undefined : factoryUrlOf(input.factoryUrl)
+  return ctx.db.tx(async (db) => {
+    // Saves of the installation's settings take turns, so two on the same value cannot both pass.
+    await db.query('SELECT 1 FROM installation WHERE id = 1 FOR UPDATE')
+    const now = await installation(db)
+    if (base) {
+      const moved = (Object.keys(base) as InstallationField[]).filter((f) => now[f] !== base[f])
+      if (moved.length) throw settingsChanged(moved, settingsView(now))
+    }
+    const next: Partial<Record<InstallationField, unknown>> = {}
+    if (name !== undefined && name !== now.name) next.name = name
+    if (input.curatorsInvite !== undefined && input.curatorsInvite !== now.curatorsInvite)
+      next.curatorsInvite = input.curatorsInvite
+    if (limit !== undefined && limit !== now.rateLimit) next.rateLimit = limit
+    if (factoryUrl !== undefined && factoryUrl !== now.factoryUrl) next.factoryUrl = factoryUrl
+    const changed = Object.keys(next) as InstallationField[]
+    if (changed.length === 0) return { ...settingsView(now), ...(base ? { unchanged: true as const } : {}) }
+    const column = {
+      name: 'name',
+      curatorsInvite: 'curators_invite',
+      rateLimit: 'rate_limit',
+      factoryUrl: 'factory_url',
+    }
+    await db.query(
+      `UPDATE installation SET ${changed.map((f, i) => `${column[f]} = $${i + 1}`).join(', ')} WHERE id = 1`,
+      changed.map((f) => next[f]),
+    )
+    await ok({ ...ctx, db }, 'settings.update', null, 'installation', JSON.stringify(next).slice(0, 300))
+    return settingsView(await installation(db))
+  })
 }
 
 // Service accounts: a name, brains with at most the contributor role, whether it may create brains and
@@ -390,13 +478,65 @@ export function keyView(k: Row, now: Date) {
   }
 }
 
-// Mail: the account that sends. The password is sealed with the installation secret, and never shown.
-export async function getMail(ctx: Ctx) {
-  adminOnly(ctx)
-  const s = await mailSettings(ctx.db)
-  const log = await ctx.db.query(
+// Mail: the account that sends. The password is sealed with the installation secret and never shown, not even
+// in part: the administration sees whether one is set. A version number, raised at each new password, lets a
+// save see that someone set another one meanwhile (whatever its characters).
+const MAIL_FIELDS = [
+  'configured',
+  'host',
+  'port',
+  'secure',
+  'user',
+  'fromName',
+  'fromAddress',
+  'hasPassword',
+  'passwordVersion',
+] as const
+type MailField = (typeof MAIL_FIELDS)[number]
+
+// What the mail form shows, as a save compares it (the password by whether it is set and its version).
+function mailBase(s: MailSettings | null, version: number): Record<MailField, unknown> {
+  return {
+    configured: s !== null,
+    host: s?.host ?? null,
+    port: s?.port ?? null,
+    secure: s?.secure ?? null,
+    user: s?.user ?? null,
+    fromName: s?.from.name ?? null,
+    fromAddress: s?.from.address ?? null,
+    hasPassword: Boolean(s?.password),
+    passwordVersion: version,
+  }
+}
+
+// The password version lives in its own column: removing the mail settings never takes it back, so a save
+// based on what was read before a remove and a new password is still seen as stale.
+async function passwordVersion(db: Ctx['db']): Promise<number> {
+  const r = await db.one<{ v: number }>('SELECT mail_password_version AS v FROM installation WHERE id = 1')
+  return Number(r?.v ?? 0)
+}
+
+const MAIL_FAILURES = 20
+
+async function mailView(db: Ctx['db']) {
+  const s = await mailSettings(db)
+  const version = await passwordVersion(db)
+  const row = (l: Row) => ({
+    at: (l.at as Date).toISOString(),
+    to: String(l.to_addr),
+    kind: String(l.kind),
+    status: String(l.status),
+    error: String(l.error) || null,
+  })
+  const log = await db.query(
     'SELECT at, to_addr, kind, status, error FROM mail_log ORDER BY at DESC, id DESC LIMIT 50',
   )
+  // Mail that did not go (failed, or skipped while mail was not set up), however many went since.
+  const failures = await db.query(
+    `SELECT at, to_addr, kind, status, error FROM mail_log WHERE status <> 'sent'
+      ORDER BY at DESC, id DESC LIMIT ${MAIL_FAILURES}`,
+  )
+  const base = mailBase(s, version)
   return {
     configured: s !== null,
     settings: s
@@ -405,23 +545,25 @@ export async function getMail(ctx: Ctx) {
           port: s.port,
           secure: s.secure,
           user: s.user,
-          hasPassword: s.password !== null,
+          hasPassword: base.hasPassword as boolean,
           from: s.from,
         }
       : null,
-    recent: log.map((l) => ({
-      at: (l.at as Date).toISOString(),
-      to: String(l.to_addr),
-      kind: String(l.kind),
-      status: String(l.status),
-      error: String(l.error) || null,
-    })),
+    base,
+    recent: log.map(row),
+    failures: failures.map(row),
   }
+}
+
+export async function getMail(ctx: Ctx) {
+  adminOnly(ctx)
+  return mailView(ctx.db)
 }
 
 export async function setMail(
   ctx: Ctx,
   input: {
+    base?: unknown
     host?: unknown
     port?: unknown
     secure?: unknown
@@ -432,6 +574,7 @@ export async function setMail(
   },
 ) {
   adminOnly(ctx)
+  const base = baseOf(input.base, MAIL_FIELDS)
   const host = typeof input.host === 'string' ? input.host.trim() : ''
   if (!host || host.length > 253 || /[\s/]/.test(host)) {
     throw invalid('"host" is the name of the mail server.', 'Such as smtp.example.com.')
@@ -451,35 +594,66 @@ export async function setMail(
   if (!fromAddress)
     throw invalid('"fromAddress" is the email mail is sent from.', 'Such as brain@example.com.')
   const fromName = typeof input.fromName === 'string' ? input.fromName.trim().slice(0, 80) : ''
-  const before = await mailSettings(ctx.db)
-  let password: string | null = before?.password ?? null
-  if (input.password !== undefined) {
-    if (input.password === null || input.password === '') password = null
-    else if (typeof input.password !== 'string' || input.password.length > 500) {
-      throw invalid('"password" is text.', 'Fix "password".')
-    } else {
-      if (!ctx.mail?.secret) throw noVault()
-      password = sealPassword(ctx.mail.secret, input.password)
+  if (
+    input.password !== undefined &&
+    input.password !== null &&
+    (typeof input.password !== 'string' || input.password.length > 500)
+  ) {
+    throw invalid('"password" is text.', 'Fix "password".')
+  }
+  // Sealed before the transaction: a missing installation secret refuses before anything is read.
+  const typed = typeof input.password === 'string' && input.password !== '' ? input.password : null
+  const sealed = typed ? sealPassword(ctx.mail?.secret, typed) : null
+  return ctx.db.tx(async (db) => {
+    // Saves of the mail settings take turns, so two on the same base cannot both pass.
+    await db.query('SELECT 1 FROM installation WHERE id = 1 FOR UPDATE')
+    const before = await mailSettings(db)
+    const version = await passwordVersion(db)
+    const was = mailBase(before, version)
+    if (base) {
+      const moved = (Object.keys(base) as MailField[]).filter((f) => was[f] !== base[f])
+      if (moved.length) throw settingsChanged(moved, await mailView(db))
     }
-  }
-  const s: MailSettings = {
-    host,
-    port,
-    secure: input.secure === true,
-    user: user as string | null,
-    password,
-    from: { name: fromName || (await installation(ctx.db)).name || 'rsc-brain', address: fromAddress },
-  }
-  await storeMail(ctx.db, s)
-  await ok(ctx, 'settings.mail', null, 'mail', `${host}:${port} from ${fromAddress}`)
-  return getMail(ctx)
+    // Removing a password that is not there is no change.
+    const keep = input.password === undefined || (!typed && !before?.password)
+    // The password set belongs to a server, port and account: sending it to another needs it typed again.
+    if (
+      keep &&
+      before?.password &&
+      (before.host !== host || before.port !== port || (before.user ?? null) !== (user as string | null))
+    ) {
+      throw invalid(
+        'The mail password belongs to the server, port and user it was set for.',
+        'Type the password again for the new server (or remove it, if the new one needs none).',
+      )
+    }
+
+    const s: MailSettings = {
+      host,
+      port,
+      secure: input.secure === true,
+      user: user as string | null,
+      password: keep ? (before?.password ?? null) : sealed,
+
+      // Empty: the name of the installation when sending, so a rename applies.
+      from: { name: fromName, address: fromAddress },
+    }
+    const same = before !== null && keep && JSON.stringify(mailBase(s, version)) === JSON.stringify(was)
+    if (same) return { ...(await mailView(db)), ...(base ? { unchanged: true as const } : {}) }
+    await storeMail(db, s)
+    if (!keep)
+      await db.query('UPDATE installation SET mail_password_version = $1 WHERE id = 1', [version + 1])
+    const pw = keep ? '' : sealed ? '; password set' : '; password removed'
+    await ok({ ...ctx, db }, 'settings.mail', null, 'mail', `${host}:${port} from ${fromAddress}${pw}`)
+    return mailView(db)
+  })
 }
 
 export async function deleteMail(ctx: Ctx) {
   adminOnly(ctx)
   await storeMail(ctx.db, null)
   await ok(ctx, 'settings.mail', null, 'mail', 'removed')
-  return getMail(ctx)
+  return mailView(ctx.db)
 }
 
 // A test mail to the administrator who asks, to check the settings.

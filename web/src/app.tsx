@@ -9,6 +9,10 @@ import { signInPath } from './lib/nav.ts'
 import { useScreenTitle } from './lib/screen.ts'
 import { Activity } from './screens/Activity.tsx'
 import { AdminInvitations, AdminPeople, AdminServices } from './screens/admin/Admin.tsx'
+import { AdminAudit } from './screens/admin/Audit.tsx'
+import { AdminEmail } from './screens/admin/Email.tsx'
+import { AdminBranding, AdminLimits, AdminSystem } from './screens/admin/Installation.tsx'
+import { AdminMeaning } from './screens/admin/Meaning.tsx'
 import { Brain, brainResource } from './screens/Brain.tsx'
 import { Connect } from './screens/Connect.tsx'
 import { HealthScreen } from './screens/Health.tsx'
@@ -219,6 +223,12 @@ function SignedIn() {
           <Route path="/admin/people" component={AdminPeople} />
           <Route path="/admin/invitations" component={AdminInvitations} />
           <Route path="/admin/services" component={AdminServices} />
+          <Route path="/admin/email" component={AdminEmail} />
+          <Route path="/admin/meaning" component={AdminMeaning} />
+          <Route path="/admin/limits" component={AdminLimits} />
+          <Route path="/admin/audit" component={AdminAudit} />
+          <Route path="/admin/system" component={AdminSystem} />
+          <Route path="/admin/branding" component={AdminBranding} />
           <Route path="/profile" component={Profile} />
           <Route path="/profile/tokens" component={Profile} />
           <Route path="/connect" component={Connect} />

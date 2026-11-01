@@ -11,9 +11,13 @@ import { createAccount } from './accounts.ts'
 import { audit } from './audit.ts'
 import { mintMainKey, mintWebSession } from './keys.ts'
 
-// The requests per minute each key may make, unless the administration sets another (spec B5).
+// The requests per minute each key may make, unless the administration sets another (spec B5). Below 60 the
+// web itself stops working (its counters and the live check of «Connect your agent» ask every few seconds),
+// and with it the screen that would raise the limit again; above 10 000 (some 170 a second for one key) one
+// process could not serve them anyway, so the limit would protect nothing.
 export const DEFAULT_RATE_LIMIT = 600
-export const MAX_RATE_LIMIT = 100_000
+export const MIN_RATE_LIMIT = 60
+export const MAX_RATE_LIMIT = 10_000
 
 export type ConnFacts = { encrypted: boolean; local: boolean; ip: string; userAgent: string }
 
@@ -24,18 +28,59 @@ export async function setupDone(db: Db): Promise<boolean> {
   return Boolean(r?.done)
 }
 
-export async function installation(
-  db: Db,
-): Promise<{ name: string; publicUrl: string | null; curatorsInvite: boolean; rateLimit: number }> {
+export type Installation = {
+  name: string
+  publicUrl: string | null
+  curatorsInvite: boolean
+  rateLimit: number
+  factoryUrl: string | null
+}
+
+export async function installation(db: Db): Promise<Installation> {
   const r = await db.one(
-    'SELECT name, public_url, curators_invite, rate_limit FROM installation WHERE id = 1',
+    'SELECT name, public_url, curators_invite, rate_limit, factory_url FROM installation WHERE id = 1',
   )
   return {
     name: String(r?.name ?? ''),
     publicUrl: r?.public_url == null ? null : String(r.public_url),
     curatorsInvite: Boolean(r?.curators_invite),
     rateLimit: Number(r?.rate_limit ?? DEFAULT_RATE_LIMIT),
+    factoryUrl: r?.factory_url == null ? null : String(r.factory_url),
   }
+}
+
+// The address of RSC Factory (plan G4, CA9): runs open there from Activity. https, or http on this machine;
+// no credentials, query or fragment; only characters SAFE_URL allows, so it is plain text wherever it goes.
+export function factoryUrlOf(v: unknown): string | null {
+  if (v === null) return null
+  const how = 'Give the address of RSC Factory, such as https://factory.example.com, or null for none.'
+  if (typeof v !== 'string' || !v.trim() || v.length > 300)
+    throw invalid('"factoryUrl" is the address of RSC Factory.', how)
+  const raw = v.trim()
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    throw invalid('"factoryUrl" is not an address.', how)
+  }
+  const local = u.protocol === 'http:' && LOCAL_HOSTS.has(u.hostname)
+  if (
+    (u.protocol !== 'https:' && !local) ||
+    u.username ||
+    u.password ||
+    raw.includes('?') ||
+    raw.includes('#')
+  ) {
+    throw invalid(
+      '"factoryUrl" must be an https address (or http on this machine), without credentials, query or fragment.',
+      how,
+    )
+  }
+  const out = u.toString().replace(/\/+$/, '')
+  if (!SAFE_URL.test(out) || out.length > 300) {
+    throw invalid('"factoryUrl" may only hold letters, digits and . - _ ~ / : in its host and path.', how)
+  }
+  return out
 }
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
