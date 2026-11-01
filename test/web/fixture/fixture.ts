@@ -1448,6 +1448,9 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       const bad =
         range('staleDays', 1, 3650) ?? range('longChars', 1000, 100000) ?? range('maintenanceEvery', 1, 1000)
       if (bad) return bad
+      // Only a base: nothing changed; what the person sees is still what is there.
+      if (base && FIELDS.every((k) => body[k] === undefined))
+        return { status: 200, body: { ...settingsView(x), unchanged: true } }
       if (typeof body.usageNote === 'string' && body.usageNote.trim().length > 2000)
         return err(400, 'invalid_request', 'The usage note has at most 2 000 characters.', 'Shorten it.')
       if (body.guide === null) x.guide = null

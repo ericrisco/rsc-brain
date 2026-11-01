@@ -311,10 +311,12 @@ function CorrectForm({
   const type = (next: Mine) => {
     setMine(next)
     if (next.title !== e.title || next.content !== e.content) store.write(next)
+    else store.clear()
   }
+  // Kept, never cleared here: this runs after a paint with the entry it last saw, and a draft is let go
+  // only when the person does it (typing back to the text, Cancel, or a save).
   useEffect(() => {
     if (dirty || theirs) store.write(mine)
-    else store.clear()
   }, [mine.title, mine.content, mine.base, Boolean(theirs)])
   useEffect(() => {
     if (!dirty) return
@@ -385,6 +387,7 @@ function CorrectForm({
               onClick={() => {
                 setMine({ title: theirs.title, content: theirs.content, base: theirs.revision })
                 setTheirs(null)
+                store.clear()
               }}
             >
               {j.startTheirs}

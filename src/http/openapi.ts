@@ -1595,7 +1595,13 @@ const HAND: Record<string, Op> = {
         'maintenanceEvery',
       ],
     ),
-    reply: WIKI_SETTINGS,
+    reply: {
+      ...WIKI_SETTINGS,
+      properties: {
+        ...(WIKI_SETTINGS.properties as Schema),
+        unchanged: b('Only a base was sent and it still holds: nothing was changed.'),
+      },
+    },
   },
   'POST /v1/brains/{slug}/members': {
     summary: 'Add a person or service account that already has an account (curators, or the administration).',

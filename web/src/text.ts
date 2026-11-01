@@ -600,8 +600,11 @@ export const T = {
     theirsIn: 'This brain is in meaning search.',
     editGuide: 'Edit the guide',
     tabsLabel: 'Parts of the settings',
-    tabs: { members: 'Members', agents: 'Agents', health: 'Health', archive: 'Archive' },
+    tabs: { members: 'Members', agents: 'Agents', health: 'Health thresholds', archive: 'Archive' },
     removeShort: 'Remove',
+    leaveShort: 'Leave',
+    leave: (brain: string) => `Leave ${brain}`,
+    leaveNow: (brain: string) => `Leave ${brain} now`,
     removeFrom: (name: string, brain: string) => `Remove ${name} from ${brain}`,
     removeLead: (name: string, brain: string) =>
       `${name} can no longer open ${brain}; their keys stop reaching it. What they wrote stays, under their name.`,
@@ -758,6 +761,8 @@ export const T = {
     unAdminTitle: (name: string) => `Remove ${name}'s administrator rights?`,
     unAdminLead: (name: string) =>
       `${name} keeps their brains and roles, and no longer manages the installation.`,
+    unAdminSelfTitle: 'Remove your administrator rights?',
+    unAdminSelf: 'Remove my administrator rights',
     unAdminSelfLead: 'You keep your brains and roles, and leave the administration as soon as it is done.',
     used: (when: string | null) => (when ? `last used ${when}` : 'never used'),
     reactivate: (name: string) => `Reactivate ${name}`,

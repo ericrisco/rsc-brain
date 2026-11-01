@@ -134,6 +134,44 @@ describe('brain settings and the administration (PR25a)', { skip: skipPg }, () =
       )
     })
 
+    it('a save that changes nothing still compares: someone else’s change is said, else it answers unchanged', async () => {
+      const g = await put({ guide: 'Cora wrote this.', base: { guide: null } })
+      assert.equal(g.status, 200, g.text)
+      // Carla read the default guide and «resets» it: nothing new from her, but her base is old.
+      const stale = await put({ base: { guide: null } })
+      assert.deepEqual([stale.status, stale.body.error?.code], [409, 'settings_changed'])
+      assert.equal(((stale.body.error as Json).current as Json).guide, 'Cora wrote this.')
+      const same = await put({ base: { guide: 'Cora wrote this.' } })
+      assert.equal(same.status, 200, same.text)
+      assert.equal(same.body.unchanged, true)
+      assert.equal(same.body.guide, 'Cora wrote this.')
+      await put({ guide: null })
+    })
+
+    it('two sessions saving the same field on the same value, round after round: exactly one wins each time', async () => {
+      await w.call(cura.key, 'POST', '/v1/brains', { slug: 'duel' })
+      const other = await w.person('Duel')
+      await w.member('duel', other.id, 'curator')
+      const b = await w.web(other.id)
+      const odd: string[] = []
+      for (let i = 0; i < 60; i++) {
+        const cur = Number((await w.callWeb(curaWeb, 'GET', '/v1/brains/duel/wiki/settings')).body.staleDays)
+        const [r1, r2] = await Promise.all([
+          w.callWeb(curaWeb, 'PUT', '/v1/brains/duel/wiki/settings', {
+            staleDays: cur === 1 ? 2 : 1,
+            base: { staleDays: cur },
+          }),
+          w.callWeb(b, 'PUT', '/v1/brains/duel/wiki/settings', {
+            staleDays: cur === 3 ? 4 : 3,
+            base: { staleDays: cur },
+          }),
+        ])
+        const got = [r1.status, r2.status].sort().join(',')
+        if (got !== '200,409') odd.push(`round ${i}: ${got}`)
+      }
+      assert.deepEqual(odd, [])
+    })
+
     it('approvals counting by themselves never conflict with a save', async () => {
       await w.db.query(
         "UPDATE wiki_settings SET approvals_since = 7 WHERE brain_id = (SELECT id FROM brains WHERE slug = 'set')",
@@ -187,6 +225,18 @@ describe('brain settings and the administration (PR25a)', { skip: skipPg }, () =
       assert.ok(!soon.text.includes('#token='))
       w.advance(61_000)
       assert.equal((await w.callWeb(adminWeb, 'POST', `/v1/invitations/${id}/resend`)).status, 200)
+    })
+
+    it('the minute is per invitation: a new invitation to the same email gets its new link at once', async () => {
+      const made = await w.callWeb(adminWeb, 'POST', '/v1/invitations', { emails: ['twice@example.com'] })
+      const first = String((made.body.invitations as Json[])[0]?.id)
+      assert.equal((await w.callWeb(adminWeb, 'POST', `/v1/invitations/${first}/resend`)).status, 200)
+      await w.callWeb(adminWeb, 'DELETE', `/v1/invitations/${first}`)
+      const again = await w.callWeb(adminWeb, 'POST', '/v1/invitations', { emails: ['twice@example.com'] })
+      const second = String((again.body.invitations as Json[])[0]?.id)
+      assert.notEqual(second, first)
+      const r = await w.callWeb(adminWeb, 'POST', `/v1/invitations/${second}/resend`)
+      assert.equal(r.status, 200, r.text)
     })
 
     it('an archived brain links no repository; its members still change', async () => {

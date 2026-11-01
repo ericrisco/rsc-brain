@@ -100,45 +100,45 @@ type Edit = Partial<{
 }>
 export type SettingsBody = Record<string, unknown> & { base: Record<string, unknown> }
 
-// What a save of one part sends (per-field compare-and-set): only the fields it changed, and in "base"
-// what each was when the part read it, so the server refuses a field someone changed since and never
-// touches the others. The guide goes as null when it is the default (empty, or the default text itself)
-// and is compared as stored (null while the default). Null when nothing changed.
-export function settingsSave(read: SettingsRead, edit: Edit): SettingsBody | null {
+// What a save of one part sends (per-field compare-and-set): in "base", what every field the part shows
+// was when it read it, and beside it only the fields it changed. Nothing changed still goes, as a
+// compare-only request: the server says whether someone changed those fields since (409 with their
+// values) or that nothing changed. The guide goes as null when it is the default (empty, or the default
+// text itself) and is compared as stored (null while the default).
+export function settingsSave(read: SettingsRead, edit: Edit): SettingsBody {
   const out: SettingsBody = { base: {} }
   if (edit.guide !== undefined) {
     const g = edit.guide.trim()
     const next = !g || g === read.guideDefault.trim() ? null : g
     const was = read.customGuide ? read.guide : null
-    if (next !== was) {
-      out.guide = next
-      out.base.guide = was
-    }
+    out.base.guide = was
+    if (next !== was) out.guide = next
   }
-  if (edit.usageNote !== undefined && edit.usageNote.trim() !== read.usageNote) {
-    out.usageNote = edit.usageNote.trim()
+  if (edit.usageNote !== undefined) {
     out.base.usageNote = read.usageNote
+    if (edit.usageNote.trim() !== read.usageNote) out.usageNote = edit.usageNote.trim()
   }
   for (const k of ['meaningExcluded', 'staleDays', 'longChars', 'maintenanceEvery'] as const) {
-    if (edit[k] !== undefined && edit[k] !== read[k]) {
-      out[k] = edit[k]
-      out.base[k] = read[k]
-    }
+    if (edit[k] === undefined) continue
+    out.base[k] = read[k]
+    if (edit[k] !== read[k]) out[k] = edit[k]
   }
-  return Object.keys(out.base).length ? out : null
+  return out
 }
 
-// What a person typed in a settings text and did not save: in this tab's memory only (never in storage,
-// so a secret pasted by mistake never lands there), by account, brain and part; gone at sign-out.
+// What a person typed in the settings and did not save (texts, thresholds, the meaning search box): in
+// this tab's memory only (never in storage, so a secret pasted by mistake never lands there), by account,
+// brain and field, so moving between tabs keeps it; gone once saved, and at sign-out.
 const drafts = new Map<string, string>()
-const draftKey = (account: string, slug: string, part: string) => `${account}\u0000${slug}\u0000${part}`
-export const textDrafts = {
-  get: (account: string, slug: string, part: string) => drafts.get(draftKey(account, slug, part)),
-  set: (account: string, slug: string, part: string, v: string) =>
-    drafts.set(draftKey(account, slug, part), v),
-  clear: (account: string, slug: string, part: string) => drafts.delete(draftKey(account, slug, part)),
+const draftKey = (account: string, slug: string, field: string) => `${account}\u0000${slug}\u0000${field}`
+export const fieldDrafts = {
+  get: (account: string, slug: string, field: string) => drafts.get(draftKey(account, slug, field)),
+  set: (account: string, slug: string, field: string, v: string) =>
+    drafts.set(draftKey(account, slug, field), v),
+  clear: (account: string, slug: string, field: string) => drafts.delete(draftKey(account, slug, field)),
   clearAll: () => drafts.clear(),
 }
+export const textDrafts = fieldDrafts
 
 export type AdminAccount = {
   id: string

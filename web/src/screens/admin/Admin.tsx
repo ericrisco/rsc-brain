@@ -8,7 +8,6 @@
 // in this screen's memory, is shown once, and is gone when hidden or when the page is put away). Who may
 // do what is the server's (B4); this screen only offers it to whoever may.
 
-import { signal } from '@preact/signals'
 import type { ComponentChildren } from 'preact'
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
@@ -17,6 +16,7 @@ import { useFresh } from '../../api/fresh.ts'
 import { api } from '../../api/index.ts'
 import { invalidate, resource } from '../../api/resource.ts'
 import { ago } from '../../lib/brains.ts'
+import { leftAdmin, rightsChanged, takeLeftAdmin } from '../../lib/flags.ts'
 import {
   type AdminAccount,
   type PersonRow,
@@ -70,6 +70,12 @@ const TABS = [
 function AdminFrame({ children }: { children: (who: Me) => ComponentChildren }) {
   const { path } = useLocation()
   const who = me().data.value
+  // «You removed your own administrator rights» is said once, then the flag is gone.
+  const [left, setLeft] = useState(false)
+  const out = who !== undefined && !who.account.isAdmin
+  useEffect(() => {
+    if (out && takeLeftAdmin()) setLeft(true)
+  }, [out])
   if (!who) return <Skeleton rows={3} />
   return (
     <div class="admin">
@@ -95,8 +101,8 @@ function AdminFrame({ children }: { children: (who: Me) => ComponentChildren }) 
         <div class="state forbidden" role="alert" data-state="forbidden">
           <span class="kind">{T.kind.noAccess}</span>
           <h2>{T.states.forbiddenTitle}</h2>
-          <p>{leftAdmin.value ? A.leftAdmin : A.cannot}</p>
-          <p class="how">{leftAdmin.value ? A.leftAdminHow : A.cannotHow}</p>
+          <p>{left || leftAdmin.value ? A.leftAdmin : A.cannot}</p>
+          <p class="how">{left || leftAdmin.value ? A.leftAdminHow : A.cannotHow}</p>
         </div>
       )}
     </div>
@@ -128,9 +134,6 @@ function useSaid() {
     },
   }
 }
-
-// Set when an administrator took away their own rights here: the administration closes and says why.
-const leftAdmin = signal(false)
 
 // Deactivating says what ends now and what stays, and asks first.
 function DeactivateDialog({
@@ -210,7 +213,7 @@ function PeopleList({ who }: { who: Me }) {
   )
   const filtered = Boolean(q) || status !== 'all'
 
-  const act = async (a: PersonRow, run: () => Promise<unknown>, done: string) => {
+  const act = async (a: PersonRow, run: () => Promise<unknown>, done: string): Promise<boolean> => {
     setBusy(a.id)
     setFailed(null)
     said.say(null)
@@ -218,21 +221,29 @@ function PeopleList({ who }: { who: Me }) {
       await run()
       await r.reload()
       said.say(done, true)
+      return true
     } catch (e) {
       setFailed({ id: a.id, error: e as ApiError })
       await r.reload()
+      return false
     } finally {
       setBusy(null)
     }
   }
   const patch = async (a: PersonRow, body: Record<string, boolean>, done: string) => {
-    await act(a, () => api.call('updateAccount', { path: { id: a.id }, body }), done)
+    const ok = await act(a, () => api.call('updateAccount', { path: { id: a.id }, body }), done)
     // My own rights changed: who I am is read again, and the screens follow (out of here, if not admin).
-    if (a.id === who.account.id) {
-      if (body.isAdmin === false) leftAdmin.value = true
+    const self = a.id === who.account.id
+    rightsChanged({ ok, self, body })
+    if (ok && self) {
       await me().reload()
     }
   }
+  // After «Show more», the keyboard goes to the first person just shown (the button may be gone).
+  const [moreAt, setMoreAt] = useState(0)
+  useEffect(() => {
+    if (moreAt) document.querySelectorAll<HTMLElement>('li[data-person]')[moreAt]?.focus()
+  }, [moreAt])
 
   return (
     <section aria-labelledby="accounts-title">
@@ -301,7 +312,7 @@ function PeopleList({ who }: { who: Me }) {
               const you = a.id === who.account.id
               const active = a.status === 'active'
               return (
-                <li key={a.id} class="with-actions" data-person={a.id}>
+                <li key={a.id} class="with-actions" data-person={a.id} tabIndex={-1}>
                   <div>
                     <p class="list-title">
                       {a.name}
@@ -405,14 +416,29 @@ function PeopleList({ who }: { who: Me }) {
           </ul>
           {rows.length > shown ? (
             <div class="actions">
-              <Button onClick={() => setShown(shown + PAGE)}>{A.showMore(rows.length - shown)}</Button>
+              <Button
+                onClick={() => {
+                  setMoreAt(shown)
+                  setShown(shown + PAGE)
+                }}
+              >
+                {A.showMore(rows.length - shown)}
+              </Button>
             </div>
           ) : null}
         </>
       )}
       <Dialog
         open={rights !== null}
-        title={rights ? (rights.to ? A.makeAdminTitle(rights.a.name) : A.unAdminTitle(rights.a.name)) : ''}
+        title={
+          rights
+            ? rights.to
+              ? A.makeAdminTitle(rights.a.name)
+              : rights.a.id === who.account.id
+                ? A.unAdminSelfTitle
+                : A.unAdminTitle(rights.a.name)
+            : ''
+        }
         onClose={() => setRights(null)}
       >
         {rights ? (
@@ -434,7 +460,11 @@ function PeopleList({ who }: { who: Me }) {
                   void patch(a, { isAdmin: to }, to ? A.nowAdmin(a.name) : A.noLongerAdmin(a.name))
                 }}
               >
-                {rights.to ? A.makeAdmin(rights.a.name) : A.unAdmin(rights.a.name)}
+                {rights.to
+                  ? A.makeAdmin(rights.a.name)
+                  : rights.a.id === who.account.id
+                    ? A.unAdminSelf
+                    : A.unAdmin(rights.a.name)}
               </Button>
               <Button kind="quiet" onClick={() => setRights(null)}>
                 {T.settings.cancel}

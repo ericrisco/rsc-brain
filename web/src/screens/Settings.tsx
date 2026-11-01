@@ -19,7 +19,9 @@ import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { invalidate, resource } from '../api/resource.ts'
 import { ago } from '../lib/brains.ts'
+import { focusOnArrival } from '../lib/screen.ts'
 import {
+  fieldDrafts,
   type MemberRow,
   memberRows,
   ROLES,
@@ -77,7 +79,8 @@ function Part({
 }) {
   return (
     <section class="settings-part" aria-labelledby={`${id}-title`}>
-      <h2 id={`${id}-title`} class="part-heading" tabIndex={-1}>
+      {/* data-start: on a move between tabs the screen's own focus goes to the first part's heading. */}
+      <h2 id={`${id}-title`} class="part-heading" tabIndex={-1} data-start>
         {title}
       </h2>
       {lead ? <p class="muted">{lead}</p> : null}
@@ -196,8 +199,15 @@ function MemberItem({
           aria-label={S.roleOf(m.name)}
           aria-describedby={m.lastCurator ? reasonId : undefined}
           value={pick}
-          disabled={m.lastCurator}
-          onChange={(e) => setPick(e.currentTarget.value)}
+          aria-disabled={m.lastCurator ? 'true' : undefined}
+          onChange={(e) => {
+            // Off but reachable (its reason is read with it): a change there goes back at once.
+            if (m.lastCurator) {
+              e.currentTarget.value = m.role
+              return
+            }
+            setPick(e.currentTarget.value)
+          }}
         >
           {m.roles.map((x) => (
             <option key={x} value={x}>
@@ -221,8 +231,12 @@ function MemberItem({
           </Button>
         ) : null}
         {m.lastCurator || asking || changed ? null : (
-          <Button blocked={blocked()} aria-label={S.remove(m.name)} onClick={() => setAsking(true)}>
-            {S.removeShort}
+          <Button
+            blocked={blocked()}
+            aria-label={m.you ? S.leave(brain.name) : S.remove(m.name)}
+            onClick={() => setAsking(true)}
+          >
+            {m.you ? S.leaveShort : S.removeShort}
           </Button>
         )}
       </div>
@@ -238,7 +252,7 @@ function MemberItem({
               blocked={blocked()}
               onClick={() => void remove()}
             >
-              {S.removeFrom(m.name, brain.name)}
+              {m.you ? S.leaveNow(brain.name) : S.removeFrom(m.name, brain.name)}
             </Button>
             <Button
               kind="quiet"
@@ -570,21 +584,21 @@ function usePart(slug: string) {
   }, [r.data.value, r.loading.value])
   const save = async (edit: Parameters<typeof settingsSave>[1]): Promise<Settings | null> => {
     if (pending || !online.value || !base) return null
+    // Always asked, even with nothing changed here: the server compares what this part shows.
     const body = settingsSave(base, edit)
     setError(null)
-    if (!body) {
-      said.say(S.nothing)
-      return null
-    }
     setPending(true)
     said.say(null)
     try {
-      const fresh = await api.call<Settings>('saveWikiSettings', { path: { slug }, body })
+      const fresh = await api.call<Settings & { unchanged?: boolean }>('saveWikiSettings', {
+        path: { slug },
+        body,
+      })
       r.data.value = fresh
       was.current = base
       setBase(fresh)
       setTheirs(null)
-      said.say(S.saved)
+      said.say(fresh.unchanged ? S.nothing : S.saved)
       return fresh
     } catch (e) {
       const a = e as ApiError
@@ -600,9 +614,13 @@ function usePart(slug: string) {
       setPending(false)
     }
   }
-  const follow = <K,>(value: K, field: (x: Settings) => K, set: (v: K) => void) => {
+  // Applied to the field's latest value, not the one of the last paint: what is typed meanwhile is kept.
+  const follow = <K,>(field: (x: Settings) => K, set: (f: (prev: K) => K) => void) => {
     const before = was.current
-    if (before && base && before !== base && value === field(before)) set(field(base))
+    if (!before || !base || before === base) return
+    const old = field(before)
+    const now = field(base)
+    set((prev) => (prev === old ? now : prev))
   }
 
   return { r, base, pending, error, said, theirs, save, follow }
@@ -622,16 +640,21 @@ function Conflict({ children }: { children?: ComponentChildren }) {
   )
 }
 
+// A part shows its fields only once its base is read: never an empty box to type in while the settings
+// are on their way (the last known values come back with the read).
 function PartBody({
   r,
   rows,
+  ready,
   children,
 }: {
   r: ReturnType<typeof settingsResource>
   rows: number
+  ready: boolean
   children: ComponentChildren
 }) {
-  if (r.data.value) return <>{children}</>
+  if (ready) return <>{children}</>
+  if (r.data.value) return <Skeleton rows={rows} />
   return r.error.value ? (
     <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />
   ) : (
@@ -656,6 +679,9 @@ function TextPart({
   const guide = part === 'guide'
   const { r, base, pending, error, said, theirs, save, follow } = usePart(slug)
   const [text, setText] = useState<string | null>(null)
+  // The person set this text (typed it, or reset it to the default) even if it reads as the old base:
+  // it is theirs, and a new base never replaces it.
+  const chose = useRef(false)
   const [problem, setProblem] = useState<string | null>(null)
   const [open, setOpen] = useState(!guide || textDrafts.get(account, slug, part) !== undefined)
   const max = guide ? 20_000 : 2000
@@ -664,7 +690,11 @@ function TextPart({
   // The field starts from the brain's text, or from what this person typed and did not save.
   useEffect(() => {
     if (base && text === null) setText(textDrafts.get(account, slug, part) ?? current)
-    else if (text !== null) follow(text, (x) => (guide ? x.guide : x.usageNote), setText)
+    else if (!chose.current)
+      follow(
+        (x) => (guide ? x.guide : x.usageNote),
+        (f) => setText((prev) => (prev === null ? prev : f(prev))),
+      )
   }, [base])
   useEffect(() => {
     if (open && guide && text !== null) document.getElementById(`${part}-text`)?.focus()
@@ -682,6 +712,7 @@ function TextPart({
     }
     const fresh = await save(guide ? { guide: value } : { usageNote: value })
     if (fresh) {
+      chose.current = false
       textDrafts.clear(account, slug, part)
       setText(guide ? fresh.guide : fresh.usageNote)
     }
@@ -694,7 +725,7 @@ function TextPart({
         : `${S.usageHint} ${S.chars(value.length, max)}`
   return (
     <Part id={part} title={label} lead={guide ? S.guideLead : S.usageLead}>
-      <PartBody r={r} rows={guide ? 2 : 3}>
+      <PartBody r={r} rows={guide ? 2 : 3} ready={base !== null}>
         <p class="meta">
           <span class={`tag ${isDefault ? '' : 'ok'}`}>{isDefault ? S.isDefault : S.isCustom}</span>
         </p>
@@ -726,6 +757,7 @@ function TextPart({
               value={value}
               problem={problem}
               onValue={(v) => {
+                chose.current = true
                 setText(v)
                 said.say(null)
                 setProblem(null)
@@ -748,6 +780,7 @@ function TextPart({
                 kind="quiet"
                 blocked={archived ? S.archivedNote : null}
                 onClick={() => {
+                  chose.current = true
                   setText(fallback)
                   if (fallback === current) textDrafts.clear(account, slug, part)
                   else textDrafts.set(account, slug, part, fallback)
@@ -773,22 +806,29 @@ function TextPart({
   )
 }
 
-function Meaning({ slug, archived }: { slug: string; archived: boolean }) {
+function Meaning({ slug, archived, account }: { slug: string; archived: boolean; account: string }) {
   const { r, base, pending, error, said, theirs, save, follow } = usePart(slug)
   const [out, setOut] = useState<boolean | null>(null)
   useEffect(() => {
-    if (base && out === null) setOut(base.meaningExcluded)
-    else if (out !== null) follow(out, (x) => x.meaningExcluded, setOut)
+    const kept = fieldDrafts.get(account, slug, 'meaningExcluded')
+    if (base && out === null) setOut(kept === undefined ? base.meaningExcluded : kept === 'true')
+    else
+      follow(
+        (x) => x.meaningExcluded,
+        (f) => setOut((prev) => (prev === null ? prev : f(prev))),
+      )
   }, [base])
   return (
     <Part id="meaning" title={S.meaning} lead={S.meaningLead}>
-      <PartBody r={r} rows={1}>
+      <PartBody r={r} rows={1} ready={base !== null}>
         <form
           class="settings-form"
           noValidate
           onSubmit={(e) => {
             e.preventDefault()
-            void save({ meaningExcluded: out === true })
+            void save({ meaningExcluded: out === true }).then((done) => {
+              if (done) fieldDrafts.clear(account, slug, 'meaningExcluded')
+            })
           }}
         >
           {archived ? <p class="note">{S.archivedNote}</p> : null}
@@ -805,8 +845,11 @@ function Meaning({ slug, archived }: { slug: string; archived: boolean }) {
               checked={out === true}
               aria-describedby="meaning-out-hint"
               onChange={(e) => {
-                setOut(e.currentTarget.checked)
+                const on = e.currentTarget.checked
+                setOut(on)
                 said.say(null)
+                if (base && on === base.meaningExcluded) fieldDrafts.clear(account, slug, 'meaningExcluded')
+                else fieldDrafts.set(account, slug, 'meaningExcluded', String(on))
               }}
             />
             <label for="meaning-out">{S.meaningOut}</label>
@@ -831,27 +874,24 @@ function Meaning({ slug, archived }: { slug: string; archived: boolean }) {
   )
 }
 
-function Health({ slug, archived }: { slug: string; archived: boolean }) {
+function Health({ slug, archived, account }: { slug: string; archived: boolean; account: string }) {
   const { r, base, pending, error, said, theirs, save, follow } = usePart(slug)
   const [v, setV] = useState<Record<ThresholdName, string> | null>(null)
   const [problems, setProblems] = useState<Partial<Record<ThresholdName, string>>>({})
   useEffect(() => {
+    const kept = (k: ThresholdName) => fieldDrafts.get(account, slug, k)
     if (base && v === null)
       setV({
-        staleDays: String(base.staleDays),
-        longChars: String(base.longChars),
-        maintenanceEvery: String(base.maintenanceEvery),
+        staleDays: kept('staleDays') ?? String(base.staleDays),
+        longChars: kept('longChars') ?? String(base.longChars),
+        maintenanceEvery: kept('maintenanceEvery') ?? String(base.maintenanceEvery),
       })
-    else if (v) {
-      const next = { ...v }
+    else
       for (const k of ['staleDays', 'longChars', 'maintenanceEvery'] as const)
         follow(
-          next[k],
           (x) => String(x[k]),
-          (x) => (next[k] = x),
+          (f) => setV((prev) => (prev ? { ...prev, [k]: f(prev[k]) } : prev)),
         )
-      setV(next)
-    }
   }, [base])
   const fields: Array<{ k: ThresholdName; label: string; hint: string }> = [
     { k: 'staleDays', label: S.staleDays, hint: S.staleHint },
@@ -860,7 +900,7 @@ function Health({ slug, archived }: { slug: string; archived: boolean }) {
   ]
   return (
     <Part id="health" title={S.health} lead={S.healthLead}>
-      <PartBody r={r} rows={2}>
+      <PartBody r={r} rows={2} ready={base !== null && v !== null}>
         {v ? (
           <form
             class="settings-form"
@@ -878,6 +918,8 @@ function Health({ slug, archived }: { slug: string; archived: boolean }) {
                 staleDays: Number(v.staleDays),
                 longChars: Number(v.longChars),
                 maintenanceEvery: Number(v.maintenanceEvery),
+              }).then((done) => {
+                if (done) for (const f of fields) fieldDrafts.clear(account, slug, f.k)
               })
             }}
           >
@@ -908,6 +950,8 @@ function Health({ slug, archived }: { slug: string; archived: boolean }) {
                   max={THRESHOLDS[f.k].max}
                   onValue={(x) => {
                     setV({ ...v, [f.k]: x })
+                    if (base && x === String(base[f.k])) fieldDrafts.clear(account, slug, f.k)
+                    else fieldDrafts.set(account, slug, f.k, x)
                     said.say(null)
                     if (problems[f.k]) setProblems({ ...problems, [f.k]: undefined })
                   }}
@@ -1085,6 +1129,15 @@ function Delete({ brain }: { brain: BrainInfo }) {
   )
 }
 
+// Arriving on a tab (by a link or by changing tab), the keyboard goes to its first heading, never to the
+// page; unless the person is already typing somewhere.
+function TabFocus({ tab }: { tab: SettingsTab }) {
+  useEffect(() => {
+    focusOnArrival(document.querySelector<HTMLElement>('.settings-tab h2'))
+  }, [tab])
+  return null
+}
+
 const TABS: Array<{ tab: SettingsTab; path: string; label: string }> = [
   { tab: 'members', path: '', label: S.tabs.members },
   { tab: 'agents', path: '/agents', label: S.tabs.agents },
@@ -1149,6 +1202,7 @@ export function BrainSettings({ slug, tab }: { slug: string; tab: SettingsTab })
           ))}
         </ul>
       </nav>
+      <TabFocus tab={tab} />
       <div class="settings-tab">
         {tab === 'members' ? <Members brain={info} me={who.account.id} /> : null}
         {tab === 'agents' ? (
@@ -1156,10 +1210,10 @@ export function BrainSettings({ slug, tab }: { slug: string; tab: SettingsTab })
             <Repositories brain={info} archived={archived} />
             <TextPart slug={brain.slug} archived={archived} account={who.account.id} part="usage" />
             <TextPart slug={brain.slug} archived={archived} account={who.account.id} part="guide" />
-            <Meaning slug={brain.slug} archived={archived} />
+            <Meaning slug={brain.slug} archived={archived} account={who.account.id} />
           </>
         ) : null}
-        {tab === 'health' ? <Health slug={brain.slug} archived={archived} /> : null}
+        {tab === 'health' ? <Health slug={brain.slug} archived={archived} account={who.account.id} /> : null}
         {tab === 'archive' ? (
           <>
             <Part id="export" title={S.exportTitle}>

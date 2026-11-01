@@ -5,6 +5,7 @@ import { describe, it } from 'node:test'
 import { repoKey as serverRepoKey } from '../../src/domain/repos.ts'
 import {
   type AdminAccount,
+  fieldDrafts,
   memberRows,
   peopleRows,
   refsLabel,
@@ -117,8 +118,8 @@ describe('what a save sends: only the fields changed, each with the value it was
     longChars: 20000,
     maintenanceEvery: 20,
   }
-  it('the default guide, unchanged, sends nothing', () => {
-    assert.equal(settingsSave(read, { guide: 'Default guide.' }), null)
+  it('nothing changed still sends the base of what the part shows: the server compares it', () => {
+    assert.deepEqual(settingsSave(read, { guide: 'Default guide.' }), { base: { guide: null } })
   })
   it('a custom guide goes with the base it was written on (null while the default)', () => {
     assert.deepEqual(settingsSave(read, { guide: 'Ours.' }), { guide: 'Ours.', base: { guide: null } })
@@ -138,9 +139,21 @@ describe('what a save sends: only the fields changed, each with the value it was
   it('thresholds: only those that changed, as numbers', () => {
     assert.deepEqual(settingsSave(read, { staleDays: 30, longChars: 20000, maintenanceEvery: 20 }), {
       staleDays: 30,
-      base: { staleDays: 90 },
+      base: { staleDays: 90, longChars: 20000, maintenanceEvery: 20 },
     })
-    assert.equal(settingsSave(read, { staleDays: 90, longChars: 20000, maintenanceEvery: 20 }), null)
+    assert.deepEqual(settingsSave(read, { staleDays: 90, longChars: 20000, maintenanceEvery: 20 }), {
+      base: { staleDays: 90, longChars: 20000, maintenanceEvery: 20 },
+    })
+  })
+})
+
+describe('unsaved fields of the settings live in memory only', () => {
+  it('any field, kept by account, brain and field, until saved or signed out', () => {
+    fieldDrafts.set('acc_a', 'growth', 'staleDays', '33')
+    assert.equal(fieldDrafts.get('acc_a', 'growth', 'staleDays'), '33')
+    assert.equal(fieldDrafts.get('acc_b', 'growth', 'staleDays'), undefined)
+    fieldDrafts.clearAll()
+    assert.equal(fieldDrafts.get('acc_a', 'growth', 'staleDays'), undefined)
   })
 })
 
@@ -219,5 +232,23 @@ describe('the administration', () => {
     assert.equal(refsLabel(3, ['run r_1', 'run r_2']), '3 short keys live: run r_1, run r_2')
     const many = Array.from({ length: 20 }, (_, i) => `r_${i}`)
     assert.match(refsLabel(40, many), /^40 short keys live: r_0, r_1, r_2, r_3, r_4 and 15 more$/)
+  })
+})
+
+describe('«you removed your own administrator rights»: set only by a change that went through, said once', () => {
+  it('a refused change, someone else, or a grant sets nothing; my own removal that went through does', async () => {
+    const { leftAdmin, rightsChanged, takeLeftAdmin } = await import('../../web/src/lib/flags.ts')
+    leftAdmin.value = false
+    rightsChanged({ ok: false, self: true, body: { isAdmin: false } })
+    assert.equal(leftAdmin.value, false)
+    rightsChanged({ ok: true, self: false, body: { isAdmin: false } })
+    assert.equal(leftAdmin.value, false)
+    rightsChanged({ ok: true, self: true, body: { isAdmin: true } })
+    assert.equal(leftAdmin.value, false)
+    rightsChanged({ ok: true, self: true, body: { isAdmin: false } })
+    assert.equal(leftAdmin.value, true)
+    assert.equal(takeLeftAdmin(), true)
+    assert.equal(takeLeftAdmin(), false)
+    assert.equal(leftAdmin.value, false)
   })
 })

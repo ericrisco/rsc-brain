@@ -400,11 +400,8 @@ export async function resendInvitation(ctx: Ctx, id: string): Promise<Invited> {
       )
     }
     // One new link a minute per invitation: a mailbox is not flooded, and links are not churned.
-    const last = await db.one<{ at: Date }>(
-      `SELECT max(at) AS at FROM audit WHERE action = 'invitation.resend' AND target = $1 AND outcome = 'ok'`,
-      [String(r.email)],
-    )
-    const wait = last?.at ? Math.ceil((last.at.getTime() + RESEND_EVERY_MS - now.getTime()) / 1000) : 0
+    const last = r.resent_at as Date | null
+    const wait = last ? Math.ceil((last.getTime() + RESEND_EVERY_MS - now.getTime()) / 1000) : 0
     if (wait > 0) {
       const e = new AppError(
         429,
@@ -416,10 +413,11 @@ export async function resendInvitation(ctx: Ctx, id: string): Promise<Invited> {
       e.headers = { 'retry-after': String(wait) }
       throw e
     }
-    await db.query('UPDATE invitations SET token_hash = $2, expires_at = $3 WHERE id = $1', [
+    await db.query('UPDATE invitations SET token_hash = $2, expires_at = $3, resent_at = $4 WHERE id = $1', [
       id,
       hashSecret(token),
       expiresAt,
+      now,
     ])
     await ok({ ...ctx, db }, 'invitation.resend', null, String(r.email))
     return r

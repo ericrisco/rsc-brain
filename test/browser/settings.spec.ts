@@ -43,7 +43,7 @@ test.describe('settings of a brain', () => {
     const parts: Record<string, string[]> = {
       Members: ['Members'],
       Agents: ['Repositories', 'Usage note', 'Compile guide', 'Meaning search'],
-      Health: ['Health thresholds'],
+      'Health thresholds': ['Health thresholds'],
       Archive: ['Export and import', 'Archive', 'Delete this brain'],
     }
     for (const [name, regions] of Object.entries(parts)) {
@@ -60,7 +60,7 @@ test.describe('settings of a brain', () => {
     await expect(region(page, 'Export and import')).toContainText('arrive with the install release')
     await expect(region(page, 'Export and import').getByRole('button')).toHaveCount(0)
     // A part heading reads stronger than a field label.
-    await tab(page, 'Health').click()
+    await tab(page, 'Health thresholds').click()
     const size = async (sel: string) =>
       page
         .locator(sel)
@@ -83,8 +83,14 @@ test.describe('settings of a brain', () => {
     const eric = member(page, 'Eric')
     await expect(eric).toContainText('Only curator')
     const select = eric.getByRole('combobox')
-    await expect(select).toBeDisabled()
+    // Off but still reachable, so its reason is heard: moving through it changes nothing.
+    await expect(select).toHaveAttribute('aria-disabled', 'true')
     await expect(select).toHaveAccessibleDescription(/A brain always keeps a curator/)
+    await select.focus()
+    await expect(select).toBeFocused()
+    await page.keyboard.press('ArrowDown')
+    await expect(select).toHaveValue('curator')
+    await expect(eric.getByRole('button', { name: /Save role/ })).toHaveCount(0)
     await expect(eric.getByRole('button', { name: /Remove/ })).toHaveCount(0)
   })
 
@@ -97,16 +103,23 @@ test.describe('settings of a brain', () => {
     await page.goto('/b/growth/settings')
     const ana = member(page, 'Ana')
     const select = ana.getByLabel('Role of Ana')
+    const writes: string[] = []
+    page.on('request', (r) => {
+      if (r.method() !== 'GET' && r.url().includes('/members')) writes.push(r.method())
+    })
     await select.focus()
     await page.keyboard.press('ArrowDown')
     await page.keyboard.press('ArrowUp')
     await expect(page.getByRole('status').filter({ hasText: 'Ana is now' })).toHaveCount(0)
+    expect(writes).toEqual([])
     await select.selectOption('reader')
     await ana.getByRole('button', { name: 'Save role of Ana' }).click()
     const said = page.getByRole('status').filter({ hasText: 'Ana is now a reader.' })
     await expect(said).toBeFocused()
     await expect(ana.getByRole('button', { name: 'Save role of Ana' })).toHaveCount(0)
     await expect(select).toHaveValue('reader')
+    // One write: the button's; choosing in the list sent nothing.
+    expect(writes).toHaveLength(1)
   })
 
   test('giving up one’s own curator role asks first, then the page says why it closes', async ({
@@ -127,6 +140,17 @@ test.describe('settings of a brain', () => {
     await expect(page.locator('[data-state="forbidden"]')).toContainText(
       'Only curators of Growth change its settings',
     )
+  })
+
+  test('leaving a brain speaks to you, by your row', async ({ page, context, baseURL }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/b/growth/settings')
+    await member(page, 'Ana').getByLabel('Role of Ana').selectOption('curator')
+    await member(page, 'Ana').getByRole('button', { name: 'Save role of Ana' }).click()
+    const eric = member(page, 'Eric')
+    await eric.getByRole('button', { name: 'Leave Growth' }).click()
+    await expect(eric).toContainText('You will no longer be able to open Growth.')
+    await expect(eric.getByRole('button', { name: 'Leave Growth now' })).toBeFocused()
   })
 
   test('remove: the confirmation is by the row with the keyboard on it', async ({
@@ -246,6 +270,92 @@ test.describe('settings of a brain', () => {
     await expect(note.getByRole('status')).toContainText('Saved.')
   })
 
+  test('a reset to the default while another curator saved a guide: it is said, not hidden as «nothing to save»', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/b/growth/settings/agents')
+    const guide = region(page, 'Compile guide')
+    await guide.getByRole('button', { name: 'Edit the guide' }).click()
+    await expect(guide.getByLabel('Compile guide')).toHaveValue(/How to compile this brain's journal/)
+    // Cora saves a guide of her own; Carla, who still sees the default, «resets» it.
+    await s.settingsEdit('growth', { guide: 'Cora wrote this guide.' })
+    await guide.getByRole('button', { name: 'Reset to default' }).click()
+    await guide.getByRole('button', { name: 'Save the guide' }).click()
+    await expect(guide.getByRole('alert')).toContainText('Someone changed this')
+    await expect(guide).toContainText('Cora wrote this guide.')
+    await expect(guide.getByLabel('Compile guide')).toHaveValue(/How to compile this brain's journal/)
+  })
+
+  test('saving with nothing changed asks the server and says so', async ({ page, context, baseURL }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/b/growth/settings/agents')
+    const note = region(page, 'Usage note')
+    await expect(note.getByLabel('Usage note')).toHaveValue('')
+    const asked = page.waitForRequest((r) => r.method() === 'PUT' && r.url().endsWith('/wiki/settings'))
+    await note.getByRole('button', { name: 'Save the note' }).click()
+    expect((await asked).postDataJSON()).toEqual({ base: { usageNote: '' } })
+    await expect(note.getByRole('status')).toContainText('Nothing changed')
+  })
+
+  test('arriving on a tab while the settings are read again: no empty box to type in, then the values', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/b/growth/settings/agents')
+    await expect(region(page, 'Usage note').getByLabel('Usage note')).toBeVisible()
+    await s.settingsEdit('growth', { usageNote: 'Write in English.' })
+    await tab(page, 'Health thresholds').click()
+    await expect(region(page, 'Health thresholds').getByLabel('Stale after (days)')).toBeVisible()
+    await s.state('settings', 'loading')
+    await tab(page, 'Agents').click()
+    await expect(
+      region(page, 'Usage note')
+        .getByRole('status')
+        .or(region(page, 'Usage note').locator('[aria-busy="true"]'))
+        .first(),
+    ).toBeVisible()
+    await expect(region(page, 'Usage note').getByLabel('Usage note')).toHaveCount(0)
+    await expect(region(page, 'Usage note').getByLabel('Usage note')).toHaveValue('Write in English.', {
+      timeout: 8000,
+    })
+    await s.state('settings', 'normal')
+  })
+
+  test('unsaved thresholds and the meaning box stay while moving between tabs', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/b/growth/settings/health')
+    await region(page, 'Health thresholds').getByLabel('Stale after (days)').fill('33')
+    await tab(page, 'Agents').click()
+    await region(page, 'Meaning search').getByLabel('Leave this brain out of meaning search').check()
+    await tab(page, 'Health thresholds').click()
+    await expect(region(page, 'Health thresholds').getByLabel('Stale after (days)')).toHaveValue('33')
+    await tab(page, 'Agents').click()
+    await expect(
+      region(page, 'Meaning search').getByLabel('Leave this brain out of meaning search'),
+    ).toBeChecked()
+  })
+
+  test('the keyboard lands on the tab’s first heading: arriving by a link, and changing tab', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/b/growth/settings/health')
+    await expect(page.getByRole('heading', { level: 2, name: 'Health thresholds' })).toBeFocused()
+    await tab(page, 'Agents').click()
+    await expect(page.getByRole('heading', { level: 2, name: 'Repositories' })).toBeFocused()
+  })
+
   test('another curator’s note is never erased by a save of another part (the reviewer’s first case)', async ({
     page,
     context,
@@ -260,7 +370,7 @@ test.describe('settings of a brain', () => {
     await region(page, 'Meaning search').getByLabel('Leave this brain out of meaning search').check()
     await region(page, 'Meaning search').getByRole('button', { name: 'Save' }).click()
     await expect(region(page, 'Meaning search').getByRole('status')).toContainText('Saved.')
-    await tab(page, 'Health').click()
+    await tab(page, 'Health thresholds').click()
     await region(page, 'Health thresholds').getByLabel('Stale after (days)').fill('30')
     await region(page, 'Health thresholds').getByRole('button', { name: 'Save' }).click()
     await expect(region(page, 'Health thresholds').getByRole('status')).toContainText('Saved.')
@@ -280,8 +390,13 @@ test.describe('settings of a brain', () => {
     await expect(health.getByLabel('Stale after (days)')).toHaveValue('90')
     // Meanwhile another curator changes how long a page may be, and when it is stale.
     await s.settingsEdit('growth', { longChars: 30000 })
-    // I change only the maintenance: saved, theirs untouched.
+    // I change only the maintenance. What this part shows changed under me: said, theirs taken into the
+    // field I did not touch, mine kept; saving again keeps both.
     await health.getByLabel('Maintenance every (approvals)').fill('25')
+    await health.getByRole('button', { name: 'Save' }).click()
+    await expect(health.getByRole('alert')).toContainText('Someone changed this')
+    await expect(health.getByLabel('Long after (characters)')).toHaveValue('30000')
+    await expect(health.getByLabel('Maintenance every (approvals)')).toHaveValue('25')
     await health.getByRole('button', { name: 'Save' }).click()
     await expect(health.getByRole('status')).toContainText('Saved.')
     await s.settingsEdit('growth', { staleDays: 60 })
@@ -312,7 +427,7 @@ test.describe('settings of a brain', () => {
       'rscb_not',
     )
     // Kept while moving inside the web.
-    await tab(page, 'Health').click()
+    await tab(page, 'Health thresholds').click()
     await tab(page, 'Agents').click()
     await expect(text).toHaveValue('A secret pasted by mistake rscb_not_a_real_one')
     await text.fill('Name the ticket.')
@@ -320,7 +435,7 @@ test.describe('settings of a brain', () => {
     await expect(region(page, 'Usage note').getByRole('status')).toContainText('Saved.')
     await s.settingsEdit('growth', { usageNote: 'Write in English.' })
     // Back to the tab: the settings are read again, and no old draft hides what is there now.
-    await tab(page, 'Health').click()
+    await tab(page, 'Health thresholds').click()
     await tab(page, 'Agents').click()
     await expect(region(page, 'Usage note').getByLabel('Usage note')).toHaveValue('Write in English.')
   })
@@ -336,7 +451,7 @@ test.describe('settings of a brain', () => {
     await meaning.getByLabel('Leave this brain out of meaning search').check()
     await meaning.getByRole('button', { name: 'Save' }).click()
     await expect(meaning.getByRole('status')).toContainText('Saved.')
-    await tab(page, 'Health').click()
+    await tab(page, 'Health thresholds').click()
     const health = region(page, 'Health thresholds')
     const stale = health.getByLabel('Stale after (days)')
     await stale.fill('0')

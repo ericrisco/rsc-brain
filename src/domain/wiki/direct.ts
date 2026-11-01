@@ -106,7 +106,11 @@ export async function getWikiSettings(ctx: Ctx, slug: string): Promise<SettingsV
   return settingsView(await settingsOf(ctx.db, brain.id))
 }
 
-export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput): Promise<SettingsView> {
+export async function setWikiSettings(
+  ctx: Ctx,
+  slug: string,
+  s: SettingsInput,
+): Promise<SettingsView & { unchanged?: true }> {
   let guide = s.guide === undefined || s.guide === null ? s.guide : redact(s.guide.trim()).text
   // The default text itself is the default: stored as null, so the brain follows it as it improves.
   if (typeof guide === 'string' && guide === DEFAULT_GUIDE.trim()) guide = null
@@ -168,6 +172,9 @@ export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput):
     set('stale_days', s.staleDays)
     set('long_chars', s.longChars)
     set('maintenance_every', s.maintenanceEvery)
+    // Only a base: the person changed nothing, and asks whether what they see is still what is there.
+    if (sets.length === 0 && s.base)
+      return { ...settingsView(await settingsOf(db, brain.id)), unchanged: true }
     if (sets.length === 0)
       throw invalid(
         'Nothing to change.',

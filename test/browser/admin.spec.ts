@@ -72,13 +72,36 @@ test.describe('administration: people', () => {
       eric.getByRole('button', { name: 'Remove administrator rights from Eric' }),
     ).not.toHaveAttribute('aria-disabled', 'true')
     // Removing my own rights: asked, then the administration closes and says why.
+    // A refusal does not throw me out.
+    await page.route('**/v1/admin/accounts/acc_eric', (r) =>
+      r.request().method() === 'PATCH'
+        ? r.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              error: { code: 'internal', message: 'Boom.', howToProceed: 'Try again.' },
+            }),
+          })
+        : r.continue(),
+    )
     await eric.getByRole('button', { name: 'Remove administrator rights from Eric' }).click()
-    const self = page.getByRole('dialog', { name: "Remove Eric's administrator rights?" })
+    const self = page.getByRole('dialog', { name: 'Remove your administrator rights?' })
     await expect(self).toContainText('leave the administration')
-    await self.getByRole('button', { name: 'Remove administrator rights from Eric' }).click()
+    await self.getByRole('button', { name: 'Remove my administrator rights' }).click()
+    await expect(eric.getByRole('alert')).toContainText('Boom.')
+    await expect(page.getByRole('navigation', { name: 'Administration' })).toBeVisible()
+    await page.unroute('**/v1/admin/accounts/acc_eric')
+    await eric.getByRole('button', { name: 'Remove administrator rights from Eric' }).click()
+    await page
+      .getByRole('dialog', { name: 'Remove your administrator rights?' })
+      .getByRole('button', { name: 'Remove my administrator rights' })
+      .click()
     await expect(page.locator('[data-state="forbidden"]')).toContainText(
       'You removed your own administrator rights',
     )
+    // Said once: coming back later reads as any other refusal.
+    await page.goto('/admin/services')
+    await expect(page.locator('[data-state="forbidden"]')).toContainText('Only the administration')
     await page.getByRole('button', { name: /Account/ }).click()
     await expect(page.locator('#account-menu').getByRole('link', { name: 'Administration' })).toHaveCount(0)
   })
@@ -94,6 +117,11 @@ test.describe('administration: people', () => {
     await expect(list.locator('li[data-person]')).toHaveCount(20)
     await list.getByRole('button', { name: /Show 20 more/ }).click()
     await expect(list.locator('li[data-person]')).toHaveCount(40)
+    // The keyboard goes to the first person just shown; after the last page too (the button is gone).
+    await expect(list.locator('li[data-person]').nth(20)).toBeFocused()
+    await list.getByRole('button', { name: /more/ }).click()
+    await expect(list.locator('li[data-person]')).toHaveCount(47)
+    await expect(list.locator('li[data-person]').nth(40)).toBeFocused()
     await list.getByLabel('Find by name or email').fill('person41@')
     await expect(list.locator('li[data-person]')).toHaveCount(1)
     await list.getByLabel('Find by name or email').fill('ana@')
