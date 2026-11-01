@@ -136,6 +136,28 @@ describe('the graph model', () => {
     assert.equal(v.pages, 5)
   })
 
+  it('by groups, the loose pages beside them keep their links: degree, hubs and focus count them', () => {
+    const m = modelOf({
+      ...groups,
+      nodes: [
+        ['faq', 'FAQ', 'guide', 'current', []],
+        ['intro', 'Intro', 'topic', 'current', []],
+        ['readme', 'Readme', 'topic', 'current', []],
+      ],
+      edges: [
+        [0, 1, 2],
+        [2, 0, 1],
+      ],
+      across: [[2, 'a', 1]],
+    })
+    assert.deepEqual(Array.from(m.degree).slice(0, 3), [2, 1, 2])
+    // FAQ links with two pages and is linked to once: it leads the hubs.
+    assert.deepEqual(hubs(m, new Uint8Array(m.items.length).fill(1), 1), [0])
+    assert.deepEqual([...neighbourhood(m, 0, 1).keys()].sort(), [0, 1, 2])
+    const v = visibility(m, NO_FILTERS)
+    assert.deepEqual(Array.from(v.edges).slice(0, 2), [1, 1])
+  })
+
   it('one group: its pages, and the groups they link with as items after them', () => {
     const m = modelOf(oneGroup)
     assert.equal(m.pages, 2)

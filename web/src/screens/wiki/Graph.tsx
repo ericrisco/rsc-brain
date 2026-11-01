@@ -38,6 +38,7 @@ import {
   type State,
   shape,
 } from '../../graph/render.ts'
+import { landing } from '../../lib/landing.ts'
 import { isField } from '../../lib/screen.ts'
 import { PAGE_STATUSES, PAGE_TYPES } from '../../lib/wiki.ts'
 import { online } from '../../session.ts'
@@ -148,16 +149,11 @@ function GraphScreen({ slug }: { slug: string }) {
   const hops: 1 | 2 = v.hops === '2' ? 2 : 1
   const list = v.view === 'list'
   const opener = useRef<HTMLElement | null>(null)
-  // Where the keyboard goes once the screen has drawn what an action changed: never left waiting. It lands
-  // as soon as that place is drawn; when the screen is done loading without it, on the focus bar or the
-  // heading; any other key or click of the person's, or two seconds, clears it.
-  const pending = useRef<string | null>(null)
-  const want = (selector: string) => {
-    pending.current = selector
-    window.setTimeout(() => {
-      if (pending.current === selector) land(true)
-    }, 2000)
-  }
+  // Where the keyboard goes once the screen has drawn what an action changed (lib/landing.ts): never left
+  // waiting, and never taking the keyboard back after a key or click of the person's own.
+  const [landed] = useState(() => landing(document, '#graph-focus, #graph-place'))
+  useEffect(() => () => landed.dispose(), [])
+  const want = landed.want
   // Where to go back to when focus is left: the row button that set it, or the page on the canvas.
   const focusFrom = useRef<{ address: string; row: boolean } | null>(null)
   const [startKey, setStartKey] = useState<string | null>(null)
@@ -217,36 +213,11 @@ function GraphScreen({ slug }: { slug: string }) {
   const listed =
     list && !v.focus && model ? pagesResource(slug, { ...listQuery, cursor: '', limit: '50' }) : null
   const listTotal = listed?.data.value?.total
-  const loading = r.loading.value || Boolean(counted?.loading.value) || Boolean(listed?.loading.value)
-
-  // The keyboard goes where the last action said: there when it is drawn; once nothing is loading (or after
-  // two seconds), to the focus bar or the heading instead.
-  const land = (late = false) => {
-    const sel = pending.current
-    if (!sel) return
-    const el = document.querySelector<HTMLElement>(sel)
-    if (el) {
-      pending.current = null
-      el.focus({ preventScroll: sel === '#graph-focus' })
-      return
-    }
-    if (loading && !late) return
-    pending.current = null
-    document.querySelector<HTMLElement>('#graph-focus, #graph-place')?.focus({ preventScroll: true })
-  }
-  useLayoutEffect(() => land())
-  // Any key or click of the person's own clears a place still waiting: it never takes the keyboard back later.
-  useEffect(() => {
-    const clear = () => {
-      pending.current = null
-    }
-    document.addEventListener('keydown', clear, true)
-    document.addEventListener('pointerdown', clear, true)
-    return () => {
-      document.removeEventListener('keydown', clear, true)
-      document.removeEventListener('pointerdown', clear, true)
-    }
-  }, [])
+  // A page to focus on that is still inside a group (by groups) is on its way: the group opens next.
+  const seeking = Boolean(v.focus) && model?.mode === 'groups' && !model.index.has(`p:${v.focus}`)
+  const loading =
+    r.loading.value || Boolean(counted?.loading.value) || Boolean(listed?.loading.value) || seeking
+  useLayoutEffect(() => landed.land(loading))
 
   const select = (key: string | null) => {
     if (key !== null && document.activeElement instanceof HTMLElement && !selected)
@@ -274,11 +245,28 @@ function GraphScreen({ slug }: { slug: string }) {
   const focusOn = (address: string, h: 1 | 2, from?: { row: boolean }) => {
     if (from) focusFrom.current = { address, row: from.row }
     want('#graph-focus')
-    const sub = group && address !== group && !address.startsWith(`${group}/`) ? areaOf(address) : group
+    // The group the page is drawn in: drawn by groups, the group it is in opens in the same step (or the
+    // pages gathered at this level); outside the group open, its own area.
+    let sub = group
+    let gathered = loose
+    if (model?.mode === 'groups' && !model.index.has(`p:${address}`)) {
+      const inside = model.items.find(
+        (it) =>
+          it.kind === 'group' && !it.loose && (address === it.prefix || address.startsWith(`${it.prefix}/`)),
+      )
+      if (inside?.kind === 'group') {
+        sub = inside.prefix
+        gathered = false
+      } else if (model.items.some((it) => it.kind === 'group' && it.loose)) gathered = true
+    } else if (group && address !== group && !address.startsWith(`${group}/`)) {
+      sub = areaOf(address)
+      gathered = false
+    }
     // A first focus, or one that moves to another group, is a step Back undoes.
+    const moves = sub !== group || gathered !== loose
     f.set(
-      { focus: address, hops: h === 2 ? '2' : '', group: sub, ...(sub !== group ? { loose: '' } : {}) },
-      { push: !v.focus || sub !== group },
+      { focus: address, hops: h === 2 ? '2' : '', group: sub, loose: gathered ? '1' : '' },
+      { push: !v.focus || moves },
     )
   }
   const leaveFocus = () => {

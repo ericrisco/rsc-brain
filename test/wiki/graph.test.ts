@@ -364,6 +364,35 @@ describe('the graph of a wiki (G10) and its list (G9)', { skip: skipPg }, () => 
       assert.equal((await w.call(eric.key, 'GET', '/v1/brains/lumpy/wiki/pages?loose=2')).status, 400)
     })
 
+    it('the loose pages of the list: a retired page under one does not count, the prefix page itself does', async () => {
+      await w.call(eric.key, 'POST', '/v1/brains', { slug: 'loosesql', purpose: 'Loose rules.' })
+      const b = await w.db.one<{ id: string }>("SELECT id FROM brains WHERE slug = 'loosesql'")
+      await w.db.query(
+        `INSERT INTO pages (id, brain_id, address, type, title, status, created_at, updated_at)
+         SELECT 'pg_ls' || n, $1, a, 'topic', a, s, now(), now()
+           FROM unnest($2::text[], $3::text[]) WITH ORDINALITY AS x(a, s, n)`,
+        [
+          b?.id,
+          ['eng', 'eng/a/1', 'eng/note', 'solo', 'solo/old', 'top'],
+          ['current', 'current', 'current', 'current', 'retired', 'current'],
+        ],
+      )
+      await w.db.query(
+        'INSERT INTO page_addresses SELECT brain_id, address, id, now() FROM pages WHERE brain_id = $1',
+        [b?.id],
+      )
+      const listed = async (q: string) =>
+        (await list(`${q}&status=current,retired`, 'loosesql')).items.map((i) => i.address)
+      assert.deepEqual(await listed('?loose=1'), ['solo', 'top'])
+      assert.deepEqual(await listed('?prefix=eng&loose=1'), ['eng', 'eng/note'])
+      // The graph gathers the same pages.
+      assert.deepEqual(addresses(await graph('?prefix=eng&loose=1', eric.key, 'loosesql')), [
+        'eng',
+        'eng/note',
+      ])
+      assert.deepEqual(addresses(await graph('?loose=1', eric.key, 'loosesql')), ['solo', 'top'])
+    })
+
     it('filters by link kind quickly on 5 000 pages', async () => {
       await w.call(eric.key, 'POST', '/v1/brains', { slug: 'kinds', purpose: 'Many links.' })
       const b = await w.db.one<{ id: string }>("SELECT id FROM brains WHERE slug = 'kinds'")

@@ -352,6 +352,92 @@ describe('the graph of a wiki (G10)', () => {
     assert.ok(loose.nodes.every((n) => n[0].startsWith('eng/note-')))
   })
 
+  it('by groups, the links between the loose pages beside them are drawn too', () => {
+    // The reviewers' case: two groups and three loose pages linked in a chain.
+    const pages = ['a/x', 'a/y', 'b/z', 'readme', 'faq', 'intro'].map((a) => page(a))
+    const links = [link('readme', 'faq'), link('faq', 'intro', 'depends-on'), link('readme', 'a/x')]
+    const v = graphView(pages, links, { max: 4 })
+    assert.equal(v.mode, 'groups')
+    assert.deepEqual(
+      v.nodes.map((n) => n[0]),
+      ['faq', 'intro', 'readme'],
+    )
+    const kind = (k: string) => GRAPH_KINDS.indexOf(k as (typeof GRAPH_KINDS)[number])
+    assert.deepEqual(v.edges, [
+      [0, 1, kind('depends-on')],
+      [2, 0, kind('related')],
+    ])
+    assert.deepEqual(v.across, [[2, 'a', 1]])
+    // A link kind keeps only its own links between them.
+    const f = graphView(pages, links, { max: 4, filters: { linkKind: 'depends-on' } })
+    assert.deepEqual(f.edges, [[0, 1, kind('depends-on')]])
+  })
+
+  it('pages at one level are gathered from 51, not at 50', () => {
+    const at = (n: number) => [
+      ...Array.from({ length: n }, (_, i) => page(`eng/note-${i}`)),
+      ...Array.from({ length: 20 }, (_, i) => page(`eng/backend/s${i}`)),
+    ]
+    // 70 and 71 pages, more than 60: by groups; the loose ones beside them up to 50.
+    const fifty = graphView(at(50), [], { max: 60, prefix: 'eng' })
+    assert.equal(fifty.mode, 'groups')
+    assert.equal(fifty.nodes.length, 50)
+    assert.ok(fifty.groups.every((g) => !g.loose))
+    const more = graphView(at(51), [], { max: 60, prefix: 'eng' })
+    assert.equal(more.mode, 'groups')
+    assert.equal(more.nodes.length, 0)
+    assert.deepEqual(
+      more.groups.map((g) => [g.prefix, g.count, g.loose ?? false]),
+      [
+        ['eng/backend', 20, false],
+        ['eng', 51, true],
+      ],
+    )
+  })
+
+  it('the gathered pages, opened, follow the filters and name the groups their links lead to', () => {
+    const pages = [
+      ...Array.from({ length: 60 }, (_, i) => page(`note-${i}`, { type: i % 2 ? 'topic' : 'decision' })),
+      page('eng/a'),
+      page('eng/b'),
+    ]
+    const links = [link('note-0', 'eng/a'), link('note-1', 'eng/b'), link('note-0', 'note-1')]
+    const all = graphView(pages, links, { max: 60, loose: true })
+    assert.equal(all.mode, 'pages')
+    assert.equal(all.total, 60)
+    // Links out of the loose pages at the top go to the group they lead into.
+    assert.deepEqual(all.across, [
+      [0, 'eng', 1],
+      [1, 'eng', 1],
+    ])
+    const decisions = graphView(pages, links, { max: 60, loose: true, filters: { type: 'decision' } })
+    assert.equal(decisions.total, 30)
+    assert.ok(decisions.nodes.every((n) => n[2] === 'decision'))
+  })
+
+  it('a retired page under an address does not make it a group', () => {
+    const pages = [page('x'), page('x/old', { status: 'retired' }), page('a/1'), page('a/2'), page('b/1')]
+    const v = graphView(pages, [], { max: 2 })
+    assert.equal(v.mode, 'groups')
+    assert.deepEqual(
+      v.nodes.map((n) => n[0]),
+      ['x'],
+    )
+  })
+
+  it('too big when the groups would not fit unfiltered, even when the filtered ones would', () => {
+    // 30 groups of two pages: 60 pages, more than 40, and 30 groups, fewer than 40: by groups.
+    const pages = Array.from({ length: 60 }, (_, i) =>
+      page(`g${String(i % 30).padStart(2, '0')}/p${i}`, { type: i ? 'topic' : 'decision' }),
+    )
+    const unfiltered = JSON.stringify(graphView(pages, [], { max: 40 }))
+    const filtered = JSON.stringify(graphView(pages, [], { max: 40, filters: { type: 'decision' } }))
+    assert.equal(JSON.parse(unfiltered).mode, 'groups')
+    assert.ok(filtered.length < unfiltered.length, `${filtered.length} < ${unfiltered.length}`)
+    const v = graphView(pages, [], { max: 40, maxChars: filtered.length + 10, filters: { type: 'decision' } })
+    assert.equal(v.mode, 'too-big')
+  })
+
   it('refuses a prefix, words or a tag longer than 200 characters', () => {
     assert.throws(() => checkFilters({ prefix: 'a'.repeat(201) }), /200/)
     assert.throws(() => checkFilters({ q: 'a'.repeat(201) }), /200/)

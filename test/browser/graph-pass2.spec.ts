@@ -199,3 +199,24 @@ test('without OffscreenCanvas the page paints the graph itself', async ({ page, 
   })
   expect(inked).toBeGreaterThan(100)
 })
+
+test('Focus from the list on a page inside a group not open: the group opens and the keyboard lands on the focus bar', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 'lumpy' })
+  // One level down, two levels down, and among the pages gathered inside a group.
+  for (const [q, address, group] of [
+    ['deal-3', 'sales/deal-3', 'sales'],
+    ['backend/s-1234', 'eng/backend/s-1234', 'eng%2Fbackend'],
+    ['note-7', 'eng/note-7', 'eng'],
+  ] as const) {
+    await page.goto(`${GRAPH}?view=list&q=${encodeURIComponent(q)}`)
+    const button = page.locator(`[data-focus-for="${address}"]`)
+    await button.focus()
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(new RegExp(`group=${group}(&|$)`))
+    await expect(page.locator('#graph-focus')).toBeFocused()
+  }
+})

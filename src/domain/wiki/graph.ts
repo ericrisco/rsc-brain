@@ -197,9 +197,8 @@ export function graphView(
       .sort((a, b) => a[0] - b[0] || byText(a[1], b[1]))
   }
 
-  // The pages drawn: of the prefix, or only its loose ones; links out go to the group they lead into.
-  const asPages = (from: GraphPage[], ls: GraphLink[], within: GraphPage[]): GraphView => {
-    const index = new Map(from.map((p, i) => [p.address, i]))
+  // [from, to, kind] for the links between drawn pages, by index, each once.
+  const edgesOf = (index: Map<string, number>, ls: GraphLink[]) => {
     const seen = new Set<string>()
     const edges: [number, number, number][] = []
     for (const l of ls) {
@@ -212,7 +211,13 @@ export function graphView(
       seen.add(key)
       edges.push([i, j, k])
     }
-    edges.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2])
+    return edges.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2])
+  }
+
+  // The pages drawn: of the prefix, or only its loose ones; links out go to the group they lead into.
+  const asPages = (from: GraphPage[], ls: GraphLink[], within: GraphPage[]): GraphView => {
+    const index = new Map(from.map((p, i) => [p.address, i]))
+    const edges = edgesOf(index, ls)
     const outside = (a: string): string | null =>
       index.has(a)
         ? null
@@ -257,6 +262,8 @@ export function graphView(
       prefix,
       total: inside.length,
       nodes: loose.map(nodeOf),
+      // The loose pages beside the groups keep the links between them.
+      edges: edgesOf(index, ls),
       across: acrossOf(index, groupOf, ls),
       groups,
       groupEdges: [...between]

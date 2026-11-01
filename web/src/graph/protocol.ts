@@ -27,7 +27,8 @@ export type PositionsMessage = {
   id: number
   xy: Float32Array
   done: boolean
-  // Once done: how long the worker took, wall time from the request (CA5 reads it: CDP cannot slow a worker).
+  // Once done: the worker's busy time, inside the layout's slices with the waits between them left out (CA5
+  // reads it: CDP cannot slow a worker).
   ms?: number
 }
 export type DrawnMessage = {
