@@ -9,7 +9,6 @@ import type { ApiError } from '../api/client.ts'
 import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { invalidate, resource } from '../api/resource.ts'
-import { ago } from '../lib/brains.ts'
 import { emailsOf } from '../lib/people.ts'
 import { branding, type Me, me, online } from '../session.ts'
 import { T } from '../text.ts'
@@ -38,20 +37,10 @@ type Invitation = {
   invitedBy: string
   expiresAt: string
 }
-type Account = {
-  id: string
-  kind: string
-  name: string
-  email: string | null
-  isAdmin: boolean
-  status: string
-  brains: number
-  lastSeenAt: string | null
-}
 type AdminBrain = { slug: string; name: string; status: string }
 // A link to give by hand, shown once, next to what made it: under the form, or in the row of its
 // invitation or person. `key` is unique per link (a new link of the same invitation is another link).
-type Shown = {
+export type Shown = {
   key: string
   title: string
   // Who it is for, for the status that announces it.
@@ -63,7 +52,7 @@ type Shown = {
   // The invitation or account it belongs to.
   of: string
 }
-type Links = {
+export type Links = {
   shown: Shown[]
   // Adds links (and drops every earlier link of the same invitation or person: it no longer works).
   add(more: Shown[]): void
@@ -72,7 +61,7 @@ type Links = {
 }
 
 let made = 0
-const nextKey = (kind: string) => `${kind}:${++made}`
+export const nextKey = (kind: string) => `${kind}:${++made}`
 
 const ROLES = ['reader', 'contributor', 'curator'] as const
 
@@ -80,9 +69,7 @@ const invitationsResource = () =>
   resource<{ invitations: Invitation[] }>('people:invitations', () =>
     api.call<{ invitations: Invitation[] }>('invitations'),
   )
-const accountsResource = () =>
-  resource<{ accounts: Account[] }>('admin:accounts', () => api.call<{ accounts: Account[] }>('accounts'))
-const allBrainsResource = () =>
+export const allBrainsResource = () =>
   resource<{ brains: AdminBrain[] }>('admin:brains', () => api.call<{ brains: AdminBrain[] }>('allBrains'))
 
 // The brains this person may invite to: every brain for the administration; the ones they curate for a
@@ -132,7 +119,7 @@ function LinkCard({ x, focus, onDone }: { x: Shown; focus: boolean; onDone: (key
   )
 }
 
-function LinksOf({ links, of, newest }: { links: Links; of: string; newest: string | null }) {
+export function LinksOf({ links, of, newest }: { links: Links; of: string; newest: string | null }) {
   const mine = links.shown.filter((x) => x.place !== 'form' && x.of === of)
   return (
     <>
@@ -343,23 +330,30 @@ function InviteForm({ who, links }: { who: Me; links: Links }) {
   )
 }
 
+const SHOW = ['all', 'pending', 'expired', 'used', 'revoked'] as const
+
 function Invitations({
   links,
   newest,
   names,
+  filter = false,
 }: {
   links: Links
   newest: string | null
   names: Map<string, string>
+  // The administration's list: shown by status (pending, expired, accepted, withdrawn).
+  filter?: boolean
 }) {
   const r = invitationsResource()
+  const [show, setShow] = useState<(typeof SHOW)[number]>('all')
   // Invitations may have been accepted since this list was loaded.
   useFresh(r)
   const [busy, setBusy] = useState<string | null>(null)
   const [said, setSaid] = useState<{ id: string; text: string; error?: boolean } | null>(null)
   const [asking, setAsking] = useState<Invitation | null>(null)
   const heading = useRef<HTMLHeadingElement>(null)
-  const list = r.data.value?.invitations
+  const all = r.data.value?.invitations
+  const list = all && show !== 'all' ? all.filter((i) => i.status === show) : all
   const p = T.people
 
   const resend = async (inv: Invitation) => {
@@ -371,21 +365,21 @@ function Invitations({
       // The link before this one no longer works: it goes, wherever it was shown.
       links.drop({ of: inv.id })
       if (i.mailed) setSaid({ id: inv.id, text: p.sentOne(i.email) })
-      else
-        links.add([
-          {
-            key: nextKey('inv'),
-            place: 'invitation',
-            of: inv.id,
-            who: i.email,
-            title: p.inviteFor(i.email),
-            link: i.link,
-            note: p.until(T.dateTime(i.expiresAt)),
-            ...(i.mailError && branding().data.value?.canSendMail
-              ? { problem: p.mailFailed(i.mailError) }
-              : {}),
-          },
-        ])
+      // The link to copy, also when it went by email (to send it another way): shown once, here.
+      links.add([
+        {
+          key: nextKey('inv'),
+          place: 'invitation',
+          of: inv.id,
+          who: i.email,
+          title: p.inviteFor(i.email),
+          link: i.link,
+          note: `${p.until(T.dateTime(i.expiresAt))}${i.mailed ? ` ${p.alsoMailed}` : ''}`,
+          ...(i.mailError && branding().data.value?.canSendMail
+            ? { problem: p.mailFailed(i.mailError) }
+            : {}),
+        },
+      ])
       await r.reload()
     } catch (e) {
       const a = e as ApiError
@@ -419,6 +413,22 @@ function Invitations({
       <h2 id="invitations-title" class="section-title" tabIndex={-1} ref={heading}>
         {p.listTitle}
       </h2>
+      {filter && all?.length ? (
+        <div class="field inline-field">
+          <label for="invitations-show">{T.admin.show}</label>
+          <select
+            id="invitations-show"
+            value={show}
+            onChange={(e) => setShow(e.currentTarget.value as (typeof SHOW)[number])}
+          >
+            {SHOW.map((x) => (
+              <option key={x} value={x}>
+                {x === 'all' ? T.admin.showAll : p.status[x]}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
       {!list ? (
         r.error.value ? (
           <ErrorState error={r.error.value} onRetry={() => void r.reload()} />
@@ -426,7 +436,9 @@ function Invitations({
           <Skeleton rows={2} />
         )
       ) : list.length === 0 ? (
-        <p class="quiet-empty">{p.noInvitations}</p>
+        <p class="quiet-empty" data-state={show === 'all' ? 'empty' : 'filtered-empty'}>
+          {show === 'all' ? p.noInvitations : T.states.filteredEmpty}
+        </p>
       ) : (
         <ul class="list">
           {list.map((inv) => {
@@ -504,102 +516,93 @@ function Invitations({
   )
 }
 
-function Accounts({ who, links, newest }: { who: Me; links: Links; newest: string | null }) {
-  const r = accountsResource()
-  useFresh(r)
-  const [busy, setBusy] = useState<string | null>(null)
-  const [failed, setFailed] = useState<{ id: string; text: string } | null>(null)
-  const p = T.people
-  const people = r.data.value?.accounts.filter((a) => a.kind === 'person')
-  const make = async (a: Account) => {
-    setBusy(a.id)
-    setFailed(null)
-    try {
-      const out = await api.call<{ link: string; expiresAt: string }>('resetLink', { path: { id: a.id } })
-      // A new reset link ends the one before (B4): only the newest is shown.
-      links.add([
-        {
-          key: nextKey('reset'),
-          place: 'account',
-          of: a.id,
-          who: a.name,
-          title: p.resetFor(a.name, a.email),
-          link: out.link,
-          note: p.resetUntil,
-        },
-      ])
-    } catch (e) {
-      const x = e as ApiError
-      setFailed({ id: a.id, text: `${x.message} ${x.howToProceed}` })
-    } finally {
-      setBusy(null)
-    }
+// Kept for the admin screen's reset links (screens/admin/Admin.tsx builds the people list).
+export function resetLinkOf(
+  a: { name: string; email: string | null },
+  out: { link: string },
+  id: string,
+): Shown {
+  return {
+    key: nextKey('reset'),
+    place: 'account',
+    of: id,
+    who: a.name,
+    title: T.people.resetFor(a.name, a.email),
+    link: out.link,
+    note: T.people.resetUntil,
   }
-  const blocked = writeBlocked({ online: online.value, pending: false })
+}
+
+// The links shown once on a screen, the newest one taking the keyboard, and what the status says.
+export function useLinks(): { links: Links; newest: string | null; announce: string } {
+  const [shown, setShown] = useState<Shown[]>([])
+  const [newest, setNewest] = useState<string | null>(null)
+  const [announce, setAnnounce] = useState('')
+  // Put in the back/forward cache, the links shown are forgotten (they work once, like a token).
+  useEffect(() => {
+    const away = () => {
+      setShown([])
+      setAnnounce('')
+    }
+    window.addEventListener('pagehide', away)
+    return () => window.removeEventListener('pagehide', away)
+  }, [])
+  const links: Links = {
+    shown,
+    add: (more) => {
+      if (!more.length) return
+      const ofs = new Set(more.map((x) => x.of))
+      setShown((now) => [...more, ...now.filter((x) => !ofs.has(x.of))])
+      setNewest(more[0]?.key ?? null)
+      setAnnounce(T.people.linkReady(more.map((x) => x.who)))
+    },
+    drop: ({ of, key }) => {
+      setShown((now) => now.filter((x) => x.of !== of && x.key !== key))
+      // The link it announced is gone: so is the announcement.
+      setAnnounce('')
+    },
+  }
+  return { links, newest, announce }
+}
+
+// Inviting: the form, the links to send and the invitations (People, and the administration's
+// Invitations, which also shows them by status).
+export function InvitePeople({ who, filter = false }: { who: Me; filter?: boolean }) {
+  const { links, newest, announce } = useLinks()
+  const admin = who.account.isAdmin
+  const names = new Map<string, string>()
+  const b = admin ? allBrainsResource().data.value?.brains : brainsResource().data.value?.brains
+  for (const x of b ?? []) names.set(x.slug, x.name)
   return (
-    <section aria-labelledby="accounts-title">
-      <h2 id="accounts-title" class="section-title">
-        {p.peopleTitle}
-      </h2>
-      <p class="muted small">{p.resetHow}</p>
-      {!people ? (
-        r.error.value ? (
-          <ErrorState error={r.error.value} onRetry={() => void r.reload()} />
-        ) : (
-          <Skeleton rows={2} />
-        )
-      ) : (
-        <ul class="list">
-          {people.map((a) => (
-            <li key={a.id} class="with-actions">
-              <div>
-                <p class="list-title">
-                  {a.name} {a.id === who.account.id ? <span class="tag">{p.you}</span> : null}
-                  {a.isAdmin ? <span class="tag">{p.admin}</span> : null}
-                  {a.status !== 'active' ? <span class="tag">{p.removed}</span> : null}
-                </p>
-                <p class="meta">
-                  {a.email ? <span class="mono">{a.email}</span> : null}
-                  {a.email ? ' · ' : ''}
-                  {p.inBrains(a.brains)} · {p.seen(ago(a.lastSeenAt))}
-                </p>
-                {failed?.id === a.id ? (
-                  <p class="problem" role="alert">
-                    {failed.text}
-                  </p>
-                ) : null}
-              </div>
-              {a.status === 'active' && a.id !== who.account.id ? (
-                <div class="actions">
-                  <Button
-                    pending={busy === a.id}
-                    blocked={blocked}
-                    aria-label={p.resetOf(a.name)}
-                    onClick={() => void make(a)}
-                  >
-                    {p.reset}
-                  </Button>
-                </div>
-              ) : null}
-              <LinksOf links={links} of={a.id} newest={newest} />
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    <>
+      <p class="sr-only" role="status">
+        {announce}
+      </p>
+      <div class="people">
+        <div class="people-main">
+          <InviteForm who={who} links={links} />
+          <LinksToSend links={links} newest={newest} />
+        </div>
+        <div class="people-side">
+          <Invitations links={links} newest={newest} names={names} filter={filter} />
+          {admin && !filter ? (
+            <section aria-labelledby="accounts-title">
+              <h2 id="accounts-title" class="section-title">
+                {T.people.peopleTitle}
+              </h2>
+              <p class="muted small">
+                {T.people.managed} <a href="/admin/people">{T.people.managedLink}</a>
+              </p>
+            </section>
+          ) : null}
+        </div>
+      </div>
+    </>
   )
 }
 
 export function People() {
   const who = me().data.value
-  const [shown, setShown] = useState<Shown[]>([])
-  // The link that takes the keyboard (the newest), and what the status says about it.
-  const [newest, setNewest] = useState<string | null>(null)
-  const [announce, setAnnounce] = useState('')
-  const admin = who?.account.isAdmin === true
-  const names = new Map<string, string>()
-  const b = admin ? allBrainsResource().data.value?.brains : brainsResource().data.value?.brains
-  for (const x of b ?? []) names.set(x.slug, x.name)
   if (!who) return <Skeleton rows={3} />
   if (!who.account.canInvite) {
     return (
@@ -616,40 +619,13 @@ export function People() {
       </>
     )
   }
-  const links: Links = {
-    shown,
-    add: (more) => {
-      if (!more.length) return
-      const ofs = new Set(more.map((x) => x.of))
-      setShown((now) => [...more, ...now.filter((x) => !ofs.has(x.of))])
-      setNewest(more[0]?.key ?? null)
-      setAnnounce(T.people.linkReady(more.map((x) => x.who)))
-    },
-    drop: ({ of, key }) => {
-      setShown((now) => now.filter((x) => x.of !== of && x.key !== key))
-      // The link it announced is gone: so is the announcement.
-      setAnnounce('')
-    },
-  }
   return (
     <>
       <div class="title-row">
         <h1 class="title">{T.people.title}</h1>
       </div>
       <p class="lead">{T.people.lead}</p>
-      <p class="sr-only" role="status">
-        {announce}
-      </p>
-      <div class="people">
-        <div class="people-main">
-          <InviteForm who={who} links={links} />
-          <LinksToSend links={links} newest={newest} />
-        </div>
-        <div class="people-side">
-          <Invitations links={links} newest={newest} names={names} />
-          {admin ? <Accounts who={who} links={links} newest={newest} /> : null}
-        </div>
-      </div>
+      <InvitePeople who={who} />
     </>
   )
 }

@@ -3727,3 +3727,118 @@ dialog.search-dialog {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* ── Brain settings and the administration (PR25a) ───────────────────── */
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 40px;
+  align-items: start;
+  margin-top: 20px;
+}
+
+.settings-main,
+.settings-side {
+  display: grid;
+  gap: 40px;
+  min-width: 0;
+}
+
+.settings-part {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-form {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.settings-form textarea {
+  font: 14px / 1.55 var(--mono);
+}
+
+.add-member {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 170px);
+  gap: 12px;
+  align-items: start;
+}
+
+.thresholds {
+  display: grid;
+  gap: 12px;
+}
+
+.member-actions select {
+  min-width: 130px;
+}
+
+.theirs {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.theirs pre,
+.default-text pre {
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.default-summary {
+  min-height: 24px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.inline-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.tab-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.admin-actions {
+  flex-wrap: wrap;
+}
+
+.main-keys {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding-left: 14px;
+  border-left: 1px solid var(--rule);
+}
+
+.list > li.service > .once,
+.list > li.service > .main-keys {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 1023px) {
+  .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 479px) {
+  .add-member {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

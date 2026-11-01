@@ -11,7 +11,7 @@ import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
 import { ago } from '../lib/brains.ts'
 import { firstPersonAlone } from '../lib/people.ts'
-import { branding, justJoined, justSetUp, type Me, me, online } from '../session.ts'
+import { branding, justDeleted, justJoined, justSetUp, type Me, me, online } from '../session.ts'
 import { connectHref, createOpen } from '../shell/dialogs.ts'
 import { useSignOut } from '../shell/signOut.ts'
 import { T } from '../text.ts'
@@ -200,9 +200,12 @@ export function Home() {
   const [setUp] = useState(() => justSetUp.value)
   // "Welcome — you joined …" is said once, on the first home after accepting an invitation.
   const [joined] = useState(() => justJoined.value)
+  // "Growth was deleted." is said once, on the home the settings lead to after deleting it.
+  const [deleted] = useState(() => justDeleted.value)
   useEffect(() => {
     justSetUp.value = false
     justJoined.value = null
+    justDeleted.value = null
   }, [])
   const state = viewState({
     loading: r.loading.value,
@@ -234,6 +237,12 @@ export function Home() {
         <p class="alert ok" role="status">
           <span class="kind">{T.kind.done}</span>
           <span>{T.home.setUp}</span>
+        </p>
+      ) : null}
+      {deleted ? (
+        <p class="alert ok" role="status">
+          <span class="kind">{T.kind.done}</span>
+          <span>{T.settings.deleted(deleted)}</span>
         </p>
       ) : null}
       {joined ? (

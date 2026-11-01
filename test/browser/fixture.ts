@@ -25,6 +25,8 @@ type Scenario = {
   streams(down: boolean): Promise<void>
   // The server ends the open streams of a brain with "closed" and its reason.
   close(brain: string, reason: string, message: string): Promise<void>
+  // Another curator saves the settings of a brain meanwhile (PR25a).
+  settingsEdit(brain: string, change: Record<string, unknown>): Promise<void>
 }
 
 export type EmitOptions = {
@@ -87,6 +89,13 @@ export async function scenario(
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ brain, reason, message }),
+      })
+    },
+    settingsEdit: async (brain, change) => {
+      await fetch(`${baseURL}/__fixture/scenarios/${id}/settings-edit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ brain, ...change }),
       })
     },
     streams: async (down) => {

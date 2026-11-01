@@ -43,6 +43,8 @@ export const justJoined = signal<Joined | null>(null)
 
 // Set by "Sign out" when it worked, so the sign-in page can confirm it ("Signed out.").
 export const justSignedOut = signal(false)
+// Set when the administration deleted a brain from its settings, so home says it once (PR25a).
+export const justDeleted = signal<string | null>(null)
 
 export const online = signal(typeof navigator === 'undefined' ? true : navigator.onLine)
 if (typeof window !== 'undefined') {

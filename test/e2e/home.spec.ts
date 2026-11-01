@@ -208,7 +208,7 @@ test('the first invitation from the web goes by email; the invitee joins; the pa
 
 test('the administration makes a reset link for a person, shown once', async ({ page, baseURL }) => {
   await signedInAdmin(page, baseURL as string)
-  await page.goto('/people')
+  await page.goto('/admin/people')
   const lena = page
     .getByRole('region', { name: 'People in this installation' })
     .getByRole('listitem')

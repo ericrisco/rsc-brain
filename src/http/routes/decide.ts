@@ -4,7 +4,7 @@
 
 import { invalid } from '../../core/errors.ts'
 import { approveProposal, returnProposal, reviewProposal } from '../../domain/wiki/decide.ts'
-import { directChange, maintenanceAsked, setWikiSettings } from '../../domain/wiki/direct.ts'
+import { directChange, getWikiSettings, maintenanceAsked, setWikiSettings } from '../../domain/wiki/direct.ts'
 import { purgePageRevisions, purgeProposal } from '../../domain/wiki/purge.ts'
 import { bool, compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
 import { type Route, route } from '../router.ts'
@@ -78,17 +78,22 @@ export const decideRoutes: Route[] = [
       }),
     }
   }),
+  route('GET /v1/brains/:slug/wiki/settings', async (r) => ({
+    body: await getWikiSettings(ctxOf(r), r.params.slug as string),
+  })),
   route('PUT /v1/brains/:slug/wiki/settings', async (r) => {
     const b = obj(r.body)
     const guide = b.guide
     if (guide !== undefined && guide !== null && typeof guide !== 'string') {
       throw invalid('"guide" is text, or null for the default.', 'Fix "guide".')
     }
+    const revision = str(b, 'revision', { max: 64 })
     return {
       body: await setWikiSettings(
         ctxOf(r),
         r.params.slug as string,
         compact({
+          revision,
           guide: guide as string | null | undefined,
           mapIntro: str(b, 'mapIntro'),
           usageNote: str(b, 'usageNote'),

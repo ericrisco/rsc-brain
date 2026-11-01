@@ -116,7 +116,13 @@ test.describe('reset links', () => {
     baseURL,
   }) => {
     await scenario(context, baseURL as string, 'signed-in')
+    // Reset links moved with the people to the administration (PR25a); People points there.
     await page.goto('/people')
+    await page
+      .getByRole('region', { name: 'People in this installation' })
+      .getByRole('link', { name: 'Administration › People' })
+      .click()
+    await expect(page).toHaveURL(/\/admin\/people$/)
     const ana = page
       .getByRole('region', { name: 'People in this installation' })
       .getByRole('listitem')
@@ -211,7 +217,7 @@ test.describe('links in view (P1, P2, P3)', () => {
 
   test('P1: a reset link shows by the person, in view, focused', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in')
-    await page.goto('/people')
+    await page.goto('/admin/people')
     const ana = page
       .getByRole('region', { name: 'People in this installation' })
       .getByRole('listitem')

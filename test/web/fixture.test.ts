@@ -980,6 +980,192 @@ describe('the fixture API', () => {
     assert.equal((await call('GET', '/v1/me', o)).status, 401)
   })
 
+  it('brain settings and the administration (PR25a): members, repositories, settings, archive, people and service accounts', async () => {
+    const s = fx.scenario('signed-in')
+    const o = { scenario: s.id, cookie: s.cookie }
+    type E = { error: { code: string } }
+    const code = (a: Ans) => (a.body as E).error?.code
+    // Settings: read with a revision, saved on it, refused on an old one.
+    const read = await call('GET', '/v1/brains/growth/wiki/settings', o)
+    assert.equal(read.status, 200)
+    const rev = (read.body as { revision: string }).revision
+    const saved = await call('PUT', '/v1/brains/growth/wiki/settings', {
+      ...o,
+      body: { usageNote: 'Ids.', revision: rev },
+    })
+    assert.equal(saved.status, 200)
+    const late = await call('PUT', '/v1/brains/growth/wiki/settings', {
+      ...o,
+      body: { staleDays: 5, revision: rev },
+    })
+    assert.equal(code(late), 'settings_changed')
+    assert.equal(
+      code(await call('PUT', '/v1/brains/growth/wiki/settings', { ...o, body: { staleDays: 0 } })),
+      'invalid_request',
+    )
+    assert.equal(
+      code(await call('PUT', '/v1/brains/legal-archive/wiki/settings', { ...o, body: { staleDays: 9 } })),
+      'forbidden',
+    )
+    // Members: add by email, change a role, remove; the last curator stays.
+    // The administration manages who is in a brain without being its curator (B4).
+    assert.equal(
+      (
+        await call('POST', '/v1/brains/support/members', {
+          ...o,
+          body: { account: 'ana@example.test', role: 'reader' },
+        })
+      ).status,
+      201,
+    )
+    const added = await call('POST', '/v1/brains/growth/members', {
+      ...o,
+      body: { account: 'ana@example.test', role: 'reader' },
+    })
+    assert.equal(added.status, 201)
+    assert.equal(
+      code(
+        await call('POST', '/v1/brains/growth/members', {
+          ...o,
+          body: { account: 'nobody@example.test', role: 'reader' },
+        }),
+      ),
+      'invalid_request',
+    )
+    assert.equal(
+      code(
+        await call('POST', '/v1/brains/growth/members', {
+          ...o,
+          body: { account: 'acc_svc_factory', role: 'curator' },
+        }),
+      ),
+      'invalid_request',
+    )
+    assert.equal(
+      (await call('PUT', '/v1/brains/growth/members/acc_ana', { ...o, body: { role: 'contributor' } }))
+        .status,
+      200,
+    )
+    assert.equal(
+      code(await call('PUT', '/v1/brains/growth/members/acc_eric', { ...o, body: { role: 'reader' } })),
+      'last_curator',
+    )
+    assert.equal(code(await call('DELETE', '/v1/brains/growth/members/acc_eric', o)), 'last_curator')
+    assert.equal((await call('DELETE', '/v1/brains/growth/members/acc_ana', o)).status, 200)
+    assert.equal((await call('GET', '/v1/brains/growth/members', o)).status, 200)
+    // Repositories.
+    assert.equal((await call('GET', '/v1/brains/growth/repos', o)).status, 200)
+    const linked = await call('POST', '/v1/brains/growth/repos', {
+      ...o,
+      body: { repo: 'git@github.com:Acme/App.git' },
+    })
+    assert.deepEqual([linked.status, (linked.body as { repo: string }).repo], [201, 'github.com/acme/app'])
+    assert.equal(
+      code(await call('POST', '/v1/brains/growth/repos', { ...o, body: { repo: '~/code' } })),
+      'invalid_request',
+    )
+    assert.equal(
+      (await call('DELETE', '/v1/brains/growth/repos', { ...o, body: { repo: 'github.com/acme/app' } }))
+        .status,
+      200,
+    )
+    assert.equal(
+      code(await call('DELETE', '/v1/brains/growth/repos', { ...o, body: { repo: 'github.com/acme/app' } })),
+      'not_found',
+    )
+    // Archive and back; deleting asks for the name.
+    assert.equal((await call('POST', '/v1/brains/growth/archive', { ...o, body: {} })).status, 200)
+    assert.equal((await call('POST', '/v1/brains/growth/unarchive', { ...o, body: {} })).status, 200)
+    assert.equal(code(await call('POST', '/v1/brains/support/archive', { ...o, body: {} })), 'forbidden')
+    assert.equal(
+      code(await call('DELETE', '/v1/brains/support', { ...o, body: { confirm: 'nope' } })),
+      'invalid_request',
+    )
+    assert.equal(
+      (await call('DELETE', '/v1/brains/support', { ...o, body: { confirm: 'support' } })).status,
+      200,
+    )
+    // People: rights, the last administrator, deactivate and back.
+    assert.equal(
+      (await call('PATCH', '/v1/admin/accounts/acc_ana', { ...o, body: { canCreateBrains: true } })).status,
+      200,
+    )
+    assert.equal(
+      code(await call('PATCH', '/v1/admin/accounts/acc_eric', { ...o, body: { isAdmin: false } })),
+      'last_admin',
+    )
+    assert.equal(
+      code(await call('POST', '/v1/admin/accounts/acc_eric/remove', { ...o, body: {} })),
+      'invalid_request',
+    )
+    assert.equal((await call('POST', '/v1/admin/accounts/acc_ana/remove', { ...o, body: {} })).status, 200)
+    assert.equal((await call('POST', '/v1/admin/accounts/acc_ana/restore', { ...o, body: {} })).status, 200)
+    assert.equal(
+      code(await call('PATCH', '/v1/admin/accounts/acc_nope', { ...o, body: { isAdmin: true } })),
+      'not_found',
+    )
+    // Service accounts: create (the key once), rotate (two at most), revoke.
+    const made = await call('POST', '/v1/admin/services', {
+      ...o,
+      body: { name: 'Nightly', brains: [{ slug: 'growth', role: 'contributor' }] },
+    })
+    assert.equal(made.status, 201)
+    const sid = (made.body as { account: { id: string } }).account.id
+    assert.match((made.body as { key: { secret: string } }).key.secret, /^rscb_/)
+    assert.equal(
+      code(
+        await call('POST', '/v1/admin/services', {
+          ...o,
+          body: { name: 'X', brains: [{ slug: 'growth', role: 'curator' }] },
+        }),
+      ),
+      'invalid_request',
+    )
+    assert.equal(
+      (await call('POST', `/v1/admin/services/${sid}/keys`, { ...o, body: { name: 'next' } })).status,
+      201,
+    )
+    assert.equal(
+      code(await call('POST', `/v1/admin/services/${sid}/keys`, { ...o, body: {} })),
+      'too_many_main_keys',
+    )
+    const keys = await call('GET', `/v1/admin/accounts/${sid}/keys`, o)
+    const first = (keys.body as { keys: Array<{ id: string }> }).keys[0]?.id
+    assert.ok(!JSON.stringify(keys.body).includes('rscb_'), 'no secret in the list')
+    assert.equal((await call('DELETE', `/v1/keys/${first}`, o)).status, 200)
+    assert.equal(code(await call('DELETE', '/v1/keys/crd_nope', o)), 'not_found')
+    // A member is not the administration; programs do not manage people.
+    const member = fx.scenario('member')
+    const ana = { scenario: member.id, cookie: 'rscb_session=fx.acc_ana' }
+    assert.equal(
+      (await call('PATCH', '/v1/admin/accounts/acc_eric', { ...ana, body: { isAdmin: false } })).status,
+      403,
+    )
+    assert.equal((await call('GET', '/v1/admin/accounts/acc_svc_factory/keys', ana)).status, 403)
+    assert.equal(
+      code(await call('POST', '/v1/admin/accounts/acc_ana/restore', { ...ana, body: {} })),
+      'forbidden',
+    )
+    assert.equal(
+      code(await call('POST', '/v1/admin/services/acc_svc_factory/keys', { ...ana, body: {} })),
+      'forbidden',
+    )
+    assert.equal(code(await call('POST', '/v1/brains/growth/unarchive', { ...ana, body: {} })), 'forbidden')
+    assert.equal(
+      code(
+        await call('POST', '/v1/brains/growth/members', {
+          ...ana,
+          body: { account: 'eric@example.test', role: 'reader' },
+        }),
+      ),
+      'forbidden',
+    )
+    assert.equal(
+      code(await call('POST', '/v1/brains/nowhere/repos', { ...o, body: { repo: 'github.com/a/b' } })),
+      'brain_not_found',
+    )
+  })
+
   it('every operation the fixture answers was checked against the description', () => {
     assert.deepEqual(
       [...fx.operations].filter((op) => !seen.has(op)),

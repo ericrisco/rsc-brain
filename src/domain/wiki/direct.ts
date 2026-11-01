@@ -2,13 +2,14 @@
 // same operations, checked the same way, written by the same applier, so history and log show it like
 // an approved proposal. An edit goes against a revision: if the page moved on, nothing is saved and the
 // current version comes back (CA10). Also the curator's settings: the compile guide and the map intro.
+import { createHash } from 'node:crypto'
 import { conflict, invalid } from '../../core/errors.ts'
 import { redact } from '../../privacy/redact.ts'
 import { allow, type Ctx, inBrain } from '../context.ts'
 import { lockMeaning } from '../meaning.ts'
 import { applyOps, type Revised } from './apply.ts'
 import { type Problem, readOp } from './model.ts'
-import { getPage, type PageReading, settingsOf, type WikiSettings } from './pages.ts'
+import { DEFAULT_GUIDE, getPage, type PageReading, settingsOf, type WikiSettings } from './pages.ts'
 import { problemsOf } from './proposals.ts'
 import { webOnly } from './review.ts'
 
@@ -63,6 +64,9 @@ export async function directChange(
 }
 
 export type SettingsInput = {
+  // The revision the person read (G11): a save on an older one is refused, so two curators editing at
+  // once never overwrite each other unseen. Left out, the save goes as before (programs).
+  revision?: string
   guide?: string | null
   mapIntro?: string
   usageNote?: string
@@ -72,7 +76,32 @@ export type SettingsInput = {
   maintenanceEvery?: number
 }
 
-export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput): Promise<WikiSettings> {
+// The settings as the brain's settings screen reads them (G11): the default texts beside the current
+// ones, and a revision of what people edit (not the count of approvals, which moves by itself).
+export type SettingsView = WikiSettings & { guideDefault: string; usageNoteDefault: string; revision: string }
+export const USAGE_NOTE_DEFAULT = ''
+
+export function settingsView(s: WikiSettings): SettingsView {
+  const edited = [
+    s.customGuide ? s.guide : null,
+    s.mapIntro,
+    s.usageNote,
+    s.meaningExcluded,
+    s.staleDays,
+    s.longChars,
+    s.maintenanceEvery,
+  ]
+  const revision = createHash('sha256').update(JSON.stringify(edited)).digest('hex').slice(0, 24)
+  return { ...s, guideDefault: DEFAULT_GUIDE, usageNoteDefault: USAGE_NOTE_DEFAULT, revision }
+}
+
+// Any member reads them: the guide and the note already reach every member's agents.
+export async function getWikiSettings(ctx: Ctx, slug: string): Promise<SettingsView> {
+  const { brain } = await inBrain(ctx, { slug })
+  return settingsView(await settingsOf(ctx.db, brain.id))
+}
+
+export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput): Promise<SettingsView> {
   const guide = s.guide === undefined || s.guide === null ? s.guide : redact(s.guide.trim()).text
   const mapIntro = s.mapIntro === undefined ? undefined : redact(s.mapIntro.trim()).text
   const usageNote = s.usageNote === undefined ? undefined : redact(s.usageNote.trim()).text
@@ -103,6 +132,16 @@ export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput):
     await db.query('INSERT INTO wiki_settings (brain_id) VALUES ($1) ON CONFLICT (brain_id) DO NOTHING', [
       brain.id,
     ])
+    if (s.revision !== undefined) {
+      await db.query('SELECT 1 FROM wiki_settings WHERE brain_id = $1 FOR UPDATE', [brain.id])
+      if (settingsView(await settingsOf(db, brain.id)).revision !== s.revision) {
+        throw conflict(
+          'settings_changed',
+          `Someone changed the settings of "${slug}" since you opened them.`,
+          'Read them again, then save your change on top.',
+        )
+      }
+    }
     const sets: string[] = []
     const values: unknown[] = [brain.id]
     const set = (col: string, v: unknown) => {
@@ -128,7 +167,7 @@ export async function setWikiSettings(ctx: Ctx, slug: string, s: SettingsInput):
     // Excluding a brain from meaning search deletes its vectors now; nothing more of it is sent (CA8).
     if (s.meaningExcluded === true)
       await db.query('DELETE FROM meaning_vectors WHERE brain_id = $1', [brain.id])
-    return settingsOf(db, brain.id)
+    return settingsView(await settingsOf(db, brain.id))
   })
 }
 

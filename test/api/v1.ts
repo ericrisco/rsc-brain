@@ -48,6 +48,7 @@ export const V1 = [
   'GET /v1/brains/{slug}/wiki/guide',
   'GET /v1/brains/{slug}/wiki/health',
   'GET /v1/brains/{slug}/wiki/log',
+  'GET /v1/brains/{slug}/wiki/settings',
   'GET /v1/brains/{slug}/wiki/map',
   'GET /v1/brains/{slug}/wiki/pages',
   'GET /v1/branding',
@@ -177,6 +178,12 @@ export const ERROR_STATUS: Record<string, number> = {
   too_many_attempts: 429,
   // The profile (PR24): a wrong current password when changing it.
   wrong_password: 400,
+  // Brain settings and the administration (PR25a): a brain keeps a curator, the installation an
+  // administrator; a third main key waits; settings saved on a revision someone moved on.
+  last_curator: 409,
+  last_admin: 409,
+  too_many_main_keys: 409,
+  settings_changed: 409,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }
