@@ -784,18 +784,31 @@ export const withByline = (e: Entry, b: Byline | undefined): Entry & Byline => (
 })
 
 // The session an entry is in, named for a person (its purpose; the session a key gets by writing without
-// opening one has its day instead).
-export type SessionRef = { id: string; purpose: string; day: string | null }
+// opening one has its day instead), with its client and author: the web names a session the same
+// everywhere («Web edits · Eric», «Unnamed work · Codex»).
+export type SessionRef = {
+  id: string
+  purpose: string
+  day: string | null
+  client: string | null
+  author: { id: string; name: string }
+}
 
 export async function sessionRefs(db: Db, ids: string[]): Promise<Map<string, SessionRef>> {
   const out = new Map<string, SessionRef>()
   if (ids.length === 0) return out
-  const rows = await db.query('SELECT id, purpose, day FROM sessions WHERE id = ANY($1)', [[...new Set(ids)]])
+  const rows = await db.query(
+    `SELECT s.id, s.purpose, s.day, s.client, s.account_id, a.name AS author_name
+       FROM sessions s JOIN accounts a ON a.id = s.account_id WHERE s.id = ANY($1)`,
+    [[...new Set(ids)]],
+  )
   for (const r of rows) {
     out.set(String(r.id), {
       id: String(r.id),
       purpose: String(r.purpose),
       day: dayText(r.day),
+      client: r.client == null ? null : String(r.client),
+      author: { id: String(r.account_id), name: String(r.author_name) },
     })
   }
   return out

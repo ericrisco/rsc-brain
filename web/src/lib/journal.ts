@@ -152,12 +152,6 @@ export function sessionLabel(s: {
   return s.purpose.trim() || T.journal.noPurpose
 }
 
-// The sessions shown as active now in Activity: agents' and services', never the web's own edits (a person
-// working in the web shows in the feed, not as a session).
-export function activeNow<S extends { client: string | null; day: string | null }>(items: readonly S[]): S[] {
-  return items.filter((x) => !(x.day && x.client === 'web'))
-}
-
 export const SESSION_FILTERS = [
   'status',
   'client',

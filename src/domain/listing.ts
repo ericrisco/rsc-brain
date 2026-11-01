@@ -59,6 +59,8 @@ export type SessionFilter = {
   to?: Date
   before?: Date
   uncompiled?: boolean
+  // Only agents' and services' sessions: not a person's edits in the web (Activity's «working now»).
+  agents?: boolean
   cursor?: string
   limit?: number
 }
@@ -139,6 +141,7 @@ export async function listSessions(
     where.push(
       "EXISTS (SELECT 1 FROM entries e WHERE e.session_id = s.id AND e.state = 'active' AND NOT e.compiled AND e.type <> 'summary')",
     )
+  if (f.agents) where.push(`NOT (s.day IS NOT NULL AND ${CLIENT} IS NOT DISTINCT FROM 'web')`)
   // Dates: a session counts on every day it was active, from its opening to its last write.
   if (f.from !== undefined) add('s.last_activity_at >= ?', f.from)
   if (f.to !== undefined) add('s.opened_at <= ?', f.to)

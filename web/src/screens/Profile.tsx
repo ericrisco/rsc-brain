@@ -163,8 +163,18 @@ function NewTokenForm({
   // «Read and write» only where the person writes: a reader's token reads (B4).
   const roles = new Map(brains.map((b) => [b.slug, b.role]))
   const canWrite = brains.length === 0 || writeAllowed(f, roles)
+  // When the form set «Read only» (the scope took only brains she reads), it gives «Read and write» back
+  // once the scope takes a brain she writes in. Her own «Read only» it never changes: while the form's
+  // stands she cannot pick it again, and picking «Read and write» needs a brain she writes in.
+  const lowered = useRef(false)
   useEffect(() => {
-    if (!canWrite && f.perm === 'write') setF((x) => ({ ...x, perm: 'read' }))
+    if (!canWrite && f.perm === 'write') {
+      lowered.current = true
+      setF((x) => ({ ...x, perm: 'read' }))
+    } else if (canWrite && lowered.current) {
+      lowered.current = false
+      setF((x) => ({ ...x, perm: 'write' }))
+    }
   }, [canWrite])
   const [problems, setProblems] = useState<{ name?: string; brains?: string }>({})
   const [error, setError] = useState<ApiError | null>(null)

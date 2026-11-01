@@ -6,7 +6,6 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   aboutOf,
-  activeNow,
   byline,
   conflictActions,
   correctionAbout,
@@ -187,16 +186,6 @@ describe('sessions', () => {
     assert.equal(
       sessionLabel({ purpose: '', day: '2026-10-29', client: 'web', who: 'Ana' }),
       'Web edits · Ana',
-    )
-  })
-
-  it('the sessions active now are agents’ and services’, never the web’s own edits', () => {
-    const s = (id: string, client: string | null, day: string | null) => ({ id, client, day })
-    assert.deepEqual(
-      activeNow([s('a', 'Claude Code', null), s('b', 'web', '2026-10-29'), s('c', null, '2026-10-29')]).map(
-        (x) => x.id,
-      ),
-      ['a', 'c'],
     )
   })
 

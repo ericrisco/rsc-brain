@@ -4,7 +4,7 @@
 // all or part, and returning answer as the server does: the fingerprint of what was seen, a comment for
 // what goes back, dependencies, an old base, a role that may not decide, and 409 when it changed or
 // someone decided meanwhile. The wiki pages it shows come from the fixture's wiki. Fictitious content.
-import { pageState, type Wiki } from './wiki.ts'
+import { ENTRIES, pageState, type Wiki } from './wiki.ts'
 
 type Answer = { status: number; body: unknown }
 type Who = { id: string; name: string }
@@ -436,8 +436,27 @@ export function reviewOf(inbox: Inbox, p: FxProposal, wiki: Wiki, canDecide: boo
       warnings: [],
       canDecide,
       purges: inbox.purges ?? 0,
+      sourceEntries: sourceEntriesOf(p, canDecide),
     },
   }
+}
+
+// The entries the operations cite, named in the review (as the server does): a forgotten one keeps its
+// words only for a curator.
+function sourceEntriesOf(p: FxProposal, curator: boolean) {
+  const ids = new Set<string>()
+  for (const x of p.ops) {
+    const list = (x.op as { sources?: unknown }).sources
+    if (Array.isArray(list))
+      for (const s of list as Array<Record<string, unknown>>)
+        if (typeof s.entryId === 'string') ids.add(s.entryId)
+  }
+  return [...ids].sort().flatMap((id) => {
+    const e = ENTRIES[id]
+    if (!e) return []
+    const shown = e.state === 'active' || (e.state === 'forgotten' && curator)
+    return [{ id, title: shown ? e.title : null, state: e.state }]
+  })
 }
 
 const FORBIDDEN = err(

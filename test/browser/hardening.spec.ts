@@ -324,3 +324,88 @@ test('in the `[[` list the first ArrowDown stays on the first page', async ({ pa
   await body.press('ArrowDown')
   await expect(list.getByRole('option').nth(1)).toHaveAttribute('aria-selected', 'true')
 })
+
+// Review of PR26 (second pass): a web-edit session has the same name on the journal, on an entry's page
+// and beside the entry in a list (its reference carries its client and its author).
+test('a session of web edits has one name: the journal, the entry page and the conflicts list', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth/journal')
+  await expect(
+    page.getByRole('list', { name: 'Sessions' }).getByRole('link', { name: 'Web edits · Eric' }),
+  ).toBeVisible()
+  await page.goto('/b/growth/journal/entries/ent_fx_corr')
+  await expect(page.getByRole('main').getByRole('link', { name: 'Web edits · Eric' }).first()).toBeVisible()
+  await expect(page.getByRole('main')).not.toContainText('Unnamed work · an agent')
+  await page.goto('/b/growth/journal/conflicts')
+  await expect(page.getByRole('main')).not.toContainText('Unnamed work · an agent')
+})
+
+// Review of PR26 (second pass): a proposal names its source entries from its review; looking at it opens
+// none of them (opening an entry is a read, in the trail and the live events). Opening one still does.
+test('a proposal names its sources without opening them', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  const opened: string[] = []
+  page.on('request', (r) => {
+    if (/\/v1\/entries\/[^/?]+/.test(new URL(r.url()).pathname)) opened.push(r.url())
+  })
+  await page.goto('/b/growth/proposals/prp_growth1')
+  const source = page.getByRole('button', { name: 'The hook goes first', exact: true })
+  await expect(source).toBeVisible()
+  await page.waitForLoadState('networkidle')
+  expect(opened).toEqual([])
+  await source.click()
+  await expect.poll(() => opened.length).toBeGreaterThan(0)
+})
+
+// Review of PR26 (second pass): Activity asks the server for agents' and services' sessions only, so the
+// page it gets and the count beside it are those (filtering in the browser after paging could show none).
+test('Activity asks the server for the sessions of agents only', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  const asked: URL[] = []
+  page.on('request', (r) => {
+    const u = new URL(r.url())
+    if (u.pathname === '/v1/brains/growth/sessions') asked.push(u)
+  })
+  await page.goto('/b/growth/activity')
+  await expect(
+    page.locator('.act-sessions').getByRole('link', { name: 'Narrate the outro of video 42' }),
+  ).toBeVisible()
+  expect(asked.length).toBeGreaterThan(0)
+  expect(asked.every((u) => u.searchParams.get('agents') === '1')).toBe(true)
+})
+
+// Review of PR26 (second pass): «Read and write» comes back by itself when the scope again takes a brain
+// the person writes in, if it was the form that set «Read only» (never over the person's own choice).
+test('the token form gives «Read and write» back when a brain she writes in joins the scope', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'member')
+  await page.goto('/profile')
+  const roles = await page.evaluate(async () => {
+    const r = await fetch('/v1/brains', { headers: { 'x-requested-with': 'rsc-brain-web' } })
+    return ((await r.json()) as { brains: Array<{ name: string; role: string }> }).brains
+  })
+  const read = roles.find((b) => b.role === 'reader')
+  const write = roles.find((b) => b.role !== 'reader')
+  test.skip(!read || !write, 'the member needs a brain she reads and one she writes in')
+  await page.getByRole('button', { name: 'Create a token' }).first().click()
+  const both = page.getByRole('radio', { name: 'Read and write' })
+  const only = page.getByRole('radio', { name: 'Read only' })
+  await expect(both).toBeChecked()
+  await page.getByRole('radio', { name: 'Only these brains' }).check()
+  await page.getByRole('checkbox', { name: read?.name ?? '' }).check()
+  await expect(only).toBeChecked()
+  await page.getByRole('checkbox', { name: write?.name ?? '' }).check()
+  await expect(both).toBeChecked()
+  // Her own «Read only» stays when the scope changes.
+  await only.check()
+  await page.getByRole('checkbox', { name: write?.name ?? '' }).uncheck()
+  await page.getByRole('checkbox', { name: write?.name ?? '' }).check()
+  await expect(only).toBeChecked()
+})

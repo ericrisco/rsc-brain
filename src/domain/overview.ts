@@ -11,6 +11,7 @@ import { type Ctx, inBrain } from './context.ts'
 import { lastSeq } from './events.ts'
 import { installation } from './installation.ts'
 import { OPEN_CONFLICT } from './relations.ts'
+import { dayText } from './sessions.ts'
 import { wikiHealth } from './wiki/health.ts'
 import { proposalOf } from './wiki/proposals.ts'
 
@@ -105,9 +106,13 @@ export async function whoAmI(ctx: Ctx) {
        FROM accounts a WHERE a.id = $1`,
     [w.accountId],
   )
-  const admins = await ctx.db.query(
-    `SELECT name FROM accounts WHERE is_admin AND kind = 'person' AND status = 'active' ORDER BY created_at, id LIMIT 5`,
-  )
+  // Only a person's web session learns who administers the installation (whom to ask); a key never does.
+  const admins =
+    w.credential.kind === 'web'
+      ? await ctx.db.query(
+          `SELECT name FROM accounts WHERE is_admin AND kind = 'person' AND status = 'active' ORDER BY created_at, id LIMIT 5`,
+        )
+      : null
   // Inviting is a person's act in the web (domain/invitations.ts): the administration always; a curator
   // when the installation allows it.
   const person = w.kind === 'person' && w.credential.kind === 'web'
@@ -133,7 +138,11 @@ export async function whoAmI(ctx: Ctx) {
     },
     // The address of RSC Factory the administration set (plan G4): a run's reference opens there (CA9).
     // Who to ask about the installation (the web names them where only the administration may go).
-    installation: { name: inst.name, factoryUrl: inst.factoryUrl, admins: admins.map((r) => String(r.name)) },
+    installation: {
+      name: inst.name,
+      factoryUrl: inst.factoryUrl,
+      ...(admins ? { admins: admins.map((r) => String(r.name)) } : {}),
+    },
   }
 }
 
@@ -203,7 +212,7 @@ export async function brainOverview(ctx: Ctx, slug: string) {
       // The session of the day a key gets by writing without opening one has no purpose of its own.
       purpose: r.day == null ? String(r.purpose) : '',
       // Set for that session: its day (the web names it «Unnamed work»).
-      day: r.day == null ? null : String(r.day instanceof Date ? r.day.toISOString().slice(0, 10) : r.day),
+      day: dayText(r.day),
       ref: r.ref == null ? null : String(r.ref),
       status: String(r.status),
       entries: Number(r.entries),

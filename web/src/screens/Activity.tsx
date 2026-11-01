@@ -17,7 +17,7 @@ import {
   waitingLabel,
 } from '../lib/activity.ts'
 import { ago, clientLabel } from '../lib/brains.ts'
-import { activeNow, sessionLabel } from '../lib/journal.ts'
+import { sessionLabel } from '../lib/journal.ts'
 import { isAddress, pageHref } from '../lib/markdown.ts'
 import { KEEP, type LiveEvent, type Stream } from '../live/stream.ts'
 import { useStream } from '../live/useStream.ts'
@@ -96,13 +96,14 @@ function SessionList({
 
 function Sessions({ slug, factoryUrl }: { slug: string; factoryUrl: string | null }) {
   const a = T.activity
-  const r = sessionsResource(slug, { status: 'open' })
+  // Agents' and services' sessions, filtered by the server (so a page and its total count only those);
+  // the web's own edits show in the feed, not here.
+  const r = sessionsResource(slug, { status: 'open', agents: '1' })
   useFresh(r)
   const list = r.data.value
   const now = Date.now()
   const quiet = (s: SessionView) => now - Date.parse(s.lastActivityAt) > QUIET_MS
-  // Agents' and services' sessions; the web's own edits show in the feed, not here.
-  const open = activeNow(list?.items ?? [])
+  const open = list?.items ?? []
   const active = open.filter((s) => !quiet(s))
   const idle = open.filter(quiet)
   return (

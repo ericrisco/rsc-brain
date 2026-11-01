@@ -115,7 +115,13 @@ export function SessionLink({
   s,
 }: {
   slug: string
-  s: { id: string; purpose: string; day: string | null }
+  s: {
+    id: string
+    purpose: string
+    day: string | null
+    client?: string | null
+    author?: { name: string } | null
+  }
 }) {
   return <a href={sessionHref(slug, s.id)}>{sessionLabel(s)}</a>
 }

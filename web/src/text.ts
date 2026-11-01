@@ -1802,7 +1802,6 @@ export const T = {
     sources: 'Sources',
     openSource: 'Open',
     sourceEntry: 'Journal entry',
-    sourceLoading: 'Journal entry…',
     noSources: 'No sources.',
     opStatus: { pending: 'pending', approved: 'approved', returned: 'returned' } as Record<string, string>,
     corrected: 'edited by a curator',

@@ -22,7 +22,7 @@ async function load(
   id: string,
   lock: boolean,
   decide = true,
-): Promise<{ row: Row; brainId: string; slug: string; canDecide: boolean }> {
+): Promise<{ row: Row; brainId: string; slug: string; canDecide: boolean; curator: boolean }> {
   const row = await ctx.db.one(`SELECT * FROM proposals WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [id])
   if (!row) throw notFound('proposal')
   const { brain, role } = await inBrain(ctx, { id: String(row.brain_id) }, lock ? 'share' : null).catch(
@@ -34,12 +34,12 @@ async function load(
   const facts = { role, brainStatus: brain.status }
   if (decide) await allow(ctx, 'wiki.decide', facts, brain.id)
   const canDecide = can(actorOf(ctx.who), 'wiki.decide', facts).ok
-  return { row, brainId: brain.id, slug: brain.slug, canDecide }
+  return { row, brainId: brain.id, slug: brain.slug, canDecide, curator: role === 'curator' }
 }
 
 export async function reviewProposal(ctx: Ctx, id: string): Promise<Review & { canDecide: boolean }> {
-  const { row, canDecide } = await load(ctx, id, false, false)
-  return { ...(await buildReview(ctx, row)), canDecide }
+  const { row, canDecide, curator } = await load(ctx, id, false, false)
+  return { ...(await buildReview(ctx, row, curator)), canDecide }
 }
 
 // Only a pending proposal is decided, and only in the version the curator saw.
@@ -74,7 +74,7 @@ async function stillAsSeen(ctx: Ctx, row: Row, seen: string): Promise<ProposalOp
       'The proposal changed while you were looking at it; nothing was applied.',
       'Review it again (the new version is in "current").',
     )
-    err.current = await buildReview(ctx, row)
+    err.current = await buildReview(ctx, row, true)
     throw err
   }
   return ops
