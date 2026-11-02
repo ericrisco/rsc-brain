@@ -1,4 +1,6 @@
 // Settings come from the environment, read once at start. Nothing secret has a default.
+import { DEFAULT_BACKUP_AT, DEFAULT_BACKUP_KEEP, parseBackupAt } from './ops/backup/schedule.ts'
+
 export type Config = {
   databaseUrl: string
   port: number
@@ -11,6 +13,9 @@ export type Config = {
   trustedProxies: string[]
   // The folder of the copies (in the container, /backups); unset, nothing is said about its free space.
   backups: string | undefined
+  // The daily copy: at HH:MM of the time zone, keeping this many (spec B7 C2).
+  backupAt: string
+  backupKeep: number
 }
 
 export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -34,6 +39,12 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (secret !== undefined && secret.length < 32) {
     throw new Error('RSC_BRAIN_SECRET must have at least 32 characters. Generate a long random value.')
   }
+  const backupAt = parseBackupAt(env.RSC_BRAIN_BACKUP_AT ?? DEFAULT_BACKUP_AT)
+  const keepText = env.RSC_BRAIN_BACKUP_KEEP ?? String(DEFAULT_BACKUP_KEEP)
+  const backupKeep = Number(keepText)
+  if (!/^\d+$/.test(keepText) || backupKeep < 1 || backupKeep > 365) {
+    throw new Error(`RSC_BRAIN_BACKUP_KEEP must be a whole number from 1 to 365, got "${keepText}".`)
+  }
   return {
     databaseUrl,
     port,
@@ -45,5 +56,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .map((s) => s.trim())
       .filter(Boolean),
     backups: env.RSC_BRAIN_BACKUPS || undefined,
+    backupAt,
+    backupKeep,
   }
 }

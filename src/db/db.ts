@@ -11,7 +11,10 @@ export type Db = {
   tx<T>(fn: (db: Db) => Promise<T>): Promise<T>
 }
 
-export type Pool = Db & { close(): Promise<void> }
+// `session` hands one connection of its own to `fn`, outside any transaction (its tx() runs on that same
+// connection), for work that holds a session-level lock across several transactions. The connection is closed
+// afterwards, never given back to the pool, so whatever it held (an advisory lock) ends with it.
+export type Pool = Db & { close(): Promise<void>; session<T>(fn: (db: Db) => Promise<T>): Promise<T> }
 
 type Queryable = { query(text: string, params?: unknown[]): Promise<pg.QueryResult> }
 
@@ -33,8 +36,7 @@ export function openPool(url: string, o: { max?: number } = {}): Pool {
   const pool = new pg.Pool({ connectionString: url, max: o.max ?? 10 })
   // An idle client that errors (server restart) must not crash the process; the next query retries.
   pool.on('error', () => {})
-  const tx = async <T>(fn: (db: Db) => Promise<T>): Promise<T> => {
-    const client = await pool.connect()
+  const txOn = async <T>(client: pg.PoolClient, fn: (db: Db) => Promise<T>): Promise<T> => {
     try {
       await client.query('BEGIN')
       const inner: Db = over(client, (f) => f(inner))
@@ -44,9 +46,24 @@ export function openPool(url: string, o: { max?: number } = {}): Pool {
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {})
       throw err
+    }
+  }
+  const tx = async <T>(fn: (db: Db) => Promise<T>): Promise<T> => {
+    const client = await pool.connect()
+    try {
+      return await txOn(client, fn)
     } finally {
       client.release()
     }
   }
-  return { ...over(pool, tx), close: () => pool.end() }
+  const session = async <T>(fn: (db: Db) => Promise<T>): Promise<T> => {
+    const client = await pool.connect()
+    try {
+      return await fn(over(client, (f) => txOn(client, f)))
+    } finally {
+      // Closed, not reused: a lock it may still hold goes with it.
+      client.release(true)
+    }
+  }
+  return { ...over(pool, tx), close: () => pool.end(), session }
 }
