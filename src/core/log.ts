@@ -26,6 +26,8 @@ export const LOG_EVENTS = [
   'backup_failed',
   // A copy kept whole whose folder could not be flushed or whose status could not be saved (its code).
   'backup_kept_with_warning',
+  // A download (an export) that failed after it started: the client keeps a cut file, never a short whole one.
+  'download_failed',
 ] as const
 export type LogEvent = (typeof LOG_EVENTS)[number]
 

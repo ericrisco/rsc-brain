@@ -87,6 +87,8 @@ export async function world(
     // Another installation key (restoring into another installation, B7).
     secret?: string
     releases?: ReleaseChecker
+    // Where exports are prepared before they are sent (B7 PR31 review).
+    exportDir?: string
   } = {},
 ): Promise<World> {
   const t = await freshDatabase()
@@ -128,6 +130,8 @@ export async function world(
           }
         : {}),
       ...(o.releases ? { releases: o.releases } : {}),
+      ...(o.backups ? { backups: o.backups } : {}),
+      ...(o.exportDir ? { exportDir: o.exportDir } : {}),
       mailTransport: () => ({
         async send(m) {
           if (w.mailFails) throw new Error('connection refused by the test mail server')

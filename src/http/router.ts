@@ -52,6 +52,8 @@ export type PublicReq = {
   copies: Copies | null
   // Whether a newer release exists (plan §3.10); null when nothing checks.
   releases: ReleaseChecker | null
+  // Where exports are prepared before they are sent.
+  exportDir: string
   // The log of the server (src/core/log.ts).
   log: Log
 }
@@ -75,6 +77,8 @@ export type Reply = {
   stream?: (out: StreamOut) => Promise<void>
   // Instead of a body: a file sent as it is on disk, to save (a copy of the installation).
   file?: { path: string; bytes: number; name: string }
+  // Instead of a body: a file prepared on disk to save (an export), removed by `done` once sent or abandoned.
+  download?: { name: string; type: string; path: string; bytes: number; done(): Promise<void> }
 }
 export type Handler = (r: Req) => Promise<Reply>
 export type Route = {

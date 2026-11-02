@@ -19,9 +19,12 @@ export type EventKind =
   | 'proposal.withdrawn'
   | 'proposal.decided'
   | 'wiki.changed'
+  // A curator exported the brain (spec B7): its curators see it; the label is the format.
+  | 'brain.exported'
 
 // What someone looked at, as opposed to what they changed: only curators and whoever looked see these.
-export const LOOKS: readonly EventKind[] = ['search', 'read']
+// An export too (review of PR31): it says who took a copy of everything; curators and whoever exported see it.
+export const LOOKS: readonly EventKind[] = ['search', 'read', 'brain.exported']
 
 // `who`: null when the installation itself did it (a session closed for being idle).
 export async function emit(

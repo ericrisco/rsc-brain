@@ -17,6 +17,8 @@ type Op = {
   csv?: boolean
   // The answer is a file to save as it is (a copy of the installation).
   file?: boolean
+  // The answer is a zip to save (the export of a brain).
+  zip?: boolean
   query?: Record<string, string>
 }
 
@@ -1799,6 +1801,15 @@ const HAND: Record<string, Op> = {
     },
     csv: true,
   },
+  'GET /v1/brains/{slug}/export': {
+    summary:
+      'Export the brain (curators, in the web only: a key gets 403 web_only): "readable" is a folder of markdown a vault opens (wiki/, raw/journal/, index, decisions, log, README); "faithful" is everything another installation needs to import it, with its history (manifest.json and one NDJSON file per kind of row; people by reference). Purged entries are never exported. It is prepared on the server first (409 export_busy while two are; 507 export_no_space when the disk is short of room), then sent with its size. Audited, and shown to the brain\'s curators in its activity.',
+    query: {
+      format: '"readable" or "faithful".',
+      includeForgotten: '1 to include forgotten entries (marked as such); 0 or left out: not.',
+    },
+    zip: true,
+  },
   'GET /v1/admin/system': {
     summary:
       'The health of the service (administration): version, start, database, meaning search, streams, mail, disk and maintenance.',
@@ -2209,20 +2220,26 @@ export function openapi(routes: Route[], serverUrl: string | null): Schema {
                 description: 'The file, as it is on disk (Content-Disposition names it).',
                 content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } },
               }
-            : hand?.csv
+            : hand?.zip
               ? {
-                  description: 'A CSV file, one row per audit line.',
-                  content: { 'text/csv': { schema: { type: 'string' } } },
+                  description: 'A zip file to save, sent as it is made (no size limit: it is a download).',
+                  content: { 'application/zip': { schema: { type: 'string', format: 'binary' } } },
                 }
-              : hand?.stream
+              : hand?.csv
                 ? {
-                    description: 'A stream of events: "id:", "event:" and "data:" lines; "data" is an Event.',
-                    content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/Event' } } },
+                    description: 'A CSV file, one row per audit line.',
+                    content: { 'text/csv': { schema: { type: 'string' } } },
                   }
-                : {
-                    description: hand ? 'Success.' : 'Success (201 when something was created).',
-                    content: { 'application/json': { schema: hand?.reply ?? { type: 'object' } } },
-                  }
+                : hand?.stream
+                  ? {
+                      description:
+                        'A stream of events: "id:", "event:" and "data:" lines; "data" is an Event.',
+                      content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/Event' } } },
+                    }
+                  : {
+                      description: hand ? 'Success.' : 'Success (201 when something was created).',
+                      content: { 'application/json': { schema: hand?.reply ?? { type: 'object' } } },
+                    }
     const op: Schema = {
       operationId: operationId(o.method, o.path),
       summary: hand?.summary ?? `${o.method} ${o.path}`,

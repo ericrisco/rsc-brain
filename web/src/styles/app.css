@@ -4095,3 +4095,9 @@ input[type="file"]::file-selector-button {
 .key-step h1:focus {
   outline: none;
 }
+
+/* Settings › Export: the format, the forgotten entries and the button, each its own step. */
+.export-form {
+  display: grid;
+  gap: 12px;
+}

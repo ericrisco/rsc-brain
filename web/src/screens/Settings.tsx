@@ -19,6 +19,7 @@ import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { invalidate, resource } from '../api/resource.ts'
 import { ago } from '../lib/brains.ts'
+import { type ExportFormat, exportAsk, sizeLabel } from '../lib/exporting.ts'
 import { focusOnArrival } from '../lib/screen.ts'
 import {
   fieldDrafts,
@@ -1045,6 +1046,108 @@ function Archive({ brain }: { brain: BrainInfo }) {
   )
 }
 
+// Export (spec B7): the zip is made by the server as it is read; the screen says what has arrived until it is
+// whole, then saves it under the server's name and says so. A refusal keeps the choices and says what to do.
+function Export({ brain }: { brain: BrainInfo }) {
+  const [format, setFormat] = useState<ExportFormat>('readable')
+  const [forgotten, setForgotten] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [received, setReceived] = useState<number | null>(null)
+  const [error, setError] = useState<ApiError | null>(null)
+  const [saved, setSaved] = useState<string | null>(null)
+  const go = async () => {
+    setBusy(true)
+    setError(null)
+    setSaved(null)
+    setReceived(null)
+    try {
+      const got = await api.download('exportBrain', exportAsk(brain.slug, format, forgotten), setReceived)
+      const href = URL.createObjectURL(got.blob)
+      const a = document.createElement('a')
+      a.href = href
+      a.download = got.name
+      document.body.append(a)
+      a.click()
+      a.remove()
+      // The browser has taken the file once the click is handled; the address is let go a while later.
+      setTimeout(() => URL.revokeObjectURL(href), 60_000)
+      setSaved(S.exportSaved(got.name, sizeLabel(got.bytes)))
+    } catch (e) {
+      setError(e as ApiError)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const choice = (value: ExportFormat, label: string, hint: string) => (
+    <div class="pick">
+      <input
+        type="radio"
+        name="export-format"
+        id={`export-${value}`}
+        checked={format === value}
+        aria-describedby={`export-${value}-hint`}
+        onChange={() => {
+          setFormat(value)
+          setSaved(null)
+        }}
+      />
+      <label for={`export-${value}`}>{label}</label>
+      <span class="reason" id={`export-${value}-hint`}>
+        {hint}
+      </span>
+    </div>
+  )
+  return (
+    <Part id="export" title={S.exportTitle} lead={S.exportLead}>
+      <form
+        class="export-form"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (!busy) void go()
+        }}
+      >
+        <FormAlert error={error} />
+        <fieldset class="choices">
+          <legend>{S.exportFormat}</legend>
+          {choice('readable', S.exportReadable, S.exportReadableHint)}
+          {choice('faithful', S.exportFaithful, S.exportFaithfulHint)}
+        </fieldset>
+        <div class="pick">
+          <input
+            type="checkbox"
+            id="export-forgotten"
+            checked={forgotten}
+            aria-describedby="export-forgotten-hint"
+            onChange={(e) => {
+              setForgotten(e.currentTarget.checked)
+              setSaved(null)
+            }}
+          />
+          <label for="export-forgotten">{S.exportForgotten}</label>
+          <span class="reason" id="export-forgotten-hint">
+            {S.exportForgottenHint}
+          </span>
+        </div>
+        <div class="actions">
+          <Button
+            type="submit"
+            kind="primary"
+            pending={busy}
+            pendingLabel={S.exportPreparing}
+            blocked={blocked()}
+          >
+            {S.exportButton}
+          </Button>
+        </div>
+        <p class={busy ? 'said' : 'said ok'} role="status">
+          {busy ? S.exportWorking(received === null ? null : sizeLabel(received)) : saved}
+        </p>
+      </form>
+    </Part>
+  )
+}
+
 function Delete({ brain }: { brain: BrainInfo }) {
   const [asking, setAsking] = useState(false)
   const [typed, setTyped] = useState('')
@@ -1217,9 +1320,7 @@ export function BrainSettings({ slug, tab }: { slug: string; tab: SettingsTab })
         {tab === 'health' ? <Health slug={brain.slug} archived={archived} account={who.account.id} /> : null}
         {tab === 'archive' ? (
           <>
-            <Part id="export" title={S.exportTitle}>
-              <p class="muted">{S.exportLead}</p>
-            </Part>
+            <Export brain={info} />
             <Archive brain={info} />
             {who.account.isAdmin ? <Delete brain={info} /> : null}
           </>
