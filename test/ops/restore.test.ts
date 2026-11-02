@@ -673,6 +673,31 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
     }
   })
 
+  it('a copy whose rows point to a row it does not hold: refused whole; nothing changes', async () => {
+    const { header, sections } = await sectionsOf(copy)
+    const entries = sections.find((x) => x.table === 'entries') as Section
+    const at = entries.columns.indexOf('superseded_by')
+    ;(entries.rows[0] as Array<string | null>)[at] = 'ent_not_in_the_copy'
+    const file = join(dir, 'dangling.rscb')
+    await craft(file, header, sections)
+    const before = await state(source.db)
+    await assert.rejects(
+      restore(source.db, {
+        file,
+        key: TEST_SECRET,
+        targetSecret: TEST_SECRET,
+        keepKeys: false,
+        clock: source.clock,
+      }),
+      (err: unknown) => {
+        isCode('corrupt_copy')(err)
+        assert.match((err as AppError).message, /point to rows it does not hold/)
+        return true
+      },
+    )
+    assert.deepEqual(await state(source.db), before)
+  })
+
   it('--keep-keys with a copy that was not made before an update: refused; nothing changes', async () => {
     const before = await state(source.db)
     await assert.rejects(
@@ -784,27 +809,49 @@ describe('restore: links within a table across batches', { skip: skipPg }, () =>
       )
       const N = 1100
       // The parent's id sorts after every child's, so copies hold the children first, a batch or more ahead.
-      const clone = async (table: string, template: string, set: Record<string, string>) => {
+      const clone = async (table: string, template: string, set: Record<string, string>, from = 0) => {
         const cols = (BACKUP_TABLES.find((t) => t.name === table)?.columns ?? []).filter((c) => !(c in set))
         const all = [...cols, ...Object.keys(set)]
         const exprs = [...cols.map((c) => `"${c}"`), ...Object.values(set)]
         await w.db.query(
           `INSERT INTO ${table} (${all.map((c) => `"${c}"`).join(', ')})
-           SELECT ${exprs.join(', ')} FROM ${table}, generate_series(0, ${N}) AS g WHERE id = $1`,
+           SELECT ${exprs.join(', ')} FROM ${table}, generate_series(${from}, ${N}) AS g WHERE id = $1`,
           [template],
         )
       }
       const child = (prefix: string) =>
         `CASE WHEN g = 0 THEN '${prefix}_zzzz_parent' ELSE '${prefix}_0000_' || lpad(g::text, 5, '0') END`
       const parentOf = (prefix: string) => `CASE WHEN g = 0 THEN NULL ELSE '${prefix}_zzzz_parent' END`
-      const token = String(
-        (await w.db.one('SELECT id FROM credentials WHERE account_id = $1 LIMIT 1', [p.id]))?.id,
-      )
-      await clone('credentials', token, {
-        id: child('crd'),
-        secret_hash: `md5('crd' || g::text)`,
-        parent_id: parentOf('crd'),
+      // Short keys: a key a service mints for one job, which must have its parent (a CHECK of 0001 says so).
+      const svc = await w.service('Factory')
+      await w.member('links', svc.id, 'contributor')
+      const short = await w.call(svc.key, 'POST', '/v1/keys/short', {
+        writeBrain: 'links',
+        ref: 'r',
+        ttlMinutes: 5,
       })
+      assert.equal(short.status, 201, short.text)
+      const shortId = String((short.body.key as { id: string }).id)
+      const main = String(
+        (await w.db.one("SELECT id FROM credentials WHERE account_id = $1 AND kind = 'main'", [svc.id]))?.id,
+      )
+      // The parent: a main key whose id sorts after every short key's.
+      await clone('credentials', main, { id: `'crd_zzzz_parent'`, secret_hash: `md5('crd parent')` }, N)
+      await clone(
+        'credentials',
+        shortId,
+        { id: child('crd'), secret_hash: `md5('crd' || g::text)`, parent_id: `'crd_zzzz_parent'` },
+        1,
+      )
+      // Sessions point to the entry that sums them up, and entries load after sessions.
+      const sessionId = String((await w.db.one('SELECT session_id FROM entries LIMIT 1'))?.session_id)
+      const summary = String((await w.db.one('SELECT id FROM entries LIMIT 1'))?.id)
+      await clone(
+        'sessions',
+        sessionId,
+        { id: child('ses'), summary_entry_id: `'${summary}'`, status: `'closed'`, closed_at: 'now()' },
+        1,
+      )
       const entry = String((await w.db.one('SELECT id FROM entries LIMIT 1'))?.id)
       await clone('entries', entry, {
         id: child('ent'),
@@ -843,6 +890,23 @@ describe('restore: links within a table across batches', { skip: skipPg }, () =>
         "SELECT count(*)::int AS n FROM credentials WHERE parent_id = 'crd_zzzz_parent'",
       )
       assert.equal(linked?.n, N)
+      const shorts = await w.db.one<{ n: number }>(
+        "SELECT count(*)::int AS n FROM credentials WHERE kind = 'short' AND parent_id = 'crd_zzzz_parent'",
+      )
+      assert.equal(shorts?.n, N)
+      // Every link of the schema is back to how its migration made it.
+      const reference = await freshDatabase()
+      try {
+        await migrate(reference.db)
+        const how = (db: Db) =>
+          db.query(
+            `SELECT conrelid::regclass::text AS t, conname AS n, condeferrable AS d, condeferred AS i
+               FROM pg_constraint WHERE connamespace = 'public'::regnamespace ORDER BY 1, 2`,
+          )
+        assert.deepEqual(await how(w.db), await how(reference.db))
+      } finally {
+        await reference.drop()
+      }
     } finally {
       await w.close()
       await rm(d, { recursive: true, force: true })

@@ -6,9 +6,10 @@
 // was still pending in it (a key or a link revoked after the copy does not come back, and an installation restored from
 // another shares none with it).
 //
-// Rows go in as they are read, a batch at a time (a table is never held whole in memory). A column that points to a
-// row of its own table, or of a table loaded later, goes in empty and is filled once every table is in: the database
-// checks such a link per statement, and the row it points to may be in a later batch.
+// Rows go in as they are read, a batch at a time (a table is never held whole in memory), with their own values. A row
+// may point to one in a later batch or a later table, so while loading every link between tables is checked at the
+// end instead of per statement (made deferrable inside the transaction); before anything else runs, every link is
+// checked and put back exactly as its migration made it.
 //
 // Nothing is committed before the last frame of the copy is read and every check holds: the first two sections are
 // the row counts and the sequences, the tables come once each in the order the header names them, and each holds as
@@ -228,64 +229,39 @@ async function dropAll(tx: Db): Promise<void> {
 
 const quote = (id: string) => `"${id}"`
 
-// A column to fill once every table is in: one that points to its own table or to one loaded later. Which they are
-// comes from the database's own list of links, so a link added by a later migration is covered without a list here.
-type Deferred = {
-  table: string
-  keys: string[]
-  columns: string[]
-  types: string[]
-  keyAt: number[]
-  at: number[]
-  // Per row with any of them set: the key values, then the column values.
-  rows: Array<Array<string | null>>
+// Every link between tables (foreign key) is checked per statement; a copy's rows come in batches, a child before its
+// parent at times. While loading, the links that are not deferrable become deferrable and deferred (the list comes
+// from the database, so a link a later migration adds is covered); `links.check` then checks all of them and puts each
+// back exactly as it was. All of it inside the restore's transaction: a failure rolls the changes back too.
+type Link = { table: string; name: string }
+async function deferLinks(tx: Db): Promise<Link[]> {
+  const fixed = await tx.query<Link>(
+    `SELECT conrelid::regclass::text AS table, conname::text AS name FROM pg_constraint
+      WHERE contype = 'f' AND connamespace = 'public'::regnamespace AND NOT condeferrable ORDER BY 1, 2`,
+  )
+  for (const l of fixed)
+    await tx.query(`ALTER TABLE ${l.table} ALTER CONSTRAINT ${quote(l.name)} DEFERRABLE INITIALLY DEFERRED`)
+  await tx.query('SET CONSTRAINTS ALL DEFERRED')
+  return fixed
 }
 
-async function deferredFor(
-  tx: Db,
-  table: string,
-  columns: string[],
-  later: Set<string>,
-): Promise<Deferred | null> {
-  const links = await tx.query<{ parent: string; cols: string[] }>(
-    `SELECT confrelid::regclass::text AS parent,
-            ARRAY(SELECT attname::text FROM pg_attribute WHERE attrelid = conrelid AND attnum = ANY (conkey)) AS cols
-       FROM pg_constraint WHERE contype = 'f' AND conrelid = $1::regclass`,
-    [quote(table)],
+const dangling = () =>
+  new AppError(
+    422,
+    'corrupt_copy',
+    'This copy holds rows that point to rows it does not hold, so it cannot be restored. Nothing was changed.',
+    'Use another copy from the list (rsc-brain backups list).',
   )
-  const bare = (name: string) => name.replace(/^public\./, '').replace(/"/g, '')
-  const cols = [
-    ...new Set(
-      links.filter((l) => bare(l.parent) === table || later.has(bare(l.parent))).flatMap((l) => l.cols),
-    ),
-  ].filter((c) => columns.includes(c))
-  if (cols.length === 0) return null
-  const keys = (
-    await tx.query<{ c: string }>(
-      `SELECT a.attname::text AS c FROM pg_constraint k, unnest(k.conkey) WITH ORDINALITY AS u(n, i)
-         JOIN pg_attribute a ON a.attnum = u.n
-        WHERE k.contype = 'p' AND k.conrelid = $1::regclass AND a.attrelid = k.conrelid ORDER BY u.i`,
-      [quote(table)],
-    )
-  ).map((r) => r.c)
-  if (keys.length === 0 || keys.some((k) => !columns.includes(k) || cols.includes(k))) throw corruptCopy()
-  const types: string[] = []
-  for (const c of cols) {
-    const t = await tx.one<{ t: string }>(
-      'SELECT format_type(atttypid, atttypmod) AS t FROM pg_attribute WHERE attrelid = $1::regclass AND attname = $2',
-      [quote(table), c],
-    )
-    types.push(String(t?.t))
+
+async function checkLinks(tx: Db, fixed: Link[]): Promise<void> {
+  try {
+    await tx.query('SET CONSTRAINTS ALL IMMEDIATE')
+  } catch (err) {
+    if ((err as { code?: unknown }).code === '23503') throw dangling()
+    throw err
   }
-  return {
-    table,
-    keys,
-    columns: cols,
-    types,
-    keyAt: keys.map((k) => columns.indexOf(k)),
-    at: cols.map((c) => columns.indexOf(c)),
-    rows: [],
-  }
+  for (const l of fixed)
+    await tx.query(`ALTER TABLE ${l.table} ALTER CONSTRAINT ${quote(l.name)} NOT DEFERRABLE`)
 }
 
 // One table, as its rows are read: in batches, never the whole table at once. Says how many rows there were; stops
@@ -296,7 +272,6 @@ async function loadTable(
   table: string,
   columns: string[],
   count: number,
-  d: Deferred | null,
 ): Promise<number> {
   if (new Set(columns).size !== columns.length || columns.length === 0) throw corruptCopy()
   const per = Math.max(1, Math.min(MAX_ROWS, Math.floor(MAX_PARAMS / columns.length)))
@@ -326,31 +301,12 @@ async function loadTable(
     n += 1
     if (n > count) throw corruptCopy()
     const r = ev.values
-    if (d?.at.some((i) => r[i] !== null)) {
-      d.rows.push([...d.keyAt.map((i) => r[i] ?? null), ...d.at.map((i) => r[i] ?? null)])
-      for (const i of d.at) r[i] = null
-    }
     batch.push(r)
     for (const v of r) chars += v === null ? 1 : v.length
     if (batch.length >= per || chars >= MAX_BATCH_CHARS) await flush()
   }
   await flush()
   return n
-}
-
-async function fill(tx: Db, d: Deferred): Promise<void> {
-  const names = [...d.keys.map((_, i) => `k${i}`), ...d.columns.map((_, i) => `c${i}`)]
-  const where = d.keys.map((key, i) => `t.${quote(key)}::text = v.k${i}`).join(' AND ')
-  const set = d.columns.map((c, i) => `${quote(c)} = v.c${i}::${d.types[i]}`).join(', ')
-  for (let i = 0; i < d.rows.length; i += MAX_ROWS) {
-    const part = d.rows.slice(i, i + MAX_ROWS)
-    await tx.query(
-      `UPDATE ${quote(d.table)} t SET ${set}
-         FROM unnest(${names.map((_, j) => `$${j + 1}::text[]`).join(', ')}) AS v(${names.join(', ')})
-        WHERE ${where}`,
-      names.map((_, j) => part.map((r) => r[j] ?? null)),
-    )
-  }
 }
 
 export async function restore(db: Pool, o: RestoreOptions): Promise<RestoreResult> {
@@ -453,20 +409,17 @@ export async function restore(db: Pool, o: RestoreOptions): Promise<RestoreResul
           )
         ).map((r) => quote(r.t))
         if (filled.length) await tx.query(`TRUNCATE ${filled.join(', ')} CASCADE`)
-        const deferred: Deferred[] = []
-        const later = new Set(h.tables)
+        const fixed = await deferLinks(tx)
         for (const table of h.tables) {
           const ev = await pull.next()
           if (ev?.kind !== 'table' || ev.table !== table) throw corruptCopy()
-          later.delete(table)
-          const d = await deferredFor(tx, table, ev.columns, later)
-          const n = await loadTable(tx, pull, table, ev.columns, counts.get(table) ?? 0, d)
+          const n = await loadTable(tx, pull, table, ev.columns, counts.get(table) ?? 0)
           if (n !== counts.get(table)) throw corruptCopy()
-          if (d) deferred.push(d)
         }
         // Nothing after the last table, and the end of the text: the last frame is read and authenticated.
         if ((await pull.next()) !== null) throw corruptCopy()
-        for (const d of deferred) await fill(tx, d)
+        // Every link checked now, and put back as its migration made it, before anything else runs.
+        await checkLinks(tx, fixed)
         for (const [name, value, called] of sequences)
           await tx.query('SELECT setval(format($1, $2::text)::regclass, $3::bigint, $4::boolean)', [
             '%I',
