@@ -2,7 +2,6 @@
 // Refusals carry { error: { code, message, howToProceed } }; an unexpected failure reveals nothing.
 import { createReadStream } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import type { TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 import { bearer, resolveKey, sessionCookie } from '../auth/principal.ts'
@@ -20,19 +19,12 @@ import type { FetchPolicy } from '../oauth/fetch.ts'
 import type { Copies } from '../ops/backup/copies.ts'
 import type { ReleaseChecker } from '../ops/releases.ts'
 import { boundJson } from './bounds.ts'
+import { connOf } from './conn.ts'
 import { EVENT_TIMINGS, type EventTimings, eventHub } from './hub.ts'
 import { ENDS_ACCESS, isWrite, maintenance, underMaintenance } from './maintenance.ts'
 import { openapi } from './openapi.ts'
 import { rateLimiter } from './ratelimit.ts'
-import {
-  type Conn,
-  match,
-  publicRoute,
-  type Reply,
-  type Route,
-  type StreamOut,
-  WEB_HEADER,
-} from './router.ts'
+import { match, publicRoute, type Reply, type Route, type StreamOut, WEB_HEADER } from './router.ts'
 import { authRoutes } from './routes/auth.ts'
 import { backupRoutes } from './routes/backups.ts'
 import { brainRoutes } from './routes/brains.ts'
@@ -65,6 +57,8 @@ export type AppDeps = {
   secret?: string | undefined
   // Addresses of proxies in front of Brain whose X-Forwarded-* headers are believed.
   trustedProxies?: string[]
+  // RSC_BRAIN_LOCAL_ONLY: the container's gateway, whose plain requests count as this machine (src/http/conn.ts).
+  localGateways?: string[]
   // Replaces SMTP (tests); the server sends with the mail settings of the installation.
   mailTransport?: Outbox['transport']
   // Only tests set this: client documents served from this machine over http.
@@ -218,36 +212,6 @@ function badText(root: unknown): string | null {
   return null
 }
 
-const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
-
-function connOf(req: IncomingMessage, trusted: string[]): Conn {
-  const remote = req.socket.remoteAddress ?? ''
-  const h = req.headers
-  const proxied =
-    h['x-forwarded-for'] !== undefined || h['x-forwarded-proto'] !== undefined || h.forwarded !== undefined
-  const userAgent = String(h['user-agent'] ?? '').slice(0, 200)
-  if (proxied && trusted.includes(remote)) {
-    // The trusted proxy appends what it saw: the last entry is its own; earlier ones the client wrote.
-    const last = (v: string | string[] | undefined) =>
-      String(v ?? '')
-        .split(',')
-        .at(-1)
-        ?.trim() ?? ''
-    return {
-      encrypted: last(h['x-forwarded-proto']) === 'https',
-      local: false,
-      ip: last(h['x-forwarded-for']) || remote,
-      userAgent,
-    }
-  }
-  return {
-    encrypted: Boolean((req.socket as TLSSocket).encrypted),
-    local: LOOPBACK.has(remote) && !proxied,
-    ip: remote,
-    userAgent,
-  }
-}
-
 // JSON by default; a reply that names its own content type (a page) is sent as it is.
 // A reply that asks for it (`compress`) travels gzipped when it passes 32 KB and the client accepts gzip
 // (plan §3.5 G10: the graph).
@@ -386,7 +350,7 @@ async function sendFile(
 export function createHandler(deps: AppDeps) {
   const routes = deps.routes ?? ROUTES
   const log = deps.log ?? stdoutLog
-  const trusted = deps.trustedProxies ?? []
+  const connOptions = { trusted: deps.trustedProxies ?? [], localGateways: deps.localGateways ?? [] }
   const rate = rateLimiter(deps.clock)
   const timings = { ...EVENT_TIMINGS, ...(deps.events ?? {}) }
   const hub = eventHub(deps.db, timings, log)
@@ -466,7 +430,7 @@ export function createHandler(deps: AppDeps) {
           )
         }
       }
-      const conn = connOf(req, trusted)
+      const conn = connOf(req, connOptions)
       const key = bearer(req.headers.authorization)
       const cookie = key ? null : sessionCookie(req.headers.cookie)
       const base = {

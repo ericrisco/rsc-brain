@@ -11,6 +11,9 @@ export type Config = {
   secret: string | undefined
   // Proxies in front of Brain whose X-Forwarded-Proto / X-Forwarded-For are believed.
   trustedProxies: string[]
+  // «This machine only» (spec B7 C19): in a container published on 127.0.0.1 alone, a plain request from the
+  // container's gateway counts as this machine (src/http/conn.ts).
+  localOnly: boolean
   // The folder of the copies (in the container, /backups); unset, nothing is said about its free space.
   backups: string | undefined
   // The daily copy: at HH:MM of the time zone, keeping this many (spec B7 C2).
@@ -45,6 +48,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (!/^\d+$/.test(keepText) || backupKeep < 1 || backupKeep > 365) {
     throw new Error(`RSC_BRAIN_BACKUP_KEEP must be a whole number from 1 to 365, got "${keepText}".`)
   }
+  const localOnly = readLocalOnly(env)
   return {
     databaseUrl,
     port,
@@ -55,8 +59,27 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
+    localOnly,
     backups: env.RSC_BRAIN_BACKUPS || undefined,
     backupAt,
     backupKeep,
   }
+}
+
+// RSC_BRAIN_LOCAL_ONLY trusts the container's gateway as this machine, which is only true when the port is published
+// on the loopback address alone (RSC_BRAIN_PUBLISH, the address the launcher publishes on). Published to the network,
+// everyone would arrive from the gateway and a password would cross it in clear: the service does not start.
+function readLocalOnly(env: NodeJS.ProcessEnv): boolean {
+  const flag = env.RSC_BRAIN_LOCAL_ONLY ?? ''
+  if (flag === '' || flag === '0') return false
+  if (flag !== '1') throw new Error(`RSC_BRAIN_LOCAL_ONLY must be 1 or 0, got "${flag}".`)
+  const publish = env.RSC_BRAIN_PUBLISH ?? ''
+  if (!/^(127\.0\.0\.1|\[::1\]):\d{1,5}$/.test(publish)) {
+    throw new Error(
+      'RSC_BRAIN_LOCAL_ONLY=1 needs RSC_BRAIN_PUBLISH set to 127.0.0.1:<port> (or [::1]:<port>): this machine only ' +
+        'is true only when the port is published on the loopback address alone. Publish it there, or remove ' +
+        'RSC_BRAIN_LOCAL_ONLY and give rsc-brain a domain with HTTPS.',
+    )
+  }
+  return true
 }

@@ -1,0 +1,63 @@
+// What a request's connection is: encrypted or not, from this machine or not, and from which address. B4's rule
+// («a password only over an encrypted connection or from this machine») reads it.
+//
+// «This machine only» (RSC_BRAIN_LOCAL_ONLY, spec B7 C19): in a container, a browser on the same machine reaches
+// the service through the container's gateway, never from 127.0.0.1. With the flag on, a request that comes
+// straight from that gateway (through no proxy) counts as this machine. That is only true because the port is
+// published on 127.0.0.1 alone: readConfig refuses the flag otherwise, and the launcher sets both together. Published
+// to the network, every outside client would also arrive from the gateway, and passwords would cross it in clear.
+import type { IncomingMessage } from 'node:http'
+import type { TLSSocket } from 'node:tls'
+import type { Conn } from './router.ts'
+
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+
+export type ConnOptions = {
+  // Proxies whose X-Forwarded-Proto / X-Forwarded-For are believed.
+  trusted: string[]
+  // With RSC_BRAIN_LOCAL_ONLY: the container's gateway; empty otherwise.
+  localGateways: string[]
+}
+
+const plain = (ip: string) => (ip.startsWith('::ffff:') ? ip.slice(7) : ip)
+
+export function connOf(req: IncomingMessage, o: ConnOptions): Conn {
+  const remote = req.socket.remoteAddress ?? ''
+  const h = req.headers
+  const proxied =
+    h['x-forwarded-for'] !== undefined || h['x-forwarded-proto'] !== undefined || h.forwarded !== undefined
+  const userAgent = String(h['user-agent'] ?? '').slice(0, 200)
+  if (proxied && o.trusted.includes(remote)) {
+    // The trusted proxy appends what it saw: the last entry is its own; earlier ones the client wrote.
+    const last = (v: string | string[] | undefined) =>
+      String(v ?? '')
+        .split(',')
+        .at(-1)
+        ?.trim() ?? ''
+    return {
+      encrypted: last(h['x-forwarded-proto']) === 'https',
+      local: false,
+      ip: last(h['x-forwarded-for']) || remote,
+      userAgent,
+    }
+  }
+  const fromGateway = remote !== '' && o.localGateways.includes(plain(remote))
+  return {
+    encrypted: Boolean((req.socket as TLSSocket).encrypted),
+    local: (LOOPBACK.has(remote) || fromGateway) && !proxied,
+    ip: remote,
+    userAgent,
+  }
+}
+
+// The gateway of the default route in /proc/net/route (Linux; little-endian hex), or null without one.
+export function defaultGateway(routeTable: string): string | null {
+  for (const line of routeTable.split('\n').slice(1)) {
+    const [, destination, gateway] = line.trim().split(/\s+/)
+    if (destination !== '00000000' || !gateway || !/^[0-9A-Fa-f]{8}$/.test(gateway)) continue
+    const n = Number.parseInt(gateway, 16)
+    if (n === 0) continue
+    return [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, n >>> 24].join('.')
+  }
+  return null
+}

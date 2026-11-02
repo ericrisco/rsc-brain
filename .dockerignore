@@ -1,0 +1,20 @@
+# What never goes into the image (nor into the build context): history, local state, secrets, tests.
+.git
+.github
+**/node_modules
+dist
+test
+web/test
+test-results
+playwright-report
+.pg-test
+.rsc
+.env
+.env.*
+**/*.log
+scripts
+playwright*.config.ts
+tsconfig.browser.json
+biome.json
+Dockerfile
+.dockerignore

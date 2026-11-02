@@ -25,6 +25,9 @@ when the PostgreSQL binaries are installed, a throwaway local cluster in `.pg-te
 that it starts for you (`npm run pg:stop` stops it). Without either, the PostgreSQL tests are
 skipped, as in CI.
 
+`npm run test:install` builds the container image and runs it with Docker (local only; skipped
+without `RSC_BRAIN_INSTALL_TESTS=1`, and always in CI).
+
 `node scripts/bench-search.ts` (with `RSC_BRAIN_PG_URL`) loads 10 000 pages and 100 000 entries into a
 throwaway database and times 100 varied searches; 95 % must answer in under a second.
 
@@ -215,3 +218,24 @@ on the same machine must therefore send `X-Forwarded-For` and `X-Forwarded-Proto
 `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` and
 `proxy_set_header X-Forwarded-Proto $scheme;`). List the proxy's own address in
 `RSC_BRAIN_TRUSTED_PROXIES`. Without those headers, everything the proxy forwards looks local.
+
+## In a container
+
+`docker build -t rsc-brain .` builds the image: the server, the web and the migrations on Node 25,
+run by an unprivileged user, healthy when `GET /v1/health` answers. `rsc-brain serve` is its command;
+`docker run --rm rsc-brain rsc-brain version` prints the version. Copies go to `/backups`.
+
+In a container, a browser on the same machine arrives through the container's gateway, not from
+`127.0.0.1`, so the rule above would refuse its password. When the port is published on `127.0.0.1`
+alone, set `RSC_BRAIN_PUBLISH=127.0.0.1:<port>` and `RSC_BRAIN_LOCAL_ONLY=1`: a request straight
+from the gateway, with no forwarded headers, then counts as this machine. The service refuses to
+start with `RSC_BRAIN_LOCAL_ONLY=1` and any other `RSC_BRAIN_PUBLISH`: published to the network,
+every visitor would arrive from the gateway and a password would cross it in clear. Never publish
+the port elsewhere by hand with the flag on; for access from other machines use a domain with HTTPS.
+
+`rsc-brain db check | provision | drop` prepares an existing PostgreSQL (17 or newer, with
+`unaccent`): `provision` takes an administration login (from a file or the standard input, never
+kept) and creates a role that is no superuser and cannot create databases or roles, and a database
+only it may connect to. `--isolate-from <database>` also closes another program's database to it,
+and rsc-brain's to that program. The new connection URL goes to a new `0600` file
+(`--url-file`) or is printed once.

@@ -26,6 +26,8 @@ export const LOG_EVENTS = [
   'backup_failed',
   // A copy kept whole whose folder could not be flushed or whose status could not be saved (its code).
   'backup_kept_with_warning',
+  // RSC_BRAIN_LOCAL_ONLY at start: whether the container's gateway was found (code gateway / no_gateway).
+  'local_only',
 ] as const
 export type LogEvent = (typeof LOG_EVENTS)[number]
 

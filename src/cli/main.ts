@@ -22,6 +22,7 @@ import { remindExpiringTokens } from '../domain/notices.ts'
 import { closeIdle } from '../domain/sessions.ts'
 import { foldTrail } from '../domain/trail.ts'
 import { createHandler } from '../http/app.ts'
+import { defaultGateway } from '../http/conn.ts'
 import { providersFromEnv } from '../meaning/providers.ts'
 import { applyStored } from '../meaning/stored.ts'
 import { type BackupInfo, backup, backupJob, copyMemory, readStatus } from '../ops/backup/backup.ts'
@@ -32,6 +33,7 @@ import { createScheduler } from '../ops/backup/schedule.ts'
 import { resealAll } from '../ops/key.ts'
 import { releaseChecker, releasesUrl } from '../ops/releases.ts'
 import { runBridge } from './bridge.ts'
+import { dbCommand } from './db.ts'
 import { sessionStart, stop } from './hooks.ts'
 import { mcpAddress, NO_TOKEN, readToken, UsageError } from './remote.ts'
 
@@ -73,6 +75,17 @@ Usage:
                                                       RSC_BRAIN_SECRET); never the key
   rsc-brain key reseal --from-file OLD --to-file NEW  seal everything sealed with OLD with NEW (rotating the
                                                       key; with the service stopped, then set RSC_BRAIN_SECRET)
+  rsc-brain db check [--db-url-file F] [--json]       whether a PostgreSQL can hold rsc-brain (17 or newer,
+                                                      unaccent) and what the login may do there; the URL comes
+                                                      from F, the standard input or RSC_BRAIN_DATABASE_URL
+  rsc-brain db provision --database D --role R [--isolate-from NAME] [--db-admin-url-file F] [--url-file OUT]
+                                                      with an administration login (F or the standard input; never
+                                                      kept): a role that is no superuser and a database only it
+                                                      may connect to; NAME, another program's database, is closed
+                                                      to it and back. The new URL goes to OUT (a new 0600 file) or
+                                                      standard output, once
+  rsc-brain db drop --database D --role R --confirm D [--db-admin-url-file F]
+                                                      remove that database and that role, and nothing else
   rsc-brain version                                   print the version of rsc-brain
   rsc-brain help                                      show this help
 
@@ -82,6 +95,8 @@ Environment:
   RSC_BRAIN_HOST           address to listen on (default 127.0.0.1)
   RSC_BRAIN_SECRET         installation secret (32+ characters) that seals second factors and mail
   RSC_BRAIN_TRUSTED_PROXIES  proxies whose X-Forwarded-Proto/-For are believed (comma separated)
+  RSC_BRAIN_LOCAL_ONLY     1 in a container published on 127.0.0.1 alone (RSC_BRAIN_PUBLISH=127.0.0.1:<port>):
+                           requests from the container's gateway count as this machine
   RSC_BRAIN_BACKUPS        folder of the copies; with it, serve makes a copy every day
   RSC_BRAIN_BACKUP_AT      time of the daily copy, HH:MM in RSC_BRAIN_TIMEZONE (default 03:00)
   RSC_BRAIN_BACKUP_KEEP    daily copies kept (default 14); copies made by hand are never removed
@@ -113,6 +128,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === 'backups') return backupsCommand(sub, rest)
   if (cmd === 'restore') return restoreCommand([sub, ...rest].filter((x) => x !== undefined))
   if (cmd === 'key') return keyCommand(sub, rest)
+  if (cmd === 'db') return dbCommand(sub, [...rest])
   if (cmd === 'bridge') return bridgeCommand([sub, ...rest].filter((x) => x !== undefined))
   if (cmd === 'hook') return hookCommand(sub, rest)
   if (cmd === 'migrate') {
@@ -149,6 +165,13 @@ async function main(argv: string[]): Promise<number> {
     // Whether a newer release exists: once a day, only the User-Agent (plan §3.10); off with an empty URL.
     const releases = releaseChecker({ url: releasesUrl(process.env), version: VERSION, clock: systemClock })
     releases.start()
+    // «This machine only» (spec B7 C19): the container's gateway, from the default route (src/http/conn.ts).
+    const localGateways: string[] = []
+    if (cfg.localOnly) {
+      const gateway = defaultGateway(await readFile('/proc/net/route', 'utf8').catch(() => ''))
+      if (gateway) localGateways.push(gateway)
+      log.info('local_only', { code: gateway ? 'gateway' : 'no_gateway' })
+    }
     const server = createServer(
       createHandler({
         db,
@@ -157,6 +180,7 @@ async function main(argv: string[]): Promise<number> {
         meaning,
         secret: cfg.secret,
         trustedProxies: cfg.trustedProxies,
+        localGateways,
         backups: cfg.backups,
         ...(copies ? { copies } : {}),
         releases,
