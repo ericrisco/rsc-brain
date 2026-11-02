@@ -126,9 +126,13 @@ export const journalRoutes: Route[] = [
     )
     return { status: 201, body: { receipt } }
   }),
-  route('POST /v1/brains/:slug/topics/suggest', async (r) => ({
-    body: await suggestTopic(ctxOf(r), r.params.slug as string, reqStr(obj(r.body), 'title', LIMITS.title)),
-  })),
+  // A suggestion changes nothing: the maintenance gate lets it through.
+  {
+    ...route('POST /v1/brains/:slug/topics/suggest', async (r) => ({
+      body: await suggestTopic(ctxOf(r), r.params.slug as string, reqStr(obj(r.body), 'title', LIMITS.title)),
+    })),
+    maintenance: 'reads',
+  },
   route('GET /v1/entries/:id', async (r) => ({
     body: await getEntry(ctxOf(r), r.params.id as string, { history: r.query.get('history') === '1' }),
   })),

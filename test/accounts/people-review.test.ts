@@ -328,6 +328,8 @@ describe('people: review', { skip: skipPg }, () => {
   })
 
   it('second pass: an invitation the administration widened names the administration as inviter', async () => {
+    // The newest invitation, so it is on the first page whatever the earlier tests left (same clock, random ids).
+    w.advance(1000)
     await w.callWeb(anaWeb, 'POST', '/v1/invitations', {
       emails: ['ee@example.com'],
       brains: [{ slug: 'yt', role: 'reader' }],

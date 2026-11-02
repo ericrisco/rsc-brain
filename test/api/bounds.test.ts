@@ -1,9 +1,11 @@
 // Spec B5 «Respuestas acotadas»: no answer of the API passes 256 000 characters; one that would is cut,
 // says so, and says how to ask for the rest. The MCP endpoint cuts at the same size.
+
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { after, before, describe, it } from 'node:test'
+import { silentLog } from '../../src/core/log.ts'
 import { createHandler, ROUTES } from '../../src/http/app.ts'
 import { MAX_REPLY_CHARS } from '../../src/http/bounds.ts'
 import { route } from '../../src/http/router.ts'
@@ -26,7 +28,7 @@ describe('bounded answers', { skip: skipPg }, () => {
       route('GET /v1/test/fits', async () => ({ body: { text: 'x'.repeat(MAX_REPLY_CHARS - 20) } })),
       ...ROUTES,
     ]
-    server = createServer(createHandler({ db: w.db, clock: w.clock, routes, log: () => {} }))
+    server = createServer(createHandler({ db: w.db, clock: w.clock, routes, log: silentLog }))
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   })

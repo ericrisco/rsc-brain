@@ -1,8 +1,10 @@
 // A small router: "METHOD /v1/brains/:slug" patterns, matched in order. A last part written "*name"
 // takes the rest of the path, slashes included (page addresses such as "audience/retention").
+
 import type { IncomingHttpHeaders } from 'node:http'
 import type { Principal } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
+import type { Log } from '../core/log.ts'
 import type { Db } from '../db/db.ts'
 import type { Outbox } from '../mail/mail.ts'
 import type { Providers } from '../meaning/providers.ts'
@@ -42,6 +44,10 @@ export type PublicReq = {
   timings: EventTimings
   // When this process started serving (Admin › Backups & system).
   startedAt: Date
+  // The folder of the copies (RSC_BRAIN_BACKUPS), when one is set.
+  backups: string | null
+  // The log of the server (src/core/log.ts).
+  log: Log
 }
 export type Req = PublicReq & { who: Principal }
 // A stream the server keeps writing to (Server-Sent Events) until the client leaves or `end` is called.
@@ -78,15 +84,24 @@ export type Route = {
   maxBody?: number
   // Only the administration (web): checked before the body is read.
   admin?: boolean
+  // How the maintenance gate counts it (http/maintenance.ts). Unset: a write unless GET or HEAD. 'reads': not
+  // GET but changes nothing; 'own': applies the gate itself (the MCP endpoint per tool, the sign-in forms with a
+  // page); 'writes': a GET that writes (the audit export records itself), refused during maintenance.
+  maintenance?: 'reads' | 'own' | 'writes'
 }
 
 export function publicRoute(
   spec: string,
   handler: (r: PublicReq) => Promise<Reply>,
-  o: { beforeSetup?: boolean } = {},
+  o: { beforeSetup?: boolean; maintenance?: 'reads' | 'own' } = {},
 ): Route {
   const r = route(spec, () => Promise.reject(new Error('a public route runs through `public`')))
-  return { ...r, public: handler, ...(o.beforeSetup ? { beforeSetup: true } : {}) }
+  return {
+    ...r,
+    public: handler,
+    ...(o.beforeSetup ? { beforeSetup: true } : {}),
+    ...(o.maintenance ? { maintenance: o.maintenance } : {}),
+  }
 }
 
 export function route(spec: string, handler: Handler): Route {

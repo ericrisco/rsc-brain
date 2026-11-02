@@ -2,6 +2,7 @@
 // web never answers on a reserved prefix, never reads outside its folder, carries the headers of plan §0
 // and loads before the first-time setup is done. These tests need no database: a database that throws
 // proves the web does not touch it.
+
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
@@ -10,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { brotliCompressSync, gzipSync } from 'node:zlib'
+import { silentLog } from '../../src/core/log.ts'
 import type { Db } from '../../src/db/db.ts'
 import { createHandler, ROUTES } from '../../src/http/app.ts'
 import { answerWeb, openWeb, WEB_CSP } from '../../src/http/web.ts'
@@ -42,7 +44,7 @@ describe('the web next to the API', () => {
   before(async () => {
     root = await builtWeb()
     server = createServer(
-      createHandler({ db: noDb, clock: () => new Date('2026-10-30T10:00:00Z'), web: root, log: () => {} }),
+      createHandler({ db: noDb, clock: () => new Date('2026-10-30T10:00:00Z'), web: root, log: silentLog }),
     )
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`

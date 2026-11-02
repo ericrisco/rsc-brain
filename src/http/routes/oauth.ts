@@ -21,7 +21,9 @@ import {
   revokeByToken,
 } from '../../domain/connections.ts'
 import { signIn } from '../../domain/login.ts'
+import { maintenance } from '../../domain/maintenance.ts'
 import { obj } from '../input.ts'
+import { retryAfter } from '../maintenance.ts'
 import { type PublicReq, publicRoute, type Reply, type Route } from '../router.ts'
 import { cookie } from './auth.ts'
 
@@ -85,6 +87,21 @@ const errorPage = (message: string, status = 400) =>
     `<h1>This app cannot connect</h1><p class="error">${esc(message)}</p><p class="muted">Nothing was shared. Close this page and check the app's settings.</p>`,
     status,
   )
+
+// While rsc-brain is under maintenance the sign-in and consent forms write nothing (spec B7 C12): a page in
+// English with Retry-After, and a link back to the start of the same connection. Null when there is none.
+async function maintenancePage(r: PublicReq, q: Record<string, string>): Promise<Reply | null> {
+  const m = await maintenance.current(r.db, r.clock())
+  if (!m) return null
+  const seconds = retryAfter(m, r.clock())
+  const again = `/oauth/authorize?${new URLSearchParams(q).toString()}`
+  return page(
+    'Updating',
+    `<h1>rsc-brain is updating</h1><p>rsc-brain is updating. Try again in ${seconds} seconds.</p><p><a href="${esc(again)}">Try again</a></p><p class="muted">Nothing was changed.</p>`,
+    503,
+    { 'retry-after': String(seconds) },
+  )
+}
 
 // The query of the request, refusing a parameter given twice (the standard asks for that).
 function queryOf(q: URLSearchParams): Record<string, string> {
@@ -275,84 +292,104 @@ export const oauthRoutes: Route[] = [
     if (!who) return loginPage(r, q, step.a.client.name)
     return consentPage(r, who, step.a, q)
   }),
-  publicRoute('POST /oauth/login', async (r) => {
-    const b = obj(r.body) as Record<string, unknown>
-    const text = (k: string) => (typeof b[k] === 'string' ? (b[k] as string) : '')
-    let q: Record<string, string>
-    let step: Awaited<ReturnType<typeof authorize>>
-    try {
-      q = queryOf(new URLSearchParams(text('continue')))
-      step = await authorize(r, q)
-    } catch (err) {
-      if (err instanceof OAuthError) return errorPage(err.description)
-      throw err
-    }
-    if (step.reply) return step.reply
-    const formNonce = /(?:^|;\s*)rscb_form=([A-Za-z0-9_-]+)/.exec(String(r.headers.cookie ?? ''))?.[1] ?? ''
-    if (!formNonce || formNonce !== text('nonce') || !sameText(text('csrf'), sign(r, `login:${formNonce}`))) {
-      return loginPage(r, q, step.a.client.name, 'This form expired. Sign in again.', 403)
-    }
-    try {
-      const s = await signIn(r.db, r.clock, r.conn, r.secret, {
-        email: text('email'),
-        password: text('password'),
-        ...(text('code') ? { code: text('code') } : {}),
-      })
-      return {
-        status: 303,
-        body: '',
-        headers: {
-          location: `/oauth/authorize?${new URLSearchParams(q).toString()}`,
-          'content-type': 'text/plain',
-          'set-cookie': cookie(s.session, r.conn),
-        },
+  publicRoute(
+    'POST /oauth/login',
+    async (r) => {
+      const b = obj(r.body) as Record<string, unknown>
+      const text = (k: string) => (typeof b[k] === 'string' ? (b[k] as string) : '')
+      const paused = await maintenancePage(
+        r,
+        Object.fromEntries(new URLSearchParams(text('continue'))) as Record<string, string>,
+      )
+      if (paused) return paused
+      let q: Record<string, string>
+      let step: Awaited<ReturnType<typeof authorize>>
+      try {
+        q = queryOf(new URLSearchParams(text('continue')))
+        step = await authorize(r, q)
+      } catch (err) {
+        if (err instanceof OAuthError) return errorPage(err.description)
+        throw err
       }
-    } catch (err) {
-      if (err instanceof AppError && err.status < 500) {
-        return loginPage(r, q, step.a.client.name, `${err.message} ${err.howToProceed}`, err.status)
+      if (step.reply) return step.reply
+      const formNonce = /(?:^|;\s*)rscb_form=([A-Za-z0-9_-]+)/.exec(String(r.headers.cookie ?? ''))?.[1] ?? ''
+      if (
+        !formNonce ||
+        formNonce !== text('nonce') ||
+        !sameText(text('csrf'), sign(r, `login:${formNonce}`))
+      ) {
+        return loginPage(r, q, step.a.client.name, 'This form expired. Sign in again.', 403)
       }
-      throw err
-    }
-  }),
-  publicRoute('POST /oauth/authorize', async (r) => {
-    const b = obj(r.body) as Record<string, string>
-    const q: Record<string, string> = {}
-    for (const k of AUTHZ_KEYS) if (typeof b[k] === 'string') q[k] = b[k]
-    let step: Awaited<ReturnType<typeof authorize>>
-    try {
-      step = await authorize(r, q)
-    } catch (err) {
-      if (err instanceof OAuthError) return errorPage(err.description)
-      throw err
-    }
-    if (step.reply) return step.reply
-    const who = await personOf(r)
-    if (!who) return errorPage('Your session ended. Start the connection again from the app.', 401)
-    const a = step.a
-    // The approval must come from this page, in this session: another site cannot make it.
-    if (typeof b.csrf !== 'string' || !sameText(b.csrf, sign(r, consentKey(who, a)))) {
-      return errorPage('This approval did not come from the consent page. Start again from the app.', 403)
-    }
-    if (b.decision !== 'approve') {
-      return back(a.redirectUri, {
-        error: 'access_denied',
-        error_description: 'The person denied it.',
-        state: a.state,
-        iss: step.iss,
-      })
-    }
-    const brainIds = Object.keys(b)
-      .filter((k) => k.startsWith('brain_') && b[k] === 'on')
-      .map((k) => k.slice(6))
-    const perm = b.perm === 'write' ? 'write' : 'read'
-    try {
-      const code = await issueCode(r.db, r.clock, a, who.accountId, { brainIds, perm })
-      return back(a.redirectUri, { code, state: a.state, iss: step.iss })
-    } catch (err) {
-      if (err instanceof OAuthError) return consentPage(r, who, a, q, err.description)
-      throw err
-    }
-  }),
+      try {
+        const s = await signIn(r.db, r.clock, r.conn, r.secret, {
+          email: text('email'),
+          password: text('password'),
+          ...(text('code') ? { code: text('code') } : {}),
+        })
+        return {
+          status: 303,
+          body: '',
+          headers: {
+            location: `/oauth/authorize?${new URLSearchParams(q).toString()}`,
+            'content-type': 'text/plain',
+            'set-cookie': cookie(s.session, r.conn),
+          },
+        }
+      } catch (err) {
+        if (err instanceof AppError && err.status < 500) {
+          return loginPage(r, q, step.a.client.name, `${err.message} ${err.howToProceed}`, err.status)
+        }
+        throw err
+      }
+    },
+    // The forms answer maintenance with a page of their own (above), not with JSON.
+    { maintenance: 'own' },
+  ),
+  publicRoute(
+    'POST /oauth/authorize',
+    async (r) => {
+      const b = obj(r.body) as Record<string, string>
+      const q: Record<string, string> = {}
+      for (const k of AUTHZ_KEYS) if (typeof b[k] === 'string') q[k] = b[k]
+      const paused = await maintenancePage(r, q)
+      if (paused) return paused
+      let step: Awaited<ReturnType<typeof authorize>>
+      try {
+        step = await authorize(r, q)
+      } catch (err) {
+        if (err instanceof OAuthError) return errorPage(err.description)
+        throw err
+      }
+      if (step.reply) return step.reply
+      const who = await personOf(r)
+      if (!who) return errorPage('Your session ended. Start the connection again from the app.', 401)
+      const a = step.a
+      // The approval must come from this page, in this session: another site cannot make it.
+      if (typeof b.csrf !== 'string' || !sameText(b.csrf, sign(r, consentKey(who, a)))) {
+        return errorPage('This approval did not come from the consent page. Start again from the app.', 403)
+      }
+      if (b.decision !== 'approve') {
+        return back(a.redirectUri, {
+          error: 'access_denied',
+          error_description: 'The person denied it.',
+          state: a.state,
+          iss: step.iss,
+        })
+      }
+      const brainIds = Object.keys(b)
+        .filter((k) => k.startsWith('brain_') && b[k] === 'on')
+        .map((k) => k.slice(6))
+      const perm = b.perm === 'write' ? 'write' : 'read'
+      try {
+        const code = await issueCode(r.db, r.clock, a, who.accountId, { brainIds, perm })
+        return back(a.redirectUri, { code, state: a.state, iss: step.iss })
+      } catch (err) {
+        if (err instanceof OAuthError) return consentPage(r, who, a, q, err.description)
+        throw err
+      }
+    },
+    { maintenance: 'own' },
+  ),
   publicRoute('POST /oauth/token', async (r) => {
     const b = obj(r.body) as Record<string, unknown>
     try {

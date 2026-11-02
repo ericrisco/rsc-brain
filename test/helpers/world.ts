@@ -1,9 +1,11 @@
 // A running server on a fresh database, with a movable clock and helpers to create accounts and keys
 // and to call the API the way a client does.
+
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { hashSecret, newSecret } from '../../src/auth/secrets.ts'
 import type { Clock } from '../../src/core/clock.ts'
+import { type Log, makeLog, silentLog } from '../../src/core/log.ts'
 import { migrate } from '../../src/db/migrate.ts'
 import { createAccount, type NewAccount } from '../../src/domain/accounts.ts'
 import { addMember } from '../../src/domain/brains.ts'
@@ -71,7 +73,14 @@ export const TEST_SECRET = 'test-secret-of-at-least-thirty-two-characters'
 // `localClients`: client documents of the standard sign-in may be served from this machine over http
 // (only tests do that).
 export async function world(
-  o: { meaning?: Providers; fresh?: boolean; localClients?: boolean; events?: Partial<EventTimings> } = {},
+  o: {
+    meaning?: Providers
+    fresh?: boolean
+    localClients?: boolean
+    events?: Partial<EventTimings>
+    backups?: string
+    log?: Log
+  } = {},
 ): Promise<World> {
   const t = await freshDatabase()
   await migrate(t.db)
@@ -93,13 +102,14 @@ export async function world(
       trustedProxies: ['127.0.0.1'],
       ...(o.localClients ? { fetchPolicy: { allowLoopbackHttp: true } } : {}),
       ...(o.events ? { events: o.events } : {}),
+      ...(o.backups ? { backups: o.backups } : {}),
       mailTransport: () => ({
         async send(m) {
           if (w.mailFails) throw new Error('connection refused by the test mail server')
           w.mails.push(m)
         },
       }),
-      log: process.env.BRAIN_TEST_LOG ? (l) => process.stderr.write(`${l}\n`) : () => {},
+      log: o.log ?? (process.env.BRAIN_TEST_LOG ? makeLog((l) => process.stderr.write(`${l}\n`)) : silentLog),
     }),
   )
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))

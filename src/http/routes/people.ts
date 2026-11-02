@@ -65,9 +65,12 @@ export const peopleRoutes: Route[] = [
     return { body: { revoked: r.params.id } }
   }),
   // The invitation page: the token travels in the body, never in an address that logs keep.
-  publicRoute('POST /v1/invitations/look', async (r) => ({
-    body: { invitation: await lookInvitation(r.db, r.clock, obj(r.body).token) },
-  })),
+  publicRoute(
+    'POST /v1/invitations/look',
+    async (r) => ({ body: { invitation: await lookInvitation(r.db, r.clock, obj(r.body).token) } }),
+    // It only reads the invitation: the maintenance gate lets it through.
+    { maintenance: 'reads' },
+  ),
   publicRoute('POST /v1/invitations/accept', async (r) => {
     fromWeb(r)
     const b = obj(r.body)
@@ -209,18 +212,22 @@ export const peopleRoutes: Route[] = [
     return { body: { revoked: r.params.id } }
   }),
   route('GET /v1/admin/audit', async (r) => ({ body: await readAudit(ctxOf(r), filters(r)) })),
-  route('GET /v1/admin/audit/export', async (r) => {
-    const out = await exportAudit(ctxOf(r), filters(r))
-    return {
-      body: out.csv,
-      headers: {
-        'content-type': 'text/csv; charset=utf-8',
-        'content-disposition': `attachment; filename="brain-audit-${r.clock().toISOString().slice(0, 10)}.csv"`,
-        // More rows than one file holds: narrow with "from" and "to" to get the older ones.
-        'x-audit-truncated': out.truncated ? 'true' : 'false',
-      },
-    }
-  }),
+  // It records the export in the audit: a GET that writes, so maintenance refuses it (review of PR27).
+  {
+    ...route('GET /v1/admin/audit/export', async (r) => {
+      const out = await exportAudit(ctxOf(r), filters(r))
+      return {
+        body: out.csv,
+        headers: {
+          'content-type': 'text/csv; charset=utf-8',
+          'content-disposition': `attachment; filename="brain-audit-${r.clock().toISOString().slice(0, 10)}.csv"`,
+          // More rows than one file holds: narrow with "from" and "to" to get the older ones.
+          'x-audit-truncated': out.truncated ? 'true' : 'false',
+        },
+      }
+    }),
+    maintenance: 'writes',
+  },
   route('GET /v1/brains/:slug/audit', async (r) => ({
     body: await brainAudit(ctxOf(r), r.params.slug as string, filters(r)),
   })),

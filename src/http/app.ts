@@ -7,15 +7,18 @@ import { gzipSync } from 'node:zlib'
 import { bearer, resolveKey, sessionCookie } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
+import { failureFields, type Log, stdoutLog } from '../core/log.ts'
 import type { Db } from '../db/db.ts'
 import { adminOnly } from '../domain/guards.ts'
 import { installation, setupDone } from '../domain/installation.ts'
+import { activeAt } from '../domain/maintenance.ts'
 import type { Outbox } from '../mail/mail.ts'
 import { mcpRoutes } from '../mcp/server.ts'
 import type { Providers } from '../meaning/providers.ts'
 import type { FetchPolicy } from '../oauth/fetch.ts'
 import { boundJson } from './bounds.ts'
 import { EVENT_TIMINGS, type EventTimings, eventHub } from './hub.ts'
+import { ENDS_ACCESS, isWrite, maintenance, underMaintenance } from './maintenance.ts'
 import { openapi } from './openapi.ts'
 import { rateLimiter } from './ratelimit.ts'
 import {
@@ -51,7 +54,8 @@ export type AppDeps = {
   clock: Clock
   tz?: string
   routes?: Route[]
-  log?: (line: string) => void
+  // Where the log goes (src/core/log.ts: closed fields, never content); standard output by default.
+  log?: Log
   meaning?: Providers
   // The installation secret (RSC_BRAIN_SECRET) that seals what the server must read back.
   secret?: string | undefined
@@ -65,6 +69,30 @@ export type AppDeps = {
   events?: Partial<EventTimings>
   // The folder of the built web (dist/web next to the server); false serves no web at all.
   web?: string | false
+  // Where the copies go (RSC_BRAIN_BACKUPS): Admin › Backups & system shows the free space there.
+  backups?: string | undefined
+}
+
+// How long the health address waits for the database before it says the database is down.
+export const HEALTH_TIMEOUT_MS = 2000
+
+// GET /v1/health (spec B7 C20): whether the service and its database answer, and whether it is under
+// maintenance; 503 when the database does not answer in time. Never the version, nothing of an error.
+async function health(db: Db, now: Date): Promise<{ status: number; body: Record<string, unknown> }> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const row = await Promise.race([
+      db.one('SELECT maintenance_until FROM installation WHERE id = 1'),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), HEALTH_TIMEOUT_MS)
+      }),
+    ])
+    return { status: 200, body: { ok: true, database: 'ok', maintenance: activeAt(row, now) !== null } }
+  } catch {
+    return { status: 503, body: { ok: false, database: 'down', maintenance: false } }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // Where the build puts the web: dist/web, next to dist/http where this module lands.
@@ -268,7 +296,7 @@ function send(
 async function stream(
   res: ServerResponse,
   run: NonNullable<Reply['stream']>,
-  log: (line: string) => void,
+  log: Log,
   bufferBytes: number,
 ): Promise<void> {
   res.writeHead(200, {
@@ -309,7 +337,7 @@ async function stream(
   try {
     await run(out)
   } catch (err) {
-    log(`event stream: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
+    log.error('stream_error', failureFields(err))
   } finally {
     out.end()
   }
@@ -317,7 +345,7 @@ async function stream(
 
 export function createHandler(deps: AppDeps) {
   const routes = deps.routes ?? ROUTES
-  const log = deps.log ?? ((line: string) => process.stderr.write(`${line}\n`))
+  const log = deps.log ?? stdoutLog
   const trusted = deps.trustedProxies ?? []
   const rate = rateLimiter(deps.clock)
   const timings = { ...EVENT_TIMINGS, ...(deps.events ?? {}) }
@@ -329,11 +357,30 @@ export function createHandler(deps: AppDeps) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     // Whether the body was read: a refusal sent before it (or instead of it) closes the connection.
     let bodyRead = false
+    // One line per answered request: the method, the route as its template (never the path or the query),
+    // the status and how long it took (plan §3.11).
+    const started = performance.now()
+    let template: string | undefined
+    res.once('close', () => {
+      try {
+        log.info('request', {
+          method: /^[A-Z]{3,7}$/.test(req.method ?? '') ? req.method : undefined,
+          route: template,
+          status: res.statusCode,
+          ms: Math.min(86_400_000, Math.round(performance.now() - started)),
+        })
+      } catch {
+        // The log never takes the server down.
+      }
+    })
     try {
       const url = new URL(req.url ?? '/', 'http://localhost')
       const method = req.method ?? 'GET'
-      if (url.pathname === '/v1/health' && (method === 'GET' || method === 'HEAD'))
-        return send(res, 200, { ok: true })
+      if (url.pathname === '/v1/health' && (method === 'GET' || method === 'HEAD')) {
+        template = '/v1/health'
+        const h = await health(deps.db, deps.clock())
+        return send(res, h.status, h.body)
+      }
       // The web answers before the first-time setup (it is what runs the setup) and never on the API's
       // prefixes (spec B6, plan §3.1).
       if (web) {
@@ -361,6 +408,7 @@ export function createHandler(deps: AppDeps) {
       if (found === 'method') {
         throw new AppError(405, 'method_not_allowed', `${method} is not allowed here.`, 'Check the method.')
       }
+      template = found.route.path
       // The query string holds text that reaches the database too.
       for (const [k, v] of url.searchParams) {
         const bad = badText(k) ?? badText(v)
@@ -398,6 +446,16 @@ export function createHandler(deps: AppDeps) {
         hub,
         timings,
         startedAt,
+        backups: deps.backups ?? null,
+        log,
+      }
+      // Maintenance (spec B7 C12): a write without a key (signing in, the standard sign-in) is refused here;
+      // one with a key once the key is read, from the same row.
+      const write = isWrite(found.route)
+      const endsAccess = ENDS_ACCESS.has(`${found.route.method} ${found.route.path}`)
+      if (found.route.public && write) {
+        const m = await maintenance.current(deps.db, deps.clock())
+        if (m) throw underMaintenance(m, deps.clock(), endsAccess)
       }
       if (found.route.public) {
         // A page that a browser posts to checks its own origin; JSON callers send no cookie here.
@@ -417,6 +475,7 @@ export function createHandler(deps: AppDeps) {
         )
       }
       const who = await resolveKey(deps.db, key ?? cookie, deps.clock(), key ? 'bearer' : 'cookie', conn)
+      if (write && who.maintenance) throw underMaintenance(who.maintenance, deps.clock(), endsAccess)
       rate.take(who.credential.id, who.rateLimit)
       // A route only the administration uses refuses anyone else before reading a (large) body.
       if (found.route.admin) adminOnly({ db: deps.db, clock: deps.clock, who })
@@ -439,11 +498,18 @@ export function createHandler(deps: AppDeps) {
         res.setHeader('connection', 'close')
         res.once('finish', () => setTimeout(() => req.socket.destroy(), 100).unref())
       }
+      const pathname = new URL(req.url ?? '/', 'http://localhost').pathname
+      // The standard sign-in answers maintenance in its own words (any of its pages), with Retry-After.
+      if (err instanceof AppError && err.code === 'under_maintenance' && pathname.startsWith('/oauth/')) {
+        return send(
+          res,
+          err.status,
+          { error: 'temporarily_unavailable', error_description: err.message },
+          err.headers,
+        )
+      }
       // The standard sign-in's endpoints answer in the standard's shape, even for a malformed request.
-      if (
-        err instanceof AppError &&
-        /^\/oauth\/(token|register|revoke)$/.test(new URL(req.url ?? '/', 'http://localhost').pathname)
-      ) {
+      if (err instanceof AppError && /^\/oauth\/(token|register|revoke)$/.test(pathname)) {
         return send(
           res,
           err.status,
@@ -452,7 +518,7 @@ export function createHandler(deps: AppDeps) {
         )
       }
       // The MCP endpoint answers in JSON-RPC, even for a body that is not JSON.
-      if (err instanceof AppError && new URL(req.url ?? '/', 'http://localhost').pathname === '/mcp') {
+      if (err instanceof AppError && pathname === '/mcp') {
         return send(res, err.status, {
           jsonrpc: '2.0',
           id: null,
@@ -462,9 +528,11 @@ export function createHandler(deps: AppDeps) {
           },
         })
       }
-      if (err instanceof AppError) return send(res, err.status, { error: err.body() }, err.headers)
+      if (err instanceof AppError)
+        return send(res, err.status, { error: err.body(), ...(err.outer ?? {}) }, err.headers)
       const id = Math.random().toString(36).slice(2, 10)
-      log(`internal error ${id}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`)
+      // The reference and where it failed; never the message, which may quote what was sent or stored.
+      log.error('internal_error', { ref: id, route: template, ...failureFields(err) })
       send(res, 500, {
         error: {
           code: 'internal',

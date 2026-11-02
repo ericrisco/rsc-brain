@@ -961,7 +961,15 @@ const HAND: Record<string, Op> = {
       ),
     }),
   },
-  'GET /v1/health': { summary: 'Whether the server answers.', reply: obj({ ok: b('Always true.') }) },
+  'GET /v1/health': {
+    summary:
+      'Whether the service and its database answer, and whether it is under maintenance (writes refused). 503 when the database does not answer. Never the version.',
+    reply: obj({
+      ok: b('The service and its database answer.'),
+      database: s('ok, or down (then the answer is 503).', { enum: ['ok', 'down'] }),
+      maintenance: b('Writes are refused for now (503 under_maintenance); reads work.'),
+    }),
+  },
   'GET /v1/openapi.json': { summary: 'This description.', reply: { type: 'object' } },
   'GET /v1/me': {
     summary: 'Who this key is, what it may do, and the installation.',
@@ -1775,7 +1783,7 @@ const HAND: Record<string, Op> = {
   },
   'GET /v1/admin/system': {
     summary:
-      'The health of the service (administration): version, start, database, meaning search, streams, mail.',
+      'The health of the service (administration): version, start, database, meaning search, streams, mail, disk and maintenance.',
     reply: obj({
       version: s('The version of rsc-brain.'),
       startedAt: s('When this process started.', { format: 'date-time' }),
@@ -1790,6 +1798,18 @@ const HAND: Record<string, Op> = {
         configured: b('Mail is set up.'),
         lastFailureAt: nul(s('The last mail that failed.', { format: 'date-time' })),
       }),
+      disk: obj({
+        backupsFree: nul(
+          n('Free bytes where the copies go; null when no folder is set (RSC_BRAIN_BACKUPS).'),
+        ),
+        databaseBytes: n('The size of the database, in bytes.'),
+      }),
+      maintenance: nul(
+        obj({
+          until: s('When it ends on its own.', { format: 'date-time' }),
+          reason: s('update, restore or manual.', { enum: ['update', 'restore', 'manual'] }),
+        }),
+      ),
     }),
   },
   'PUT /v1/admin/branding/logo': {
@@ -1990,19 +2010,24 @@ const HAND: Record<string, Op> = {
   },
 }
 
-const ERROR = obj({
-  error: obj(
-    {
-      code: s('A stable code.'),
-      message: s('What happened.'),
-      howToProceed: s('What to do next.'),
-      retryAfter: n('Seconds to wait (rate_limited).'),
-      current: { description: 'The current version, after a conflict.' },
-      problems: { description: 'Everything wrong with a request checked as a whole.' },
-    },
-    ['retryAfter', 'current', 'problems'],
-  ),
-})
+const ERROR = obj(
+  {
+    error: obj(
+      {
+        code: s('A stable code.'),
+        message: s('What happened.'),
+        howToProceed: s('What to do next.'),
+        retryAfter: n('Seconds to wait (rate_limited, under_maintenance).'),
+        current: { description: 'The current version, after a conflict.' },
+        problems: { description: 'Everything wrong with a request checked as a whole.' },
+      },
+      ['retryAfter', 'current', 'problems'],
+    ),
+    // 503 under_maintenance also says it next to the error (plan §3.1), as the Retry-After header does.
+    retryAfter: n('Seconds to wait before sending a write again (under_maintenance).'),
+  },
+  ['retryAfter'],
+)
 
 const PUBLIC_OPS = new Set(['GET /v1/health'])
 
