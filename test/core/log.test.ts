@@ -3,7 +3,7 @@
 // authorization headers. A field outside the list does not compile, and throws if forced.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { LOG_EVENTS, LOG_FIELDS, type LogFields, makeLog } from '../../src/core/log.ts'
+import { failureFields, LOG_EVENTS, LOG_FIELDS, type LogFields, makeLog } from '../../src/core/log.ts'
 
 const at = new Date('2026-11-01T10:00:00.000Z')
 function capture() {
@@ -113,5 +113,16 @@ describe('the log', () => {
     const c = capture()
     c.log.info('request', { route: undefined, status: 404, ms: 1 })
     assert.deepEqual(Object.keys(c.json()[0] ?? {}), ['at', 'level', 'event', 'status', 'ms'])
+  })
+
+  it('a failure says its code and the first frame of src/, never anything from its message', () => {
+    const e = new Error('saved src/our-secret-plan.ts:7 for later\nsrc/second-line.ts:9')
+    e.stack = `Error: saved src/our-secret-plan.ts:7 for later\nsrc/second-line.ts:9\n    at save (file:///app/src/domain/entries.ts:88:5)\n    at run (node:internal/x:1:1)`
+    assert.deepEqual(failureFields(e), { code: 'Error', file: 'src/domain/entries.ts:88' })
+    const only = new Error('src/our-secret-plan.ts:7')
+    only.stack = 'Error: src/our-secret-plan.ts:7\n    at x (node:internal/y:1:1)'
+    assert.deepEqual(failureFields(only), { code: 'Error' })
+    assert.deepEqual(failureFields(Object.assign(new Error('x'), { code: '23505' })).code, '23505')
+    assert.deepEqual(failureFields({ code: 'duplicate key (title)=(plan)' }), { code: 'unknown' })
   })
 })

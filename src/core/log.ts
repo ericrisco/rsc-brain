@@ -88,6 +88,12 @@ export function failureFields(err: unknown): Pick<LogFields, 'code' | 'file'> {
   const e = err as { code?: unknown; name?: unknown; stack?: unknown } | null
   const rawCode = typeof e?.code === 'string' ? e.code : typeof e?.name === 'string' ? e.name : 'unknown'
   const code = /^[A-Za-z0-9_.-]{1,64}$/.test(rawCode) ? rawCode : 'unknown'
-  const frame = typeof e?.stack === 'string' ? /(src\/[a-z0-9/_.-]+\.ts):(\d+)/.exec(e.stack) : null
+  // Only the frames of the stack ("    at …" lines): the message before them may quote anything.
+  const frames = typeof e?.stack === 'string' ? e.stack.split('\n').filter((l) => /^\s+at\s/.test(l)) : []
+  let frame: RegExpExecArray | null = null
+  for (const l of frames) {
+    frame = /(src\/[a-z0-9/_.-]+\.ts):(\d+)/.exec(l)
+    if (frame) break
+  }
   return { code, ...(frame ? { file: `${frame[1]}:${frame[2]}` } : {}) }
 }

@@ -80,15 +80,16 @@ export type Route = {
   maxBody?: number
   // Only the administration (web): checked before the body is read.
   admin?: boolean
-  // Not a write for the maintenance gate though its method is not GET (http/maintenance.ts): 'reads' changes
-  // nothing; 'own' applies the gate itself (the MCP endpoint, per tool). Unset: a write unless GET or HEAD.
-  maintenance?: 'reads' | 'own'
+  // How the maintenance gate counts it (http/maintenance.ts). Unset: a write unless GET or HEAD. 'reads': not
+  // GET but changes nothing; 'own': applies the gate itself (the MCP endpoint per tool, the sign-in forms with a
+  // page); 'writes': a GET that writes (the audit export records itself), refused during maintenance.
+  maintenance?: 'reads' | 'own' | 'writes'
 }
 
 export function publicRoute(
   spec: string,
   handler: (r: PublicReq) => Promise<Reply>,
-  o: { beforeSetup?: boolean; maintenance?: 'reads' } = {},
+  o: { beforeSetup?: boolean; maintenance?: 'reads' | 'own' } = {},
 ): Route {
   const r = route(spec, () => Promise.reject(new Error('a public route runs through `public`')))
   return {

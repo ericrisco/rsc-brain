@@ -62,6 +62,14 @@ describe('rsc-brain maintenance', { skip: skipPg }, () => {
     assert.ok(left > 100_000 && left <= 125_000, `${left}`)
   })
 
+  it('on while on replaces the end and the reason, and says which one it replaced', async () => {
+    const first = JSON.parse((await run(['maintenance', 'status', '--json'], env)).out)
+    const r = await run(['maintenance', 'on', '--seconds', '600', '--reason', 'restore'], env)
+    assert.equal(r.code, 0, r.err)
+    assert.ok(r.out.includes(`It replaces the one until ${first.until} (update).`), r.out)
+    assert.equal(JSON.parse((await run(['maintenance', 'status', '--json'], env)).out).reason, 'restore')
+  })
+
   it('off ends it at once', async () => {
     const r = await run(['maintenance', 'off'], env)
     assert.equal(r.code, 0, r.err)
@@ -84,6 +92,40 @@ describe('rsc-brain maintenance', { skip: skipPg }, () => {
       (await run(['maintenance', 'status'], env)).out,
       /Maintenance is off\. The last one \(update\) expired/,
     )
+  })
+
+  it('status and off do not migrate, and work on a database a newer release migrated', async () => {
+    await run(['maintenance', 'on', '--seconds', '120'], env)
+    await t.db.query("INSERT INTO schema_migrations (id) VALUES ('9999_from_the_future')")
+    try {
+      const s = await run(['maintenance', 'status', '--json'], env)
+      assert.equal(s.code, 0, s.err)
+      assert.equal(JSON.parse(s.out).reason, 'manual')
+      const off = await run(['maintenance', 'off'], env)
+      assert.equal(off.code, 0, off.err)
+      assert.equal(JSON.parse((await run(['maintenance', 'status', '--json'], env)).out).until, null)
+      // Only on needs the schema of this release.
+      const on = await run(['maintenance', 'on'], env)
+      assert.equal(on.code, 1, on.out)
+      assert.match(on.err, /newer release/)
+    } finally {
+      await t.db.query("DELETE FROM schema_migrations WHERE id = '9999_from_the_future'")
+    }
+  })
+
+  it('status and off on a database of a release before maintenance: off, nothing to clear', async () => {
+    const old = await freshDatabase()
+    try {
+      const e = { RSC_BRAIN_DATABASE_URL: old.url }
+      const s = await run(['maintenance', 'status', '--json'], e)
+      assert.equal(s.code, 0, s.err)
+      assert.deepEqual(JSON.parse(s.out), { until: null, reason: null })
+      assert.equal((await run(['maintenance', 'off'], e)).code, 0)
+      const tables = await old.db.query("SELECT 1 FROM pg_tables WHERE schemaname = 'public'")
+      assert.equal(tables.length, 0, 'nothing was migrated')
+    } finally {
+      await old.drop()
+    }
   })
 
   it('wrong use: exit 2 with what to pass, nothing changed', async () => {

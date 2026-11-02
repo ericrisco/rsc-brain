@@ -17,6 +17,7 @@ import { audit } from './audit.ts'
 import { type Ctx, ok } from './context.ts'
 import { adminOnly, inWeb } from './guards.ts'
 import { installation } from './installation.ts'
+import { maintenance } from './maintenance.ts'
 
 export const CODE_SECONDS = 60
 export const ACCESS_SECONDS = 3600
@@ -156,11 +157,13 @@ async function fetchClient(db: Db, now: Date, clientId: string, policy: FetchPol
     name: clientName(doc.client_name, u.host),
     redirectUris: uris as string[],
   }
-  await db.query(
-    `INSERT INTO oauth_clients (client_id, kind, name, redirect_uris, fetched_at, created_at) VALUES ($1, 'cimd', $2, $3, $4, $4)
+  // Kept for next time, except during maintenance, when nothing is written (spec B7 C12): it is fetched again.
+  if (!(await maintenance.current(db, now)))
+    await db.query(
+      `INSERT INTO oauth_clients (client_id, kind, name, redirect_uris, fetched_at, created_at) VALUES ($1, 'cimd', $2, $3, $4, $4)
      ON CONFLICT (client_id) DO UPDATE SET name = EXCLUDED.name, redirect_uris = EXCLUDED.redirect_uris, fetched_at = EXCLUDED.fetched_at`,
-    [clientId, c.name, c.redirectUris, now],
-  )
+      [clientId, c.name, c.redirectUris, now],
+    )
   return c
 }
 

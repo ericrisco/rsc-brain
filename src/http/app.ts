@@ -18,7 +18,7 @@ import type { Providers } from '../meaning/providers.ts'
 import type { FetchPolicy } from '../oauth/fetch.ts'
 import { boundJson } from './bounds.ts'
 import { EVENT_TIMINGS, type EventTimings, eventHub } from './hub.ts'
-import { isWrite, maintenance, underMaintenance } from './maintenance.ts'
+import { ENDS_ACCESS, isWrite, maintenance, underMaintenance } from './maintenance.ts'
 import { openapi } from './openapi.ts'
 import { rateLimiter } from './ratelimit.ts'
 import {
@@ -451,9 +451,10 @@ export function createHandler(deps: AppDeps) {
       // Maintenance (spec B7 C12): a write without a key (signing in, the standard sign-in) is refused here;
       // one with a key once the key is read, from the same row.
       const write = isWrite(found.route)
+      const endsAccess = ENDS_ACCESS.has(`${found.route.method} ${found.route.path}`)
       if (found.route.public && write) {
         const m = await maintenance.current(deps.db, deps.clock())
-        if (m) throw underMaintenance(m, deps.clock())
+        if (m) throw underMaintenance(m, deps.clock(), endsAccess)
       }
       if (found.route.public) {
         // A page that a browser posts to checks its own origin; JSON callers send no cookie here.
@@ -473,7 +474,7 @@ export function createHandler(deps: AppDeps) {
         )
       }
       const who = await resolveKey(deps.db, key ?? cookie, deps.clock(), key ? 'bearer' : 'cookie', conn)
-      if (write && who.maintenance) throw underMaintenance(who.maintenance, deps.clock())
+      if (write && who.maintenance) throw underMaintenance(who.maintenance, deps.clock(), endsAccess)
       rate.take(who.credential.id, who.rateLimit)
       // A route only the administration uses refuses anyone else before reading a (large) body.
       if (found.route.admin) adminOnly({ db: deps.db, clock: deps.clock, who })

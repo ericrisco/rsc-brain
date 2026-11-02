@@ -3,6 +3,9 @@
 // what keeps it so: a new write route is a write unless it is pinned below as one that changes nothing, so it
 // cannot slip past the gate unclassified.
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { after, before, describe, it } from 'node:test'
 import { closeIdle } from '../../src/domain/sessions.ts'
 import { ROUTES } from '../../src/http/app.ts'
@@ -18,8 +21,17 @@ import { TOOLS } from '../../src/mcp/tools.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
 
+// The only GET routes that write, so the gate refuses them (review of PR27): an export is not allowed without
+// its audit record. The table-hash probe below finds any other.
+const GET_WRITES: Record<string, 'writes'> = {
+  'GET /v1/admin/audit/export': 'writes',
+}
+
 // The only routes other than GET that the gate lets through, and why. Adding one here is a decision.
 const NOT_WRITES: Record<string, 'reads' | 'own'> = {
+  // The sign-in and consent forms of the standard sign-in answer maintenance with a page of their own.
+  'POST /oauth/login': 'own',
+  'POST /oauth/authorize': 'own',
   // Look up what a repository resolves to; a topic suggestion; whether a reset link or an invitation is
   // still good. They change nothing.
   'POST /v1/resolve': 'reads',
@@ -32,17 +44,19 @@ const NOT_WRITES: Record<string, 'reads' | 'own'> = {
 }
 
 describe('what the gate counts as a write', () => {
-  it('every route other than GET is a write unless pinned here, and GET never is', () => {
+  it('every route other than GET is a write unless pinned here, and a GET only when pinned', () => {
     const passed: Record<string, string> = {}
+    const gets: Record<string, string> = {}
     for (const r of ROUTES) {
       const op = `${r.method} ${r.path}`
       if (r.method === 'GET' || r.method === 'HEAD') {
-        assert.equal(isWrite(r), false, op)
+        if (isWrite(r)) gets[op] = String(r.maintenance)
         continue
       }
       if (!isWrite(r)) passed[op] = String(r.maintenance)
     }
     assert.deepEqual(passed, NOT_WRITES)
+    assert.deepEqual(gets, GET_WRITES)
   })
 
   it('every MCP tool says whether it writes, and its annotations agree', () => {
@@ -64,6 +78,19 @@ describe('what the gate counts as a write', () => {
   })
 })
 
+// Revoking and signing out are refused too (a rollback would silently undo them); their refusal names the
+// way out.
+const ENDS_ACCESS = new Set([
+  'POST /v1/auth/logout',
+  'POST /v1/auth/logout-everywhere',
+  'DELETE /v1/keys/:id',
+  'DELETE /v1/me/tokens/:id',
+  'POST /v1/me/revoke-all',
+  'DELETE /v1/me/apps/:id',
+  'DELETE /v1/admin/apps/:id',
+  'POST /v1/admin/accounts/:id/remove',
+])
+
 const META = {
   'io.modelcontextprotocol/protocolVersion': MODERN,
   'io.modelcontextprotocol/clientInfo': { name: 'test-agent', version: '1.0.0' },
@@ -75,11 +102,27 @@ describe('the maintenance gate', { skip: skipPg }, () => {
   let eric: { id: string; key: string }
   let web: string
   let entryId: string
+  let sessionId: string
+  let proposalId: string
+  let docs: Server
+  let clientId: string
   const count = async (table: string) =>
     Number((await w.db.one<{ n: string }>(`SELECT count(*) AS n FROM ${table}`))?.n)
 
   before(async () => {
-    w = await world()
+    w = await world({ localClients: true })
+    // A client document of the standard sign-in, served from this machine.
+    docs = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          client_id: clientId,
+          client_name: 'Probe',
+          redirect_uris: ['http://127.0.0.1/cb'],
+        }),
+      )
+    })
+    await new Promise<void>((r) => docs.listen(0, '127.0.0.1', r))
+    clientId = `http://127.0.0.1:${(docs.address() as AddressInfo).port}/client.json`
     eric = await w.person('Eric', { isAdmin: true })
     web = await w.web(eric.id)
     await w.call(eric.key, 'POST', '/v1/brains', { slug: 'alpha', purpose: 'Gate.' })
@@ -89,9 +132,56 @@ describe('the maintenance gate', { skip: skipPg }, () => {
       content: 'We measure retention before anything else.',
     })
     entryId = String((saved.body.receipt as Record<string, unknown>).entryId)
+    sessionId = String((await w.db.one<{ id: string }>('SELECT id FROM sessions LIMIT 1'))?.id)
+    const proposed = await w.call(eric.key, 'POST', '/v1/brains/alpha/proposals', {
+      title: 'Retention',
+      reason: 'The journal says so.',
+      ops: [
+        {
+          op: 'create',
+          address: 'growth/retention',
+          type: 'topic',
+          title: 'Retention',
+          summary: 'Retention first.',
+          body: 'We measure retention before anything else.',
+          sources: [{ entryId }],
+          reason: 'One decision.',
+        },
+      ],
+    })
+    proposalId = String((proposed.body.proposal as Record<string, unknown>).id)
+    await w.callWeb(web, 'POST', '/v1/brains/alpha/wiki/changes', {
+      op: 'create',
+      address: 'growth/intros',
+      type: 'decision',
+      title: 'Intros',
+      summary: 'Short intros.',
+      body: 'Keep them short.',
+      tags: [],
+      sources: [{ entryId }],
+      reason: 'From the journal.',
+    })
     await maintenance.on(w.db, w.clock(), { reason: 'update' })
   })
-  after(async () => w.close())
+  after(async () => {
+    await new Promise<void>((r) => docs.close(() => r()))
+    await w.close()
+  })
+
+  // A fingerprint of every table of the database: any write anywhere changes it.
+  async function fingerprint(): Promise<Record<string, string>> {
+    const tables = await w.db.query<{ t: string }>(
+      "SELECT tablename AS t FROM pg_tables WHERE schemaname = 'public' ORDER BY 1",
+    )
+    const out: Record<string, string> = {}
+    for (const { t } of tables) {
+      const r = await w.db.one<{ h: string | null }>(
+        `SELECT md5(string_agg(x::text, '|' ORDER BY x::text)) AS h FROM "${t}" x`,
+      )
+      out[t] = r?.h ?? 'empty'
+    }
+    return out
+  }
 
   const refused = (
     op: string,
@@ -110,7 +200,7 @@ describe('the maintenance gate', { skip: skipPg }, () => {
       const path = r.path.replace(/[:*](\w+)/g, (_, k) => (k === 'slug' ? 'alpha' : 'x'))
       const op = `${r.method} ${r.path}`
       const res = await w.raw(r.method, path, {
-        body: {},
+        ...(r.method === 'GET' ? {} : { body: {} }),
         headers: r.public
           ? { 'x-requested-with': 'rsc-brain-web' }
           : { cookie: `rscb_session=${web}`, 'x-requested-with': 'rsc-brain-web' },
@@ -124,6 +214,12 @@ describe('the maintenance gate', { skip: skipPg }, () => {
         assert.equal(e.code, 'under_maintenance', op)
         assert.equal(e.message, MAINTENANCE_MESSAGE(120), op)
         assert.ok(String(e.howToProceed).length > 0, op)
+        // Ending access cannot wait silently: the way out is ending the maintenance (review of PR27).
+        assert.equal(
+          String(e.howToProceed).includes('`rsc-brain maintenance off`'),
+          ENDS_ACCESS.has(op),
+          `${op}: ${e.howToProceed}`,
+        )
         assert.equal(res.body.retryAfter, 120, op)
       }
     }
@@ -218,6 +314,90 @@ describe('the maintenance gate', { skip: skipPg }, () => {
     assert.equal(await count('trail'), trail, 'no trail')
     assert.equal(await count('events'), events, 'no events')
     assert.deepEqual(await w.db.query('SELECT id, last_used_at FROM credentials ORDER BY id'), used)
+  })
+
+  it('every GET of ROUTES, with a key and in the web, leaves every table as it was (review of PR27)', async () => {
+    const before = await fingerprint()
+    const paramOf = (path: string, k: string) => {
+      if (k === 'slug') return 'alpha'
+      if (k === 'address') return 'growth/intros'
+      if (k === 'account') return eric.id
+      if (k !== 'id') return 'x'
+      if (path.startsWith('/v1/entries/')) return entryId
+      if (path.startsWith('/v1/sessions/')) return sessionId
+      if (path.startsWith('/v1/proposals/')) return proposalId
+      if (path.startsWith('/v1/admin/accounts/')) return eric.id
+      return 'x'
+    }
+    const query: Record<string, string> = {
+      '/v1/search': '?q=retention',
+      '/v1/brains/:slug/trail': '?ref=x',
+      '/v1/brains/:slug/pages/*address': '?history=1',
+      '/v1/entries/:id': '?history=1',
+    }
+    let probed = 0
+    for (const r of ROUTES) {
+      // Event streams never end on their own; their reads are covered by the trail tests.
+      if (r.method !== 'GET' || r.path.endsWith('/events')) continue
+      const path = r.path.replace(/[:*](\w+)/g, (_, k) => paramOf(r.path, k)) + (query[r.path] ?? '')
+      for (const headers of [
+        { authorization: `Bearer ${eric.key}` },
+        { cookie: `rscb_session=${web}`, 'x-requested-with': 'rsc-brain-web' },
+      ]) {
+        const res = await fetch(`${w.base}${path}`, { headers, redirect: 'manual' })
+        await res.arrayBuffer()
+        assert.ok(res.status < 500 || (isWrite(r) && res.status === 503), `${r.path}: ${res.status}`)
+        probed += 1
+      }
+    }
+    assert.ok(probed > 100, `probed ${probed}`)
+    // The consent page fetches the client's document; it is not kept while maintenance lasts.
+    const authz = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: 'http://127.0.0.1/cb',
+      code_challenge: createHash('sha256').update('v'.repeat(43)).digest('base64url'),
+      code_challenge_method: 'S256',
+      state: 's',
+      resource: 'http://localhost/mcp',
+    })
+    for (const cookie of ['', `rscb_session=${web}`]) {
+      const page = await fetch(`${w.base}/oauth/authorize?${authz}`, { headers: cookie ? { cookie } : {} })
+      const html = await page.text()
+      assert.equal(page.status, 200, html)
+      assert.match(html, /Probe/)
+    }
+    assert.deepEqual(await fingerprint(), before)
+  })
+
+  it('the audit export, a GET that writes its own record, is refused while maintenance lasts', async () => {
+    const r = await w.callWeb(web, 'GET', '/v1/admin/audit/export')
+    assert.equal(r.status, 503, r.text)
+    assert.equal((r.body.error as Record<string, unknown>).code, 'under_maintenance')
+  })
+
+  it('the sign-in and consent forms answer a page in English with Retry-After and a way back', async () => {
+    const q = new URLSearchParams({ response_type: 'code', client_id: clientId, state: 's<b>' })
+    for (const [path, fields] of [
+      ['/oauth/login', { continue: q.toString(), email: 'e@example.com', password: 'x' }],
+      ['/oauth/authorize', { ...Object.fromEntries(q), decision: 'approve' }],
+    ] as const) {
+      const res = await fetch(`${w.base}${path}`, {
+        method: 'POST',
+        redirect: 'manual',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(fields as Record<string, string>).toString(),
+      })
+      const html = await res.text()
+      assert.equal(res.status, 503, `${path}: ${html}`)
+      assert.equal(res.headers.get('retry-after'), '120', path)
+      assert.match(res.headers.get('content-type') ?? '', /text\/html/, path)
+      assert.match(html, /rsc-brain is updating\. Try again in 120 seconds\./, path)
+      const back = /<a href="([^"]+)"/.exec(html)?.[1]?.replace(/&amp;/g, '&') ?? ''
+      assert.ok(back.startsWith('/oauth/authorize?'), `${path}: ${back}`)
+      assert.equal(new URLSearchParams(back.split('?')[1]).get('client_id'), clientId, path)
+      assert.doesNotMatch(html, /<b>/, 'what came in is escaped')
+    }
   })
 
   it('sweeps pause: idle sessions stay open, and the sweeps of serve do not run', async () => {

@@ -333,23 +333,33 @@ async function maintenanceCommand(which: string | undefined, args: string[]): Pr
       return usage('--reason is update, restore or manual.')
   }
   return withDb(async (db) => {
-    await migrate(db)
     if (which === 'on') {
+      // Only `on` needs this release's schema; a second `on` replaces the end and the reason (and says so).
+      await migrate(db)
+      const before = await maintenance.current(db, systemClock())
       const { until } = await maintenance.on(db, systemClock(), {
         reason,
         ...(seconds === undefined ? {} : { seconds }),
       })
       out(`Maintenance is on until ${until.toISOString()} (${reason}). Writes are refused; reads work.\n`)
+      if (before) out(`It replaces the one until ${before.until.toISOString()} (${before.reason}).\n`)
       return 0
     }
+    // `off` and `status` never migrate: they work on a database a newer release migrated (off only clears two
+    // columns), and on one from before maintenance existed (nothing to clear, nothing on).
+    const noMaintenance = (err: unknown) => {
+      const code = (err as { code?: string }).code
+      if (code === '42703' || code === '42P01') return null
+      throw err
+    }
     if (which === 'off') {
-      await maintenance.off(db)
+      await maintenance.off(db).catch(noMaintenance)
       out('Maintenance is off. Writes are taken again.\n')
       return 0
     }
     const now = systemClock()
-    const m = await maintenance.current(db, now)
-    const last = m ? null : await maintenance.last(db)
+    const m = await maintenance.current(db, now).catch(noMaintenance)
+    const last = m ? null : await maintenance.last(db).catch(noMaintenance)
     if (values.json) {
       out(
         `${JSON.stringify({
