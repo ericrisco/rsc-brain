@@ -15,6 +15,8 @@ type Op = {
   image?: boolean
   // The answer is CSV (the download of the audit).
   csv?: boolean
+  // The answer is a file to save as it is (a copy of the installation).
+  file?: boolean
   query?: Record<string, string>
 }
 
@@ -580,6 +582,22 @@ const FULL_REVISION = obj({
   sources: list({ type: 'object' }, 'Its sources then.'),
   links: list({ type: 'object' }, 'Its typed links then.'),
 })
+const COPY_OK = nul(obj({ at: DATE, file: s('Its file.') }))
+const COPY_FAILURE = nul(
+  obj({
+    at: DATE,
+    category: s(
+      'disk_full, no_permission, no_installation_secret, weak_installation_key, database, busy or failed.',
+    ),
+  }),
+)
+const COPY_WARNING = nul(
+  obj({
+    at: DATE,
+    code: s('A copy kept whole but: fsync_failed, status_not_saved, disk_full or no_permission.'),
+  }),
+)
+
 const CHANGED = obj({
   revised: list(
     obj({ pageId: s('Page.'), address: s('Its address now.'), revision: n('Its new revision.') }, []),
@@ -1810,7 +1828,111 @@ const HAND: Record<string, Op> = {
           reason: s('update, restore or manual.', { enum: ['update', 'restore', 'manual'] }),
         }),
       ),
+      backups: obj({
+        lastOk: COPY_OK,
+        lastFailure: COPY_FAILURE,
+        lastWarning: COPY_WARNING,
+      }),
+      keyId: nul(
+        s('The id of the installation key (never the key): each copy says the id of the key it needs.'),
+      ),
+      release: obj({
+        installed: s('The release running.'),
+        latest: nul(
+          s('The newest published release, once checked (daily; null when off or not checked yet).'),
+        ),
+        notes: nul(s('What the newest release changes, from its notes.')),
+        checkedAt: nul(s('When the list of releases was last read.', { format: 'date-time' })),
+        newer: b('The newest published release is newer than the one running.'),
+      }),
     }),
+  },
+  // The copies, the installation key and the release from the web (B7 PR30, plan §3.4).
+  'GET /v1/admin/backups': {
+    summary:
+      'The copies of this installation, newest first, with the id of the key each needs; the last good copy, the last failure or warning, the schedule (administration, in the rsc-brain web).',
+    reply: obj({
+      configured: b('A folder for the copies is set (RSC_BRAIN_BACKUPS).'),
+      items: list(
+        obj({
+          id: s('The copy: its file name without .rscb.'),
+          createdAt: DATE,
+          bytes: n('Its size.'),
+          reason: s('scheduled, manual, pre-update or pre-restore.', {
+            enum: ['scheduled', 'manual', 'pre-update', 'pre-restore'],
+          }),
+          keyId: s('The id of the key it was made with.'),
+          needsOldKey: b('Made with another key than this installation’s: it restores only with that key.'),
+        }),
+      ),
+      lastOk: COPY_OK,
+      lastFailure: COPY_FAILURE,
+      lastWarning: COPY_WARNING,
+      keyId: nul(s('The id of the installation key now.')),
+      schedule: obj({
+        at: s('The daily copy, HH:MM.'),
+        keep: n('Daily copies kept.'),
+        timezone: s('The time zone of "at".'),
+      }),
+      lastUpdate: { description: 'What the last update said (null when none).' },
+      running: b('A copy by hand is being made now.'),
+    }),
+  },
+  'POST /v1/admin/backups': {
+    summary:
+      'Make a copy now (administration, in the rsc-brain web). 202 at once with its id; the copy runs in the service, and the list says when it ended or why it failed. 409 backup_running; 409 backups_not_set_up.',
+    status: 202,
+    reply: obj({ id: s('The copy being made.') }),
+  },
+  'GET /v1/admin/backups/{id}/download': {
+    summary:
+      'Download a copy, encrypted as it is (administration, in the rsc-brain web). Without the installation key it was made with, it cannot be restored. Recorded in the audit.',
+    file: true,
+  },
+  'GET /v1/admin/backups/{id}/impact': {
+    summary:
+      'What restoring a copy loses: when it was made, the last write it holds and the last write there is now.',
+    reply: obj({
+      copyAt: DATE,
+      copyLastWriteAt: nul(DATE),
+      lastWriteAt: nul(DATE),
+      lostWrites: b('Something was written after the copy: restoring it loses that.'),
+    }),
+  },
+  'POST /v1/admin/backups/{id}/restore': {
+    summary:
+      'Restore a copy of this list over everything (administration, in the rsc-brain web). Asks the password again (401 reauth_failed) and the name of the installation (400 confirm_mismatch); first makes a copy of what is there (pre-restore). Every key, session and connection ends, this session too: the answer comes first. 409 wrong_key (with "needs", the key id), newer_copy, backup_running.',
+    body: obj(
+      {
+        confirm: s('The name of this installation, exactly.'),
+        password: s('Your password.'),
+        code: s('The code of your authenticator app, with a second factor.'),
+      },
+      ['code'],
+    ),
+    reply: obj({
+      copyAt: DATE,
+      restoredAt: DATE,
+      preRestore: nul(s('The copy made of what was there before.')),
+      ended: obj({
+        invitations: n('Pending invitations ended.'),
+        resets: n('Links to set a password ended.'),
+      }),
+    }),
+  },
+  'POST /v1/admin/installation-key': {
+    summary:
+      'The installation key (RSC_BRAIN_SECRET), to keep: copies are restored with it. Administration, in the rsc-brain web, with the password again (and the code); never with a key of a program. Not cached; recorded in the audit.',
+    body: obj(
+      { password: s('Your password.'), code: s('The code of your authenticator app, with a second factor.') },
+      ['code'],
+    ),
+    reply: obj({ key: s('The installation key.'), keyId: s('Its id.') }),
+  },
+  'GET /v1/setup/key': {
+    summary:
+      'The installation key, once, for the step «Installation key» of the first-time setup: to whoever ran the setup in the web, within an hour of it. Then 404 not_found (download it again in Admin › Backups & system).',
+    reply: obj({ key: s('The installation key.'), keyId: s('Its id.') }),
   },
   'PUT /v1/admin/branding/logo': {
     summary:
@@ -2082,20 +2204,25 @@ export function openapi(routes: Route[], serverUrl: string | null): Schema {
                 ]),
               ),
             }
-          : hand?.csv
+          : hand?.file
             ? {
-                description: 'A CSV file, one row per audit line.',
-                content: { 'text/csv': { schema: { type: 'string' } } },
+                description: 'The file, as it is on disk (Content-Disposition names it).',
+                content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } },
               }
-            : hand?.stream
+            : hand?.csv
               ? {
-                  description: 'A stream of events: "id:", "event:" and "data:" lines; "data" is an Event.',
-                  content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/Event' } } },
+                  description: 'A CSV file, one row per audit line.',
+                  content: { 'text/csv': { schema: { type: 'string' } } },
                 }
-              : {
-                  description: hand ? 'Success.' : 'Success (201 when something was created).',
-                  content: { 'application/json': { schema: hand?.reply ?? { type: 'object' } } },
-                }
+              : hand?.stream
+                ? {
+                    description: 'A stream of events: "id:", "event:" and "data:" lines; "data" is an Event.',
+                    content: { 'text/event-stream': { schema: { $ref: '#/components/schemas/Event' } } },
+                  }
+                : {
+                    description: hand ? 'Success.' : 'Success (201 when something was created).',
+                    content: { 'application/json': { schema: hand?.reply ?? { type: 'object' } } },
+                  }
     const op: Schema = {
       operationId: operationId(o.method, o.path),
       summary: hand?.summary ?? `${o.method} ${o.path}`,

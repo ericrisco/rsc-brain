@@ -34,6 +34,7 @@ import { Field } from '../../ui/Field.tsx'
 import { writeBlocked } from '../../ui/state.ts'
 import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
 import { allBrainsResource, InvitePeople, LinksOf, resetLinkOf, useLinks } from '../People.tsx'
+import { BackupBand } from './Backups.tsx'
 
 const A = T.admin
 const blocked = () => writeBlocked({ online: online.value, pending: false })
@@ -90,6 +91,7 @@ export function AdminFrame({ children }: { children: (who: Me) => ComponentChild
       </div>
       {who.account.isAdmin ? (
         <>
+          <BackupBand />
           <nav class="tabs" aria-label={A.nav}>
             <ul class="tab-list">
               {TABS.map((t) => (

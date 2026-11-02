@@ -5,6 +5,8 @@ import { type APIRequestContext, expect, test } from '@playwright/test'
 
 const ADMIN = { name: 'Eric', email: 'eric@example.test', password: 'correct horse battery staple' }
 const WEB = { 'x-requested-with': 'rsc-brain-web' }
+// The installation key of the e2e server (test/e2e/server.ts).
+const E2E_SECRET = 'e2e-secret-of-at-least-thirty-two-characters'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -30,7 +32,14 @@ test('first run from the web makes the administrator and signs them in', async (
   await page.getByLabel('Your email').fill(ADMIN.email)
   await page.getByLabel('Password', { exact: true }).fill(ADMIN.password)
   await page.getByRole('button', { name: 'Set up and sign in' }).click()
+  // T019: the last step shows the installation key of this process (RSC_BRAIN_SECRET), once.
+  await expect(page.getByRole('heading', { level: 1, name: 'Keep the installation key' })).toBeVisible()
+  await expect(page.locator('pre')).toHaveText(E2E_SECRET)
+  await page.getByLabel('I saved the installation key somewhere safe, outside this machine').check()
+  await page.getByRole('button', { name: 'Continue to rsc-brain' }).click()
   await expect(page.getByRole('heading', { name: 'Your brains' })).toBeVisible()
+  expect((await page.request.get('/v1/setup/key')).status()).toBe(404)
+  await expect(page.locator('body')).not.toContainText(E2E_SECRET)
   // U1: the administrator sees it worked and the next step, with the agent command for this address.
   await expect(page.getByRole('status').filter({ hasText: 'Brain is set up.' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Get started' })).toBeVisible()

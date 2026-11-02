@@ -22,6 +22,9 @@ export const V1 = [
   'GET /v1/admin/accounts/{id}/keys',
   'GET /v1/admin/audit',
   'GET /v1/admin/audit/export',
+  'GET /v1/admin/backups',
+  'GET /v1/admin/backups/{id}/download',
+  'GET /v1/admin/backups/{id}/impact',
   'GET /v1/admin/brains',
   'GET /v1/admin/mail',
   'GET /v1/admin/meaning',
@@ -72,14 +75,18 @@ export const V1 = [
   'GET /v1/search',
   'GET /v1/sessions/{id}',
   'GET /v1/setup',
+  'GET /v1/setup/key',
   'PATCH /v1/admin/accounts/{id}',
   'PATCH /v1/brains/{slug}/pages/{address}',
   'PATCH /v1/entries/{id}',
   'POST /v1/admin/accounts/{id}/remove',
   'POST /v1/admin/accounts/{id}/reset-link',
   'POST /v1/admin/accounts/{id}/restore',
+  'POST /v1/admin/backups',
+  'POST /v1/admin/backups/{id}/restore',
   'POST /v1/admin/brains/{slug}/curator',
   'POST /v1/admin/brains/{slug}/join',
+  'POST /v1/admin/installation-key',
   'POST /v1/admin/mail/test',
   'POST /v1/admin/services',
   'POST /v1/admin/services/{id}/keys',
@@ -199,6 +206,13 @@ export const ERROR_STATUS: Record<string, number> = {
   provider_in_use: 409,
   // A test mail before mail is set up.
   mail_not_set_up: 409,
+  // Copies, the installation key and restoring from the web (B7 PR30): the password again, the name of the
+  // installation, a copy already being made, no folder for the copies, a copy made with another key.
+  reauth_failed: 401,
+  confirm_mismatch: 400,
+  backup_running: 409,
+  backups_not_set_up: 409,
+  wrong_key: 409,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }

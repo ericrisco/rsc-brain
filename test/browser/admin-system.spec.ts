@@ -294,7 +294,7 @@ test.describe('administration: audit', () => {
 })
 
 test.describe('administration: backups & system', () => {
-  test('the version and the health of the service; backups said honestly, with no button that does nothing', async ({
+  test('the version and the health of the service, next to the copies (B7 PR30: test/browser/backups.spec.ts)', async ({
     page,
     context,
     baseURL,
@@ -305,9 +305,8 @@ test.describe('administration: backups & system', () => {
     await expect(service).toContainText('0.1.0')
     await expect(service).toContainText('0020_branding_factory_keys')
     await expect(service).toContainText('2 of 200')
-    const backups = page.getByRole('region', { name: 'Backups' })
-    await expect(backups).toContainText('arrive with the install release')
-    await expect(backups.getByRole('button')).toHaveCount(0)
+    await expect(service).toContainText('Database size')
+    await expect(page.getByRole('region', { name: 'Backups' })).toContainText('Last good copy')
   })
 
   test('the address of RSC Factory: checked before it is sent, saved explicitly', async ({

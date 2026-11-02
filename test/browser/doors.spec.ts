@@ -1,6 +1,6 @@
 // Spec B6 «Sign in · First run · Accept invitation» and B4: the screens before a session, used in a real
 // browser against the fixture API (plan T009). Each test walks the job and its failures.
-import { CODE, expect, INVITE, PASSWORD, RESET, scenario, test } from './fixture.ts'
+import { CODE, expect, INVITE, keepTheKey, PASSWORD, RESET, scenario, test } from './fixture.ts'
 
 test.describe('sign in', () => {
   test('returns to where the person was going; a wrong password keeps the email and puts the keyboard on the password', async ({
@@ -123,6 +123,7 @@ test.describe('first run', () => {
     await expect(page.getByLabel('Password', { exact: true })).toHaveAttribute('type', 'text')
     await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
     await page.getByRole('button', { name: 'Set up and sign in' }).click()
+    await keepTheKey(page)
     await expect(page).toHaveURL(/\/$/)
     await expect(page.getByRole('link', { name: /rsc-brain/ })).toBeVisible()
     await page.goto('/setup')

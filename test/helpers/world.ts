@@ -14,6 +14,8 @@ import { createHandler, WEB_HEADER } from '../../src/http/app.ts'
 import type { EventTimings } from '../../src/http/hub.ts'
 import type { Message, Sender } from '../../src/mail/mail.ts'
 import type { Providers } from '../../src/meaning/providers.ts'
+import { createCopies } from '../../src/ops/backup/copies.ts'
+import type { ReleaseChecker } from '../../src/ops/releases.ts'
 import { freshDatabase, type TestDb } from './pg.ts'
 
 export type Call = {
@@ -82,6 +84,7 @@ export async function world(
     log?: Log
     // Another installation key (restoring into another installation, B7).
     secret?: string
+    releases?: ReleaseChecker
   } = {},
 ): Promise<World> {
   const t = await freshDatabase()
@@ -104,7 +107,21 @@ export async function world(
       trustedProxies: ['127.0.0.1'],
       ...(o.localClients ? { fetchPolicy: { allowLoopbackHttp: true } } : {}),
       ...(o.events ? { events: o.events } : {}),
-      ...(o.backups ? { backups: o.backups } : {}),
+      ...(o.backups
+        ? {
+            backups: o.backups,
+            copies: createCopies({
+              db: t.db,
+              dir: o.backups,
+              secret: o.secret ?? TEST_SECRET,
+              clock: () => w.clock(),
+              log: silentLog,
+              schedule: { at: '03:00', keep: 14, timezone: 'UTC' },
+              settleMs: 0,
+            }),
+          }
+        : {}),
+      ...(o.releases ? { releases: o.releases } : {}),
       mailTransport: () => ({
         async send(m) {
           if (w.mailFails) throw new Error('connection refused by the test mail server')

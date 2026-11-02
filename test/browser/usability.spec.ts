@@ -1,7 +1,7 @@
 // The usability review of PR17 (ux skill: every screen says where you are, what it is, what you can do,
 // what just happened and what comes next; errors sit next to their field; the keyboard lands where the
 // work is). Each test walks a real task against the fixture API.
-import { CODE, expect, INVITE, PASSWORD, RESET, scenario, test } from './fixture.ts'
+import { CODE, expect, INVITE, keepTheKey, PASSWORD, RESET, scenario, test } from './fixture.ts'
 
 test.describe('U1: home with no brains', () => {
   test('right after the setup, the administrator sees it worked and what to do next', async ({
@@ -16,6 +16,7 @@ test.describe('U1: home with no brains', () => {
     await page.getByLabel('Your email').fill('eric@example.test')
     await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
     await page.getByRole('button', { name: 'Set up and sign in' }).click()
+    await keepTheKey(page)
     await expect(page).toHaveURL(/\/$/)
     await expect(page.getByRole('status').filter({ hasText: 'Brain is set up.' })).toBeVisible()
     await expect(page.getByRole('heading', { name: 'Get started' })).toBeVisible()
@@ -166,6 +167,7 @@ test.describe('U4: the setup form', () => {
     await page.getByLabel('Your email').fill('eric@example.test')
     await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
     await page.getByRole('button', { name: 'Set up and sign in' }).click()
+    await keepTheKey(page)
     await expect(page).toHaveURL(/\/$/)
     expect(sent).toBe(1)
   })

@@ -1,7 +1,7 @@
 // The second review of PR17 (B6 web foundations): where the first steps point, how a session ends, what
 // a link says before anyone types, and the small things a person meets on the way. Each test walks a real
 // task against the fixture API.
-import { expect, INVITE, PASSWORD, RESET, scenario, test } from './fixture.ts'
+import { expect, INVITE, keepTheKey, PASSWORD, RESET, scenario, test } from './fixture.ts'
 
 const ENDED = 'Your session ended. Sign in again.'
 
@@ -260,6 +260,7 @@ test.describe('R6: the small things', () => {
     await page.getByLabel('Your email').fill('eric@example.test')
     await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
     await page.getByRole('button', { name: 'Set up and sign in' }).click()
+    await keepTheKey(page)
     const banner = page.getByRole('status').filter({ hasText: 'Brain is set up.' })
     await expect(banner).toBeVisible()
     const a = await banner.boundingBox()

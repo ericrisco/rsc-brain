@@ -19,7 +19,9 @@ export type AdminScen = {
   name: string
   factoryUrl: string | null
   mail: boolean
-  accounts: Array<{ id: string; name: string; email: string }>
+  accounts: Array<{ id: string; name: string; email: string; password?: string; totp?: boolean }>
+  // The sessions of the scenario: a restore ends them all.
+  sessions: Set<string>
   brains: Array<{ slug: string }>
   // The states forced on the scenario's screens.
   states: ReadonlyMap<string, string>
@@ -70,6 +72,38 @@ type Fx = {
   logo: { bytes: Buffer; type: string; sha: string; at: string } | null
   audit: Row[]
   started: string
+  // Copies (B7 PR30): the folder set or not, the copies, a copy by hand under way, what failed or warned last,
+  // what the next copy by hand does, and the newest release.
+  backupsOn: boolean
+  copies: Copy[]
+  running: { id: string; doneAt: number } | null
+  lastFailure: { at: string; category: string } | null
+  lastWarning: { at: string; code: string } | null
+  nextCopy: 'ok' | 'disk_full'
+  release: { latest: string | null; notes: string | null; checkedAt: string | null }
+}
+type Copy = { id: string; createdAt: string; bytes: number; reason: string; keyId: string }
+
+// The installation key of the fixture (never a real one) and its id.
+export const FIXTURE_KEY = 'fixture-installation-key-0123456789abcdefghijklmnop'
+export const FIXTURE_KEY_ID = 'fx12ab34cd56'
+const OLD_KEY_ID = 'old9876fedcb'
+const copyName = (at: string, reason: string) =>
+  `rsc-brain-${at.replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')}-${reason}`
+const seedCopies = (s: AdminScen): Copy[] => {
+  if (s.states.get('admin-backups') === 'empty') return []
+  const n = s.states.get('admin-backups') === 'much-data' ? 40 : 3
+  return Array.from({ length: n }, (_, i) => {
+    const at = new Date(Date.parse('2026-10-29T03:00:00.000Z') - i * 86_400_000).toISOString()
+    const reason = i === 2 ? 'manual' : 'scheduled'
+    return {
+      id: copyName(at, reason),
+      createdAt: at,
+      bytes: 48_000_000 - i * 250_000,
+      reason,
+      keyId: i >= 2 ? OLD_KEY_ID : FIXTURE_KEY_ID,
+    }
+  })
 }
 
 const err = (status: number, code: string, message: string, howToProceed: string): Answer => ({
@@ -193,6 +227,13 @@ export function fxOf(s: AdminScen): Fx {
       logo: null,
       audit: seedAudit(s),
       started: '2026-10-29T08:00:00.000Z',
+      backupsOn: true,
+      copies: seedCopies(s),
+      running: null,
+      lastFailure: null,
+      lastWarning: null,
+      nextCopy: 'ok',
+      release: { latest: null, notes: null, checkedAt: null },
     }
     fxs.set(s, f)
   }
@@ -206,7 +247,72 @@ export function adminBehind(s: AdminScen, change: Record<string, unknown>): void
   if (typeof change.name === 'string') s.name = change.name
   if (change.factoryUrl !== undefined) s.factoryUrl = (change.factoryUrl as string | null) ?? null
   if (typeof change.mailHost === 'string' && f.mail) f.mail.host = change.mailHost
+  // The copies (B7 PR30): no folder for them, the last one failed or warned, the next by hand fails, a release.
+  if (change.backupsOff === true) f.backupsOn = false
+  if (typeof change.backupFailure === 'string')
+    f.lastFailure = { at: '2026-10-29T03:00:05.000Z', category: change.backupFailure }
+  if (typeof change.backupWarning === 'string')
+    f.lastWarning = { at: '2026-10-29T03:00:05.000Z', code: change.backupWarning }
+  if (change.nextCopy === 'disk_full') f.nextCopy = 'disk_full'
+  if (change.release && typeof change.release === 'object') f.release = change.release as Fx['release']
 }
+
+// A copy by hand ends a moment after it starts: well, or as the next copy was told to.
+function settleCopy(f: Fx): void {
+  if (!f.running || Date.now() < f.running.doneAt) return
+  const id = f.running.id
+  f.running = null
+  const at = new Date().toISOString()
+  if (f.nextCopy === 'disk_full') {
+    f.lastFailure = { at, category: 'disk_full' }
+    f.nextCopy = 'ok'
+    return
+  }
+  const createdAt = `${id.slice(10, 14)}-${id.slice(14, 16)}-${id.slice(16, 18)}T${id.slice(19, 21)}:${id.slice(21, 23)}:${id.slice(23, 25)}.000Z`
+  f.copies.unshift({ id, createdAt, bytes: 48_200_000, reason: 'manual', keyId: FIXTURE_KEY_ID })
+  f.lastFailure = null
+}
+
+function copiesView(s: AdminScen) {
+  const f = fxOf(s)
+  settleCopy(f)
+  const newest = f.copies[0]
+  const lastOk = newest ? { at: newest.createdAt, file: `${newest.id}.rscb` } : null
+  return {
+    configured: f.backupsOn,
+    items: f.backupsOn ? f.copies.map((c) => ({ ...c, needsOldKey: c.keyId !== FIXTURE_KEY_ID })) : [],
+    lastOk: f.backupsOn ? lastOk : null,
+    lastFailure: f.lastFailure && (!lastOk || f.lastFailure.at > lastOk.at) ? f.lastFailure : null,
+    lastWarning: f.lastWarning,
+    keyId: FIXTURE_KEY_ID,
+    schedule: { at: '03:00', keep: 14, timezone: 'Europe/Madrid' },
+    lastUpdate: null,
+    running: f.running !== null,
+  }
+}
+
+// The password again (and the code with a second factor), as the server asks it: 401 reauth_failed otherwise.
+function reauthOf(c: AdminCtx): Answer | null {
+  const a = c.s.accounts.find((x) => x.id === c.who?.id)
+  const password = typeof c.body.password === 'string' ? c.body.password : ''
+  const how = 'Type the password you sign in with in "password".'
+  if (!password) return err(401, 'reauth_failed', 'This asks for your password again.', how)
+  if (a?.password !== undefined && password !== a.password)
+    return err(401, 'reauth_failed', 'The password is not right.', how)
+  if (a?.totp && c.body.code !== '424242')
+    return err(
+      401,
+      'reauth_failed',
+      c.body.code
+        ? 'The code is not right, or was already used.'
+        : 'This account has a second factor: the code of the authenticator app is asked too.',
+      'Type the 6 digits your app shows now in "code".',
+    )
+  return null
+}
+
+const noCopy = () =>
+  err(404, 'not_found', 'There is no such copy here.', 'Pick a copy from the list in Backups & system.')
 
 const settingsView = (s: AdminScen) => {
   const f = fxOf(s)
@@ -759,11 +865,146 @@ export const ADMIN_OPS: Record<string, Op> = {
           },
           streams: { open: 2, max: 200 },
           mail: { configured: f.mail !== null, lastFailureAt: failed?.at ?? null },
-          disk: { backupsFree: 41_000_000_000, databaseBytes: 52_000_000 },
+          disk: { backupsFree: f.backupsOn ? 41_000_000_000 : null, databaseBytes: 52_000_000 },
           maintenance: null,
+          backups: (({ lastOk, lastFailure, lastWarning }) => ({ lastOk, lastFailure, lastWarning }))(
+            copiesView(s),
+          ),
+          keyId: FIXTURE_KEY_ID,
+          release: {
+            installed: '0.1.0',
+            ...f.release,
+            newer: f.release.latest !== null && f.release.latest !== '0.1.0',
+          },
         },
       }
     }),
+  },
+  'GET /v1/admin/backups': {
+    screen: 'admin-backups',
+    run: admin(({ s }) => ({ status: 200, body: copiesView(s) })),
+  },
+  'POST /v1/admin/backups': {
+    run: admin(
+      (c) => {
+        const f = fxOf(c.s)
+        settleCopy(f)
+        if (!f.backupsOn)
+          return err(
+            409,
+            'backups_not_set_up',
+            'This installation has no folder for its copies.',
+            'Set RSC_BRAIN_BACKUPS to a folder for the copies (the installer does) and restart rsc-brain.',
+          )
+        if (f.running)
+          return err(
+            409,
+            'backup_running',
+            'A copy is being made right now.',
+            'Wait for it to finish (rsc-brain backups list shows it when it is done), then try again.',
+          )
+        const id = copyName(new Date().toISOString().replace(/\.\d{3}Z$/, '.000Z'), 'manual')
+        f.running = { id, doneAt: Date.now() + 700 }
+        audited(c, 'backup.create', id)
+        return { status: 202, body: { id } }
+      },
+      { write: true },
+    ),
+  },
+  'GET /v1/admin/backups/{id}/download': {
+    run: admin((c) => {
+      const copy = fxOf(c.s).copies.find((x) => x.id === c.params.id)
+      if (!copy) return noCopy()
+      audited(c, 'backup.download', `${copy.id}.rscb`)
+      return {
+        status: 200,
+        body: null,
+        raw: Buffer.from(`RSCB1\n${copy.id}\n`),
+        headers: {
+          'content-type': 'application/octet-stream',
+          'content-disposition': `attachment; filename="${copy.id}.rscb"`,
+        },
+      }
+    }),
+  },
+  'GET /v1/admin/backups/{id}/impact': {
+    run: admin((c) => {
+      const copy = fxOf(c.s).copies.find((x) => x.id === c.params.id)
+      if (!copy) return noCopy()
+      const copyLastWriteAt = new Date(Date.parse(copy.createdAt) - 60_000).toISOString()
+      const lastWriteAt = '2026-10-29T10:20:00.000Z'
+      return {
+        status: 200,
+        body: {
+          copyAt: copy.createdAt,
+          copyLastWriteAt,
+          lastWriteAt,
+          lostWrites: lastWriteAt > copyLastWriteAt,
+        },
+      }
+    }),
+  },
+  'POST /v1/admin/backups/{id}/restore': {
+    run: admin(
+      (c) => {
+        const f = fxOf(c.s)
+        const copy = f.copies.find((x) => x.id === c.params.id)
+        const again = reauthOf(c)
+        if (again) return again
+        if (!copy) return noCopy()
+        if (c.body.confirm !== c.s.name)
+          return err(
+            400,
+            'confirm_mismatch',
+            'The name given to confirm does not match this installation. Nothing was changed.',
+            `Confirm with the name of this installation, exactly: "${c.s.name}".`,
+          )
+        if (copy.keyId !== FIXTURE_KEY_ID)
+          return {
+            status: 409,
+            body: {
+              error: {
+                code: 'wrong_key',
+                message: `This copy was made with another installation key (id ${copy.keyId}).`,
+                howToProceed: 'Restore it with that key, on the machine: rsc-brain restore --key-file.',
+                needs: copy.keyId,
+              },
+            },
+          }
+        const now = new Date().toISOString().replace(/\.\d{3}Z$/, '.000Z')
+        const pre = copyName(now, 'pre-restore')
+        f.copies.unshift({
+          id: pre,
+          createdAt: now,
+          bytes: 48_300_000,
+          reason: 'pre-restore',
+          keyId: FIXTURE_KEY_ID,
+        })
+        // Every key and session ends with a restore, the one that asked too (its answer comes first).
+        c.s.sessions.clear()
+        return {
+          status: 200,
+          body: {
+            copyAt: copy.createdAt,
+            restoredAt: now,
+            preRestore: `${pre}.rscb`,
+            ended: { invitations: 0, resets: 0 },
+          },
+        }
+      },
+      { write: true },
+    ),
+  },
+  'POST /v1/admin/installation-key': {
+    run: admin(
+      (c) => {
+        const again = reauthOf(c)
+        if (again) return again
+        audited(c, 'installation_key.download', '')
+        return { status: 200, body: { key: FIXTURE_KEY, keyId: FIXTURE_KEY_ID } }
+      },
+      { write: true },
+    ),
   },
   'PUT /v1/admin/branding/logo': {
     run: admin(

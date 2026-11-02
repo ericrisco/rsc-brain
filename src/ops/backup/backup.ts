@@ -182,7 +182,11 @@ async function writeStatus(
   }
 }
 
-function category(err: unknown): FailureCategory {
+const categories = new WeakMap<object, FailureCategory>()
+
+export function failureCategory(err: unknown): FailureCategory {
+  const known = err !== null && typeof err === 'object' ? categories.get(err) : undefined
+  if (known) return known
   if (err instanceof AppError && err.code === 'no_installation_secret') return 'no_installation_secret'
   if (err instanceof AppError && err.code === 'weak_installation_key') return 'weak_installation_key'
   const code = (err as { code?: unknown } | null)?.code
@@ -261,6 +265,15 @@ async function settle(db: Db, clock: Clock, settleMs: number, why: 'update' | 'r
   }
 }
 
+// The last write the database holds (a copy keeps it in its header; the web compares the two before a restore).
+export async function lastWrite(db: Db): Promise<string | null> {
+  const last = await db.one<{ at: Date | null }>(
+    `SELECT greatest((SELECT max(at) FROM events), (SELECT max(at) FROM audit), (SELECT max(at) FROM wiki_log),
+                     (SELECT max(updated_at) FROM entries), (SELECT max(updated_at) FROM pages)) AS at`,
+  )
+  return last?.at ? last.at.toISOString() : null
+}
+
 // Every migration of this release, SQL files and steps in code, sorted.
 export async function knownMigrations(): Promise<string[]> {
   return [
@@ -329,7 +342,7 @@ async function create(
   const at = o.clock()
   const files = o.files ?? diskFiles
   const fail = async (err: unknown): Promise<never> => {
-    const cat = category(err)
+    const cat = failureCategory(err)
     await writeStatus(
       o.dir,
       {
@@ -340,7 +353,10 @@ async function create(
       at,
       files,
     ).catch(() => {})
-    throw failure(cat, err)
+    const out = failure(cat, err)
+    // Its category travels with it: the memory of the process records it (status.json may not have taken it).
+    categories.set(out, cat)
+    throw out
   }
   if (!BACKUP_REASONS.includes(o.reason)) throw new Error(`Unknown reason for a copy: ${o.reason}`)
   await mkdir(o.dir, { recursive: true, mode: 0o700 })
@@ -436,10 +452,7 @@ async function create(
             )
             sequences.push({ name, lastValue: q?.v ?? '1', isCalled: q?.c === true })
           }
-          const last = await tx.one<{ at: Date | null }>(
-            `SELECT greatest((SELECT max(at) FROM events), (SELECT max(at) FROM audit), (SELECT max(at) FROM wiki_log),
-                         (SELECT max(updated_at) FROM entries), (SELECT max(updated_at) FROM pages)) AS at`,
-          )
+          const last = await lastWrite(tx)
           sink = await files.open(part)
           const out = sink
           const { bytes, header } = await writeBackup(
@@ -451,7 +464,7 @@ async function create(
               installation: { id: inst?.id ?? 1, name: inst?.name ?? '' },
               reason: o.reason,
               tables: BACKUP_TABLES.map((t) => t.name),
-              lastWriteAt: last?.at ? last.at.toISOString() : null,
+              lastWriteAt: last,
             },
             tableRows(tx, counts, sequences),
             secret,
@@ -511,7 +524,7 @@ async function create(
           files,
         )
       } catch (err) {
-        const cat = category(err)
+        const cat = failureCategory(err)
         warning = {
           at: info.createdAt,
           code: cat === 'disk_full' || cat === 'no_permission' ? cat : 'status_not_saved',
@@ -585,6 +598,43 @@ async function lastScheduledAt(dir: string, now: Date): Promise<Date | null> {
 
 export const backup = { create, list, prune, diskFiles, lastScheduledAt }
 
+// What this process knows of the copies beyond status.json: the last failure (status.json may be on the disk that
+// failed) and a warning not yet written there. The web merges it with status.json (copies.ts).
+export type CopyMemory = { lastFailure: Status['lastFailure']; lastWarning: Warning | null }
+export const copyMemory = (): CopyMemory => ({ lastFailure: null, lastWarning: null })
+
+// One copy, as `serve` makes them (daily) and the web (by hand): a failure and a warning are kept in `memory` too.
+export async function keptCopy(
+  db: Pool,
+  memory: CopyMemory,
+  o: {
+    dir: string
+    secret: string | undefined
+    reason: BackupReason
+    clock: Clock
+    files?: FileOps | undefined
+  },
+): Promise<BackupInfo> {
+  try {
+    const info = await create(db, {
+      dir: o.dir,
+      secret: o.secret,
+      reason: o.reason,
+      clock: o.clock,
+      ...(o.files ? { files: o.files } : {}),
+      ...(memory.lastWarning ? { carryWarning: memory.lastWarning } : {}),
+    })
+    memory.lastFailure = null
+    memory.lastWarning =
+      info.warningCode && !info.statusSaved ? { at: info.createdAt, code: info.warningCode } : null
+    return info
+  } catch (err) {
+    if (!(err instanceof AppError && err.code === 'backup_running'))
+      memory.lastFailure = { at: o.clock().toISOString(), category: failureCategory(err) }
+    throw err
+  }
+}
+
 // The daily copy of `serve`: a scheduled copy, then the scheduled ones beyond `keep` removed. It never throws: a
 // failure is in status.json (the web shows it) and in the log, with its code only. A copy kept with a warning is
 // said in the log; when its status could not be saved, the warning is kept here and written with the next status.
@@ -592,24 +642,28 @@ export const backup = { create, list, prune, diskFiles, lastScheduledAt }
 export type BackupJob = (() => Promise<'busy' | undefined>) & { files?: FileOps | undefined }
 export function backupJob(
   db: Pool,
-  o: { dir: string; secret: string | undefined; keep: number; clock: Clock; log: Log; files?: FileOps },
+  o: {
+    dir: string
+    secret: string | undefined
+    keep: number
+    clock: Clock
+    log: Log
+    files?: FileOps
+    memory?: CopyMemory
+  },
 ): BackupJob {
-  let pending: Warning | null = null
+  const memory = o.memory ?? copyMemory()
   const job: BackupJob = async () => {
     const t0 = Date.now()
     try {
-      const info = await create(db, {
+      const info = await keptCopy(db, memory, {
         dir: o.dir,
         secret: o.secret,
         reason: 'scheduled',
         clock: o.clock,
-        ...(job.files ? { files: job.files } : {}),
-        ...(pending ? { carryWarning: pending } : {}),
+        files: job.files,
       })
-      if (info.warningCode) {
-        o.log.warn('backup_kept_with_warning', { code: info.warningCode })
-        pending = info.statusSaved ? null : { at: info.createdAt, code: info.warningCode }
-      } else pending = null
+      if (info.warningCode) o.log.warn('backup_kept_with_warning', { code: info.warningCode })
       const removed = await prune(o.dir, o.keep)
       o.log.info('backup_done', { ms: Date.now() - t0, count: removed.length })
     } catch (err) {

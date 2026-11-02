@@ -9,7 +9,7 @@ import type { ApiError } from '../api/client.ts'
 import { api, sessionEnded } from '../api/index.ts'
 import { resetResources } from '../api/resource.ts'
 import { safeNext } from '../lib/nav.ts'
-import { branding, installationName, justSignedOut, me, online } from '../session.ts'
+import { branding, installationName, justRestored, justSignedOut, me, online } from '../session.ts'
 import { Door } from '../shell/Door.tsx'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
@@ -32,10 +32,13 @@ export function SignIn() {
   const codeRef = useRef<HTMLInputElement>(null)
   // "Signed out." right after signing out; gone once the person does anything here.
   const [signedOut] = useState(() => justSignedOut.value)
+  // «Restored. Everyone signs in again» once, after a restore from the administration (its session ended with it).
+  const [restored] = useState(() => justRestored.value)
   // "Your session ended." when a session ended while the web was open; never on a plain visit.
   const [ended] = useState(() => sessionEnded.value && !justSignedOut.value)
   useEffect(() => {
     justSignedOut.value = false
+    justRestored.value = false
     sessionEnded.value = false
   }, [])
 
@@ -92,7 +95,13 @@ export function SignIn() {
                 <span>{T.signIn.signedOut}</span>
               </p>
             ) : null}
-            {ended && !error ? (
+            {restored && !error ? (
+              <p class="alert ok" role="status" data-state="restored">
+                <span class="kind">{T.kind.done}</span>
+                <span>{T.signIn.restored}</span>
+              </p>
+            ) : null}
+            {ended && !restored && !error ? (
               <p class="alert warn" role="status">
                 <span class="kind">{T.kind.signedOut}</span>
                 <span>{T.signIn.sessionEnded}</span>

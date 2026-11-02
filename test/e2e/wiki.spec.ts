@@ -10,6 +10,7 @@ import {
   type Page,
   test,
 } from '@playwright/test'
+import { keepTheKey } from './key.ts'
 
 const ADMIN = { name: 'Eric', email: 'eric@example.test', password: 'correct horse battery staple' }
 const WEB = { 'x-requested-with': 'rsc-brain-web' }
@@ -30,6 +31,7 @@ async function signedInAdmin(page: Page, baseURL: string): Promise<void> {
     await page.getByLabel('Your email').fill(ADMIN.email)
     await page.getByLabel('Password', { exact: true }).fill(ADMIN.password)
     await page.getByRole('button', { name: 'Set up and sign in' }).click()
+    await keepTheKey(page)
   } else if (where === 'Sign in') {
     await page.getByLabel('Email').fill(ADMIN.email)
     await page.getByLabel('Password').fill(ADMIN.password)

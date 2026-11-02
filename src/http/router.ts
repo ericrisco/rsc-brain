@@ -9,6 +9,8 @@ import type { Db } from '../db/db.ts'
 import type { Outbox } from '../mail/mail.ts'
 import type { Providers } from '../meaning/providers.ts'
 import type { FetchPolicy } from '../oauth/fetch.ts'
+import type { Copies } from '../ops/backup/copies.ts'
+import type { ReleaseChecker } from '../ops/releases.ts'
 import type { EventHub, EventTimings } from './hub.ts'
 import type { RateLimiter } from './ratelimit.ts'
 
@@ -46,6 +48,10 @@ export type PublicReq = {
   startedAt: Date
   // The folder of the copies (RSC_BRAIN_BACKUPS), when one is set.
   backups: string | null
+  // The copies of this process (list, by hand, restore), when RSC_BRAIN_BACKUPS is set (spec B7).
+  copies: Copies | null
+  // Whether a newer release exists (plan §3.10); null when nothing checks.
+  releases: ReleaseChecker | null
   // The log of the server (src/core/log.ts).
   log: Log
 }
@@ -67,6 +73,8 @@ export type Reply = {
   compress?: boolean
   // Instead of a body: an event stream; the promise settles when the stream is over.
   stream?: (out: StreamOut) => Promise<void>
+  // Instead of a body: a file sent as it is on disk, to save (a copy of the installation).
+  file?: { path: string; bytes: number; name: string }
 }
 export type Handler = (r: Req) => Promise<Reply>
 export type Route = {

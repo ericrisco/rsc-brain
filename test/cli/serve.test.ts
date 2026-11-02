@@ -50,7 +50,13 @@ describe('rsc-brain serve', { skip: skipPg }, () => {
     ).secret
     const port = await freePort()
     const p = spawn(process.execPath, [CLI, 'serve'], {
-      env: { ...process.env, RSC_BRAIN_DATABASE_URL: t.url, RSC_BRAIN_PORT: String(port) },
+      // No request to the list of releases from a test.
+      env: {
+        ...process.env,
+        RSC_BRAIN_DATABASE_URL: t.url,
+        RSC_BRAIN_PORT: String(port),
+        RSC_BRAIN_RELEASES_URL: '',
+      },
     })
     const exited = new Promise<number | null>((r) => p.on('exit', (code) => r(code)))
     let out = ''

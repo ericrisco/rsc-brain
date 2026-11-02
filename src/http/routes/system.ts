@@ -1,15 +1,18 @@
 // The health of the service for the administration (spec B6 «Admin › Backups & system», plan G14): the
 // version, when this process started, the database and its last migration, meaning search and how far it
 // got, the open event streams, and mail; and (spec B7 «Salud y registros») the free disk where the copies go,
-// the size of the database, and the maintenance under way. Copies, the installation key and restoring
-// arrive with the rest of B7; nothing here pretends they exist.
+// the size of the database, and the maintenance under way; the copies (last good one, last failure or warning), the
+// id of the installation key and the release, with a newer one when there is (B7 PR30).
 import { statfs } from 'node:fs/promises'
 import { VERSION } from '../../core/version.ts'
 import { adminOnly } from '../../domain/guards.ts'
 import { maintenance } from '../../domain/maintenance.ts'
 import { meaningProgress, meaningSettings } from '../../domain/meaning.ts'
 import { mailConfigured } from '../../mail/mail.ts'
+import { keyId } from '../../ops/backup/format.ts'
+import { newer } from '../../ops/releases.ts'
 import { type Route, route } from '../router.ts'
+import { backupsOfSystem } from './backups.ts'
 import { ctxOf } from './brains.ts'
 
 // Free bytes where the copies go; null when no folder is set or it cannot be read.
@@ -20,6 +23,17 @@ async function freeBytes(dir: string | null): Promise<number | null> {
     return Number(s.bavail) * Number(s.bsize)
   } catch {
     return null
+  }
+}
+
+// The installed release and, once checked, the newest published one with its notes (plan §3.10).
+function release(s: { latest: string | null; notes: string | null; checkedAt: string | null } | null) {
+  return {
+    installed: VERSION,
+    latest: s?.latest ?? null,
+    notes: s?.notes ?? null,
+    checkedAt: s?.checkedAt ?? null,
+    newer: s?.latest ? newer(s.latest, VERSION) : false,
   }
 }
 
@@ -56,6 +70,9 @@ export const systemRoutes: Route[] = [
           ),
         },
         maintenance: m2 ? { until: m2.until.toISOString(), reason: m2.reason } : null,
+        backups: await backupsOfSystem(r),
+        keyId: r.secret ? keyId(r.secret) : null,
+        release: release(r.releases?.state() ?? null),
       },
     }
   }),
