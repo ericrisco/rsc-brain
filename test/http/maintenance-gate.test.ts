@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { after, before, describe, it } from 'node:test'
+import { makeLog } from '../../src/core/log.ts'
 import { closeIdle } from '../../src/domain/sessions.ts'
 import { ROUTES } from '../../src/http/app.ts'
 import {
@@ -89,6 +90,9 @@ const ENDS_ACCESS = new Set([
   'DELETE /v1/me/apps/:id',
   'DELETE /v1/admin/apps/:id',
   'POST /v1/admin/accounts/:id/remove',
+  // Taking someone out of a brain; changing an account (it can drop the administration).
+  'DELETE /v1/brains/:slug/members/:account',
+  'PATCH /v1/admin/accounts/:id',
 ])
 
 const META = {
@@ -106,11 +110,14 @@ describe('the maintenance gate', { skip: skipPg }, () => {
   let proposalId: string
   let docs: Server
   let clientId: string
+  let rita: { id: string; key: string }
+  let ritaWeb: string
+  const logged: string[] = []
   const count = async (table: string) =>
     Number((await w.db.one<{ n: string }>(`SELECT count(*) AS n FROM ${table}`))?.n)
 
   before(async () => {
-    w = await world({ localClients: true })
+    w = await world({ localClients: true, log: makeLog((l) => logged.push(l)) })
     // A client document of the standard sign-in, served from this machine.
     docs = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' }).end(
@@ -161,6 +168,10 @@ describe('the maintenance gate', { skip: skipPg }, () => {
       sources: [{ entryId }],
       reason: 'From the journal.',
     })
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'beta', purpose: 'Not Rita’s.' })
+    rita = await w.person('Rita')
+    ritaWeb = await w.web(rita.id)
+    await w.member('alpha', rita.id, 'reader')
     await maintenance.on(w.db, w.clock(), { reason: 'update' })
   })
   after(async () => {
@@ -316,10 +327,11 @@ describe('the maintenance gate', { skip: skipPg }, () => {
     assert.deepEqual(await w.db.query('SELECT id, last_used_at FROM credentials ORDER BY id'), used)
   })
 
-  it('every GET of ROUTES, with a key and in the web, leaves every table as it was (review of PR27)', async () => {
-    const before = await fingerprint()
-    const paramOf = (path: string, k: string) => {
-      if (k === 'slug') return 'alpha'
+  // Every GET of ROUTES (event streams never end on their own: their reads are covered by the trail tests),
+  // with a bearer key and with a web session, for each of these brains.
+  async function probeGets(key: string, session: string, slugs: string[]): Promise<number> {
+    const paramOf = (path: string, k: string, slug: string) => {
+      if (k === 'slug') return slug
       if (k === 'address') return 'growth/intros'
       if (k === 'account') return eric.id
       if (k !== 'id') return 'x'
@@ -336,21 +348,28 @@ describe('the maintenance gate', { skip: skipPg }, () => {
       '/v1/entries/:id': '?history=1',
     }
     let probed = 0
-    for (const r of ROUTES) {
-      // Event streams never end on their own; their reads are covered by the trail tests.
-      if (r.method !== 'GET' || r.path.endsWith('/events')) continue
-      const path = r.path.replace(/[:*](\w+)/g, (_, k) => paramOf(r.path, k)) + (query[r.path] ?? '')
-      for (const headers of [
-        { authorization: `Bearer ${eric.key}` },
-        { cookie: `rscb_session=${web}`, 'x-requested-with': 'rsc-brain-web' },
-      ]) {
-        const res = await fetch(`${w.base}${path}`, { headers, redirect: 'manual' })
-        await res.arrayBuffer()
-        assert.ok(res.status < 500 || (isWrite(r) && res.status === 503), `${r.path}: ${res.status}`)
-        probed += 1
+    for (const slug of slugs) {
+      for (const r of ROUTES) {
+        if (r.method !== 'GET' || r.path.endsWith('/events')) continue
+        if (slug !== slugs[0] && !r.path.includes(':slug')) continue
+        const path = r.path.replace(/[:*](\w+)/g, (_, k) => paramOf(r.path, k, slug)) + (query[r.path] ?? '')
+        for (const headers of [
+          { authorization: `Bearer ${key}` },
+          { cookie: `rscb_session=${session}`, 'x-requested-with': 'rsc-brain-web' },
+        ]) {
+          const res = await fetch(`${w.base}${path}`, { headers, redirect: 'manual' })
+          await res.arrayBuffer()
+          assert.ok(res.status < 500 || (isWrite(r) && res.status === 503), `${r.path}: ${res.status}`)
+          probed += 1
+        }
       }
     }
-    assert.ok(probed > 100, `probed ${probed}`)
+    return probed
+  }
+
+  it('every GET of ROUTES, with a key and in the web, leaves every table as it was (review of PR27)', async () => {
+    const before = await fingerprint()
+    assert.ok((await probeGets(eric.key, web, ['alpha'])) > 100)
     // The consent page fetches the client's document; it is not kept while maintenance lasts.
     const authz = new URLSearchParams({
       response_type: 'code',
@@ -368,6 +387,46 @@ describe('the maintenance gate', { skip: skipPg }, () => {
       assert.match(html, /Probe/)
     }
     assert.deepEqual(await fingerprint(), before)
+  })
+
+  it('a reader, refused here and there, leaves every table as it was too; the refusals go to the log', async () => {
+    const before = await fingerprint()
+    logged.length = 0
+    // Rita reads alpha and is not a member of beta; she is no administrator. Over the API, in the web and
+    // through the MCP reading tools.
+    assert.ok((await probeGets(rita.key, ritaWeb, ['alpha', 'beta'])) > 100)
+    for (const t of TOOLS.filter((x) => !x.writes)) {
+      for (const brain of ['alpha', 'beta']) {
+        const res = await fetch(`${w.base}/mcp`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${rita.key}`,
+            'mcp-protocol-version': MODERN,
+            'mcp-method': 'tools/call',
+            'mcp-name': t.name,
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: { name: t.name, arguments: { brain, query: 'retention', id: entryId }, _meta: META },
+          }),
+        })
+        assert.equal(res.status, 200, `${t.name} ${brain}`)
+        await res.text()
+      }
+    }
+    assert.deepEqual(await fingerprint(), before)
+    const denials = logged
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .filter((l) => l.event === 'access_denied')
+    assert.ok(denials.length > 0, 'the refusals are in the log')
+    for (const d of denials) {
+      assert.equal(d.outcome, 'denied')
+      assert.equal(d.account, rita.id)
+      assert.match(String(d.action), /^[a-z_.]+$/)
+    }
   })
 
   it('the audit export, a GET that writes its own record, is refused while maintenance lasts', async () => {
@@ -456,6 +515,7 @@ describe('the maintenance gate', { skip: skipPg }, () => {
     assert.equal(ran, 1)
     const trail = await count('trail')
     await w.call(eric.key, 'GET', '/v1/search?q=retention')
-    assert.equal(await count('trail'), trail + 1, 'the trail is written again')
+    // One line per brain searched (Eric reads alpha and beta).
+    assert.equal(await count('trail'), trail + 2, 'the trail is written again')
   })
 })

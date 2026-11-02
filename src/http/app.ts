@@ -447,6 +447,7 @@ export function createHandler(deps: AppDeps) {
         timings,
         startedAt,
         backups: deps.backups ?? null,
+        log,
       }
       // Maintenance (spec B7 C12): a write without a key (signing in, the standard sign-in) is refused here;
       // one with a key once the key is read, from the same row.

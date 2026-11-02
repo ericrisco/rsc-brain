@@ -19,6 +19,8 @@ export const LOG_EVENTS = [
   'resealed',
   // A background sweep that failed (closing idle sessions, folding the trail, reminders, meaning).
   'sweep_failed',
+  // A refusal during maintenance: the audit is not written then, so it is said here (action, account, brain).
+  'access_denied',
 ] as const
 export type LogEvent = (typeof LOG_EVENTS)[number]
 
@@ -32,6 +34,10 @@ export type LogFields = {
   file?: string | undefined
   ref?: string | undefined
   port?: number | undefined
+  action?: string | undefined
+  outcome?: string | undefined
+  account?: string | undefined
+  brain?: string | undefined
 }
 
 const whole = (min: number, max: number) => (v: unknown) =>
@@ -49,6 +55,11 @@ const CHECKS: Record<keyof LogFields, (v: unknown) => boolean> = {
   code: text(/^[A-Za-z0-9_.-]{1,64}$/),
   file: text(/^src\/[a-z0-9/_.-]+\.ts(:\d+)?$/),
   ref: text(/^[a-z0-9]{1,16}$/),
+  // A refusal: what was asked (`brain.read`), how it ended, and the ids of who and where (never names).
+  action: text(/^[a-z][a-z_]*(\.[a-z_]+)*$/),
+  outcome: text(/^(ok|denied)$/),
+  account: text(/^acc_[0-9a-f]{12}$/),
+  brain: text(/^brn_[0-9a-f]{12}$/),
 }
 export const LOG_FIELDS = Object.keys(CHECKS) as Array<keyof LogFields>
 
@@ -88,12 +99,24 @@ export function failureFields(err: unknown): Pick<LogFields, 'code' | 'file'> {
   const e = err as { code?: unknown; name?: unknown; stack?: unknown } | null
   const rawCode = typeof e?.code === 'string' ? e.code : typeof e?.name === 'string' ? e.name : 'unknown'
   const code = /^[A-Za-z0-9_.-]{1,64}$/.test(rawCode) ? rawCode : 'unknown'
-  // Only the frames of the stack ("    at …" lines): the message before them may quote anything.
-  const frames = typeof e?.stack === 'string' ? e.stack.split('\n').filter((l) => /^\s+at\s/.test(l)) : []
+  // Only the frames of the stack ("    at …" lines) after its first line, `${name}: ${message}`, which is cut
+  // off whole: a message may quote anything, even text shaped like a frame.
+  const first = err0(e)
+  let stack = typeof e?.stack === 'string' ? e.stack : ''
+  if (first.head && stack.startsWith(first.head)) stack = stack.slice(first.head.length)
+  else stack = stack.split('\n').slice(1).join('\n')
+  const frames = stack.split('\n').filter((l) => /^\s+at\s/.test(l))
   let frame: RegExpExecArray | null = null
   for (const l of frames) {
     frame = /(src\/[a-z0-9/_.-]+\.ts):(\d+)/.exec(l)
     if (frame) break
   }
   return { code, ...(frame ? { file: `${frame[1]}:${frame[2]}` } : {}) }
+}
+
+// The first line a stack starts with: "Name: message" (just "Name" without a message).
+function err0(e: { name?: unknown; message?: unknown } | null): { head: string | null } {
+  if (typeof e?.name !== 'string') return { head: null }
+  const m = typeof e.message === 'string' ? e.message : ''
+  return { head: m ? `${e.name}: ${m}` : e.name }
 }

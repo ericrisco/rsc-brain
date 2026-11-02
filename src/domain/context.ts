@@ -1,10 +1,12 @@
 // What every domain operation receives: the database (or the open transaction), the clock and who is
 // calling. Brain-scoped operations go through `inBrain`, which loads the brain, works out the role
 // through the key, and answers "not found" for anyone without access (constitution P4).
+
 import { type Action, can, type Facts, type Role } from '../auth/can.ts'
 import { actorOf, type Principal, roleIn } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
 import { brainNotFound, denied } from '../core/errors.ts'
+import { type Log, stdoutLog } from '../core/log.ts'
 import type { Db } from '../db/db.ts'
 import type { Outbox } from '../mail/mail.ts'
 import type { Providers } from '../meaning/providers.ts'
@@ -23,6 +25,8 @@ export type Ctx = {
   tz?: string
   meaning?: Providers
   mail?: Outbox
+  // The log of the server (refusals during maintenance go there instead of the audit).
+  log?: Log
 }
 
 export type Brain = {
@@ -87,6 +91,17 @@ export async function allow(ctx: Ctx, action: Action, facts: Facts, brainId?: st
         `Ask a curator of the brain (${names.map((n) => n.name).join(', ')})`,
       )
     }
+  }
+  // During maintenance nothing is written (spec B7 C12): the refusal goes to the log instead, so it is not lost
+  // and nothing lands after the copy taken for an update.
+  if (ctx.who.maintenance) {
+    ;(ctx.log ?? stdoutLog).warn('access_denied', {
+      action,
+      outcome: 'denied',
+      account: ctx.who.accountId,
+      brain: brainId,
+    })
+    throw denied(d.reason, how)
   }
   await audit(ctx.root ?? ctx.db, {
     at: ctx.clock(),

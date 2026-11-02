@@ -36,6 +36,9 @@ export const ENDS_ACCESS = new Set([
   'DELETE /v1/me/apps/:id',
   'DELETE /v1/admin/apps/:id',
   'POST /v1/admin/accounts/:id/remove',
+  // Taking someone out of a brain; changing an account (it can take the administration away).
+  'DELETE /v1/brains/:slug/members/:account',
+  'PATCH /v1/admin/accounts/:id',
 ])
 
 export function underMaintenance(m: Maintenance, now: Date, endsAccess = false): AppError {

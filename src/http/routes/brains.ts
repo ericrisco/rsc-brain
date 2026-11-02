@@ -13,6 +13,7 @@ export const ctxOf = (r: Req): Ctx => ({
   tz: r.tz,
   meaning: r.meaning,
   mail: r.mail,
+  log: r.log,
 })
 
 export const brainRoutes: Route[] = [

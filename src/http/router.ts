@@ -1,8 +1,10 @@
 // A small router: "METHOD /v1/brains/:slug" patterns, matched in order. A last part written "*name"
 // takes the rest of the path, slashes included (page addresses such as "audience/retention").
+
 import type { IncomingHttpHeaders } from 'node:http'
 import type { Principal } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
+import type { Log } from '../core/log.ts'
 import type { Db } from '../db/db.ts'
 import type { Outbox } from '../mail/mail.ts'
 import type { Providers } from '../meaning/providers.ts'
@@ -44,6 +46,8 @@ export type PublicReq = {
   startedAt: Date
   // The folder of the copies (RSC_BRAIN_BACKUPS), when one is set.
   backups: string | null
+  // The log of the server (src/core/log.ts).
+  log: Log
 }
 export type Req = PublicReq & { who: Principal }
 // A stream the server keeps writing to (Server-Sent Events) until the client leaves or `end` is called.

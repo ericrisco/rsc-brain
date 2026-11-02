@@ -5,7 +5,7 @@ import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { hashSecret, newSecret } from '../../src/auth/secrets.ts'
 import type { Clock } from '../../src/core/clock.ts'
-import { makeLog, silentLog } from '../../src/core/log.ts'
+import { type Log, makeLog, silentLog } from '../../src/core/log.ts'
 import { migrate } from '../../src/db/migrate.ts'
 import { createAccount, type NewAccount } from '../../src/domain/accounts.ts'
 import { addMember } from '../../src/domain/brains.ts'
@@ -79,6 +79,7 @@ export async function world(
     localClients?: boolean
     events?: Partial<EventTimings>
     backups?: string
+    log?: Log
   } = {},
 ): Promise<World> {
   const t = await freshDatabase()
@@ -108,7 +109,7 @@ export async function world(
           w.mails.push(m)
         },
       }),
-      log: process.env.BRAIN_TEST_LOG ? makeLog((l) => process.stderr.write(`${l}\n`)) : silentLog,
+      log: o.log ?? (process.env.BRAIN_TEST_LOG ? makeLog((l) => process.stderr.write(`${l}\n`)) : silentLog),
     }),
   )
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))

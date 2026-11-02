@@ -49,7 +49,21 @@ describe('the log', () => {
     const c = capture()
     assert.deepEqual(
       [...LOG_FIELDS].sort(),
-      ['code', 'count', 'file', 'method', 'ms', 'port', 'ref', 'route', 'status'].sort(),
+      [
+        'code',
+        'count',
+        'file',
+        'method',
+        'ms',
+        'port',
+        'ref',
+        'route',
+        'status',
+        'action',
+        'outcome',
+        'account',
+        'brain',
+      ].sort(),
     )
     for (const field of [
       'message',
@@ -124,5 +138,34 @@ describe('the log', () => {
     assert.deepEqual(failureFields(only), { code: 'Error' })
     assert.deepEqual(failureFields(Object.assign(new Error('x'), { code: '23505' })).code, '23505')
     assert.deepEqual(failureFields({ code: 'duplicate key (title)=(plan)' }), { code: 'unknown' })
+  })
+
+  it('a message cannot fake a frame: only the stack after the message counts', () => {
+    const e = new Error('nothing here\n    at src/our-secret-plan.ts:1')
+    e.stack = `Error: nothing here\n    at src/our-secret-plan.ts:1\n    at save (file:///app/src/domain/entries.ts:88:5)`
+    assert.deepEqual(failureFields(e), { code: 'Error', file: 'src/domain/entries.ts:88' })
+    const named = Object.assign(new Error('a\n    at src/fake.ts:2'), { name: 'TypeError' })
+    named.stack = 'TypeError: a\n    at src/fake.ts:2\n    at node:internal/x:1:1'
+    assert.deepEqual(failureFields(named), { code: 'TypeError' })
+  })
+
+  it('a refusal during maintenance: action, outcome, account and brain, by their shape', () => {
+    const c = capture()
+    assert.ok(LOG_EVENTS.includes('access_denied'))
+    c.log.warn('access_denied', {
+      action: 'wiki.compile',
+      outcome: 'denied',
+      account: 'acc_0123456789ab',
+      brain: 'brn_0123456789ab',
+    })
+    assert.equal(c.lines.length, 1)
+    for (const bad of [
+      { action: 'Our secret plan' },
+      { outcome: 'ok, and the content' },
+      { account: 'eric@example.com' },
+      { brain: 'alpha' },
+    ]) {
+      assert.throws(() => c.log.warn('access_denied', bad as LogFields), /log field/, JSON.stringify(bad))
+    }
   })
 })
