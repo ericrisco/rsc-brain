@@ -38,7 +38,7 @@ test('first run from the web makes the administrator and signs them in', async (
   await page.getByLabel('I saved the installation key somewhere safe, outside this machine').check()
   await page.getByRole('button', { name: 'Continue to rsc-brain' }).click()
   await expect(page.getByRole('heading', { name: 'Your brains' })).toBeVisible()
-  expect((await page.request.get('/v1/setup/key')).status()).toBe(404)
+  expect((await page.request.post('/v1/setup/key', { headers: WEB, data: {} })).status()).toBe(404)
   await expect(page.locator('body')).not.toContainText(E2E_SECRET)
   // U1: the administrator sees it worked and the next step, with the agent command for this address.
   await expect(page.getByRole('status').filter({ hasText: 'Brain is set up.' })).toBeVisible()

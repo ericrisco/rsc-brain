@@ -312,7 +312,7 @@ function KeyStep({ name, onDone }: { name: string; onDone: () => void }) {
   const load = async () => {
     setError(null)
     try {
-      setK(await api.call<{ key: string; keyId: string }>('setupKey', { quiet: true }))
+      setK(await api.call<{ key: string; keyId: string }>('setupKey', { body: {}, quiet: true }))
     } catch (e) {
       const a = e as ApiError
       if (a.status === 404) setGone(true)
@@ -360,7 +360,15 @@ function KeyStep({ name, onDone }: { name: string; onDone: () => void }) {
             </div>
           </>
         ) : error ? (
-          <ErrorState error={error} onRetry={() => void load()} />
+          <>
+            <ErrorState error={error} onRetry={() => void load()} />
+            <p>{K.keyFailedLater}</p>
+            <div class="actions">
+              <Button kind="quiet" onClick={finish}>
+                {K.keyContinue}
+              </Button>
+            </div>
+          </>
         ) : !k ? (
           <Skeleton rows={2} label={K.keyLoading} />
         ) : (

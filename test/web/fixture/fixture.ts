@@ -721,8 +721,9 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       }
     },
   },
-  'GET /v1/setup/key': {
-    run: ({ s, who }) => {
+  'POST /v1/setup/key': {
+    run: ({ s, who, web }) => {
+      if (!web) return CSRF
       // Whoever ran the setup, once, right after it.
       if (who?.id !== 'acc_admin' || s.setupKey !== 'ready')
         return err(
@@ -2445,7 +2446,7 @@ function healthOf(slug: string, st: State | undefined) {
 // Paths that need a session; the rest are public, as on the server.
 const PRIVATE = new Set([
   ...ADMIN_PRIVATE,
-  'GET /v1/setup/key',
+  'POST /v1/setup/key',
   'GET /v1/brains/{slug}/wiki/settings',
   'PUT /v1/brains/{slug}/wiki/settings',
   'POST /v1/brains/{slug}/members',

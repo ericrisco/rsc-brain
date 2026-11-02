@@ -10,7 +10,7 @@ import { audit } from '../../domain/audit.ts'
 import { adminOnly, inWeb } from '../../domain/guards.ts'
 import { reauth } from '../../domain/login.ts'
 import { applyStored } from '../../meaning/stored.ts'
-import { lastWrite, readStatus } from '../../ops/backup/backup.ts'
+import { lastWrite, liveWarning, readStatus } from '../../ops/backup/backup.ts'
 import { notFound } from '../../ops/backup/copies.ts'
 import { keyId, readHeader } from '../../ops/backup/format.ts'
 import { obj } from '../input.ts'
@@ -63,7 +63,7 @@ export const backupRoutes: Route[] = [
   route('POST /v1/admin/backups', async (r) => {
     adminOnly(ctxOf(r))
     const copies = copiesOf(r)
-    const { id } = copies.start()
+    const { id } = await copies.start()
     await audit(r.db, { at: r.clock(), ...by(r), action: 'backup.create', outcome: 'ok', detail: id })
     return { status: 202, body: { id } }
   }),
@@ -101,7 +101,8 @@ export const backupRoutes: Route[] = [
         copyLastWriteAt: h.lastWriteAt,
         lastWriteAt: now,
         // Something was written after the copy: a restore loses it.
-        lostWrites: now !== null && now > (h.lastWriteAt ?? h.createdAt),
+        // Data written after the copy was made: a restore loses it (audit lines are not counted).
+        lostWrites: now !== null && now > h.createdAt,
       },
     }
   }),
@@ -133,31 +134,29 @@ export const backupRoutes: Route[] = [
     await audit(r.db, { at: r.clock(), ...by(r), action: 'installation_key.download', outcome: 'ok' })
     return { body: { key: r.secret, keyId: keyId(r.secret) }, headers: { 'cache-control': 'no-store' } }
   }),
-  {
-    ...route('GET /v1/setup/key', async (r) => {
-      inWeb(ctxOf(r), 'The installation key')
-      const secret = r.secret
-      if (!secret) throw noVault()
-      const now = r.clock()
-      const given = await r.db.tx(async (tx) => {
-        const inst = await tx.one<{ at: Date | null }>(
-          'SELECT setup_done_at AS at FROM installation WHERE id = 1 FOR UPDATE',
-        )
-        if (!inst?.at || now.getTime() - inst.at.getTime() > SETUP_KEY_WINDOW_MS) return false
-        // Whoever ran the setup from the web, and only once.
-        const setup = await tx.one<{ actor: string | null }>(
-          "SELECT actor_id AS actor FROM audit WHERE action = 'installation.setup' AND detail LIKE 'web%' ORDER BY at DESC, id DESC LIMIT 1",
-        )
-        if (!setup || setup.actor !== r.who.accountId) return false
-        if (await tx.one("SELECT 1 FROM audit WHERE action = 'installation_key.setup' LIMIT 1")) return false
-        await audit(tx, { at: now, ...by(r), action: 'installation_key.setup', outcome: 'ok' })
-        return true
-      })
-      if (!given) throw setupKeyGone()
-      return { body: { key: secret, keyId: keyId(secret) }, headers: { 'cache-control': 'no-store' } }
-    }),
-    maintenance: 'writes' as const,
-  },
+  // A POST, so it passes the check of the web's own header: a page elsewhere cannot ask for it (review of PR #31).
+  route('POST /v1/setup/key', async (r) => {
+    inWeb(ctxOf(r), 'The installation key')
+    const secret = r.secret
+    if (!secret) throw noVault()
+    const now = r.clock()
+    const given = await r.db.tx(async (tx) => {
+      const inst = await tx.one<{ at: Date | null }>(
+        'SELECT setup_done_at AS at FROM installation WHERE id = 1 FOR UPDATE',
+      )
+      if (!inst?.at || now.getTime() - inst.at.getTime() > SETUP_KEY_WINDOW_MS) return false
+      // Whoever ran the setup from the web, and only once.
+      const setup = await tx.one<{ actor: string | null }>(
+        "SELECT actor_id AS actor FROM audit WHERE action = 'installation.setup' AND detail LIKE 'web%' ORDER BY at DESC, id DESC LIMIT 1",
+      )
+      if (!setup || setup.actor !== r.who.accountId) return false
+      if (await tx.one("SELECT 1 FROM audit WHERE action = 'installation_key.setup' LIMIT 1")) return false
+      await audit(tx, { at: now, ...by(r), action: 'installation_key.setup', outcome: 'ok' })
+      return true
+    })
+    if (!given) throw setupKeyGone()
+    return { body: { key: secret, keyId: keyId(secret) }, headers: { 'cache-control': 'no-store' } }
+  }),
 ]
 
 // What GET /v1/admin/system says of the copies, read the same way as the list.
@@ -168,5 +167,9 @@ export async function backupsOfSystem(r: Req) {
   }
   if (!r.backups) return { lastOk: null, lastFailure: null, lastWarning: null }
   const s = await readStatus(r.backups)
-  return { lastOk: s.lastOk, lastFailure: s.lastFailure, lastWarning: s.lastWarning ?? null }
+  return {
+    lastOk: s.lastOk,
+    lastFailure: s.lastFailure,
+    lastWarning: liveWarning(s.lastWarning, s.lastOk, s.lastOk?.at ?? null),
+  }
 }

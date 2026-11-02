@@ -9,7 +9,8 @@ import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { hashPassword } from '../../src/auth/password.ts'
 import { stepOf, totpAt } from '../../src/auth/totp.ts'
-import { backup } from '../../src/ops/backup/backup.ts'
+import { silentLog } from '../../src/core/log.ts'
+import { backup, backupJob, type CopyMemory, LOCK } from '../../src/ops/backup/backup.ts'
 import { keyId } from '../../src/ops/backup/format.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { TEST_SECRET, type World, world } from '../helpers/world.ts'
@@ -139,6 +140,18 @@ describe('copies, the installation key and versions from the web (§3.4)', { ski
       const r = await w.callWeb(adminWeb, 'GET', `/v1/admin/backups/${bad}/download`)
       assert.deepEqual([r.status, r.body.error?.code], [404, 'not_found'], `${bad}: ${r.text}`)
     }
+  })
+
+  it('a download (an audit line) is not a write a restore loses', async () => {
+    const id = await copy()
+    w.advance(60_000)
+    const dl = await fetch(`${w.base}/v1/admin/backups/${id}/download`, {
+      headers: { cookie: `rscb_session=${adminWeb}` },
+    })
+    assert.equal(dl.status, 200)
+    await dl.arrayBuffer()
+    const r = await w.callWeb(adminWeb, 'GET', `/v1/admin/backups/${id}/impact`)
+    assert.equal(r.body.lostWrites, false, r.text)
   })
 
   it('the impact of a restore: when the copy was made and the last write it would lose', async () => {
@@ -383,14 +396,18 @@ describe('the installation key of the first-time setup (wizard step «Installati
     const session = await setup()
     const other = await w.person('Bo', { isAdmin: true })
     const otherWeb = await w.web(other.id)
-    const notTheirs = await w.callWeb(otherWeb, 'GET', '/v1/setup/key')
+    const notTheirs = await w.callWeb(otherWeb, 'POST', '/v1/setup/key', {})
     assert.deepEqual([notTheirs.status, notTheirs.body.error?.code], [404, 'not_found'], notTheirs.text)
-    const byKey = await w.call(await w.token(other.id), 'GET', '/v1/setup/key')
+    const byKey = await w.call(await w.token(other.id), 'POST', '/v1/setup/key', {})
     assert.deepEqual([byKey.status, byKey.body.error?.code], [403, 'web_only'], byKey.text)
-    const first = await w.callWeb(session, 'GET', '/v1/setup/key')
+    // A POST through the web's own header only (a page elsewhere cannot ask for it); GET is no longer an answer.
+    const crossSite = await w.callWeb(session, 'POST', '/v1/setup/key', {}, { csrf: false })
+    assert.deepEqual([crossSite.status, crossSite.body.error?.code], [403, 'csrf'], crossSite.text)
+    assert.equal((await w.callWeb(session, 'GET', '/v1/setup/key')).status, 405)
+    const first = await w.callWeb(session, 'POST', '/v1/setup/key', {})
     assert.equal(first.status, 200, first.text)
     assert.deepEqual(first.body, { key: TEST_SECRET, keyId: keyId(TEST_SECRET) })
-    const second = await w.callWeb(session, 'GET', '/v1/setup/key')
+    const second = await w.callWeb(session, 'POST', '/v1/setup/key', {})
     assert.deepEqual([second.status, second.body.error?.code], [404, 'not_found'], second.text)
     assert.match(second.body.error?.howToProceed ?? '', /Backups & system/)
     assert.doesNotMatch(second.text, new RegExp(TEST_SECRET))
@@ -413,10 +430,135 @@ describe('the installation key of the first-time setup (wizard step «Installati
       })
       const session = /rscb_session=([^;]+)/.exec(r.headers.get('set-cookie') ?? '')?.[1] ?? ''
       v.advance(3600_000 + 1000)
-      const late = await v.callWeb(session, 'GET', '/v1/setup/key')
+      const late = await v.callWeb(session, 'POST', '/v1/setup/key', {})
       assert.deepEqual([late.status, late.body.error?.code], [404, 'not_found'], late.text)
     } finally {
       await v.close()
     }
+  })
+})
+
+describe('copies review: one copy at a time, said; a warning that retires', { skip: skipPg }, () => {
+  let w: World
+  let dir: string
+  let web: string
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'brain-web-copies-review-'))
+    w = await world({ backups: dir })
+    const a = await w.person('Ada', { isAdmin: true })
+    web = await w.web(a.id)
+  })
+  after(async () => {
+    await w?.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+  const idle = async () => {
+    for (let i = 0; i < 400; i++) {
+      if (!(await w.callWeb(web, 'GET', '/v1/admin/backups')).body.running) return
+      await new Promise((x) => setTimeout(x, 25))
+    }
+    throw new Error('the copy never ended')
+  }
+
+  it('while the daily copy runs, a copy by hand is 409 backup_running at once, naming it', async () => {
+    const memory = w.copies?.memory as { busy?: string | null }
+    memory.busy = 'scheduled'
+    try {
+      const r = await w.callWeb(web, 'POST', '/v1/admin/backups', {})
+      assert.deepEqual([r.status, r.body.error?.code], [409, 'backup_running'], r.text)
+      assert.match(r.body.error?.message ?? '', /the daily one/)
+      assert.equal((await w.callWeb(web, 'GET', '/v1/admin/backups')).body.running, true)
+    } finally {
+      memory.busy = null
+    }
+  })
+
+  it('the daily copy of serve and the web share one memory: during a real daily copy, 409 naming it', async () => {
+    let go: () => void = () => {}
+    const gate = new Promise<void>((r) => {
+      go = r
+    })
+    const slow = {
+      ...backup.diskFiles,
+      open: async (path: string) => {
+        await gate
+        return backup.diskFiles.open(path)
+      },
+    }
+    w.advance(2000)
+    const job = backupJob(w.db, {
+      dir,
+      secret: TEST_SECRET,
+      keep: 99,
+      clock: w.clock,
+      log: silentLog,
+      files: slow,
+      memory: w.copies?.memory as CopyMemory,
+    })
+    const running = job()
+    try {
+      await new Promise((x) => setTimeout(x, 50))
+      const r = await w.callWeb(web, 'POST', '/v1/admin/backups', {})
+      assert.deepEqual([r.status, r.body.error?.code], [409, 'backup_running'], r.text)
+      assert.match(r.body.error?.message ?? '', /the daily one/)
+    } finally {
+      // The daily copy goes on whatever the assertions said, so a failure here never hangs the file.
+      go()
+      await running
+    }
+    assert.equal((await w.callWeb(web, 'GET', '/v1/admin/backups')).body.running, false)
+  })
+
+  it('while another process holds the lock of the copies, a copy by hand is 409 before any 202', async () => {
+    const pg = (await import('pg')).default
+    const other = new pg.Client({ connectionString: w.url })
+    await other.connect()
+    try {
+      await other.query('SELECT pg_advisory_lock($1)', [LOCK])
+      const r = await w.callWeb(web, 'POST', '/v1/admin/backups', {})
+      assert.deepEqual([r.status, r.body.error?.code], [409, 'backup_running'], r.text)
+    } finally {
+      await other.end()
+    }
+    w.advance(2000)
+    const ok = await w.callWeb(web, 'POST', '/v1/admin/backups', {})
+    assert.equal(ok.status, 202, ok.text)
+    await idle()
+  })
+
+  it('a warning retires: a good copy without one clears it, and a later copy outdates the status that held it', async () => {
+    w.advance(2000)
+    const warnedAt = w.clock().toISOString()
+    const status = JSON.parse(await readFile(join(dir, 'status.json'), 'utf8'))
+    await writeFile(
+      join(dir, 'status.json'),
+      JSON.stringify({ ...status, lastWarning: { at: warnedAt, code: 'fsync_failed' } }),
+    )
+    const shown = await w.callWeb(web, 'GET', '/v1/admin/backups')
+    assert.deepEqual(shown.body.lastWarning, { at: warnedAt, code: 'fsync_failed' })
+    // A copy written later whose status was not saved (only in the folder): the old status is outdated.
+    w.advance(2000)
+    await backup.create(w.db, {
+      dir,
+      secret: TEST_SECRET,
+      reason: 'manual',
+      clock: w.clock,
+      files: {
+        ...backup.diskFiles,
+        status: async () => Promise.reject(Object.assign(new Error('x'), { code: 'EIO' })),
+      },
+    })
+    const later = await w.callWeb(web, 'GET', '/v1/admin/backups')
+    assert.equal(later.body.lastWarning, null, later.text)
+    assert.equal(
+      ((await w.callWeb(web, 'GET', '/v1/admin/system')).body.backups as { lastWarning: unknown })
+        .lastWarning,
+      null,
+    )
+    // A good copy with nothing to say clears it from status.json too.
+    w.advance(2000)
+    assert.equal((await w.callWeb(web, 'POST', '/v1/admin/backups', {})).status, 202)
+    await idle()
+    assert.equal(JSON.parse(await readFile(join(dir, 'status.json'), 'utf8')).lastWarning, null)
   })
 })

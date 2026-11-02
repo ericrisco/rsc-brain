@@ -122,7 +122,7 @@ export const ROUTE_TABLE = {
   backupImpact: { route: 'GET /v1/admin/backups/{id}/impact' },
   restoreBackup: { route: 'POST /v1/admin/backups/{id}/restore' },
   installationKey: { route: 'POST /v1/admin/installation-key' },
-  setupKey: { route: 'GET /v1/setup/key' },
+  setupKey: { route: 'POST /v1/setup/key' },
   uploadLogo: { route: 'PUT /v1/admin/branding/logo' },
   removeLogo: { route: 'DELETE /v1/admin/branding/logo' },
   revokeKey: { route: 'DELETE /v1/keys/{id}' },

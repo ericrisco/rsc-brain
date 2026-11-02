@@ -160,6 +160,8 @@ export const T = {
     keyGone:
       'The installation key is shown once, right after the setup. You can download it again in Administration › Backups & system, with your password.',
     keyLater: 'Download it later in Administration › Backups & system, with your password.',
+    keyFailedLater:
+      'You can download the key later in Admin › Backups & system, with your password. Do it before the first copy you would need.',
     doneTitle: 'rsc-brain is already set up',
     doneLead: 'The first-time setup runs once. Sign in with your account.',
     goSignIn: 'Go to sign in',

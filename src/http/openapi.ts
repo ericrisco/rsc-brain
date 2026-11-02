@@ -1929,9 +1929,9 @@ const HAND: Record<string, Op> = {
     ),
     reply: obj({ key: s('The installation key.'), keyId: s('Its id.') }),
   },
-  'GET /v1/setup/key': {
+  'POST /v1/setup/key': {
     summary:
-      'The installation key, once, for the step «Installation key» of the first-time setup: to whoever ran the setup in the web, within an hour of it. Then 404 not_found (download it again in Admin › Backups & system).',
+      'The installation key, once, for the step «Installation key» of the first-time setup: to whoever ran the setup in the web, within an hour of it (the rsc-brain web only). Then 404 not_found (download it again in Admin › Backups & system).',
     reply: obj({ key: s('The installation key.'), keyId: s('Its id.') }),
   },
   'PUT /v1/admin/branding/logo': {

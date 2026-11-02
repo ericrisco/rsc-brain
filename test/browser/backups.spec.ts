@@ -255,6 +255,54 @@ test.describe('Admin › Backups & system: restoring', () => {
     expect((await page.request.get('/v1/me')).status()).toBe(401)
   })
 
+  test('while a restore is running the dialog stays (Esc, Close, backdrop); its answer is shown; Restore opens again', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    let release: () => void = () => {}
+    const held = new Promise<void>((r) => {
+      release = r
+    })
+    await page.route('**/v1/admin/backups/*/restore', async (route) => {
+      await held
+      await route.fulfill({
+        status: 409,
+        json: {
+          error: {
+            code: 'backup_running',
+            message: 'A copy is being made right now (the daily one).',
+            howToProceed: 'Try again when it ends.',
+          },
+        },
+      })
+    })
+    await page.goto('/admin/system')
+    const open = page
+      .locator('.copies > li')
+      .first()
+      .getByRole('button', { name: /Restore the copy of/ })
+    await open.click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Name of this installation').fill('rsc-brain')
+    await dialog.getByLabel('Your password').fill(PASSWORD)
+    await dialog.getByRole('button', { name: 'Restore this copy' }).click()
+    await expect(dialog.getByRole('button', { name: /Restoring/ })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Close' })).toHaveAttribute('aria-disabled', 'true')
+    await dialog.getByRole('button', { name: 'Close' }).click({ force: true })
+    await page.mouse.click(5, 5)
+    await expect(dialog).toBeVisible()
+    release()
+    await expect(dialog).toContainText('A copy is being made right now (the daily one).')
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await open.click()
+    await expect(page.getByRole('dialog').getByLabel('Name of this installation')).toBeVisible()
+  })
+
   test('Esc keeps things as they are; the keyboard goes back to the button that opened it', async ({
     page,
     context,
@@ -403,7 +451,10 @@ test.describe('first-time setup: the step «Installation key»', () => {
     await expect(page).toHaveURL(/\/$/)
     await expect(page.locator('body')).not.toContainText(KEY)
     // Shown once: the server says it was given.
-    const again = await page.request.get('/v1/setup/key')
+    const again = await page.request.post('/v1/setup/key', {
+      headers: { 'x-requested-with': 'rsc-brain-web' },
+      data: {},
+    })
     expect(again.status()).toBe(404)
   })
 
@@ -424,6 +475,36 @@ test.describe('first-time setup: the step «Installation key»', () => {
     await expect(page.locator('body')).not.toContainText(KEY)
     await expect(page.getByRole('heading', { level: 1, name: 'The key was already shown' })).toBeVisible()
     await expect(page.getByText('Administration › Backups & system')).toBeVisible()
+  })
+
+  test('the key cannot be read (a failure): try again, or go on and download it later', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'fresh')
+    await page.route('**/v1/setup/key', (route) =>
+      route.fulfill({
+        status: 500,
+        json: {
+          error: {
+            code: 'internal',
+            message: 'Something went wrong on the server.',
+            howToProceed: 'Try again.',
+          },
+        },
+      }),
+    )
+    await page.goto('/setup')
+    await page.getByLabel('Name of this installation').fill('Acme')
+    await page.getByLabel('Your name').fill('Ada')
+    await page.getByLabel('Your email').fill('ada@example.test')
+    await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
+    await page.getByRole('button', { name: 'Set up and sign in' }).click()
+    await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible()
+    await expect(page.getByText('You can download the key later in Admin › Backups & system')).toBeVisible()
+    await page.getByRole('button', { name: 'Continue to rsc-brain' }).click()
+    await expect(page).toHaveURL(/\/$/)
   })
 
   test('320 px and keyboard on the step', async ({ page, context, baseURL }) => {

@@ -1377,8 +1377,11 @@ describe('the fixture API', () => {
       },
     })
     const f = { scenario: fresh.id, cookie: cookieOf(done) }
-    assert.match(((await call('GET', '/v1/setup/key', f)).body as { key: string }).key, /^fixture-/)
-    assert.equal(code(await call('GET', '/v1/setup/key', f)), 'not_found')
+    assert.match(
+      ((await call('POST', '/v1/setup/key', { ...f, body: {} })).body as { key: string }).key,
+      /^fixture-/,
+    )
+    assert.equal(code(await call('POST', '/v1/setup/key', { ...f, body: {} })), 'not_found')
   })
 
   it('every operation the fixture answers was checked against the description', () => {

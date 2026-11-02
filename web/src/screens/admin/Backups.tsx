@@ -289,8 +289,8 @@ function RestoreDialog({ copy, onClose }: { copy: CopyItem | null; onClose: () =
     setError(null)
     if (copy) void load(copy)
   }, [copy?.id])
+  // Any close of the native dialog ends this one (it never closes while a restore runs: `locked`).
   const close = () => {
-    if (pending) return
     setPassword('')
     setCode('')
     onClose()
@@ -340,7 +340,13 @@ function RestoreDialog({ copy, onClose }: { copy: CopyItem | null; onClose: () =
   }
   const when = copy ? localWhen(copy.createdAt) : ''
   return (
-    <Dialog open={copy !== null} title={A.restoreTitle(when)} onClose={close} class="restore-dialog">
+    <Dialog
+      open={copy !== null}
+      title={A.restoreTitle(when)}
+      onClose={close}
+      class="restore-dialog"
+      locked={pending}
+    >
       {!impact ? (
         impactError ? (
           <ErrorState error={impactError} onRetry={() => copy && void load(copy)} focus={false} />

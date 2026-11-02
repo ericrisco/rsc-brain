@@ -110,6 +110,41 @@ describe('releases', () => {
     assert.equal(down.state().latest, null)
   })
 
+  it('a failed check is tried again soon, then less often (15 min doubling up to 6 h), never once a day', async () => {
+    seen.length = 0
+    answer = { status: 500, body: 'down' }
+    let now = Date.parse('2026-11-02T10:00:00.000Z')
+    const c = releaseChecker({ url: `${base}/r`, version: '0.1.0', clock: () => new Date(now) })
+    await c.check()
+    assert.equal(seen.length, 1)
+    now += 14 * 60_000
+    await c.check()
+    assert.equal(seen.length, 1, 'not before 15 minutes')
+    now += 60_000
+    await c.check()
+    assert.equal(seen.length, 2, 'again after 15 minutes')
+    now += 29 * 60_000
+    await c.check()
+    assert.equal(seen.length, 2, 'then 30 minutes')
+    now += 60_000
+    await c.check()
+    assert.equal(seen.length, 3)
+    // Many failures: at most 6 hours apart.
+    for (let i = 0; i < 6; i++) {
+      now += 6 * 3600_000
+      await c.check()
+    }
+    assert.equal(seen.length, 9)
+    // It answers: then once a day.
+    answer = { status: 200, body: JSON.stringify([{ tag_name: 'v0.2.0', body: '' }]) }
+    now += 6 * 3600_000
+    await c.check()
+    assert.equal(c.state().latest, '0.2.0')
+    now += 6 * 3600_000
+    await c.check()
+    assert.equal(seen.length, 10)
+  })
+
   it('notes are bounded, and only a newer release counts as new', () => {
     assert.equal(newer('0.2.0', '0.1.0'), true)
     assert.equal(newer('0.1.10', '0.1.9'), true)

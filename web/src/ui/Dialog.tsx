@@ -11,6 +11,7 @@ export function Dialog({
   children,
   class: cls,
   closeLabel = T.help.close,
+  locked = false,
 }: {
   open: boolean
   title: string
@@ -18,6 +19,8 @@ export function Dialog({
   children: ComponentChildren
   class?: string
   closeLabel?: string
+  // While what it started runs (a restore): Esc, the backdrop and Close do not close it, so its answer is seen.
+  locked?: boolean
 }) {
   const ref = useRef<HTMLDialogElement>(null)
   const id = useId()
@@ -34,20 +37,30 @@ export function Dialog({
       ref={ref}
       class={cls}
       aria-labelledby={id}
+      onCancel={(e) => {
+        if (locked) e.preventDefault()
+      }}
       onClose={() => {
         // The browser's "close" is queued: one that arrives after the dialog opened again is stale.
         if (!ref.current?.open) onClose()
       }}
       onClick={(e) => {
         // A click on the backdrop (the dialog itself, outside its content) closes it.
-        if (e.target === ref.current) ref.current?.close()
+        if (e.target === ref.current && !locked) ref.current?.close()
       }}
     >
       {open ? (
         <>
           <div class="dialog-head">
             <h2 id={id}>{title}</h2>
-            <button type="button" class="button quiet" onClick={() => ref.current?.close()}>
+            <button
+              type="button"
+              class="button quiet"
+              aria-disabled={locked ? 'true' : undefined}
+              onClick={() => {
+                if (!locked) ref.current?.close()
+              }}
+            >
               {closeLabel}
             </button>
           </div>

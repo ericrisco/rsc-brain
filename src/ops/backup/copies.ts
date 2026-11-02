@@ -17,6 +17,8 @@ import {
   copyMemory,
   type FileOps,
   keptCopy,
+  LOCK,
+  liveWarning,
   readStatus,
   type Status,
 } from './backup.ts'
@@ -46,8 +48,9 @@ export type Copies = {
   dir: string | null
   memory: CopyMemory
   view(): Promise<CopiesView>
-  // Starts a copy by hand and answers at once with its id; it runs in the process (the view says when it ends).
-  start(): { id: string }
+  // Starts a copy by hand and answers with its id once it can start (no other copy here or in another process); it
+  // runs in the process (the view says when it ends).
+  start(): Promise<{ id: string }>
   find(id: string): Promise<BackupInfo | null>
   restore(
     id: string,
@@ -79,7 +82,7 @@ export function createCopies(o: {
   files?: FileOps
 }): Copies {
   const memory = o.memory ?? copyMemory()
-  let running = false
+  const running = () => memory.busy !== null
   const current = o.secret ? keyId(o.secret) : null
   const c: Copies = {
     dir: o.dir,
@@ -95,7 +98,7 @@ export function createCopies(o: {
           keyId: current,
           schedule: o.schedule,
           lastUpdate: null,
-          running,
+          running: running(),
         }
       const status = await readStatus(o.dir)
       const items = await backup.list(o.dir).catch(() => [])
@@ -106,7 +109,12 @@ export function createCopies(o: {
         lastOk = { at: newest.createdAt, file: newest.file }
       const failures = [status.lastFailure, memory.lastFailure].filter((f) => f !== null)
       const failure = failures.sort((a, b) => (a.at < b.at ? 1 : -1))[0] ?? null
-      const warnings = [status.lastWarning ?? null, memory.lastWarning].filter((x) => x != null)
+      // A warning retires once a later copy is made: status.json's when the folder holds a copy newer than the one
+      // that wrote it; this process's when it was not about the newest copy.
+      const warnings = [
+        liveWarning(status.lastWarning, lastOk, status.lastOk?.at ?? null),
+        liveWarning(memory.lastWarning, lastOk, memory.lastWarning?.at ?? null),
+      ].filter((x) => x != null)
       return {
         configured: true,
         items: items.map((b) => ({
@@ -124,31 +132,41 @@ export function createCopies(o: {
         keyId: current,
         schedule: o.schedule,
         lastUpdate: status.lastUpdate ?? null,
-        running,
+        running: running(),
       }
     },
-    start() {
+    async start() {
       const dir = o.dir
       if (!dir) throw notSetUp()
-      if (running) throw backupRunning()
+      if (memory.busy) throw backupRunning(memory.busy)
+      memory.busy = 'manual'
+      try {
+        // Another process (a command on the machine) may be copying: asked before answering, never a 202 that fails.
+        const free = await o.db.session(async (s) => {
+          const r = await s.one<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [LOCK])
+          if (r?.ok) await s.query('SELECT pg_advisory_unlock($1)', [LOCK])
+          return r?.ok === true
+        })
+        if (!free) throw backupRunning()
+      } catch (err) {
+        memory.busy = null
+        throw err
+      }
       const at = o.clock()
       const id = backupName(at, 'manual').slice(0, -5)
-      running = true
       void keptCopy(o.db, memory, {
         dir,
         secret: o.secret,
         reason: 'manual',
         clock: () => at,
         files: o.files,
+        held: true,
       })
         .then((info) => {
           if (info.warningCode) o.log.warn('backup_kept_with_warning', { code: info.warningCode })
           o.log.info('backup_done', { count: 0 })
         })
         .catch((err: unknown) => o.log.warn('backup_failed', failureFields(err)))
-        .finally(() => {
-          running = false
-        })
       return { id }
     },
     async find(id) {
@@ -160,8 +178,8 @@ export function createCopies(o: {
       if (!dir) throw notSetUp()
       const found = await c.find(id)
       if (!found) throw notFound()
-      if (running) throw backupRunning()
-      running = true
+      if (memory.busy) throw backupRunning(memory.busy)
+      memory.busy = 'restore'
       let pre: BackupInfo | null = null
       try {
         const done = await restore(o.db, {
@@ -186,7 +204,7 @@ export function createCopies(o: {
         const kept = pre as BackupInfo | null
         return { ...done, preRestore: kept ? kept.file : null }
       } finally {
-        running = false
+        memory.busy = null
       }
     },
   }

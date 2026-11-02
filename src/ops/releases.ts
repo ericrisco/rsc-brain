@@ -9,6 +9,9 @@ import type { Clock } from '../core/clock.ts'
 
 export const DEFAULT_RELEASES_URL = 'https://api.github.com/repos/ericrisco/rsc-brain/releases'
 const DAY_MS = 24 * 3600_000
+// After a failed check: again in 15 minutes, doubling up to 6 hours (review of PR #31).
+const RETRY_FIRST_MS = 15 * 60_000
+const RETRY_MAX_MS = 6 * 3600_000
 const TIMEOUT_MS = 10_000
 // A list of releases is a few kilobytes; more is not read.
 const MAX_BYTES = 2_000_000
@@ -24,7 +27,7 @@ export type ReleaseChecker = {
   state(): ReleaseState
   // Asks the list, unless it was asked less than a day ago (or there is no list).
   check(): Promise<void>
-  // Checks now and then once an hour (each check asks at most once a day).
+  // Checks now and then every 15 minutes (a check asks once a day after an answer, sooner after a failure).
   start(): void
   stop(): void
 }
@@ -101,28 +104,36 @@ function newest(text: string): { latest: string; notes: string } | null {
 
 export function releaseChecker(o: { url: string | null; version: string; clock: Clock }): ReleaseChecker {
   const s: ReleaseState = { installed: o.version, latest: null, notes: null, checkedAt: null }
-  let askedAt = 0
+  // When the next check may ask: a day after one that answered, sooner after one that failed.
+  let nextAt = 0
+  let failures = 0
   let timer: ReturnType<typeof setInterval> | null = null
   let busy: Promise<void> | null = null
   const check = async () => {
     if (!o.url) return
     const now = o.clock().getTime()
-    if (askedAt && now - askedAt < DAY_MS) return
+    if (now < nextAt) return
     if (busy !== null) return busy
-    askedAt = now
     const url = o.url
     busy = (async () => {
+      let found: { latest: string; notes: string } | null = null
       try {
-        const found = newest(await get(url, `rsc-brain/${o.version}`))
-        if (!found) return
+        found = newest(await get(url, `rsc-brain/${o.version}`))
+      } catch {
+        found = null
+      }
+      if (found) {
         s.latest = found.latest
         s.notes = found.notes
         s.checkedAt = new Date(now).toISOString()
-      } catch {
-        // Kept as it was: the web says when it last checked.
-      } finally {
-        busy = null
+        failures = 0
+        nextAt = now + DAY_MS
+      } else {
+        // Kept as it was (the web says when it last checked); asked again soon, then less often.
+        failures++
+        nextAt = now + Math.min(RETRY_MAX_MS, RETRY_FIRST_MS * 2 ** (failures - 1))
       }
+      busy = null
     })()
     return busy
   }
@@ -132,7 +143,7 @@ export function releaseChecker(o: { url: string | null; version: string; clock: 
     start() {
       if (!o.url || timer) return
       void check()
-      timer = setInterval(() => void check(), 3600_000)
+      timer = setInterval(() => void check(), RETRY_FIRST_MS)
       timer.unref()
     },
     stop() {

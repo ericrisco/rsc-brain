@@ -223,12 +223,19 @@ function failure(cat: FailureCategory, err: unknown): AppError {
   )
 }
 
-export const backupRunning = () =>
+const BUSY_WORDS: Record<string, string> = {
+  scheduled: ' (the daily one)',
+  manual: ' (one made by hand)',
+  'pre-update': ' (the one before an update)',
+  'pre-restore': ' (the one before a restore)',
+  restore: ': a restore is running',
+}
+export const backupRunning = (what?: string) =>
   new AppError(
     409,
     'backup_running',
-    'A copy is being made right now.',
-    'Wait for it to finish (rsc-brain backups list shows it when it is done), then try again.',
+    `A copy is being made right now${what ? (BUSY_WORDS[what] ?? '') : ''}.`,
+    'Try again when it ends (rsc-brain backups list shows it when it is done).',
   )
 
 // A copy before an update or a restore: maintenance must be on, and every write that began before it must have ended
@@ -265,10 +272,12 @@ async function settle(db: Db, clock: Clock, settleMs: number, why: 'update' | 'r
   }
 }
 
-// The last write the database holds (a copy keeps it in its header; the web compares the two before a restore).
+// The last write of data the database holds: brains, entries, pages, the wiki's log and the events of brains. The
+// audit is left out: downloading a copy or looking at the key writes there, and a restore loses nothing of what
+// people made by it (review of PR #31). A copy keeps it in its header; the web warns before a restore.
 export async function lastWrite(db: Db): Promise<string | null> {
   const last = await db.one<{ at: Date | null }>(
-    `SELECT greatest((SELECT max(at) FROM events), (SELECT max(at) FROM audit), (SELECT max(at) FROM wiki_log),
+    `SELECT greatest((SELECT max(at) FROM events), (SELECT max(at) FROM wiki_log), (SELECT max(updated_at) FROM brains),
                      (SELECT max(updated_at) FROM entries), (SELECT max(updated_at) FROM pages)) AS at`,
   )
   return last?.at ? last.at.toISOString() : null
@@ -518,7 +527,8 @@ async function create(
             lastOk: { at: info.createdAt, file },
             lastFailure: null,
             keyId: info.keyId,
-            ...(recorded ? { lastWarning: recorded } : {}),
+            // A copy with nothing to say clears what an earlier one said (review of PR #31).
+            lastWarning: recorded ?? null,
           },
           at,
           files,
@@ -600,8 +610,26 @@ export const backup = { create, list, prune, diskFiles, lastScheduledAt }
 
 // What this process knows of the copies beyond status.json: the last failure (status.json may be on the disk that
 // failed) and a warning not yet written there. The web merges it with status.json (copies.ts).
-export type CopyMemory = { lastFailure: Status['lastFailure']; lastWarning: Warning | null }
-export const copyMemory = (): CopyMemory => ({ lastFailure: null, lastWarning: null })
+// `busy`: the copy (or restore) this process is making now, by its reason: one source for the daily copy and the
+// web, so a copy by hand during the daily one is refused at once and says which (review of PR #31).
+export type CopyMemory = {
+  lastFailure: Status['lastFailure']
+  lastWarning: Warning | null
+  busy: BackupReason | 'restore' | null
+}
+export const copyMemory = (): CopyMemory => ({ lastFailure: null, lastWarning: null, busy: null })
+
+// A warning is said while what recorded it is the last word: a copy made later (even one whose status was not saved)
+// outdates it.
+export function liveWarning(
+  w: Warning | null | undefined,
+  lastOk: Status['lastOk'],
+  since: string | null,
+): Warning | null {
+  if (!w) return null
+  if (lastOk && since !== null && lastOk.at > since) return null
+  return w
+}
 
 // One copy, as `serve` makes them (daily) and the web (by hand): a failure and a warning are kept in `memory` too.
 export async function keptCopy(
@@ -613,8 +641,14 @@ export async function keptCopy(
     reason: BackupReason
     clock: Clock
     files?: FileOps | undefined
+    // The caller marked `memory.busy` already (the web, which answers only once it knows the copy can start).
+    held?: boolean
   },
 ): Promise<BackupInfo> {
+  if (!o.held) {
+    if (memory.busy) throw backupRunning(memory.busy)
+    memory.busy = o.reason
+  }
   try {
     const info = await create(db, {
       dir: o.dir,
@@ -632,6 +666,8 @@ export async function keptCopy(
     if (!(err instanceof AppError && err.code === 'backup_running'))
       memory.lastFailure = { at: o.clock().toISOString(), category: failureCategory(err) }
     throw err
+  } finally {
+    memory.busy = null
   }
 }
 

@@ -187,7 +187,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     ended: ['invitations', 'resets'],
   },
   'POST /v1/admin/installation-key': { '': ['key', 'keyId'] },
-  'GET /v1/setup/key': { '': ['key', 'keyId'] },
+  'POST /v1/setup/key': { '': ['key', 'keyId'] },
   // B7 (C20): what an outside watcher reads; never the version.
   'GET /v1/health': {
     '': ['ok', 'database', 'maintenance'],
@@ -866,9 +866,9 @@ describe('the v1 contract', { skip: skipPg }, () => {
     out['POST /v1/setup'] = setup.body
     // The step «Installation key» of the wizard, with the session the setup gave.
     const setupSession = /rscb_session=([^;]+)/.exec(setup.headers.get('set-cookie') ?? '')?.[1] ?? ''
-    const key = await fresh.callWeb(setupSession, 'GET', '/v1/setup/key')
+    const key = await fresh.callWeb(setupSession, 'POST', '/v1/setup/key', {})
     assert.equal(key.status, 200, key.text)
-    out['GET /v1/setup/key'] = key.body
+    out['POST /v1/setup/key'] = key.body
     const lou = await withPassword('Lou')
     const signedIn = await login({ email: lou.email, password: PW })
     assert.equal(signedIn.status, 200, signedIn.text)
