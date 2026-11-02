@@ -5,7 +5,8 @@
 //   file   = MAGIC "RSCB1\n" · u32 header length · header JSON · frames…
 //   frame  = u32 ciphertext length · nonce (12) · ciphertext · tag (16)
 //
-// The header is readable without the key (what the list shows: when, why, which key, how many rows). Each
+// The header is readable without the key (what the list shows: when, why, which key; never how much there is:
+// the row counts and the sequences are the first two sections of the encrypted text). Each
 // frame is AES-256-GCM with a key derived from the installation key and the file's own salt (scrypt), and
 // authenticates sha256(header) ‖ its index ‖ whether it is the last one: a changed header, frames in another
 // order, frames from another copy, or a file without its last frame never decrypt. The plain text is gzip of
@@ -40,18 +41,49 @@ export type Header = {
   reason: BackupReason
   keyId: string
   kdf: { name: 'scrypt'; N: number; r: number; p: number; salt: string }
-  tables: Array<{ name: string; rows: number }>
-  // Where each sequence stood in the snapshot (bigint as text), so a restore puts them back exactly.
-  sequences: Array<{ name: string; value: string }>
+  // The tables the copy holds, in load order (their row counts are inside the encryption).
+  tables: string[]
   // The last write the copy holds (the web warns what a restore loses after it).
   lastWriteAt: string | null
 }
 export type HeaderInput = Omit<Header, 'format' | 'product' | 'keyId' | 'kdf'>
 
-// The id of an installation key: a keyed fingerprint (it reveals nothing of the key and cannot be checked
-// against guesses without it), short enough to read aloud.
+// The id of an installation key, short enough to read aloud. It is a fingerprint keyed by the key itself, so
+// whoever has a copy can test a guess of the key against it (one scrypt per guess): it protects nothing that the
+// key's own length and randomness do not. The installer generates a long random key, and copies refuse a short or
+// obviously repetitive one (strongKey).
 export function keyId(secret: string): string {
   return keyedHash(secret, KEY_ID_LABEL).slice(0, 12)
+}
+
+// At least 32 characters (as RSC_BRAIN_SECRET must be) and not built from a handful of characters ("aaaa…",
+// "0101…"): a key a person could guess would make every copy readable through its key id.
+export function strongKey(secret: string): boolean {
+  return secret.length >= 32 && new Set(secret).size >= 12
+}
+
+export const weakKey = () =>
+  new AppError(
+    409,
+    'weak_installation_key',
+    'The installation key is too short or too repetitive to protect a copy (RSC_BRAIN_SECRET).',
+    'Rotate to a long random key (the installer generates one: openssl rand -base64 48), then make a copy again.',
+  )
+
+// Writes every byte of `b`, however few each call takes (a nearly full disk may take part of a buffer without an
+// error). A call that takes none is a full disk.
+export async function writeFully(
+  write: (b: Buffer, offset: number, length: number) => Promise<{ bytesWritten: number }>,
+  b: Buffer,
+): Promise<void> {
+  let at = 0
+  while (at < b.length) {
+    const { bytesWritten } = await write(b, at, b.length - at)
+    if (!(bytesWritten > 0)) {
+      throw Object.assign(new Error('The disk took no more bytes.'), { code: 'ENOSPC' })
+    }
+    at += bytesWritten
+  }
 }
 
 export const corruptCopy = () =>
@@ -101,6 +133,7 @@ export async function writeBackup(
   rows: AsyncIterable<Buffer>,
   secret: string,
 ): Promise<{ bytes: number; header: Header }> {
+  if (!strongKey(secret)) throw weakKey()
   const id = keyId(secret)
   const salt = randomBytes(16)
   const header: Header = {
@@ -114,7 +147,6 @@ export async function writeBackup(
     keyId: id,
     kdf: { ...KDF, salt: salt.toString('base64') },
     tables: input.tables,
-    sequences: input.sequences,
     lastWriteAt: input.lastWriteAt,
   }
   const headerBytes = Buffer.from(JSON.stringify(header), 'utf8')
@@ -192,9 +224,7 @@ function validHeader(h: unknown): h is Header {
     isText(kdf.salt, 64) &&
     Buffer.from(kdf.salt, 'base64').length === 16 &&
     Array.isArray(x.tables) &&
-    x.tables.every((t) => isText(t?.name, 64) && isCount(t?.rows)) &&
-    Array.isArray(x.sequences) &&
-    x.sequences.every((s) => isText(s?.name, 64) && isText(s?.value, 24)) &&
+    x.tables.every((t) => isText(t, 64)) &&
     (x.lastWriteAt === null || isText(x.lastWriteAt, 40))
   )
 }
@@ -230,8 +260,10 @@ export async function readHeader(path: string): Promise<Header> {
 // Opens a copy with an installation key: refused at once with the id of the key it needs when the key is
 // another; then the plain text, frame by frame, each authenticated before it is handed on. A damage found
 // later (a cut, a frame out of place, no final frame) ends the reading with corrupt_copy, so whoever reads
-// it (a restore, in one transaction) throws everything away.
-export async function openBackup(path: string, secret: string): Promise<AsyncIterable<Buffer>> {
+// it (a restore, in one transaction) throws everything away. It carries the header its frames are bound to: a
+// restore uses that one only, never a second reading of the file (decisions, B7 PR28 review).
+export type OpenedBackup = AsyncIterable<Buffer> & { header: Header }
+export async function openBackup(path: string, secret: string): Promise<OpenedBackup> {
   const fh = await open(path, 'r')
   let header: Header
   let headerBytes: Buffer
@@ -288,6 +320,7 @@ export async function openBackup(path: string, secret: string): Promise<AsyncIte
   }
   const out = pipeline(Readable.from(frames()), createGunzip(), () => {})
   return {
+    header,
     async *[Symbol.asyncIterator]() {
       try {
         for await (const c of out) yield c as Buffer

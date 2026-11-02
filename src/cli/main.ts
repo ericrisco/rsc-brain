@@ -164,10 +164,15 @@ async function main(argv: string[]): Promise<number> {
     embed.unref()
     // The daily copy (spec B7 C2), with the folder of the copies set; checked every minute.
     if (cfg.backups) {
+      // Started more than a day after the last daily copy (it was down at that time): one copy now.
+      const lastScheduled = (await backup.list(cfg.backups).catch(() => [])).find(
+        (b) => b.reason === 'scheduled',
+      )
       const daily = createScheduler({
         at: cfg.backupAt,
         tz: cfg.timezone,
         clock: systemClock,
+        lastScheduledAt: lastScheduled ? new Date(lastScheduled.createdAt) : null,
         run: backupJob(db, {
           dir: cfg.backups,
           secret: cfg.secret,
@@ -451,6 +456,8 @@ async function backupCommand(args: string[]): Promise<number> {
   if (!dir) return 2
   return withDb(async (db) => {
     const info = await backup.create(db, { dir, secret: readConfig().secret, reason, clock: systemClock })
+    // Whole and kept, but its status or the folder were not saved: said, and still a success.
+    if (info.warning) process.stderr.write(`${info.warning}\n`)
     out(
       values.json
         ? `${JSON.stringify(info)}\n`

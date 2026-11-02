@@ -4,7 +4,7 @@
 // two copies never run at once; and a copy before an update waits for writes that slipped in before
 // maintenance began.
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -132,21 +132,44 @@ describe('backups on PostgreSQL', { skip: skipPg }, () => {
     )
     assert.ok(h.lastWriteAt)
     const got = await sections(path)
+    // First the counts and the sequences (review of PR #29: inside the encryption, never in the header), then
+    // every table in load order.
     assert.deepEqual(
       got.map((s) => s.table),
+      ['_tables', '_sequences', ...BACKUP_TABLES.map((t) => t.name)],
+    )
+    assert.deepEqual(
+      h.tables,
       BACKUP_TABLES.map((t) => t.name),
     )
-    for (const s of got) {
+    const counted = got[0] as Table
+    assert.deepEqual(counted.columns, ['name', 'rows'])
+    for (const s of got.slice(2)) {
       const n = await w.db.one<{ n: number }>(`SELECT count(*)::int AS n FROM ${s.table}`)
       assert.equal(s.rows.length, n?.n, `rows of ${s.table}`)
-      assert.equal(h.tables.find((t) => t.name === s.table)?.rows, n?.n)
+      assert.deepEqual(
+        counted.rows.find((r) => r[0] === s.table),
+        [s.table, String(n?.n)],
+      )
     }
+    const raw = await readFile(path)
+    const header = raw.subarray(10, 10 + raw.readUInt32BE(6)).toString('utf8')
+    for (const word of ['"rows"', 'audit_id_seq', 'last_value', 'is_called'])
+      assert.ok(!header.includes(word), `${word} in the readable header`)
     // Values come back exactly, tabs and new lines included.
     const entries = got.find((s) => s.table === 'entries') as Table
     const content = entries.columns.indexOf('content')
     assert.ok(entries.rows.some((r) => r[content] === `${CANARIES.entry}\twith a tab\nand a line`))
-    const seqs = h.sequences.map((s) => s.name)
-    assert.ok(seqs.includes('audit_id_seq') && seqs.includes('events_seq'))
+    // Sequences as setval takes them: a used one with its value and is_called true; one never used says so,
+    // with the value it would hand out first (never a 0 that setval refuses).
+    const seqs = got[1] as Table
+    assert.deepEqual(seqs.columns, ['name', 'last_value', 'is_called'])
+    const audit = seqs.rows.find((r) => r[0] === 'audit_id_seq')
+    assert.equal(audit?.[2], 't')
+    assert.ok(Number(audit?.[1]) >= 1)
+    const unused = seqs.rows.find((r) => r[0] === 'mail_log_id_seq')
+    assert.deepEqual(unused, ['mail_log_id_seq', '1', 'f'])
+    assert.ok(seqs.rows.some((r) => r[0] === 'events_seq'))
   })
 
   it('every value comes back as PostgreSQL itself writes it, nulls as nulls', async () => {
@@ -211,17 +234,19 @@ describe('backups on PostgreSQL', { skip: skipPg }, () => {
     const before = await backup.list(dir)
     let written = 0
     const full: FileOps = {
+      ...backup.diskFiles,
       async open(path) {
         const real = await backup.diskFiles.open(path)
         return {
-          async write(b) {
-            if (written > 2000) {
+          async write(b, offset, length) {
+            // The header goes out; the first frame meets a full disk.
+            if (written > 0) {
               const e = new Error('no space left on device') as NodeJS.ErrnoException
               e.code = 'ENOSPC'
               throw e
             }
-            written += b.length
-            await real.write(b)
+            written += length
+            return real.write(b, offset, length)
           },
           sync: () => real.sync(),
           close: () => real.close(),
@@ -243,10 +268,11 @@ describe('backups on PostgreSQL', { skip: skipPg }, () => {
   it('any other failure while writing also leaves nothing, and says it failed', async () => {
     w.advance(60_000)
     const broken: FileOps = {
+      ...backup.diskFiles,
       async open(path) {
         const real = await backup.diskFiles.open(path)
         return {
-          write: (b) => real.write(b),
+          write: (b, offset, length) => real.write(b, offset, length),
           sync: async () => {
             throw Object.assign(new Error('i/o error'), { code: 'EIO' })
           },
@@ -280,6 +306,170 @@ describe('backups on PostgreSQL', { skip: skipPg }, () => {
     assert.equal((await readStatus(dir)).lastFailure?.category, 'no_installation_secret')
   })
 
+  it('review of PR #29 (blocker): writes that take only part of a buffer still give a whole copy', async () => {
+    w.advance(60_000)
+    const dribble: FileOps = {
+      ...backup.diskFiles,
+      async open(path) {
+        const real = await backup.diskFiles.open(path)
+        return {
+          // At most 97 bytes per write, as a nearly full disk may do without an error.
+          write: (b, offset, length) => real.write(b, offset, Math.min(length, 97)),
+          sync: () => real.sync(),
+          close: () => real.close(),
+        }
+      },
+    }
+    const c = await backup.create(w.db, {
+      dir,
+      secret: TEST_SECRET,
+      reason: 'manual',
+      clock: w.clock,
+      files: dribble,
+    })
+    assert.equal((await stat(join(dir, c.file))).size, c.bytes)
+    const got = await sections(join(dir, c.file))
+    assert.equal(got.length, BACKUP_TABLES.length + 2)
+    await rm(join(dir, c.file))
+  })
+
+  it('review of PR #29 (blocker): bytes lost on the way to disk → the copy is never renamed, listed or called kept', async () => {
+    w.advance(60_000)
+    const before = await backup.list(dir)
+    let calls = 0
+    const lossy: FileOps = {
+      ...backup.diskFiles,
+      async open(path) {
+        const real = await backup.diskFiles.open(path)
+        return {
+          // Says it wrote everything; the second write (the first frame) loses its last 10 bytes.
+          async write(b, offset, length) {
+            calls += 1
+            if (calls === 2) await real.write(b, offset, Math.max(0, length - 10))
+            else await real.write(b, offset, length)
+            return { bytesWritten: length }
+          },
+          sync: () => real.sync(),
+          close: () => real.close(),
+        }
+      },
+    }
+    await assert.rejects(
+      () => backup.create(w.db, { dir, secret: TEST_SECRET, reason: 'manual', clock: w.clock, files: lossy }),
+      isCode('disk_full'),
+    )
+    assert.deepEqual(await files(), [first.file])
+    assert.deepEqual(await backup.list(dir), before)
+    assert.equal((await readStatus(dir)).lastFailure?.category, 'disk_full')
+  })
+
+  it('review of PR #29 (blocker): a rename that fails leaves nothing; a failure after the rename keeps the whole copy and says so', async () => {
+    w.advance(60_000)
+    const noRename: FileOps = {
+      ...backup.diskFiles,
+      rename: async () => {
+        throw Object.assign(new Error('no space'), { code: 'ENOSPC' })
+      },
+    }
+    await assert.rejects(
+      () =>
+        backup.create(w.db, { dir, secret: TEST_SECRET, reason: 'manual', clock: w.clock, files: noRename }),
+      isCode('disk_full'),
+    )
+    assert.deepEqual(await files(), [first.file])
+    w.advance(60_000)
+    const noDirSync: FileOps = {
+      ...backup.diskFiles,
+      syncDir: async () => {
+        throw Object.assign(new Error('no space'), { code: 'ENOSPC' })
+      },
+    }
+    const c = await backup.create(w.db, {
+      dir,
+      secret: TEST_SECRET,
+      reason: 'manual',
+      clock: w.clock,
+      files: noDirSync,
+    })
+    assert.ok(c.warning && /kept/.test(c.warning), c.warning)
+    assert.ok((await backup.list(dir)).some((b) => b.file === c.file))
+    assert.equal((await sections(join(dir, c.file))).length, BACKUP_TABLES.length + 2)
+    await rm(join(dir, c.file))
+  })
+
+  it('review of PR #29: status.json that cannot be written after a good copy → "copy kept, status not saved"; the next status is right', async () => {
+    w.advance(60_000)
+    const noStatus: FileOps = {
+      ...backup.diskFiles,
+      status: async () => {
+        throw Object.assign(new Error('no space'), { code: 'ENOSPC' })
+      },
+    }
+    const before = await readStatus(dir)
+    const kept = await backup.create(w.db, {
+      dir,
+      secret: TEST_SECRET,
+      reason: 'manual',
+      clock: w.clock,
+      files: noStatus,
+    })
+    assert.match(kept.warning ?? '', /copy is kept.*status.*not saved/i)
+    assert.deepEqual(await readStatus(dir), before)
+    // The next copy fails and its status is written: the last good copy is the one above, not an older one.
+    w.advance(60_000)
+    const full: FileOps = {
+      ...backup.diskFiles,
+      open: async () => {
+        throw Object.assign(new Error('no space'), { code: 'ENOSPC' })
+      },
+    }
+    await assert.rejects(() =>
+      backup.create(w.db, { dir, secret: TEST_SECRET, reason: 'manual', clock: w.clock, files: full }),
+    )
+    const s = await readStatus(dir)
+    assert.deepEqual(s.lastOk, { at: kept.createdAt, file: kept.file })
+    assert.equal(s.lastFailure?.category, 'disk_full')
+    await rm(join(dir, kept.file))
+  })
+
+  it('review of PR #29: status.json is written through a temporary file of its own, never followed through a link', async () => {
+    w.advance(60_000)
+    const seen: string[] = []
+    const watch: FileOps = {
+      ...backup.diskFiles,
+      status: async (path) => {
+        seen.push(path)
+        return backup.diskFiles.status(path)
+      },
+    }
+    const c = await backup.create(w.db, {
+      dir,
+      secret: TEST_SECRET,
+      reason: 'manual',
+      clock: w.clock,
+      files: watch,
+    })
+    assert.equal(seen.length, 1)
+    assert.match(seen[0] as string, /\/status\.json\.\d+\.[0-9a-f]{16}\.tmp$/)
+    assert.ok(!(await readdir(dir)).some((f) => f.endsWith('.tmp')))
+    // The default opener refuses a path that exists (a planted link included).
+    const planted = join(dir, 'status.json.1.0000000000000000.tmp')
+    await symlink(join(dir, 'elsewhere'), planted)
+    await assert.rejects(() => backup.diskFiles.status(planted), /EEXIST/)
+    await rm(planted)
+    await rm(join(dir, c.file))
+  })
+
+  it('review of PR #29: a weak installation key makes no copy, and says why', async () => {
+    w.advance(60_000)
+    await assert.rejects(
+      () => backup.create(w.db, { dir, secret: 'x'.repeat(40), reason: 'manual', clock: w.clock }),
+      isCode('weak_installation_key'),
+    )
+    assert.deepEqual(await files(), [first.file])
+    assert.equal((await readStatus(dir)).lastFailure?.category, 'weak_installation_key')
+  })
+
   it('two copies never overlap: the second is refused with backup_running while the first writes', async () => {
     w.advance(60_000)
     let release!: () => void
@@ -291,13 +481,14 @@ describe('backups on PostgreSQL', { skip: skipPg }, () => {
       started = r
     })
     const slow: FileOps = {
+      ...backup.diskFiles,
       async open(path) {
         const real = await backup.diskFiles.open(path)
         return {
-          async write(b) {
+          async write(b, offset, length) {
             started()
             await held
-            await real.write(b)
+            return real.write(b, offset, length)
           },
           sync: () => real.sync(),
           close: () => real.close(),

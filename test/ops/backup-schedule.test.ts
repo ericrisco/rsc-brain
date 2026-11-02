@@ -27,7 +27,6 @@ async function fakeCopy(dir: string, at: Date, reason: BackupReason): Promise<st
       installation: { id: 1, name: 'T' },
       reason,
       tables: [],
-      sequences: [],
       lastWriteAt: null,
     },
     rows(),
@@ -155,6 +154,53 @@ describe('CA8: 15 days of the daily copy', () => {
     assert.equal(await s.check(), false)
     assert.equal(runs, 1)
     assert.equal(s.next().toISOString(), '2026-11-05T03:00:00.000Z')
+  })
+
+  it('review of PR #29: started with no scheduled copy in the last 24 hours, it makes one at once, then keeps its time', async () => {
+    let now = new Date('2026-11-05T12:00:00Z')
+    let runs = 0
+    const run = async () => {
+      runs += 1
+    }
+    const s = createScheduler({
+      at: '03:00',
+      tz: 'UTC',
+      clock: () => now,
+      run,
+      lastScheduledAt: new Date('2026-11-04T02:00:00Z'),
+    })
+    assert.equal(await s.check(), true, 'a copy at start')
+    assert.equal(await s.check(), false, 'only once')
+    assert.equal(s.next().toISOString(), '2026-11-06T03:00:00.000Z')
+    now = new Date('2026-11-06T03:00:00Z')
+    assert.equal(await s.check(), true)
+    assert.equal(runs, 2)
+  })
+
+  it('review of PR #29: no catch-up when the last scheduled copy is recent, or the daily time is within the hour', async () => {
+    const now = new Date('2026-11-05T12:00:00Z')
+    const run = async () => {}
+    const recent = createScheduler({
+      at: '03:00',
+      tz: 'UTC',
+      clock: () => now,
+      run,
+      lastScheduledAt: new Date('2026-11-05T03:00:00Z'),
+    })
+    assert.equal(await recent.check(), false)
+    assert.equal(recent.next().toISOString(), '2026-11-06T03:00:00.000Z')
+    const soon = createScheduler({
+      at: '12:30',
+      tz: 'UTC',
+      clock: () => now,
+      run,
+      lastScheduledAt: new Date('2026-11-01T12:30:00Z'),
+    })
+    assert.equal(await soon.check(), false)
+    assert.equal(soon.next().toISOString(), '2026-11-05T12:30:00.000Z')
+    // Never a scheduled copy at all: one at start.
+    const never = createScheduler({ at: '03:00', tz: 'UTC', clock: () => now, run, lastScheduledAt: null })
+    assert.equal(await never.check(), true)
   })
 
   it('a run that fails does not stop the next day', async () => {

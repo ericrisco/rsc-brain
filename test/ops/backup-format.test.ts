@@ -20,7 +20,9 @@ import {
   readSections,
   sectionEnd,
   sectionHead,
+  strongKey,
   writeBackup,
+  writeFully,
 } from '../../src/ops/backup/format.ts'
 
 const A = 'key-a-of-the-tests-with-more-than-thirty-two-chars'
@@ -32,8 +34,7 @@ const input = (o: Partial<HeaderInput> = {}): HeaderInput => ({
   createdAt: '2026-11-02T03:00:00.000Z',
   installation: { id: 1, name: 'Acme rsc-brain' },
   reason: 'manual',
-  tables: [{ name: 'entries', rows: 2 }],
-  sequences: [],
+  tables: ['entries'],
   lastWriteAt: '2026-11-02T02:59:00.000Z',
   ...o,
 })
@@ -105,6 +106,47 @@ describe('the .rscb copy format', () => {
     assert.notEqual(keyId(A), createHash('sha256').update(A).digest('hex').slice(0, 12))
   })
 
+  it('review of PR #29: opening gives the header the frames are bound to, so a restore never reads it twice', async () => {
+    const opened = await openBackup(bigFile, A)
+    assert.deepEqual(opened.header, await readHeader(bigFile))
+    assert.equal((await readAll(opened)).toString('utf8'), big)
+  })
+
+  it('review of PR #29: no copy with a short or obviously weak key', async () => {
+    const sink = async () => {}
+    for (const weak of ['short-key', 'a'.repeat(64), '01'.repeat(20), 'abcdefgh'.repeat(5)]) {
+      await assert.rejects(
+        () => writeBackup(sink, input(), chunks('x'), weak),
+        (err: unknown) => isCode('weak_installation_key')(err) && !(err as Error).message.includes(weak),
+      )
+    }
+    assert.ok(strongKey(A) && strongKey(B))
+  })
+
+  it('review of PR #29: every byte is written, however few each write takes; a write that takes none is a full disk', async () => {
+    const got: Buffer[] = []
+    const dribble = async (b: Buffer, offset: number, length: number) => {
+      const n = Math.min(length, 7)
+      got.push(Buffer.from(b.subarray(offset, offset + n)))
+      return { bytesWritten: n }
+    }
+    const data = Buffer.from('0123456789'.repeat(10))
+    await writeFully(dribble, data)
+    assert.deepEqual(Buffer.concat(got), data)
+    // A disk that takes nothing: refused at the first such call, never retried for ever.
+    let calls = 0
+    const stuck = async () => {
+      calls += 1
+      if (calls > 100) throw new Error('still retrying')
+      return { bytesWritten: 0 }
+    }
+    await assert.rejects(
+      () => writeFully(stuck, data),
+      (err: unknown) => (err as { code?: string }).code === 'ENOSPC',
+    )
+    assert.equal(calls, 1)
+  })
+
   it('round trip: what was written is what is read, across several frames', async () => {
     assert.ok(layout(await readFile(bigFile)).frames.length > 2, 'the test data spans more than two frames')
     const back = await readAll(await openBackup(bigFile, A))
@@ -119,7 +161,21 @@ describe('the .rscb copy format', () => {
     assert.equal(h.product, 'rsc-brain')
     assert.equal(h.reason, 'manual')
     assert.equal(h.keyId, keyId(A))
-    assert.deepEqual(h.tables, [{ name: 'entries', rows: 2 }])
+    assert.deepEqual(h.tables, ['entries'])
+    // Review of PR #29: nothing in the readable header says how much there is (no counts, no sequences).
+    assert.deepEqual(Object.keys(h).sort(), [
+      'createdAt',
+      'format',
+      'installation',
+      'kdf',
+      'keyId',
+      'lastWriteAt',
+      'migrations',
+      'product',
+      'reason',
+      'release',
+      'tables',
+    ])
     assert.deepEqual(h.installation, { id: 1, name: 'Acme rsc-brain' })
     assert.equal(h.createdAt, '2026-11-02T03:00:00.000Z')
     assert.equal(h.kdf.name, 'scrypt')
@@ -275,9 +331,12 @@ describe('the .rscb copy format', () => {
     await corrupt('bitflip.rscb', f)
   })
 
-  it('the header is bound to the frames: a changed row count (same length) → corrupt_copy', async () => {
-    const { file } = await write('bound.rscb', 'row\n', A, { tables: [{ name: 'entries', rows: 2 }] })
-    const changed = Buffer.from(file.toString('latin1').replace('"rows":2', '"rows":7'), 'latin1')
+  it('the header is bound to the frames: a changed date (same length) → corrupt_copy', async () => {
+    const { file } = await write('bound.rscb', 'row\n', A)
+    const changed = Buffer.from(
+      file.toString('latin1').replace('"createdAt":"2026-11-02T03', '"createdAt":"2026-11-02T04'),
+      'latin1',
+    )
     assert.notDeepEqual(changed, file)
     await corrupt('bound-changed.rscb', changed)
   })

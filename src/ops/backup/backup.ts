@@ -3,6 +3,7 @@
 // only once it is whole and on disk, so a copy that failed halfway (a full disk) never shows in the list. Two
 // copies never run at once. Whether the last one went well lives next to the copies (status.json), not in the
 // database, so a restore does not erase it.
+import { randomBytes } from 'node:crypto'
 import { mkdir, open, readdir, readFile, rename, rm, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { noVault } from '../../auth/vault.ts'
@@ -21,7 +22,10 @@ import {
   readHeader,
   sectionEnd,
   sectionHead,
+  strongKey,
+  weakKey,
   writeBackup,
+  writeFully,
 } from './format.ts'
 import { BACKUP_TABLES } from './tables.ts'
 
@@ -40,12 +44,15 @@ export type BackupInfo = {
   keyId: string
   createdAt: string
   reason: BackupReason
+  // Set when the copy is whole and kept but something after it was not done (its status, the folder on disk).
+  warning?: string
 }
 
 export const FAILURE_CATEGORIES = [
   'disk_full',
   'no_permission',
   'no_installation_secret',
+  'weak_installation_key',
   'database',
   'busy',
   'failed',
@@ -60,17 +67,41 @@ export type Status = {
   keyId: string | null
 }
 
-// Where the bytes go: a file on disk. Tests put a full disk or a slow one in its place.
-export type Sink = { write(b: Buffer): Promise<unknown>; sync(): Promise<void>; close(): Promise<void> }
-export type FileOps = { open(path: string): Promise<Sink> }
+// Where the bytes go: files on disk. Tests put a full disk, short writes, a slow disk or a failing rename in its
+// place. `write` is the raw call: it may take only part of the buffer (writeFully loops).
+export type Sink = {
+  write(b: Buffer, offset: number, length: number): Promise<{ bytesWritten: number }>
+  sync(): Promise<void>
+  close(): Promise<void>
+}
+export type FileOps = {
+  // The `.part` of a copy, and the temporary file of status.json: always new files (never over another file,
+  // never through a link planted at that name), readable by the owner only.
+  open(path: string): Promise<Sink>
+  status(path: string): Promise<Sink>
+  size(path: string): Promise<number>
+  rename(from: string, to: string): Promise<void>
+  syncDir(dir: string): Promise<void>
+}
+async function newFile(path: string): Promise<Sink> {
+  const fh = await open(path, 'wx', 0o600)
+  return {
+    write: (b, offset, length) => fh.write(b, offset, length),
+    sync: () => fh.sync(),
+    close: () => fh.close(),
+  }
+}
 const diskFiles: FileOps = {
-  async open(path) {
-    // Never over another file; readable by the owner only (it is safe without the key, but there is no need).
-    const fh = await open(path, 'wx', 0o600)
-    return {
-      write: (b) => fh.write(b),
-      sync: () => fh.sync(),
-      close: () => fh.close(),
+  open: newFile,
+  status: newFile,
+  size: async (path) => (await stat(path)).size,
+  rename: (from, to) => rename(from, to),
+  async syncDir(dir) {
+    const d = await open(dir, 'r')
+    try {
+      await d.sync()
+    } finally {
+      await d.close()
     }
   },
 }
@@ -103,24 +134,38 @@ export async function readStatus(dir: string): Promise<Status> {
   }
 }
 
-// Written whole or not at all (a temporary file renamed over it), owner only.
-async function writeStatus(dir: string, patch: Partial<Status>): Promise<void> {
+// Written whole or not at all: a new temporary file of this writer only (pid and random, never over an existing
+// file or link), renamed over status.json; owner only. A failure keeps the last good copy right: if a copy was
+// kept but its status could not be saved, the next status written takes it from the folder.
+async function writeStatus(dir: string, patch: Partial<Status>, files: FileOps = diskFiles): Promise<void> {
   const next = { ...(await readStatus(dir)), ...patch }
-  const tmp = join(dir, `${STATUS}.tmp`)
-  const fh = await open(tmp, 'w', 0o600)
-  try {
-    await fh.write(`${JSON.stringify(next, null, 2)}\n`)
-    await fh.sync()
-  } finally {
-    await fh.close()
+  if (patch.lastOk === undefined) {
+    const newest = (await list(dir))[0]
+    if (newest && (!next.lastOk || newest.createdAt > next.lastOk.at))
+      next.lastOk = { at: newest.createdAt, file: newest.file }
   }
-  await rename(tmp, join(dir, STATUS))
+  const tmp = join(dir, `${STATUS}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`)
+  try {
+    const sink = await files.status(tmp)
+    try {
+      await writeFully((b, o, l) => sink.write(b, o, l), Buffer.from(`${JSON.stringify(next, null, 2)}\n`))
+      await sink.sync()
+    } finally {
+      await sink.close()
+    }
+    await rename(tmp, join(dir, STATUS))
+  } catch (err) {
+    await rm(tmp, { force: true }).catch(() => {})
+    throw err
+  }
 }
 
 function category(err: unknown): FailureCategory {
   if (err instanceof AppError && err.code === 'no_installation_secret') return 'no_installation_secret'
+  if (err instanceof AppError && err.code === 'weak_installation_key') return 'weak_installation_key'
   const code = (err as { code?: unknown } | null)?.code
-  if (code === 'ENOSPC' || code === 'EDQUOT') return 'disk_full'
+  // ESHORT: the file on disk is shorter than what was written to it (bytes lost on a full disk).
+  if (code === 'ENOSPC' || code === 'EDQUOT' || code === 'ESHORT') return 'disk_full'
   if (code === 'EACCES' || code === 'EPERM' || code === 'EROFS') return 'no_permission'
   if (err instanceof AppError && err.code === 'writes_in_progress') return 'busy'
   // A PostgreSQL error carries a five-character SQLSTATE.
@@ -200,7 +245,26 @@ async function knownMigrations(): Promise<string[]> {
   ].sort()
 }
 
-async function* tableRows(tx: Db, counts: Map<string, number>): AsyncGenerator<Buffer> {
+export type SequenceState = { name: string; lastValue: string; isCalled: boolean }
+
+// The text of a copy: first the row count of every table and where every sequence stands (inside the encryption:
+// the readable header says nothing of how much there is), then every table in load order. A sequence is written
+// as setval takes it back: its last value and whether it was ever called (one never called hands out that value
+// first).
+async function* tableRows(
+  tx: Db,
+  counts: Map<string, number>,
+  sequences: SequenceState[],
+): AsyncGenerator<Buffer> {
+  yield Buffer.from(
+    sectionHead('_tables', ['name', 'rows']) +
+      BACKUP_TABLES.map((t) => encodeRow([t.name, String(counts.get(t.name) ?? 0)])).join('') +
+      sectionEnd +
+      sectionHead('_sequences', ['name', 'last_value', 'is_called']) +
+      sequences.map((q) => encodeRow([q.name, q.lastValue, q.isCalled ? 't' : 'f'])).join('') +
+      sectionEnd,
+    'utf8',
+  )
   for (const t of BACKUP_TABLES) {
     yield Buffer.from(sectionHead(t.name, t.columns), 'utf8')
     const cols = t.columns.map((c, i) => `"${c}"::text AS c${i}`).join(', ')
@@ -237,17 +301,23 @@ async function create(
   },
 ): Promise<BackupInfo> {
   const at = o.clock()
+  const files = o.files ?? diskFiles
   const fail = async (err: unknown): Promise<never> => {
     const cat = category(err)
-    await writeStatus(o.dir, {
-      lastFailure: { at: at.toISOString(), category: cat },
-      ...(o.secret ? { keyId: keyId(o.secret) } : {}),
-    }).catch(() => {})
+    await writeStatus(
+      o.dir,
+      {
+        lastFailure: { at: at.toISOString(), category: cat },
+        ...(o.secret && cat !== 'weak_installation_key' ? { keyId: keyId(o.secret) } : {}),
+      },
+      files,
+    ).catch(() => {})
     throw failure(cat, err)
   }
   if (!BACKUP_REASONS.includes(o.reason)) throw new Error(`Unknown reason for a copy: ${o.reason}`)
   await mkdir(o.dir, { recursive: true, mode: 0o700 })
   if (!o.secret) return fail(noVault())
+  if (!strongKey(o.secret)) return fail(weakKey())
   const secret = o.secret
   try {
     if (o.reason === 'pre-update') await settle(db, o.clock, o.settleMs ?? PRE_UPDATE_SETTLE_MS)
@@ -259,8 +329,10 @@ async function create(
   const path = join(o.dir, file)
   const part = `${path}.part`
   let sink: Sink | null = null
+  let written: { bytes: number; keyId: string; createdAt: string }
+  // 1. The whole copy into `.part`, on disk, and checked to be all there: the snapshot and the lock end here.
   try {
-    return await db.tx(async (tx) => {
+    written = await db.tx(async (tx) => {
       await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
       const locked = await tx.one<{ ok: boolean }>('SELECT pg_try_advisory_xact_lock($1) AS ok', [LOCK])
       if (!locked?.ok) throw backupRunning()
@@ -307,51 +379,44 @@ async function create(
         ),
       )
       const counts = new Map(countRows.map((r) => [r.t, r.n]))
-      const seqs = await tx.query<{ name: string; value: string }>(
-        `SELECT sequencename AS name, coalesce(last_value, 0)::text AS value FROM pg_sequences
-          WHERE schemaname = 'public' ORDER BY sequencename`,
-      )
+      const sequences: SequenceState[] = []
+      for (const { name } of await tx.query<{ name: string }>(
+        "SELECT sequencename AS name FROM pg_sequences WHERE schemaname = 'public' ORDER BY sequencename",
+      )) {
+        const q = await tx.one<{ v: string; c: boolean }>(
+          `SELECT last_value::text AS v, is_called AS c FROM "${name}"`,
+        )
+        sequences.push({ name, lastValue: q?.v ?? '1', isCalled: q?.c === true })
+      }
       const last = await tx.one<{ at: Date | null }>(
         `SELECT greatest((SELECT max(at) FROM events), (SELECT max(at) FROM audit), (SELECT max(at) FROM wiki_log),
                          (SELECT max(updated_at) FROM entries), (SELECT max(updated_at) FROM pages)) AS at`,
       )
-      sink = await (o.files ?? diskFiles).open(part)
+      sink = await files.open(part)
       const out = sink
       const { bytes, header } = await writeBackup(
-        (b) => out.write(b),
+        (b) => writeFully((x, off, len) => out.write(x, off, len), b),
         {
           release: VERSION,
           migrations: applied,
           createdAt: at.toISOString(),
           installation: { id: inst?.id ?? 1, name: inst?.name ?? '' },
           reason: o.reason,
-          tables: BACKUP_TABLES.map((t) => ({ name: t.name, rows: counts.get(t.name) ?? 0 })),
-          sequences: seqs,
+          tables: BACKUP_TABLES.map((t) => t.name),
           lastWriteAt: last?.at ? last.at.toISOString() : null,
         },
-        tableRows(tx, counts),
+        tableRows(tx, counts, sequences),
         secret,
       )
       await out.sync()
       await out.close()
       sink = null
-      await rename(part, path)
-      // The rename itself on disk.
-      const d = await open(o.dir, 'r')
-      await d.sync().finally(() => d.close())
-      await writeStatus(o.dir, {
-        lastOk: { at: at.toISOString(), file },
-        lastFailure: null,
-        keyId: header.keyId,
-      })
-      return {
-        id: file.slice(0, -5),
-        file,
-        bytes,
-        keyId: header.keyId,
-        createdAt: header.createdAt,
-        reason: o.reason,
-      }
+      // What the disk holds is what was written, byte for byte, or it is no copy (review of PR #29).
+      if ((await files.size(part)) !== bytes)
+        throw Object.assign(new Error('The copy on disk is shorter than what was written.'), {
+          code: 'ESHORT',
+        })
+      return { bytes, keyId: header.keyId, createdAt: header.createdAt }
     })
   } catch (err) {
     if (sink) await (sink as Sink).close().catch(() => {})
@@ -359,6 +424,43 @@ async function create(
     if (err instanceof AppError && ['backup_running', 'backup_exists'].includes(err.code)) throw err
     return fail(err)
   }
+  // 2. Into place. A rename that fails leaves no copy; from here on the copy is whole and kept, whatever else fails.
+  try {
+    await files.rename(part, path)
+  } catch (err) {
+    await rm(part, { force: true }).catch(() => {})
+    return fail(err)
+  }
+  const info: BackupInfo = {
+    id: file.slice(0, -5),
+    file,
+    bytes: written.bytes,
+    keyId: written.keyId,
+    createdAt: written.createdAt,
+    reason: o.reason,
+  }
+  const notes: string[] = []
+  try {
+    await files.syncDir(o.dir)
+  } catch (err) {
+    notes.push(
+      `the folder could not be flushed to disk (${String((err as { code?: unknown }).code ?? 'error')})`,
+    )
+  }
+  try {
+    await writeStatus(
+      o.dir,
+      { lastOk: { at: info.createdAt, file }, lastFailure: null, keyId: info.keyId },
+      files,
+    )
+  } catch (err) {
+    notes.push(
+      `the status of the copies was not saved (${String((err as { code?: unknown }).code ?? 'error')}), so the web may not show it as the last copy`,
+    )
+  }
+  if (notes.length > 0)
+    info.warning = `The copy is kept, but ${notes.join(', and ')}. Check the disk of the copies.`
+  return info
 }
 
 // The copies in the folder, newest first, read from their headers only. A `.part`, a file of another name and a

@@ -58,13 +58,23 @@ export type Scheduler = { next(): Date; check(): Promise<boolean> }
 
 // `check` is called often (every minute in `serve`); it runs the copy when its moment has come, and says so.
 // The next moment is fixed before the copy runs, so a copy that fails does not run again until the next day.
+// With `lastScheduledAt` (the newest scheduled copy in the folder, null for none): a process that starts more than
+// a day after it makes one copy at once, then keeps the daily time; not when that time is within the hour anyway.
+const DAY_MS = 24 * 3600_000
+const HOUR_MS = 3600_000
 export function createScheduler(o: {
   at: string
   tz: string
   clock: Clock
   run: () => Promise<void>
+  lastScheduledAt?: Date | null
 }): Scheduler {
-  let next = nextRun(o.at, o.tz, o.clock())
+  const start = o.clock()
+  let next = nextRun(o.at, o.tz, start)
+  if (o.lastScheduledAt !== undefined) {
+    const stale = o.lastScheduledAt === null || start.getTime() - o.lastScheduledAt.getTime() > DAY_MS
+    if (stale && next.getTime() - start.getTime() > HOUR_MS) next = start
+  }
   return {
     next: () => next,
     async check() {
