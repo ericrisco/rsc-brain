@@ -11,7 +11,7 @@ import type { Clock } from '../../core/clock.ts'
 import { AppError } from '../../core/errors.ts'
 import { failureFields, type Log } from '../../core/log.ts'
 import { VERSION } from '../../core/version.ts'
-import type { Db } from '../../db/db.ts'
+import type { Db, Pool } from '../../db/db.ts'
 import { MIGRATIONS_DIR, migrationFiles, STEPS } from '../../db/migrate.ts'
 import { maintenance } from '../../domain/maintenance.ts'
 import {
@@ -46,6 +46,9 @@ export type BackupInfo = {
   reason: BackupReason
   // Set when the copy is whole and kept but something after it was not done (its status, the folder on disk).
   warning?: string
+  warningCode?: Warning['code']
+  // With a warning: whether this copy's status.json was written (so the warning is already recorded).
+  statusSaved?: boolean
 }
 
 export const FAILURE_CATEGORIES = [
@@ -59,9 +62,15 @@ export const FAILURE_CATEGORIES = [
 ] as const
 export type FailureCategory = (typeof FAILURE_CATEGORIES)[number]
 
+export const WARNING_CODES = ['fsync_failed', 'status_not_saved', 'disk_full', 'no_permission'] as const
+export type Warning = { at: string; code: (typeof WARNING_CODES)[number] }
+
 export type Status = {
   lastOk: { at: string; file: string } | null
   lastFailure: { at: string; category: FailureCategory } | null
+  // A copy kept whole whose folder could not be flushed, or whose status could not be saved then (recorded by
+  // the next status written); the web shows it with its date.
+  lastWarning?: Warning | null
   // Written by an update (plan §3.9); a copy keeps it as it is.
   lastUpdate?: unknown
   keyId: string | null
@@ -107,7 +116,13 @@ const diskFiles: FileOps = {
 }
 
 const NAME = /^rsc-brain-(\d{8}T\d{6}Z)-(scheduled|manual|pre-update|pre-restore)\.rscb$/
-const PART = /^rsc-brain-\d{8}T\d{6}Z-[a-z-]+\.rscb\.part$/
+// A copy being written: its name, then the pid and a random part of the process writing it (an older release wrote
+// `.rscb.part` alone). Only one older than PART_STALE_MS is swept: no copy takes an hour to write here, so a younger
+// one may still be some process's work.
+const PART = /^rsc-brain-\d{8}T\d{6}Z-[a-z-]+\.rscb(\.\d+\.[0-9a-f]{16})?\.part$/
+const PART_STALE_MS = 3600_000
+// A copy dated more than this ahead of the clock is not taken as the last one (a wrong clock, or a planted file).
+const FUTURE_MS = 5 * 60_000
 
 // rsc-brain-<UTC yyyymmddThhmmssZ>-<reason>.rscb (plan §0).
 export function backupName(at: Date, reason: BackupReason): string {
@@ -126,6 +141,7 @@ export async function readStatus(dir: string): Promise<Status> {
     return {
       lastOk: s.lastOk ?? null,
       lastFailure: s.lastFailure ?? null,
+      ...(s.lastWarning ? { lastWarning: s.lastWarning } : {}),
       ...(s.lastUpdate === undefined ? {} : { lastUpdate: s.lastUpdate }),
       keyId: s.keyId ?? null,
     }
@@ -137,10 +153,15 @@ export async function readStatus(dir: string): Promise<Status> {
 // Written whole or not at all: a new temporary file of this writer only (pid and random, never over an existing
 // file or link), renamed over status.json; owner only. A failure keeps the last good copy right: if a copy was
 // kept but its status could not be saved, the next status written takes it from the folder.
-async function writeStatus(dir: string, patch: Partial<Status>, files: FileOps = diskFiles): Promise<void> {
+async function writeStatus(
+  dir: string,
+  patch: Partial<Status>,
+  now: Date,
+  files: FileOps = diskFiles,
+): Promise<void> {
   const next = { ...(await readStatus(dir)), ...patch }
   if (patch.lastOk === undefined) {
-    const newest = (await list(dir))[0]
+    const newest = (await list(dir)).find((b) => Date.parse(b.createdAt) <= now.getTime() + FUTURE_MS)
     if (newest && (!next.lastOk || newest.createdAt > next.lastOk.at))
       next.lastOk = { at: newest.createdAt, file: newest.file }
   }
@@ -290,7 +311,7 @@ async function* tableRows(
 }
 
 async function create(
-  db: Db,
+  db: Pool,
   o: {
     dir: string
     secret: string | undefined
@@ -298,6 +319,8 @@ async function create(
     clock: Clock
     settleMs?: number
     files?: FileOps
+    // A warning of an earlier copy whose status could not be saved: written with this copy's status.
+    carryWarning?: Warning
   },
 ): Promise<BackupInfo> {
   const at = o.clock()
@@ -309,7 +332,9 @@ async function create(
       {
         lastFailure: { at: at.toISOString(), category: cat },
         ...(o.secret && cat !== 'weak_installation_key' ? { keyId: keyId(o.secret) } : {}),
+        ...(o.carryWarning ? { lastWarning: o.carryWarning } : {}),
       },
+      at,
       files,
     ).catch(() => {})
     throw failure(cat, err)
@@ -319,148 +344,183 @@ async function create(
   if (!o.secret) return fail(noVault())
   if (!strongKey(o.secret)) return fail(weakKey())
   const secret = o.secret
-  try {
-    if (o.reason === 'pre-update') await settle(db, o.clock, o.settleMs ?? PRE_UPDATE_SETTLE_MS)
-  } catch (err) {
-    if (err instanceof AppError && err.code === 'not_in_maintenance') throw err
-    return fail(err)
-  }
-  const file = backupName(at, o.reason)
-  const path = join(o.dir, file)
-  const part = `${path}.part`
-  let sink: Sink | null = null
-  let written: { bytes: number; keyId: string; createdAt: string }
-  // 1. The whole copy into `.part`, on disk, and checked to be all there: the snapshot and the lock end here.
-  try {
-    written = await db.tx(async (tx) => {
-      await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
-      const locked = await tx.one<{ ok: boolean }>('SELECT pg_try_advisory_xact_lock($1) AS ok', [LOCK])
-      if (!locked?.ok) throw backupRunning()
-      // Same text whatever the server's settings: UTC times, hex bytes, exact floats.
-      for (const s of [
-        "SET LOCAL TimeZone = 'UTC'",
-        "SET LOCAL DateStyle = 'ISO, YMD'",
-        "SET LOCAL IntervalStyle = 'postgres'",
-        "SET LOCAL bytea_output = 'hex'",
-        'SET LOCAL extra_float_digits = 1',
-      ])
-        await tx.query(s)
-      const applied = (await tx.query<{ id: string }>('SELECT id FROM schema_migrations ORDER BY id')).map(
-        (r) => r.id,
-      )
-      if (applied.join(',') !== (await knownMigrations()).join(',')) {
-        throw new AppError(
-          409,
-          'schema_mismatch',
-          `The database is not at the schema of this release (${VERSION}).`,
-          'Run rsc-brain migrate with this release, or make the copy with the release that migrated the database.',
-        )
+  // One copy at a time, from the sweep to its status: a session-level lock on a connection of its own, held across
+  // the snapshot transaction, the size check, the rename and the status. It ends with that connection if the
+  // process dies.
+  return db.session(async (session) => {
+    const locked = await session.one<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [LOCK])
+    if (!locked?.ok) throw backupRunning()
+    try {
+      const db = session
+      try {
+        if (o.reason === 'pre-update') await settle(db, o.clock, o.settleMs ?? PRE_UPDATE_SETTLE_MS)
+      } catch (err) {
+        if (err instanceof AppError && err.code === 'not_in_maintenance') throw err
+        return fail(err)
       }
-      // Under the lock no other copy is writing: what a copy that died left behind goes.
-      for (const f of await readdir(o.dir)) if (PART.test(f)) await unlink(join(o.dir, f)).catch(() => {})
-      if (
-        await stat(path).then(
-          () => true,
-          () => false,
-        )
-      )
-        throw new AppError(
-          409,
-          'backup_exists',
-          'A copy with this name exists already.',
-          'Try again in a second.',
-        )
-      const inst = await tx.one<{ id: number; name: string }>(
-        'SELECT id, name FROM installation WHERE id = 1',
-      )
-      const countRows = await tx.query<{ t: string; n: number }>(
-        BACKUP_TABLES.map((t) => `SELECT '${t.name}' AS t, count(*)::int AS n FROM "${t.name}"`).join(
-          ' UNION ALL ',
-        ),
-      )
-      const counts = new Map(countRows.map((r) => [r.t, r.n]))
-      const sequences: SequenceState[] = []
-      for (const { name } of await tx.query<{ name: string }>(
-        "SELECT sequencename AS name FROM pg_sequences WHERE schemaname = 'public' ORDER BY sequencename",
-      )) {
-        const q = await tx.one<{ v: string; c: boolean }>(
-          `SELECT last_value::text AS v, is_called AS c FROM "${name}"`,
-        )
-        sequences.push({ name, lastValue: q?.v ?? '1', isCalled: q?.c === true })
-      }
-      const last = await tx.one<{ at: Date | null }>(
-        `SELECT greatest((SELECT max(at) FROM events), (SELECT max(at) FROM audit), (SELECT max(at) FROM wiki_log),
+      const file = backupName(at, o.reason)
+      const path = join(o.dir, file)
+      const part = `${path}.${process.pid}.${randomBytes(8).toString('hex')}.part`
+      let sink: Sink | null = null
+      let written: { bytes: number; keyId: string; createdAt: string }
+      // 1. The whole copy into `.part`, on disk, and checked to be all there: the snapshot and the lock end here.
+      try {
+        written = await db.tx(async (tx) => {
+          await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+          // Same text whatever the server's settings: UTC times, hex bytes, exact floats.
+          for (const s of [
+            "SET LOCAL TimeZone = 'UTC'",
+            "SET LOCAL DateStyle = 'ISO, YMD'",
+            "SET LOCAL IntervalStyle = 'postgres'",
+            "SET LOCAL bytea_output = 'hex'",
+            'SET LOCAL extra_float_digits = 1',
+          ])
+            await tx.query(s)
+          const applied = (
+            await tx.query<{ id: string }>('SELECT id FROM schema_migrations ORDER BY id')
+          ).map((r) => r.id)
+          if (applied.join(',') !== (await knownMigrations()).join(',')) {
+            throw new AppError(
+              409,
+              'schema_mismatch',
+              `The database is not at the schema of this release (${VERSION}).`,
+              'Run rsc-brain migrate with this release, or make the copy with the release that migrated the database.',
+            )
+          }
+          // Under the lock no other copy of this database is writing: what a copy that died (over an hour ago) left
+          // behind goes.
+          for (const f of await readdir(o.dir)) {
+            if (!PART.test(f)) continue
+            const old = await stat(join(o.dir, f)).then(
+              (st) => Date.now() - st.mtimeMs > PART_STALE_MS,
+              () => false,
+            )
+            if (old) await unlink(join(o.dir, f)).catch(() => {})
+          }
+          if (
+            await stat(path).then(
+              () => true,
+              () => false,
+            )
+          )
+            throw new AppError(
+              409,
+              'backup_exists',
+              'A copy with this name exists already.',
+              'Try again in a second.',
+            )
+          const inst = await tx.one<{ id: number; name: string }>(
+            'SELECT id, name FROM installation WHERE id = 1',
+          )
+          const countRows = await tx.query<{ t: string; n: number }>(
+            BACKUP_TABLES.map((t) => `SELECT '${t.name}' AS t, count(*)::int AS n FROM "${t.name}"`).join(
+              ' UNION ALL ',
+            ),
+          )
+          const counts = new Map(countRows.map((r) => [r.t, r.n]))
+          const sequences: SequenceState[] = []
+          for (const { name } of await tx.query<{ name: string }>(
+            "SELECT sequencename AS name FROM pg_sequences WHERE schemaname = 'public' ORDER BY sequencename",
+          )) {
+            const q = await tx.one<{ v: string; c: boolean }>(
+              `SELECT last_value::text AS v, is_called AS c FROM "${name}"`,
+            )
+            sequences.push({ name, lastValue: q?.v ?? '1', isCalled: q?.c === true })
+          }
+          const last = await tx.one<{ at: Date | null }>(
+            `SELECT greatest((SELECT max(at) FROM events), (SELECT max(at) FROM audit), (SELECT max(at) FROM wiki_log),
                          (SELECT max(updated_at) FROM entries), (SELECT max(updated_at) FROM pages)) AS at`,
-      )
-      sink = await files.open(part)
-      const out = sink
-      const { bytes, header } = await writeBackup(
-        (b) => writeFully((x, off, len) => out.write(x, off, len), b),
-        {
-          release: VERSION,
-          migrations: applied,
-          createdAt: at.toISOString(),
-          installation: { id: inst?.id ?? 1, name: inst?.name ?? '' },
-          reason: o.reason,
-          tables: BACKUP_TABLES.map((t) => t.name),
-          lastWriteAt: last?.at ? last.at.toISOString() : null,
-        },
-        tableRows(tx, counts, sequences),
-        secret,
-      )
-      await out.sync()
-      await out.close()
-      sink = null
-      // What the disk holds is what was written, byte for byte, or it is no copy (review of PR #29).
-      if ((await files.size(part)) !== bytes)
-        throw Object.assign(new Error('The copy on disk is shorter than what was written.'), {
-          code: 'ESHORT',
+          )
+          sink = await files.open(part)
+          const out = sink
+          const { bytes, header } = await writeBackup(
+            (b) => writeFully((x, off, len) => out.write(x, off, len), b),
+            {
+              release: VERSION,
+              migrations: applied,
+              createdAt: at.toISOString(),
+              installation: { id: inst?.id ?? 1, name: inst?.name ?? '' },
+              reason: o.reason,
+              tables: BACKUP_TABLES.map((t) => t.name),
+              lastWriteAt: last?.at ? last.at.toISOString() : null,
+            },
+            tableRows(tx, counts, sequences),
+            secret,
+          )
+          await out.sync()
+          await out.close()
+          sink = null
+          // What the disk holds is what was written, byte for byte, or it is no copy (review of PR #29).
+          if ((await files.size(part)) !== bytes)
+            throw Object.assign(new Error('The copy on disk is shorter than what was written.'), {
+              code: 'ESHORT',
+            })
+          return { bytes, keyId: header.keyId, createdAt: header.createdAt }
         })
-      return { bytes, keyId: header.keyId, createdAt: header.createdAt }
-    })
-  } catch (err) {
-    if (sink) await (sink as Sink).close().catch(() => {})
-    await rm(part, { force: true }).catch(() => {})
-    if (err instanceof AppError && ['backup_running', 'backup_exists'].includes(err.code)) throw err
-    return fail(err)
-  }
-  // 2. Into place. A rename that fails leaves no copy; from here on the copy is whole and kept, whatever else fails.
-  try {
-    await files.rename(part, path)
-  } catch (err) {
-    await rm(part, { force: true }).catch(() => {})
-    return fail(err)
-  }
-  const info: BackupInfo = {
-    id: file.slice(0, -5),
-    file,
-    bytes: written.bytes,
-    keyId: written.keyId,
-    createdAt: written.createdAt,
-    reason: o.reason,
-  }
-  const notes: string[] = []
-  try {
-    await files.syncDir(o.dir)
-  } catch (err) {
-    notes.push(
-      `the folder could not be flushed to disk (${String((err as { code?: unknown }).code ?? 'error')})`,
-    )
-  }
-  try {
-    await writeStatus(
-      o.dir,
-      { lastOk: { at: info.createdAt, file }, lastFailure: null, keyId: info.keyId },
-      files,
-    )
-  } catch (err) {
-    notes.push(
-      `the status of the copies was not saved (${String((err as { code?: unknown }).code ?? 'error')}), so the web may not show it as the last copy`,
-    )
-  }
-  if (notes.length > 0)
-    info.warning = `The copy is kept, but ${notes.join(', and ')}. Check the disk of the copies.`
-  return info
+      } catch (err) {
+        if (sink) await (sink as Sink).close().catch(() => {})
+        await rm(part, { force: true }).catch(() => {})
+        if (err instanceof AppError && err.code === 'backup_exists') throw err
+        return fail(err)
+      }
+      // 2. Into place. A rename that fails leaves no copy; from here on the copy is whole and kept, whatever else fails.
+      try {
+        await files.rename(part, path)
+      } catch (err) {
+        await rm(part, { force: true }).catch(() => {})
+        return fail(err)
+      }
+      const info: BackupInfo = {
+        id: file.slice(0, -5),
+        file,
+        bytes: written.bytes,
+        keyId: written.keyId,
+        createdAt: written.createdAt,
+        reason: o.reason,
+      }
+      const notes: string[] = []
+      let warning: Warning | null = null
+      try {
+        await files.syncDir(o.dir)
+      } catch (err) {
+        warning = { at: info.createdAt, code: 'fsync_failed' }
+        notes.push(
+          `the folder could not be flushed to disk (${String((err as { code?: unknown }).code ?? 'error')})`,
+        )
+      }
+      const recorded = warning ?? o.carryWarning
+      try {
+        await writeStatus(
+          o.dir,
+          {
+            lastOk: { at: info.createdAt, file },
+            lastFailure: null,
+            keyId: info.keyId,
+            ...(recorded ? { lastWarning: recorded } : {}),
+          },
+          at,
+          files,
+        )
+      } catch (err) {
+        const cat = category(err)
+        warning = {
+          at: info.createdAt,
+          code: cat === 'disk_full' || cat === 'no_permission' ? cat : 'status_not_saved',
+        }
+        notes.push(
+          `the status of the copies was not saved (${String((err as { code?: unknown }).code ?? 'error')}), so the web may not show it as the last copy`,
+        )
+      }
+      if (warning) {
+        info.warning = `The copy is kept, but ${notes.join(', and ')}. Check the disk of the copies.`
+        info.warningCode = warning.code
+        info.statusSaved = notes.length === 1 && warning.code === 'fsync_failed'
+      }
+      return info
+    } finally {
+      await session.query('SELECT pg_advisory_unlock($1)', [LOCK]).catch(() => {})
+    }
+  })
 }
 
 // The copies in the folder, newest first, read from their headers only. A `.part`, a file of another name and a
@@ -506,22 +566,49 @@ async function prune(dir: string, keep: number): Promise<string[]> {
   return removed
 }
 
-export const backup = { create, list, prune, diskFiles }
+// When the newest daily copy in the folder was made (null for none), never one dated ahead of the clock.
+async function lastScheduledAt(dir: string, now: Date): Promise<Date | null> {
+  const b = (await list(dir)).find(
+    (x) => x.reason === 'scheduled' && Date.parse(x.createdAt) <= now.getTime() + FUTURE_MS,
+  )
+  return b ? new Date(b.createdAt) : null
+}
+
+export const backup = { create, list, prune, diskFiles, lastScheduledAt }
 
 // The daily copy of `serve`: a scheduled copy, then the scheduled ones beyond `keep` removed. It never throws: a
-// failure is in status.json (the web shows it) and in the log, with its code only.
+// failure is in status.json (the web shows it) and in the log, with its code only. A copy kept with a warning is
+// said in the log; when its status could not be saved, the warning is kept here and written with the next status.
+// It answers 'busy' when another copy is running, so the scheduler can try again.
+export type BackupJob = (() => Promise<'busy' | undefined>) & { files?: FileOps | undefined }
 export function backupJob(
-  db: Db,
-  o: { dir: string; secret: string | undefined; keep: number; clock: Clock; log: Log },
-): () => Promise<void> {
-  return async () => {
+  db: Pool,
+  o: { dir: string; secret: string | undefined; keep: number; clock: Clock; log: Log; files?: FileOps },
+): BackupJob {
+  let pending: Warning | null = null
+  const job: BackupJob = async () => {
     const t0 = Date.now()
     try {
-      await create(db, { dir: o.dir, secret: o.secret, reason: 'scheduled', clock: o.clock })
+      const info = await create(db, {
+        dir: o.dir,
+        secret: o.secret,
+        reason: 'scheduled',
+        clock: o.clock,
+        ...(job.files ? { files: job.files } : {}),
+        ...(pending ? { carryWarning: pending } : {}),
+      })
+      if (info.warningCode) {
+        o.log.warn('backup_kept_with_warning', { code: info.warningCode })
+        pending = info.statusSaved ? null : { at: info.createdAt, code: info.warningCode }
+      } else pending = null
       const removed = await prune(o.dir, o.keep)
       o.log.info('backup_done', { ms: Date.now() - t0, count: removed.length })
     } catch (err) {
       o.log.warn('backup_failed', failureFields(err))
+      if (err instanceof AppError && err.code === 'backup_running') return 'busy'
     }
+    return undefined
   }
+  job.files = o.files
+  return job
 }

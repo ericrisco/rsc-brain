@@ -4,7 +4,7 @@
 // two copies never run at once; and a copy before an update waits for writes that slipped in before
 // maintenance began.
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -12,9 +12,17 @@ import { gunzipSync } from 'node:zlib'
 import pg from 'pg'
 import { seal } from '../../src/auth/vault.ts'
 import { AppError } from '../../src/core/errors.ts'
+import { makeLog } from '../../src/core/log.ts'
 import { maintenance } from '../../src/domain/maintenance.ts'
-import { type BackupInfo, backup, type FileOps, readStatus } from '../../src/ops/backup/backup.ts'
-import { keyId, openBackup, readHeader, readSections } from '../../src/ops/backup/format.ts'
+import {
+  type BackupInfo,
+  backup,
+  backupJob,
+  backupName,
+  type FileOps,
+  readStatus,
+} from '../../src/ops/backup/backup.ts'
+import { keyId, openBackup, readHeader, readSections, writeBackup } from '../../src/ops/backup/format.ts'
 import { BACKUP_TABLES, LOAD_ORDER_EXCEPTIONS, SKIP } from '../../src/ops/backup/tables.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { TEST_SECRET, type World, world } from '../helpers/world.ts'
@@ -463,7 +471,7 @@ describe('backups on PostgreSQL', { skip: skipPg }, () => {
   it('review of PR #29: a weak installation key makes no copy, and says why', async () => {
     w.advance(60_000)
     await assert.rejects(
-      () => backup.create(w.db, { dir, secret: 'x'.repeat(40), reason: 'manual', clock: w.clock }),
+      () => backup.create(w.db, { dir, secret: 'x'.repeat(31), reason: 'manual', clock: w.clock }),
       isCode('weak_installation_key'),
     )
     assert.deepEqual(await files(), [first.file])
@@ -509,7 +517,7 @@ describe('backups on PostgreSQL', { skip: skipPg }, () => {
       const writingNow = await files()
       assert.equal(writingNow.length, 2)
       assert.ok(writingNow.includes(first.file))
-      assert.ok(writingNow.some((f) => f.endsWith('.rscb.part')))
+      assert.ok(writingNow.some((f) => /\.rscb\.\d+\.[0-9a-f]{16}\.part$/.test(f)))
       assert.deepEqual(
         (await backup.list(dir)).map((b) => b.file),
         [first.file],
@@ -532,14 +540,224 @@ describe('backups on PostgreSQL', { skip: skipPg }, () => {
     await rm(join(dir, made.file))
   })
 
-  it('a .part left by a copy that died is cleared by the next copy', async () => {
+  it('a .part left by a copy that died more than an hour ago is cleared by the next copy; a recent one is left', async () => {
     w.advance(60_000)
-    const stale = join(dir, 'rsc-brain-20261029T090000Z-scheduled.rscb.part')
-    await writeFile(stale, 'half a copy')
+    const stale = join(dir, 'rsc-brain-20261029T090000Z-scheduled.rscb.123.00112233445566aa.part')
+    const old = join(dir, 'rsc-brain-20261029T080000Z-scheduled.rscb.part')
+    const recent = join(dir, 'rsc-brain-20261029T095900Z-scheduled.rscb.456.00112233445566bb.part')
+    for (const f of [stale, old, recent]) await writeFile(f, 'half a copy')
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600_000)
+    await utimes(stale, twoHoursAgo, twoHoursAgo)
+    await utimes(old, twoHoursAgo, twoHoursAgo)
     assert.ok((await backup.list(dir)).every((b) => !b.file.endsWith('.part')))
     const c = await backup.create(w.db, { dir, secret: TEST_SECRET, reason: 'manual', clock: w.clock })
-    assert.deepEqual(await files(), [first.file, c.file].sort())
+    assert.deepEqual(await files(), [first.file, c.file, recent.slice(dir.length + 1)].sort())
     await rm(join(dir, c.file))
+    await rm(recent)
+  })
+
+  // A rename held until the test lets it go, to look at the folder while one copy is between its snapshot and
+  // its place.
+  function pausedRename(): { files: FileOps; renaming: Promise<void>; release(): void; parts: string[] } {
+    let release!: () => void
+    const held = new Promise<void>((r) => {
+      release = r
+    })
+    let started!: () => void
+    const renaming = new Promise<void>((r) => {
+      started = r
+    })
+    const parts: string[] = []
+    return {
+      files: {
+        ...backup.diskFiles,
+        async open(path) {
+          parts.push(path)
+          return backup.diskFiles.open(path)
+        },
+        async rename(from, to) {
+          started()
+          await held
+          return backup.diskFiles.rename(from, to)
+        },
+      },
+      renaming,
+      release,
+      parts,
+    }
+  }
+
+  it('second pass: one copy at a time until it is in place — another copy meanwhile is refused and sweeps nothing', async () => {
+    w.advance(60_000)
+    const p = pausedRename()
+    const one = backup.create(w.db, {
+      dir,
+      secret: TEST_SECRET,
+      reason: 'manual',
+      clock: w.clock,
+      files: p.files,
+    })
+    try {
+      await p.renaming
+      // The .part is unique to this copy.
+      assert.match(p.parts[0] as string, /\.rscb\.\d+\.[0-9a-f]{16}\.part$/)
+      w.advance(1000)
+      await assert.rejects(
+        () => backup.create(w.db, { dir, secret: TEST_SECRET, reason: 'manual', clock: w.clock }),
+        isCode('backup_running'),
+      )
+      assert.ok(
+        (await readdir(dir)).includes((p.parts[0] as string).slice(dir.length + 1)),
+        'its .part is still there',
+      )
+    } finally {
+      p.release()
+    }
+    const made = await one
+    assert.equal((await sections(join(dir, made.file))).length, BACKUP_TABLES.length + 2)
+    assert.ok((await backup.list(dir)).some((b) => b.file === made.file))
+    await rm(join(dir, made.file))
+  })
+
+  it('second pass: two copies at the same second with the same reason — the second never touches the first', async () => {
+    w.advance(60_000)
+    const p = pausedRename()
+    const one = backup.create(w.db, {
+      dir,
+      secret: TEST_SECRET,
+      reason: 'manual',
+      clock: w.clock,
+      files: p.files,
+    })
+    try {
+      await p.renaming
+      await assert.rejects(
+        () => backup.create(w.db, { dir, secret: TEST_SECRET, reason: 'manual', clock: w.clock }),
+        isCode('backup_running'),
+      )
+    } finally {
+      p.release()
+    }
+    const made = await one
+    const size = (await stat(join(dir, made.file))).size
+    await assert.rejects(
+      () => backup.create(w.db, { dir, secret: TEST_SECRET, reason: 'manual', clock: w.clock }),
+      isCode('backup_exists'),
+    )
+    assert.equal((await stat(join(dir, made.file))).size, size)
+    assert.equal((await sections(join(dir, made.file))).length, BACKUP_TABLES.length + 2)
+    await rm(join(dir, made.file))
+  })
+
+  it('second pass: the job of serve answers busy while another copy runs, so the scheduler tries again', async () => {
+    w.advance(60_000)
+    const p = pausedRename()
+    const one = backup.create(w.db, {
+      dir,
+      secret: TEST_SECRET,
+      reason: 'manual',
+      clock: w.clock,
+      files: p.files,
+    })
+    try {
+      await p.renaming
+      w.advance(1000)
+      const job = backupJob(w.db, {
+        dir,
+        secret: TEST_SECRET,
+        keep: 99,
+        clock: w.clock,
+        log: makeLog(() => {}),
+      })
+      assert.equal(await job(), 'busy')
+    } finally {
+      p.release()
+    }
+    await rm(join(dir, (await one).file))
+  })
+
+  it('second pass: the job of serve says a kept copy with a warning in the log, and the next status records it', async () => {
+    w.advance(60_000)
+    const lines: string[] = []
+    const log = makeLog((l) => lines.push(l))
+    const noStatus: FileOps = {
+      ...backup.diskFiles,
+      status: async () => {
+        throw Object.assign(new Error('no space'), { code: 'ENOSPC' })
+      },
+    }
+    const warnedAt = w.clock().toISOString()
+    const statusBefore = await readStatus(dir)
+    const job = backupJob(w.db, { dir, secret: TEST_SECRET, keep: 99, clock: w.clock, log, files: noStatus })
+    await job()
+    const warned = lines.map((l) => JSON.parse(l)).filter((l) => l.event === 'backup_kept_with_warning')
+    assert.deepEqual(
+      warned.map((l) => [l.level, l.code]),
+      [['warn', 'disk_full']],
+    )
+    assert.deepEqual(await readStatus(dir), statusBefore, 'status could not be written then')
+    // The same job, the disk fine again: its next status says what happened.
+    w.advance(60_000)
+    job.files = backup.diskFiles
+    await job()
+    assert.deepEqual((await readStatus(dir)).lastWarning, { at: warnedAt, code: 'disk_full' })
+    for (const b of await backup.list(dir)) if (b.reason === 'scheduled') await rm(join(dir, b.file))
+  })
+
+  it('second pass: a folder that cannot be flushed is recorded as lastWarning fsync_failed', async () => {
+    w.advance(60_000)
+    const noDirSync: FileOps = {
+      ...backup.diskFiles,
+      syncDir: async () => {
+        throw Object.assign(new Error('i/o'), { code: 'EIO' })
+      },
+    }
+    const c = await backup.create(w.db, {
+      dir,
+      secret: TEST_SECRET,
+      reason: 'manual',
+      clock: w.clock,
+      files: noDirSync,
+    })
+    assert.deepEqual((await readStatus(dir)).lastWarning, { at: c.createdAt, code: 'fsync_failed' })
+    await rm(join(dir, c.file))
+  })
+
+  it('second pass: a copy dated in the future (beyond 5 minutes) is never taken as the last good one nor the last daily one', async () => {
+    w.advance(60_000)
+    const future = new Date('2030-01-01T03:00:00Z')
+    const name = backupName(future, 'scheduled')
+    const parts: Buffer[] = []
+    async function* rows() {
+      yield Buffer.from('x')
+    }
+    await writeBackup(
+      async (b) => void parts.push(Buffer.from(b)),
+      {
+        release: '0.1.0',
+        migrations: [],
+        createdAt: future.toISOString(),
+        installation: { id: 1, name: 'T' },
+        reason: 'scheduled',
+        tables: [],
+        lastWriteAt: null,
+      },
+      rows(),
+      TEST_SECRET,
+    )
+    await writeFile(join(dir, name), Buffer.concat(parts))
+    try {
+      const last = await backup.lastScheduledAt(dir, w.clock())
+      assert.ok(last === null || last.getTime() <= w.clock().getTime(), String(last))
+      const before = await readStatus(dir)
+      await assert.rejects(() =>
+        backup.create(w.db, { dir, secret: undefined, reason: 'manual', clock: w.clock }),
+      )
+      assert.deepEqual((await readStatus(dir)).lastOk, before.lastOk)
+      assert.notEqual((await readStatus(dir)).lastOk?.file, name)
+    } finally {
+      await rm(join(dir, name))
+    }
   })
 
   it('a copy before an update needs maintenance on', async () => {

@@ -165,14 +165,12 @@ async function main(argv: string[]): Promise<number> {
     // The daily copy (spec B7 C2), with the folder of the copies set; checked every minute.
     if (cfg.backups) {
       // Started more than a day after the last daily copy (it was down at that time): one copy now.
-      const lastScheduled = (await backup.list(cfg.backups).catch(() => [])).find(
-        (b) => b.reason === 'scheduled',
-      )
+      const lastScheduled = await backup.lastScheduledAt(cfg.backups, systemClock()).catch(() => null)
       const daily = createScheduler({
         at: cfg.backupAt,
         tz: cfg.timezone,
         clock: systemClock,
-        lastScheduledAt: lastScheduled ? new Date(lastScheduled.createdAt) : null,
+        lastScheduledAt: lastScheduled,
         run: backupJob(db, {
           dir: cfg.backups,
           secret: cfg.secret,

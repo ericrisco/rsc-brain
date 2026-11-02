@@ -203,6 +203,50 @@ describe('CA8: 15 days of the daily copy', () => {
     assert.equal(await never.check(), true)
   })
 
+  it('second pass: a catch-up that meets a copy already running tries again every 2 minutes, then keeps the daily time', async () => {
+    let now = new Date('2026-11-05T12:00:00Z')
+    const answers: Array<'busy' | undefined> = ['busy', 'busy', undefined]
+    const at: string[] = []
+    const s = createScheduler({
+      at: '03:00',
+      tz: 'UTC',
+      clock: () => now,
+      run: async () => {
+        at.push(now.toISOString())
+        return answers.shift()
+      },
+      lastScheduledAt: null,
+    })
+    for (let i = 0; i < 10; i += 1) {
+      await s.check()
+      now = new Date(now.getTime() + 60_000)
+    }
+    assert.deepEqual(at, ['2026-11-05T12:00:00.000Z', '2026-11-05T12:02:00.000Z', '2026-11-05T12:04:00.000Z'])
+    assert.equal(s.next().toISOString(), '2026-11-06T03:00:00.000Z')
+  })
+
+  it('second pass: it gives up retrying after 30 minutes, and the daily time still comes', async () => {
+    let now = new Date('2026-11-05T12:00:00Z')
+    let runs = 0
+    const s = createScheduler({
+      at: '03:00',
+      tz: 'UTC',
+      clock: () => now,
+      run: async () => {
+        runs += 1
+        return 'busy'
+      },
+      lastScheduledAt: null,
+    })
+    for (let i = 0; i < 60; i += 1) {
+      await s.check()
+      now = new Date(now.getTime() + 60_000)
+    }
+    // At 0, 2, 4 … 30 minutes: 16 tries, then nothing until the daily time.
+    assert.equal(runs, 16)
+    assert.equal(s.next().toISOString(), '2026-11-06T03:00:00.000Z')
+  })
+
   it('a run that fails does not stop the next day', async () => {
     let now = new Date('2026-11-01T00:00:00Z')
     let runs = 0

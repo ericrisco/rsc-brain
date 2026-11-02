@@ -112,15 +112,22 @@ describe('the .rscb copy format', () => {
     assert.equal((await readAll(opened)).toString('utf8'), big)
   })
 
-  it('review of PR #29: no copy with a short or obviously weak key', async () => {
+  it('second pass: no copy with a key shorter than RSC_BRAIN_SECRET allows (32), measured the same way', async () => {
     const sink = async () => {}
-    for (const weak of ['short-key', 'a'.repeat(64), '01'.repeat(20), 'abcdefgh'.repeat(5)]) {
+    for (const weak of ['short-key', 'x'.repeat(31), 'ü'.repeat(31)]) {
       await assert.rejects(
         () => writeBackup(sink, input(), chunks('x'), weak),
         (err: unknown) => isCode('weak_installation_key')(err) && !(err as Error).message.includes(weak),
       )
     }
-    assert.ok(strongKey(A) && strongKey(B))
+    assert.ok(strongKey(A) && strongKey(B) && strongKey('x'.repeat(32)))
+  })
+
+  it('second pass: every key the installer could generate is accepted (1000 random hex keys of 32)', () => {
+    for (let i = 0; i < 1000; i += 1) {
+      const k = randomBytes(16).toString('hex')
+      assert.ok(strongKey(k), k.length === 32 ? 'a hex key was refused' : 'length')
+    }
   })
 
   it('review of PR #29: every byte is written, however few each write takes; a write that takes none is a full disk', async () => {

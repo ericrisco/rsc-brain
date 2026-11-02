@@ -60,13 +60,17 @@ export type Scheduler = { next(): Date; check(): Promise<boolean> }
 // The next moment is fixed before the copy runs, so a copy that fails does not run again until the next day.
 // With `lastScheduledAt` (the newest scheduled copy in the folder, null for none): a process that starts more than
 // a day after it makes one copy at once, then keeps the daily time; not when that time is within the hour anyway.
+// A run that answers 'busy' (another copy was running) is tried again every 2 minutes, for 30 minutes at most,
+// before the next daily time is taken.
 const DAY_MS = 24 * 3600_000
 const HOUR_MS = 3600_000
+const RETRY_MS = 2 * 60_000
+const RETRY_FOR_MS = 30 * 60_000
 export function createScheduler(o: {
   at: string
   tz: string
   clock: Clock
-  run: () => Promise<void>
+  run: () => Promise<unknown> // 'busy' when another copy was running
   lastScheduledAt?: Date | null
 }): Scheduler {
   const start = o.clock()
@@ -75,13 +79,25 @@ export function createScheduler(o: {
     const stale = o.lastScheduledAt === null || start.getTime() - o.lastScheduledAt.getTime() > DAY_MS
     if (stale && next.getTime() - start.getTime() > HOUR_MS) next = start
   }
+  let retryUntil: number | null = null
   return {
     next: () => next,
     async check() {
       const now = o.clock()
       if (now.getTime() < next.getTime()) return false
+      if (retryUntil === null) retryUntil = now.getTime() + RETRY_FOR_MS
       next = nextRun(o.at, o.tz, now)
-      await o.run()
+      try {
+        const r = await o.run()
+        if (r === 'busy' && now.getTime() + RETRY_MS <= retryUntil) {
+          next = new Date(now.getTime() + RETRY_MS)
+          return true
+        }
+      } catch (err) {
+        retryUntil = null
+        throw err
+      }
+      retryUntil = null
       return true
     },
   }

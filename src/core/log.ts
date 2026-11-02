@@ -24,6 +24,8 @@ export const LOG_EVENTS = [
   // The daily copy: made (milliseconds, how many old copies were removed), or failed (its code).
   'backup_done',
   'backup_failed',
+  // A copy kept whole whose folder could not be flushed or whose status could not be saved (its code).
+  'backup_kept_with_warning',
 ] as const
 export type LogEvent = (typeof LOG_EVENTS)[number]
 
