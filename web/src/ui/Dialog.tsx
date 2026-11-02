@@ -41,8 +41,17 @@ export function Dialog({
         if (locked) e.preventDefault()
       }}
       onClose={() => {
+        const d = ref.current
         // The browser's "close" is queued: one that arrives after the dialog opened again is stale.
-        if (!ref.current?.open) onClose()
+        if (!d || d.open) return
+        // Locked (a restore runs): a second Esc may close it anyway (close watchers); it opens again at once, with
+        // the keyboard on its heading, so what it started is seen to the end.
+        if (locked && open) {
+          d.showModal()
+          document.getElementById(id)?.focus()
+          return
+        }
+        onClose()
       }}
       onClick={(e) => {
         // A click on the backdrop (the dialog itself, outside its content) closes it.
@@ -52,7 +61,9 @@ export function Dialog({
       {open ? (
         <>
           <div class="dialog-head">
-            <h2 id={id}>{title}</h2>
+            <h2 id={id} tabIndex={-1}>
+              {title}
+            </h2>
             <button
               type="button"
               class="button quiet"

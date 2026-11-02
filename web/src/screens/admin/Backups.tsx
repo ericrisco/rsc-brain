@@ -289,8 +289,9 @@ function RestoreDialog({ copy, onClose }: { copy: CopyItem | null; onClose: () =
     setError(null)
     if (copy) void load(copy)
   }, [copy?.id])
-  // Any close of the native dialog ends this one (it never closes while a restore runs: `locked`).
+  // Any close of the native dialog ends this one; never while a restore runs (`locked` opens it again).
   const close = () => {
+    if (pending) return
     setPassword('')
     setCode('')
     onClose()

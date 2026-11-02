@@ -289,8 +289,12 @@ test.describe('Admin › Backups & system: restoring', () => {
     await dialog.getByLabel('Your password').fill(PASSWORD)
     await dialog.getByRole('button', { name: 'Restore this copy' }).click()
     await expect(dialog.getByRole('button', { name: /Restoring/ })).toBeVisible()
+    // Twice: the browser lets a second Esc close a dialog whose first was refused (close watchers).
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
     await page.keyboard.press('Escape')
     await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('button', { name: /Restoring/ })).toBeVisible()
     await expect(dialog.getByRole('button', { name: 'Close' })).toHaveAttribute('aria-disabled', 'true')
     await dialog.getByRole('button', { name: 'Close' }).click({ force: true })
     await page.mouse.click(5, 5)

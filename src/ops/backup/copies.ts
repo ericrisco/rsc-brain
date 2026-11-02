@@ -140,33 +140,43 @@ export function createCopies(o: {
       if (!dir) throw notSetUp()
       if (memory.busy) throw backupRunning(memory.busy)
       memory.busy = 'manual'
-      try {
-        // Another process (a command on the machine) may be copying: asked before answering, never a 202 that fails.
-        const free = await o.db.session(async (s) => {
-          const r = await s.one<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [LOCK])
-          if (r?.ok) await s.query('SELECT pg_advisory_unlock($1)', [LOCK])
-          return r?.ok === true
-        })
-        if (!free) throw backupRunning()
-      } catch (err) {
-        memory.busy = null
-        throw err
-      }
+      // The lock of the copies is taken now, on a session of its own, and the copy runs inside that same session:
+      // no other process can start one between the answer and the copy (second pass of the review of PR #31).
       const at = o.clock()
       const id = backupName(at, 'manual').slice(0, -5)
-      void keptCopy(o.db, memory, {
-        dir,
-        secret: o.secret,
-        reason: 'manual',
-        clock: () => at,
-        files: o.files,
-        held: true,
+      let taken: (ok: boolean) => void = () => {}
+      const ready = new Promise<boolean>((r) => {
+        taken = r
       })
-        .then((info) => {
-          if (info.warningCode) o.log.warn('backup_kept_with_warning', { code: info.warningCode })
-          o.log.info('backup_done', { count: 0 })
+      void o.db
+        .session(async (s) => {
+          const r = await s.one<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [LOCK])
+          if (!r?.ok) return taken(false)
+          taken(true)
+          try {
+            const info = await keptCopy(o.db, memory, {
+              dir,
+              secret: o.secret,
+              reason: 'manual',
+              clock: () => at,
+              files: o.files,
+              held: true,
+              locked: s,
+            })
+            if (info.warningCode) o.log.warn('backup_kept_with_warning', { code: info.warningCode })
+            o.log.info('backup_done', { count: 0 })
+          } finally {
+            await s.query('SELECT pg_advisory_unlock($1)', [LOCK]).catch(() => {})
+          }
         })
-        .catch((err: unknown) => o.log.warn('backup_failed', failureFields(err)))
+        .catch((err: unknown) => {
+          taken(false)
+          o.log.warn('backup_failed', failureFields(err))
+        })
+      if (!(await ready)) {
+        memory.busy = null
+        throw backupRunning()
+      }
       return { id }
     },
     async find(id) {

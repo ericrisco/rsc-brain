@@ -143,6 +143,11 @@ describe('copies, the installation key and versions from the web (§3.4)', { ski
   })
 
   it('a download (an audit line) is not a write a restore loses', async () => {
+    const made = await w.call(admin.key, 'POST', '/v1/brains', {
+      slug: 'readable',
+      purpose: 'Read after the copy.',
+    })
+    assert.equal(made.status, 201, made.text)
     const id = await copy()
     w.advance(60_000)
     const dl = await fetch(`${w.base}/v1/admin/backups/${id}/download`, {
@@ -150,8 +155,40 @@ describe('copies, the installation key and versions from the web (§3.4)', { ski
     })
     assert.equal(dl.status, 200)
     await dl.arrayBuffer()
+    // Signing in, a refusal and a search write too, but nothing a restore would lose (it ends every session anyway).
+    const signedIn = await w.raw('POST', '/v1/auth/login', {
+      headers: { 'x-requested-with': 'rsc-brain-web' },
+      body: { email: admin.email, password: PW },
+    })
+    assert.equal(signedIn.status, 200, signedIn.text)
+    await w.raw('POST', '/v1/auth/login', {
+      headers: { 'x-requested-with': 'rsc-brain-web' },
+      body: { email: admin.email, password: 'not it at all' },
+    })
+    await w.call(admin.key, 'GET', '/v1/search?q=anything')
+    const looked = await w.db.one<{ n: number }>(
+      "SELECT count(*)::int AS n FROM events WHERE kind = 'search' AND at > (SELECT min(at) FROM events) - interval '1 day'",
+    )
+    assert.ok((looked?.n ?? 0) > 0, 'the search wrote its event')
     const r = await w.callWeb(adminWeb, 'GET', `/v1/admin/backups/${id}/impact`)
     assert.equal(r.body.lostWrites, false, r.text)
+  })
+
+  it('second pass: people invited and a key made after the copy are writes a restore loses', async () => {
+    const id = await copy()
+    w.advance(60_000)
+    const before = await w.callWeb(adminWeb, 'GET', `/v1/admin/backups/${id}/impact`)
+    assert.equal(before.body.lostWrites, false, before.text)
+    const inv = await w.callWeb(adminWeb, 'POST', '/v1/invitations', { emails: ['bob@example.com'] })
+    assert.equal(inv.status, 201, inv.text)
+    const r = await w.callWeb(adminWeb, 'GET', `/v1/admin/backups/${id}/impact`)
+    assert.equal(r.body.lostWrites, true, r.text)
+    const id2 = await copy()
+    w.advance(60_000)
+    const svc = await w.callWeb(adminWeb, 'POST', '/v1/admin/services', { name: 'Bot' })
+    assert.equal(svc.status, 201, svc.text)
+    const r2 = await w.callWeb(adminWeb, 'GET', `/v1/admin/backups/${id2}/impact`)
+    assert.equal(r2.body.lostWrites, true, r2.text)
   })
 
   it('the impact of a restore: when the copy was made and the last write it would lose', async () => {
@@ -523,6 +560,23 @@ describe('copies review: one copy at a time, said; a warning that retires', { sk
     w.advance(2000)
     const ok = await w.callWeb(web, 'POST', '/v1/admin/backups', {})
     assert.equal(ok.status, 202, ok.text)
+    await idle()
+  })
+
+  it('second pass: by the time the web answers 202 the copy holds the lock, so no other process slips in', async () => {
+    const pg = (await import('pg')).default
+    const other = new pg.Client({ connectionString: w.url })
+    await other.connect()
+    try {
+      w.advance(2000)
+      const ok = await w.callWeb(web, 'POST', '/v1/admin/backups', {})
+      assert.equal(ok.status, 202, ok.text)
+      const r = await other.query('SELECT pg_try_advisory_lock($1) AS ok', [LOCK])
+      if (r.rows[0]?.ok) await other.query('SELECT pg_advisory_unlock($1)', [LOCK])
+      assert.equal(r.rows[0]?.ok, false, 'another process took the lock after the 202')
+    } finally {
+      await other.end()
+    }
     await idle()
   })
 
