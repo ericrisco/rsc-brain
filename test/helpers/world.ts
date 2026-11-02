@@ -80,6 +80,8 @@ export async function world(
     events?: Partial<EventTimings>
     backups?: string
     log?: Log
+    // Another installation key (restoring into another installation, B7).
+    secret?: string
   } = {},
 ): Promise<World> {
   const t = await freshDatabase()
@@ -98,7 +100,7 @@ export async function world(
       db: t.db,
       clock: w.clock,
       meaning: o.meaning ?? {},
-      secret: TEST_SECRET,
+      secret: o.secret ?? TEST_SECRET,
       trustedProxies: ['127.0.0.1'],
       ...(o.localClients ? { fetchPolicy: { allowLoopbackHttp: true } } : {}),
       ...(o.events ? { events: o.events } : {}),

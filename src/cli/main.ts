@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // rsc-brain command line. Each command says what it did, or what to do when it cannot.
+import { readFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { basename } from 'node:path'
 import { parseArgs } from 'node:util'
 import { resealV1 } from '../auth/reseal.ts'
 import { readConfig } from '../config.ts'
@@ -22,9 +24,11 @@ import { foldTrail } from '../domain/trail.ts'
 import { createHandler } from '../http/app.ts'
 import { providersFromEnv } from '../meaning/providers.ts'
 import { applyStored } from '../meaning/stored.ts'
-import { backup, backupJob, readStatus } from '../ops/backup/backup.ts'
-import { BACKUP_REASONS, type BackupReason } from '../ops/backup/format.ts'
+import { type BackupInfo, backup, backupJob, readStatus } from '../ops/backup/backup.ts'
+import { BACKUP_REASONS, type BackupReason, keyId, strongKey } from '../ops/backup/format.ts'
+import { restore } from '../ops/backup/restore.ts'
 import { createScheduler } from '../ops/backup/schedule.ts'
+import { resealAll } from '../ops/key.ts'
 import { runBridge } from './bridge.ts'
 import { sessionStart, stop } from './hooks.ts'
 import { mcpAddress, NO_TOKEN, readToken, UsageError } from './remote.ts'
@@ -54,6 +58,19 @@ Usage:
                                                       RSC_BRAIN_BACKUPS; R is manual (default), pre-update
                                                       (under maintenance) or pre-restore
   rsc-brain backups list [--json]                     the copies, newest first, and whether the last failed
+  rsc-brain restore --file F --confirm NAME [--key-file K] [--keep-keys] [--json]
+                                                      replace everything with the copy F, after a copy of what
+                                                      is there (pre-restore). NAME is this installation's name
+                                                      (or the copy's, on a new installation). The key the copy
+                                                      was made with comes from K or the standard input
+                                                      (default: RSC_BRAIN_SECRET). Every key, session,
+                                                      pending invitation and password link ends, but with
+                                                      --keep-keys (only the rollback of an update, with the
+                                                      pre-update copy of this installation)
+  rsc-brain key id [--key-file K]                     the id of a key (K, the standard input or
+                                                      RSC_BRAIN_SECRET); never the key
+  rsc-brain key reseal --from-file OLD --to-file NEW  seal everything sealed with OLD with NEW (rotating the
+                                                      key; with the service stopped, then set RSC_BRAIN_SECRET)
   rsc-brain version                                   print the version of rsc-brain
   rsc-brain help                                      show this help
 
@@ -92,6 +109,8 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === 'maintenance') return maintenanceCommand(sub, rest)
   if (cmd === 'backup') return backupCommand([sub, ...rest].filter((x) => x !== undefined))
   if (cmd === 'backups') return backupsCommand(sub, rest)
+  if (cmd === 'restore') return restoreCommand([sub, ...rest].filter((x) => x !== undefined))
+  if (cmd === 'key') return keyCommand(sub, rest)
   if (cmd === 'bridge') return bridgeCommand([sub, ...rest].filter((x) => x !== undefined))
   if (cmd === 'hook') return hookCommand(sub, rest)
   if (cmd === 'migrate') {
@@ -499,6 +518,208 @@ async function backupsCommand(which: string | undefined, args: string[]): Promis
       `${b.createdAt}  ${b.reason.padEnd(11)}  ${String(b.bytes).padStart(12)} bytes  key id ${b.keyId}  ${b.file}\n`,
     )
   return 0
+}
+
+// A key comes from a file or from the standard input, never from the command line (where any process of the machine
+// could read it). Whitespace around it is not part of it. Undefined: none given (no file, a terminal or nothing piped).
+class KeyInputError extends Error {}
+async function readKeyInput(file: string | undefined): Promise<string | undefined> {
+  if (file !== undefined) {
+    let text: string
+    try {
+      text = await readFile(file, 'utf8')
+    } catch {
+      throw new KeyInputError(`The key file ${file} cannot be read.`)
+    }
+    const key = text.trim()
+    if (!key) throw new KeyInputError(`The key file ${file} holds no key.`)
+    return key
+  }
+  if (process.stdin.isTTY) return undefined
+  const chunks: Buffer[] = []
+  for await (const c of process.stdin) chunks.push(c as Buffer)
+  return Buffer.concat(chunks).toString('utf8').trim() || undefined
+}
+
+const KEY_RULE = 'a key is read from a file or the standard input, never on the command line'
+
+// Parsed strictly; a wrong option or a stray argument (perhaps a key) is never repeated back.
+function strictArgs<T>(
+  args: string[],
+  options: NonNullable<NonNullable<Parameters<typeof parseArgs>[0]>['options']>,
+): T | null {
+  try {
+    return parseArgs({ args, options, strict: true, allowPositionals: false }).values as T
+  } catch {
+    return null
+  }
+}
+
+// Restoring a copy (plan §3.3): on this installation, or on a new one (another key: what was sealed is sealed again
+// with this installation's). Before anything is replaced, a copy of what is there (pre-restore), except in the
+// rollback of an update, which restores the copy it made moments before.
+async function restoreCommand(args: string[]): Promise<number> {
+  const USAGE =
+    'Usage: rsc-brain restore --file <copy> --confirm <installation name> [--key-file <file>] [--keep-keys] [--json]'
+  const usage = (why: string) => {
+    process.stderr.write(`${why} ${USAGE}; ${KEY_RULE}.\n`)
+    return 2
+  }
+  const values = strictArgs<{
+    file?: string
+    'key-file'?: string
+    confirm?: string
+    'keep-keys'?: boolean
+    json?: boolean
+  }>(args, {
+    file: { type: 'string' },
+    'key-file': { type: 'string' },
+    confirm: { type: 'string' },
+    'keep-keys': { type: 'boolean' },
+    json: { type: 'boolean' },
+  })
+  if (!values) return usage('Unknown option or argument.')
+  if (!values.file) return usage('Pass --file with the copy to restore.')
+  if (values.confirm === undefined)
+    return usage(
+      'Pass --confirm with the name of this installation (on a new installation, the name in the copy).',
+    )
+  const keepKeys = Boolean(values['keep-keys'])
+  const cfg = readConfig()
+  let key: string | undefined
+  try {
+    key = (await readKeyInput(values['key-file'])) ?? cfg.secret
+  } catch (err) {
+    return usage((err as Error).message)
+  }
+  if (!key) return usage('Pass the key the copy was made with in --key-file or on the standard input.')
+  const dir = keepKeys ? undefined : backupsDir()
+  if (!keepKeys && !dir) return 2
+  const file = values.file
+  return withDb(async (db) => {
+    let pre: BackupInfo | null = null
+    try {
+      const r = await restore(db, {
+        file,
+        key: key as string,
+        targetSecret: cfg.secret,
+        keepKeys,
+        clock: systemClock,
+        confirm: values.confirm as string,
+        ...(dir
+          ? {
+              async before() {
+                // A database without rsc-brain's schema holds nothing to keep.
+                const has = await db.one<{ ok: boolean }>(
+                  "SELECT to_regclass('public.schema_migrations') IS NOT NULL AS ok",
+                )
+                if (!has?.ok) return
+                pre = await backup.create(db, {
+                  dir,
+                  secret: cfg.secret,
+                  reason: 'pre-restore',
+                  clock: systemClock,
+                })
+                if (pre.warning) process.stderr.write(`${pre.warning}\n`)
+              },
+            }
+          : {}),
+      })
+      const kept = pre as BackupInfo | null
+      if (values.json) {
+        out(
+          `${JSON.stringify({
+            copyAt: r.copyAt,
+            restoredAt: r.restoredAt,
+            epoch: r.epoch,
+            preRestore: kept ? kept.file : null,
+            notResealed: r.resealed.notResealed,
+          })}\n`,
+        )
+        return 0
+      }
+      out(`Restored the copy of ${r.copyAt} (${basename(file)}).\n`)
+      if (kept) out(`What it replaced is kept in the copy ${kept.file}.\n`)
+      out(
+        keepKeys
+          ? 'Keys, sessions and connections were kept (the rollback of an update).\n'
+          : 'Every key, session and connection made before no longer works: everyone must sign in again, and the administration issues new main keys for service accounts.\n' +
+              `Invitations and links to set a password still pending in the copy were ended (${r.ended.invitations} and ${r.ended.resets}): send them again if they are still needed.\n`,
+      )
+      if (r.resealed.notResealed)
+        out(`${r.resealed.notResealed} sealed values open with neither key and were left as they are.\n`)
+      out('Restart rsc-brain so the service reads the restored settings.\n')
+      return 0
+    } catch (err) {
+      if (err instanceof AppError && (err.code === 'confirm_mismatch' || err.code === 'keep_keys_refused')) {
+        process.stderr.write(`${err.message} ${err.howToProceed}\n`)
+        return 2
+      }
+      throw err
+    }
+  })
+}
+
+// The installation key: its id, and sealing everything again with another one (rotation; plan §3.3).
+async function keyCommand(which: string | undefined, args: string[]): Promise<number> {
+  const USAGE = 'Usage: rsc-brain key id [--key-file <file>] | key reseal --from-file <old> --to-file <new>'
+  const usage = (why: string) => {
+    process.stderr.write(`${why} ${USAGE}; ${KEY_RULE}.\n`)
+    return 2
+  }
+  if (which === 'id') {
+    const values = strictArgs<{ 'key-file'?: string }>(args, { 'key-file': { type: 'string' } })
+    if (!values) return usage('Unknown option or argument.')
+    let key: string | undefined
+    try {
+      key = (await readKeyInput(values['key-file'])) ?? process.env.RSC_BRAIN_SECRET
+    } catch (err) {
+      return usage((err as Error).message)
+    }
+    if (!key) return usage('Set RSC_BRAIN_SECRET, or pass the key in --key-file or on the standard input.')
+    out(`${keyId(key)}\n`)
+    return 0
+  }
+  if (which === 'reseal') {
+    const values = strictArgs<{ 'from-file'?: string; 'to-file'?: string }>(args, {
+      'from-file': { type: 'string' },
+      'to-file': { type: 'string' },
+    })
+    if (!values) return usage('Unknown option or argument.')
+    if (!values['from-file'] || !values['to-file'])
+      return usage('Pass --from-file with the key in use and --to-file with the new key.')
+    let from: string
+    let to: string
+    try {
+      from = (await readKeyInput(values['from-file'])) as string
+      to = (await readKeyInput(values['to-file'])) as string
+    } catch (err) {
+      return usage((err as Error).message)
+    }
+    if (keyId(from) === keyId(to)) return usage('The two files hold the same key.')
+    if (!strongKey(to))
+      return usage('The new key is too short: at least 32 characters (openssl rand -base64 48 makes one).')
+    return withDb(async (db) => {
+      const n = await db.tx((tx) => resealAll(tx, from, to))
+      // Sealed values exist and none opens with the old key: it is not the key in use. Nothing changed (nothing was
+      // opened, so nothing was written); switching keys now would leave them all unreadable.
+      if (n.resealed === 0 && n.already === 0 && n.notResealed > 0) {
+        process.stderr.write(
+          `None of the ${n.notResealed} sealed values opens with key id ${keyId(from)}: it is not the key in use. Nothing was changed. ` +
+            'Pass in --from-file the key in RSC_BRAIN_SECRET now (rsc-brain key id prints its id).\n',
+        )
+        return 1
+      }
+      out(`Resealed ${n.resealed} values from key id ${keyId(from)} to key id ${keyId(to)}.\n`)
+      if (n.already) out(`${n.already} were sealed with the new key already.\n`)
+      if (n.notResealed) out(`${n.notResealed} open with neither key and were left as they are.\n`)
+      out(
+        'Set RSC_BRAIN_SECRET to the new key and start rsc-brain; copies made from now on need the new key.\n',
+      )
+      return 0
+    })
+  }
+  return usage('Say id or reseal.')
 }
 
 // The bridge: a wrong option or a missing token stops it before the agent sends anything.

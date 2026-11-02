@@ -29,7 +29,8 @@ import {
 } from './format.ts'
 import { BACKUP_TABLES } from './tables.ts'
 
-const LOCK = 7_310_420_003 // one copy at a time, across every process on this database
+// One copy at a time, across every process on this database; a restore takes it too (no copy while it runs).
+export const LOCK = 7_310_420_003
 const BATCH = 1000
 // A copy before an update waits this long after maintenance is on, then for every transaction that began
 // before that to end: a write that read the installation row just before maintenance went on may still be on
@@ -218,7 +219,7 @@ function failure(cat: FailureCategory, err: unknown): AppError {
   )
 }
 
-const backupRunning = () =>
+export const backupRunning = () =>
   new AppError(
     409,
     'backup_running',
@@ -226,14 +227,15 @@ const backupRunning = () =>
     'Wait for it to finish (rsc-brain backups list shows it when it is done), then try again.',
   )
 
-// A copy before an update: maintenance must be on, and every write that began before it must have ended.
-async function settle(db: Db, clock: Clock, settleMs: number): Promise<void> {
+// A copy before an update or a restore: maintenance must be on, and every write that began before it must have ended
+// (a write accepted just before must be in the copy, not lost with what the update or the restore replaces).
+async function settle(db: Db, clock: Clock, settleMs: number, why: 'update' | 'restore'): Promise<void> {
   if (!(await maintenance.current(db, clock()))) {
     throw new AppError(
       409,
       'not_in_maintenance',
-      'A copy before an update is made while writes are refused, and maintenance is off.',
-      'Run rsc-brain maintenance on --reason update first.',
+      `A copy before ${why === 'update' ? 'an update' : 'a restore'} is made while writes are refused, and maintenance is off.`,
+      `Run rsc-brain maintenance on --reason ${why} first.`,
     )
   }
   await new Promise((r) => setTimeout(r, settleMs))
@@ -259,7 +261,8 @@ async function settle(db: Db, clock: Clock, settleMs: number): Promise<void> {
   }
 }
 
-async function knownMigrations(): Promise<string[]> {
+// Every migration of this release, SQL files and steps in code, sorted.
+export async function knownMigrations(): Promise<string[]> {
   return [
     ...(await migrationFiles(MIGRATIONS_DIR)).map((f) => f.slice(0, -4)),
     ...STEPS.map((s) => s.id),
@@ -353,7 +356,13 @@ async function create(
     try {
       const db = session
       try {
-        if (o.reason === 'pre-update') await settle(db, o.clock, o.settleMs ?? PRE_UPDATE_SETTLE_MS)
+        if (o.reason === 'pre-update' || o.reason === 'pre-restore')
+          await settle(
+            db,
+            o.clock,
+            o.settleMs ?? PRE_UPDATE_SETTLE_MS,
+            o.reason === 'pre-update' ? 'update' : 'restore',
+          )
       } catch (err) {
         if (err instanceof AppError && err.code === 'not_in_maintenance') throw err
         return fail(err)
