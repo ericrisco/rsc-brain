@@ -72,7 +72,13 @@ export async function migrationFiles(dir: string): Promise<string[]> {
   return names.sort()
 }
 
-export async function migrate(db: Db, dir: string = MIGRATIONS_DIR): Promise<string[]> {
+// `until`: apply only these migrations (a restore migrates to the exact list of its copy, loads it, then migrates
+// the rest). Any of them this code does not know is from a newer release.
+export async function migrate(
+  db: Db,
+  dir: string = MIGRATIONS_DIR,
+  o: { until?: readonly string[] } = {},
+): Promise<string[]> {
   const files = await migrationFiles(dir)
   const all: Step[] = [
     ...files.map((f) => ({
@@ -83,6 +89,8 @@ export async function migrate(db: Db, dir: string = MIGRATIONS_DIR): Promise<str
     ...(dir === MIGRATIONS_DIR ? STEPS : []),
   ].sort((a, b) => (a.id < b.id ? -1 : 1))
   const ids = all.map((x) => x.id)
+  const beyond = (o.until ?? []).filter((id) => !ids.includes(id)).sort()
+  if (beyond.length > 0) throw new NewerDatabaseError(beyond)
   return db.tx(async (tx) => {
     await tx.query('SELECT pg_advisory_xact_lock($1)', [LOCK])
     await tx.query(
@@ -96,6 +104,7 @@ export async function migrate(db: Db, dir: string = MIGRATIONS_DIR): Promise<str
     const applied: string[] = []
     for (const step of all) {
       if (done.has(step.id)) continue
+      if (o.until && !o.until.includes(step.id)) continue
       await step.run(tx)
       await tx.query('INSERT INTO schema_migrations (id) VALUES ($1)', [step.id])
       applied.push(step.id)

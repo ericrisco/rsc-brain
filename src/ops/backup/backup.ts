@@ -29,7 +29,8 @@ import {
 } from './format.ts'
 import { BACKUP_TABLES } from './tables.ts'
 
-const LOCK = 7_310_420_003 // one copy at a time, across every process on this database
+// One copy at a time, across every process on this database; a restore takes it too (no copy while it runs).
+export const LOCK = 7_310_420_003
 const BATCH = 1000
 // A copy before an update waits this long after maintenance is on, then for every transaction that began
 // before that to end: a write that read the installation row just before maintenance went on may still be on
@@ -218,7 +219,7 @@ function failure(cat: FailureCategory, err: unknown): AppError {
   )
 }
 
-const backupRunning = () =>
+export const backupRunning = () =>
   new AppError(
     409,
     'backup_running',
@@ -259,7 +260,8 @@ async function settle(db: Db, clock: Clock, settleMs: number): Promise<void> {
   }
 }
 
-async function knownMigrations(): Promise<string[]> {
+// Every migration of this release, SQL files and steps in code, sorted.
+export async function knownMigrations(): Promise<string[]> {
   return [
     ...(await migrationFiles(MIGRATIONS_DIR)).map((f) => f.slice(0, -4)),
     ...STEPS.map((s) => s.id),

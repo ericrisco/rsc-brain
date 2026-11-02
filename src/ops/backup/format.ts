@@ -262,7 +262,8 @@ export async function readHeader(path: string): Promise<Header> {
 // later (a cut, a frame out of place, no final frame) ends the reading with corrupt_copy, so whoever reads
 // it (a restore, in one transaction) throws everything away. It carries the header its frames are bound to: a
 // restore uses that one only, never a second reading of the file (decisions, B7 PR28 review).
-export type OpenedBackup = AsyncIterable<Buffer> & { header: Header }
+// `close` ends the reading early (a restore that stops before the end): the file is closed, whatever was read.
+export type OpenedBackup = AsyncIterable<Buffer> & { header: Header; close(): Promise<void> }
 export async function openBackup(path: string, secret: string): Promise<OpenedBackup> {
   const fh = await open(path, 'r')
   let header: Header
@@ -274,6 +275,12 @@ export async function openBackup(path: string, secret: string): Promise<OpenedBa
   } catch (err) {
     await fh.close()
     throw err
+  }
+  let closed = false
+  const closeFile = async () => {
+    if (closed) return
+    closed = true
+    await fh.close()
   }
   const key = await deriveKey(secret, Buffer.from(header.kdf.salt, 'base64'))
   const headerHash = createHash('sha256').update(headerBytes).digest()
@@ -315,7 +322,7 @@ export async function openBackup(path: string, secret: string): Promise<OpenedBa
         }
       }
     } finally {
-      await fh.close()
+      await closeFile()
     }
   }
   const out = pipeline(Readable.from(frames()), createGunzip(), () => {})
@@ -327,6 +334,10 @@ export async function openBackup(path: string, secret: string): Promise<OpenedBa
       } catch (err) {
         throw err instanceof AppError ? err : corruptCopy()
       }
+    },
+    async close() {
+      out.destroy()
+      await closeFile().catch(() => {})
     },
   }
 }
