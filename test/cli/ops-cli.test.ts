@@ -178,6 +178,18 @@ describe('rsc-brain restore and key reseal', { skip: skipPg }, () => {
     assert.deepEqual(await readdir(copies).catch(() => []), [])
   })
 
+  it('--keep-keys with a copy not made before an update of this installation: exit 2; nothing changed', async () => {
+    const before = await state(target.db)
+    const r = await run(
+      ['restore', '--file', copy, '--key-file', keyFile(SOURCE_KEY), '--confirm', 'Target', '--keep-keys'],
+      env,
+    )
+    assert.equal(r.code, 2, r.err)
+    assert.match(r.err, /--keep-keys/)
+    noKeyIn(r)
+    assert.deepEqual(await state(target.db), before)
+  })
+
   it('another key: exit 1 with the id of the key the copy needs; nothing changed', async () => {
     const before = await state(target.db)
     const r = await run(
@@ -235,6 +247,19 @@ describe('rsc-brain restore and key reseal', { skip: skipPg }, () => {
     } finally {
       await empty.drop()
     }
+  })
+
+  it('key reseal with an old key that opens nothing sealed here: exit 1, nothing changed, no switch advised', async () => {
+    const before = await state(target.db)
+    const r = await run(
+      ['key', 'reseal', '--from-file', keyFile(SOURCE_KEY), '--to-file', keyFile(NEW_KEY)],
+      env,
+    )
+    assert.equal(r.code, 1, r.out + r.err)
+    assert.match(r.err, new RegExp(keyId(SOURCE_KEY)))
+    assert.doesNotMatch(r.out + r.err, /Set RSC_BRAIN_SECRET/)
+    noKeyIn(r)
+    assert.deepEqual(await state(target.db), before)
   })
 
   it('key reseal: everything sealed opens with the new key; run again, nothing left to do', async () => {

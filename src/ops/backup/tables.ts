@@ -3,8 +3,10 @@
 // the database after every migration, so a new table or column cannot be lost from copies in silence.
 //
 // The order is the order a restore loads them: a table comes after every table it points to, except the links
-// named in LOAD_ORDER_EXCEPTIONS (a table pointing to itself is always fine: a whole table loads in one
-// statement). Rows go out in key order, so two copies of the same data are the same text.
+// named in LOAD_ORDER_EXCEPTIONS. A restore loads rows in batches and the database checks a link per statement, so
+// a column that points to its own table (or to one loaded later) goes in empty and is filled once every table is in
+// (restore.ts reads which columns those are from the database). Rows go out in key order, so two copies of the same
+// data are the same text.
 export type BackupTable = { name: string; columns: string[]; order: string[] }
 
 const t = (name: string, columns: string, order = 'id'): BackupTable => ({

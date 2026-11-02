@@ -63,8 +63,10 @@ Usage:
                                                       is there (pre-restore). NAME is this installation's name
                                                       (or the copy's, on a new installation). The key the copy
                                                       was made with comes from K or the standard input
-                                                      (default: RSC_BRAIN_SECRET). Every key and session ends,
-                                                      but with --keep-keys (only the rollback of an update)
+                                                      (default: RSC_BRAIN_SECRET). Every key, session,
+                                                      pending invitation and password link ends, but with
+                                                      --keep-keys (only the rollback of an update, with the
+                                                      pre-update copy of this installation)
   rsc-brain key id [--key-file K]                     the id of a key (K, the standard input or
                                                       RSC_BRAIN_SECRET); never the key
   rsc-brain key reseal --from-file OLD --to-file NEW  seal everything sealed with OLD with NEW (rotating the
@@ -641,14 +643,15 @@ async function restoreCommand(args: string[]): Promise<number> {
       out(
         keepKeys
           ? 'Keys, sessions and connections were kept (the rollback of an update).\n'
-          : 'Every key, session and connection made before no longer works: everyone must sign in again, and the administration issues new main keys for service accounts.\n',
+          : 'Every key, session and connection made before no longer works: everyone must sign in again, and the administration issues new main keys for service accounts.\n' +
+              `Invitations and links to set a password still pending in the copy were ended (${r.ended.invitations} and ${r.ended.resets}): send them again if they are still needed.\n`,
       )
       if (r.resealed.notResealed)
         out(`${r.resealed.notResealed} sealed values open with neither key and were left as they are.\n`)
       out('Restart rsc-brain so the service reads the restored settings.\n')
       return 0
     } catch (err) {
-      if (err instanceof AppError && err.code === 'confirm_mismatch') {
+      if (err instanceof AppError && (err.code === 'confirm_mismatch' || err.code === 'keep_keys_refused')) {
         process.stderr.write(`${err.message} ${err.howToProceed}\n`)
         return 2
       }
@@ -698,6 +701,15 @@ async function keyCommand(which: string | undefined, args: string[]): Promise<nu
       return usage('The new key is too short: at least 32 characters (openssl rand -base64 48 makes one).')
     return withDb(async (db) => {
       const n = await db.tx((tx) => resealAll(tx, from, to))
+      // Sealed values exist and none opens with the old key: it is not the key in use. Nothing changed (nothing was
+      // opened, so nothing was written); switching keys now would leave them all unreadable.
+      if (n.resealed === 0 && n.already === 0 && n.notResealed > 0) {
+        process.stderr.write(
+          `None of the ${n.notResealed} sealed values opens with key id ${keyId(from)}: it is not the key in use. Nothing was changed. ` +
+            'Pass in --from-file the key in RSC_BRAIN_SECRET now (rsc-brain key id prints its id).\n',
+        )
+        return 1
+      }
       out(`Resealed ${n.resealed} values from key id ${keyId(from)} to key id ${keyId(to)}.\n`)
       if (n.already) out(`${n.already} were sealed with the new key already.\n`)
       if (n.notResealed) out(`${n.notResealed} open with neither key and were left as they are.\n`)

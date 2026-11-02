@@ -5,17 +5,20 @@
 // asks to keep them). Nothing is committed before the last frame of the copy is read and every count checks out: a
 // copy cut, changed or made with another key leaves the database exactly as it was.
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { mkdtemp, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { hashPassword } from '../../src/auth/password.ts'
+import { hashSecret, newSecret } from '../../src/auth/secrets.ts'
 import { stepOf, totpAt } from '../../src/auth/totp.ts'
 import { seal, unseal } from '../../src/auth/vault.ts'
 import { AppError } from '../../src/core/errors.ts'
 import type { Db } from '../../src/db/db.ts'
 import { MIGRATIONS_DIR, migrate } from '../../src/db/migrate.ts'
+import { newReset } from '../../src/domain/login.ts'
 import { maintenance } from '../../src/domain/maintenance.ts'
 import { openai } from '../../src/meaning/providers.ts'
 import { destinationOf } from '../../src/meaning/stored.ts'
@@ -40,6 +43,8 @@ const PW = 'correct horse battery staple'
 const MAIL_PW = 'mail-password-canary-41c9'
 const PROVIDER_KEY = 'sk-provider-canary-key-0f3e'
 const WEB = { 'x-requested-with': 'rsc-brain-web' }
+// A restore that moves the epoch ends every pending invitation and unused reset link of the copy.
+const LINKS = { invitations: ['revoked_at'], password_resets: ['used_at'] }
 
 const isCode = (code: string) => (err: unknown) => {
   assert.ok(err instanceof AppError, String(err))
@@ -118,6 +123,9 @@ async function craft(
   await writeFile(path, Buffer.concat(chunks))
 }
 
+const lookInvite = (w: World, token: string) => w.raw('POST', '/v1/invitations/look', { body: { token } })
+const lookReset = (w: World, token: string) => w.raw('POST', '/v1/auth/reset/look', { body: { token } })
+
 const login = (w: World, email: string, password: string, extra: Record<string, unknown> = {}) =>
   w.raw('POST', '/v1/auth/login', { headers: WEB, body: { email, password, ...extra } })
 
@@ -130,6 +138,8 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
   let admin: { id: string; key: string; email: string; totp: string; web: string }
   let service: { id: string; key: string }
   let appKey: string
+  let invite: string
+  let reset: string
 
   before(async () => {
     source = await world()
@@ -177,6 +187,16 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
       )
     service = await source.service('Robot')
     appKey = await source.app(a.id, [String(brain?.id)])
+    // A pending invitation and an unused link to set a password: links that are not keys, but open the door.
+    invite = newSecret()
+    await source.db.query(
+      `INSERT INTO invitations (id, email, token_hash, grants, invited_by, created_at, expires_at)
+       VALUES ('inv_restore01', 'new.person@example.com', $1, '[]', $2, $3, $4)`,
+      [hashSecret(invite), a.id, source.now, new Date(source.now.getTime() + 7 * 86_400_000)],
+    )
+    reset = await newReset(source.db, a.id, null, source.now)
+    assert.equal((await lookInvite(source, invite)).status, 200)
+    assert.equal((await lookReset(source, reset)).status, 200)
     await source.setUpMail()
     await source.db.query(
       "UPDATE installation SET mail = jsonb_set(mail, '{password}', to_jsonb($1::text)) WHERE id = 1",
@@ -195,7 +215,7 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
     })
     copy = join(dir, info.file)
     atCopy = await state(source.db)
-    atCopyNoEpoch = await state(source.db, { except: { installation: ['key_epoch'] } })
+    atCopyNoEpoch = await state(source.db, { except: { installation: ['key_epoch'], ...LINKS } })
   })
   after(async () => {
     await source.close()
@@ -323,6 +343,16 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
       ],
       ['a table missing', (ss) => ss.filter((s) => s.table !== 'mail_log')],
       [
+        // A table copies leave out (single-use codes, receipts, brakes) is never loaded from a copy.
+        'a table copies skip',
+        (ss) => {
+          ss[0]?.rows.push(['request_keys', '0'])
+          ss.push({ table: 'request_keys', columns: ['key'], rows: [] })
+          return ss
+        },
+        { tables: [...header.tables, 'request_keys'] },
+      ],
+      [
         // Both empty, so only the name tells them apart.
         'an empty table under the name of another empty one',
         (ss) => {
@@ -396,6 +426,7 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
           installation: ['key_epoch', 'mail'],
           accounts: ['totp_secret', 'totp_pending'],
           meaning_settings: ['openai_key', 'destination'],
+          ...LINKS,
         },
       })
       const was = await state(source.db, {
@@ -403,6 +434,7 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
           installation: ['key_epoch', 'mail'],
           accounts: ['totp_secret', 'totp_pending'],
           meaning_settings: ['openai_key', 'destination'],
+          ...LINKS,
         },
       })
       const audit = await target.db.query<{ action: string; detail: string }>(
@@ -446,6 +478,10 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
         assert.equal(r.body.error?.code, 'key_invalidated')
       }
       assert.equal((await target.callWeb(admin.web, 'GET', '/v1/me')).status, 401)
+      // Nor the links of the source: the invitation and the reset link are ended, and the audit says how many.
+      assert.notEqual((await lookInvite(target, invite)).status, 200)
+      assert.notEqual((await lookReset(target, reset)).status, 200)
+      assert.match(String(audit[0]?.detail), /1 pending invitation.*1 password link/)
       assert.equal(await maintenance.current(target.db, target.clock()), null)
     } finally {
       await target.close()
@@ -467,7 +503,7 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
       clock: source.clock,
       by: admin.id,
     })
-    const now = await state(source.db, { except: { installation: ['key_epoch'] } })
+    const now = await state(source.db, { except: { installation: ['key_epoch'], ...LINKS } })
     for (const k of Object.keys(atCopyNoEpoch)) {
       if (k === 'audit' || k.startsWith('seq:audit')) continue
       assert.equal(now[k], atCopyNoEpoch[k], `${k} is as in the copy`)
@@ -481,6 +517,9 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
     )
     assert.deepEqual([last?.action, last?.actor_id], ['installation.restore', admin.id])
     assert.equal((await source.call(admin.key, 'GET', '/v1/brains')).status, 401)
+    // An invitation or reset link pending in the copy does not come back to life.
+    assert.notEqual((await lookInvite(source, invite)).status, 200)
+    assert.notEqual((await lookReset(source, reset)).status, 200)
     assert.equal(out.epoch, Number((await source.db.one('SELECT key_epoch FROM installation'))?.key_epoch))
   })
 
@@ -505,6 +544,19 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
       await t.db.query("INSERT INTO schema_migrations (id) VALUES ('9999_next_release')")
       await t.db.query("UPDATE brains SET name = 'changed by the new release'")
       const epoch = (await t.db.one('SELECT key_epoch FROM installation'))?.key_epoch
+      // Keeping keys is only for the copy this installation made before an update, with its own key.
+      const kept = await state(t.db)
+      await assert.rejects(
+        restore(t.db, {
+          file: join(d, pre.file),
+          key: TEST_SECRET,
+          targetSecret: OTHER,
+          keepKeys: true,
+          clock: t.clock,
+        }),
+        isCode('keep_keys_refused'),
+      )
+      assert.deepEqual(await state(t.db), kept)
       const out = await restore(t.db, {
         file: join(d, pre.file),
         key: TEST_SECRET,
@@ -621,6 +673,37 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
     }
   })
 
+  it('--keep-keys with a copy that was not made before an update: refused; nothing changes', async () => {
+    const before = await state(source.db)
+    await assert.rejects(
+      restore(source.db, {
+        file: copy,
+        key: TEST_SECRET,
+        targetSecret: TEST_SECRET,
+        keepKeys: true,
+        clock: source.clock,
+      }),
+      isCode('keep_keys_refused'),
+    )
+    assert.deepEqual(await state(source.db), before)
+  })
+
+  it('a copy before a restore needs maintenance on, like one before an update', async () => {
+    const d = await mkdtemp(join(tmpdir(), 'rsc-brain-prerestore-'))
+    try {
+      await assert.rejects(
+        backup.create(source.db, { dir: d, secret: TEST_SECRET, reason: 'pre-restore', clock: source.clock }),
+        (err: unknown) => {
+          isCode('not_in_maintenance')(err)
+          assert.match((err as AppError).howToProceed, /--reason restore/)
+          return true
+        },
+      )
+    } finally {
+      await rm(d, { recursive: true, force: true })
+    }
+  })
+
   it('a database that is not rsc-brain’s is refused; nothing changes', async () => {
     const t = await freshDatabase()
     try {
@@ -668,6 +751,176 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
       assert.equal((await empty.db.one('SELECT name FROM installation'))?.name, 'Test')
     } finally {
       await empty.drop()
+    }
+  })
+})
+
+// Review of PR #30 (blocker): rows go in by batches and a link to the same table is checked per statement, so a row
+// pointing to one in a later batch failed. Every such column (and the session ↔ entry link) goes in empty and is
+// filled once the table is in, whatever the order of the ids.
+describe('restore: links within a table across batches', { skip: skipPg }, () => {
+  it('more than a thousand rows, each pointing to one that comes after it', async () => {
+    const w = await world()
+    const d = await mkdtemp(join(tmpdir(), 'rsc-brain-selflinks-'))
+    try {
+      const p = await w.person('Lia', { isAdmin: true })
+      assert.equal((await w.call(p.key, 'POST', '/v1/brains', { slug: 'links' })).status, 201)
+      const e = await w.call(p.key, 'POST', '/v1/brains/links/entries', {
+        type: 'note',
+        title: 'T',
+        content: 'c',
+      })
+      assert.equal(e.status, 201, e.text)
+      const brain = String((await w.db.one("SELECT id FROM brains WHERE slug = 'links'"))?.id)
+      await w.db.query(
+        `INSERT INTO pages (id, brain_id, address, type, title, body, created_at, updated_at)
+         VALUES ('pag_template', $1, 'template', 'topic', 'T', '', now(), now())`,
+        [brain],
+      )
+      await w.db.query(
+        `INSERT INTO proposals (id, brain_id, title, author_id, credential_id, created_at)
+         VALUES ('prp_template', $1, 'T', $2, 'crd_x', now())`,
+        [brain, p.id],
+      )
+      const N = 1100
+      // The parent's id sorts after every child's, so copies hold the children first, a batch or more ahead.
+      const clone = async (table: string, template: string, set: Record<string, string>) => {
+        const cols = (BACKUP_TABLES.find((t) => t.name === table)?.columns ?? []).filter((c) => !(c in set))
+        const all = [...cols, ...Object.keys(set)]
+        const exprs = [...cols.map((c) => `"${c}"`), ...Object.values(set)]
+        await w.db.query(
+          `INSERT INTO ${table} (${all.map((c) => `"${c}"`).join(', ')})
+           SELECT ${exprs.join(', ')} FROM ${table}, generate_series(0, ${N}) AS g WHERE id = $1`,
+          [template],
+        )
+      }
+      const child = (prefix: string) =>
+        `CASE WHEN g = 0 THEN '${prefix}_zzzz_parent' ELSE '${prefix}_0000_' || lpad(g::text, 5, '0') END`
+      const parentOf = (prefix: string) => `CASE WHEN g = 0 THEN NULL ELSE '${prefix}_zzzz_parent' END`
+      const token = String(
+        (await w.db.one('SELECT id FROM credentials WHERE account_id = $1 LIMIT 1', [p.id]))?.id,
+      )
+      await clone('credentials', token, {
+        id: child('crd'),
+        secret_hash: `md5('crd' || g::text)`,
+        parent_id: parentOf('crd'),
+      })
+      const entry = String((await w.db.one('SELECT id FROM entries LIMIT 1'))?.id)
+      await clone('entries', entry, {
+        id: child('ent'),
+        norm_hash: `md5('ent' || g::text)`,
+        superseded_by: parentOf('ent'),
+      })
+      await clone('pages', 'pag_template', {
+        id: child('pag'),
+        address: `'addr-' || g::text`,
+        superseded_by: parentOf('pag'),
+      })
+      await clone('proposals', 'prp_template', {
+        id: child('prp'),
+        supersedes_id: parentOf('prp'),
+        superseded_by: parentOf('prp'),
+      })
+      const info = await backup.create(w.db, {
+        dir: d,
+        secret: TEST_SECRET,
+        reason: 'manual',
+        clock: w.clock,
+      })
+      const was = await state(w.db)
+      await w.db.query("UPDATE brains SET name = 'changed after the copy'")
+      await restore(w.db, {
+        file: join(d, info.file),
+        key: TEST_SECRET,
+        targetSecret: TEST_SECRET,
+        keepKeys: false,
+        clock: w.clock,
+      })
+      const now = await state(w.db)
+      for (const t of ['credentials', 'entries', 'pages', 'proposals', 'sessions', 'brains'])
+        assert.equal(now[t], was[t], `${t} as in the copy`)
+      const linked = await w.db.one<{ n: number }>(
+        "SELECT count(*)::int AS n FROM credentials WHERE parent_id = 'crd_zzzz_parent'",
+      )
+      assert.equal(linked?.n, N)
+    } finally {
+      await w.close()
+      await rm(d, { recursive: true, force: true })
+    }
+  })
+})
+
+// Review of PR #30: a restore held a whole table in memory. With the heap capped well under the size of the copy,
+// it still restores: rows go in as they are read, and the count is checked at the end of each table.
+describe('restore: a copy larger than the memory of the process', { skip: skipPg }, () => {
+  it('restores a copy of some 150 MB of text with a 128 MB heap', { timeout: 600_000 }, async () => {
+    const source = await freshDatabase()
+    const target = await freshDatabase()
+    const d = await mkdtemp(join(tmpdir(), 'rsc-brain-bigcopy-'))
+    try {
+      await migrate(source.db)
+      await source.db.query(
+        `INSERT INTO accounts (id, kind, email, name, status, created_at)
+         VALUES ('acc_000000000big', 'person', 'big@example.com', 'Big', 'active', now())`,
+      )
+      await source.db.query(
+        `INSERT INTO brains (id, slug, name, created_by, created_at, updated_at)
+         VALUES ('brn_000000000big', 'big', 'Big', 'acc_000000000big', now(), now())`,
+      )
+      await source.db.query(
+        `INSERT INTO meaning_vectors (kind, target_id, brain_id, provider, model, text_hash, vec, updated_at)
+         SELECT 'entry', 'ent_' || g, 'brn_000000000big', 'p', 'm', md5(g::text),
+                (SELECT array_agg(random()::real) FROM generate_series(1, 1536) WHERE g > 0), now()
+           FROM generate_series(1, 9000) AS g`,
+      )
+      const info = await backup.create(source.db, {
+        dir: d,
+        secret: TEST_SECRET,
+        reason: 'manual',
+        clock: () => new Date(),
+      })
+      let plain = 0
+      for await (const c of await openBackup(join(d, info.file), TEST_SECRET)) plain += c.length
+      assert.ok(plain > 140 * 1024 * 1024, `the copy holds ${plain} bytes of text`)
+      await writeFile(join(d, 'key'), TEST_SECRET, { mode: 0o600 })
+      const cli = new URL('../../src/cli/main.ts', import.meta.url).pathname
+      const r = await new Promise<{ code: number; err: string }>((resolve) => {
+        const c = spawn(
+          process.execPath,
+          [
+            '--max-old-space-size=128',
+            cli,
+            'restore',
+            '--file',
+            join(d, info.file),
+            '--key-file',
+            join(d, 'key'),
+            '--confirm',
+            '',
+          ],
+          {
+            env: {
+              ...process.env,
+              RSC_BRAIN_DATABASE_URL: target.url,
+              RSC_BRAIN_SECRET: TEST_SECRET,
+              RSC_BRAIN_BACKUPS: join(d, 'pre'),
+            },
+          },
+        )
+        let err = ''
+        c.stderr.on('data', (x) => {
+          err += x
+        })
+        c.stdin.end()
+        c.on('close', (code) => resolve({ code: code ?? -1, err }))
+      })
+      assert.equal(r.code, 0, r.err.slice(0, 2000))
+      const n = await target.db.one<{ n: number }>('SELECT count(*)::int AS n FROM meaning_vectors')
+      assert.equal(n?.n, 9000)
+    } finally {
+      await source.drop()
+      await target.drop()
+      await rm(d, { recursive: true, force: true })
     }
   })
 })

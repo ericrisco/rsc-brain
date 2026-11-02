@@ -2,8 +2,13 @@
 // everything, in one transaction: it drops what is there, migrates to exactly the migrations the copy was made at,
 // loads every table, puts every sequence back where it stood, migrates the rest, seals what was sealed again with the
 // key of this installation, ends maintenance and, unless the rollback of an update asks to keep them, moves the epoch
-// so no key, session or connection of the copy works again (a key revoked after the copy does not come back, and an
-// installation restored from another shares no key with it).
+// so no key, session or connection of the copy works again, and ends every invitation and link to set a password that
+// was still pending in it (a key or a link revoked after the copy does not come back, and an installation restored from
+// another shares none with it).
+//
+// Rows go in as they are read, a batch at a time (a table is never held whole in memory). A column that points to a
+// row of its own table, or of a table loaded later, goes in empty and is filled once every table is in: the database
+// checks such a link per statement, and the row it points to may be in a later batch.
 //
 // Nothing is committed before the last frame of the copy is read and every check holds: the first two sections are
 // the row counts and the sequences, the tables come once each in the order the header names them, and each holds as
@@ -20,12 +25,22 @@ import { bumpKeyEpoch } from '../../domain/installation.ts'
 import { maintenance } from '../../domain/maintenance.ts'
 import { type ResealCount, resealAll } from '../key.ts'
 import { LOCK as BACKUP_LOCK, backupRunning, knownMigrations } from './backup.ts'
-import { corruptCopy, openBackup, readSections, type SectionEvent, strongKey, weakKey } from './format.ts'
-import { BACKUP_TABLES, LOAD_ORDER_EXCEPTIONS } from './tables.ts'
+import {
+  corruptCopy,
+  keyId,
+  openBackup,
+  readSections,
+  type SectionEvent,
+  strongKey,
+  weakKey,
+} from './format.ts'
+import { BACKUP_TABLES } from './tables.ts'
 
-// Parameters per INSERT stay well under PostgreSQL's 65 535.
+// Parameters per INSERT stay well under PostgreSQL's 65 535; a batch also stays under a few megabytes of text (a row
+// of a meaning vector is some 15 kB).
 const MAX_PARAMS = 30_000
 const MAX_ROWS = 1000
+const MAX_BATCH_CHARS = 4 * 1024 * 1024
 
 export type RestoreOptions = {
   file: string
@@ -49,6 +64,8 @@ export type RestoreResult = {
   restoredAt: string
   epoch: number
   resealed: ResealCount
+  // Invitations and links to set a password the copy held pending, ended because the epoch moved.
+  ended: { invitations: number; resets: number }
 }
 
 export const newerCopy = (release: string) => {
@@ -68,6 +85,14 @@ const confirmMismatch = (expected: string) =>
     'confirm_mismatch',
     'The name given to confirm does not match this installation. Nothing was changed.',
     `Confirm with the name of this installation, exactly: "${expected}".`,
+  )
+
+const keepKeysRefused = () =>
+  new AppError(
+    400,
+    'keep_keys_refused',
+    'Keys are kept only when rolling back an update: with the copy this installation made before it, with its own key.',
+    'Restore without --keep-keys (every key and session then ends), or pick the pre-update copy of this installation.',
   )
 
 const notRscBrain = () =>
@@ -127,6 +152,7 @@ async function section(pull: Pull, table: string, columns: string[]): Promise<Ar
   return rowsOf(pull)
 }
 
+const COPIED = new Set(BACKUP_TABLES.map((t) => t.name))
 const COUNT = /^\d{1,15}$/
 const SEQ_VALUE = /^-?\d{1,19}$/
 
@@ -202,66 +228,127 @@ async function dropAll(tx: Db): Promise<void> {
 
 const quote = (id: string) => `"${id}"`
 
-// One table's rows, in batches. A column that points both ways (LOAD_ORDER_EXCEPTIONS) goes in empty; its values
-// are kept to be filled once every table is in.
-type Deferred = { table: string; key: string; column: string; type: string; keys: string[]; values: string[] }
-async function load(
+// A column to fill once every table is in: one that points to its own table or to one loaded later. Which they are
+// comes from the database's own list of links, so a link added by a later migration is covered without a list here.
+type Deferred = {
+  table: string
+  keys: string[]
+  columns: string[]
+  types: string[]
+  keyAt: number[]
+  at: number[]
+  // Per row with any of them set: the key values, then the column values.
+  rows: Array<Array<string | null>>
+}
+
+async function deferredFor(
   tx: Db,
   table: string,
   columns: string[],
-  rows: Array<Array<string | null>>,
-  deferred: Deferred[],
-): Promise<void> {
-  if (rows.length === 0) return
-  if (new Set(columns).size !== columns.length || columns.length === 0) throw corruptCopy()
-  for (const x of LOAD_ORDER_EXCEPTIONS) {
-    if (x.child !== table) continue
-    const at = columns.indexOf(x.column)
-    const key = BACKUP_TABLES.find((t) => t.name === table)?.order
-    if (at === -1 || !key || key.length !== 1) continue
-    const k = columns.indexOf(key[0] as string)
-    if (k === -1) throw corruptCopy()
-    const type = await tx.one<{ t: string }>(
-      `SELECT format_type(atttypid, atttypmod) AS t FROM pg_attribute WHERE attrelid = $1::regclass AND attname = $2`,
-      [quote(table), x.column],
+  later: Set<string>,
+): Promise<Deferred | null> {
+  const links = await tx.query<{ parent: string; cols: string[] }>(
+    `SELECT confrelid::regclass::text AS parent,
+            ARRAY(SELECT attname::text FROM pg_attribute WHERE attrelid = conrelid AND attnum = ANY (conkey)) AS cols
+       FROM pg_constraint WHERE contype = 'f' AND conrelid = $1::regclass`,
+    [quote(table)],
+  )
+  const bare = (name: string) => name.replace(/^public\./, '').replace(/"/g, '')
+  const cols = [
+    ...new Set(
+      links.filter((l) => bare(l.parent) === table || later.has(bare(l.parent))).flatMap((l) => l.cols),
+    ),
+  ].filter((c) => columns.includes(c))
+  if (cols.length === 0) return null
+  const keys = (
+    await tx.query<{ c: string }>(
+      `SELECT a.attname::text AS c FROM pg_constraint k, unnest(k.conkey) WITH ORDINALITY AS u(n, i)
+         JOIN pg_attribute a ON a.attnum = u.n
+        WHERE k.contype = 'p' AND k.conrelid = $1::regclass AND a.attrelid = k.conrelid ORDER BY u.i`,
+      [quote(table)],
     )
-    const d: Deferred = {
-      table,
-      key: key[0] as string,
-      column: x.column,
-      type: String(type?.t),
-      keys: [],
-      values: [],
-    }
-    for (const r of rows) {
-      const v = r[at]
-      if (v === null || v === undefined) continue
-      d.keys.push(String(r[k]))
-      d.values.push(v)
-      r[at] = null
-    }
-    deferred.push(d)
+  ).map((r) => r.c)
+  if (keys.length === 0 || keys.some((k) => !columns.includes(k) || cols.includes(k))) throw corruptCopy()
+  const types: string[] = []
+  for (const c of cols) {
+    const t = await tx.one<{ t: string }>(
+      'SELECT format_type(atttypid, atttypmod) AS t FROM pg_attribute WHERE attrelid = $1::regclass AND attname = $2',
+      [quote(table), c],
+    )
+    types.push(String(t?.t))
   }
+  return {
+    table,
+    keys,
+    columns: cols,
+    types,
+    keyAt: keys.map((k) => columns.indexOf(k)),
+    at: cols.map((c) => columns.indexOf(c)),
+    rows: [],
+  }
+}
+
+// One table, as its rows are read: in batches, never the whole table at once. Says how many rows there were; stops
+// at once when there are more than counted.
+async function loadTable(
+  tx: Db,
+  pull: Pull,
+  table: string,
+  columns: string[],
+  count: number,
+  d: Deferred | null,
+): Promise<number> {
+  if (new Set(columns).size !== columns.length || columns.length === 0) throw corruptCopy()
   const per = Math.max(1, Math.min(MAX_ROWS, Math.floor(MAX_PARAMS / columns.length)))
   const head = `INSERT INTO ${quote(table)} (${columns.map(quote).join(', ')}) OVERRIDING SYSTEM VALUE VALUES `
-  for (let i = 0; i < rows.length; i += per) {
-    const batch = rows.slice(i, i + per)
+  let batch: Array<Array<string | null>> = []
+  let chars = 0
+  let n = 0
+  const flush = async () => {
+    if (batch.length === 0) return
     const params: Array<string | null> = []
     const tuples = batch.map((r) => {
       const at = params.length
       params.push(...r)
       return `(${r.map((_, j) => `$${at + j + 1}`).join(', ')})`
     })
+    batch = []
+    chars = 0
     await tx.query(head + tuples.join(', '), params)
   }
+  for (;;) {
+    const ev = await pull.next()
+    if (ev === null) break
+    if (ev.kind === 'table') {
+      pull.putBack(ev)
+      break
+    }
+    n += 1
+    if (n > count) throw corruptCopy()
+    const r = ev.values
+    if (d?.at.some((i) => r[i] !== null)) {
+      d.rows.push([...d.keyAt.map((i) => r[i] ?? null), ...d.at.map((i) => r[i] ?? null)])
+      for (const i of d.at) r[i] = null
+    }
+    batch.push(r)
+    for (const v of r) chars += v === null ? 1 : v.length
+    if (batch.length >= per || chars >= MAX_BATCH_CHARS) await flush()
+  }
+  await flush()
+  return n
 }
 
 async function fill(tx: Db, d: Deferred): Promise<void> {
-  for (let i = 0; i < d.keys.length; i += MAX_ROWS) {
+  const names = [...d.keys.map((_, i) => `k${i}`), ...d.columns.map((_, i) => `c${i}`)]
+  const where = d.keys.map((key, i) => `t.${quote(key)}::text = v.k${i}`).join(' AND ')
+  const set = d.columns.map((c, i) => `${quote(c)} = v.c${i}::${d.types[i]}`).join(', ')
+  for (let i = 0; i < d.rows.length; i += MAX_ROWS) {
+    const part = d.rows.slice(i, i + MAX_ROWS)
     await tx.query(
-      `UPDATE ${quote(d.table)} t SET ${quote(d.column)} = v.c::${d.type}
-         FROM unnest($1::text[], $2::text[]) AS v(k, c) WHERE t.${quote(d.key)}::text = v.k`,
-      [d.keys.slice(i, i + MAX_ROWS), d.values.slice(i, i + MAX_ROWS)],
+      `UPDATE ${quote(d.table)} t SET ${set}
+         FROM unnest(${names.map((_, j) => `$${j + 1}::text[]`).join(', ')}) AS v(${names.join(', ')})
+        WHERE ${where}`,
+      names.map((_, j) => part.map((r) => r[j] ?? null)),
     )
   }
 }
@@ -281,7 +368,8 @@ export async function restore(db: Pool, o: RestoreOptions): Promise<RestoreResul
     if (
       h.tables.length === 0 ||
       new Set(h.tables).size !== h.tables.length ||
-      h.tables.some((t) => !/^[a-z][a-z0-9_]{0,62}$/.test(t) || t === 'schema_migrations')
+      // Only tables copies hold: never one copies leave out (single-use codes, receipts, brakes).
+      h.tables.some((t) => !COPIED.has(t))
     )
       throw corruptCopy()
     const pull = puller(it)
@@ -315,6 +403,16 @@ export async function restore(db: Pool, o: RestoreOptions): Promise<RestoreResul
       const expected = now.name || h.installation.name
       if (o.confirm !== expected) throw confirmMismatch(expected)
     }
+    // Keeping keys is the rollback of an update only: the copy this installation made before it, with its key.
+    if (
+      o.keepKeys &&
+      !(
+        h.reason === 'pre-update' &&
+        h.keyId === keyId(targetSecret) &&
+        (now.name ?? '') === h.installation.name
+      )
+    )
+      throw keepKeysRefused()
     // Under maintenance from here (writes refused with a clear answer), put back as it was if anything fails.
     if (now.maintenance) await maintenance.on(db, o.clock(), { reason: 'restore' })
     try {
@@ -356,12 +454,15 @@ export async function restore(db: Pool, o: RestoreOptions): Promise<RestoreResul
         ).map((r) => quote(r.t))
         if (filled.length) await tx.query(`TRUNCATE ${filled.join(', ')} CASCADE`)
         const deferred: Deferred[] = []
+        const later = new Set(h.tables)
         for (const table of h.tables) {
           const ev = await pull.next()
           if (ev?.kind !== 'table' || ev.table !== table) throw corruptCopy()
-          const rows = await rowsOf(pull)
-          if (rows.length !== counts.get(table)) throw corruptCopy()
-          await load(tx, table, ev.columns, rows, deferred)
+          later.delete(table)
+          const d = await deferredFor(tx, table, ev.columns, later)
+          const n = await loadTable(tx, pull, table, ev.columns, counts.get(table) ?? 0, d)
+          if (n !== counts.get(table)) throw corruptCopy()
+          if (d) deferred.push(d)
         }
         // Nothing after the last table, and the end of the text: the last frame is read and authenticated.
         if ((await pull.next()) !== null) throw corruptCopy()
@@ -383,22 +484,38 @@ export async function restore(db: Pool, o: RestoreOptions): Promise<RestoreResul
             : await resealAll(tx, o.key, targetSecret)
         const restoredAt = o.clock()
         let epoch: number
+        const ended = { invitations: 0, resets: 0 }
         if (o.keepKeys) {
           epoch = Number(
             (await tx.one<{ e: number }>('SELECT key_epoch AS e FROM installation WHERE id = 1'))?.e,
           )
         } else {
           epoch = await bumpKeyEpoch(tx)
+          // Links that are not keys but open the door: an invitation and a link to set a password are ended too.
+          ended.invitations = (
+            await tx.query(
+              'UPDATE invitations SET revoked_at = $1 WHERE used_at IS NULL AND revoked_at IS NULL RETURNING id',
+              [restoredAt],
+            )
+          ).length
+          ended.resets = (
+            await tx.query(
+              'UPDATE password_resets SET used_at = $1 WHERE used_at IS NULL RETURNING token_hash',
+              [restoredAt],
+            )
+          ).length
           await audit(tx, {
             at: restoredAt,
             actorId: o.by ?? null,
             credentialId: null,
             action: 'installation.restore',
             outcome: 'ok',
-            detail: `copy of ${h.createdAt} (${basename(o.file)})${o.by ? '' : ', from the command line'}`,
+            detail:
+              `copy of ${h.createdAt} (${basename(o.file)})${o.by ? '' : ', from the command line'}; ended ` +
+              `${ended.invitations} pending invitation(s) and ${ended.resets} password link(s)`,
           })
         }
-        return { copyAt: h.createdAt, restoredAt: restoredAt.toISOString(), epoch, resealed }
+        return { copyAt: h.createdAt, restoredAt: restoredAt.toISOString(), epoch, resealed, ended }
       })
     } catch (err) {
       if (now.maintenance) {
