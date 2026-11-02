@@ -21,6 +21,9 @@ export const LOG_EVENTS = [
   'sweep_failed',
   // A refusal during maintenance: the audit is not written then, so it is said here (action, account, brain).
   'access_denied',
+  // The daily copy: made (milliseconds, how many old copies were removed), or failed (its code).
+  'backup_done',
+  'backup_failed',
 ] as const
 export type LogEvent = (typeof LOG_EVENTS)[number]
 

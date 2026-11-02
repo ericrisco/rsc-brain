@@ -22,6 +22,9 @@ import { foldTrail } from '../domain/trail.ts'
 import { createHandler } from '../http/app.ts'
 import { providersFromEnv } from '../meaning/providers.ts'
 import { applyStored } from '../meaning/stored.ts'
+import { backup, backupJob, readStatus } from '../ops/backup/backup.ts'
+import { BACKUP_REASONS, type BackupReason } from '../ops/backup/format.ts'
+import { createScheduler } from '../ops/backup/schedule.ts'
 import { runBridge } from './bridge.ts'
 import { sessionStart, stop } from './hooks.ts'
 import { mcpAddress, NO_TOKEN, readToken, UsageError } from './remote.ts'
@@ -47,6 +50,10 @@ Usage:
                                                       R is update, restore or manual (default manual)
   rsc-brain maintenance off                           take writes again
   rsc-brain maintenance status [--json]               whether writes are refused, until when and why
+  rsc-brain backup [--reason R] [--json]              make an encrypted copy of everything now, in
+                                                      RSC_BRAIN_BACKUPS; R is manual (default), pre-update
+                                                      (under maintenance) or pre-restore
+  rsc-brain backups list [--json]                     the copies, newest first, and whether the last failed
   rsc-brain version                                   print the version of rsc-brain
   rsc-brain help                                      show this help
 
@@ -56,7 +63,9 @@ Environment:
   RSC_BRAIN_HOST           address to listen on (default 127.0.0.1)
   RSC_BRAIN_SECRET         installation secret (32+ characters) that seals second factors and mail
   RSC_BRAIN_TRUSTED_PROXIES  proxies whose X-Forwarded-Proto/-For are believed (comma separated)
-  RSC_BRAIN_BACKUPS        folder of the copies (its free space shows in Admin › Backups & system)
+  RSC_BRAIN_BACKUPS        folder of the copies; with it, serve makes a copy every day
+  RSC_BRAIN_BACKUP_AT      time of the daily copy, HH:MM in RSC_BRAIN_TIMEZONE (default 03:00)
+  RSC_BRAIN_BACKUP_KEEP    daily copies kept (default 14); copies made by hand are never removed
 `
 
 const out = (s: string) => process.stdout.write(s)
@@ -81,6 +90,8 @@ async function main(argv: string[]): Promise<number> {
     return 0
   }
   if (cmd === 'maintenance') return maintenanceCommand(sub, rest)
+  if (cmd === 'backup') return backupCommand([sub, ...rest].filter((x) => x !== undefined))
+  if (cmd === 'backups') return backupsCommand(sub, rest)
   if (cmd === 'bridge') return bridgeCommand([sub, ...rest].filter((x) => x !== undefined))
   if (cmd === 'hook') return hookCommand(sub, rest)
   if (cmd === 'migrate') {
@@ -151,6 +162,33 @@ async function main(argv: string[]): Promise<number> {
         })
     }, 60_000)
     embed.unref()
+    // The daily copy (spec B7 C2), with the folder of the copies set; checked every minute.
+    if (cfg.backups) {
+      const daily = createScheduler({
+        at: cfg.backupAt,
+        tz: cfg.timezone,
+        clock: systemClock,
+        run: backupJob(db, {
+          dir: cfg.backups,
+          secret: cfg.secret,
+          keep: cfg.backupKeep,
+          clock: systemClock,
+          log,
+        }),
+      })
+      let copying = false
+      const copies = setInterval(() => {
+        if (copying) return
+        copying = true
+        daily
+          .check()
+          .catch((err: unknown) => log.warn('backup_failed', failureFields(err)))
+          .finally(() => {
+            copying = false
+          })
+      }, 60_000)
+      copies.unref()
+    }
     const stop = () => {
       log.info('stopping')
       server.close(() => {
@@ -379,6 +417,83 @@ async function maintenanceCommand(which: string | undefined, args: string[]): Pr
     }
     return 0
   })
+}
+
+// The folder of the copies, or why there is none (exit 2).
+function backupsDir(): string | null {
+  const dir = process.env.RSC_BRAIN_BACKUPS
+  if (dir) return dir
+  process.stderr.write('Set RSC_BRAIN_BACKUPS to the folder of the copies (in the container, /backups).\n')
+  return null
+}
+
+// A copy now (plan §3.3). The installation key comes from RSC_BRAIN_SECRET only; the output says its id.
+async function backupCommand(args: string[]): Promise<number> {
+  const usage = (why: string) => {
+    process.stderr.write(`${why} Usage: rsc-brain backup [--reason manual|pre-update|pre-restore] [--json]\n`)
+    return 2
+  }
+  let values: { reason?: string; json?: boolean }
+  try {
+    values = parseArgs({
+      args,
+      options: { reason: { type: 'string' }, json: { type: 'boolean' } },
+      strict: true,
+    }).values
+  } catch (err) {
+    return usage(`${(err as Error).message}.`)
+  }
+  const reason = (values.reason ?? 'manual') as BackupReason
+  // Scheduled copies are the daily ones of serve: only they are pruned.
+  if (!BACKUP_REASONS.includes(reason) || reason === 'scheduled')
+    return usage('--reason is manual, pre-update or pre-restore.')
+  const dir = backupsDir()
+  if (!dir) return 2
+  return withDb(async (db) => {
+    const info = await backup.create(db, { dir, secret: readConfig().secret, reason, clock: systemClock })
+    out(
+      values.json
+        ? `${JSON.stringify(info)}\n`
+        : `Copy written: ${info.file} (${info.bytes} bytes, key id ${info.keyId}).\n` +
+            'Keep the installation key: without it this copy cannot be restored.\n',
+    )
+    return 0
+  })
+}
+
+async function backupsCommand(which: string | undefined, args: string[]): Promise<number> {
+  let values: { json?: boolean }
+  try {
+    values = parseArgs({ args, options: { json: { type: 'boolean' } }, strict: true }).values
+  } catch (err) {
+    process.stderr.write(`${(err as Error).message}. Usage: rsc-brain backups list [--json]\n`)
+    return 2
+  }
+  if (which !== 'list') {
+    process.stderr.write('Usage: rsc-brain backups list [--json]\n')
+    return 2
+  }
+  const dir = backupsDir()
+  if (!dir) return 2
+  const items = await backup.list(dir)
+  const status = await readStatus(dir)
+  if (values.json) {
+    out(
+      `${JSON.stringify({ items, lastOk: status.lastOk, lastFailure: status.lastFailure, keyId: status.keyId })}\n`,
+    )
+    return 0
+  }
+  if (status.lastFailure)
+    out(`The last copy failed at ${status.lastFailure.at} (${status.lastFailure.category}).\n`)
+  if (items.length === 0) {
+    out(`No copies yet in ${dir}.\n`)
+    return 0
+  }
+  for (const b of items)
+    out(
+      `${b.createdAt}  ${b.reason.padEnd(11)}  ${String(b.bytes).padStart(12)} bytes  key id ${b.keyId}  ${b.file}\n`,
+    )
+  return 0
 }
 
 // The bridge: a wrong option or a missing token stops it before the agent sends anything.
