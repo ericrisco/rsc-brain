@@ -3,10 +3,14 @@
 // to become /v2 and leave /v1 working. The description at /v1/openapi.json is generated from the same
 // route table, so it cannot leave a route out, and it documents the pinned fields.
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { hashPassword } from '../../src/auth/password.ts'
 import { stepOf, totpAt } from '../../src/auth/totp.ts'
 import { ROUTES } from '../../src/http/app.ts'
+import { backup } from '../../src/ops/backup/backup.ts'
 import { png, SVG } from '../helpers/images.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type Call, type World, world } from '../helpers/world.ts'
@@ -141,11 +145,49 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     'providers[]': ['name', 'label', 'needs', 'source', 'last4', 'url', 'urlHidden', 'unreadable', 'model'],
   },
   'GET /v1/admin/system': {
-    '': ['version', 'startedAt', 'database', 'meaning', 'streams', 'mail', 'disk', 'maintenance'],
+    '': [
+      'version',
+      'startedAt',
+      'database',
+      'meaning',
+      'streams',
+      'mail',
+      'disk',
+      'maintenance',
+      'backups',
+      'keyId',
+      'release',
+    ],
     database: ['ok', 'migration'],
     streams: ['open', 'max'],
     disk: ['backupsFree', 'databaseBytes'],
+    backups: ['lastOk', 'lastFailure', 'lastWarning'],
+    release: ['installed', 'latest', 'notes', 'checkedAt', 'newer'],
   },
+  // B7 PR30 (plan §3.4): the copies, the installation key and restoring, from the web.
+  'GET /v1/admin/backups': {
+    '': [
+      'configured',
+      'items',
+      'lastOk',
+      'lastFailure',
+      'lastWarning',
+      'keyId',
+      'schedule',
+      'lastUpdate',
+      'running',
+    ],
+    'items[]': ['id', 'createdAt', 'bytes', 'reason', 'keyId', 'needsOldKey'],
+    schedule: ['at', 'keep', 'timezone'],
+  },
+  'POST /v1/admin/backups': { '': ['id'] },
+  'GET /v1/admin/backups/{id}/impact': { '': ['copyAt', 'copyLastWriteAt', 'lastWriteAt', 'lostWrites'] },
+  'POST /v1/admin/backups/{id}/restore': {
+    '': ['copyAt', 'restoredAt', 'preRestore', 'ended'],
+    ended: ['invitations', 'resets'],
+  },
+  'POST /v1/admin/installation-key': { '': ['key', 'keyId'] },
+  'POST /v1/setup/key': { '': ['key', 'keyId'] },
   // B7 (C20): what an outside watcher reads; never the version.
   'GET /v1/health': {
     '': ['ok', 'database', 'maintenance'],
@@ -709,6 +751,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       ...(await journal()),
       ...(await inbox(entryId)),
       ...(await profile()),
+      ...(await copies()),
     }
     const paths = doc.paths as Record<string, Record<string, Json>>
     for (const [op, shape] of Object.entries(SHAPES)) {
@@ -729,6 +772,86 @@ describe('the v1 contract', { skip: skipPg }, () => {
     }
   })
 
+  // The copies from the web (B7 PR30), on an installation of their own: restoring ends every key of it.
+  async function copies(): Promise<Record<string, Json>> {
+    const out: Record<string, Json> = {}
+    const dir = await mkdtemp(join(tmpdir(), 'brain-contract-copies-'))
+    const o = await world({ backups: dir })
+    try {
+      const a = await o.person('Ada', { isAdmin: true })
+      await o.db.query('UPDATE accounts SET password_hash = $2 WHERE id = $1', [a.id, await hashPassword(PW)])
+      const web = await o.web(a.id)
+      const made = await o.callWeb(web, 'POST', '/v1/admin/backups', {})
+      assert.equal(made.status, 202, made.text)
+      out['POST /v1/admin/backups'] = made.body
+      let list = await o.callWeb(web, 'GET', '/v1/admin/backups')
+      for (let i = 0; list.body.running && i < 200; i++) {
+        await new Promise((r) => setTimeout(r, 25))
+        list = await o.callWeb(web, 'GET', '/v1/admin/backups')
+      }
+      out['GET /v1/admin/backups'] = list.body
+      const id = String(made.body.id)
+      out['GET /v1/admin/backups/{id}/impact'] = (
+        await o.callWeb(web, 'GET', `/v1/admin/backups/${id}/impact`)
+      ).body
+      out['POST /v1/admin/installation-key'] = (
+        await o.callWeb(web, 'POST', '/v1/admin/installation-key', { password: PW })
+      ).body
+      o.advance(2000)
+      const restored = await o.callWeb(web, 'POST', `/v1/admin/backups/${id}/restore`, {
+        confirm: 'Test',
+        password: PW,
+      })
+      assert.equal(restored.status, 200, restored.text)
+      out['POST /v1/admin/backups/{id}/restore'] = restored.body
+      return out
+    } finally {
+      await o.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  }
+
+  // The refusals of the copies from the web that need a folder of copies (B7 PR30).
+  async function copyRefusals(): Promise<Array<[string, Call]>> {
+    const dir = await mkdtemp(join(tmpdir(), 'brain-contract-refusals-'))
+    const o = await world({ backups: dir })
+    try {
+      const a = await o.person('Ada', { isAdmin: true })
+      await o.db.query('UPDATE accounts SET password_hash = $2 WHERE id = $1', [a.id, await hashPassword(PW)])
+      const web = await o.web(a.id)
+      const got: Array<[string, Call]> = []
+      const first = await o.callWeb(web, 'POST', '/v1/admin/backups', {})
+      got.push(['backup_running', await o.callWeb(web, 'POST', '/v1/admin/backups', {})])
+      for (let i = 0; i < 200; i++) {
+        if (!(await o.callWeb(web, 'GET', '/v1/admin/backups')).body.running) break
+        await new Promise((r) => setTimeout(r, 25))
+      }
+      const id = String(first.body.id)
+      got.push([
+        'confirm_mismatch',
+        await o.callWeb(web, 'POST', `/v1/admin/backups/${id}/restore`, { confirm: 'Nope', password: PW }),
+      ])
+      o.advance(2000)
+      const old = await backup.create(o.db, {
+        dir,
+        secret: 'an-older-installation-key-of-32-characters',
+        reason: 'manual',
+        clock: o.clock,
+      })
+      got.push([
+        'wrong_key',
+        await o.callWeb(web, 'POST', `/v1/admin/backups/${old.id}/restore`, {
+          confirm: 'Test',
+          password: PW,
+        }),
+      ])
+      return got
+    } finally {
+      await o.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  }
+
   // The real answers of the screens before a session, in the order a person meets them.
   async function doors(): Promise<Record<string, Json>> {
     const out: Record<string, Json> = {}
@@ -741,6 +864,11 @@ describe('the v1 contract', { skip: skipPg }, () => {
     const setup = await fresh.raw('POST', '/v1/setup', { headers: WEB, body: setupBody })
     assert.equal(setup.status, 201, setup.text)
     out['POST /v1/setup'] = setup.body
+    // The step «Installation key» of the wizard, with the session the setup gave.
+    const setupSession = /rscb_session=([^;]+)/.exec(setup.headers.get('set-cookie') ?? '')?.[1] ?? ''
+    const key = await fresh.callWeb(setupSession, 'POST', '/v1/setup/key', {})
+    assert.equal(key.status, 200, key.text)
+    out['POST /v1/setup/key'] = key.body
     const lou = await withPassword('Lou')
     const signedIn = await login({ email: lou.email, password: PW })
     assert.equal(signedIn.status, 200, signedIn.text)
@@ -1298,6 +1426,10 @@ describe('the v1 contract', { skip: skipPg }, () => {
       if (a.isAdmin && a.id !== boss.id)
         await w.db.query('UPDATE accounts SET is_admin = true WHERE id = $1', [a.id])
     await add('no_logo', w.raw('GET', '/v1/branding/logo'))
+    // The copies and the installation key (B7 PR30): this installation has no folder for copies.
+    await add('reauth_failed', w.callWeb(bossWeb, 'POST', '/v1/admin/installation-key', {}))
+    await add('backups_not_set_up', w.callWeb(bossWeb, 'POST', '/v1/admin/backups', {}))
+    got.push(...(await copyRefusals()))
     // The logo (G3) and the key of the meaning provider in use (PR25b).
     const logo = (contentType: string, data: Buffer) =>
       w.callWeb(bossWeb, 'PUT', '/v1/admin/branding/logo', { contentType, data: data.toString('base64') })

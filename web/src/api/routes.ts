@@ -114,6 +114,15 @@ export const ROUTE_TABLE = {
   // Reached by a plain link (a download), not through the client; listed so the table covers it.
   auditExport: { route: 'GET /v1/admin/audit/export' },
   system: { route: 'GET /v1/admin/system' },
+  // Copies, the installation key and restoring (B7 PR30).
+  backups: { route: 'GET /v1/admin/backups' },
+  makeBackup: { route: 'POST /v1/admin/backups' },
+  // Reached by a plain link (a download), not through the client; listed so the table covers it.
+  backupDownload: { route: 'GET /v1/admin/backups/{id}/download' },
+  backupImpact: { route: 'GET /v1/admin/backups/{id}/impact' },
+  restoreBackup: { route: 'POST /v1/admin/backups/{id}/restore' },
+  installationKey: { route: 'POST /v1/admin/installation-key' },
+  setupKey: { route: 'POST /v1/setup/key' },
   uploadLogo: { route: 'PUT /v1/admin/branding/logo' },
   removeLogo: { route: 'DELETE /v1/admin/branding/logo' },
   revokeKey: { route: 'DELETE /v1/keys/{id}' },

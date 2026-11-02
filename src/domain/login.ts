@@ -440,6 +440,89 @@ export async function confirmReset(
   })
 }
 
+// Typing the password again (and the code, with a second factor) before something a stolen session must not be
+// enough for (spec B7: the installation key, restoring a copy). Only in the web. Every refusal is 401
+// reauth_failed, audited, and takes its turn at the brake of signing in (same email, same count).
+export async function reauth(
+  ctx: Ctx,
+  conn: ConnFacts,
+  secret: string | undefined,
+  input: { password?: unknown; code?: unknown },
+  what: string,
+): Promise<void> {
+  inWeb(ctx, what)
+  const password = typeof input.password === 'string' ? input.password : ''
+  const key = ctx.who.email ?? `account:${ctx.who.accountId}`
+  const now = ctx.clock()
+  if (!password || password.length > PASSWORD.max) {
+    throw unauthorized(
+      'reauth_failed',
+      `${what} asks for your password again.`,
+      'Type the password you sign in with in "password".',
+    )
+  }
+  const waiting = await attempt(ctx.db, key, now)
+  if (waiting) throw braked(waiting, now, PROFILE_WAIT)
+  const a = await ctx.db.one<Row>(
+    'SELECT password_hash, totp_secret, totp_last_step FROM accounts WHERE id = $1',
+    [ctx.who.accountId],
+  )
+  if (!a?.password_hash || !(await verifyPassword(password, String(a.password_hash)))) {
+    await failedAudit(ctx.db, ctx.who.accountId, now, 'wrong password to confirm', conn)
+    throw await refuse(
+      ctx.db,
+      key,
+      now,
+      unauthorized(
+        'reauth_failed',
+        'The password is not right.',
+        'Type the password you sign in with. Forgot it? Sign out and reset it from the sign-in page.',
+      ),
+      PROFILE_WAIT,
+    )
+  }
+  if (a.totp_secret != null) {
+    const code = typeof input.code === 'string' ? input.code.trim() : ''
+    const step = code
+      ? checkTotp(
+          openSeed(secret, String(a.totp_secret)),
+          code,
+          now,
+          a.totp_last_step == null ? null : Number(a.totp_last_step),
+        )
+      : null
+    const used =
+      step !== null &&
+      (await ctx.db.one(
+        'UPDATE accounts SET totp_last_step = $2 WHERE id = $1 AND (totp_last_step IS NULL OR totp_last_step < $2) RETURNING id',
+        [ctx.who.accountId, step],
+      ))
+    if (!used) {
+      await failedAudit(
+        ctx.db,
+        ctx.who.accountId,
+        now,
+        code ? 'wrong code to confirm' : 'no code to confirm',
+        conn,
+      )
+      throw await refuse(
+        ctx.db,
+        key,
+        now,
+        unauthorized(
+          'reauth_failed',
+          code
+            ? 'The code is not right, or was already used.'
+            : 'This account has a second factor: the code of the authenticator app is asked too.',
+          'Type the 6 digits your app shows now in "code".',
+        ),
+        PROFILE_WAIT,
+      )
+    }
+  }
+  await clearBrake(ctx.db, key)
+}
+
 // A new password from the profile (spec B6 «Profile», plan G6): only in the web, with the current
 // password. A wrong one takes its turn at the brake of signing in (same email, same count), so a stolen
 // session cannot guess the password without end. The change ends every pending reset link and every other

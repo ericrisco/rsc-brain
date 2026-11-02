@@ -26,6 +26,8 @@ import { type World, world } from '../helpers/world.ts'
 // its audit record. The table-hash probe below finds any other.
 const GET_WRITES: Record<string, 'writes'> = {
   'GET /v1/admin/audit/export': 'writes',
+  // B7 PR30: downloading a copy records it.
+  'GET /v1/admin/backups/:id/download': 'writes',
 }
 
 // The only routes other than GET that the gate lets through, and why. Adding one here is a decision.

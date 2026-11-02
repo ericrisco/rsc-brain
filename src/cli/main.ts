@@ -24,11 +24,13 @@ import { foldTrail } from '../domain/trail.ts'
 import { createHandler } from '../http/app.ts'
 import { providersFromEnv } from '../meaning/providers.ts'
 import { applyStored } from '../meaning/stored.ts'
-import { type BackupInfo, backup, backupJob, readStatus } from '../ops/backup/backup.ts'
+import { type BackupInfo, backup, backupJob, copyMemory, readStatus } from '../ops/backup/backup.ts'
+import { createCopies } from '../ops/backup/copies.ts'
 import { BACKUP_REASONS, type BackupReason, keyId, strongKey } from '../ops/backup/format.ts'
 import { restore } from '../ops/backup/restore.ts'
 import { createScheduler } from '../ops/backup/schedule.ts'
 import { resealAll } from '../ops/key.ts'
+import { releaseChecker, releasesUrl } from '../ops/releases.ts'
 import { runBridge } from './bridge.ts'
 import { sessionStart, stop } from './hooks.ts'
 import { mcpAddress, NO_TOKEN, readToken, UsageError } from './remote.ts'
@@ -131,6 +133,22 @@ async function main(argv: string[]): Promise<number> {
     // meaning search stays off until the administration turns it on there (spec B3).
     const meaning = providersFromEnv()
     await applyStored(db, meaning, cfg.secret)
+    // One memory of the copies for the daily copy and the web (a failure status.json could not hold is still said).
+    const memory = copyMemory()
+    const copies = cfg.backups
+      ? createCopies({
+          db,
+          dir: cfg.backups,
+          secret: cfg.secret,
+          clock: systemClock,
+          log,
+          schedule: { at: cfg.backupAt, keep: cfg.backupKeep, timezone: cfg.timezone },
+          memory,
+        })
+      : undefined
+    // Whether a newer release exists: once a day, only the User-Agent (plan §3.10); off with an empty URL.
+    const releases = releaseChecker({ url: releasesUrl(process.env), version: VERSION, clock: systemClock })
+    releases.start()
     const server = createServer(
       createHandler({
         db,
@@ -140,6 +158,8 @@ async function main(argv: string[]): Promise<number> {
         secret: cfg.secret,
         trustedProxies: cfg.trustedProxies,
         backups: cfg.backups,
+        ...(copies ? { copies } : {}),
+        releases,
         log,
       }),
     )
@@ -196,6 +216,7 @@ async function main(argv: string[]): Promise<number> {
           keep: cfg.backupKeep,
           clock: systemClock,
           log,
+          memory,
         }),
       })
       let copying = false

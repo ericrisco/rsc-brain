@@ -1,5 +1,6 @@
 // The HTTP face of the server: JSON in, JSON out, a key on every /v1 request except /v1/health.
 // Refusals carry { error: { code, message, howToProceed } }; an unexpected failure reveals nothing.
+import { createReadStream } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
@@ -16,6 +17,8 @@ import type { Outbox } from '../mail/mail.ts'
 import { mcpRoutes } from '../mcp/server.ts'
 import type { Providers } from '../meaning/providers.ts'
 import type { FetchPolicy } from '../oauth/fetch.ts'
+import type { Copies } from '../ops/backup/copies.ts'
+import type { ReleaseChecker } from '../ops/releases.ts'
 import { boundJson } from './bounds.ts'
 import { EVENT_TIMINGS, type EventTimings, eventHub } from './hub.ts'
 import { ENDS_ACCESS, isWrite, maintenance, underMaintenance } from './maintenance.ts'
@@ -31,6 +34,7 @@ import {
   WEB_HEADER,
 } from './router.ts'
 import { authRoutes } from './routes/auth.ts'
+import { backupRoutes } from './routes/backups.ts'
 import { brainRoutes } from './routes/brains.ts'
 import { brandingRoutes } from './routes/branding.ts'
 import { connectRoutes } from './routes/connect.ts'
@@ -71,6 +75,10 @@ export type AppDeps = {
   web?: string | false
   // Where the copies go (RSC_BRAIN_BACKUPS): Admin › Backups & system shows the free space there.
   backups?: string | undefined
+  // The copies of this process (serve builds them with the daily copy; spec B7).
+  copies?: Copies
+  // Whether a newer release exists (plan §3.10).
+  releases?: ReleaseChecker
 }
 
 // How long the health address waits for the database before it says the database is down.
@@ -113,13 +121,17 @@ export const ROUTES: Route[] = [
   ...connectRoutes,
   ...brandingRoutes,
   ...systemRoutes,
+  ...backupRoutes,
 ]
 // The MCP endpoint calls the same routes a program would (spec B5 parity).
 ROUTES.push(...mcpRoutes(() => ROUTES))
 // The description of the API, generated from this table; it holds no data, so it needs no key.
 ROUTES.push(
+  // Sent whole as text: it describes, it holds no data, so the bound on answers (256 000 characters, for data) does
+  // not cut it; it passed that size with the copies of B7.
   publicRoute('GET /v1/openapi.json', async (r) => ({
-    body: openapi(ROUTES, (await installation(r.db)).publicUrl),
+    body: JSON.stringify(openapi(ROUTES, (await installation(r.db)).publicUrl)),
+    headers: { 'content-type': 'application/json; charset=utf-8' },
   })),
 )
 
@@ -343,6 +355,34 @@ async function stream(
   }
 }
 
+// A file to save, as it is on disk (a copy of the installation): never cached, never sniffed.
+async function sendFile(
+  res: ServerResponse,
+  f: { path: string; bytes: number; name: string },
+): Promise<void> {
+  const from = createReadStream(f.path)
+  await new Promise<void>((resolve, reject) => {
+    from.once('open', () => {
+      res.writeHead(200, {
+        'content-type': 'application/octet-stream',
+        'content-disposition': `attachment; filename="${f.name}"`,
+        'content-length': f.bytes,
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      })
+      from.pipe(res)
+    })
+    from.once('error', (err) => {
+      if (!res.headersSent) reject(err)
+      else res.destroy(err)
+    })
+    res.once('close', () => {
+      from.destroy()
+      resolve()
+    })
+  })
+}
+
 export function createHandler(deps: AppDeps) {
   const routes = deps.routes ?? ROUTES
   const log = deps.log ?? stdoutLog
@@ -447,6 +487,8 @@ export function createHandler(deps: AppDeps) {
         timings,
         startedAt,
         backups: deps.backups ?? null,
+        copies: deps.copies ?? null,
+        releases: deps.releases ?? null,
         log,
       }
       // Maintenance (spec B7 C12): a write without a key (signing in, the standard sign-in) is refused here;
@@ -483,6 +525,7 @@ export function createHandler(deps: AppDeps) {
       bodyRead = true
       const reply = await found.route.handler({ ...base, body, who })
       if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)
+      if (reply.file) return await sendFile(res, reply.file)
       send(res, reply.status ?? 200, reply.body, reply.headers, {
         route: Boolean(reply.compress),
         accepts: acceptsGzip(req.headers['accept-encoding']),

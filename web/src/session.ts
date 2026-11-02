@@ -37,6 +37,8 @@ export const me = () => resource<Me>('me', () => api.call<Me>('me', { quiet: tru
 
 // Set by the first-time setup when it worked, so home can confirm it ("Brain is set up.").
 export const justSetUp = signal(false)
+// Set by a restore from Admin › Backups & system: the sign-in page says «Restored. Everyone signs in again».
+export const justRestored = signal(false)
 
 // Set by accepting an invitation, so home can welcome the person with what they joined.
 export type Joined = Array<{ slug: string; name: string; role: string }>

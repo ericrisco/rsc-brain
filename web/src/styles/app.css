@@ -4045,3 +4045,53 @@ input[type="file"]::file-selector-button {
   grid-column: 1 / -1;
   margin: 0 0 4px;
 }
+
+/* ── Backups & system (B7 PR30) ─────────────────────────────────────── */
+
+/* The band of the administration while the last copy failed. */
+.backup-band {
+  margin-bottom: 16px;
+  max-width: 720px;
+}
+
+.backup-band .band-link {
+  justify-self: start;
+}
+
+.copies .copy-row {
+  align-items: center;
+}
+
+.copies .copy-when,
+.copies .meta {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.copies .row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.release pre.notes,
+.key-step pre.command,
+.once pre.command {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.release pre.notes {
+  max-height: 320px;
+  overflow: auto;
+  font: 13px / 1.5 var(--mono);
+}
+
+.key-step {
+  display: grid;
+  gap: 14px;
+}
+
+.key-step h1:focus {
+  outline: none;
+}

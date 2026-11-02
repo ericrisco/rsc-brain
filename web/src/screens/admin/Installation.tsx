@@ -10,7 +10,8 @@ import type { ApiError } from '../../api/client.ts'
 import { useFresh } from '../../api/fresh.ts'
 import { api } from '../../api/index.ts'
 import { resource } from '../../api/resource.ts'
-import { factoryProblem, logoProblem, progressLabel, rateProblem } from '../../lib/admin.ts'
+import { factoryProblem, localWhen, logoProblem, progressLabel, rateProblem } from '../../lib/admin.ts'
+import { sizeLabel } from '../../lib/backups.ts'
 import { ago } from '../../lib/brains.ts'
 import { branding, me } from '../../session.ts'
 import { T } from '../../text.ts'
@@ -19,6 +20,7 @@ import { Dialog } from '../../ui/Dialog.tsx'
 import { Field } from '../../ui/Field.tsx'
 import { ErrorState, FormAlert, Skeleton } from '../../ui/states.tsx'
 import { AdminFrame } from './Admin.tsx'
+import { BackupsPart, KeyPart } from './Backups.tsx'
 import {
   adminDrafts,
   blocked,
@@ -154,6 +156,16 @@ type System = {
   meaning: { enabled: boolean; provider: string | null; progress: { done: number; total: number } | null }
   streams: { open: number; max: number }
   mail: { configured: boolean; lastFailureAt: string | null }
+  disk?: { backupsFree: number | null; databaseBytes: number }
+  maintenance?: { until: string; reason: string } | null
+  keyId?: string | null
+  release?: {
+    installed: string
+    latest: string | null
+    notes: string | null
+    checkedAt: string | null
+    newer: boolean
+  }
 }
 const systemResource = () => resource<System>('admin:system', () => api.call<System>('system'))
 
@@ -162,7 +174,7 @@ function Service() {
   useFresh(r)
   const s = r.data.value
   return (
-    <Part id="service" title={A.service} start>
+    <Part id="service" title={A.service}>
       {!s ? (
         r.error.value ? (
           <ErrorState error={r.error.value} onRetry={() => void r.reload()} focus={false} />
@@ -188,7 +200,24 @@ function Service() {
             </dd>
             <dt>{A.email}</dt>
             <dd>{A.mailState(s.mail.configured, s.mail.lastFailureAt ? ago(s.mail.lastFailureAt) : null)}</dd>
+            {s.disk ? (
+              <>
+                <dt>{A.databaseSize}</dt>
+                <dd>{sizeLabel(s.disk.databaseBytes)}</dd>
+              </>
+            ) : null}
+            {s.maintenance !== undefined ? (
+              <>
+                <dt>{A.maintenanceState}</dt>
+                <dd>
+                  {s.maintenance
+                    ? A.maintenanceOn(localWhen(s.maintenance.until), s.maintenance.reason)
+                    : A.maintenanceOff}
+                </dd>
+              </>
+            ) : null}
           </dl>
+          {s.release ? <Release r={s.release} /> : null}
           <div class="actions">
             <Button
               kind="quiet"
@@ -281,16 +310,48 @@ function Factory({ account }: { account: string }) {
   )
 }
 
+// The release running and, once checked, a newer one with what it changes (plan §3.10).
+function Release({ r }: { r: NonNullable<System['release']> }) {
+  return (
+    <div class="release" data-state={r.newer ? 'newer' : 'current'}>
+      <h3 class="part-title">{A.release}</h3>
+      <p>
+        {A.releaseRunning(r.installed)}.{' '}
+        {r.newer && r.latest ? (
+          <strong>{A.releaseNewer(r.latest)}</strong>
+        ) : r.latest ? (
+          A.releaseUpToDate
+        ) : null}
+      </p>
+      <p class="meta">
+        {r.checkedAt ? A.releaseChecked(ago(r.checkedAt) ?? localWhen(r.checkedAt)) : A.releaseNotChecked}
+      </p>
+      {r.newer && r.latest ? (
+        <>
+          {r.notes ? (
+            <details>
+              <summary>{A.releaseNotes(r.latest)}</summary>
+              <pre class="notes">{r.notes}</pre>
+            </details>
+          ) : null}
+          <p class="meta">{A.releaseHow}</p>
+        </>
+      ) : null}
+    </div>
+  )
+}
+
 export function AdminSystem() {
+  const sys = systemResource()
+  useFresh(sys)
   return (
     <AdminFrame>
       {(who) => (
         <div class="settings-parts">
+          <BackupsPart freeBytes={sys.data.value?.disk?.backupsFree} />
+          <KeyPart keyId={sys.data.value?.keyId} />
           <Service />
           <Factory account={who.account.id} />
-          <Part id="backups" title={A.backups}>
-            <p>{A.backupsLead}</p>
-          </Part>
         </div>
       )}
     </AdminFrame>

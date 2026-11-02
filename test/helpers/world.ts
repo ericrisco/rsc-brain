@@ -14,6 +14,8 @@ import { createHandler, WEB_HEADER } from '../../src/http/app.ts'
 import type { EventTimings } from '../../src/http/hub.ts'
 import type { Message, Sender } from '../../src/mail/mail.ts'
 import type { Providers } from '../../src/meaning/providers.ts'
+import { type Copies, createCopies } from '../../src/ops/backup/copies.ts'
+import type { ReleaseChecker } from '../../src/ops/releases.ts'
 import { freshDatabase, type TestDb } from './pg.ts'
 
 export type Call = {
@@ -64,6 +66,8 @@ export type World = TestDb & {
   // Waits until a mail to `to` arrives (sends that happen in the background).
   mailTo(to: string, subject?: RegExp): Promise<Message>
   close(): Promise<void>
+  // The copies of the server, when it has a folder for them (B7 PR30): tests set what the daily copy holds.
+  copies: Copies | null
 }
 
 // The installation secret of the tests (never a real one).
@@ -82,6 +86,7 @@ export async function world(
     log?: Log
     // Another installation key (restoring into another installation, B7).
     secret?: string
+    releases?: ReleaseChecker
   } = {},
 ): Promise<World> {
   const t = await freshDatabase()
@@ -95,6 +100,18 @@ export async function world(
   w.advance = (ms) => {
     w.now = new Date(w.now.getTime() + ms)
   }
+  const copies = o.backups
+    ? createCopies({
+        db: t.db,
+        dir: o.backups,
+        secret: o.secret ?? TEST_SECRET,
+        clock: () => w.clock(),
+        log: silentLog,
+        schedule: { at: '03:00', keep: 14, timezone: 'UTC' },
+        settleMs: 0,
+      })
+    : null
+  w.copies = copies
   const server: Server = createServer(
     createHandler({
       db: t.db,
@@ -104,7 +121,13 @@ export async function world(
       trustedProxies: ['127.0.0.1'],
       ...(o.localClients ? { fetchPolicy: { allowLoopbackHttp: true } } : {}),
       ...(o.events ? { events: o.events } : {}),
-      ...(o.backups ? { backups: o.backups } : {}),
+      ...(o.backups
+        ? {
+            backups: o.backups,
+            ...(copies ? { copies } : {}),
+          }
+        : {}),
+      ...(o.releases ? { releases: o.releases } : {}),
       mailTransport: () => ({
         async send(m) {
           if (w.mailFails) throw new Error('connection refused by the test mail server')

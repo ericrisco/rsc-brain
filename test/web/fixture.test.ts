@@ -1314,6 +1314,76 @@ describe('the fixture API', () => {
       assert.equal(code(await call(m, p, ana)), 'forbidden', p)
   })
 
+  it('the copies, the installation key and restoring (B7 PR30), as the server answers them', async () => {
+    const admin = fx.scenario('signed-in')
+    const o = { scenario: admin.id, cookie: 'rscb_session=fx.acc_eric' }
+    const code = (a: Ans) => (a.body as { error?: { code: string } }).error?.code
+    type View = { items: Array<{ id: string; needsOldKey: boolean }>; running: boolean; lastFailure: unknown }
+    const list = (await call('GET', '/v1/admin/backups', o)).body as View
+    assert.equal(list.items.length, 3)
+    assert.equal(list.items.filter((i) => i.needsOldKey).length, 1)
+    const made = await call('POST', '/v1/admin/backups', { ...o, body: {} })
+    assert.equal(made.status, 202)
+    assert.equal(code(await call('POST', '/v1/admin/backups', { ...o, body: {} })), 'backup_running')
+    await new Promise((r) => setTimeout(r, 800))
+    const after = (await call('GET', '/v1/admin/backups', o)).body as View
+    assert.equal(after.running, false)
+    assert.equal(after.items[0]?.id, (made.body as { id: string }).id)
+    const id = after.items[1]?.id as string
+    const res = await fetch(`${fx.url}/v1/admin/backups/${id}/download`, {
+      headers: { 'x-fixture-scenario': admin.id, cookie: o.cookie },
+    })
+    assert.match(String(res.headers.get('content-disposition')), /^attachment; filename=".+\.rscb"$/)
+    assert.deepEqual(validate(doc, 'GET', `/v1/admin/backups/${id}/download`, res.status, null), [])
+    seen.add('GET /v1/admin/backups/{id}/download')
+    assert.equal(code(await call('GET', '/v1/admin/backups/nope/impact', o)), 'not_found')
+    const impact = (await call('GET', `/v1/admin/backups/${id}/impact`, o)).body as { lostWrites: boolean }
+    assert.equal(impact.lostWrites, true)
+    // The key: only with the password again.
+    assert.equal(code(await call('POST', '/v1/admin/installation-key', { ...o, body: {} })), 'reauth_failed')
+    const key = (await call('POST', '/v1/admin/installation-key', { ...o, body: { password: fx.password } }))
+      .body as { key: string }
+    assert.match(key.key, /^fixture-installation-key-/)
+    // Restoring: an older key, the name, the password; then every session is over.
+    const old = after.items.find((i) => i.needsOldKey)?.id as string
+    const restore = (copy: string, body: unknown) =>
+      call('POST', `/v1/admin/backups/${copy}/restore`, { ...o, body })
+    assert.equal(code(await restore(id, { confirm: 'rsc-brain' })), 'reauth_failed')
+    assert.equal(code(await restore(id, { confirm: 'nope', password: fx.password })), 'confirm_mismatch')
+    assert.equal(code(await restore(old, { confirm: 'rsc-brain', password: fx.password })), 'wrong_key')
+    assert.equal((await restore(id, { confirm: 'rsc-brain', password: fx.password })).status, 200)
+    assert.equal((await call('GET', '/v1/me', o)).status, 401)
+    // No folder for copies.
+    const off = fx.scenario('signed-in')
+    await fetch(`${fx.url}/__fixture/scenarios/${off.id}/admin-edit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ backupsOff: true }),
+    })
+    const offO = { scenario: off.id, cookie: 'rscb_session=fx.acc_eric' }
+    assert.equal(code(await call('POST', '/v1/admin/backups', { ...offO, body: {} })), 'backups_not_set_up')
+    // A member: refused.
+    const member = fx.scenario('member')
+    const ana = { scenario: member.id, cookie: 'rscb_session=fx.acc_ana' }
+    assert.equal(code(await call('GET', '/v1/admin/backups', ana)), 'forbidden')
+    // The key of the first-time setup: once, to whoever ran it.
+    const fresh = fx.scenario('fresh')
+    const done = await call('POST', '/v1/setup', {
+      scenario: fresh.id,
+      body: {
+        name: 'Acme',
+        publicUrl: 'http://localhost',
+        admin: { name: 'Ada', email: 'ada@example.test', password: fx.password },
+      },
+    })
+    const f = { scenario: fresh.id, cookie: cookieOf(done) }
+    assert.match(
+      ((await call('POST', '/v1/setup/key', { ...f, body: {} })).body as { key: string }).key,
+      /^fixture-/,
+    )
+    assert.equal(code(await call('POST', '/v1/setup/key', { ...f, body: {} })), 'not_found')
+  })
+
   it('every operation the fixture answers was checked against the description', () => {
     assert.deepEqual(
       [...fx.operations].filter((op) => !seen.has(op)),

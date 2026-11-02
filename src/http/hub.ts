@@ -50,6 +50,8 @@ export type EventHub = {
   // How many streams are open now, and how many the installation serves (Admin › Backups & system).
   streams(): { open: number; max: number }
   subscribe(brainId: string, push: (rows: EventRow[]) => void): Promise<Subscription>
+  // After a restore: the feed follows from the newest event there is now (the numbering came back with the copy).
+  reset(): void
 }
 
 type Sub = { brainId: string; push: (rows: EventRow[]) => void }
@@ -122,6 +124,13 @@ export function eventHub(db: Db, t: EventTimings, log: Log): EventHub {
   let openTotal = 0
   return {
     streams: () => ({ open: openTotal, max: t.total }),
+    reset() {
+      if (!timer) return
+      void serial(async () => {
+        await numberAll()
+        cursor = await lastSeq(db)
+      }).catch((err: unknown) => log.warn('events_failed', failureFields(err)))
+    },
     admit(keyId) {
       if ((open.get(keyId) ?? 0) >= t.perKey) {
         throw new AppError(

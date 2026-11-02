@@ -14,7 +14,15 @@ import { DEFAULT_GUIDE } from '../../../src/domain/wiki/pages.ts'
 import { answerWeb, openWeb } from '../../../src/http/web.ts'
 import { AGENT_IDS, type AgentId, connectKit } from '../../../src/mcp/kit.ts'
 import { type GenPage, generate } from '../../../web/test/data/generate.ts'
-import { ADMIN_OPS, ADMIN_PRIVATE, adminBehind, brandingLogo, logoAnswer } from './admin.ts'
+import {
+  ADMIN_OPS,
+  ADMIN_PRIVATE,
+  adminBehind,
+  brandingLogo,
+  FIXTURE_KEY,
+  FIXTURE_KEY_ID,
+  logoAnswer,
+} from './admin.ts'
 import * as G from './graph.ts'
 import * as J from './journal.ts'
 import * as P from './proposals.ts'
@@ -80,6 +88,7 @@ export type Screen =
   | 'admin-meaning'
   | 'admin-audit'
   | 'admin-system'
+  | 'admin-backups'
   | 'connect'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
@@ -129,6 +138,8 @@ type Life = { entries: number; agent: boolean }
 type Scen = {
   id: string
   setupDone: boolean
+  // The installation key of the wizard's last step: ready right after the setup, given once (B7 PR30).
+  setupKey?: 'ready' | 'given'
   insecure: boolean
   // The installation can send email (reset links, invitations).
   mail: boolean
@@ -699,6 +710,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       }
       s.accounts.push(a)
       s.setupDone = true
+      s.setupKey = 'ready'
       s.name = name
       s.publicUrl = body.publicUrl.replace(/\/+$/, '')
       s.sessions.add(`fx.${a.id}`)
@@ -707,6 +719,21 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         body: { done: true, publicUrl: body.publicUrl.replace(/\/+$/, ''), warning: null, adminId: a.id },
         headers: { 'set-cookie': sessionCookie(a) },
       }
+    },
+  },
+  'POST /v1/setup/key': {
+    run: ({ s, who, web }) => {
+      if (!web) return CSRF
+      // Whoever ran the setup, once, right after it.
+      if (who?.id !== 'acc_admin' || s.setupKey !== 'ready')
+        return err(
+          404,
+          'not_found',
+          'The installation key is shown once, right after the first-time setup, to whoever ran it.',
+          'Download it again in Admin › Backups & system, typing your password.',
+        )
+      s.setupKey = 'given'
+      return { status: 200, body: { key: FIXTURE_KEY, keyId: FIXTURE_KEY_ID } }
     },
   },
   'POST /v1/auth/login': {
@@ -2419,6 +2446,7 @@ function healthOf(slug: string, st: State | undefined) {
 // Paths that need a session; the rest are public, as on the server.
 const PRIVATE = new Set([
   ...ADMIN_PRIVATE,
+  'POST /v1/setup/key',
   'GET /v1/brains/{slug}/wiki/settings',
   'PUT /v1/brains/{slug}/wiki/settings',
   'POST /v1/brains/{slug}/members',

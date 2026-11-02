@@ -11,10 +11,12 @@ import type { ApiError } from '../api/client.ts'
 import { draft } from '../api/draft.ts'
 import { api } from '../api/index.ts'
 import { resetResources } from '../api/resource.ts'
+import { keyFile, keyFileName } from '../lib/backups.ts'
 import { branding, justSetUp, online } from '../session.ts'
 import { Door } from '../shell/Door.tsx'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
+import { CopyButton } from '../ui/CopyButton.tsx'
 import { Field } from '../ui/Field.tsx'
 import { PasswordField } from '../ui/PasswordField.tsx'
 import { writeBlocked } from '../ui/state.ts'
@@ -95,6 +97,9 @@ export function Setup() {
   const [error, setError] = useState<ApiError | null>(null)
   const [problems, setProblems] = useState<Problems>({})
   const [pending, setPending] = useState(false)
+  // After the setup: the step «Installation key».
+  const [stage, setStage] = useState<'form' | 'key'>('form')
+  const [keyName, setKeyName] = useState('')
   // A field fixed is no longer marked; the others keep their problem until the next try.
   const fix = (f: FieldName, set: (v: string) => void) => (v: string) => {
     set(v)
@@ -136,9 +141,11 @@ export function Setup() {
         },
       })
       for (const c of [clearName, clearUrl, clearAdmin, clearEmail]) c()
+      setKeyName(name.trim())
       resetResources()
-      justSetUp.value = true
-      route('/', true)
+      setPassword('')
+      // The last step: the installation key, shown once (B7 PR30).
+      setStage('key')
     } catch (err) {
       const a = err as ApiError
       const f = a.status === 400 ? fieldOfRefusal(a.message) : null
@@ -153,6 +160,16 @@ export function Setup() {
     }
   }
 
+  if (stage === 'key')
+    return (
+      <KeyStep
+        name={keyName}
+        onDone={() => {
+          justSetUp.value = true
+          route('/', true)
+        }}
+      />
+    )
   const done = loadError?.code === 'setup_done' || b.data.value?.setupRequired === false
   if (done) {
     return (
@@ -277,6 +294,122 @@ export function Setup() {
           </Button>
         </div>
       </form>
+    </Door>
+  )
+}
+
+// The last step of the setup (spec B7 «Copias y restauración»): the installation key, shown once, to copy or
+// download, and a tick that it was saved before going on. Held in this screen's memory only, and forgotten when
+// the page is put away. When it was already shown, it says where to download it again.
+function KeyStep({ name, onDone }: { name: string; onDone: () => void }) {
+  const K = T.setup
+  const [k, setK] = useState<{ key: string; keyId: string } | null>(null)
+  // Already shown (404), or forgotten when the page was put away: either way, where to get it again.
+  const [gone, setGone] = useState(false)
+  const [error, setError] = useState<ApiError | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [href, setHref] = useState<string | null>(null)
+  const load = async () => {
+    setError(null)
+    try {
+      setK(await api.call<{ key: string; keyId: string }>('setupKey', { body: {}, quiet: true }))
+    } catch (e) {
+      const a = e as ApiError
+      if (a.status === 404) setGone(true)
+      else setError(a)
+    }
+  }
+  useEffect(() => {
+    void load()
+    const away = () => {
+      setK(null)
+      setGone(true)
+    }
+    window.addEventListener('pagehide', away)
+    return () => window.removeEventListener('pagehide', away)
+  }, [])
+  useEffect(() => {
+    if (!k) return setHref(null)
+    const url = URL.createObjectURL(new Blob([keyFile(k.key)], { type: 'text/plain' }))
+    setHref(url)
+    return () => URL.revokeObjectURL(url)
+  }, [k])
+  useEffect(() => {
+    document.querySelector<HTMLElement>('.key-step h1')?.focus()
+  }, [k !== null, gone])
+  const finish = () => {
+    setK(null)
+    onDone()
+  }
+  return (
+    <Door wide brand={false}>
+      <div class="key-step">
+        <p class="meta">
+          <span class="step">3</span> {K.keyStep}
+        </p>
+        <h1 class="title" tabIndex={-1}>
+          {gone ? K.keyGoneTitle : K.keyTitle}
+        </h1>
+        {gone ? (
+          <>
+            <p class="lead">{K.keyGone}</p>
+            <div class="actions">
+              <Button kind="primary" onClick={finish}>
+                {K.keyContinue}
+              </Button>
+            </div>
+          </>
+        ) : error ? (
+          <>
+            <ErrorState error={error} onRetry={() => void load()} />
+            <p>{K.keyFailedLater}</p>
+            <div class="actions">
+              <Button kind="quiet" onClick={finish}>
+                {K.keyContinue}
+              </Button>
+            </div>
+          </>
+        ) : !k ? (
+          <Skeleton rows={2} label={K.keyLoading} />
+        ) : (
+          <>
+            <p class="lead">{K.keyLead}</p>
+            <pre class="command">
+              <code>{k.key}</code>
+            </pre>
+            <p class="meta mono">{K.keyIdIs(k.keyId)}</p>
+            <p>{K.keyWhere}</p>
+            <div class="actions">
+              <CopyButton text={k.key} label={K.copyKey} id="copy-setup-key" />
+              {href ? (
+                <a class="button" href={href} download={keyFileName(name, k.keyId)}>
+                  {K.downloadKey}
+                </a>
+              ) : null}
+            </div>
+            <div class="pick">
+              <input
+                type="checkbox"
+                id="key-saved"
+                checked={saved}
+                onChange={(e) => setSaved((e.currentTarget as HTMLInputElement).checked)}
+              />
+              <label for="key-saved">{K.keySaved}</label>
+            </div>
+            <p class="meta">{K.keyLater}</p>
+            <div class="actions">
+              <Button
+                kind="primary"
+                blocked={saved ? null : K.keyNeedsSaved}
+                data-needs="key-saved"
+                onClick={finish}
+              >
+                {K.keyContinue}
+              </Button>
+            </div>
+          </>
+        )}
+      </div>
     </Door>
   )
 }
