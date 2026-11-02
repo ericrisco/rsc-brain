@@ -85,7 +85,7 @@ describe('the readable export (CA11, CA12)', { skip: skipPg }, () => {
     ids.tricky = await entry(
       eric.key,
       'Tricky text',
-      'A line that ends like an anchor ^ent-forged\nA picture ![x](https://evil.example/p.png) and <img src="https://evil.example/q.png">.',
+      'A line that ends like an anchor ^ent-forged\nA picture ![x](https://evil.example/p.png) and <img src="https://evil.example/q.png">, <IMG SRC="https://evil.example/r.png">, <image href="https://evil.example/s.png">, <input type="image" src="https://evil.example/t.png">, <!-- hidden --> and 1 < 2.',
     )
     // Twenty pages in two areas, each mentioning the next; aliases; typed links; one page moved and mentioned
     // by its old address; a retired page with links both ways; a mention of nothing; text that only looks
@@ -251,8 +251,17 @@ describe('the readable export (CA11, CA12)', { skip: skipPg }, () => {
     assert.doesNotMatch(notes, /(^|[^\\])\^ent-forged\s*$/m)
     assert.ok(notes.includes('\\![x](https://evil.example/p.png)'))
     assert.doesNotMatch(notes, /(^|[^\\])!\[/m)
-    assert.ok(notes.includes('&lt;img src='))
-    assert.doesNotMatch(notes, /<img/)
+    for (const tag of [
+      '&lt;img src=',
+      '&lt;IMG SRC=',
+      '&lt;image href=',
+      '&lt;input type=',
+      '&lt;!-- hidden',
+    ])
+      assert.ok(notes.includes(tag), tag)
+    // No "<" opens a tag or a comment; a "<" that opens nothing stays as written.
+    assert.doesNotMatch(notes, /<[A-Za-z!/?]/)
+    assert.ok(notes.includes('1 < 2'))
   })
 
   it('a source address keeps its link whole (review of PR31)', () => {

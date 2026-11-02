@@ -8,7 +8,13 @@ export const exportRoutes: Route[] = [
   {
     ...route('GET /v1/brains/:slug/export', async (r) => {
       const o = exportQuery(r.query.get('format'), r.query.get('includeForgotten'))
-      return { body: null, download: await exportBrain(ctxOf(r), r.params.slug as string, o, r.exportDir) }
+      return {
+        body: null,
+        download: await exportBrain(ctxOf(r), r.params.slug as string, o, {
+          dir: r.exportDir,
+          signal: r.signal,
+        }),
+      }
     }),
     maintenance: 'writes',
   },

@@ -1,6 +1,7 @@
 // A small router: "METHOD /v1/brains/:slug" patterns, matched in order. A last part written "*name"
 // takes the rest of the path, slashes included (page addresses such as "audience/retention").
 
+import type { FileHandle } from 'node:fs/promises'
 import type { IncomingHttpHeaders } from 'node:http'
 import type { Principal } from '../auth/principal.ts'
 import type { Clock } from '../core/clock.ts'
@@ -52,8 +53,10 @@ export type PublicReq = {
   copies: Copies | null
   // Whether a newer release exists (plan §3.10); null when nothing checks.
   releases: ReleaseChecker | null
-  // Where exports are prepared before they are sent.
-  exportDir: string
+  // Where exports are prepared before they are sent (null: a private folder of this process).
+  exportDir: string | null
+  // Aborted when the client leaves (from the start of the request).
+  signal: AbortSignal
   // The log of the server (src/core/log.ts).
   log: Log
 }
@@ -78,7 +81,7 @@ export type Reply = {
   // Instead of a body: a file sent as it is on disk, to save (a copy of the installation).
   file?: { path: string; bytes: number; name: string }
   // Instead of a body: a file prepared on disk to save (an export), removed by `done` once sent or abandoned.
-  download?: { name: string; type: string; path: string; bytes: number; done(): Promise<void> }
+  download?: { name: string; type: string; fh: FileHandle; bytes: number; done(): Promise<void> }
 }
 export type Handler = (r: Req) => Promise<Reply>
 export type Route = {

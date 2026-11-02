@@ -56,6 +56,8 @@ test.describe('exporting a brain', () => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/b/growth/settings/archive')
     const p = part(page)
+    // The screen's own arrival puts the keyboard on the first heading; only then does the person move on.
+    await expect(page.locator('#export-title')).toBeFocused()
     await p.getByRole('radio', { name: /Readable/ }).focus()
     await page.keyboard.press('ArrowDown')
     await expect(p.getByRole('radio', { name: /Faithful/ })).toBeChecked()

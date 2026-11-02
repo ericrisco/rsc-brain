@@ -5,12 +5,12 @@
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs'
@@ -18,7 +18,7 @@ import { get, type IncomingMessage } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
-import { EXPORT_LIMITS, EXPORT_STATE, sweepExports } from '../../src/ops/export/export.ts'
+import { EXPORT_LIMITS, EXPORT_STATE, exportFolder, sweepExports } from '../../src/ops/export/export.ts'
 import { download } from '../helpers/download.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
@@ -43,6 +43,34 @@ describe('a crash leaves no export behind (the next start sweeps)', () => {
     }
   })
 })
+
+describe('the folder exports are prepared in (B7 PR31 second pass)', () => {
+  it('is made private when it is not there, and taken when it is a private folder of this user', async () => {
+    const d = join(root, 'fresh-folder')
+    assert.equal(await exportFolder(d), d)
+    assert.equal(statSync(d).mode & 0o777, 0o700)
+    assert.equal(await exportFolder(d), d)
+  })
+  it('refuses a folder others can read, and a link in place of a folder', async () => {
+    const open = join(root, 'open-folder')
+    mkdirSync(open, { mode: 0o755 })
+    await assert.rejects(exportFolder(open), /export_folder_unsafe|not a private folder/)
+    const real = join(root, 'real-folder')
+    mkdirSync(real, { mode: 0o700 })
+    const link = join(root, 'linked-folder')
+    symlinkSync(real, link)
+    await assert.rejects(exportFolder(link), /not a private folder/)
+    // A file in place of the folder.
+    const file = join(root, 'file-folder')
+    writeFileSync(file, 'x', { mode: 0o700 })
+    await assert.rejects(exportFolder(file), /not a private folder/)
+    // Nothing was changed to make it pass.
+    assert.equal(statSync(open).mode & 0o777, 0o755)
+  })
+})
+
+// The descriptors this process holds open (macOS and Linux list them).
+const openFds = () => readdirSync(process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd').length
 
 describe('preparing and sending an export', { skip: skipPg }, () => {
   let w: World
@@ -79,7 +107,6 @@ describe('preparing and sending an export', { skip: skipPg }, () => {
     writeFileSync(join(dir, 'crashed.zip.part'), 'x')
     const old = new Date(Date.now() - 2 * 3_600_000)
     utimesSync(join(dir, 'crashed.zip.part'), old, old)
-    chmodSync(dir, 0o755)
     w = await world({ exportDir: dir })
     const eric = await w.person('Eric')
     await w.call(eric.key, 'POST', '/v1/brains', { slug: 'big', purpose: 'A big export.' })
@@ -119,8 +146,8 @@ describe('preparing and sending an export', { skip: skipPg }, () => {
     EXPORT_LIMITS.stallMs = 300
     try {
       const s = await open()
-      // The prepared file only this user reads, while it waits.
-      for (const f of readdirSync(dir)) assert.equal(statSync(join(dir, f)).mode & 0o077, 0, f)
+      // Sent from the handle it was prepared in: the file has no name any more while it is sent.
+      assert.deepEqual(readdirSync(dir), [])
       // Seen from the server: the prepared file goes once the stalled download is let go.
       const end = Date.now() + 3000
       while (readdirSync(dir).length && Date.now() < end) await new Promise((r) => setTimeout(r, 50))
@@ -129,6 +156,48 @@ describe('preparing and sending an export', { skip: skipPg }, () => {
     } finally {
       EXPORT_LIMITS.stallMs = was
     }
+  })
+
+  it('a client that leaves while the export is prepared stops it: no file, no descriptor, no slot', async () => {
+    // Warm: the pool and the folder as they stay.
+    await download(w, { session: web }, path)
+    await new Promise((r) => setTimeout(r, 300))
+    const fds = openFds()
+    const stopped = EXPORT_STATE.abandoned
+    const t0 = Date.now()
+    await new Promise<void>((resolve) => {
+      const req = get(`${w.base}${path}`, { headers: { cookie: `rscb_session=${web}` } })
+      req.on('error', () => resolve())
+      setTimeout(() => {
+        req.destroy()
+        resolve()
+      }, 100)
+    })
+    await new Promise((r) => setTimeout(r, 1500))
+    assert.ok(Date.now() - t0 >= 100)
+    assert.deepEqual(readdirSync(dir), [])
+    assert.equal(EXPORT_STATE.building, 0)
+    // It was stopped, not finished for nobody.
+    assert.equal(EXPORT_STATE.abandoned, stopped + 1)
+    assert.ok(openFds() <= fds, `${openFds()} descriptors open, ${fds} before`)
+  })
+
+  it('the snapshot of an export says it is one, so a copy before an update does not wait for it', async () => {
+    let seen = false
+    const watching = (async () => {
+      const end = Date.now() + 5000
+      while (!seen && Date.now() < end) {
+        const r = await w.db.one(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND application_name = 'rsc-brain export' AND xact_start IS NOT NULL`,
+        )
+        if (Number(r?.n) > 0) seen = true
+        else await new Promise((r2) => setTimeout(r2, 5))
+      }
+    })()
+    await download(w, { session: web }, path)
+    await watching
+    assert.ok(seen, 'no transaction named "rsc-brain export" while it was prepared')
   })
 
   it('a whole download is the whole file, sized, and its file goes', async () => {
@@ -179,6 +248,7 @@ describe('preparing and sending an export', { skip: skipPg }, () => {
   })
 
   it('an export bigger than an export may be refuses, and its file goes', async () => {
+    const fds = openFds()
     const was = EXPORT_LIMITS.maxBytes
     EXPORT_LIMITS.maxBytes = 1024 * 1024
     try {
@@ -188,6 +258,7 @@ describe('preparing and sending an export', { skip: skipPg }, () => {
       EXPORT_LIMITS.maxBytes = was
     }
     assert.deepEqual(readdirSync(dir), [])
+    assert.ok(openFds() <= fds, `${openFds()} descriptors open, ${fds} before`)
     assert.equal(EXPORT_STATE.building, 0)
   })
 

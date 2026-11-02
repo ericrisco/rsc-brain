@@ -2,6 +2,7 @@
 // Refusals carry { error: { code, message, howToProceed } }; an unexpected failure reveals nothing.
 import { createReadStream } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { join } from 'node:path'
 import type { TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
@@ -18,7 +19,7 @@ import { mcpRoutes } from '../mcp/server.ts'
 import type { Providers } from '../meaning/providers.ts'
 import type { FetchPolicy } from '../oauth/fetch.ts'
 import type { Copies } from '../ops/backup/copies.ts'
-import { EXPORT_DIR, EXPORT_LIMITS, sweepExports } from '../ops/export/export.ts'
+import { EXPORT_LIMITS, sweepExports } from '../ops/export/export.ts'
 import type { ReleaseChecker } from '../ops/releases.ts'
 import { boundJson } from './bounds.ts'
 import { EVENT_TIMINGS, type EventTimings, eventHub } from './hub.ts'
@@ -397,7 +398,10 @@ export async function sendDownload(
   stallMs: number,
 ): Promise<void> {
   try {
-    const from = createReadStream(d.path, { highWaterMark: 64 * 1024 })
+    // The client left while it was prepared: nothing to send, the file goes now.
+    if (res.destroyed || res.writableEnded) return
+    // From the handle it was written with: the file has no name any more.
+    const from = d.fh.createReadStream({ start: 0, autoClose: false, highWaterMark: 64 * 1024 })
     res.writeHead(200, {
       'content-type': d.type,
       'content-disposition': `attachment; filename="${d.name}"`,
@@ -447,9 +451,11 @@ export function createHandler(deps: AppDeps) {
   const hub = eventHub(deps.db, timings, log)
   const web = deps.web === false ? null : openWeb(deps.web ?? WEB_ROOT)
   const startedAt = deps.clock()
-  const exportDir = deps.exportDir ?? EXPORT_DIR
+  // Where exports are prepared: the folder given, or one next to the copies (the server's data); without either, a
+  // private folder of the system's temporary space for this process (export.ts).
+  const exportDir = deps.exportDir ?? (deps.backups ? join(deps.backups, '.exports') : null)
   // What a crash left of an export goes now (by the files' own times: the wall clock, not the service's).
-  void sweepExports(exportDir, new Date())
+  if (exportDir) void sweepExports(exportDir, new Date())
   // Once the first-time setup is done it stays done: no need to ask the database again.
   let ready = false
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -459,6 +465,9 @@ export function createHandler(deps: AppDeps) {
     // the status and how long it took (plan §3.11).
     const started = performance.now()
     let template: string | undefined
+    // Whether the client is still there, from the very start: what is prepared for it stops when it leaves.
+    const left = new AbortController()
+    res.once('close', () => left.abort())
     res.once('close', () => {
       try {
         log.info('request', {
@@ -548,6 +557,7 @@ export function createHandler(deps: AppDeps) {
         copies: deps.copies ?? null,
         releases: deps.releases ?? null,
         exportDir,
+        signal: left.signal,
         log,
       }
       // Maintenance (spec B7 C12): a write without a key (signing in, the standard sign-in) is refused here;

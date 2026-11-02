@@ -6,7 +6,7 @@
 // client that stops reading never holds the database (review of PR31). At most two are prepared at once; a disk
 // short of room refuses; the file goes once sent, refused or abandoned, and a crash's leftovers on the next start.
 import { randomBytes } from 'node:crypto'
-import { chmod, mkdir, open, readdir, rm, stat, statfs } from 'node:fs/promises'
+import { type FileHandle, lstat, mkdir, mkdtemp, open, readdir, rm, stat, statfs } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AppError, invalid } from '../../core/errors.ts'
@@ -32,19 +32,21 @@ export const EXPORT_LIMITS = {
   // The most one prepared export may take on disk.
   maxBytes: 20 * 1024 * 1024 * 1024,
 }
-export const EXPORT_STATE = { building: 0 }
+// Prepared now; and how many were stopped because their client left (for the tests and whoever looks).
+export const EXPORT_STATE = { building: 0, abandoned: 0 }
 
-// Where exports are prepared by default: a folder of the system's temporary space only this user reads.
-export const EXPORT_DIR = join(tmpdir(), 'rsc-brain-exports')
+// The name an export's transaction carries (settle() in backup.ts does not wait for it: it only reads).
+export const EXPORT_APP_NAME = 'rsc-brain export'
 // What a crash left behind is this old at least (a live export is never this long in the making).
 const STALE_MS = 3_600_000
 
 export type ExportFile = {
   name: string
   type: 'application/zip'
-  path: string
+  // The file, already without a name on disk: it is sent from this handle.
+  fh: FileHandle
   bytes: number
-  // Removes the file; called once it is sent, refused or abandoned.
+  // Closes the handle (the file goes with it); called once it is sent, refused or abandoned.
   done(): Promise<void>
 }
 
@@ -84,9 +86,35 @@ const noSpace = () =>
     'Ask an administrator to free disk space on the server, then try again.',
   )
 
-async function privateDir(dir: string): Promise<void> {
-  await mkdir(dir, { recursive: true, mode: 0o700 })
-  await chmod(dir, 0o700)
+const unsafe = () =>
+  new AppError(
+    500,
+    'export_folder_unsafe',
+    'The folder where exports are prepared is not a private folder of rsc-brain.',
+    'Ask an administrator: it must be a folder (not a link) owned by the user rsc-brain runs as, with mode 700.',
+  )
+
+// The folder of the server's data (next to the copies) where exports are prepared: made private when it is not
+// there; taken only when it is a real folder (not a link), owned by this process's user, mode 700. Never changed to
+// fit: a folder someone else made or opened up is refused.
+export async function exportFolder(dir: string): Promise<string> {
+  try {
+    await mkdir(dir, { mode: 0o700 })
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+  }
+  const st = await lstat(dir)
+  const uid = typeof process.getuid === 'function' ? process.getuid() : st.uid
+  if (!st.isDirectory() || st.isSymbolicLink() || st.uid !== uid || (st.mode & 0o777) !== 0o700)
+    throw unsafe()
+  return dir
+}
+
+// Without a data folder: one private folder of the system's temporary space for this process (mkdtemp: 700).
+let own: Promise<string> | null = null
+const processFolder = () => {
+  own ??= mkdtemp(join(tmpdir(), 'rsc-brain-exports-'))
+  return own
 }
 
 // Removes what a crash left: prepared files older than an hour. Called when the server starts.
@@ -108,25 +136,41 @@ export async function sweepExports(dir: string, now: Date): Promise<void> {
   }
 }
 
+// The client left: what was being prepared for it stops.
+const abandoned = () =>
+  new AppError(
+    499,
+    'client_left',
+    'The client left before the export was ready.',
+    'Download the export again.',
+  )
+
 export async function exportBrain(
   ctx: Ctx,
   slug: string,
   o: { format: ExportFormat; includeForgotten: boolean },
-  dir: string = EXPORT_DIR,
+  place: { dir: string | null; signal?: AbortSignal } = { dir: null },
 ): Promise<ExportFile> {
   inWeb(ctx, 'Exporting a brain')
   const { brain, role } = await inBrain(ctx, { slug })
   await allow(ctx, 'brain.export', { role, brainStatus: brain.status }, brain.id)
   if (EXPORT_STATE.building >= EXPORT_LIMITS.building) throw busy()
   EXPORT_STATE.building += 1
+  const stop = () => {
+    if (!place.signal?.aborted) return
+    EXPORT_STATE.abandoned += 1
+    throw abandoned()
+  }
   let path: string | null = null
+  let fh: FileHandle | null = null
   try {
-    await privateDir(dir)
+    const dir = place.dir === null ? await processFolder() : await exportFolder(place.dir)
     const free = async () => {
       const s = await statfs(dir)
       return Number(s.bavail) * Number(s.bsize)
     }
     if ((await free()) < EXPORT_LIMITS.minFreeBytes) throw noSpace()
+    stop()
     const at = ctx.clock()
     await ok(ctx, 'brain.export', brain.id, undefined, JSON.stringify(o))
     await emit(ctx.db, ctx, {
@@ -135,47 +179,61 @@ export async function exportBrain(
       label: o.includeForgotten ? `${o.format}, forgotten included` : o.format,
     })
     path = join(dir, `${randomBytes(12).toString('hex')}.zip.part`)
-    const fh = await open(path, 'wx', 0o600)
+    const file = await open(path, 'wx+', 0o600)
+    fh = file
     let bytes = 0
-    try {
-      await ctx.db.tx(async (db) => {
-        await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
-        await db.query("SET LOCAL TIME ZONE 'UTC'")
-        // The brain as the snapshot has it (renamed since the check: its name of now; left since: not found).
-        const now = (await inBrain({ ...ctx, db }, { id: brain.id })).brain
-        let sinceCheck = 0
-        const zip = zipWriter(
-          async (b) => {
-            bytes += b.length
-            if (bytes > EXPORT_LIMITS.maxBytes) throw noSpace()
-            await fh.write(b)
-            sinceCheck += b.length
-            // The room left is looked at every 8 MB: an export never fills the disk.
-            if (sinceCheck >= 8 * 1024 * 1024) {
-              sinceCheck = 0
-              if ((await free()) < EXPORT_LIMITS.minFreeBytes) throw noSpace()
-            }
-          },
-          { at },
-        )
-        const x = { brain: now, includeForgotten: o.includeForgotten, at, release: VERSION }
-        if (o.format === 'readable') await writeReadable(db, zip, x)
-        else await writeFaithful(db, zip, x)
-        await zip.end()
-      })
-    } finally {
-      await fh.close()
-    }
-    const file = path
+    await ctx.db.tx(async (db) => {
+      await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+      await db.query("SET LOCAL TIME ZONE 'UTC'")
+      // Named, so a copy before an update knows this transaction only reads and does not wait for it.
+      await db.query(`SET LOCAL application_name = '${EXPORT_APP_NAME}'`)
+      // The brain as the snapshot has it (renamed since the check: its name of now; left since: not found).
+      const now = (await inBrain({ ...ctx, db }, { id: brain.id })).brain
+      let sinceCheck = 0
+      const zip = zipWriter(
+        async (b) => {
+          stop()
+          // What the disk took: a write may take only part of the buffer.
+          for (let off = 0; off < b.length; ) {
+            const { bytesWritten } = await file.write(b, off, b.length - off)
+            off += bytesWritten
+            bytes += bytesWritten
+            sinceCheck += bytesWritten
+          }
+          if (bytes > EXPORT_LIMITS.maxBytes) throw noSpace()
+          // The room left is looked at every 8 MB: an export never fills the disk.
+          if (sinceCheck >= 8 * 1024 * 1024) {
+            sinceCheck = 0
+            if ((await free()) < EXPORT_LIMITS.minFreeBytes) throw noSpace()
+          }
+        },
+        { at },
+      )
+      const x = { brain: now, includeForgotten: o.includeForgotten, at, release: VERSION }
+      if (o.format === 'readable') await writeReadable(db, zip, x)
+      else await writeFaithful(db, zip, x)
+      await zip.end()
+    })
+    stop()
+    // The file loses its name now: it is sent from this handle, and nothing else can open it, or find it after a
+    // crash.
+    await rm(path, { force: true })
     path = null
+    fh = null
+    let closed = false
     return {
       name: `rsc-brain-${brain.slug}-${o.format}-${stamp(at)}.zip`,
       type: 'application/zip',
-      path: file,
+      fh: file,
       bytes,
-      done: () => rm(file, { force: true }),
+      done: async () => {
+        if (closed) return
+        closed = true
+        await file.close()
+      },
     }
   } catch (err) {
+    await fh?.close().catch(() => {})
     if (path) await rm(path, { force: true })
     // A disk that filled up while writing says so in the same words.
     if ((err as NodeJS.ErrnoException)?.code === 'ENOSPC') throw noSpace()

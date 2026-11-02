@@ -33,10 +33,8 @@ export const journalText = (text: string) =>
   plain(text)
     .replace(/(^|\s)\^([A-Za-z0-9-]+)(\s*)$/gm, '$1\\^$2$3')
     .replace(/!\[/g, '\\![')
-    .replace(
-      /<(?=\s*\/?\s*(img|iframe|video|audio|embed|object|source|picture|svg|link|script|style)\b)/gi,
-      '&lt;',
-    )
+    // Every "<" that opens a tag or a comment (an image, an input of type image, a style, "<!--"): no HTML at all.
+    .replace(/<(?=[A-Za-z!/?])/g, '&lt;')
 
 // An address inside a markdown link "(<…>)": what would end it early (a space, "<", ">") is percent-encoded.
 export const linkAddress = (url: string) => url.replace(/[\s<>]/g, (c) => encodeURIComponent(c))
