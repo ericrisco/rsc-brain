@@ -7,6 +7,18 @@ log() { printf '%s\n' "$*" >>"$FAKE_LOG"; }
 log "$*"
 args=" $* "
 state=${FAKE_STATE:?}
+# A value of the installation's that reached docker compose from the caller's environment instead of its .env file
+# (`docker compose version` reads no project).
+if [ "$1" = compose ] && [ "${2:-}" != version ]; then
+  env | grep -E '^(RSC_BRAIN_|POSTGRES_|COMPOSE_)' | grep -vE '^RSC_BRAIN_(TTY|REPO)=' | sed 's/^/LEAK /' >>"$FAKE_LOG"
+fi
+# The env file a compose call reads (for the logs below).
+env_file=''
+prev=''
+for a in "$@"; do
+  [ "$prev" = --env-file ] && env_file=$a
+  prev=$a
+done
 
 # Whatever the call is given on its standard input (the launcher closes it, or pipes a secret in).
 take_stdin() {
@@ -29,6 +41,7 @@ case "$args" in
   ;;
 *" rsc-brain db provision "*)
   take_stdin db provision
+  [ -n "${FAKE_PROVISION_SLEEP:-}" ] && echo provisioning >>"$FAKE_STATE/provision-started" && sleep "$FAKE_PROVISION_SLEEP"
   [ -n "${FAKE_PROVISION_WARNING:-}" ] && echo "Warning: $FAKE_PROVISION_WARNING" >&2
   [ "${FAKE_PROVISION_EXIT:-0}" != 0 ] && exit "$FAKE_PROVISION_EXIT"
   host=postgres
@@ -75,7 +88,13 @@ case "$args" in
 esac
 
 case "$1" in
-info) exit "${FAKE_INFO_EXIT:-0}" ;;
+info)
+  if [ -n "${FAKE_INFO_DENIED:-}" ]; then
+    echo 'permission denied while trying to connect to the docker API at unix:///var/run/docker.sock' >&2
+    exit 1
+  fi
+  exit "${FAKE_INFO_EXIT:-0}"
+  ;;
 build)
   exit "${FAKE_BUILD_EXIT:-0}"
   ;;
@@ -135,6 +154,12 @@ compose)
       exit "$FAKE_UP_EXIT"
     fi
     : >"$state/up"
+    exit 0
+    ;;
+  *" logs "*)
+    # A service that prints its own key at start (it never should): the launcher must not keep it.
+    secret=$(sed -n "s/^RSC_BRAIN_SECRET='\\(.*\\)'$/\\1/p" "$env_file" 2>/dev/null)
+    echo "app-1  | boot failed: database refused (key $secret)"
     exit 0
     ;;
   *" down "*)

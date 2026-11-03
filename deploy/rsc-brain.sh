@@ -218,13 +218,19 @@ if [ -n "$DIR" ]; then
 fi
 
 # ----------------------------------------------------------------------------------------------- the installation
-env_get() { sed -n "s/^$1='\\(.*\\)'\$/\\1/p" "$DIR/.env" | head -n 1; }
+# Everything the launcher keeps for itself lives in <dir>/.rsc-brain (the source it builds from, an install still in
+# progress, the settings before a change). An installation is a folder whose .env the launcher wrote (it carries
+# RSC_BRAIN_LAUNCHER='1'); .env is written only once an install has completed.
+STATE=.rsc-brain
+ENV_FILE='' PROFILES=''
+env_get() { sed -n "s/^$1='\\(.*\\)'\$/\\1/p" "$ENV_FILE" 2>/dev/null | head -n 1; }
+is_installation() { [ -f "$1/.env" ] && grep -q "^RSC_BRAIN_LAUNCHER='1'\$" "$1/.env"; }
 
 # Where an installation is when --dir is not given: the one for this machine, or the one for a server.
 find_dir() {
   [ -n "$DIR" ] && return
   for d in "${HOME:-/nonexistent}/rsc-brain" /opt/rsc-brain; do
-    if [ -f "$d/.env" ]; then
+    if is_installation "$d"; then
       DIR=$d
       return
     fi
@@ -233,15 +239,42 @@ find_dir() {
 }
 need_installation() {
   find_dir
-  if [ ! -f "$DIR/.env" ]; then
-    say "No rsc-brain installation in $DIR. Pass --dir with the folder it was installed in. Nothing was changed."
+  if ! is_installation "$DIR"; then
+    say "No rsc-brain installation in \"$DIR\". Pass --dir with the folder it was installed in. Nothing was changed."
     exit 3
   fi
+  ENV_FILE=$DIR/.env
   NAME=$(env_get RSC_BRAIN_NAME)
   PROFILES=$(env_get COMPOSE_PROFILES)
 }
 
-# docker compose, always for this installation's project and files (and never anything else's).
+# What docker compose would take from this shell instead of the installation's file: the variables compose.yaml
+# names, and Compose's own. They are removed for every compose call.
+FIXED_VARS='COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_FILE COMPOSE_ENV_FILES COMPOSE_PATH_SEPARATOR
+POSTGRES_PASSWORD RSC_BRAIN_SECRET RSC_BRAIN_DATABASE_URL RSC_BRAIN_PUBLISH RSC_BRAIN_IMAGE RSC_BRAIN_DOMAIN
+RSC_BRAIN_ACME_CA'
+compose_vars() {
+  {
+    # shellcheck disable=SC2086
+    printf '%s\n' $FIXED_VARS
+    for f in "$@"; do
+      # shellcheck disable=SC2016
+      [ -f "$f" ] && grep -o '\${[A-Z_][A-Z0-9_]*' "$f" | sed 's/^\${//'
+    done
+  } | sort -u
+}
+warn_shell_vars() {
+  set_here=''
+  for v in $(compose_vars "$HERE/compose.yaml" "${DIR:-/nonexistent}/compose.yaml"); do
+    eval "isset=\${$v+x}"
+    [ -n "$isset" ] && set_here="$set_here $v"
+  done
+  [ -n "$set_here" ] && say "Ignored, set in this shell:$set_here. rsc-brain takes its settings from its own .env only."
+  return 0
+}
+
+# docker compose, always for this installation's project and files (and never anything else's), with none of the
+# installation's values taken from this shell.
 dc() {
   if [ -f "$DIR/compose.override.yaml" ]; then
     set -- -f "$DIR/compose.yaml" -f "$DIR/compose.override.yaml" "$@"
@@ -251,7 +284,10 @@ dc() {
   for p in $(printf '%s' "$PROFILES" | tr ',' ' '); do
     set -- --profile "$p" "$@"
   done
-  docker compose --project-directory "$DIR" -p "$NAME" --env-file "$DIR/.env" "$@"
+  (
+    for v in $(compose_vars "$DIR/compose.yaml" "$DIR/compose.override.yaml"); do unset "$v"; done
+    docker compose --project-directory "$DIR" -p "$NAME" --env-file "$ENV_FILE" "$@"
+  )
 }
 
 running() { [ -n "$(dc ps -q app 2>/dev/null </dev/null)" ]; }
@@ -275,22 +311,38 @@ missing() {
 need_docker() {
   command -v docker >/dev/null 2>&1 ||
     missing 'Docker is not installed. Install Docker Desktop (macOS) or Docker Engine (Linux): https://docs.docker.com/get-docker/ and run this again.'
-  docker info >/dev/null 2>&1 </dev/null ||
+  if ! info=$(docker info 2>&1 </dev/null); then
+    case $info in
+    *[Pp]ermission\ denied*)
+      # shellcheck disable=SC2016
+      missing 'Your user cannot use Docker. Add it to the docker group (sudo usermod -aG docker $USER, then log in again) or run with sudo.'
+      ;;
+    esac
     missing 'Docker is not running. Start Docker Desktop (or the docker service: sudo systemctl start docker) and run this again.'
+  fi
   docker compose version >/dev/null 2>&1 </dev/null ||
     missing 'Docker Compose v2 is missing (the "docker compose" command). Install it: https://docs.docker.com/compose/install/'
 }
 
+# 0: something listens on the port; 1: free; 2: no tool here can tell.
 port_busy() {
   if command -v nc >/dev/null 2>&1; then
-    nc -z -w 2 127.0.0.1 "$1" >/dev/null 2>&1 </dev/null
-    return
+    nc -z -w 2 127.0.0.1 "$1" >/dev/null 2>&1 </dev/null && return 0
+    return 1
   fi
   if command -v lsof >/dev/null 2>&1; then
-    lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
-    return
+    lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1 && return 0
+    return 1
   fi
-  return 1
+  if command -v ss >/dev/null 2>&1; then
+    [ -n "$(ss -ltnH "sport = :$1" 2>/dev/null)" ] && return 0
+    return 1
+  fi
+  if command -v bash >/dev/null 2>&1; then
+    bash -c "exec 3<>/dev/tcp/127.0.0.1/$1" >/dev/null 2>&1 </dev/null && return 0
+    return 1
+  fi
+  return 2
 }
 next_free() {
   q=$(($1 + 1))
@@ -307,7 +359,14 @@ next_free() {
 free_port() {
   fp=''
   eval "fp=\$$1"
-  port_busy "$fp" || return 0
+  port_busy "$fp"
+  case $? in
+  1) return 0 ;;
+  2)
+    say "This machine has no nc, lsof, ss or bash: cannot check whether port $fp is free. Going on."
+    return 0
+    ;;
+  esac
   alt=$(next_free "$fp")
   if can_ask && [ -n "$alt" ]; then
     if yes_no "Port $fp is in use on this machine. Use $alt instead?" y; then
@@ -321,13 +380,13 @@ free_port() {
 # The URL in a file (or - for the standard input), whole, checked for what .env could not keep as written.
 read_url() {
   if [ "$1" = - ]; then RU=$(cat); else
-    [ -r "$1" ] || usage "The file $1 cannot be read."
+    [ -r "$1" ] || usage "The file \"$1\" cannot be read."
     RU=$(cat -- "$1")
   fi
   case $RU in
-  *"$NL"* | *"$CR"* | *"'"*) usage "The URL in $1 holds a line break or a quote; percent-encode a quote as %27." ;;
+  *"$NL"* | *"$CR"* | *"'"*) usage "The URL in \"$1\" holds a line break or a quote; percent-encode a quote as %27." ;;
   postgres://?* | postgresql://?*) ;;
-  *) usage "The file $1 does not hold a PostgreSQL URL (postgres://...)." ;;
+  *) usage "The file \"$1\" does not hold a PostgreSQL URL (postgres://...)." ;;
   esac
 }
 
@@ -366,18 +425,20 @@ pick_subnet() {
 }
 
 # ---------------------------------------------------------------------------------------------------------- install
-# What this run made, so a failure takes back exactly that.
-MADE_DIR=0 MADE_IMAGE=0 MADE_FILES='' PROVISIONED=0 STARTED=0 REINSTALL=0
+# What this run made, so a failure (or a stop) takes back exactly that. During a first install the same is kept in
+# <dir>/.rsc-brain/install.pending, so a run that was killed can be taken back by the next one.
+MADE_DIR=0 MADE_IMAGE=0 MADE_FILES='' PROVISIONED=0 STARTED=0 REINSTALL=0 RESUME=0 FAILURE_LOG=''
 
 take_back() {
   if [ "$REINSTALL" = 1 ]; then
-    if [ -f "$DIR/.env.previous" ]; then
-      mv -f "$DIR/.env.previous" "$DIR/.env"
+    if [ -f "${DIR:?}/${STATE:?}/env.previous" ]; then
+      mv -f "${DIR:?}/${STATE:?}/env.previous" "$DIR/.env"
+      ENV_FILE=$DIR/.env
       PROFILES=$(env_get COMPOSE_PROFILES)
       step 'Starting the previous settings again'
-      dc up -d --remove-orphans >&2 </dev/null || say "The previous installation did not start either: see 'docker compose logs' in $DIR."
+      dc up -d --remove-orphans >&2 </dev/null || say "The previous installation did not start either: see docker compose logs in \"$DIR\"."
     fi
-    return
+    return 0
   fi
   if [ "$PROVISIONED" = 1 ] && [ "$DB" != bundled ]; then
     step "Removing the database $DB_NAME it made"
@@ -388,26 +449,54 @@ take_back() {
     step 'Removing the containers, network and volumes it made'
     dc down -v --remove-orphans >&2 </dev/null
   fi
-  for f in $MADE_FILES; do rm -rf "${DIR:?}/$f"; done
-  [ "$MADE_DIR" = 1 ] && rmdir "$DIR" 2>/dev/null
   [ "$MADE_IMAGE" = 1 ] && docker image rm "$IMAGE" >/dev/null 2>&1 </dev/null
+  for f in $MADE_FILES; do rm -rf "${DIR:?}/${f:?}"; done
+  [ "$MADE_DIR" = 1 ] && rmdir "$DIR" 2>/dev/null
   return 0
 }
+
+# The service's last lines, kept before the containers go, with the key and the passwords taken out.
+sed_escape() { printf '%s' "$1" | sed 's/[][\/.*^$&]/\\&/g'; }
+url_password() { printf '%s' "$1" | sed -n 's|^[a-z]*://[^:/@]*:\([^@]*\)@.*|\1|p'; }
+keep_failure_log() {
+  [ "$STARTED" = 1 ] || return 0
+  script=''
+  for s in "$SECRET" "$PG_PASSWORD" "$(url_password "$DATABASE_URL")" "$(url_password "$ADMIN_URL")"; do
+    [ -n "$s" ] && script="${script}s/$(sed_escape "$s")/[redacted]/g;"
+  done
+  dc logs --no-color --tail 200 app </dev/null 2>&1 | sed "${script:-p;d}" >"$DIR/last-failure.log.new" &&
+    chmod 600 "$DIR/last-failure.log.new" && mv -f "$DIR/last-failure.log.new" "$DIR/last-failure.log" &&
+    FAILURE_LOG=$DIR/last-failure.log
+  return 0
+}
+
 # failed CODE MESSAGE: take back what this run made, then exit with CODE (4: failed and put back; 3: a requirement).
 failed() {
+  trap - HUP INT TERM
   say "$2"
+  [ "$1" = 4 ] && keep_failure_log
   take_back
   if [ "$1" = 3 ]; then say 'Nothing was changed.'; else
     if [ "$REINSTALL" = 1 ]; then say 'The previous settings were put back.'; else say 'Everything it made was removed.'; fi
   fi
+  [ -n "$FAILURE_LOG" ] && say "The last lines of the service are in \"$FAILURE_LOG\"."
   exit "$1"
+}
+interrupted() {
+  trap - HUP INT TERM
+  say ''
+  say 'Interrupted: taking back what this run made.'
+  take_back
+  exit 4
 }
 
 say_env() { printf "%s='%s'\n" "$1" "$2"; }
+# write_env FILE [pending]: the settings, whole, written beside and moved into place.
 write_env() {
   {
     echo '# rsc-brain settings, written by rsc-brain.sh. Only its owner may read this file: it holds the'
     echo '# installation key, which opens every copy. Change settings by running rsc-brain.sh install again.'
+    say_env RSC_BRAIN_LAUNCHER 1
     say_env RSC_BRAIN_NAME "$NAME"
     say_env COMPOSE_PROJECT_NAME "$NAME"
     say_env COMPOSE_PROFILES "$PROFILES"
@@ -432,10 +521,34 @@ write_env() {
     [ "$DB" = bundled ] && say_env POSTGRES_PASSWORD "$PG_PASSWORD"
     say_env RSC_BRAIN_DATABASE_URL "$DATABASE_URL"
     say_env RSC_BRAIN_SECRET "$SECRET"
-  } >"$DIR/.env.new" && chmod 600 "$DIR/.env.new" && mv -f "$DIR/.env.new" "$DIR/.env"
+    if [ "${2:-}" = pending ]; then
+      say_env RSC_BRAIN_PENDING_MADE "$MADE_FILES"
+      say_env RSC_BRAIN_PENDING_MADE_DIR "$MADE_DIR"
+      say_env RSC_BRAIN_PENDING_MADE_IMAGE "$MADE_IMAGE"
+      say_env RSC_BRAIN_PENDING_PROVISIONED "$PROVISIONED"
+      say_env RSC_BRAIN_PENDING_STARTED "$STARTED"
+    fi
+  } >"$1.new" && chmod 600 "$1.new" && mv -f "$1.new" "$1"
+}
+# What a first install has made so far, for the next run if this one is killed.
+save_state() {
+  [ "$REINSTALL" = 1 ] && return 0
+  write_env "$PENDING" pending || failed 4 "Could not write \"$PENDING\"."
 }
 
 random_hex() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
+
+# Only these may be in a folder before the first install: the person's own additions, and the log of a failed one.
+foreign_files() {
+  for f in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    [ -e "$f" ] || [ -L "$f" ] || continue
+    case ${f##*/} in compose.override.yaml | last-failure.log) ;; *)
+      echo "${f##*/}"
+      return
+      ;;
+    esac
+  done
+}
 
 install() {
   # Where, and what is there already.
@@ -446,18 +559,20 @@ install() {
     *) find_dir ;;
     esac
   fi
-  if [ -f "$DIR/.env" ]; then
+  PENDING=$DIR/$STATE/install.pending
+  if is_installation "$DIR"; then
     REINSTALL=1
+    ENV_FILE=$DIR/.env
     OLD_NAME=$(env_get RSC_BRAIN_NAME)
     OLD_DB=$(env_get RSC_BRAIN_DB)
     OLD_IMAGE=$(env_get RSC_BRAIN_IMAGE)
-    [ -n "$NAME" ] && [ "$NAME" != "$OLD_NAME" ] && usage "The installation in $DIR is called $OLD_NAME; its name cannot change."
+    [ -n "$NAME" ] && [ "$NAME" != "$OLD_NAME" ] && usage "The installation in \"$DIR\" is called $OLD_NAME; its name cannot change."
     NAME=$OLD_NAME
     [ -n "$DB" ] && [ "$DB" != "$OLD_DB" ] &&
-      usage "The installation in $DIR uses the $OLD_DB database, and install keeps it. To move to another one: make a copy (backup), uninstall, install anew and restore the copy."
+      usage "The installation in \"$DIR\" uses the $OLD_DB database, and install keeps it. To move to another one: make a copy (backup), uninstall, install anew and restore the copy."
     DB=$OLD_DB
     if { [ -n "$IMAGE" ] && [ "$IMAGE" != "$OLD_IMAGE" ]; } || { [ -n "$VERSION" ] && [ "rsc-brain:$VERSION" != "$OLD_IMAGE" ]; }; then
-      usage "The installation in $DIR runs $OLD_IMAGE. Changing the version is an update (a copy first, then the new version, and back if it fails); install keeps the version."
+      usage "The installation in \"$DIR\" runs $OLD_IMAGE. Changing the version is an update (a copy first, then the new version, and back if it fails); install keeps the version."
     fi
     IMAGE=$OLD_IMAGE VERSION=''
     if [ -z "$MODE" ]; then
@@ -469,6 +584,11 @@ install() {
     [ -n "$HTTPS_PORT" ] || HTTPS_PORT=$(env_get RSC_BRAIN_HTTPS_PORT)
     [ -n "$DB_URL_FILE$ADMIN_URL_FILE" ] && say 'The installation keeps its database: the URL file is not used.'
     DB_URL_FILE='' ADMIN_URL_FILE='' FACTORY_DB=$(env_get RSC_BRAIN_FACTORY_DB)
+  elif [ -f "$PENDING" ]; then
+    # A first install that was killed: the next one takes it back, then installs as a first install.
+    RESUME=1
+  elif [ -n "$(foreign_files "$DIR")" ]; then
+    usage "\"$DIR\" already holds files that are not an rsc-brain installation. Choose another folder with --dir."
   fi
   [ -n "$NAME" ] || NAME=rsc-brain
 
@@ -487,7 +607,12 @@ install() {
         fi
       fi
     done
-    [ "$MODE" = server ] && [ "$DIR_GIVEN" = 0 ] && [ "$REINSTALL" = 0 ] && DIR=/opt/rsc-brain
+    if [ "$MODE" = server ] && [ "$DIR_GIVEN" = 0 ] && [ "$REINSTALL" = 0 ] && [ "$RESUME" = 0 ]; then
+      DIR=/opt/rsc-brain
+      PENDING=$DIR/$STATE/install.pending
+      [ -n "$(foreign_files "$DIR")" ] &&
+        usage "\"$DIR\" already holds files that are not an rsc-brain installation. Choose another folder with --dir."
+    fi
   fi
   if [ -z "$DB" ]; then
     if can_ask; then
@@ -523,10 +648,45 @@ install() {
   DB_NAME=$(printf '%s' "$NAME" | tr '-' '_')
   case $DB_NAME in [0-9]*) DB_NAME=b_$DB_NAME ;; esac
   [ "$REINSTALL" = 1 ] && DB_NAME=$(env_get RSC_BRAIN_DB_NAME)
+  DB_URL='' ADMIN_URL=''
+  if [ -n "$DB_URL_FILE" ]; then
+    read_url "$DB_URL_FILE"
+    DB_URL=$RU
+  fi
+  if [ -n "$ADMIN_URL_FILE" ]; then
+    read_url "$ADMIN_URL_FILE"
+    ADMIN_URL=$RU
+  fi
+  if [ "$RESUME" = 1 ]; then
+    ENV_FILE=$PENDING
+    if [ "$(env_get RSC_BRAIN_PENDING_PROVISIONED)" = 1 ] && [ "$(env_get RSC_BRAIN_DB)" != bundled ] && [ -z "$ADMIN_URL" ]; then
+      usage "An install in \"$DIR\" was interrupted while it made the database $(env_get RSC_BRAIN_DB_NAME). Pass --db-admin-url-file with the administration login, so that database is removed before installing again."
+    fi
+  fi
 
   # Requirements: nothing is changed until all of them are met.
   step 'Checking what rsc-brain needs'
   need_docker
+  if [ "$RESUME" = 1 ]; then
+    # Take back the interrupted install with what it wrote down, then go on as a first install.
+    step "Taking back an install in \"$DIR\" that was interrupted"
+    saved="$NAME|$DB|$DB_NAME|$IMAGE|$PROFILES"
+    NAME=$(env_get RSC_BRAIN_NAME) DB=$(env_get RSC_BRAIN_DB) DB_NAME=$(env_get RSC_BRAIN_DB_NAME)
+    IMAGE=$(env_get RSC_BRAIN_IMAGE) PROFILES=$(env_get COMPOSE_PROFILES)
+    MADE_FILES=$(env_get RSC_BRAIN_PENDING_MADE) MADE_DIR=$(env_get RSC_BRAIN_PENDING_MADE_DIR)
+    MADE_IMAGE=$(env_get RSC_BRAIN_PENDING_MADE_IMAGE) PROVISIONED=$(env_get RSC_BRAIN_PENDING_PROVISIONED)
+    STARTED=$(env_get RSC_BRAIN_PENDING_STARTED)
+    take_back
+    oldifs=$IFS
+    IFS='|'
+    # shellcheck disable=SC2086
+    set -- $saved
+    IFS=$oldifs
+    NAME=$1 DB=$2 DB_NAME=$3 IMAGE=${4:-} PROFILES=${5:-}
+    MADE_FILES='' MADE_DIR=0 MADE_IMAGE=0 PROVISIONED=0 STARTED=0 RESUME=0
+    [ -n "$(foreign_files "$DIR")" ] &&
+      usage "\"$DIR\" still holds files that are not an rsc-brain installation. Choose another folder with --dir."
+  fi
   BUILD=0
   if [ -z "$IMAGE" ]; then
     command -v git >/dev/null 2>&1 ||
@@ -549,7 +709,7 @@ install() {
   free_kb=$(df -Pk "$probe" 2>/dev/null | tail -n 1 | tr -s ' ' | cut -d' ' -f4)
   case $free_kb in '' | *[!0-9]*) free_kb=$MIN_FREE_KB ;; esac
   [ "$free_kb" -ge "$MIN_FREE_KB" ] ||
-    missing "Only $((free_kb / 1024)) MB are free on the disk of $DIR; rsc-brain needs at least 2 GB (images, database and copies). Free some space, or pass --dir on another disk."
+    missing "Only $((free_kb / 1024)) MB are free on the disk of \"$DIR\"; rsc-brain needs at least 2 GB (images, database and copies). Free some space, or pass --dir on another disk."
   # Its own running installation holds its ports: those are not «in use».
   OWN=0
   [ "$REINSTALL" = 1 ] && PROFILES=$(env_get COMPOSE_PROFILES) && running && OWN=1
@@ -558,21 +718,12 @@ install() {
     if [ "$OWN" = 0 ] || [ "$(env_get RSC_BRAIN_MODE)" != server ] || [ "$HTTP_PORT" != "$(env_get RSC_BRAIN_HTTP_PORT)" ]; then free_port HTTP_PORT --http-port; fi
     if [ "$OWN" = 0 ] || [ "$(env_get RSC_BRAIN_MODE)" != server ] || [ "$HTTPS_PORT" != "$(env_get RSC_BRAIN_HTTPS_PORT)" ]; then free_port HTTPS_PORT --https-port; fi
   fi
-  DB_URL='' ADMIN_URL=''
-  if [ -n "$DB_URL_FILE" ]; then
-    read_url "$DB_URL_FILE"
-    DB_URL=$RU
-  fi
-  if [ -n "$ADMIN_URL_FILE" ]; then
-    read_url "$ADMIN_URL_FILE"
-    ADMIN_URL=$RU
-  fi
 
   # A new installation never takes the name of one Docker already holds (a failure would take its volumes down).
   if [ "$REINSTALL" = 0 ]; then
     if [ -n "$(docker ps -a -q --filter "label=com.docker.compose.project=$NAME" 2>/dev/null </dev/null)" ] ||
       docker volume inspect "${NAME}_pgdata" >/dev/null 2>&1 </dev/null; then
-      missing "Docker already holds an installation called $NAME (its containers or its database volume ${NAME}_pgdata), and $DIR has no .env for it. Pass --dir with its folder, or --name with another name for a new one."
+      missing "Docker already holds an installation called $NAME (its containers or its database volume ${NAME}_pgdata), and \"$DIR\" has no .env for it. Pass --dir with its folder, or --name with another name for a new one."
     fi
     pick_subnet
   fi
@@ -583,8 +734,8 @@ install() {
     SITE=http://localhost:$PORT
   fi
   if can_ask; then
-    if [ "$REINSTALL" = 1 ]; then q="Apply these settings to rsc-brain in $DIR ($MODE, $SITE)? Its key and data are kept."; else
-      q="Install rsc-brain in $DIR ($MODE, $SITE, $DB database)?"
+    if [ "$REINSTALL" = 1 ]; then q="Apply these settings to rsc-brain in \"$DIR\" ($MODE, $SITE)? Its key and data are kept."; else
+      q="Install rsc-brain in \"$DIR\" ($MODE, $SITE, $DB database)?"
     fi
     yes_no "$q" y || {
       say 'Nothing was changed.'
@@ -592,21 +743,51 @@ install() {
     }
   fi
 
-  # From here on, a failure takes back what this run made.
+  # The values: kept on a reinstall, new on a first install.
+  if [ "$(id -u)" = 0 ]; then RUN_UID=1000 RUN_GID=1000; else RUN_UID=$(id -u) RUN_GID=$(id -g); fi
+  if [ "$REINSTALL" = 1 ]; then
+    SECRET=$(env_get RSC_BRAIN_SECRET)
+    PG_PASSWORD=$(env_get POSTGRES_PASSWORD)
+    DATABASE_URL=$(env_get RSC_BRAIN_DATABASE_URL)
+    SUBNET=$(env_get RSC_BRAIN_SUBNET) IP_RANGE=$(env_get RSC_BRAIN_IP_RANGE) PROXY_IP=$(env_get RSC_BRAIN_PROXY_IP)
+  else
+    SECRET=$(random_hex 48)
+    PG_PASSWORD=$(random_hex 32)
+    DATABASE_URL=$DB_URL
+  fi
+  [ "$DB" = bundled ] || PG_PASSWORD=''
+  PROFILES=''
+  [ "$DB" = bundled ] && PROFILES=bundled
+  [ "$MODE" = server ] && PROFILES=${PROFILES:+$PROFILES,}server
+  if [ "$MODE" = server ]; then LOCAL_ONLY=0 TRUSTED=$PROXY_IP; else LOCAL_ONLY=1 TRUSTED=''; fi
+
+  # From here on, a failure or a stop takes back what this run made.
+  trap interrupted HUP INT TERM
   if [ ! -d "$DIR" ]; then
-    mkdir -p "$DIR" || missing "Cannot create $DIR. Pass --dir with a folder you may write in (or run as root for /opt)."
+    mkdir -p "$DIR" || missing "Cannot create \"$DIR\". Pass --dir with a folder you may write in (or run as root for /opt)."
     MADE_DIR=1
     chmod 700 "$DIR"
   fi
+  if [ ! -d "$DIR/$STATE" ]; then
+    mkdir "$DIR/$STATE" || failed 4 "Cannot create \"$DIR/$STATE\"."
+    MADE_FILES="$MADE_FILES $STATE"
+  fi
+  if [ "$REINSTALL" = 1 ]; then
+    cp -p "$DIR/.env" "$DIR/$STATE/env.previous" || failed 4 "Cannot keep a copy of \"$DIR/.env\"."
+  else
+    ENV_FILE=$PENDING
+    save_state
+  fi
   if [ "$BUILD" = 1 ]; then
     docker image inspect "$IMAGE" >/dev/null 2>&1 </dev/null || MADE_IMAGE=1
+    save_state
     step "Fetching the source of rsc-brain $VERSION"
-    rm -rf "${DIR:?}/src"
-    MADE_FILES="$MADE_FILES src"
-    git clone --depth 1 --branch "$VERSION" "$REPO" "$DIR/src" >&2 </dev/null ||
+    rm -rf "${DIR:?}/${STATE:?}/src"
+    # The image is built from these files: they must be readable by all, whatever this shell's umask.
+    (umask 022 && git clone --depth 1 --branch "$VERSION" "$REPO" "$DIR/$STATE/src") >&2 </dev/null ||
       failed 3 "Could not fetch $VERSION from $REPO. Check the version (git tags) and the network."
     step "Building the image $IMAGE (a few minutes the first time)"
-    docker build -t "$IMAGE" "$DIR/src" >&2 </dev/null || failed 4 "The image did not build: the lines above say why."
+    docker build -t "$IMAGE" "$DIR/$STATE/src" >&2 </dev/null || failed 4 "The image did not build: the lines above say why."
   fi
   # A database it is given is checked before anything is made in it.
   check_url=$DB_URL
@@ -617,51 +798,28 @@ install() {
       failed 3 'That PostgreSQL cannot hold rsc-brain (the line above says why).'
   fi
 
-  [ -d "$DIR/backups" ] || {
-    mkdir "$DIR/backups"
+  if [ ! -d "$DIR/backups" ]; then
+    mkdir "$DIR/backups" || failed 4 "Cannot create \"$DIR/backups\"."
     MADE_FILES="$MADE_FILES backups"
-  }
+  fi
   # The service writes the copies as the owner of the folder; as root, as the image's unprivileged user.
-  if [ "$(id -u)" = 0 ]; then
-    RUN_UID=1000 RUN_GID=1000
-    chown 1000:1000 "$DIR/backups"
-  else
-    RUN_UID=$(id -u) RUN_GID=$(id -g)
-  fi
+  [ "$(id -u)" = 0 ] && chown 1000:1000 "$DIR/backups"
   chmod 700 "$DIR/backups"
-
-  if [ "$REINSTALL" = 1 ]; then
-    cp -p "$DIR/.env" "$DIR/.env.previous"
-    SECRET=$(env_get RSC_BRAIN_SECRET)
-    PG_PASSWORD=$(env_get POSTGRES_PASSWORD)
-    DATABASE_URL=$(env_get RSC_BRAIN_DATABASE_URL)
-    SUBNET=$(env_get RSC_BRAIN_SUBNET) IP_RANGE=$(env_get RSC_BRAIN_IP_RANGE) PROXY_IP=$(env_get RSC_BRAIN_PROXY_IP)
-  else
-    SECRET=$(random_hex 48)
-    PG_PASSWORD=$(random_hex 32)
-    DATABASE_URL=$DB_URL
-    MADE_FILES="$MADE_FILES .env"
-  fi
-  [ "$DB" = bundled ] || PG_PASSWORD=''
-  PROFILES=''
-  [ "$DB" = bundled ] && PROFILES=bundled
-  [ "$MODE" = server ] && PROFILES=${PROFILES:+$PROFILES,}server
-  if [ "$MODE" = server ]; then LOCAL_ONLY=0 TRUSTED=$PROXY_IP; else LOCAL_ONLY=1 TRUSTED=''; fi
-  write_env || failed 4 "Could not write $DIR/.env."
   # The compose file and the Caddyfile of the version installed.
   src=$HERE
-  [ "$BUILD" = 1 ] && src=$DIR/src/deploy
+  [ "$BUILD" = 1 ] && src=$DIR/$STATE/src/deploy
   for f in compose.yaml Caddyfile; do
     if [ -f "$src/$f" ]; then
       [ -f "$DIR/$f" ] || MADE_FILES="$MADE_FILES $f"
-      cp "$src/$f" "$DIR/$f.new" && mv -f "$DIR/$f.new" "$DIR/$f"
+      cp "$src/$f" "$DIR/$f.new" && chmod 644 "$DIR/$f.new" && mv -f "$DIR/$f.new" "$DIR/$f"
     elif [ ! -f "$DIR/$f" ]; then
       failed 3 "$f is not next to the launcher. Run it from a copy of the repository (deploy/), or with --version."
     fi
   done
-  chmod 644 "$DIR/compose.yaml" "$DIR/Caddyfile"
-
+  if [ "$REINSTALL" = 1 ]; then write_env "$DIR/.env" || failed 4 "Could not write \"$DIR/.env\"."; fi
   STARTED=1
+  save_state
+
   if [ "$DB" = bundled ]; then
     step 'Starting PostgreSQL'
     dc up -d --wait postgres >&2 </dev/null || failed 4 'PostgreSQL did not start: the lines above say why.'
@@ -669,28 +827,38 @@ install() {
   fi
   if [ -z "$DATABASE_URL" ]; then
     step "Making the database and the role $DB_NAME (no superuser)"
+    # Written down before it starts: if this run is stopped meanwhile, what it was making is removed.
+    PROVISIONED=1
+    save_state
     set --
     [ "$DB" = shared ] && set -- --isolate-from "$FACTORY_DB"
     made=$(printf '%s\n' "$ADMIN_URL" | dc run --rm -T --no-deps app rsc-brain db provision --database "$DB_NAME" \
       --role "$DB_NAME" "$@" --json)
     code=$?
     case $code in
-    0) PROVISIONED=1 ;;
+    0) ;;
     2 | 3) failed "$code" 'The database could not be made (the line above says why).' ;;
     *) failed 4 'The database could not be made (the lines above say why).' ;;
     esac
     DATABASE_URL=$(printf '%s\n' "$made" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')
     case $DATABASE_URL in '' | *"'"*) failed 4 'The database was made, but its URL could not be read.' ;; esac
-    write_env || failed 4 "Could not write $DIR/.env."
+    save_state
   fi
 
   step 'Starting rsc-brain'
   dc up -d --remove-orphans >&2 </dev/null || failed 4 'rsc-brain did not start: the lines above say why.'
   step 'Waiting for rsc-brain to answer'
-  wait_healthy || failed 4 "rsc-brain did not answer within 2 minutes. See why with: docker compose --project-directory $DIR logs app"
-  rm -f "$DIR/.env.previous"
+  wait_healthy || failed 4 'rsc-brain did not answer within 2 minutes.'
   version=$(dc exec -T app rsc-brain version </dev/null 2>/dev/null)
   key_id=$(printf '%s' "$SECRET" | dc exec -T app rsc-brain key id 2>/dev/null)
+  # Done: only now is there an installation (.env), and nothing left to take back.
+  if [ "$REINSTALL" = 0 ]; then
+    write_env "$DIR/.env" || failed 4 "Could not write \"$DIR/.env\"."
+    rm -f "${PENDING:?}"
+    ENV_FILE=$DIR/.env
+  fi
+  rm -f "${DIR:?}/${STATE:?}/env.previous" "${DIR:?}/last-failure.log"
+  trap - HUP INT TERM
 
   if [ "$JSON" = 1 ]; then
     printf '{"url":%s,"mode":%s,"db":%s,"installationKey":%s,"keyId":%s,"version":%s,"dir":%s}\n' \
@@ -713,12 +881,12 @@ install() {
     out ''
     out "  $SECRET"
     out ''
-    out "Print it again with: sh $PROG key show --dir $DIR"
+    out "Print it again with: sh $PROG key show --dir \"$DIR\""
   else
     out "The installation key (id $key_id) opens your copies; without it they cannot be restored. It is kept in"
-    out "$DIR/.env. Print it with: sh $PROG key show --dir $DIR, and save it in a password manager."
+    out "\"$DIR/.env\". Print it with: sh $PROG key show --dir \"$DIR\", and save it in a password manager."
   fi
-  out "Copies are made every day at 03:00 (UTC) in $DIR/backups; list them with: sh $PROG backups --dir $DIR"
+  out "Copies are made every day at 03:00 (UTC) in \"$DIR/backups\"; list them with: sh $PROG backups --dir \"$DIR\""
   return 0
 }
 
@@ -738,14 +906,14 @@ status() {
       "$(json_str "$site")" "$(json_str "$mode")" "$(json_str "$db")" "$(json_str "$DIR")" "$(json_str "$image")" \
       "$(json_str "$version")" "$is_running" "$is_healthy"
   else
-    out "rsc-brain in $DIR: $site ($mode, $db database, $image)"
+    out "rsc-brain in \"$DIR\": $site ($mode, $db database, $image)"
     if [ "$is_healthy" = true ]; then
       out "Running version $version and answering."
       dc exec -T app rsc-brain maintenance status </dev/null 2>/dev/null
     elif [ "$is_running" = true ]; then
-      out "Running but not answering. See why with: docker compose --project-directory $DIR logs app"
+      out "Running but not answering. See why with: docker compose --project-directory \"$DIR\" logs app"
     else
-      out "Not running. Start it with: sh $PROG install --dir $DIR"
+      out "Not running. Start it with: sh $PROG install --dir \"$DIR\""
     fi
   fi
   [ "$is_healthy" = true ]
@@ -753,7 +921,7 @@ status() {
 
 need_running() {
   running || {
-    say "rsc-brain is not running. Start it with: sh $PROG install --dir $DIR"
+    say "rsc-brain is not running. Start it with: sh $PROG install --dir \"$DIR\""
     exit 1
   }
 }
@@ -777,9 +945,11 @@ backups() {
 }
 
 restore() {
-  [ -f "$COPY_FILE" ] && [ -r "$COPY_FILE" ] || usage "The copy $COPY_FILE cannot be read."
-  [ -z "$KEY_FILE" ] || [ -r "$KEY_FILE" ] || usage "The key file $KEY_FILE cannot be read."
+  [ -z "$KEY_FILE" ] || [ -r "$KEY_FILE" ] || usage "The key file \"$KEY_FILE\" cannot be read."
   need_installation
+  # A name as `backups` prints it is a copy in <dir>/backups.
+  case $COPY_FILE in */*) ;; *) [ -f "$DIR/backups/$COPY_FILE" ] && COPY_FILE=$DIR/backups/$COPY_FILE ;; esac
+  [ -f "$COPY_FILE" ] && [ -r "$COPY_FILE" ] || usage "The copy \"$COPY_FILE\" cannot be read."
   if [ "$CONFIRM_SET" = 0 ]; then
     can_ask || usage "Pass --confirm with the installation's name (as the web shows it; on a new installation, the name in the copy)."
     ask "Restoring replaces everything in rsc-brain with the copy. Type the installation's name to go on: "
@@ -789,9 +959,11 @@ restore() {
   base=$(basename -- "$COPY_FILE" | tr -c 'A-Za-z0-9._\n-' '_')
   target=$DIR/backups/$base
   copy_dir=$(cd -- "$(dirname -- "$COPY_FILE")" && pwd)
+  brought=0
   if [ "$copy_dir/$(basename -- "$COPY_FILE")" != "$target" ]; then
-    [ -e "$target" ] && usage "A copy named $base is in $DIR/backups already: restore that one (--file $target) or rename yours."
+    [ -e "$target" ] && usage "A copy named $base is in \"$DIR/backups\" already: restore that one (--file $base) or rename yours."
     cp -- "$COPY_FILE" "$target" || exit 1
+    brought=1
     [ "$(id -u)" = 0 ] && chown 1000:1000 "$target"
   fi
   step 'Stopping rsc-brain'
@@ -805,9 +977,11 @@ restore() {
     dc run --rm -T --no-deps app rsc-brain restore --file "/backups/$base" --confirm "$CONFIRM" "$@" </dev/null
   fi
   code=$?
+  # A copy brought in only for a restore that did not happen is not left among the copies.
+  [ "$code" != 0 ] && [ "$brought" = 1 ] && rm -f "${target:?}"
   step 'Starting rsc-brain again'
   if ! { dc up -d >&2 </dev/null && wait_healthy; }; then
-    say "rsc-brain did not answer after the restore. See why with: docker compose --project-directory $DIR logs app"
+    say "rsc-brain did not answer after the restore. See why with: docker compose --project-directory \"$DIR\" logs app"
   fi
   if [ "$code" = 0 ]; then
     say 'Restored. Every key, session and connection made before no longer works: everyone has to sign in again.'
@@ -841,37 +1015,37 @@ uninstall() {
   if [ "$DELETE_DATA" = 0 ]; then
     step 'Stopping rsc-brain and removing its containers'
     dc down --remove-orphans >&2 </dev/null || exit 1
-    out "rsc-brain was removed from this machine's containers. Its database, the copies in $DIR/backups and the"
-    out "installation key ($DIR/.env) are kept: sh $PROG install --dir $DIR brings it back as it was."
+    out "rsc-brain was removed from this machine's containers. Its database, the copies in \"$DIR/backups\" and the"
+    out "installation key (\"$DIR/.env\") are kept: sh $PROG install --dir \"$DIR\" brings it back as it was."
     return 0
   fi
   db_name=$(env_get RSC_BRAIN_DB_NAME)
-  if [ "$db" != bundled ]; then
-    if [ -n "$ADMIN_URL_FILE" ]; then
-      read_url "$ADMIN_URL_FILE"
-      step "Removing the database $db_name and the role $db_name"
-      printf '%s\n' "$RU" | dc run --rm -T --no-deps app rsc-brain db drop --database "$db_name" --role "$db_name" \
-        --confirm "$db_name" >&2 || {
-        say 'The database was not removed (the line above says why). Nothing else was deleted.'
-        exit 1
-      }
-    fi
+  if [ "$db" != bundled ] && [ -n "$ADMIN_URL_FILE" ]; then
+    read_url "$ADMIN_URL_FILE"
+    step "Removing the database $db_name and the role $db_name"
+    printf '%s\n' "$RU" | dc run --rm -T --no-deps app rsc-brain db drop --database "$db_name" --role "$db_name" \
+      --confirm "$db_name" >&2 || {
+      say 'The database was not removed (the line above says why). Nothing else was deleted.'
+      exit 1
+    }
   fi
   step 'Stopping rsc-brain and removing its containers, network and volumes'
   dc down -v --remove-orphans >&2 </dev/null || exit 1
   printf '%s\n' "$(env_get RSC_BRAIN_SECRET)" >"$DIR/installation-key.txt"
   chmod 600 "$DIR/installation-key.txt"
-  rm -rf "${DIR:?}/backups" "${DIR:?}/src" "$DIR/compose.yaml" "$DIR/Caddyfile" "$DIR/.env" "$DIR/.env.previous"
-  out "rsc-brain and its copies were deleted from $DIR."
+  rm -rf "${DIR:?}/backups" "${DIR:?}/${STATE:?}" "${DIR:?}/compose.yaml" "${DIR:?}/Caddyfile" "${DIR:?}/.env" \
+    "${DIR:?}/last-failure.log"
+  out "rsc-brain and its copies were deleted from \"$DIR\"."
   if [ "$db" != bundled ] && [ -z "$ADMIN_URL_FILE" ]; then
     out "Its database is on your PostgreSQL and was not touched: remove the database rsc-brain used (and its role) there,"
-    out "or run rsc-brain db drop with an administration login."
+    out "or run this again with --db-admin-url-file."
   fi
-  out "The installation key is kept in $DIR/installation-key.txt (copies you downloaded need it). Delete it when you"
-  out 'no longer need them.'
+  out "The installation key is kept in \"$DIR/installation-key.txt\" (copies you downloaded need it). Delete it when"
+  out 'you no longer need them.'
   return 0
 }
 
+warn_shell_vars
 case $CMD in
 install) install ;;
 status) status ;;

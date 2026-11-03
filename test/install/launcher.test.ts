@@ -11,12 +11,21 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { request } from 'node:https'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { promisify } from 'node:util'
 
@@ -60,12 +69,19 @@ const measured = (line: string) => process.stdout.write(`# measured: ${line}\n`)
 
 type Run = { code: number | null; stdout: string; stderr: string; seconds: number }
 // The launcher, with no terminal to ask on; its error stream is passed through as it runs.
-const launch = (args: string[]): Promise<Run> =>
+const launch = (
+  args: string[],
+  o: {
+    argv?: string[]
+    env?: Record<string, string>
+    onStderr?: (all: string, kill: (s: NodeJS.Signals) => void) => void
+  } = {},
+): Promise<Run> =>
   new Promise((resolve) => {
     const started = Date.now()
-    const p = spawn('sh', [LAUNCHER, ...args], {
+    const p = spawn('sh', [...(o.argv ?? [LAUNCHER]), ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, RSC_BRAIN_TTY: '/nonexistent/tty' },
+      env: { ...process.env, RSC_BRAIN_TTY: '/nonexistent/tty', ...o.env },
     })
     let stdout = ''
     let stderr = ''
@@ -74,6 +90,7 @@ const launch = (args: string[]): Promise<Run> =>
     })
     p.stderr.on('data', (d) => {
       stderr += d
+      o.onStderr?.(stderr, (s) => p.kill(s))
     })
     p.on('close', (code) => resolve({ code, stdout, stderr, seconds: (Date.now() - started) / 1000 }))
   })
@@ -290,7 +307,10 @@ describe('the launcher with real containers', { skip: why ?? false }, () => {
     before(async () => {
       projects.push(name)
       dir = join(BASE, 'server')
+      // The folder holds only the person's own additions before the first install; Pebble's files live beside it.
+      const pebble = join(BASE, 'pebble')
       mkdirSync(dir)
+      mkdirSync(pebble)
       httpsPort = await freePort()
       httpPort = await freePort()
       pebblePort = await freePort()
@@ -298,12 +318,12 @@ describe('the launcher with real containers', { skip: why ?? false }, () => {
       const probe = `rscb-pr34-test-pebble-probe-${ID}`
       await docker('create', '--name', probe, PEBBLE_IMAGE)
       try {
-        await docker('cp', `${probe}:/test/certs/pebble.minica.pem`, join(dir, 'pebble.minica.pem'))
+        await docker('cp', `${probe}:/test/certs/pebble.minica.pem`, join(pebble, 'pebble.minica.pem'))
       } finally {
         await docker('rm', probe).catch(() => {})
       }
       writeFileSync(
-        join(dir, 'pebble-config.json'),
+        join(pebble, 'pebble-config.json'),
         JSON.stringify({
           pebble: {
             listenAddress: '0.0.0.0:14000',
@@ -327,7 +347,7 @@ describe('the launcher with real containers', { skip: why ?? false }, () => {
       RSC_BRAIN_ACME_CA: https://pebble:14000/dir
       SSL_CERT_FILE: /pebble/pebble.minica.pem
     volumes:
-      - ./pebble.minica.pem:/pebble/pebble.minica.pem:ro
+      - ${pebble}/pebble.minica.pem:/pebble/pebble.minica.pem:ro
     networks:
       default:
         aliases: [brain.test]
@@ -337,7 +357,7 @@ describe('the launcher with real containers', { skip: why ?? false }, () => {
     environment:
       PEBBLE_VA_NOSLEEP: "1"
     volumes:
-      - ./pebble-config.json:/pebble/pebble-config.json:ro
+      - ${pebble}/pebble-config.json:/pebble/pebble-config.json:ro
     ports:
       - "127.0.0.1:${pebblePort}:15000"
 `,
@@ -368,7 +388,7 @@ describe('the launcher with real containers', { skip: why ?? false }, () => {
       assert.equal(JSON.parse(r.stdout).url, `https://brain.test:${httpsPort}`)
       assert.doesNotMatch(r.stderr, /certificate/i)
       // The root Pebble issues from (it makes a new one each start).
-      const minica = readFileSync(join(dir, 'pebble.minica.pem'), 'utf8')
+      const minica = readFileSync(join(BASE, 'pebble', 'pebble.minica.pem'), 'utf8')
       const root = await until('the root of the ACME test CA', async () => {
         const g = await get('/roots/0', minica, pebblePort, 'localhost')
         return g.status === 200 ? g.body : null
@@ -439,6 +459,155 @@ describe('the launcher with real containers', { skip: why ?? false }, () => {
       assert.deepEqual(await ofProject('ps', name), [])
       assert.deepEqual(await ofProject('volume', name), [])
       assert.deepEqual(await ofProject('network', name), [])
+    })
+  })
+
+  describe('from the source, as the README says: the launcher alone, from a 077 shell (review of PR #35)', () => {
+    const name = `rscb-pr34-test-src-${ID}`
+    // A version of its own, so the image it builds (rsc-brain:<version>) is this test's alone.
+    const version = `v34.${Number.parseInt(ID.slice(0, 4), 16)}.0`
+    let repo = ''
+    let alone = ''
+    before(async () => {
+      projects.push(name)
+      // A tagged clone of this tree (with what is not committed yet), as the public repository would serve it.
+      repo = join(BASE, 'repo')
+      const files = (
+        await run('git', ['-C', ROOT, 'ls-files', '-co', '--exclude-standard'], { maxBuffer: 64 << 20 })
+      ).stdout
+        .split('\n')
+        .filter((f) => f && existsSync(join(ROOT, f)))
+      for (const f of files) {
+        mkdirSync(dirname(join(repo, f)), { recursive: true })
+        copyFileSync(join(ROOT, f), join(repo, f))
+      }
+      const git = (...a: string[]) =>
+        run('git', ['-C', repo, '-c', 'user.name=test', '-c', 'user.email=test@example.com', ...a])
+      await git('init', '-q')
+      await git('add', '-A')
+      await git('commit', '-q', '-m', 'test')
+      await git('tag', version)
+      alone = join(BASE, 'launcher-alone')
+      mkdirSync(alone)
+      copyFileSync(LAUNCHER, join(alone, 'rsc-brain.sh'))
+    })
+    after(async () => {
+      await docker('image', 'rm', '-f', `rsc-brain:${version}`).catch(() => {})
+    })
+
+    it('clones the version, builds its image and answers', async () => {
+      const dir = join(BASE, 'from-source')
+      const port = await freePort()
+      const r = await launch(
+        [
+          'install',
+          '--local',
+          '--yes',
+          '--json',
+          '--dir',
+          dir,
+          '--name',
+          name,
+          '--port',
+          String(port),
+          '--version',
+          version,
+        ],
+        {
+          argv: ['-c', 'umask 077 && exec sh "$0" "$@"', join(alone, 'rsc-brain.sh')],
+          env: { RSC_BRAIN_REPO: `file://${repo}` },
+        },
+      )
+      assert.equal(r.code, 0, r.stderr.slice(-3000))
+      measured(`from the source, the launcher alone in a 077 shell: ${r.seconds.toFixed(1)} s`)
+      const branding = (await (await fetch(`http://localhost:${port}/v1/branding`)).json()) as {
+        setupRequired: boolean
+      }
+      assert.equal(branding.setupRequired, true)
+      const u = await launch(['uninstall', '--delete-data', '--confirm', name, '--dir', dir], {
+        argv: [join(alone, 'rsc-brain.sh')],
+      })
+      assert.equal(u.code, 0, u.stderr)
+    })
+  })
+
+  describe('stopped while it makes its database in a real PostgreSQL (review of PR #35)', () => {
+    const name = `rscb-pr34-test-hup-${ID}`
+    const pg = `rscb-pr34-test-pg-${ID}`
+    const db = name.replaceAll('-', '_')
+    let adminFile = ''
+    const sql = (q: string) => docker('exec', pg, 'psql', '-U', 'postgres', '-Atc', q)
+    before(async () => {
+      projects.push(name)
+      const port = await freePort()
+      await docker(
+        'run',
+        '-d',
+        '--name',
+        pg,
+        '-p',
+        `127.0.0.1:${port}:5432`,
+        '-e',
+        'POSTGRES_PASSWORD=pr34-test-only',
+        'postgres:17.11-alpine',
+      )
+      await until('PostgreSQL', async () => ((await sql('SELECT 1')) === '1' ? true : null))
+      adminFile = join(BASE, 'hup-admin-url')
+      writeFileSync(adminFile, `postgres://postgres:pr34-test-only@host.docker.internal:${port}/postgres\n`)
+    })
+    after(async () => {
+      await docker('rm', '-f', '-v', pg).catch(() => {})
+    })
+
+    it('HUP mid-provision: the role and database it was making are gone, and so is everything else it made; a rerun installs', async () => {
+      const dir = join(BASE, 'hup')
+      const args = [
+        'install',
+        '--local',
+        '--yes',
+        '--dir',
+        dir,
+        '--name',
+        name,
+        '--port',
+        String(await freePort()),
+        '--image',
+        IMAGE,
+        '--db',
+        'existing',
+        '--db-admin-url-file',
+        adminFile,
+      ]
+      let sent = false
+      const r = await launch(args, {
+        onStderr: (all, kill) => {
+          if (!sent && /Making the database/.test(all)) {
+            sent = true
+            kill('SIGHUP')
+          }
+        },
+      })
+      assert.ok(sent)
+      assert.equal(r.code, 4, r.stderr)
+      assert.equal(await sql(`SELECT count(*) FROM pg_database WHERE datname = '${db}'`), '0')
+      assert.equal(await sql(`SELECT count(*) FROM pg_roles WHERE rolname = '${db}'`), '0')
+      assert.equal(existsSync(dir), false)
+      assert.deepEqual(await ofProject('ps', name), [])
+      const again = await launch(args)
+      assert.equal(again.code, 0, again.stderr)
+      assert.equal(await sql(`SELECT count(*) FROM pg_database WHERE datname = '${db}'`), '1')
+      const u = await launch([
+        'uninstall',
+        '--delete-data',
+        '--confirm',
+        name,
+        '--dir',
+        dir,
+        '--db-admin-url-file',
+        adminFile,
+      ])
+      assert.equal(u.code, 0, u.stderr)
+      assert.equal(await sql(`SELECT count(*) FROM pg_roles WHERE rolname = '${db}'`), '0')
     })
   })
 })

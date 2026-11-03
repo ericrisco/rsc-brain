@@ -37,7 +37,7 @@ services:
 
   postgres:
     profiles: [bundled]
-    image: postgres:17.11-alpine
+    image: postgres:17.11-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
@@ -51,7 +51,7 @@ services:
 
   caddy:
     profiles: [server]
-    image: caddy:2.11.7-alpine
+    image: caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
     restart: unless-stopped
     environment:
       RSC_BRAIN_DOMAIN: ${RSC_BRAIN_DOMAIN:-}

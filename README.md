@@ -15,13 +15,18 @@ MIT. See [LICENSE](LICENSE).
 rsc-brain runs in containers, on macOS or Linux. You need Docker with Compose v2 and git. One
 command installs it; it checks what it needs first and changes nothing when something is missing.
 
+Download the launcher from a published release (replace `vX.Y.Z` with the version), and check it
+against the SHA-256 the release notes give for `rsc-brain.sh` before you run it:
+
 ```sh
-curl -fsSLO https://raw.githubusercontent.com/ericrisco/rsc-brain/main/deploy/rsc-brain.sh
+curl -fsSLO https://github.com/ericrisco/rsc-brain/releases/download/vX.Y.Z/rsc-brain.sh
+shasum -a 256 rsc-brain.sh      # Linux: sha256sum rsc-brain.sh; it must match the release notes
 sh rsc-brain.sh install --local
 ```
 
 It fetches the latest published version, builds its image, starts it with its own PostgreSQL and
-tells you the address. Open it to finish the first-time setup, where you make the administration
+tells you the address. It only writes in its own folder: an empty folder, or one that holds only
+your `compose.override.yaml`; it refuses any other (a clone of this repository, say). Open it to finish the first-time setup, where you make the administration
 account. `sh rsc-brain.sh help` lists every command and option.
 
 ### On this machine
@@ -96,7 +101,8 @@ sh rsc-brain.sh backups                   # the list
 sh rsc-brain.sh restore --file rsc-brain-20261101T030000Z-manual.rscb --confirm "<installation name>"
 ```
 
-Restoring replaces everything with the copy, after a copy of what is there. `--confirm` takes the
+`--file` takes a name as `backups` prints it (a copy in `backups/`) or the path of a copy from
+elsewhere. Restoring replaces everything with the copy, after a copy of what is there. `--confirm` takes the
 installation's name as the web shows it. To restore on another installation, pass the key of the
 copy's installation in a file with `--key-file`. Afterwards every key, session and connection made
 before stops working: everyone signs in again, and the administration issues new keys for programs.

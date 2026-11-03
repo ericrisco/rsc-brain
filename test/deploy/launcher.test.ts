@@ -9,7 +9,7 @@
 // (a PostgreSQL too old: exit 3, nothing created), the port in use, reinstalling keeps the key and the data,
 // uninstall removes only what it made, and the key never on a command line.
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
   chmodSync,
   copyFileSync,
@@ -54,12 +54,15 @@ const TOOLS = [
   'rm',
   'rmdir',
   'sed',
+  'sort',
   'sleep',
   'tail',
   'tr',
   'wc',
+  'env',
   'nc',
   'lsof',
+  'ss',
 ]
 
 let BASE = ''
@@ -612,11 +615,13 @@ describe('the launcher: reinstalling (spec «Volver a ejecutar el instalador»)'
   it('a failed first install takes down what it made, and only that: exit 4', async () => {
     const c = fresh()
     mkdirSync(c.dir)
-    writeFileSync(join(c.dir, 'mine.txt'), 'not the launcher’s')
+    // The one file a folder may hold before the first install: the person's own additions.
+    writeFileSync(join(c.dir, 'compose.override.yaml'), 'services: {}\n')
     const r = launch(c, await local(c), { env: { FAKE_UP_EXIT: '1' } })
     assert.equal(r.code, 4, r.stderr)
     assert.ok(r.calls.some((l) => / down /.test(l) && / -v /.test(l) && /-p rsc-brain /.test(l)))
-    assert.deepEqual(readdirSync(c.dir), ['mine.txt'])
+    assert.deepEqual(readdirSync(c.dir).sort(), ['compose.override.yaml', 'last-failure.log'])
+    assert.equal(readFileSync(join(c.dir, 'compose.override.yaml'), 'utf8'), 'services: {}\n')
   })
 
   it('another version on a reinstall is refused (that is an update, with a copy first): exit 2, nothing changed', async () => {
@@ -808,7 +813,7 @@ describe('the launcher: a server', () => {
 })
 
 describe('the launcher: building from the source', () => {
-  it('clones the version asked into <dir>/src and builds rsc-brain:<version> from it', async () => {
+  it('clones the version asked into its own <dir>/.rsc-brain/src and builds rsc-brain:<version> from it', async () => {
     const c = fresh()
     const gitBin = join(c.state, 'gitbin')
     mkdirSync(gitBin)
@@ -838,9 +843,11 @@ describe('the launcher: building from the source', () => {
       r.calls.some((l) => /^git clone --depth 1 --branch v0\.1\.0 \S+ /.test(l)),
       r.calls.join('\n'),
     )
-    assert.ok(r.calls.some((l) => new RegExp(`^build -t rsc-brain:v0\\.1\\.0 ${c.dir}/src$`).test(l)))
+    assert.ok(
+      r.calls.some((l) => new RegExp(`^build -t rsc-brain:v0\\.1\\.0 ${c.dir}/\\.rsc-brain/src$`).test(l)),
+    )
     assert.equal(readEnv(c.dir).RSC_BRAIN_IMAGE, 'rsc-brain:v0.1.0')
-    assert.ok(existsSync(join(c.dir, 'src', 'deploy', 'compose.yaml')))
+    assert.ok(existsSync(join(c.dir, '.rsc-brain', 'src', 'deploy', 'compose.yaml')))
   })
 })
 
@@ -1065,5 +1072,270 @@ describe('the launcher: uninstall (CA16, spec «Desinstalar»)', () => {
     const r = launch(c, ['uninstall', '--dir', c.dir])
     assert.equal(r.code, 3)
     assert.equal(r.calls.length, 0)
+  })
+})
+
+// The review of PR #35: what the launcher may touch, what it inherits, what it leaves when it fails or is stopped.
+describe('the launcher: only its own (review of PR #35)', () => {
+  it('a folder holding files that are not an installation is refused and left as it was (a git clone, say)', async () => {
+    const c = fresh()
+    mkdirSync(join(c.dir, 'src'), { recursive: true })
+    writeFileSync(join(c.dir, 'src', 'work.ts'), 'uncommitted work')
+    const r = launch(c, await local(c))
+    assert.equal(r.code, 2, r.stderr)
+    assert.match(
+      r.stderr,
+      /already holds files that are not an rsc-brain installation\. Choose another folder with --dir/,
+    )
+    assert.equal(readFileSync(join(c.dir, 'src', 'work.ts'), 'utf8'), 'uncommitted work')
+    assert.deepEqual(readdirSync(c.dir), ['src'])
+    assert.equal(
+      r.calls.some((l) => / up /.test(l) || /^build /.test(l)),
+      false,
+    )
+  })
+
+  it('a .env the launcher did not write is not an installation: refused, untouched', async () => {
+    const c = fresh()
+    mkdirSync(c.dir)
+    writeFileSync(join(c.dir, '.env'), "RSC_BRAIN_SECRET='someone elses'\n")
+    const r = launch(c, await local(c))
+    assert.equal(r.code, 2, r.stderr)
+    assert.equal(readFileSync(join(c.dir, '.env'), 'utf8'), "RSC_BRAIN_SECRET='someone elses'\n")
+    for (const cmd of [['uninstall'], ['key', 'show', '--yes']]) {
+      const u = launch(c, [...cmd, '--dir', c.dir])
+      assert.equal(u.code, 3, u.stderr)
+      assert.equal(u.stdout, '')
+    }
+  })
+
+  it('values of the installation exported in the shell never reach docker compose; it says so once', async () => {
+    const c = fresh()
+    const r = launch(c, await local(c), {
+      env: {
+        RSC_BRAIN_SECRET: 'from-the-shell-0123456789abcdef0123456789',
+        RSC_BRAIN_PUBLISH: '0.0.0.0:80',
+        POSTGRES_PASSWORD: 'shell-pw',
+        RSC_BRAIN_ACME_CA: 'https://evil.example/dir',
+        COMPOSE_PROFILES: 'server',
+        // Named only in compose.yaml: the list comes from the file, not from the launcher's memory.
+        RSC_BRAIN_TRUSTED_PROXIES: '0.0.0.0/0',
+        RSC_BRAIN_LOCAL_ONLY: '0',
+      },
+    })
+    assert.equal(r.code, 0, r.stderr)
+    assert.deepEqual(
+      r.calls.filter((l) => l.startsWith('LEAK ')),
+      [],
+    )
+    assert.equal((r.stderr.match(/set in this shell/g) ?? []).length, 1, r.stderr)
+    assert.match(r.stderr, /RSC_BRAIN_SECRET/)
+    assert.doesNotMatch(r.stderr, /from-the-shell/)
+    for (const day of [['status'], ['backups'], ['uninstall']]) {
+      const d = launch(c, [...day, '--dir', c.dir], {
+        env: { RSC_BRAIN_SECRET: 'x'.repeat(40), RSC_BRAIN_IMAGE: 'evil' },
+      })
+      assert.deepEqual(
+        d.calls.filter((l) => l.startsWith('LEAK ')),
+        [],
+        day.join(' '),
+      )
+    }
+  })
+
+  it('a failed start keeps the service’s last lines, without the key, in <dir>/last-failure.log (0600), and says where', async () => {
+    const c = fresh()
+    const r = launch(c, await local(c), { env: { FAKE_UP_EXIT: '1' } })
+    assert.equal(r.code, 4)
+    const log = join(c.dir, 'last-failure.log')
+    const text = readFileSync(log, 'utf8')
+    assert.match(text, /boot failed: database refused/)
+    assert.doesNotMatch(text, /\(key [0-9a-f]{20,}/)
+    assert.match(text, /\[redacted\]/)
+    assert.equal(mode(log), 0o600)
+    assert.ok(r.stderr.includes(`"${log}"`), r.stderr)
+    assert.ok(
+      r.calls.findIndex((l) => / logs /.test(l)) < r.calls.findIndex((l) => / down /.test(l)),
+      'the logs are read before the containers go',
+    )
+  })
+
+  it('a user who may not use Docker is told how to fix it: exit 3, nothing changed', async () => {
+    const c = fresh()
+    const r = launch(c, await local(c), { env: { FAKE_INFO_DENIED: '1' } })
+    assert.equal(r.code, 3)
+    assert.match(
+      r.stderr,
+      /Your user cannot use Docker\. Add it to the docker group \(sudo usermod -aG docker \$USER/,
+    )
+    assert.equal(existsSync(c.dir), false)
+  })
+
+  const admin = (c: Case) => {
+    const f = join(c.state, 'admin-url')
+    writeFileSync(f, 'postgres://admin:adm1n-pw@db.internal:5432/postgres\n')
+    return f
+  }
+  const launchAsync = (c: Case, args: string[], env: Record<string, string>, signal: NodeJS.Signals) =>
+    new Promise<{ code: number | null; stderr: string }>((resolve) => {
+      const p = spawn(join(SYSBIN, 'sh'), [LAUNCHER, ...args], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          PATH: `${FAKEBIN}:${SYSBIN}`,
+          HOME: c.home,
+          LANG: 'C',
+          FAKE_LOG: c.log,
+          FAKE_STDIN: c.stdin,
+          FAKE_STATE: c.state,
+          RSC_BRAIN_TTY: c.tty,
+          ...env,
+        },
+      })
+      let stderr = ''
+      let sent = false
+      p.stderr.on('data', (d) => {
+        stderr += d
+        if (!sent && /Making the database/.test(stderr)) {
+          sent = true
+          // Once the fake provision has started (it sleeps), stop the launcher.
+          const wait = setInterval(() => {
+            if (existsSync(join(c.state, 'provision-started'))) {
+              clearInterval(wait)
+              p.kill(signal)
+            }
+          }, 50)
+        }
+      })
+      p.on('close', (code) => resolve({ code, stderr }))
+    })
+
+  it('stopped (HUP) while making the database: takes back the database it was making, the containers and its files', async () => {
+    const c = fresh()
+    const args = await local(c, '--db', 'existing', '--db-admin-url-file', admin(c))
+    const r = await launchAsync(c, args, { FAKE_PROVISION_SLEEP: '1' }, 'SIGHUP')
+    assert.equal(r.code, 4, r.stderr)
+    assert.match(r.stderr, /Interrupted/)
+    const calls = readFileSync(c.log, 'utf8')
+    assert.match(calls, / rsc-brain db drop --database rsc_brain --role rsc_brain --confirm rsc_brain/)
+    assert.match(readFileSync(c.stdin, 'utf8'), /<<< db drop\npostgres:\/\/admin:adm1n-pw@/)
+    assert.equal(existsSync(c.dir), false)
+  })
+
+  it('killed outright mid-install, a rerun takes back what the first one left and installs as a first install', async () => {
+    const c = fresh()
+    const args = await local(c, '--db', 'existing', '--db-admin-url-file', admin(c))
+    const killed = await launchAsync(c, args, { FAKE_PROVISION_SLEEP: '1' }, 'SIGKILL')
+    assert.equal(killed.code, null)
+    assert.equal(existsSync(join(c.dir, '.env')), false, 'no .env before the first install completes')
+    await new Promise((r) => setTimeout(r, 1500))
+    const again = launch(c, args)
+    assert.equal(again.code, 0, again.stderr)
+    assert.match(again.stderr, /interrupted/)
+    const drop = again.calls.findIndex((l) => / db drop /.test(l))
+    const provision = again.calls.findIndex((l) => / db provision /.test(l))
+    assert.ok(drop >= 0 && drop < provision, 'the database the first one was making is removed first')
+    // A first install: the onboarding, and the new key in the summary.
+    assert.match(again.stdout, /first-time setup/)
+    assert.match(readFileSync(join(c.dir, '.env'), 'utf8'), /RSC_BRAIN_LAUNCHER='1'/)
+    assert.equal(existsSync(join(c.dir, '.rsc-brain', 'install.pending')), false)
+  })
+
+  it('an interrupted install that made a database cannot resume without the login that removes it: exit 2', async () => {
+    const c = fresh()
+    const args = await local(c, '--db', 'existing', '--db-admin-url-file', admin(c))
+    await launchAsync(c, args, { FAKE_PROVISION_SLEEP: '1' }, 'SIGKILL')
+    await new Promise((r) => setTimeout(r, 1500))
+    const url = join(c.state, 'db-url')
+    writeFileSync(url, 'postgres://b:p@h/db\n')
+    const r = launch(c, [
+      'install',
+      '--local',
+      '--yes',
+      '--dir',
+      c.dir,
+      '--db',
+      'existing',
+      '--db-url-file',
+      url,
+    ])
+    assert.equal(r.code, 2, r.stderr)
+    assert.match(r.stderr, /--db-admin-url-file/)
+    assert.ok(existsSync(join(c.dir, '.rsc-brain', 'install.pending')))
+  })
+})
+
+describe('the launcher: restore and ports (review of PR #35)', () => {
+  const installed = async () => {
+    const c = fresh()
+    const r = launch(c, await local(c))
+    assert.equal(r.code, 0, r.stderr)
+    return c
+  }
+
+  it('restore takes a copy by the name backups prints, from <dir>/backups', async () => {
+    const c = await installed()
+    writeFileSync(join(c.dir, 'backups', 'rsc-brain-20261101T030000Z-manual.rscb'), 'copy')
+    const r = launch(c, [
+      'restore',
+      '--dir',
+      c.dir,
+      '--file',
+      'rsc-brain-20261101T030000Z-manual.rscb',
+      '--confirm',
+      'x',
+    ])
+    assert.equal(r.code, 0, r.stderr)
+    assert.ok(
+      r.calls.some((l) => / restore --file \/backups\/rsc-brain-20261101T030000Z-manual\.rscb /.test(l)),
+    )
+  })
+
+  it('a restore that fails removes the copy it brought into <dir>/backups', async () => {
+    const c = await installed()
+    const copy = join(c.state, 'brought.rscb')
+    writeFileSync(copy, 'copy')
+    const r = launch(c, ['restore', '--dir', c.dir, '--file', copy, '--confirm', 'x'], {
+      env: { FAKE_RESTORE_EXIT: '1' },
+    })
+    assert.equal(r.code, 1)
+    assert.equal(existsSync(join(c.dir, 'backups', 'brought.rscb')), false)
+    assert.ok(existsSync(copy))
+  })
+
+  const bin = (c: Case, tools: string[]) => {
+    const d = join(c.state, `bin-${++n}`)
+    mkdirSync(d)
+    for (const t of readdirSync(SYSBIN))
+      if (!['nc', 'lsof', 'ss'].includes(t)) symlinkSync(join(SYSBIN, t), join(d, t))
+    for (const t of tools) {
+      const p = which(t)
+      if (p) symlinkSync(p, join(d, t))
+    }
+    return d
+  }
+
+  it('without nc, lsof or ss, a port in use is still found (bash), or the launcher says it cannot check', {
+    skip: which('bash') ? false : 'bash is not installed here',
+  }, async () => {
+    const c = fresh()
+    const port = await busyPort()
+    const withBash = launch(
+      c,
+      ['install', '--local', '--yes', '--dir', c.dir, '--port', String(port), ...IMAGE],
+      {
+        path: `${FAKEBIN}:${bin(c, ['bash'])}`,
+      },
+    )
+    assert.equal(withBash.code, 3, withBash.stderr)
+    assert.match(withBash.stderr, new RegExp(`Port ${port} is in use`))
+    const none = launch(
+      c,
+      ['install', '--local', '--yes', '--dir', c.dir, '--port', String(await freePort()), ...IMAGE],
+      {
+        path: `${FAKEBIN}:${bin(c, [])}`,
+      },
+    )
+    assert.equal(none.code, 0, none.stderr)
+    assert.match(none.stderr, /cannot check whether port \d+ is free/)
   })
 })
