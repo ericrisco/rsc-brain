@@ -1,5 +1,5 @@
 // Settings come from the environment, read once at start. Nothing secret has a default.
-import { SERVICE_INVITES_PER_HOUR } from './domain/service-invite.ts'
+import { SERVICE_INVITES_PER_HOUR } from './domain/invite-quota.ts'
 import { DEFAULT_BACKUP_AT, DEFAULT_BACKUP_KEEP, parseBackupAt } from './ops/backup/schedule.ts'
 
 export type Config = {

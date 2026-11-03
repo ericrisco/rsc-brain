@@ -28,7 +28,10 @@ export const brainRoutes: Route[] = [
       purpose: str(b, 'purpose', { max: 1000 }),
       firstCurator: str(b, 'firstCurator', { max: 200 }),
     }
-    return { status: 201, body: { brain: await createBrain(ctxOf(r), compact(input)) } }
+    return {
+      status: 201,
+      body: { brain: await createBrain(ctxOf(r), compact(input), r.serviceInvitesPerHour) },
+    }
   }),
   route('GET /v1/brains/:slug', async (r) => ({
     body: { brain: await getBrainWithStats(ctxOf(r), r.params.slug as string) },

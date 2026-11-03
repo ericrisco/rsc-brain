@@ -32,7 +32,7 @@ type Shapes = {
 }
 
 // The same constant is in rsc-factory's test/memory/brain-client.test.ts: change both, with both copies.
-const BRAIN_SHAPES_SHA256 = 'b4de57ce52c6a89ddbaf758562ec452920387c75ff5fabf2a1b4ce484e1af4aa'
+const BRAIN_SHAPES_SHA256 = 'f13c26dace0938a68c208664a5230b5708c4d0cb136c5e591377ebac89af42a3'
 const SHAPES_TEXT = readFileSync(new URL('./brain-shapes.json', import.meta.url), 'utf8')
 const SHAPES = JSON.parse(SHAPES_TEXT) as Shapes
 

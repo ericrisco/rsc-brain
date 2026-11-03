@@ -18,6 +18,7 @@ import { emailOf, inWeb } from './guards.ts'
 import { type ConnFacts, installation, requireSecure } from './installation.ts'
 import { mintWebSession } from './keys.ts'
 import { decode, encode, limitOf } from './listing.ts'
+import { notify } from './notices.ts'
 
 export const INVITE_HOURS = 72
 export const MAX_EMAILS = 50
@@ -78,12 +79,24 @@ async function mailInvitation(
 // - the administration adds these grants to an open one, takes it over and makes its link again (the
 //   old link stops working). An expired one is closed, and a new one is made;
 // - a service adds its grants to an open one, never lowering a role there. When that service made it, the
-//   link is kept (nothing new is mailed). When someone else made it, the service takes it over and makes its
-//   link again: the old link stops working, so whoever held it gains nothing, and the new link goes to the
-//   email only (F1-PR2 review). An expired one is closed, and a new one is made.
+//   link is kept (nothing new is mailed). When someone else made it, nothing is changed here: the caller gets
+//   a takeover to finish after its commit (takeOver), only if the new link reaches the person; then the old
+//   link stops working, so whoever held it gains nothing (F1-PR2 review). An expired one is closed, and a new
+//   one is made.
 // A closed expired invitation passes on the first-curator places of brains still waiting for this
 // email, never the administrator rights.
 export const INVITATION_LOCK = "SELECT pg_advisory_xact_lock(hashtext('rsc-brain invitation ' || $1))"
+export type Takeover = { previousBy: string; expectHash: string }
+export type Stored = {
+  id: string
+  token: string | null
+  expiresAt: Date
+  grants: Grant[]
+  isAdmin: boolean
+  // Someone else's open invitation, left as it is: takeOver makes it this service's once the mail went out.
+  takeover?: Takeover
+}
+
 export async function storeInvitation(
   db: Db,
   clock: Clock,
@@ -95,7 +108,7 @@ export async function storeInvitation(
     by: string
     as: 'admin' | 'service' | 'curator'
   },
-): Promise<{ id: string; token: string | null; expiresAt: Date; grants: Grant[]; isAdmin: boolean }> {
+): Promise<Stored> {
   const now = clock()
   const token = newSecret()
   const expiresAt = new Date(now.getTime() + INVITE_HOURS * 3_600_000)
@@ -136,6 +149,16 @@ export async function storeInvitation(
         expiresAt: unused.expires_at as Date,
         grants,
         isAdmin: Boolean(unused.is_admin),
+      }
+    }
+    if (o.as === 'service') {
+      return {
+        id: String(unused.id),
+        token,
+        expiresAt,
+        grants,
+        isAdmin: Boolean(unused.is_admin),
+        takeover: { previousBy: String(unused.invited_by), expectHash: String(unused.token_hash) },
       }
     }
     const isAdmin = Boolean(unused.is_admin) || Boolean(o.isAdmin)
@@ -183,6 +206,57 @@ export async function sendInvitation(
 ) {
   const link = await linkOf(db, o.token)
   return { link, ...(await mailInvitation(db, clock, outbox, { ...o, link })) }
+}
+
+// A service takes over someone else's open invitation (F1-PR2 review, second pass): the new link is mailed
+// first, and only once the mail was accepted is the invitation changed, if it is still the one that was read
+// (same link, still open). Then the old link stops working; the takeover is audited with the previous inviter,
+// who is told in the app. Without a sent mail nothing changes: false, and the caller refuses that person.
+export async function takeOver(
+  ctx: Ctx,
+  brainId: string | null,
+  t: {
+    email: string
+    id: string
+    token: string
+    expiresAt: Date
+    grants: Grant[]
+    isAdmin: boolean
+  } & Takeover,
+): Promise<boolean> {
+  const failed = async (why: string) => {
+    await ok(ctx, 'invitation.takeover_failed', brainId, t.email, `${why}; it stays with ${t.previousBy}`)
+    return false
+  }
+  const sent = await sendInvitation(ctx.db, ctx.clock, ctx.mail, {
+    email: t.email,
+    token: t.token,
+    by: ctx.who.name,
+    grants: t.grants,
+    isAdmin: t.isAdmin,
+  })
+  if (!sent.sent) return failed('the new link could not be mailed')
+  const done = await ctx.db.tx(async (db) => {
+    await db.query(INVITATION_LOCK, [t.email])
+    const r = await db.one(
+      `UPDATE invitations SET token_hash = $2, grants = $3, expires_at = $4, invited_by = $5, resent_at = NULL
+        WHERE id = $1 AND token_hash = $6 AND used_at IS NULL AND revoked_at IS NULL RETURNING id`,
+      [t.id, hashSecret(t.token), JSON.stringify(t.grants), t.expiresAt, ctx.who.accountId, t.expectHash],
+    )
+    if (r) await ok({ ...ctx, db }, 'invitation.taken_over', brainId, t.email, `from ${t.previousBy}`)
+    return Boolean(r)
+  })
+  if (!done) return failed('the invitation changed meanwhile')
+  const before = await ctx.db.one<{ kind: string }>('SELECT kind FROM accounts WHERE id = $1', [t.previousBy])
+  if (before?.kind === 'person') {
+    await notify(ctx.db, ctx.clock, ctx.mail, [t.previousBy], {
+      kind: 'invitation.taken_over',
+      brainId,
+      subject: `Your invitation of ${t.email} was taken over`,
+      text: `The service account "${ctx.who.name}" took over your invitation of ${t.email}: it mailed them a new link, and the one you had no longer works. The administration of rsc-brain can still see and withdraw it.`,
+    })
+  }
+  return true
 }
 
 export type InviteInput = {
@@ -468,6 +542,10 @@ export async function resendInvitation(ctx: Ctx, id: string): Promise<Invited> {
 export async function revokeInvitation(ctx: Ctx, id: string): Promise<void> {
   inWeb(ctx, 'Managing invitations')
   await ctx.db.tx(async (db) => {
+    // The email's turn first, as everyone takes it before brain and invitation rows (no deadlock with a service
+    // inviting the same email into a brain that waits for it).
+    const peek = await db.one<{ email: string }>('SELECT email FROM invitations WHERE id = $1', [id])
+    if (peek) await db.query(INVITATION_LOCK, [peek.email])
     const r = await mine(ctx, db, id, false)
     if (r.used_at != null) {
       throw conflict(

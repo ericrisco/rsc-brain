@@ -201,7 +201,7 @@
                   "enum": ["added", "invited", "raised", "already", "refused"]
                 },
                 "reason": {
-                  "enum": ["account_removed"]
+                  "enum": ["account_removed", "invitation_pending_elsewhere"]
                 }
               }
             }

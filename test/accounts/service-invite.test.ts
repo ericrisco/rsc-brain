@@ -310,6 +310,111 @@ describe('a service invites people to the brains it created', { skip: skipPg }, 
     assert.notEqual(fresh, held)
   })
 
+  // Second pass: a takeover happens only when the new link reaches the person. Without mail, or when the send
+  // fails, the other invitation is left as it was and that person is refused (invitation_pending_elsewhere).
+  const curatorInvite = async (email: string, slug: string) => {
+    const mallory = await w.person(`Mallory${slug.replaceAll('-', '')}`)
+    await w.call(eric.key, 'POST', '/v1/brains', { slug })
+    await w.member(slug, mallory.id, 'curator')
+    await w.db.query('UPDATE installation SET curators_invite = true WHERE id = 1')
+    const sent = await w.callWeb(await w.web(mallory.id), 'POST', '/v1/invitations', {
+      emails: [email],
+      brains: [{ slug, role: 'reader' }],
+    })
+    await w.db.query('UPDATE installation SET curators_invite = false WHERE id = 1')
+    assert.equal(sent.status, 201, sent.text)
+    return { mallory, held: tokenOf(((sent.body.invitations as Json[])[0] as Json).link) }
+  }
+  const look = (token: string) => w.raw('POST', '/v1/invitations/look', { body: { token } })
+
+  it("second pass: without mail, someone else's invitation is left alone and the person is refused", async () => {
+    const email = 'nomail@corp.example'
+    const { held } = await curatorInvite(email, 'nomail-src')
+    const mail = await w.db.one<{ mail: unknown }>('SELECT mail FROM installation WHERE id = 1')
+    await w.db.query('UPDATE installation SET mail = NULL WHERE id = 1')
+    try {
+      const r = await invite('made', [{ email, role: 'curator' }])
+      assert.equal(r.status, 201, r.text)
+      assert.deepEqual(r.body.invited, [{ email, status: 'refused', reason: 'invitation_pending_elsewhere' }])
+    } finally {
+      await w.db.query('UPDATE installation SET mail = $1 WHERE id = 1', [JSON.stringify(mail?.mail)])
+    }
+    assert.equal((await look(held)).status, 200, 'the link already handed out still works')
+    assert.deepEqual(
+      ((await openGrants(email)) ?? []).map((g) => g.role),
+      ['reader'],
+      'nothing was added to it',
+    )
+  })
+
+  it('second pass: a send that fails leaves the other invitation as it was; the person is refused', async () => {
+    const email = 'mailfails@corp.example'
+    const { held } = await curatorInvite(email, 'mailfails-src')
+    w.mailFails = true
+    try {
+      const r = await invite('made', [{ email, role: 'curator' }])
+      assert.deepEqual(r.body.invited, [{ email, status: 'refused', reason: 'invitation_pending_elsewhere' }])
+    } finally {
+      w.mailFails = false
+    }
+    assert.equal((await look(held)).status, 200)
+    assert.equal((await openGrants(email))?.length, 1)
+  })
+
+  it('second pass: a takeover is audited with the previous inviter, who is told in the app', async () => {
+    const email = 'taken@corp.example'
+    const { mallory, held } = await curatorInvite(email, 'taken-src')
+    const r = await invite('made', [{ email, role: 'reader' }])
+    assert.deepEqual(r.body.invited, [{ email, status: 'invited' }])
+    assert.equal((await look(held)).status, 400, 'the old link no longer opens it')
+    const audit = await w.db.one<{ actor_id: string; detail: string }>(
+      "SELECT actor_id, detail FROM audit WHERE action = 'invitation.taken_over' AND target = $1",
+      [email],
+    )
+    assert.equal(audit?.actor_id, factory.id)
+    assert.match(String(audit?.detail), new RegExp(mallory.id))
+    const told = await w.db.query(
+      "SELECT text FROM notices WHERE account_id = $1 AND kind = 'invitation.taken_over'",
+      [mallory.id],
+    )
+    assert.equal(told.length, 1)
+    assert.match(String(told[0]?.text), /rsc-factory/)
+  })
+
+  it("second pass: someone else's invitation that already gives this role here is taken over too (Mallory variant)", async () => {
+    const email = 'variant@corp.example'
+    const mallory = await w.person('Malloryvariant')
+    await w.member('made', mallory.id, 'curator')
+    await w.db.query('UPDATE installation SET curators_invite = true WHERE id = 1')
+    const sent = await w.callWeb(await w.web(mallory.id), 'POST', '/v1/invitations', {
+      emails: [email],
+      brains: [{ slug: 'made', role: 'curator' }],
+    })
+    await w.db.query('UPDATE installation SET curators_invite = false WHERE id = 1')
+    const held = tokenOf(((sent.body.invitations as Json[])[0] as Json).link)
+    await w.db.query('DELETE FROM memberships WHERE account_id = $1', [mallory.id])
+    const r = await invite('made', [{ email, role: 'curator' }])
+    assert.deepEqual(r.body.invited, [{ email, status: 'invited' }])
+    assert.equal((await look(held)).status, 400, 'the link Mallory holds is dead')
+    const fresh = tokenOf((await w.mailTo(email, /^rsc-factory invited you/)).text)
+    assert.equal((await look(fresh)).status, 200)
+  })
+
+  it("second pass: a brain made for a first curator with someone else's invitation and no mail: nothing is made", async () => {
+    const email = 'fc-nomail@corp.example'
+    await curatorInvite(email, 'fc-nomail-src')
+    const mail = await w.db.one<{ mail: unknown }>('SELECT mail FROM installation WHERE id = 1')
+    await w.db.query('UPDATE installation SET mail = NULL WHERE id = 1')
+    try {
+      const r = await w.call(factory.key, 'POST', '/v1/brains', { slug: 'fc-nomail', firstCurator: email })
+      assert.equal(r.status, 409, r.text)
+      assert.equal(r.body.error?.code, 'invitation_pending_elsewhere')
+    } finally {
+      await w.db.query('UPDATE installation SET mail = $1 WHERE id = 1', [JSON.stringify(mail?.mail)])
+    }
+    assert.equal(await w.db.one("SELECT 1 FROM brains WHERE slug = 'fc-nomail'"), undefined)
+  })
+
   it('CA6b: an open invitation of this service to the brain as reader is raised to curator, its link kept', async () => {
     const email = 'raise-me@example.com'
     await invite('other-made', [{ email, role: 'reader' }])

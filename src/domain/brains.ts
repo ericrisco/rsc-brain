@@ -5,10 +5,12 @@ import { roleIn } from '../auth/principal.ts'
 import { brainNotFound, conflict, invalid } from '../core/errors.ts'
 import { newId } from '../core/ids.ts'
 import type { Db } from '../db/db.ts'
+import { mailConfigured } from '../mail/mail.ts'
 import { accountByEmail } from './accounts.ts'
 import { allow, type Brain, brainOf, type Ctx, inBrain, ok } from './context.ts'
 import { inWeb } from './guards.ts'
-import { sendInvitation, storeInvitation } from './invitations.ts'
+import { INVITATION_LOCK, sendInvitation, storeInvitation, takeOver } from './invitations.ts'
+import { checkQuota, SERVICE_INVITES_PER_HOUR, serviceTurn, spendMail } from './invite-quota.ts'
 
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -70,7 +72,11 @@ export async function raiseMember(
   return !r ? 'already' : r.added ? 'added' : 'raised'
 }
 
-export async function createBrain(ctx: Ctx, input: NewBrain): Promise<Brain> {
+export async function createBrain(
+  ctx: Ctx,
+  input: NewBrain,
+  perHour: number = SERVICE_INVITES_PER_HOUR,
+): Promise<Brain> {
   await allow(ctx, 'brain.create', {})
   const slug = (input.slug ?? '').trim()
   if (!SLUG.test(slug) || slug.length < 2 || slug.length > 64) {
@@ -83,12 +89,17 @@ export async function createBrain(ctx: Ctx, input: NewBrain): Promise<Brain> {
   const description = text(input.description, 2000, 'description')
   const purpose = text(input.purpose, 1000, 'purpose')
   const now = ctx.clock()
+  const named = ctx.who.kind === 'service' ? input.firstCurator?.trim() : undefined
   const made = await ctx.db.tx(async (db) => {
+    // The lock order of every invitation (invite-quota.ts): the service's turn, the email's, then rows.
+    if (named?.includes('@')) {
+      await serviceTurn(db, ctx.who.accountId)
+      await db.query(INVITATION_LOCK, [named.toLowerCase()])
+    }
     const id = newId('brn')
     let curatorId: string | null = null
     let pendingEmail: string | null = null
     if (ctx.who.kind === 'service') {
-      const named = input.firstCurator?.trim()
       if (!named) {
         throw invalid(
           'A service account must name the first curator of a brain it creates.',
@@ -139,13 +150,38 @@ export async function createBrain(ctx: Ctx, input: NewBrain): Promise<Brain> {
           as: 'service',
         })
       : null
+    // Someone else's open invitation is taken over only if the new link can be mailed (takeOver, after the
+    // commit); without mail, nothing is made.
+    if (invitation?.takeover && !(await mailConfigured(db))) {
+      throw conflict(
+        'invitation_pending_elsewhere',
+        `${pendingEmail} has an open rsc-brain invitation from someone else, and rsc-brain cannot mail a new one.`,
+        'Ask an administrator of rsc-brain to resend or withdraw that invitation, or name another first curator.',
+      )
+    }
     if (invitation) await ok({ ...ctx, db }, 'invitation.create', id, pendingEmail ?? '', 'first curator')
+    // Its mail spends the service's quota (429 invite_quota: nothing is made).
+    if (invitation?.token && pendingEmail) {
+      await checkQuota({ ...ctx, db }, 1, perHour)
+      await spendMail({ ...ctx, db }, id, pendingEmail, 'first curator, by a service')
+    }
     const row = await db.one('SELECT * FROM brains WHERE id = $1', [id])
     return { brain: brainOf(row as Record<string, unknown>), invitation, pendingEmail }
   })
-  // A new invitation, or one whose link this service made, is mailed; one the person already holds
-  // just gains the brain.
-  if (made.invitation?.token && made.pendingEmail) {
+  // A new invitation is mailed; one this service made just gains the brain (its link stays). Someone else's is
+  // taken over once its new link is mailed; if that fails it stays theirs and the brain waits for its curator
+  // (audited as invitation.takeover_failed).
+  if (made.invitation?.takeover && made.invitation.token && made.pendingEmail) {
+    await takeOver(ctx, made.brain.id, {
+      email: made.pendingEmail,
+      id: made.invitation.id,
+      token: made.invitation.token,
+      expiresAt: made.invitation.expiresAt,
+      grants: made.invitation.grants,
+      isAdmin: made.invitation.isAdmin,
+      ...made.invitation.takeover,
+    })
+  } else if (made.invitation?.token && made.pendingEmail) {
     await sendInvitation(ctx.db, ctx.clock, ctx.mail, {
       email: made.pendingEmail,
       token: made.invitation.token,

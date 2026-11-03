@@ -25,13 +25,13 @@ describe('service invitations under concurrency', { skip: skipPg }, () => {
     )?.role ?? null
   const madeId = async () => String((await w.db.one("SELECT id FROM brains WHERE slug = 'made'"))?.id)
   // Until a backend of this database waits on a lock (the server's request, held by `other`).
-  async function blocked() {
+  async function blocked(n = 1) {
     const end = Date.now() + 5000
     for (;;) {
       const r = await w.db.one<{ n: number }>(
         "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
       )
-      if ((r?.n ?? 0) > 0) return
+      if ((r?.n ?? 0) >= n) return
       if (Date.now() > end) throw new Error('nothing waited on the lock held by the other transaction')
       await new Promise((r) => setTimeout(r, 10))
     }
@@ -115,6 +115,56 @@ describe('service invitations under concurrency', { skip: skipPg }, () => {
     )
     assert.equal(open, undefined, 'no invitation is left for an email that has an account')
   })
+
+  // Second pass: one lock order for everyone (the email's turn, then brain rows, then invitation rows). Before,
+  // the service held the brain row and then wanted the email, while an acceptance held the email and then wanted
+  // to update the brain row (its pending first curator): a deadlock, and one of them answered 500.
+  it('second pass: a first curator accepting while the service invites the same email: both succeed', async () => {
+    const email = 'first-curator@example.com'
+    const made = await w.call(factory.key, 'POST', '/v1/brains', { slug: 'waits', firstCurator: email })
+    assert.equal(made.status, 201, made.text)
+    const token = /#token=([A-Za-z0-9_-]+)/.exec((await w.mailTo(email, /invited you/)).text)?.[1] ?? ''
+    const waits = String((await w.db.one("SELECT id FROM brains WHERE slug = 'waits'"))?.id)
+    // The brain row is held, so whoever wants it waits there, in the order they came.
+    await other.query('BEGIN')
+    await other.query('SELECT 1 FROM brains WHERE id = $1 FOR UPDATE', [waits])
+    const invited = invite('waits', [{ email, role: 'reader' }])
+    await blocked(1)
+    const accepted = w.raw('POST', '/v1/invitations/accept', {
+      headers: { 'x-requested-with': 'rsc-brain-web' },
+      body: { token, name: 'First', password: 'correct horse battery staple' },
+    })
+    await blocked(2)
+    await other.query('COMMIT')
+    const [i, a] = await Promise.all([invited, accepted])
+    assert.equal(i.status, 201, i.text)
+    assert.equal(a.status, 201, a.text)
+  })
+
+  it("second pass: withdrawing an invitation takes the email's turn too (no deadlock with the service)", async () => {
+    const email = 'withdrawn@example.com'
+    assert.equal(
+      (await w.call(factory.key, 'POST', '/v1/brains', { slug: 'withdraws', firstCurator: email })).status,
+      201,
+    )
+    const id = String((await w.db.one('SELECT id FROM invitations WHERE email = $1', [email]))?.id)
+    const brain = String((await w.db.one("SELECT id FROM brains WHERE slug = 'withdraws'"))?.id)
+    const admin = await w.person('Admin', { isAdmin: true })
+    const web = await w.web(admin.id)
+    // The administration widens it: the invitation is now the administration's, so the service would take it
+    // over (and lock its row) while holding the brain row.
+    assert.equal((await w.callWeb(web, 'POST', '/v1/invitations', { emails: [email] })).status, 201)
+    await other.query('BEGIN')
+    await other.query('SELECT 1 FROM brains WHERE id = $1 FOR UPDATE', [brain])
+    const invited = invite('withdraws', [{ email, role: 'curator' }])
+    await blocked(1)
+    const revoked = w.callWeb(web, 'DELETE', `/v1/invitations/${id}`)
+    await blocked(2)
+    await other.query('COMMIT')
+    const [i, r] = await Promise.all([invited, revoked])
+    assert.ok(i.status < 300, i.text)
+    assert.ok(r.status < 300, r.text)
+  })
 })
 
 describe('F8: a quota of invitation mails per service account and hour', { skip: skipPg }, () => {
@@ -167,5 +217,21 @@ describe('F8: a quota of invitation mails per service account and hour', { skip:
     w.advance(50 * 60_000)
     const later = await invite([{ email: 'q3@example.com', role: 'reader' }])
     assert.deepEqual(later.body.invited, [{ email: 'q3@example.com', status: 'invited' }])
+  })
+
+  it('second pass: a brain made with a first curator to invite spends the same quota; past it, nothing is made', async () => {
+    w.advance(2 * 3_600_000)
+    const make = (slug: string, firstCurator: string) =>
+      w.call(factory.key, 'POST', '/v1/brains', { slug, firstCurator })
+    assert.equal((await make('qb-1', 'fc1@example.com')).status, 201)
+    assert.equal((await make('qb-2', 'fc2@example.com')).status, 201)
+    const over = await make('qb-3', 'fc3@example.com')
+    assert.equal(over.status, 429, over.text)
+    assert.equal(over.body.error?.code, 'invite_quota')
+    assert.equal(await w.db.one("SELECT 1 FROM brains WHERE slug = 'qb-3'"), undefined, 'no brain is made')
+    assert.equal(await open('fc3@example.com'), undefined)
+    // And the invitations endpoint sees those two mails.
+    const inv = await invite([{ email: 'q9@example.com', role: 'reader' }])
+    assert.equal(inv.status, 429, inv.text)
   })
 })

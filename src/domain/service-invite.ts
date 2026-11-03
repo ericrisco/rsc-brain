@@ -3,15 +3,17 @@
 // only when the administration let it invite, only in brains it made and is still in (any other answers as
 // one that does not exist, constitution P4). It never takes a role away nor lowers one; it may raise one
 // (CA6b: an approver must curate). Each person is audited, and the brain's curators are told who came in or
-// rose. A removed account is refused for that person alone. Its invitation mails have an hourly quota.
+// rose. A removed account, or someone else's invitation that cannot be taken over, is refused for that person
+// alone. Its invitation mails have an hourly quota (invite-quota.ts).
 import { type Role, rank } from '../auth/can.ts'
-import { AppError, brainNotFound, denied, invalid } from '../core/errors.ts'
+import { brainNotFound, denied, invalid } from '../core/errors.ts'
 import { serviceMainKey } from './access.ts'
 import { raiseMember } from './brains.ts'
 import { type Ctx, ok } from './context.ts'
 import { emailOf } from './guards.ts'
-import type { Grant } from './invitations.ts'
-import { INVITATION_LOCK, sendInvitation, storeInvitation } from './invitations.ts'
+import type { Grant, Takeover } from './invitations.ts'
+import { INVITATION_LOCK, sendInvitation, storeInvitation, takeOver } from './invitations.ts'
+import { checkQuota, SERVICE_INVITES_PER_HOUR, serviceTurn, spendMail } from './invite-quota.ts'
 import { curatorsOf, notify } from './notices.ts'
 
 export const SERVICE_INVITE_MAX = 20
@@ -22,12 +24,10 @@ const INVITE_ROLES = ['curator', 'reader'] as const
 // done for this person (reason account_removed: their account was removed), the others go ahead.
 export const INVITE_STATUSES = ['added', 'invited', 'raised', 'already', 'refused'] as const
 export type InviteStatus = (typeof INVITE_STATUSES)[number]
-export type ServiceInvited = { email: string; status: InviteStatus; reason?: 'account_removed' }
-
-// How many invitation mails one service account may make rsc-brain send in an hour, unless
-// RSC_BRAIN_SERVICE_INVITES_PER_HOUR says otherwise.
-export const SERVICE_INVITES_PER_HOUR = 100
-const HOUR_MS = 3_600_000
+// Why a person was refused: account_removed (their account was removed); invitation_pending_elsewhere (someone
+// else's open invitation could not be taken over: no mail, or the new link could not be mailed).
+export type RefusedReason = 'account_removed' | 'invitation_pending_elsewhere'
+export type ServiceInvited = { email: string; status: InviteStatus; reason?: RefusedReason }
 
 function peopleOf(v: unknown): Array<{ email: string; role: Role }> {
   if (!Array.isArray(v) || v.length < 1 || v.length > SERVICE_INVITE_MAX) {
@@ -54,34 +54,6 @@ function peopleOf(v: unknown): Array<{ email: string; role: Role }> {
   return out
 }
 
-// Past the quota the whole request is refused (429 invite_quota) and nothing changes. The mails of the last
-// hour are counted in the audit (one invitation.mail each), while the service holds its own turn.
-async function checkQuota(c: Ctx, needed: number, perHour: number): Promise<void> {
-  if (needed === 0) return
-  const now = c.clock().getTime()
-  const rows = await c.db.query<{ at: Date }>(
-    `SELECT at FROM audit WHERE actor_id = $1 AND action = 'invitation.mail' AND at > $2 ORDER BY at`,
-    [c.who.accountId, new Date(now - HOUR_MS)],
-  )
-  if (rows.length + needed <= perHour) return
-  // The wait until enough of the last hour's mails are an hour old; none helps a request bigger than the quota.
-  const freed = needed <= perHour ? rows[rows.length + needed - perHour - 1] : undefined
-  const wait = freed ? Math.max(1, Math.ceil((freed.at.getTime() + HOUR_MS - now) / 1000)) : null
-  const e = new AppError(
-    429,
-    'invite_quota',
-    `This service account may have rsc-brain mail at most ${perHour} invitations an hour.`,
-    wait === null
-      ? `Invite at most ${perHour} people without an account in an hour.`
-      : `Try again in ${Math.ceil(wait / 60)} minutes; people who already have an account can be added now.`,
-  )
-  if (wait !== null) {
-    e.extra = { retryAfter: wait }
-    e.headers = { 'retry-after': String(wait) }
-  }
-  throw e
-}
-
 export async function serviceInvite(
   ctx: Ctx,
   slug: string,
@@ -96,8 +68,19 @@ export async function serviceInvite(
     )
   }
   const people = peopleOf(input.people)
+  // Emails in sorted order: two invitations of the same people at once take their turns the same way.
+  const sorted = [...people].sort((x, y) => x.email.localeCompare(y.email))
+  type Out = ServiceInvited & {
+    role: Role
+    mail?: { token: string; grants: Grant[]; isAdmin: boolean; id: string; expiresAt: Date }
+    takeover?: Takeover
+  }
   const made = await ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
+    // One lock order for everyone (invite-quota.ts): the service's turn, the emails' turns, then rows. An
+    // acceptance holds an email's turn while it updates a brain row; taking the brain row first deadlocked.
+    await serviceTurn(db, ctx.who.accountId)
+    for (const p of sorted) await db.query(INVITATION_LOCK, [p.email])
     const b = await db.one<{ id: string; created_by: string | null }>(
       'SELECT id, created_by FROM brains WHERE slug = $1 FOR SHARE',
       [slug],
@@ -109,17 +92,8 @@ export async function serviceInvite(
         ])
       : undefined
     if (!b || b.created_by !== ctx.who.accountId || !inIt) throw brainNotFound()
-    // One request of a service at a time: its quota is counted and spent in turn.
-    await db.query("SELECT pg_advisory_xact_lock(hashtext('rsc-brain service invites ' || $1))", [
-      ctx.who.accountId,
-    ])
-    const out: Array<
-      ServiceInvited & { role: Role; mail?: { token: string; grants: Grant[]; isAdmin: boolean } }
-    > = []
-    // Emails in sorted order: two invitations of the same people at once take their turns the same way. The
-    // email's turn comes before anything is read about it, so an acceptance (which takes it too) is seen whole.
-    for (const p of [...people].sort((x, y) => x.email.localeCompare(y.email))) {
-      await db.query(INVITATION_LOCK, [p.email])
+    const out: Out[] = []
+    for (const p of sorted) {
       const account = await db.one<{ id: string; status: string }>(
         "SELECT id, status FROM accounts WHERE email = $1 AND kind = 'person'",
         [p.email],
@@ -133,15 +107,16 @@ export async function serviceInvite(
         out.push({ email: p.email, role: p.role, status })
         continue
       }
-      // No account: an invitation. One still open that brings the person here with this role or a higher one
-      // is left as it is; a lower one is raised (CA6b).
-      const open = await db.one<{ grants: Grant[] }>(
-        `SELECT grants FROM invitations
+      // No account: an invitation. One of this service, still open, that brings the person here with this role
+      // or a higher one is left as it is; a lower one is raised (CA6b). Someone else's is taken over, whatever it
+      // grants, so a link someone else holds never gains this brain (second pass).
+      const open = await db.one<{ grants: Grant[]; invited_by: string }>(
+        `SELECT grants, invited_by FROM invitations
           WHERE email = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $2`,
         [p.email, ctx.clock()],
       )
       const had = open?.grants.find((g) => g.brainId === b.id)
-      if (had && rank(had.role) >= rank(p.role)) {
+      if (open?.invited_by === ctx.who.accountId && had && rank(had.role) >= rank(p.role)) {
         out.push({ email: p.email, role: p.role, status: 'already' })
         continue
       }
@@ -154,23 +129,43 @@ export async function serviceInvite(
       out.push({
         email: p.email,
         role: p.role,
-        status: had ? 'raised' : 'invited',
+        status: had && rank(had.role) < rank(p.role) ? 'raised' : 'invited',
         ...(stored.token
-          ? { mail: { token: stored.token, grants: stored.grants, isAdmin: stored.isAdmin } }
+          ? {
+              mail: {
+                token: stored.token,
+                grants: stored.grants,
+                isAdmin: stored.isAdmin,
+                id: stored.id,
+                expiresAt: stored.expiresAt,
+              },
+            }
           : {}),
+        ...(stored.takeover ? { takeover: stored.takeover } : {}),
       })
     }
     await checkQuota(c, out.filter((x) => x.mail).length, perHour)
     for (const x of out) {
-      const what = x.reason ? `${x.status} (account removed)` : x.status
-      await ok(c, 'invitation.create', b.id, x.email, `${x.role}, ${what}, by a service`)
-      if (x.mail) await ok(c, 'invitation.mail', b.id, x.email, 'by a service')
+      const what = x.reason ? `${x.status} (${x.reason.replaceAll('_', ' ')})` : x.status
+      await ok(
+        c,
+        'invitation.create',
+        b.id,
+        x.email,
+        `${x.role}, ${what}${x.takeover ? ', takeover' : ''}, by a service`,
+      )
+      if (x.mail) await spendMail(c, b.id, x.email, 'by a service')
     }
     return { brainId: b.id, out }
   })
-  // Mail goes after the commit: a slow mail server never holds the invitation back.
+  // Mail goes after the commit: a slow mail server never holds the invitation back. A takeover is finished only
+  // once its mail went out; otherwise that person is refused and the other invitation is left as it was.
   for (const x of made.out) {
-    if (x.mail) {
+    if (!x.mail) continue
+    if (x.takeover) {
+      const taken = await takeOver(ctx, made.brainId, { email: x.email, ...x.mail, ...x.takeover })
+      if (!taken) Object.assign(x, { status: 'refused', reason: 'invitation_pending_elsewhere' })
+    } else {
       await sendInvitation(ctx.db, ctx.clock, ctx.mail, { email: x.email, by: ctx.who.name, ...x.mail })
     }
   }

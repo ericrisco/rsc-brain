@@ -1187,7 +1187,8 @@ const HAND: Record<string, Op> = {
   },
   'GET /v1/brains': { summary: 'The brains this key can use.', reply: obj({ brains: list(BRAIN_ROLE) }) },
   'POST /v1/brains': {
-    summary: 'Create a brain (with the right to create brains).',
+    summary:
+      'Create a brain (with the right to create brains). A service account names its first curator; an email without an account gets an invitation, whose mail spends the service hourly quota (429 invite_quota: nothing is made). Someone else open invitation for that email is taken over only if its new link can be mailed (409 invitation_pending_elsewhere without mail: nothing is made).',
     status: 201,
     body: obj(
       {
@@ -2230,7 +2231,7 @@ const HAND: Record<string, Op> = {
   },
   'POST /v1/brains/{slug}/invitations': {
     summary:
-      'A service account allowed to invite, with its main key, brings people into a brain it created: an active person is added with the role, someone without an account gets an invitation by mail. A role is raised, never lowered. An open invitation another account made is taken over with a new link, mailed to the person (the old link stops working). A removed account is refused for that person alone. At most RSC_BRAIN_SERVICE_INVITES_PER_HOUR invitation mails an hour per service account (100 by default): past it the whole request is refused with 429 invite_quota and Retry-After, and nothing changes. Another brain answers 404 as one that does not exist.',
+      'A service account allowed to invite, with its main key, brings people into a brain it created: an active person is added with the role, someone without an account gets an invitation by mail. A role is raised, never lowered. An open invitation another account made is taken over only when its new link is mailed and the mail is accepted: then the old link stops working and the previous inviter is told; otherwise it is left as it was and that person is refused (invitation_pending_elsewhere). A removed account is refused for that person alone (account_removed). At most RSC_BRAIN_SERVICE_INVITES_PER_HOUR invitation mails an hour per service account (100 by default): past it the whole request is refused with 429 invite_quota and Retry-After, and nothing changes. Another brain answers 404 as one that does not exist.',
     status: 201,
     body: obj({
       people: {
@@ -2254,9 +2255,12 @@ const HAND: Record<string, Op> = {
               'added (now a member with that role), invited (an invitation to the brain is open), raised (a member, or an open invitation, with a lower role now has this one), already (a member, or invited to it, with this role or a higher one: nothing changed) or refused (not done for this person; see reason).',
               { enum: ['added', 'invited', 'raised', 'already', 'refused'] },
             ),
-            reason: s('Only when refused: account_removed (the account of that email was removed).', {
-              enum: ['account_removed'],
-            }),
+            reason: s(
+              'Only when refused: account_removed (the account of that email was removed) or invitation_pending_elsewhere (an open invitation of someone else could not be taken over: no mail, or the new link could not be mailed; an administrator can resend or withdraw it).',
+              {
+                enum: ['account_removed', 'invitation_pending_elsewhere'],
+              },
+            ),
           },
           ['reason'],
         ),
