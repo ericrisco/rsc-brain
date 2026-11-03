@@ -4,6 +4,7 @@
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { hashSecret, newSecret } from '../../src/auth/secrets.ts'
+import type { CompanionConfig } from '../../src/config.ts'
 import type { Clock } from '../../src/core/clock.ts'
 import { type Log, makeLog, silentLog } from '../../src/core/log.ts'
 import { migrate } from '../../src/db/migrate.ts'
@@ -93,6 +94,10 @@ export async function world(
     exportDir?: string
     // The invitation mails a service may have sent in an hour (F1-PR2 review).
     serviceInvitesPerHour?: number
+    // Companion mode (F1-PR11): installed by rsc-factory, waiting for its setup.
+    companion?: CompanionConfig
+    // The proxies believed (default: this machine, so tests can say what a proxy saw).
+    trustedProxies?: string[]
   } = {},
 ): Promise<World> {
   const t = await freshDatabase()
@@ -124,7 +129,8 @@ export async function world(
       clock: w.clock,
       meaning: o.meaning ?? {},
       secret: o.secret ?? TEST_SECRET,
-      trustedProxies: ['127.0.0.1'],
+      trustedProxies: o.trustedProxies ?? ['127.0.0.1'],
+      ...(o.companion ? { companion: o.companion } : {}),
       ...(o.localClients ? { fetchPolicy: { allowLoopbackHttp: true } } : {}),
       ...(o.events ? { events: o.events } : {}),
       ...(o.backups

@@ -130,6 +130,36 @@ test.describe('first run', () => {
     await expect(page.getByRole('heading', { name: 'rsc-brain is already set up' })).toBeVisible()
   })
 
+  test('installed with rsc-factory: says to finish there, links to it, asks for nothing; then leads to sign in', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(
+      context,
+      baseURL as string,
+      'fresh',
+      {},
+      {
+        companion: true,
+        factoryUrl: 'https://factory.example.test',
+      },
+    )
+    await page.goto('/b/growth')
+    await expect(page).toHaveURL(/\/setup$/)
+    await expect(page.getByRole('heading', { name: 'Finish the setup in rsc-factory' })).toBeVisible()
+    await expect(page.getByText('rsc-brain was installed with rsc-factory')).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Open rsc-factory' })).toHaveAttribute(
+      'href',
+      'https://factory.example.test',
+    )
+    await expect(page.locator('input')).toHaveCount(0)
+    // rsc-factory finishes its setup meanwhile: checking again leads to signing in.
+    await s.setUpElsewhere()
+    await page.getByRole('button', { name: 'Check again' }).click()
+    await expect(page.getByRole('heading', { name: 'rsc-brain is already set up' })).toBeVisible()
+  })
+
   test('over a connection that is not safe, it explains and does not ask for a password', async ({
     page,
     context,

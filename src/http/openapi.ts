@@ -949,6 +949,30 @@ const HAND: Record<string, Op> = {
       adminId: s('The administrator account.'),
     }),
   },
+  'POST /v1/setup/companion': {
+    summary:
+      'Companion mode (installed by rsc-factory): set up the installation with the one-time key of rsc-brain.sh install --companion (Authorization: Bearer <companionToken>, not a key of rsc-brain), from the network shared with rsc-factory only. Makes the administration and the service account rsc-factory uses, and links runs to rsc-factory. 401 unauthorized with a wrong key; 404 setup_done once set up (the key serves nothing then); 404 no_such_route through a proxy, from elsewhere, or without companion mode. While it waits, GET and POST /v1/setup answer 409 companion_pending with factoryUrl.',
+    status: 201,
+    body: obj(
+      {
+        name: s('The name of the installation (default rsc-brain).', { maxLength: 80 }),
+        publicUrl: s('The address people open (default: the one the launcher set).'),
+        factoryUrl: s('The address of rsc-factory (default: the one the launcher set).'),
+        admin: obj({
+          name: s('The administrator’s name.'),
+          email: s('The administrator’s email.'),
+          password: s('12 to 200 characters.'),
+        }),
+        serviceName: s('The name of the service account (default rsc-factory).'),
+      },
+      ['name', 'publicUrl', 'factoryUrl', 'serviceName'],
+    ),
+    reply: obj({
+      serviceKey: s('The main key of the service account, shown once.'),
+      serviceId: s('The service account.'),
+      adminId: s('The administrator account.'),
+    }),
+  },
   'POST /v1/auth/login': {
     summary: 'Sign in to the web (the rsc-brain web only): sets the session cookie.',
     body: obj(

@@ -141,6 +141,7 @@ export const V1 = [
   'POST /v1/sessions/{id}/end',
   'POST /v1/sessions/{id}/summary',
   'POST /v1/setup',
+  'POST /v1/setup/companion',
   'POST /v1/setup/key',
   'PUT /v1/admin/branding/logo',
   'PUT /v1/admin/mail',
@@ -176,6 +177,8 @@ export const ERROR_STATUS: Record<string, number> = {
   no_logo: 404,
   no_such_route: 404,
   setup_done: 404,
+  // Companion mode (F1-PR11): the setup of the web while rsc-factory is to set rsc-brain up.
+  companion_pending: 409,
   // The wiki (PR19).
   page_not_found: 404,
   page_changed: 409,

@@ -77,11 +77,39 @@ rsc-brain gets its own database and role on the same server. Neither program can
 other's database. If rsc-factory's login is a superuser, it can still reach everything; the installer
 says so.
 
+### Installed by rsc-factory (companion mode)
+
+rsc-factory's installer can install rsc-brain next to it. It makes a Docker network both share and
+calls:
+
+```sh
+sh rsc-brain.sh install --companion --attach-network rsc-shared --factory-url https://factory.example.com \
+  --domain brain.example.com --trusted-proxy 192.168.210.2 \
+  --db shared --db-admin-url-file admin-url.txt --factory-db rscf --yes --json
+```
+
+- rsc-brain joins the network as `rsc-brain` (`http://rsc-brain:8090` for rsc-factory) and runs no
+  Caddy of its own: rsc-factory's Caddy serves its address. `--trusted-proxy` is that Caddy's fixed
+  address on the network, the only proxy rsc-brain believes. With `--local` instead of `--domain`,
+  the web is at `http://localhost:8090` on this machine and no proxy is believed.
+- rsc-brain stays installed but not set up. Its first-time setup page says "Finish the setup in
+  rsc-factory" and links there. rsc-factory's own setup makes the administration of both, with the
+  same name, email and password, and the service account rsc-factory uses.
+- It does that with a one-time key, `companionToken` in the `--json` summary (also in `.env`, which
+  only its owner reads): `POST /v1/setup/companion` with `Authorization: Bearer <companionToken>`.
+  rsc-brain answers that call only while it is not set up, only from the shared network (never
+  through a proxy or from this machine), and only once: two calls at once set it up once.
+- It needs Docker Engine 28 and Docker Compose 2.33 or newer, and a PostgreSQL that is not
+  rsc-brain's own (`--db shared` by default, or `--db existing`).
+- Running `install` again keeps companion mode, the network and the key. An installation made
+  without `--companion` does not become one.
+
 ### Without questions
 
 With every answer as an option and `--yes`, the installer asks nothing; whatever is missing is an
 error that names the option giving it. With `--json`, standard output holds only a summary for
-programs: `url`, `mode`, `db`, `installationKey`, `keyId`, `version` and `dir`. Exit codes: 0 done,
+programs: `url`, `mode`, `db`, `installationKey`, `keyId`, `version` and `dir` (and, in companion
+mode, `companionToken` and `internalUrl`). Exit codes: 0 done,
 2 wrong usage, 3 a requirement is missing (nothing was changed), 4 it failed and put back what was
 there, 1 anything else.
 

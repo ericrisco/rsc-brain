@@ -17,13 +17,15 @@ export class ApiError extends Error {
   readonly problems: Array<{ op: number | null; message: string }>
   // The operations the problems are about (an old base names its operation without a message).
   readonly problemOps: number[]
+  // Where rsc-factory is, while it is to set this installation up (companion_pending); only a plain http(s) address.
+  readonly factoryUrl: string | null
   constructor(
     status: number,
     code: string,
     message: string,
     howToProceed: string,
     retryAfter?: number,
-    extra: { current?: unknown; problems?: unknown } = {},
+    extra: { current?: unknown; problems?: unknown; factoryUrl?: unknown } = {},
   ) {
     super(message)
     this.status = status
@@ -31,6 +33,10 @@ export class ApiError extends Error {
     this.howToProceed = howToProceed
     this.retryAfter = retryAfter
     this.current = extra.current
+    this.factoryUrl =
+      typeof extra.factoryUrl === 'string' && /^https?:\/\/[A-Za-z0-9.:/_~-]+$/.test(extra.factoryUrl)
+        ? extra.factoryUrl
+        : null
     this.problemOps = Array.isArray(extra.problems)
       ? extra.problems.flatMap((p) => (typeof p?.op === 'number' ? [p.op] : []))
       : []
@@ -113,7 +119,7 @@ function errorOf(status: number, text: string): ApiError {
         e.message,
         typeof e.howToProceed === 'string' ? e.howToProceed : 'Try again.',
         typeof e.retryAfter === 'number' ? e.retryAfter : undefined,
-        { current: e.current, problems: e.problems },
+        { current: e.current, problems: e.problems, factoryUrl: e.factoryUrl },
       )
     }
   } catch {

@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 import { bearer, resolveKey, sessionCookie } from '../auth/principal.ts'
+import type { CompanionConfig } from '../config.ts'
 import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
 import { failureFields, type Log, stdoutLog } from '../core/log.ts'
@@ -32,6 +33,7 @@ import { authRoutes } from './routes/auth.ts'
 import { backupRoutes } from './routes/backups.ts'
 import { brainRoutes } from './routes/brains.ts'
 import { brandingRoutes } from './routes/branding.ts'
+import { companionRoutes } from './routes/companion.ts'
 import { connectRoutes } from './routes/connect.ts'
 import { decideRoutes } from './routes/decide.ts'
 import { eventRoutes } from './routes/events.ts'
@@ -82,6 +84,8 @@ export type AppDeps = {
   exportDir?: string
   // The invitation mails one service account may have sent in an hour (RSC_BRAIN_SERVICE_INVITES_PER_HOUR).
   serviceInvitesPerHour?: number
+  // Companion mode (plan F1 §3.1): installed by rsc-factory and set up by it with the one-time key.
+  companion?: CompanionConfig | null
 }
 
 // How long the health address waits for the database before it says the database is down.
@@ -111,6 +115,7 @@ export const WEB_ROOT = fileURLToPath(new URL('../web/', import.meta.url))
 
 export const ROUTES: Route[] = [
   ...authRoutes,
+  ...companionRoutes,
   ...brainRoutes,
   ...keyRoutes,
   ...journalRoutes,
@@ -504,6 +509,7 @@ export function createHandler(deps: AppDeps) {
   const exportDir = deps.exportDir ?? (deps.backups ? join(deps.backups, '.exports') : null)
   // What a crash left of an export goes now (by the files' own times: the wall clock, not the service's).
   if (exportDir) void sweepExports(exportDir, new Date())
+  const companion = deps.companion ? { ...deps.companion, proxies: connOptions.trusted } : null
   // Once the first-time setup is done it stays done: no need to ask the database again.
   let ready = false
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -608,6 +614,7 @@ export function createHandler(deps: AppDeps) {
         serviceInvitesPerHour: deps.serviceInvitesPerHour ?? SERVICE_INVITES_PER_HOUR,
         signal: left.signal,
         log,
+        companion,
       }
       // Maintenance (spec B7 C12): a write without a key (signing in, the standard sign-in) is refused here;
       // one with a key once the key is read, from the same row.

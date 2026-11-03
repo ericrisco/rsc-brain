@@ -133,21 +133,26 @@ const launch = (
     tty = join(c.state, `answers-${++n}`)
     writeFileSync(tty, o.answers)
   }
-  const r = spawnSync(o.shell ?? join(SYSBIN, 'sh'), [LAUNCHER, ...args], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 30_000,
-    env: {
-      PATH: o.path ?? `${FAKEBIN}:${SYSBIN}`,
-      HOME: c.home,
-      LANG: 'C',
-      FAKE_LOG: c.log,
-      FAKE_STDIN: c.stdin,
-      FAKE_STATE: c.state,
-      RSC_BRAIN_TTY: tty,
-      ...o.env,
+  // RSC_BRAIN_TEST_SHELL runs the whole file under another shell (dash), as test/deploy/update.test.ts does.
+  const r = spawnSync(
+    o.shell ?? process.env.RSC_BRAIN_TEST_SHELL ?? join(SYSBIN, 'sh'),
+    [LAUNCHER, ...args],
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+      env: {
+        PATH: o.path ?? `${FAKEBIN}:${SYSBIN}`,
+        HOME: c.home,
+        LANG: 'C',
+        FAKE_LOG: c.log,
+        FAKE_STDIN: c.stdin,
+        FAKE_STATE: c.state,
+        RSC_BRAIN_TTY: tty,
+        ...o.env,
+      },
     },
-  })
+  )
   assert.notEqual(r.signal, 'SIGTERM', `the launcher hung: ${r.stderr}`)
   return {
     code: r.status,
@@ -1601,5 +1606,326 @@ describe('the launcher: the folder changed while it asked (second pass on PR #35
     assert.equal(code, 3, stderr)
     assert.match(stderr, /changed while this launcher was getting ready/)
     assert.equal(readFileSync(join(c.dir, '.env'), 'utf8'), before)
+  })
+})
+
+// Companion mode (plan F1 §3.1, T048): rsc-factory's installer runs `install --companion --attach-network NAME
+// --factory-url URL` and reads the --json summary. The app joins the network shared with rsc-factory as `rsc-brain`,
+// has no Caddy of its own (rsc-factory's serves it), and waits with a one-time key for rsc-factory's setup.
+describe('the launcher: companion mode (F1)', () => {
+  const NET = 'rsc-shared=192.168.230.0/24|192.168.230.1'
+  const adminFile = (c: Case) => {
+    const f = join(c.state, 'admin-url')
+    writeFileSync(f, 'postgres://admin:adm1n-pw@postgres:5432/postgres\n')
+    return f
+  }
+  const companion = async (c: Case, ...more: string[]) => [
+    ...(await local(c)),
+    '--companion',
+    '--attach-network',
+    'rsc-shared',
+    '--factory-url',
+    'http://localhost:3000',
+    '--db',
+    'shared',
+    '--db-admin-url-file',
+    adminFile(c),
+    '--factory-db',
+    'rscf',
+    ...more,
+  ]
+  const server = async (c: Case, ...more: string[]) =>
+    (await companion(c, ...more)).filter((a) => a !== '--local').concat(['--domain', 'brain.example.com'])
+
+  for (const shell of ['sh', 'dash'] as const) {
+    it(`local, under ${shell}: --json adds the one-time key and the internal address; .env keeps them for the service`, {
+      skip: shell === 'dash' && !which('dash') ? 'dash is not installed here' : false,
+    }, async () => {
+      const c = fresh()
+      const r = launch(c, await companion(c, '--json'), {
+        env: { FAKE_NETWORKS: NET },
+        ...(shell === 'dash' ? { shell: which('dash') as string } : {}),
+      })
+      assert.equal(r.code, 0, r.stderr)
+      const lines = r.stdout.trim().split('\n')
+      assert.equal(lines.length, 1, r.stdout)
+      const s = JSON.parse(lines[0] as string)
+      assert.deepEqual(Object.keys(s).sort(), [
+        'companionToken',
+        'db',
+        'dir',
+        'installationKey',
+        'internalUrl',
+        'keyId',
+        'mode',
+        'url',
+        'version',
+      ])
+      const env = readEnv(c.dir)
+      assert.match(s.companionToken, /^[0-9a-f]{64}$/)
+      assert.notEqual(s.companionToken, s.installationKey)
+      assert.equal(env.RSC_BRAIN_COMPANION_TOKEN, s.companionToken)
+      assert.equal(s.internalUrl, 'http://rsc-brain:8090')
+      assert.deepEqual([s.mode, s.db], ['local', 'shared'])
+      assert.equal(mode(join(c.dir, '.env')), 0o600)
+      assert.deepEqual(
+        [
+          env.RSC_BRAIN_SHARED_NETWORK,
+          env.RSC_BRAIN_COMPANION_NETWORK,
+          env.RSC_BRAIN_COMPANION_GATEWAY,
+          env.RSC_BRAIN_FACTORY_URL,
+          env.RSC_BRAIN_LOCAL_ONLY,
+          env.RSC_BRAIN_TRUSTED_PROXIES,
+        ],
+        ['rsc-shared', '192.168.230.0/24', '192.168.230.1', 'http://localhost:3000', '1', ''],
+      )
+      // The app joins the shared network, external, as rsc-brain; the compose file names the service's settings.
+      const extra = readFileSync(join(c.dir, 'compose.companion.yaml'), 'utf8')
+      assert.match(extra, /name: \$\{RSC_BRAIN_SHARED_NETWORK/)
+      assert.match(extra, /external: true/)
+      assert.match(extra, /aliases:\s*\n\s*- rsc-brain/)
+      // Its own network keeps the default route: «this machine only» trusts that gateway, never the shared one.
+      assert.match(extra, /default:\s*\n\s*gw_priority: 1/)
+      const compose = readFileSync(join(c.dir, 'compose.yaml'), 'utf8')
+      for (const v of ['COMPANION_TOKEN', 'COMPANION_NETWORK', 'COMPANION_GATEWAY', 'FACTORY_URL'])
+        assert.match(compose, new RegExp(`RSC_BRAIN_${v}: \\$\\{RSC_BRAIN_${v}:-\\}`))
+      const up = r.calls.find((l) => /^compose /.test(l) && / up /.test(l)) ?? ''
+      assert.match(up, new RegExp(`-f ${join(c.dir, 'compose.companion.yaml')}`))
+      assert.doesNotMatch(up, /--profile (server|bundled)/)
+      // The database is checked from the shared network (where rsc-factory's PostgreSQL is).
+      const check = r.calls.find((l) => / rsc-brain db check /.test(l)) ?? ''
+      assert.match(check, /--network rsc-shared/)
+      // The one-time key never on a command line.
+      assert.equal(r.calls.join('\n').includes(s.companionToken), false)
+    })
+  }
+
+  it('server: no Caddy of its own; the service believes only rsc-factory’s proxy; the https address', async () => {
+    const c = fresh()
+    const r = launch(c, await server(c, '--trusted-proxy', '192.168.230.2', '--json'), {
+      env: { FAKE_NETWORKS: NET },
+    })
+    assert.equal(r.code, 0, r.stderr)
+    const s = JSON.parse(r.stdout)
+    assert.deepEqual(
+      [s.mode, s.url, s.internalUrl],
+      ['server', 'https://brain.example.com', 'http://rsc-brain:8090'],
+    )
+    const env = readEnv(c.dir)
+    assert.deepEqual(
+      [env.RSC_BRAIN_TRUSTED_PROXIES, env.RSC_BRAIN_LOCAL_ONLY, env.RSC_BRAIN_SETUP_URL],
+      ['192.168.230.2', '0', 'https://brain.example.com'],
+    )
+    const up = r.calls.find((l) => /^compose /.test(l) && / up /.test(l)) ?? ''
+    assert.doesNotMatch(up, /--profile server/)
+  })
+
+  for (const [what, env, says] of [
+    ['Docker Compose older than 2.33', { FAKE_COMPOSE_VERSION: 'v2.32.4' }, /Compose 2\.33/],
+    ['Docker Engine older than 28', { FAKE_ENGINE_VERSION: '27.5.1' }, /Engine 28/],
+  ] as const) {
+    it(`${what}: exit 3 naming what it needs, nothing created`, async () => {
+      const c = fresh()
+      const r = launch(c, await companion(c), { env: { FAKE_NETWORKS: NET, ...env } })
+      assert.equal(r.code, 3, r.stderr)
+      assert.match(r.stderr, says)
+      assert.equal(existsSync(c.dir), false)
+    })
+  }
+  it('Docker Compose 5 is newer than 2.33', async () => {
+    const c = fresh()
+    const r = launch(c, await companion(c), { env: { FAKE_NETWORKS: NET, FAKE_COMPOSE_VERSION: 'v5.0.1' } })
+    assert.equal(r.code, 0, r.stderr)
+  })
+
+  it('the shared network does not exist: exit 3 naming it, nothing created', async () => {
+    const c = fresh()
+    const r = launch(c, await companion(c), { env: { FAKE_NETWORKS: '' } })
+    assert.equal(r.code, 3, r.stderr)
+    assert.match(r.stderr, /There is no Docker network rsc-shared/)
+    assert.match(r.stderr, /Nothing was changed/)
+    assert.equal(existsSync(c.dir), false)
+  })
+
+  for (const [what, ip] of [
+    ['outside the shared network', '10.0.0.2'],
+    ['its gateway', '192.168.230.1'],
+  ] as const) {
+    it(`a trusted proxy ${what}: exit 2, nothing created`, async () => {
+      const c = fresh()
+      const r = launch(c, await server(c, '--trusted-proxy', ip), { env: { FAKE_NETWORKS: NET } })
+      assert.equal(r.code, 2, r.stderr)
+      assert.match(r.stderr, /--trusted-proxy/)
+      assert.equal(existsSync(c.dir), false)
+    })
+  }
+
+  const bad: Array<[string, string[], RegExp]> = [
+    [
+      '--companion without the network',
+      ['--companion', '--factory-url', 'http://localhost:3000'],
+      /--attach-network/,
+    ],
+    [
+      '--companion without the address of rsc-factory',
+      ['--companion', '--attach-network', 'rsc-shared'],
+      /--factory-url/,
+    ],
+    ['the network without --companion', ['--attach-network', 'rsc-shared'], /--companion/],
+    [
+      'the address of rsc-factory without --companion',
+      ['--factory-url', 'http://localhost:3000'],
+      /--companion/,
+    ],
+    [
+      'a network name a shell would read',
+      ['--companion', '--attach-network', 'a;b', '--factory-url', 'http://localhost:3000'],
+      /--attach-network/,
+    ],
+    [
+      'rsc-factory in clear on a server address',
+      ['--companion', '--attach-network', 'n', '--factory-url', 'http://factory.example.com'],
+      /--factory-url/,
+    ],
+    [
+      'an address of rsc-factory with a quote',
+      ['--companion', '--attach-network', 'n', '--factory-url', "https://factory.example.com/it's"],
+      /--factory-url/,
+    ],
+    [
+      'rsc-brain’s own PostgreSQL',
+      ['--companion', '--attach-network', 'n', '--factory-url', 'http://localhost:3000', '--db', 'bundled'],
+      /--db/,
+    ],
+    [
+      'ports for a Caddy it does not run',
+      [
+        '--companion',
+        '--attach-network',
+        'n',
+        '--factory-url',
+        'http://localhost:3000',
+        '--http-port',
+        '8080',
+      ],
+      /--http-port/,
+    ],
+    [
+      'a trusted proxy that is not an address',
+      [
+        '--companion',
+        '--attach-network',
+        'n',
+        '--factory-url',
+        'http://localhost:3000',
+        '--trusted-proxy',
+        'caddy',
+      ],
+      /--trusted-proxy/,
+    ],
+    [
+      'a trusted proxy on this machine only',
+      [
+        '--companion',
+        '--attach-network',
+        'n',
+        '--factory-url',
+        'http://localhost:3000',
+        '--trusted-proxy',
+        '192.168.230.2',
+      ],
+      /--trusted-proxy/,
+    ],
+  ]
+  for (const [what, args, says] of bad) {
+    it(`${what}: exit 2, says which option, changes nothing`, async () => {
+      const c = fresh()
+      const r = launch(c, [...(await local(c)), ...args], { env: { FAKE_NETWORKS: NET } })
+      assert.equal(r.code, 2, r.stderr)
+      assert.match(r.stderr, says)
+      assert.equal(existsSync(c.dir), false)
+      assert.equal(r.calls.length, 0, r.calls.join('\n'))
+    })
+  }
+
+  it('a server without the address of rsc-factory’s proxy: exit 2 naming --trusted-proxy', async () => {
+    const c = fresh()
+    const r = launch(c, await server(c), { env: { FAKE_NETWORKS: NET } })
+    assert.equal(r.code, 2, r.stderr)
+    assert.match(r.stderr, /--trusted-proxy/)
+  })
+
+  it('reinstalling keeps the one-time key and the shared network; --json gives the key again', async () => {
+    const c = fresh()
+    const first = launch(c, await companion(c, '--json'), { env: { FAKE_NETWORKS: NET } })
+    assert.equal(first.code, 0, first.stderr)
+    const before = readEnv(c.dir)
+    const again = launch(c, ['install', '--yes', '--json', '--dir', c.dir], { env: { FAKE_NETWORKS: NET } })
+    assert.equal(again.code, 0, again.stderr)
+    const s = JSON.parse(again.stdout)
+    assert.equal(s.companionToken, JSON.parse(first.stdout).companionToken)
+    const after = readEnv(c.dir)
+    for (const k of [
+      'RSC_BRAIN_COMPANION_TOKEN',
+      'RSC_BRAIN_SHARED_NETWORK',
+      'RSC_BRAIN_COMPANION_NETWORK',
+      'RSC_BRAIN_FACTORY_URL',
+      'RSC_BRAIN_SECRET',
+    ])
+      assert.equal(after[k], before[k], k)
+    const up = again.calls.find((l) => /^compose /.test(l) && / up /.test(l)) ?? ''
+    assert.match(up, /compose\.companion\.yaml/)
+  })
+
+  it('an installation that is not in companion mode does not become one on a reinstall: exit 2, nothing changed', async () => {
+    const c = fresh()
+    assert.equal(launch(c, await local(c)).code, 0)
+    const before = readFileSync(join(c.dir, '.env'), 'utf8')
+    const r = launch(
+      c,
+      [
+        'install',
+        '--yes',
+        '--dir',
+        c.dir,
+        '--companion',
+        '--attach-network',
+        'rsc-shared',
+        '--factory-url',
+        'http://localhost:3000',
+      ],
+      { env: { FAKE_NETWORKS: NET } },
+    )
+    assert.equal(r.code, 2, r.stderr)
+    assert.match(r.stderr, /companion/)
+    assert.equal(readFileSync(join(c.dir, '.env'), 'utf8'), before)
+    assert.equal(existsSync(join(c.dir, 'compose.companion.yaml')), false)
+  })
+
+  it('values of companion mode exported in the shell never reach docker compose', async () => {
+    const c = fresh()
+    const r = launch(c, await companion(c), {
+      env: {
+        FAKE_NETWORKS: NET,
+        RSC_BRAIN_SHARED_NETWORK: 'elsewhere',
+        RSC_BRAIN_COMPANION_TOKEN: 'from-the-shell-0123456789abcdef0123',
+        RSC_BRAIN_FACTORY_URL: 'https://evil.example.com',
+      },
+    })
+    assert.equal(r.code, 0, r.stderr)
+    assert.deepEqual(
+      r.calls.filter((l) => l.startsWith('LEAK ')),
+      [],
+    )
+  })
+
+  it('uninstall --delete-data removes its compose file for the shared network too', async () => {
+    const c = fresh()
+    assert.equal(launch(c, await companion(c), { env: { FAKE_NETWORKS: NET } }).code, 0)
+    const r = launch(c, ['uninstall', '--dir', c.dir, '--delete-data', '--confirm', 'rsc-brain', '--yes'], {
+      env: { FAKE_NETWORKS: NET },
+    })
+    assert.equal(r.code, 0, r.stderr)
+    assert.equal(existsSync(join(c.dir, 'compose.companion.yaml')), false)
   })
 })

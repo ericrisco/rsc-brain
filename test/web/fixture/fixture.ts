@@ -143,6 +143,8 @@ type Life = { entries: number; agent: boolean; imported?: boolean }
 type Scen = {
   id: string
   setupDone: boolean
+  // Companion mode (F1-PR11): installed by rsc-factory, which sets it up; the setup of the web waits.
+  companion?: boolean
   // The installation key of the wizard's last step: ready right after the setup, given once (B7 PR30).
   setupKey?: 'ready' | 'given'
   insecure: boolean
@@ -287,6 +289,21 @@ const err = (status: number, code: string, message: string, howToProceed: string
   status,
   body: { error: { code, message, howToProceed } },
 })
+// The setup of the web while rsc-factory is to set rsc-brain up (companion mode, src/domain/companion.ts).
+const companionPending = (s: Scen): Answer => {
+  const factoryUrl = s.factoryUrl ?? 'https://factory.example.test'
+  return {
+    status: 409,
+    body: {
+      error: {
+        code: 'companion_pending',
+        message: 'Finish the setup in rsc-factory.',
+        howToProceed: `rsc-brain was installed with rsc-factory: open rsc-factory at ${factoryUrl} and finish its first-time setup. rsc-brain is set up with the same administration.`,
+        factoryUrl,
+      },
+    },
+  }
+}
 const NOT_THE_CODE = err(
   400,
   'invalid_request',
@@ -662,6 +679,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   'GET /v1/setup': {
     screen: 'setup',
     run: ({ s, query }) => {
+      if (s.companion && !s.setupDone) return companionPending(s)
       if (s.setupDone)
         return err(404, 'setup_done', 'This installation is already set up.', 'Sign in instead.')
       const url = query.get('publicUrl') ?? ''
@@ -681,6 +699,7 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
   'POST /v1/setup': {
     run: ({ s, body, web }) => {
       if (!web) return CSRF
+      if (s.companion && !s.setupDone) return companionPending(s)
       if (s.setupDone)
         return err(404, 'setup_done', 'This installation is already set up.', 'Sign in instead.')
       if (s.insecure)
@@ -3284,6 +3303,7 @@ export async function startFixture(
         if (b.mail === false) s.mail = false
         if (b.seeded === 300 || b.seeded === 5000 || b.seeded === 'lumpy') s.seeded = b.seeded
         if (typeof b.factoryUrl === 'string') s.factoryUrl = b.factoryUrl
+        if (b.companion === true) s.companion = true
         return send(res, { status: 201, body: { id: s.id } })
       }
       const control = /^\/__fixture\/scenarios\/([\w]+)\/state$/.exec(url.pathname)
@@ -3292,6 +3312,13 @@ export async function startFixture(
         if (!s) return send(res, { status: 404, body: {} })
         const b = await bodyOf(req)
         handle(s).set(b.screen as Screen, b.state as State)
+        return send(res, { status: 200, body: {} })
+      }
+      const setUpElsewhere = /^\/__fixture\/scenarios\/([\w]+)\/set-up$/.exec(url.pathname)
+      if (setUpElsewhere && method === 'POST') {
+        const s = scenarios.get(setUpElsewhere[1] as string)
+        if (!s) return send(res, { status: 404, body: {} })
+        s.setupDone = true
         return send(res, { status: 200, body: {} })
       }
       const ending = /^\/__fixture\/scenarios\/([\w]+)\/end-sessions$/.exec(url.pathname)

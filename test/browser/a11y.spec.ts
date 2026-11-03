@@ -63,6 +63,14 @@ for (const theme of ['dark', 'light'] as const) {
     await audit(page, `${theme} setup`)
   })
 
+  test(`first run installed with rsc-factory, ${theme}`, async ({ page, context, baseURL }) => {
+    await scenario(context, baseURL as string, 'fresh', {}, { companion: true })
+    await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
+    await page.goto('/setup')
+    await expect(page.getByRole('heading', { name: 'Finish the setup in rsc-factory' })).toBeVisible()
+    await audit(page, `${theme} setup waiting for rsc-factory`)
+  })
+
   test(`signed-in screens and dialogs, ${theme}`, async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)

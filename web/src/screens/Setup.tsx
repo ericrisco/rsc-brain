@@ -184,6 +184,32 @@ export function Setup() {
       </Door>
     )
   }
+  if (loadError?.code === 'companion_pending') {
+    // Installed with rsc-factory (F1-PR11): nothing to fill in here; its own setup makes the administration.
+    return (
+      <Door brand={false}>
+        <h1 class="title">{T.setup.companionTitle}</h1>
+        <p class="lead">{T.setup.companionLead}</p>
+        {loadError.factoryUrl ? null : <p>{T.setup.companionNoLink}</p>}
+        <div class="actions">
+          {loadError.factoryUrl ? (
+            <a class="button primary" href={loadError.factoryUrl} rel="noopener noreferrer">
+              {T.setup.companionOpen}
+            </a>
+          ) : null}
+          <Button
+            kind={loadError.factoryUrl ? 'quiet' : 'primary'}
+            onClick={() => {
+              resetResources()
+              void look(publicUrl)
+            }}
+          >
+            {T.setup.companionCheck}
+          </Button>
+        </div>
+      </Door>
+    )
+  }
   if (loadError) {
     return (
       <Door brand={false}>

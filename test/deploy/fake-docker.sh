@@ -220,6 +220,11 @@ case "$args" in
 esac
 
 case "$1" in
+version)
+  # docker version --format '{{.Server.Version}}'
+  echo "${FAKE_ENGINE_VERSION:-29.1.5}"
+  exit 0
+  ;;
 info)
   if [ -n "${FAKE_INFO_DENIED:-}" ]; then
     echo 'permission denied while trying to connect to the docker API at unix:///var/run/docker.sock' >&2
@@ -256,6 +261,17 @@ network)
     exit 0
   fi
   if [ "$2" = inspect ]; then
+    # A network asked for by name (companion mode): FAKE_NETWORKS="name=subnet|gateway ...", or not found.
+    case "$args" in
+    *'|{{.Gateway}}'*)
+      for a in "$@"; do last=$a; done
+      for pair in ${FAKE_NETWORKS:-}; do
+        [ "${pair%%=*}" = "$last" ] && printf '%s \n' "${pair#*=}" && exit 0
+      done
+      echo "Error response from daemon: network $last not found" >&2
+      exit 1
+      ;;
+    esac
     printf '%s\n' "${FAKE_SUBNETS:-}"
     exit 0
   fi
@@ -271,7 +287,7 @@ compose)
       echo "docker: unknown command: docker compose" >&2
       exit 1
     fi
-    echo 'Docker Compose version v2.30.0'
+    echo "Docker Compose version ${FAKE_COMPOSE_VERSION:-v2.38.2}"
     exit 0
   fi
   case "$args" in

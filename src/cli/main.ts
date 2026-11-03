@@ -213,6 +213,7 @@ async function main(argv: string[]): Promise<number> {
         secret: cfg.secret,
         trustedProxies: cfg.trustedProxies,
         localGateways,
+        companion: cfg.companion,
         backups: cfg.backups,
         ...(copies ? { copies } : {}),
         releases,

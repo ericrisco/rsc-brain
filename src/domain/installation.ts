@@ -167,7 +167,7 @@ export type SetupInput = {
   admin: { name: unknown; email: unknown; password: unknown }
 }
 
-const setupGone = () =>
+export const setupGone = () =>
   new AppError(404, 'setup_done', 'This installation is already set up.', 'Sign in instead.')
 
 // Runs once, as one transaction: the installation row is locked, so two setups at once make one admin.
@@ -235,13 +235,18 @@ export async function runSetup(db: Db, clock: Clock, conn: ConnFacts, input: Set
 }
 
 // Companion mode (CA24): the installer of Factory prepares Brain with what it already asked, and
-// Factory gets its service account. The main key is returned once, to the installer.
+// Factory gets its service account. The main key is returned once, to the installer. With `factoryUrl`
+// (POST /v1/setup/companion, plan F1 §3.1) the installation links runs to rsc-factory, in the same transaction.
 export async function companionSetup(
   db: Db,
   clock: Clock,
-  input: SetupInput & { serviceName?: string },
+  input: SetupInput & { serviceName?: string; factoryUrl?: unknown; ip?: string },
 ): Promise<{ adminId: string; serviceId: string; serviceKey: string }> {
-  const { adminId, more } = await setUp(db, clock, input, { by: 'companion' }, async (tx) => {
+  const factoryUrl = input.factoryUrl === undefined ? undefined : factoryUrlOf(input.factoryUrl)
+  const by = { by: 'companion' as const, ...(input.ip ? { ip: input.ip } : {}) }
+  const { adminId, more } = await setUp(db, clock, input, by, async (tx) => {
+    if (factoryUrl !== undefined)
+      await tx.query('UPDATE installation SET factory_url = $1 WHERE id = 1', [factoryUrl])
     const serviceId = await createAccount(tx, clock, {
       kind: 'service',
       name: input.serviceName?.trim() || 'RSC Factory',
