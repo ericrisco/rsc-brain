@@ -1,7 +1,7 @@
 // Invitations (spec B4 «Invitar»): the administration (or a curator, when the installation allows it)
 // invites emails to brains with a role each. The link works once and for 72 hours; it goes by mail, and
 // the administration can always copy it (no mail set up, or a failed send). Only its hash is kept.
-import { atLeast, ROLES, type Role } from '../auth/can.ts'
+import { atLeast, ROLES, type Role, rank } from '../auth/can.ts'
 import { checkPassword, hashPassword } from '../auth/password.ts'
 import { memberRole } from '../auth/principal.ts'
 import { hashSecret, newSecret } from '../auth/secrets.ts'
@@ -18,6 +18,7 @@ import { emailOf, inWeb } from './guards.ts'
 import { type ConnFacts, installation, requireSecure } from './installation.ts'
 import { mintWebSession } from './keys.ts'
 import { decode, encode, limitOf } from './listing.ts'
+import { notify } from './notices.ts'
 
 export const INVITE_HOURS = 72
 export const MAX_EMAILS = 50
@@ -42,6 +43,15 @@ async function brainNames(db: Db, grants: Grant[]): Promise<Map<string, { slug: 
     grants.map((g) => g.brainId),
   ])
   return new Map(rows.map((r) => [String(r.id), { slug: String(r.slug), name: String(r.name) }]))
+}
+
+// "- <name>" for each of these brains that still exists.
+async function brainLines(db: Db, grants: Grant[]): Promise<string[]> {
+  const names = await brainNames(db, grants)
+  return grants.flatMap((g) => {
+    const b = names.get(g.brainId)
+    return b ? [`- ${b.name}`] : []
+  })
 }
 
 async function mailInvitation(
@@ -77,10 +87,38 @@ async function mailInvitation(
 // - a curator never touches it (409): its link, and whatever it grants, stay with whoever made it;
 // - the administration adds these grants to an open one, takes it over and makes its link again (the
 //   old link stops working). An expired one is closed, and a new one is made;
-// - a service naming a first curator adds the grant to an open one, keeping its link (nothing new is
-//   mailed, and the link stays with whoever has it); an expired one is closed, and a new one is made.
+// - a service adds its grants to an open one, never lowering a role there. When that service made it, the
+//   link is kept (nothing new is mailed). When someone else made it, nothing is changed here: the caller gets
+//   a takeover to finish after its commit (takeOver), only if the new link reaches the person; then the old
+//   link stops working, so whoever held it gains nothing (F1-PR2 review). An expired one is closed, and a new
+//   one is made.
 // A closed expired invitation passes on the first-curator places of brains still waiting for this
 // email, never the administrator rights.
+export const INVITATION_LOCK = "SELECT pg_advisory_xact_lock(hashtext('rsc-brain invitation ' || $1))"
+// add: the grants this service adds; merged again, raise only, onto the invitation as it is when it is taken over,
+// so a grant someone added meanwhile (the own path of the service that holds it keeps the link) is not lost.
+export type Takeover = { previousBy: string; expectHash: string; add: Grant[] }
+
+// grants with `add` on top: a new brain is added; a brain already there only rises, never lowers.
+export function raiseGrants(base: Grant[], add: Grant[]): Grant[] {
+  const grants = [...base]
+  for (const g of add) {
+    const i = grants.findIndex((x) => x.brainId === g.brainId)
+    if (i < 0) grants.push(g)
+    else if (rank(g.role) > rank((grants[i] as Grant).role)) grants[i] = g
+  }
+  return grants
+}
+export type Stored = {
+  id: string
+  token: string | null
+  expiresAt: Date
+  grants: Grant[]
+  isAdmin: boolean
+  // Someone else's open invitation, left as it is: takeOver makes it this service's once the mail went out.
+  takeover?: Takeover
+}
+
 export async function storeInvitation(
   db: Db,
   clock: Clock,
@@ -92,11 +130,11 @@ export async function storeInvitation(
     by: string
     as: 'admin' | 'service' | 'curator'
   },
-): Promise<{ id: string; token: string | null; expiresAt: Date; grants: Grant[]; isAdmin: boolean }> {
+): Promise<Stored> {
   const now = clock()
   const token = newSecret()
   const expiresAt = new Date(now.getTime() + INVITE_HOURS * 3_600_000)
-  await db.query("SELECT pg_advisory_xact_lock(hashtext('rsc-brain invitation ' || $1))", [o.email])
+  await db.query(INVITATION_LOCK, [o.email])
   const unused = await db.one<Row>(
     'SELECT * FROM invitations WHERE email = $1 AND used_at IS NULL AND revoked_at IS NULL FOR UPDATE',
     [o.email],
@@ -113,7 +151,7 @@ export async function storeInvitation(
     for (const g of o.grants) {
       const i = grants.findIndex((x) => x.brainId === g.brainId)
       if (i < 0) grants.push(g)
-      else grants[i] = g
+      else if (o.as !== 'service' || rank(g.role) > rank((grants[i] as Grant).role)) grants[i] = g
     }
     return grants
   }
@@ -125,7 +163,7 @@ export async function storeInvitation(
     carried = (unused.grants as Grant[]).filter((g) => g.role === 'curator' && ids.has(g.brainId))
   } else if (unused) {
     const grants = merge(unused.grants as Grant[])
-    if (o.as === 'service') {
+    if (o.as === 'service' && unused.invited_by === o.by) {
       await db.query('UPDATE invitations SET grants = $2 WHERE id = $1', [unused.id, JSON.stringify(grants)])
       return {
         id: String(unused.id),
@@ -133,6 +171,20 @@ export async function storeInvitation(
         expiresAt: unused.expires_at as Date,
         grants,
         isAdmin: Boolean(unused.is_admin),
+      }
+    }
+    if (o.as === 'service') {
+      return {
+        id: String(unused.id),
+        token,
+        expiresAt,
+        grants,
+        isAdmin: Boolean(unused.is_admin),
+        takeover: {
+          previousBy: String(unused.invited_by),
+          expectHash: String(unused.token_hash),
+          add: o.grants,
+        },
       }
     }
     const isAdmin = Boolean(unused.is_admin) || Boolean(o.isAdmin)
@@ -180,6 +232,115 @@ export async function sendInvitation(
 ) {
   const link = await linkOf(db, o.token)
   return { link, ...(await mailInvitation(db, clock, outbox, { ...o, link })) }
+}
+
+// A service takes over someone else's open invitation (F1-PR2 review): the new link is mailed first, and only once
+// the mail was accepted is the invitation changed, under the email's turn, if it is still open:
+// - same link as when it was read: taken over. Its grants are read again and this service's merged on top (raise
+//   only); the old link stops working; audited with the previous inviter, who is told in the app (no brain named);
+// - another link, but now this service's (another of its requests took it over first): this request's grants merge
+//   into it, its link kept; the person is told to use the most recent working link, which covers them too;
+// - otherwise (closed, or someone else's): nothing changes; the person is told the link just mailed is void, and
+//   the caller refuses that person. Without a sent mail nothing changes either.
+// Only the service invite route takes over: a brain is never made on a takeover (fourth pass).
+export async function takeOver(
+  ctx: Ctx,
+  brainId: string | null,
+  t: {
+    email: string
+    id: string
+    token: string
+    expiresAt: Date
+    grants: Grant[]
+    isAdmin: boolean
+  } & Takeover,
+): Promise<boolean> {
+  const failed = async (why: string) => {
+    await ok(ctx, 'invitation.takeover_failed', brainId, t.email, `${why}; it stays with ${t.previousBy}`)
+    return false
+  }
+  const sent = await sendInvitation(ctx.db, ctx.clock, ctx.mail, {
+    email: t.email,
+    token: t.token,
+    by: ctx.who.name,
+    grants: t.grants,
+    isAdmin: t.isAdmin,
+  })
+  if (!sent.sent) return failed('the new link could not be mailed')
+  const done = await ctx.db.tx(async (db) => {
+    await db.query(INVITATION_LOCK, [t.email])
+    // Still open? Its grants are read again and ours merged on top (raise only), so none added meanwhile is lost.
+    const now = await db.one<{ grants: Grant[]; token_hash: string; invited_by: string }>(
+      `SELECT grants, token_hash, invited_by FROM invitations
+        WHERE id = $1 AND used_at IS NULL AND revoked_at IS NULL FOR UPDATE`,
+      [t.id],
+    )
+    if (!now) return false
+    if (now.token_hash !== t.expectHash) {
+      // Another request of this same service took it over first (fourth pass): it is ours now, so ours merge in as
+      // the own path does, its link kept. Not a lost race: no refusal; the person is pointed at the newest link.
+      if (now.invited_by !== ctx.who.accountId) return false
+      await db.query('UPDATE invitations SET grants = $2 WHERE id = $1', [
+        t.id,
+        JSON.stringify(raiseGrants(now.grants, t.add)),
+      ])
+      return 'merged' as const
+    }
+    await db.query(
+      `UPDATE invitations SET token_hash = $2, grants = $3, expires_at = $4, invited_by = $5, resent_at = NULL
+        WHERE id = $1`,
+      [
+        t.id,
+        hashSecret(t.token),
+        JSON.stringify(raiseGrants(now.grants, t.add)),
+        t.expiresAt,
+        ctx.who.accountId,
+      ],
+    )
+    await ok({ ...ctx, db }, 'invitation.taken_over', brainId, t.email, `from ${t.previousBy}`)
+    return 'taken' as const
+  })
+  if (!done) {
+    // The link just mailed opens nothing: the person is told so, best effort (the send never throws), naming
+    // only the brains this service was inviting them to, never the other invitation's.
+    const lines = await brainLines(ctx.db, t.add)
+    await send(ctx.db, ctx.clock, ctx.mail, 'invitation', {
+      to: t.email,
+      subject: 'The rsc-brain invitation you just received is no longer valid',
+      text: [
+        'The rsc-brain invitation you just received is no longer valid.',
+        ...(lines.length ? ['', 'It was for:', ...lines] : []),
+        '',
+        'You will get a new one if needed; nothing else needs doing.',
+      ].join('\n'),
+    })
+    return failed('the invitation changed meanwhile')
+  }
+  // The request that took it over told the previous inviter. One that merged into it tells the person only that
+  // its own link is void and the most recent one covers its brains too (the other link's token is not kept).
+  if (done === 'merged') {
+    await send(ctx.db, ctx.clock, ctx.mail, 'invitation', {
+      to: t.email,
+      subject: 'Use the most recent rsc-brain invitation link',
+      text: [
+        'The link in one of the rsc-brain invitations you just received does not work.',
+        'Use the most recent working link from rsc-brain; it also covers:',
+        ...(await brainLines(ctx.db, t.add)),
+      ].join('\n'),
+    })
+    return true
+  }
+  const before = await ctx.db.one<{ kind: string }>('SELECT kind FROM accounts WHERE id = $1', [t.previousBy])
+  if (before?.kind === 'person') {
+    // No brain named: the previous inviter may not be in the brain the service invites to.
+    await notify(ctx.db, ctx.clock, ctx.mail, [t.previousBy], {
+      kind: 'invitation.taken_over',
+      brainId: null,
+      subject: `Your invitation of ${t.email} was taken over`,
+      text: `The service account "${ctx.who.name}" took over your invitation of ${t.email}: it mailed them a new link, and the one you had no longer works. The administration of rsc-brain can still see and withdraw it.`,
+    })
+  }
+  return true
 }
 
 export type InviteInput = {
@@ -465,6 +626,10 @@ export async function resendInvitation(ctx: Ctx, id: string): Promise<Invited> {
 export async function revokeInvitation(ctx: Ctx, id: string): Promise<void> {
   inWeb(ctx, 'Managing invitations')
   await ctx.db.tx(async (db) => {
+    // The email's turn first, as everyone takes it before brain and invitation rows (no deadlock with a service
+    // inviting the same email into a brain that waits for it).
+    const peek = await db.one<{ email: string }>('SELECT email FROM invitations WHERE id = $1', [id])
+    if (peek) await db.query(INVITATION_LOCK, [peek.email])
     const r = await mine(ctx, db, id, false)
     if (r.used_at != null) {
       throw conflict(
@@ -530,6 +695,13 @@ export async function acceptInvitation(
   const hash = await hashPassword(password)
   const now = clock()
   const out = await db.tx(async (tx) => {
+    // The email's turn first, as everything that makes or changes its invitation takes it (a service
+    // inviting the same email at once then sees the account this makes); then the invitation, read again.
+    const peek = await tx.one<{ email: string }>('SELECT email FROM invitations WHERE token_hash = $1', [
+      hashSecret(input.token as string),
+    ])
+    if (!peek) throw badInvitation()
+    await tx.query(INVITATION_LOCK, [peek.email])
     const r = await tx.one<Row>(
       'SELECT * FROM invitations WHERE token_hash = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $2 FOR UPDATE',
       [hashSecret(input.token as string), now],

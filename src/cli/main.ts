@@ -128,6 +128,7 @@ Environment:
   RSC_BRAIN_BACKUPS        folder of the copies; with it, serve makes a copy every day
   RSC_BRAIN_BACKUP_AT      time of the daily copy, HH:MM in RSC_BRAIN_TIMEZONE (default 03:00)
   RSC_BRAIN_BACKUP_KEEP    daily copies kept (default 14); copies made by hand are never removed
+  RSC_BRAIN_SERVICE_INVITES_PER_HOUR  invitation mails one service account may have sent in an hour (default 100)
 `
 
 const out = (s: string) => process.stdout.write(s)
@@ -215,6 +216,7 @@ async function main(argv: string[]): Promise<number> {
         backups: cfg.backups,
         ...(copies ? { copies } : {}),
         releases,
+        serviceInvitesPerHour: cfg.serviceInvitesPerHour,
         log,
       }),
     )

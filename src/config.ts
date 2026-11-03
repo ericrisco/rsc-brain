@@ -1,4 +1,5 @@
 // Settings come from the environment, read once at start. Nothing secret has a default.
+import { SERVICE_INVITES_PER_HOUR } from './domain/invite-quota.ts'
 import { DEFAULT_BACKUP_AT, DEFAULT_BACKUP_KEEP, parseBackupAt } from './ops/backup/schedule.ts'
 
 export type Config = {
@@ -19,6 +20,8 @@ export type Config = {
   // The daily copy: at HH:MM of the time zone, keeping this many (spec B7 C2).
   backupAt: string
   backupKeep: number
+  // How many invitation mails one service account may make rsc-brain send in an hour (F1-PR2 review).
+  serviceInvitesPerHour: number
 }
 
 export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -48,6 +51,13 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (!/^\d+$/.test(keepText) || backupKeep < 1 || backupKeep > 365) {
     throw new Error(`RSC_BRAIN_BACKUP_KEEP must be a whole number from 1 to 365, got "${keepText}".`)
   }
+  const perHourText = env.RSC_BRAIN_SERVICE_INVITES_PER_HOUR ?? String(SERVICE_INVITES_PER_HOUR)
+  const serviceInvitesPerHour = Number(perHourText)
+  if (!/^\d+$/.test(perHourText) || serviceInvitesPerHour < 1 || serviceInvitesPerHour > 100_000) {
+    throw new Error(
+      `RSC_BRAIN_SERVICE_INVITES_PER_HOUR must be a whole number from 1 to 100000, got "${perHourText}".`,
+    )
+  }
   const localOnly = readLocalOnly(env)
   return {
     databaseUrl,
@@ -63,6 +73,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): Config {
     backups: env.RSC_BRAIN_BACKUPS || undefined,
     backupAt,
     backupKeep,
+    serviceInvitesPerHour,
   }
 }
 

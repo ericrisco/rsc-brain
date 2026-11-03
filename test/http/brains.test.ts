@@ -207,4 +207,40 @@ describe('brains over HTTP', { skip: skipPg }, () => {
     assert.equal((await w.callWeb(ericWeb, 'DELETE', '/v1/brains/doomed', { confirm: 'doomed' })).status, 200)
     assert.equal((await w.call(k.secret, 'GET', '/v1/me')).body.error?.code, 'key_revoked')
   })
+
+  // F1-PR4 review (plan rsc-factory-brain, T010): a program adopts a brain whose creation reply it lost only
+  // when this says its own account created it.
+  it('each brain says whether the account asking created it (createdByYou)', async () => {
+    const svc = await w.service('Maker')
+    const email = String((await w.db.one('SELECT email FROM accounts WHERE id = $1', [eric.id]))?.email)
+    assert.equal(
+      (await w.call(svc.key, 'POST', '/v1/brains', { slug: 'made-by-svc', firstCurator: email })).status,
+      201,
+    )
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'made-by-eric' })
+    await w.member('made-by-eric', svc.id, 'contributor')
+    const mine = (key: string) =>
+      w
+        .call(key, 'GET', '/v1/brains')
+        .then((r) =>
+          Object.fromEntries(
+            (r.body.brains as { slug: string; createdByYou: unknown }[])
+              .filter((b) => b.slug.startsWith('made-by-'))
+              .map((b) => [b.slug, b.createdByYou]),
+          ),
+        )
+    assert.deepEqual(await mine(svc.key), { 'made-by-eric': false, 'made-by-svc': true })
+    assert.deepEqual(await mine(eric.key), { 'made-by-eric': true, 'made-by-svc': false })
+    // A short key of the service speaks for the same account.
+    const short = await w.call(svc.key, 'POST', '/v1/keys/short', {
+      writeBrain: 'made-by-svc',
+      ref: 'run r_0000aaaa step 1',
+      ttlMinutes: 5,
+    })
+    assert.deepEqual(await mine(String((short.body.key as { secret: string }).secret)), {
+      'made-by-svc': true,
+    })
+    const one = await w.call(eric.key, 'GET', '/v1/brains/made-by-svc')
+    assert.equal((one.body.brain as { createdByYou: unknown }).createdByYou, false)
+  })
 })

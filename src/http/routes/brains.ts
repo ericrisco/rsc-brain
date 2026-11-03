@@ -2,6 +2,7 @@ import { createBrain, deleteBrain, setArchived } from '../../domain/brains.ts'
 import type { Ctx } from '../../domain/context.ts'
 import { brainOverview, getBrainWithStats, listBrainsWithStats } from '../../domain/overview.ts'
 import { linkRepo, listRepos, resolveRepo, unlinkRepo } from '../../domain/repos.ts'
+import { serviceInvite } from '../../domain/service-invite.ts'
 import { compact, obj, reqStr, str } from '../input.ts'
 import { type Req, type Route, route } from '../router.ts'
 
@@ -27,7 +28,10 @@ export const brainRoutes: Route[] = [
       purpose: str(b, 'purpose', { max: 1000 }),
       firstCurator: str(b, 'firstCurator', { max: 200 }),
     }
-    return { status: 201, body: { brain: await createBrain(ctxOf(r), compact(input)) } }
+    return {
+      status: 201,
+      body: { brain: await createBrain(ctxOf(r), compact(input), r.serviceInvitesPerHour) },
+    }
   }),
   route('GET /v1/brains/:slug', async (r) => ({
     body: { brain: await getBrainWithStats(ctxOf(r), r.params.slug as string) },
@@ -40,6 +44,16 @@ export const brainRoutes: Route[] = [
   })),
   route('POST /v1/brains/:slug/unarchive', async (r) => ({
     body: { brain: await setArchived(ctxOf(r), r.params.slug as string, false) },
+  })),
+  // A service account brings people into a brain it created (plan rsc-factory-brain §3.1, spec C6).
+  route('POST /v1/brains/:slug/invitations', async (r) => ({
+    status: 201,
+    body: await serviceInvite(
+      ctxOf(r),
+      r.params.slug as string,
+      { people: obj(r.body).people },
+      r.serviceInvitesPerHour,
+    ),
   })),
   route('GET /v1/brains/:slug/repos', async (r) => ({
     body: { repos: await listRepos(ctxOf(r), r.params.slug as string) },

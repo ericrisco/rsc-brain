@@ -305,26 +305,23 @@ describe('people: review', { skip: skipPg }, () => {
     w.advance(-73 * 3_600_000)
   })
 
-  it('second pass: a service naming someone already invited keeps their link and mails nothing new', async () => {
+  it('F1-PR2 fourth pass: a service naming as first curator someone invited by another makes nothing (409)', async () => {
     const r = await w.callWeb(adminWeb, 'POST', '/v1/invitations', {
       emails: ['boss2@example.com'],
       isAdmin: true,
     })
     const link = (r.body.invitations as Array<{ link: string }>)[0]?.link ?? ''
-    await w.setUpMail()
-    const before = w.mails.filter((m) => m.to === 'boss2@example.com').length
     const svc = await w.service('Sneaky', { canInvite: true })
-    assert.equal(
-      (await w.call(svc.key, 'POST', '/v1/brains', { slug: 'sneak', firstCurator: 'boss2@example.com' }))
-        .status,
-      201,
-    )
+    const made = await w.call(svc.key, 'POST', '/v1/brains', {
+      slug: 'sneak',
+      firstCurator: 'boss2@example.com',
+    })
+    assert.equal(made.status, 409, made.text)
+    assert.equal(made.body.error?.code, 'invitation_pending_elsewhere')
+    // The administration's link still opens it, unchanged.
     const seen = await w.raw('POST', '/v1/invitations/look', { body: { token: tokenOf(link) } })
-    assert.equal(seen.status, 200)
-    assert.ok(
-      (seen.body.invitation as { brains: Array<{ slug: string }> }).brains.some((b) => b.slug === 'sneak'),
-    )
-    assert.equal(w.mails.filter((m) => m.to === 'boss2@example.com').length, before)
+    assert.equal(seen.status, 200, seen.text)
+    assert.deepEqual((seen.body.invitation as { brains: unknown[] }).brains, [])
   })
 
   it('second pass: an invitation the administration widened names the administration as inviter', async () => {

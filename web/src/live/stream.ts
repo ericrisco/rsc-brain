@@ -14,7 +14,8 @@ export type LiveEvent = {
   brain: string
   kind: string
   who: { id: string; name: string } | null
-  key: { id: string; ref: string | null } | null
+  // service: a service account's key did it (only then does a run reference link to rsc-factory).
+  key: { id: string; ref: string | null; service?: boolean } | null
   target: { id: string | null; label: string | null } | null
   query: string | null
   client: string | null

@@ -16,7 +16,7 @@ type Ev = {
     brain: string
     kind: string
     who: { id: string; name: string } | null
-    key: { id: string; ref: string | null } | null
+    key: { id: string; ref: string | null; service?: boolean } | null
     target: { id: string; label: string | null } | null
     query: string | null
     client?: string | null
@@ -689,5 +689,58 @@ describe('the event stream of a brain', { skip: skipPg }, () => {
     assert.doesNotMatch(String(mine?.client), /0123456789abcdefghij/)
     const stored = await w.db.query('SELECT agent, name FROM credentials WHERE id = $1', [k.id])
     assert.doesNotMatch(JSON.stringify(stored), /0123456789abcdefghij/)
+  })
+
+  // F1 (plan rsc-factory-brain §3.1, closes B6): the web links a reference to its rsc-factory run only when a
+  // service's key did it; a person can type "r_…" into a reference of their own, and that stays text.
+  it('key.service says a service account did it; sessions say viaService; a person with a run-like ref is neither', async () => {
+    const s = await subscribe(eric.key)
+    const ref = 'run r_0f0f0f0f step 1'
+    const agent = await shortKey(ref)
+    const bound = await w.call(factory.key, 'POST', '/v1/brains/yt/sessions', {
+      purpose: 'step',
+      ref,
+      forKey: agent.id,
+    })
+    assert.equal(bound.status, 201, bound.text)
+    const boundId = (bound.body.session as { id: string }).id
+    await w.call(agent.secret, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'By the agent',
+      content: 'x',
+    })
+    const mine = await w.call(ana.key, 'POST', '/v1/brains/yt/sessions', {
+      purpose: 'mine',
+      ref: 'run r_0e0e0e0e',
+    })
+    assert.equal(mine.status, 201, mine.text)
+    const mineId = (mine.body.session as { id: string }).id
+    await w.call(ana.key, 'POST', '/v1/brains/yt/entries', {
+      type: 'note',
+      title: 'By Ana',
+      content: 'y',
+      sessionId: mineId,
+    })
+    const opened = await s.waitFor((e) => e.data.kind === 'session.opened' && e.data.target?.id === boundId)
+    const byAgent = await s.waitFor((e) => e.data.kind === 'entry.saved' && e.data.key?.id === agent.id)
+    const anaOpened = await s.waitFor((e) => e.data.kind === 'session.opened' && e.data.target?.id === mineId)
+    const byAna = await s.waitFor((e) => e.data.kind === 'entry.saved' && e.data.who?.id === ana.id)
+    assert.equal(opened.data.key?.service, true, 'the main key of the service')
+    assert.equal(byAgent.data.key?.service, true, 'a short key of the service')
+    assert.equal(byAgent.data.sessionRef, ref)
+    assert.equal(anaOpened.data.key?.service, false)
+    assert.equal(byAna.data.key?.service, false)
+    assert.equal(byAna.data.sessionRef, 'run r_0e0e0e0e')
+    s.close()
+    const view = async (id: string) =>
+      (await w.call(eric.key, 'GET', `/v1/sessions/${id}`)).body.session as { viaService: unknown }
+    assert.equal((await view(boundId)).viaService, true)
+    assert.equal((await view(mineId)).viaService, false)
+    const listed = await w.call(eric.key, 'GET', '/v1/brains/yt/sessions?limit=100')
+    const via = Object.fromEntries(
+      (listed.body.items as { id: string; viaService: unknown }[]).map((x) => [x.id, x.viaService]),
+    )
+    assert.equal(via[boundId], true)
+    assert.equal(via[mineId], false)
   })
 })

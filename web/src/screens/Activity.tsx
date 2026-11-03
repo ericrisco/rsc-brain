@@ -36,9 +36,18 @@ const SESSIONS_SHOWN = 20
 export const QUIET_MS = 30 * 60_000
 const NO_FILTERS: ActivityFilters = { client: '', kind: '', ref: '' }
 
-// The reference of a session or an event: a link to its Factory run when there is one, else text.
-function Ref({ value, factoryUrl }: { value: string; factoryUrl: string | null }) {
-  const href = factoryRunHref(factoryUrl, value)
+// The reference of a session or an event: a link to its Factory run when a service wrote it and there is one,
+// else text.
+function Ref({
+  value,
+  factoryUrl,
+  byService,
+}: {
+  value: string
+  factoryUrl: string | null
+  byService: boolean | undefined
+}) {
+  const href = factoryRunHref(factoryUrl, value, byService)
   if (!href) return <span class="mono wrap">{value}</span>
   return (
     <a class="mono wrap" href={href} target="_blank" rel="noopener noreferrer">
@@ -84,7 +93,7 @@ function SessionList({
             {s.ref ? (
               <>
                 {' · '}
-                <Ref value={s.ref} factoryUrl={factoryUrl} />
+                <Ref value={s.ref} factoryUrl={factoryUrl} byService={s.viaService} />
               </>
             ) : null}
           </p>
@@ -198,13 +207,13 @@ function Line({
         {e.key?.ref ? (
           <>
             {' · '}
-            <Ref value={e.key.ref} factoryUrl={factoryUrl} />
+            <Ref value={e.key.ref} factoryUrl={factoryUrl} byService={e.key.service} />
           </>
         ) : null}
         {e.sessionRef && e.sessionRef !== e.key?.ref ? (
           <>
             {' · '}
-            <Ref value={e.sessionRef} factoryUrl={factoryUrl} />
+            <Ref value={e.sessionRef} factoryUrl={factoryUrl} byService={e.key?.service} />
           </>
         ) : null}
       </p>

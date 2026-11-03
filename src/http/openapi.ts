@@ -162,8 +162,9 @@ const BRAIN_ROLE = {
     role: s('Your role through this key.'),
     stats: STATS,
     notifyProposals: b('You get an email for each new proposal of this brain.'),
+    createdByYou: b('The account of this key created the brain.'),
   },
-  required: [...(BRAIN.required as string[]), 'role', 'stats', 'notifyProposals'],
+  required: [...(BRAIN.required as string[]), 'role', 'stats', 'notifyProposals', 'createdByYou'],
 }
 const INVITED = obj({
   id: s('Invitation id (inv_…).'),
@@ -266,8 +267,20 @@ const SESSION_VIEW = {
     entries: n('Its active entries, the summary aside.'),
     forgotten: n('Its entries forgotten since (not counted in "entries").'),
     summary: nul(s('Its summary (the first 300 characters), once closed with one.')),
+    viaService: b(
+      'A service account opened it (its main key or a short key): only then is the reference the service’s own, such as an rsc-factory run.',
+    ),
   },
-  required: [...(SESSION.required as string[]), 'day', 'client', 'author', 'entries', 'forgotten', 'summary'],
+  required: [
+    ...(SESSION.required as string[]),
+    'day',
+    'client',
+    'author',
+    'entries',
+    'forgotten',
+    'summary',
+    'viaService',
+  ],
 }
 const ENTRY_LIST = obj({
   items: list({
@@ -345,7 +358,15 @@ export const EVENT = obj(
       'session.opened, session.closed, entry.saved, entry.revised, entry.repeated, entry.changed, search, read, proposal.submitted, proposal.withdrawn, proposal.decided, wiki.changed; and gap.',
     ),
     who: nul(obj({ id: s('Account id.'), name: s('Account name.') })),
-    key: nul(obj({ id: s('Credential id.'), ref: nul(s('The external reference of a short key.')) })),
+    key: nul(
+      obj({
+        id: s('Credential id.'),
+        ref: nul(s('The external reference of a short key.')),
+        service: b(
+          'A service account did it (its main key or a short key): only then is the reference the service’s own, such as an rsc-factory run.',
+        ),
+      }),
+    ),
     target: nul(obj({ id: s('What it touches.'), label: nul(s('Its title or address.')) })),
     query: nul(s('For a search: the text searched, already redacted.')),
     client: nul(
@@ -1004,7 +1025,7 @@ const HAND: Record<string, Op> = {
         isAdmin: b('Administration rights travel with this key.'),
         canCreateBrains: b('This key may create brains.'),
         canInvite: b(
-          'This key may invite people (POST /v1/invitations): a web session of the administration, or of a curator when the installation allows curators to invite.',
+          'This key may invite people: a web session of the administration, or of a curator when the installation allows curators to invite (POST /v1/invitations); the main key of a service account allowed to invite, into the brains it created (POST /v1/brains/{slug}/invitations).',
         ),
         totp: nul(b('The account signs in with a second factor; null for any key but a web session.')),
       }),
@@ -1166,7 +1187,8 @@ const HAND: Record<string, Op> = {
   },
   'GET /v1/brains': { summary: 'The brains this key can use.', reply: obj({ brains: list(BRAIN_ROLE) }) },
   'POST /v1/brains': {
-    summary: 'Create a brain (with the right to create brains).',
+    summary:
+      'Create a brain (with the right to create brains). A service account names its first curator; an email without an account gets an invitation, whose mail spends the service hourly quota (429 invite_quota: nothing is made). An open invitation for that email made by someone else: 409 invitation_pending_elsewhere before anything is written (no brain, no mail, no quota spent); an administrator of rsc-brain resends or withdraws it. One this service made gains the brain, its link kept.',
     status: 201,
     body: obj(
       {
@@ -2205,6 +2227,71 @@ const HAND: Record<string, Op> = {
     reply: obj({
       key: obj({ id: s('Key id.'), secret: s('The main key. Shown only in this answer.') }),
       message: s('Copy it now.'),
+    }),
+  },
+  'POST /v1/brains/{slug}/invitations': {
+    summary:
+      'A service account allowed to invite, with its main key, brings people into a brain it created: an active person is added with the role, someone without an account gets an invitation by mail. A role is raised, never lowered. An open invitation another account made is taken over only when its new link is mailed and the mail is accepted: then the old link stops working and the previous inviter is told; otherwise it is left as it was and that person is refused (invitation_pending_elsewhere). A removed account is refused for that person alone (account_removed). At most RSC_BRAIN_SERVICE_INVITES_PER_HOUR invitation mails an hour per service account (100 by default): past it the whole request is refused with 429 invite_quota and Retry-After, and nothing changes. Another brain answers 404 as one that does not exist.',
+    status: 201,
+    body: obj({
+      people: {
+        ...list(
+          obj({
+            email: s('Their email.'),
+            role: s('curator or reader.', { enum: ['curator', 'reader'] }),
+          }),
+          '1 to 20 people, each once.',
+        ),
+        minItems: 1,
+        maxItems: 20,
+      },
+    }),
+    reply: obj({
+      invited: list(
+        obj(
+          {
+            email: s('The email, in lower case.'),
+            status: s(
+              'added (now a member with that role), invited (an invitation to the brain is open), raised (a member, or an open invitation, with a lower role now has this one), already (a member, or invited to it, with this role or a higher one: nothing changed) or refused (not done for this person; see reason).',
+              { enum: ['added', 'invited', 'raised', 'already', 'refused'] },
+            ),
+            reason: s(
+              'Only when refused: account_removed (the account of that email was removed) or invitation_pending_elsewhere (an open invitation of someone else could not be taken over: no mail, or the new link could not be mailed; an administrator can resend or withdraw it).',
+              {
+                enum: ['account_removed', 'invitation_pending_elsewhere'],
+              },
+            ),
+          },
+          ['reason'],
+        ),
+        'One per person, in the order asked.',
+      ),
+    }),
+  },
+  // What a service asks for the people it serves (plan rsc-factory-brain §3.1, spec C21).
+  'POST /v1/access': {
+    summary:
+      'A service account, with its main key: the role a person has in brains the service is in. A brain the service is not in is left out, as one that does not exist. Any other key: 403 key_not_allowed.',
+    body: obj({
+      person: s('The email or account id of a person.', { maxLength: 200 }),
+      brains: { ...list(s('A brain name (slug).'), '1 to 50 brain names.'), minItems: 1, maxItems: 50 },
+    }),
+    reply: obj({
+      person: obj({ found: b('An active person account answers to that email or id.') }),
+      brains: list(
+        obj({
+          slug: s('The brain.'),
+          serviceRole: s('The role of the service account: reader or contributor (never curator).', {
+            enum: ['reader', 'contributor'],
+          }),
+          personRole: nul(
+            s('The role of the person; null when not a member (or not found).', {
+              enum: ['reader', 'contributor', 'curator', null],
+            }),
+          ),
+        }),
+        'The brains asked for that the service is in, in the order asked (each once).',
+      ),
     }),
   },
   'DELETE /v1/keys/{id}': {
