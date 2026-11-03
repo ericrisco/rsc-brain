@@ -2,7 +2,13 @@
 // body. Who may not, or a brain that is not empty, is refused before any of the body is read; the report comes
 // back whole (its lists are capped, their totals say how many there were).
 import { invalid } from '../../core/errors.ts'
-import { archiveError, importTree, mayImport, takeImportTurn } from '../../ops/import/import.ts'
+import {
+  archiveError,
+  IMPORT_LIMITS,
+  importTree,
+  mayImport,
+  takeImportTurn,
+} from '../../ops/import/import.ts'
 import { treeFromZip } from '../../ops/import/tree.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
@@ -24,17 +30,22 @@ export const importRoutes: Route[] = [
       } catch (err) {
         throw archiveError(err)
       }
-      return { body: { report: await importTree(ctxOf(r), r.params.slug as string, tree, { from: name }) } }
+      // A client that leaves stops the work: between files, and before anything is written.
+      const report = await importTree(ctxOf(r), r.params.slug as string, tree, {
+        from: name,
+        signal: r.signal,
+      })
+      return { body: { report } }
     }),
     raw: true,
     maxBody: IMPORT_MAX_BODY,
+    rawDeadline: IMPORT_LIMITS,
     // Who may, into an empty brain, and one at a time: all before any of the body is read (no second 50 MB body
-    // waits in memory). The turn is given back when the request ends, however it ends.
+    // waits in memory). The turn is given back once the import's work is settled, not when its client leaves
+    // (second pass on PR32): the app calls what this returns after the handler, however it ended.
     before: async (r) => {
       await mayImport(ctxOf(r), r.params.slug as string)
-      const release = takeImportTurn()
-      if (r.signal.aborted) release()
-      else r.signal.addEventListener('abort', release, { once: true })
+      return takeImportTurn()
     },
   },
 ]

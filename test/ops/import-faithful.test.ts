@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { zipWriter } from '../../src/core/zip.ts'
+import { authorName } from '../../src/ops/import/faithful.ts'
 import { importTree } from '../../src/ops/import/import.ts'
 import { treeFromZip } from '../../src/ops/import/tree.ts'
 import { download } from '../helpers/download.ts'
@@ -322,7 +323,8 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
     ])
     const imported = y.filter((r) => r.includes('"kind":"import"'))
     assert.equal(imported.length, 1)
-    assert.match(imported[0] as string, /Imported by Eric B from faith\.zip/)
+    assert.match(imported[0] as string, /"summary":"Imported from faith\.zip"/)
+    assert.match(imported[0] as string, /person:Eric B/)
     assert.deepEqual(
       y
         .filter((r) => !r.includes('"kind":"import"'))
@@ -530,5 +532,73 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
       [brain],
     )
     assert.equal(m?.to_address, 'topics/audience-page')
+  })
+  // Second pass on PR32: the names of an export's import lines are not copied (they could not be anonymised): the
+  // line says «Imported» and its actor is the author.
+  it('the import lines of the export come in without the name they held', async () => {
+    const files = new Map(readZip(exported).map((e) => [e.name, e.data]))
+    const manifest = JSON.parse(String(files.get('manifest.json'))) as {
+      people: Array<{ ref: string; name: string }>
+    }
+    const dora = manifest.people.find((p) => p.name === 'Dora')?.ref
+    const lines = String(files.get('wiki_log.ndjson')).trim().split('\n')
+    const one = JSON.parse(lines[0] as string) as Json
+    lines.push(
+      JSON.stringify({
+        ...one,
+        id: 'wlg_000000000099',
+        kind: 'import',
+        actor: dora,
+        proposal_id: null,
+        pages: [],
+        summary: 'Imported by Dora Realname from old.zip',
+      }),
+    )
+    files.set('wiki_log.ndjson', Buffer.from(`${lines.join('\n')}\n`))
+    await b.call(P('beric').key, 'POST', '/v1/brains', { slug: 'relog', name: 'Relog' })
+    await imp(b, bWeb, 'relog', await zipOf(files))
+    const log = await b.db.query(
+      `SELECT l.summary, a.name FROM wiki_log l JOIN brains x ON x.id = l.brain_id JOIN accounts a ON a.id = l.actor_id
+        WHERE x.slug = 'relog' AND l.kind = 'import' ORDER BY l.at`,
+    )
+    assert.ok(!log.some((r) => String(r.summary).includes('Realname')), JSON.stringify(log))
+    assert.ok(
+      log.some((r) => r.summary === 'Imported' && r.name === 'Dora (imported)'),
+      JSON.stringify(log),
+    )
+  })
+
+  // Second pass on PR32: the folder around the export is the one that holds its manifest, whatever comes first in the
+  // zip (a Mac adds __MACOSX/ and .DS_Store), and __MACOSX/ is never read.
+  it('a zip of the folder of the export, with what a Mac adds first', async () => {
+    const inner = readZip(exported)
+    const files = new Map<string, Buffer | string>([
+      ['.DS_Store', Buffer.from([0, 0, 0, 1])],
+      ['__MACOSX/faith/._manifest.json', Buffer.from([0, 5, 22, 7])],
+      ['__MACOSX/manifest.json', '{"format":"nothing"}'],
+      ...inner.map((e) => [`faith/${e.name}`, e.data] as [string, Buffer]),
+    ])
+    const tree = treeFromZip(await zipOf(files))
+    assert.ok(!tree.files.some((f) => f.path.startsWith('__MACOSX/')))
+    await b.call(P('beric').key, 'POST', '/v1/brains', { slug: 'wrapped', name: 'Wrapped' })
+    const report = await imp(b, bWeb, 'wrapped', await zipOf(files))
+    assert.equal(report.kind, 'faithful')
+  })
+})
+
+// Second pass on PR32: an imported author always says so, whatever its name holds (invisible characters, a suffix of
+// its own, a long name).
+describe('the name of an imported author', () => {
+  it('is cleaned, cut and always marked as imported', () => {
+    const padded = `${'X'.repeat(60)}${'\u200B'.repeat(30)} (imported)`
+    const n = authorName(padded)
+    assert.ok(n.endsWith(' (imported)'), n)
+    assert.ok(!/\p{Cf}/u.test(n), n)
+    assert.ok(n.length <= 80)
+    const long = authorName(`${'A'.repeat(100)} (imported)`)
+    assert.ok(long.endsWith(' (imported)') && long.length === 80, long)
+    assert.equal(authorName('Dora (imported)'), 'Dora (imported)')
+    assert.equal(authorName('  Dora\t  Smith \u200D'), 'Dora Smith (imported)')
+    assert.equal(authorName('\u200B\u200B'), 'Someone (imported)')
   })
 })

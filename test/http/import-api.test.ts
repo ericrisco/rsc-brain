@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process'
 import { connect } from 'node:net'
 import { after, before, describe, it } from 'node:test'
 import { WEB_HEADER } from '../../src/http/app.ts'
+import { IMPORT_HOOKS, IMPORT_LIMITS, IMPORT_STATE } from '../../src/ops/import/import.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
 import { zipOfFolder } from '../helpers/zipfolder.ts'
@@ -102,6 +103,66 @@ function hold(base: string, path: string, cookie: string): Promise<{ stop(): voi
       )
     })
     s.on('error', () => {})
+  })
+}
+
+// Second pass on PR32: the whole zip goes, then the client leaves before the answer (after `leaveMs`).
+function sendAndLeave(
+  base: string,
+  path: string,
+  cookie: string,
+  body: Buffer,
+  leaveMs: number,
+): Promise<void> {
+  const u = new URL(base)
+  return new Promise((resolve) => {
+    const s = connect(Number(u.port), u.hostname, () => {
+      s.write(
+        `POST ${path} HTTP/1.1\r\nHost: ${u.host}\r\nContent-Type: application/zip\r\nX-Requested-With: rsc-brain-web\r\nCookie: rscb_session=${cookie}\r\nContent-Length: ${body.length}\r\n\r\n`,
+      )
+      s.write(body)
+      setTimeout(() => {
+        s.destroy()
+        resolve()
+      }, leaveMs)
+    })
+    s.on('error', () => {})
+  })
+}
+
+// Second pass on PR32: a body that starts and then stops coming (`every`: ms between small pieces; 0: never again).
+function stalled(
+  base: string,
+  path: string,
+  cookie: string,
+  every: number,
+): Promise<{ status: string; code: string; ms: number }> {
+  const u = new URL(base)
+  return new Promise((resolve) => {
+    const t0 = Date.now()
+    let got = ''
+    let tick: NodeJS.Timeout | undefined
+    const s = connect(Number(u.port), u.hostname, () => {
+      s.write(
+        `POST ${path} HTTP/1.1\r\nHost: ${u.host}\r\nContent-Type: application/zip\r\nX-Requested-With: rsc-brain-web\r\nCookie: rscb_session=${cookie}\r\nContent-Length: ${MB}\r\n\r\nPK`,
+      )
+      if (every) tick = setInterval(() => !s.destroyed && s.write(Buffer.alloc(8, 0x20)), every)
+    })
+    s.on('data', (d) => {
+      got += d.toString('latin1')
+    })
+    s.on('error', () => {})
+    const done = () => {
+      if (tick) clearInterval(tick)
+      s.destroy()
+      resolve({
+        status: /HTTP\/1\.1 (\d{3})/.exec(got)?.[1] ?? '',
+        code: /"code":"([a-z_]+)"/.exec(got)?.[1] ?? '',
+        ms: Date.now() - t0,
+      })
+    }
+    s.on('close', done)
+    setTimeout(done, 4000).unref()
   })
 }
 
@@ -324,6 +385,67 @@ describe('the import route and the command (CA19)', { skip: skipPg }, () => {
     assert.equal(r?.status, 200, r?.text)
   })
 
+  it('a client that leaves does not give back the turn while its import still runs; the import stops (second pass)', async () => {
+    const slugs = ['gone-1', 'gone-2', 'gone-3', 'gone-4']
+    for (const slug of slugs) await w.call(P('eric').key, 'POST', '/v1/brains', { slug, name: slug })
+    let inside = 0
+    let peak = 0
+    let entered = 0
+    let wrote = 0
+    IMPORT_HOOKS.writing = () => {
+      wrote += 1
+    }
+    IMPORT_HOOKS.beforeWrite = async () => {
+      entered += 1
+      inside += 1
+      peak = Math.max(peak, inside)
+      await new Promise((ok) => setTimeout(ok, 400))
+      inside -= 1
+    }
+    try {
+      for (const slug of slugs) {
+        await sendAndLeave(w.base, `/v1/brains/${slug}/import?name=a.zip`, S('eric'), zip, 60)
+        await new Promise((ok) => setTimeout(ok, 60))
+      }
+      for (let i = 0; i < 100 && (IMPORT_STATE.running > 0 || inside > 0); i++)
+        await new Promise((ok) => setTimeout(ok, 50))
+    } finally {
+      delete IMPORT_HOOKS.beforeWrite
+      delete IMPORT_HOOKS.writing
+    }
+    assert.ok(entered >= 1)
+    // Stopped before its transaction: nothing was even begun.
+    assert.equal(wrote, 0)
+    assert.equal(peak, 1, 'two imports ran at once')
+    assert.equal(IMPORT_STATE.running, 0)
+    // Whoever left took nothing with them: no brain was written.
+    for (const slug of slugs)
+      assert.deepEqual(await counts(slug), { pages: 0, entries: 0, log: 0, imported: null })
+  })
+
+  it('a body that stops coming, or takes too long, is answered 408 and gives the turn back (second pass)', async () => {
+    await w.call(P('eric').key, 'POST', '/v1/brains', { slug: 'stall', name: 'Stall' })
+    const was = { ...IMPORT_LIMITS }
+    IMPORT_LIMITS.stallMs = 300
+    IMPORT_LIMITS.totalMs = 3000
+    try {
+      // Nothing more comes: refused after the pause, long before the whole time is up.
+      const still = await stalled(w.base, '/v1/brains/stall/import?name=a.zip', S('eric'), 0)
+      assert.deepEqual([still.status, still.code], ['408', 'upload_timeout'])
+      assert.ok(still.ms >= 250 && still.ms < 1500, String(still.ms))
+      // It keeps coming, too slowly: refused once the whole time is up.
+      IMPORT_LIMITS.totalMs = 800
+      const slow = await stalled(w.base, '/v1/brains/stall/import?name=a.zip', S('eric'), 50)
+      assert.deepEqual([slow.status, slow.code], ['408', 'upload_timeout'])
+      assert.ok(slow.ms >= 700 && slow.ms < 3000, String(slow.ms))
+    } finally {
+      Object.assign(IMPORT_LIMITS, was)
+    }
+    assert.equal(IMPORT_STATE.running, 0)
+    const r = await upload(w, { session: S('eric') }, 'stall', zip)
+    assert.equal(r.status, 200, r.text)
+  })
+
   it('refuses what is not a zip it can read, and changes nothing', async () => {
     const r = await upload(w, { session: S('eric') }, 'keyed', Buffer.from('not a zip'))
     assert.deepEqual([r.status, r.body.error?.code], [422, 'invalid_archive'])
@@ -366,10 +488,12 @@ describe('the import route and the command (CA19)', { skip: skipPg }, () => {
       await rm(dir, { recursive: true, force: true })
     }
     // Who it was, in the log and the audit; the key the command made for it never works.
+    // The log names no one in its text (a name there could not be anonymised): who it was is its actor.
     const log = await w.db.one(
-      "SELECT summary FROM wiki_log l JOIN brains b ON b.id = l.brain_id WHERE b.slug = 'cli'",
+      "SELECT summary, actor_id FROM wiki_log l JOIN brains b ON b.id = l.brain_id WHERE b.slug = 'cli'",
     )
-    assert.match(String(log?.summary), /^Imported by Boss from docs-sample/)
+    assert.match(String(log?.summary), /^Imported from docs-sample/)
+    assert.equal(log?.actor_id, P('boss').id)
     const keys = await w.db.query(
       "SELECT kind, revoked_at FROM credentials WHERE account_id = $1 AND name = 'Command line import'",
       [P('boss').id],

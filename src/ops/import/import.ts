@@ -48,6 +48,11 @@ export const notEmpty = () =>
 // One import at a time in this process (review of PR32): its zip is held in memory (up to 50 MB) and read whole, so a
 // second waits instead of doubling that; it also keeps two imports off one brain. Mutable for the tests only.
 export const IMPORT_STATE = { running: 0 }
+// How long a body may take: no new bytes for `stallMs`, or `totalMs` in all, and it is refused (408). Mutable for the
+// tests only (second pass on PR32).
+export const IMPORT_LIMITS = { stallMs: 30_000, totalMs: 5 * 60_000 }
+// A seam for the tests: what runs once the file is read and planned, before anything is written.
+export const IMPORT_HOOKS: { beforeWrite?: () => Promise<void>; writing?: () => void } = {}
 export const importBusy = () =>
   new AppError(
     409,
@@ -112,22 +117,48 @@ export async function importTree(
   ctx: Ctx,
   slug: string,
   tree: FileTree,
-  o: { from: string },
+  o: { from: string; signal?: AbortSignal },
 ): Promise<ImportReport> {
+  // Whoever asked has left (the web's client closed the connection): the work stops between files, before writing
+  // and before its transaction commits, so nothing of it stays (second pass on PR32).
+  const going = () => {
+    if (o.signal?.aborted)
+      throw new AppError(
+        400,
+        'invalid_request',
+        'The import was stopped: its request ended.',
+        'Import again.',
+      )
+  }
   await mayImport(ctx, slug)
   const from = fromName(o.from)
+  const watched: FileTree = o.signal
+    ? {
+        ...tree,
+        files: tree.files.map((f) => ({
+          ...f,
+          read: async () => {
+            going()
+            return f.read()
+          },
+        })),
+      }
+    : tree
   let faithful: FaithfulPlan | null = null
   let docs: Awaited<ReturnType<typeof planDocs>> | null = null
   try {
-    if (await isFaithful(tree)) faithful = await planFaithful(tree)
-    else docs = await planDocs(tree)
+    if (await isFaithful(watched)) faithful = await planFaithful(watched)
+    else docs = await planDocs(watched)
   } catch (err) {
     throw archiveError(err)
   }
+  await IMPORT_HOOKS.beforeWrite?.()
+  going()
   // What the writing finds wrong in the file (a reference outside it, a row the schema refuses) is the file's.
   return ctx.db
     .tx(async (db) => {
       const c = { ...ctx, db }
+      IMPORT_HOOKS.writing?.()
       // The brain row held until the end: a second import, or an archive, waits for this one.
       const { brain, role } = await inBrain(c, { slug }, 'update')
       await allow(c, 'brain.import', { role, brainStatus: brain.status }, brain.id)
@@ -178,7 +209,8 @@ export async function importTree(
           brain.id,
           now,
           ctx.who.accountId,
-          redact(`Imported by ${ctx.who.name} from ${from}`).text.slice(0, 500),
+          // No name in the text (it could not be anonymised): who imported is the line's actor.
+          redact(`Imported from ${from}`).text.slice(0, 500),
           addresses,
         ],
       )
@@ -194,6 +226,8 @@ export async function importTree(
         JSON.stringify({ kind: report.kind, from, pages: report.pages, entries: report.entries }),
       )
       await emit(db, c, { brainId: brain.id, kind: 'brain.imported', label: report.kind })
+      // Left while it was written: all of it rolls back.
+      going()
       return report
     })
     .catch((err: unknown) => {

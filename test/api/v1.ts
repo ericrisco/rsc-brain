@@ -225,6 +225,7 @@ export const ERROR_STATUS: Record<string, number> = {
   invalid_archive: 422,
   archive_too_large: 413,
   import_busy: 409,
+  upload_timeout: 408,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }

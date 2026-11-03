@@ -29,10 +29,15 @@ export function saysFaithful(manifest: Buffer): boolean {
   }
 }
 
+// What a Mac adds to a zip it makes (resource forks): never read, never reported (second pass on PR32).
+const macJunk = (path: string) =>
+  path === '__MACOSX' || path.startsWith('__MACOSX/') || path.includes('/__MACOSX/')
+
 export function treeFromZip(buf: Buffer, limits = UNZIP_LIMITS): FileTree {
-  let items = openZip(buf, limits)
-  const m = items.find((i) => manifestAt(i.path) && !i.tooLarge)
-  if (m && saysFaithful(m.read())) items = openZip(buf, faithfulLimits(limits))
+  const open = (l: typeof UNZIP_LIMITS) => openZip(buf, l).filter((i) => !macJunk(i.path))
+  let items = open(limits)
+  const m = items.find((i) => manifestAt(i.path) && !i.tooLarge && !i.path.startsWith('.'))
+  if (m && saysFaithful(m.read())) items = open(faithfulLimits(limits))
   const files = items.map((i) => ({
     path: i.path,
     size: i.size,
@@ -76,6 +81,7 @@ export async function treeFromFolder(root: string, given = UNZIP_LIMITS): Promis
         continue
       }
       if (st.isDirectory()) {
+        if (d.name === '__MACOSX') continue
         if (d.name.startsWith('.')) skipped.push({ path: `${path}/`, why: 'hidden' })
         else if (!rel && docs && !DOCS_FOLDERS.has(d.name)) skipped.push({ path: `${path}/`, why: 'outside' })
         else await walk(full, path)

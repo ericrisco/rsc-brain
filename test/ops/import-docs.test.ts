@@ -414,9 +414,7 @@ describe('importing a documentation folder (CA14, PostgreSQL)', { skip: skipPg }
     const log = await w.db.query('SELECT kind, summary, actor_id FROM wiki_log WHERE brain_id = $1', [
       brain.id,
     ])
-    assert.deepEqual(log, [
-      { kind: 'import', summary: 'Imported by Eric from docs-sample', actor_id: eric.id },
-    ])
+    assert.deepEqual(log, [{ kind: 'import', summary: 'Imported from docs-sample', actor_id: eric.id }])
     // Nothing private, no secret, anywhere it wrote.
     const dump = JSON.stringify(
       await w.db.query(
@@ -507,5 +505,64 @@ describe('importing a documentation folder (CA14, PostgreSQL)', { skip: skipPg }
       const n = await w.db.one('SELECT count(*)::int AS n FROM pages WHERE brain_id = $1', [id])
       assert.equal(n?.n, 0, slug)
     }
+  })
+  // Second pass on PR32: a request that ends stops its import between files, and when it ends while the import is
+  // written, the transaction rolls back.
+  it('a request that ends stops the import: between its files, and while it is written', async () => {
+    const { importTree, IMPORT_HOOKS } = await import('../../src/ops/import/import.ts')
+    const { principalOfSession } = await import('../helpers/principal.ts')
+    const bo = await w.person('Bo')
+    const who = await principalOfSession(w, await w.web(bo.id))
+    const files = (reads: string[], onRead?: () => void) => ({
+      skipped: [],
+      files: ['wiki/a.md', 'wiki/b.md', 'wiki/c.md'].map((path) => ({
+        path,
+        size: 3,
+        tooLarge: false,
+        read: async () => {
+          reads.push(path)
+          onRead?.()
+          return Buffer.from(`# ${path}`)
+        },
+      })),
+    })
+    const stopped = (e: { message?: string }) => /stopped/.test(String(e.message))
+    // Ends while the first file is read: no other file is read.
+    assert.equal((await w.call(bo.key, 'POST', '/v1/brains', { slug: 'ends-1', name: 'Ends 1' })).status, 201)
+    const one = new AbortController()
+    const reads: string[] = []
+    await assert.rejects(
+      importTree(
+        { db: w.db, clock: w.clock, who },
+        'ends-1',
+        files(reads, () => one.abort()),
+        {
+          from: 'gone',
+          signal: one.signal,
+        },
+      ),
+      stopped,
+    )
+    assert.equal(reads.length, 1, reads.join())
+    // Ends once the writing has begun: nothing of it stays.
+    assert.equal((await w.call(bo.key, 'POST', '/v1/brains', { slug: 'ends-2', name: 'Ends 2' })).status, 201)
+    const two = new AbortController()
+    IMPORT_HOOKS.writing = () => two.abort()
+    try {
+      await assert.rejects(
+        importTree({ db: w.db, clock: w.clock, who }, 'ends-2', files([]), {
+          from: 'gone',
+          signal: two.signal,
+        }),
+        stopped,
+      )
+    } finally {
+      delete IMPORT_HOOKS.writing
+    }
+    const left = await w.db.one(
+      `SELECT (SELECT count(*)::int FROM pages p JOIN brains b ON b.id = p.brain_id WHERE b.slug = 'ends-2') AS pages,
+              (SELECT imported_at FROM brains WHERE slug = 'ends-2') AS at`,
+    )
+    assert.deepEqual(left, { pages: 0, at: null })
   })
 })

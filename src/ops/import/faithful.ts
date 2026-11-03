@@ -199,9 +199,20 @@ const find = (tree: FileTree, name: string): TreeFile | undefined => {
   }
   const direct = m.get(name)
   if (direct) return direct
-  // A zip of the folder the export was unpacked to: one folder around everything.
-  const top = tree.files[0]?.path.split('/')[0]
+  // A zip of the folder the export was unpacked to: the folder that holds its manifest, whatever comes first in the
+  // zip (a Mac adds __MACOSX/ and .DS_Store; second pass on PR32).
+  const top = wrapperOf(tree)
   return top ? m.get(`${top}/${name}`) : undefined
+}
+const wrappers = new WeakMap<FileTree, string | null>()
+function wrapperOf(tree: FileTree): string | null {
+  if (wrappers.has(tree)) return wrappers.get(tree) ?? null
+  const dirs = tree.files
+    .map((f) => /^([^/]+)\/manifest\.json$/.exec(f.path)?.[1])
+    .filter((d): d is string => d !== undefined && d !== '__MACOSX' && !d.startsWith('.'))
+  const top = dirs.length === 1 ? (dirs[0] as string) : null
+  wrappers.set(tree, top)
+  return top
 }
 
 export async function isFaithful(tree: FileTree): Promise<boolean> {
@@ -362,9 +373,16 @@ function fixAddresses(v: unknown, fixes: Map<string, string>, key = ''): unknown
 // What an imported author is called: their name, and that they were imported (a name alone could pass for someone
 // of this installation; review of PR32).
 export const IMPORTED = ' (imported)'
+// Format characters (zero-width and the like) out, spaces collapsed, a «(imported)» of its own taken off, cut so the
+// suffix always fits, and the suffix always added (second pass on PR32: a long name lost it).
 export const authorName = (name: string) => {
-  const n = redactText(name.replace(/\s+/g, ' ').trim()) || 'Someone'
-  return n.endsWith(IMPORTED) ? n.slice(0, 80) : `${n.slice(0, 80 - IMPORTED.length)}${IMPORTED}`
+  let n = name
+    .replace(/\p{Cf}/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  while (n.endsWith(IMPORTED.trim())) n = n.slice(0, -IMPORTED.trim().length).trim()
+  n = redactText(n) || 'Someone'
+  return `${n.slice(0, 80 - IMPORTED.length).trim()}${IMPORTED}`
 }
 
 export async function writeFaithful(
@@ -503,6 +521,9 @@ export async function writeFaithful(
       )
         row.brain_id = brainId
       if (KEYED.has(name)) row.credential_id = credential
+      // An import line of the export named who imported in its text, a name this installation could not anonymise:
+      // it says «Imported», and who it was is its actor (second pass on PR32).
+      if (name === 'wiki_log' && row.kind === 'import') row.summary = 'Imported'
       if (name === 'sessions' && row.status === 'open') {
         row.status = 'closed'
         row.closed_at = row.last_activity_at ?? o.now

@@ -102,8 +102,12 @@ export type Route = {
   // The body is a file (an import's zip), given to the handler as its bytes, up to maxBody; too big is
   // `archive_too_large`.
   raw?: boolean
-  // Who may send the body, decided before any of it is read (an import: its curators, into an empty brain).
-  before?: (r: Req) => Promise<void>
+  // How long a raw body may take: no new bytes for stallMs, or totalMs in all, and it is refused (408). Read when the
+  // body is, so it can change at run time (the tests).
+  rawDeadline?: { stallMs: number; totalMs: number }
+  // Who may send the body, decided before any of it is read (an import: its curators, into an empty brain). What it
+  // returns is called once the request is over, its handler's work settled, however it ended (an import's turn).
+  before?: (r: Req) => Promise<(() => void) | undefined>
   // How the maintenance gate counts it (http/maintenance.ts). Unset: a write unless GET or HEAD. 'reads': not
   // GET but changes nothing; 'own': applies the gate itself (the MCP endpoint per tool, the sign-in forms with a
   // page); 'writes': a GET that writes (the audit export records itself), refused during maintenance.

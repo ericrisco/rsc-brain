@@ -4,6 +4,7 @@
 // route table, so it cannot leave a route out, and it documents the pinned fields.
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -12,7 +13,7 @@ import { stepOf, totpAt } from '../../src/auth/totp.ts'
 import { ROUTES } from '../../src/http/app.ts'
 import { backup } from '../../src/ops/backup/backup.ts'
 import { EXPORT_LIMITS, EXPORT_STATE } from '../../src/ops/export/export.ts'
-import { IMPORT_STATE } from '../../src/ops/import/import.ts'
+import { IMPORT_LIMITS, IMPORT_STATE } from '../../src/ops/import/import.ts'
 import { png, SVG } from '../helpers/images.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type Call, type World, world } from '../helpers/world.ts'
@@ -1474,6 +1475,34 @@ describe('the v1 contract', { skip: skipPg }, () => {
     IMPORT_STATE.running = 1
     await add('import_busy', upload('contract-import', Buffer.from('PK')))
     IMPORT_STATE.running = 0
+    // A body that stops coming (second pass on PR32): 408.
+    const stalled = (slug: string): Promise<Call> =>
+      new Promise((resolve) => {
+        const u = new URL(w.base)
+        let got = ''
+        const s = connect(Number(u.port), u.hostname, () =>
+          s.write(
+            `POST /v1/brains/${slug}/import?name=x.zip HTTP/1.1\r\nHost: ${u.host}\r\nContent-Type: application/zip\r\nX-Requested-With: rsc-brain-web\r\nCookie: rscb_session=${ericWeb}\r\nContent-Length: 100\r\n\r\nPK`,
+          ),
+        )
+        s.on('data', (d) => {
+          got += d.toString('utf8')
+        })
+        s.on('error', () => {})
+        s.on('close', () => {
+          const text = got.slice(got.indexOf('\r\n\r\n') + 4)
+          const json = text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)
+          resolve({
+            status: Number(/HTTP\/1\.1 (\d{3})/.exec(got)?.[1]),
+            body: json ? JSON.parse(json) : {},
+            text,
+          })
+        })
+      })
+    const was = IMPORT_LIMITS.stallMs
+    IMPORT_LIMITS.stallMs = 200
+    await add('upload_timeout', stalled('contract-import'))
+    IMPORT_LIMITS.stallMs = was
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))
     await add('setup_done', w.raw('GET', '/v1/setup'))
     await add(
