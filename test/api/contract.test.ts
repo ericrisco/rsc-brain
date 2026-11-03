@@ -34,12 +34,22 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     brain: ['id', 'slug', 'name', 'description', 'purpose', 'status', 'createdAt', 'updatedAt'],
   },
   'GET /v1/brains': {
-    'brains[]': ['id', 'slug', 'name', 'purpose', 'status', 'role', 'stats', 'notifyProposals'],
+    'brains[]': [
+      'id',
+      'slug',
+      'name',
+      'purpose',
+      'status',
+      'role',
+      'stats',
+      'notifyProposals',
+      'createdByYou',
+    ],
     'brains[].stats': ['pages', 'entries', 'uncompiled', 'conflicts', 'pendingProposals', 'lastActivityAt'],
   },
   // Home and the overview of a brain (spec B6, PR18: G5, G7, G8).
   'GET /v1/brains/{slug}': {
-    brain: ['id', 'slug', 'name', 'purpose', 'status', 'role', 'stats', 'notifyProposals'],
+    brain: ['id', 'slug', 'name', 'purpose', 'status', 'role', 'stats', 'notifyProposals', 'createdByYou'],
     'brain.stats': ['pages', 'entries', 'uncompiled', 'conflicts', 'pendingProposals', 'lastActivityAt'],
   },
   'GET /v1/brains/{slug}/overview': {
@@ -413,9 +423,20 @@ const SHAPES: Record<string, Record<string, string[]>> = {
       'closedAt',
       // Review of PR20: the entries of it forgotten since, so its count of entries never drops unexplained.
       'forgotten',
+      // F1-PR2: opened by a service account, so its reference may link to an rsc-factory run.
+      'viaService',
     ],
     'items[].author': ['id', 'name'],
     facets: ['clients', 'authors'],
+  },
+  // What a service asks for the people it serves (plan rsc-factory-brain §3.1, F1-PR2): rsc-factory reads these.
+  'POST /v1/access': {
+    '': ['person', 'brains'],
+    person: ['found'],
+    'brains[]': ['slug', 'serviceRole', 'personRole'],
+  },
+  'POST /v1/brains/{slug}/invitations': {
+    'invited[]': ['email', 'status'],
   },
   'GET /v1/brains/{slug}/members': {
     '': ['members', 'former', 'pendingCurator'],
@@ -750,6 +771,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       'GET /v1/health': (await w.call(null, 'GET', '/v1/health')).body,
       ...(await doors()),
       ...(await people()),
+      ...(await service()),
       ...(await wiki(entryId)),
       ...(await journal()),
       ...(await inbox(entryId)),
@@ -965,6 +987,28 @@ describe('the v1 contract', { skip: skipPg }, () => {
   }
 
   // The administration invites and makes reset links from the web (PR18).
+  // A service account working for people (F1-PR2): what it asks with its main key.
+  async function service(): Promise<Record<string, Json>> {
+    const out: Record<string, Json> = {}
+    const svc = await w.service('Contract service', { canInvite: true })
+    await w.member('contract', svc.id, 'contributor')
+    const ericEmail = String((await w.db.one('SELECT email FROM accounts WHERE id = $1', [eric.id]))?.email)
+    const access = await w.call(svc.key, 'POST', '/v1/access', { person: ericEmail, brains: ['contract'] })
+    assert.equal(access.status, 200, access.text)
+    out['POST /v1/access'] = access.body
+    const own = await w.call(svc.key, 'POST', '/v1/brains', { slug: 'contract-svc', firstCurator: ericEmail })
+    assert.equal(own.status, 201, own.text)
+    const invited = await w.call(svc.key, 'POST', '/v1/brains/contract-svc/invitations', {
+      people: [{ email: 'svc-invited@example.com', role: 'reader' }],
+    })
+    assert.equal(invited.status, 201, invited.text)
+    out['POST /v1/brains/{slug}/invitations'] = invited.body
+    // A service that may invite says so in who it is (rsc-factory warns when it may not).
+    const me = await w.call(svc.key, 'GET', '/v1/me')
+    assert.equal((me.body.account as Json).canInvite, true, me.text)
+    return out
+  }
+
   async function people(): Promise<Record<string, Json>> {
     const out: Record<string, Json> = {}
     const admin = await withPassword('Admina', { isAdmin: true })
@@ -1503,6 +1547,17 @@ describe('the v1 contract', { skip: skipPg }, () => {
     IMPORT_LIMITS.stallMs = 200
     await add('upload_timeout', stalled('contract-import'))
     IMPORT_LIMITS.stallMs = was
+    // F1-PR2: what only the main key of a service account asks.
+    await add(
+      'key_not_allowed',
+      w.call(eric.key, 'POST', '/v1/access', { person: 'x', brains: ['contract'] }),
+    )
+    const keyed = { type: 'note', title: 'Once', content: 'First.', requestKey: 'contract-reused' }
+    await w.call(eric.key, 'POST', '/v1/brains/contract/entries', keyed)
+    await add(
+      'request_key_reused',
+      w.call(eric.key, 'POST', '/v1/brains/contract/entries', { ...keyed, content: 'Another.' }),
+    )
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))
     await add('setup_done', w.raw('GET', '/v1/setup'))
     await add(

@@ -38,6 +38,8 @@ export type EmitOptions = {
   client?: string | null
   ref?: string | null
   query?: string | null
+  // A service account's key did it (default: when it has a reference).
+  service?: boolean
 }
 
 export async function scenario(

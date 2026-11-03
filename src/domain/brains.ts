@@ -136,7 +136,9 @@ export async function createBrain(ctx: Ctx, input: NewBrain): Promise<Brain> {
   return made.brain
 }
 
-export type BrainListed = Brain & { role: Role }
+// createdByYou: the account behind this key created the brain (a program that lost the reply to its creation
+// adopts only a brain it made itself: plan rsc-factory-brain, T010).
+export type BrainListed = Brain & { role: Role; createdByYou: boolean }
 
 export async function listBrains(ctx: Ctx): Promise<BrainListed[]> {
   const rows = await ctx.db.query(
@@ -148,14 +150,18 @@ export async function listBrains(ctx: Ctx): Promise<BrainListed[]> {
   const out: BrainListed[] = []
   for (const r of rows) {
     const role = await roleIn(ctx.db, ctx.who, String(r.id))
-    if (role) out.push({ ...brainOf(r), role })
+    if (role) out.push({ ...brainOf(r), role, createdByYou: r.created_by === ctx.who.accountId })
   }
   return out
 }
 
 export async function getBrain(ctx: Ctx, slug: string): Promise<BrainListed> {
   const { brain, role } = await inBrain(ctx, { slug })
-  return { ...brain, role }
+  const made = await ctx.db.one<{ created_by: string | null }>(
+    'SELECT created_by FROM brains WHERE id = $1',
+    [brain.id],
+  )
+  return { ...brain, role, createdByYou: made?.created_by === ctx.who.accountId }
 }
 
 export async function setArchived(ctx: Ctx, slug: string, archived: boolean): Promise<Brain> {

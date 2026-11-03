@@ -80,6 +80,7 @@ export const V1 = [
   'PATCH /v1/admin/accounts/{id}',
   'PATCH /v1/brains/{slug}/pages/{address}',
   'PATCH /v1/entries/{id}',
+  'POST /v1/access',
   'POST /v1/admin/accounts/{id}/remove',
   'POST /v1/admin/accounts/{id}/reset-link',
   'POST /v1/admin/accounts/{id}/restore',
@@ -103,6 +104,7 @@ export const V1 = [
   'POST /v1/brains/{slug}/corrections/relay',
   'POST /v1/brains/{slug}/corrections',
   'POST /v1/brains/{slug}/entries',
+  'POST /v1/brains/{slug}/invitations',
   'POST /v1/brains/{slug}/import',
   'POST /v1/brains/{slug}/members',
   'POST /v1/brains/{slug}/proposals',
@@ -226,6 +228,10 @@ export const ERROR_STATUS: Record<string, number> = {
   archive_too_large: 413,
   import_busy: 409,
   upload_timeout: 408,
+  // What a service asks for the people it serves (F1-PR2): a call that takes the main key of a service account.
+  key_not_allowed: 403,
+  // A request key used again for another request (rsc-factory reads it as "not written": plan T010).
+  request_key_reused: 409,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }

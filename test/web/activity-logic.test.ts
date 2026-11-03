@@ -110,16 +110,16 @@ describe('the Factory link (CA9, read side)', () => {
 
   it('links only the run id Factory stamps (r_ and 8 hex), only with a safe Factory address', () => {
     const F = 'https://factory.example.com'
-    assert.equal(factoryRunHref(F, 'run r_3f9a1c2e, step 2'), `${F}/runs/r_3f9a1c2e`)
+    assert.equal(factoryRunHref(F, 'run r_3f9a1c2e, step 2', true), `${F}/runs/r_3f9a1c2e`)
     assert.equal(
-      factoryRunHref('http://localhost:4000/', 'r_3f9a1c2e'),
+      factoryRunHref('http://localhost:4000/', 'r_3f9a1c2e', true),
       'http://localhost:4000/runs/r_3f9a1c2e',
     )
-    assert.equal(factoryRunHref(null, 'run r_3f9a1c2e'), null)
-    assert.equal(factoryRunHref('', 'run r_3f9a1c2e'), null)
-    assert.equal(factoryRunHref('javascript:alert(1)', 'run r_3f9a1c2e'), null)
-    assert.equal(factoryRunHref('https://user:pw@factory.example.com', 'run r_3f9a1c2e'), null)
-    assert.equal(factoryRunHref('https://factory.example.com/#x', 'run r_3f9a1c2e'), null)
+    assert.equal(factoryRunHref(null, 'run r_3f9a1c2e', true), null)
+    assert.equal(factoryRunHref('', 'run r_3f9a1c2e', true), null)
+    assert.equal(factoryRunHref('javascript:alert(1)', 'run r_3f9a1c2e', true), null)
+    assert.equal(factoryRunHref('https://user:pw@factory.example.com', 'run r_3f9a1c2e', true), null)
+    assert.equal(factoryRunHref('https://factory.example.com/#x', 'run r_3f9a1c2e', true), null)
     // Not a run id of Factory: text.
     for (const ref of [
       'ticket-42',
@@ -132,8 +132,16 @@ describe('the Factory link (CA9, read side)', () => {
       'x-r_3f9a1c2e',
       'r_3f9a1c2_',
     ])
-      assert.equal(factoryRunHref(F, ref), null, ref)
-    assert.equal(factoryRunHref(F, null), null)
+      assert.equal(factoryRunHref(F, ref, true), null, ref)
+    assert.equal(factoryRunHref(F, null, true), null)
+  })
+
+  // F1 (plan rsc-factory-brain §3.1, closes B6): a person may type a run-like id into a reference of their
+  // own; only a service account's reference (key.service, viaService) is one of its runs.
+  it('never links a reference a service account did not write', () => {
+    const F = 'https://factory.example.com'
+    assert.equal(factoryRunHref(F, 'run r_3f9a1c2e, step 2', false), null)
+    assert.equal(factoryRunHref(F, 'run r_3f9a1c2e, step 2', undefined), null)
   })
 })
 

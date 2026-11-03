@@ -74,6 +74,9 @@ export type SessionView = Session & {
   // and the web says why.
   forgotten: number
   summary: string | null
+  // Opened by a service account (its main key, or a short key of it): only then is its reference the
+  // service's own, such as an rsc-factory run (plan rsc-factory-brain §3.1).
+  viaService: boolean
 }
 
 export const SESSION_STATUSES = ['open', 'closed', 'closed_no_summary'] as const
@@ -82,7 +85,7 @@ const SUMMARY_CHARS = 300
 // The client that opened it, named then (domain/clients.ts).
 const CLIENT = 's.client'
 
-const SESSION_SELECT = `SELECT s.*, a.name AS author_name, ${CLIENT} AS client, se.content AS summary_text,
+const SESSION_SELECT = `SELECT s.*, a.name AS author_name, a.kind AS author_kind, ${CLIENT} AS client, se.content AS summary_text,
     (SELECT count(*)::int FROM entries e WHERE e.session_id = s.id AND e.state = 'active'
         AND e.type <> 'summary') AS entry_count,
     (SELECT count(*)::int FROM entries e WHERE e.session_id = s.id AND e.state = 'forgotten'
@@ -98,6 +101,7 @@ const sessionViewOf = (r: Row): SessionView => ({
   entries: Number(r.entry_count),
   forgotten: Number(r.forgotten_count),
   summary: r.summary_text == null ? null : String(r.summary_text).slice(0, SUMMARY_CHARS),
+  viaService: r.author_kind === 'service',
 })
 
 // A part of a reference, as typed: % and _ match themselves.

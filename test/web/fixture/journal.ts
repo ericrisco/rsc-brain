@@ -204,7 +204,8 @@ export function freshJournal(slug: string): Journal {
       id: sid(2),
       brainId,
       purpose: 'Fix the onboarding emails',
-      ref: 'repo web, branch emails',
+      // A person may type anything, a run-like id too: it stays text (only a service's reference links).
+      ref: 'repo web, branch emails, run r_0b0b0b0b',
       status: 'open',
       day: null,
       client: 'Codex',
@@ -457,6 +458,8 @@ const sessionView = (j: Journal, s: FxSession) => {
     day: s.day,
     client: s.client,
     author: s.author,
+    // Opened by a service account (rsc-factory's runs): only then does its reference link to a run.
+    viaService: s.author.id === FACTORY.id,
     entries: j.entries.filter((e) => e.sessionId === s.id && e.state === 'active' && e.type !== 'summary')
       .length,
     forgotten: j.entries.filter((e) => e.sessionId === s.id && e.state === 'forgotten').length,

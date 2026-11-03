@@ -1,3 +1,4 @@
+import { checkAccess } from '../../domain/access.ts'
 import { MAX_SHORT_MINUTES, mintShortKey, revokeKey } from '../../domain/keys.ts'
 import { whoAmI } from '../../domain/overview.ts'
 import { compact, int, obj, oneOf, reqStr, str, strList } from '../input.ts'
@@ -20,6 +21,11 @@ export const keyRoutes: Route[] = [
     }
     const k = await mintShortKey(ctxOf(r), compact(req))
     return { status: 201, body: { key: { id: k.id, secret: k.secret, expiresAt: k.expiresAt } } }
+  }),
+  // What a person may read in the brains of a service (plan rsc-factory-brain §3.1, spec C21).
+  route('POST /v1/access', async (r) => {
+    const b = obj(r.body)
+    return { body: await checkAccess(ctxOf(r), { person: b.person, brains: b.brains }) }
   }),
   route('DELETE /v1/keys/:id', async (r) => {
     await revokeKey(ctxOf(r), r.params.id as string)

@@ -1,0 +1,489 @@
+{
+  "$comment": "What rsc-factory reads from each rsc-brain answer (plan rsc-factory-brain §3.1–§3.2): the consumer contract. The same file lives in both repositories: rsc-factory checks its fake rsc-brain against test/memory/brain-shapes.json, rsc-brain checks its real server against test/contract/brain-shapes.json (factory-consumer.test.ts). Change both copies in the same pair of PRs, reviewed by hand.",
+  "error": {
+    "type": "object",
+    "required": ["error"],
+    "properties": {
+      "error": {
+        "type": "object",
+        "required": ["code", "message", "howToProceed"],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "howToProceed": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "operations": {
+    "GET /v1/health": {
+      "status": 200,
+      "reply": {
+        "type": "object",
+        "required": ["ok"],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "database": {
+            "enum": ["ok", "down"]
+          },
+          "maintenance": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "GET /v1/me": {
+      "status": 200,
+      "reply": {
+        "type": "object",
+        "required": ["account", "key"],
+        "properties": {
+          "account": {
+            "type": "object",
+            "required": ["id", "kind", "name", "canCreateBrains", "canInvite"],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": ["person", "service"]
+              },
+              "name": {
+                "type": "string"
+              },
+              "canCreateBrains": {
+                "type": "boolean"
+              },
+              "canInvite": {
+                "type": "boolean"
+              }
+            }
+          },
+          "key": {
+            "type": "object",
+            "required": ["id", "kind"],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": ["web", "token", "app", "main", "short"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /v1/brains": {
+      "status": 200,
+      "reply": {
+        "type": "object",
+        "required": ["brains"],
+        "properties": {
+          "brains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "slug",
+                "name",
+                "purpose",
+                "role",
+                "stats",
+                "status",
+                "pendingCuratorEmail",
+                "createdByYou"
+              ],
+              "properties": {
+                "slug": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "pendingCuratorEmail": {
+                  "type": ["string", "null"]
+                },
+                "createdByYou": {
+                  "type": "boolean"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "purpose": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "stats": {
+                  "type": "object",
+                  "required": ["pages", "entries", "uncompiled", "pendingProposals"],
+                  "properties": {
+                    "pages": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "integer"
+                    },
+                    "uncompiled": {
+                      "type": "integer"
+                    },
+                    "pendingProposals": {
+                      "type": "integer"
+                    }
+                  }
+                },
+                "id": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "POST /v1/brains": {
+      "status": 201,
+      "reply": {
+        "type": "object",
+        "required": ["brain"],
+        "properties": {
+          "brain": {
+            "type": "object",
+            "required": ["id", "slug", "name", "purpose", "pendingCuratorEmail"],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "pendingCuratorEmail": {
+                "type": ["string", "null"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "POST /v1/brains/{slug}/invitations": {
+      "status": 201,
+      "reply": {
+        "type": "object",
+        "required": ["invited"],
+        "properties": {
+          "invited": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["email", "status"],
+              "properties": {
+                "email": {
+                  "type": "string"
+                },
+                "status": {
+                  "enum": ["added", "invited", "already"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "POST /v1/access": {
+      "status": 200,
+      "reply": {
+        "type": "object",
+        "required": ["person", "brains"],
+        "properties": {
+          "person": {
+            "type": "object",
+            "required": ["found"],
+            "properties": {
+              "found": {
+                "type": "boolean"
+              }
+            }
+          },
+          "brains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["slug", "serviceRole", "personRole"],
+              "properties": {
+                "slug": {
+                  "type": "string"
+                },
+                "serviceRole": {
+                  "enum": ["reader", "contributor", "curator"]
+                },
+                "personRole": {
+                  "enum": ["reader", "contributor", "curator", null]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /v1/brains/{slug}/members": {
+      "status": 200,
+      "reply": {
+        "type": "object",
+        "required": ["members"],
+        "properties": {
+          "members": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "role"],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": ["string", "null"]
+                },
+                "role": {
+                  "enum": ["reader", "contributor", "curator"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "POST /v1/keys/short": {
+      "status": 201,
+      "reply": {
+        "type": "object",
+        "required": ["key"],
+        "properties": {
+          "key": {
+            "type": "object",
+            "required": ["id", "secret", "expiresAt"],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "secret": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "DELETE /v1/keys/{id}": {
+      "status": 200,
+      "reply": {
+        "type": "object",
+        "required": ["revoked"],
+        "properties": {
+          "revoked": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /v1/brains/{slug}/sessions": {
+      "status": 201,
+      "reply": {
+        "type": "object",
+        "required": ["session"],
+        "properties": {
+          "session": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "POST /v1/sessions/{id}/end": {
+      "status": 200,
+      "reply": {
+        "type": "object",
+        "required": ["session"],
+        "properties": {
+          "session": {
+            "type": "object",
+            "required": ["id", "status"],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /v1/brains/{slug}/context": {
+      "status": 200,
+      "reply": {
+        "type": "object",
+        "required": ["text", "chars", "included", "omitted"],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "chars": {
+            "type": "integer"
+          },
+          "included": {
+            "type": "object"
+          },
+          "omitted": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "GET /v1/brains/{slug}/entries": {
+      "status": 200,
+      "reply": {
+        "type": "object",
+        "required": ["items", "next"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "type", "content", "state", "ref", "createdAt"],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": ["string", "null"]
+                },
+                "createdAt": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "next": {
+            "type": ["string", "null"]
+          }
+        }
+      }
+    },
+    "POST /v1/brains/{slug}/entries": {
+      "status": 201,
+      "reply": {
+        "type": "object",
+        "required": ["receipt"],
+        "properties": {
+          "receipt": {
+            "type": "object",
+            "required": ["entryId", "deduplicated"],
+            "properties": {
+              "entryId": {
+                "type": "string"
+              },
+              "deduplicated": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "POST /v1/brains/{slug}/corrections/relay": {
+      "status": 201,
+      "reply": {
+        "type": "object",
+        "required": ["receipt"],
+        "properties": {
+          "receipt": {
+            "type": "object",
+            "required": ["entryId", "deduplicated"],
+            "properties": {
+              "entryId": {
+                "type": "string"
+              },
+              "deduplicated": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /v1/brains/{slug}/proposals": {
+      "status": 200,
+      "reply": {
+        "type": "object",
+        "required": ["items", "next", "total"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "title", "opCount", "createdAt", "status"],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "opCount": {
+                  "type": "integer"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "next": {
+            "type": ["string", "null"]
+          },
+          "total": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  }
+}

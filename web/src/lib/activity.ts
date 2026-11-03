@@ -138,13 +138,15 @@ export function clientsOf(events: readonly LiveEvent[]): string[] {
 // (rsc-factory src/core/engine.ts), a word of its own (not part of a longer one, nor joined by a hyphen).
 export const RUN_ID = /(?:^|[^A-Za-z0-9_-])(r_[0-9a-f]{8})(?![A-Za-z0-9_-])/
 
-// `<factoryUrl>/runs/<runId>` for a reference that names a Factory run, with a safe Factory address; null
-// otherwise (the reference is shown as text).
+// `<factoryUrl>/runs/<runId>` for a reference that names a Factory run, written by a service account (an
+// event's key.service, a session's viaService), with a safe Factory address; null otherwise (the reference is
+// shown as text). A person may type a run-like id into a reference of their own: that is not a run.
 export function factoryRunHref(
   factoryUrl: string | null | undefined,
   ref: string | null | undefined,
+  byService: boolean | undefined,
 ): string | null {
-  if (!factoryUrl || !ref || !SAFE_URL.test(factoryUrl)) return null
+  if (byService !== true || !factoryUrl || !ref || !SAFE_URL.test(factoryUrl)) return null
   const run = RUN_ID.exec(ref)?.[1]
   if (!run) return null
   return `${factoryUrl.replace(/\/+$/, '')}/runs/${run}`

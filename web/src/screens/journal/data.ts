@@ -21,6 +21,8 @@ export type SessionView = {
   openedAt: string
   lastActivityAt: string
   closedAt: string | null
+  // Opened by a service account: only then does its reference link to an rsc-factory run.
+  viaService: boolean
 }
 export type SessionList = {
   items: SessionView[]

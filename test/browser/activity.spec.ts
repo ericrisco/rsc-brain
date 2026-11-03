@@ -133,6 +133,56 @@ test('active sessions: client and reference; a Factory run links only with a Fac
   await expect(other.getByRole('link', { name: /repo web/ })).toHaveCount(0)
 })
 
+// F1 (plan rsc-factory-brain §3.1, closes B6): a reference links to its rsc-factory run only when a service's
+// key wrote it. A person can type "r_…" into a reference of their own: that stays text.
+test("a run-like reference of a person's key is text; the same from a service links", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  const s = await scenario(
+    context,
+    baseURL as string,
+    'signed-in',
+    {},
+    { factoryUrl: 'https://factory.example.test' },
+  )
+  await page.goto(A)
+  await expect(page.locator('.live-state')).toHaveText('Live')
+  await s.emit('growth', 'entry.saved', {
+    ref: 'run r_0e0e0e0e',
+    service: false,
+    target: { id: 'p', label: 'Typed by a person' },
+  })
+  await s.emit('growth', 'entry.saved', {
+    sessionRef: 'run r_0d0d0d0d',
+    service: false,
+    target: { id: 'q', label: 'In a session a person named' },
+  })
+  await s.emit('growth', 'entry.saved', {
+    ref: 'run r_0c0c0c0c',
+    service: true,
+    target: { id: 'r', label: 'Written by a run' },
+  })
+  await expect(feed(page)).toHaveCount(3)
+  const person = feed(page).filter({ hasText: 'Typed by a person' })
+  await expect(person).toContainText('run r_0e0e0e0e')
+  await expect(person.getByRole('link', { name: /r_0e0e0e0e/ })).toHaveCount(0)
+  const named = feed(page).filter({ hasText: 'In a session a person named' })
+  await expect(named).toContainText('run r_0d0d0d0d')
+  await expect(named.getByRole('link', { name: /r_0d0d0d0d/ })).toHaveCount(0)
+  const run = feed(page).filter({ hasText: 'Written by a run' })
+  await expect(run.getByRole('link', { name: /run r_0c0c0c0c/ })).toHaveAttribute(
+    'href',
+    'https://factory.example.test/runs/r_0c0c0c0c',
+  )
+  // A session a person opened with a run-like reference: text, in the list of sessions too.
+  const quiet = page.getByRole('region', { name: 'Quiet sessions' })
+  const typed = quiet.getByRole('listitem').filter({ hasText: 'Fix the onboarding emails' })
+  await expect(typed).toContainText('run r_0b0b0b0b')
+  await expect(typed.getByRole('link', { name: /r_0b0b0b0b/ })).toHaveCount(0)
+})
+
 test('without a Factory address, a run reference is text', async ({ page, context, baseURL }) => {
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto(A)

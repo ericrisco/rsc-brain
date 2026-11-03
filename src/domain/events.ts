@@ -74,6 +74,9 @@ export type EventRow = {
   kind: string
   accountId: string | null
   accountName: string | null
+  // A service account did it (with its main key or a short key): only then is a reference one of its own,
+  // such as an rsc-factory run (plan rsc-factory-brain §3.1).
+  service: boolean
   credentialId: string | null
   ref: string | null
   targetId: string | null
@@ -118,7 +121,7 @@ export function labelFor(
 // title), the summary entry's. The session reference: of the session it opened or closed, or of the session
 // an entry was written in, for the writing itself; a later change by someone else (entry.changed) happened
 // outside that session and carries none.
-const SELECT = `SELECT e.*, b.slug, a.name AS account_name, coalesce(en.state, sm.state) AS target_state,
+const SELECT = `SELECT e.*, b.slug, a.name AS account_name, a.kind AS account_kind, coalesce(en.state, sm.state) AS target_state,
                        se.ref AS session_ref, sm.id AS summary_entry_id, cr.on_behalf_id, ob.name AS on_behalf_name
                   FROM events e JOIN brains b ON b.id = e.brain_id LEFT JOIN accounts a ON a.id = e.account_id
                   LEFT JOIN entries en ON en.id = e.target_id
@@ -139,6 +142,7 @@ const rowOf = (r: Row): EventRow => ({
   kind: String(r.kind),
   accountId: r.account_id == null ? null : String(r.account_id),
   accountName: r.account_name == null ? null : String(r.account_name),
+  service: r.account_kind === 'service',
   credentialId: r.credential_id == null ? null : String(r.credential_id),
   ref: r.ref == null ? null : String(r.ref),
   targetId: r.target_id == null ? null : String(r.target_id),

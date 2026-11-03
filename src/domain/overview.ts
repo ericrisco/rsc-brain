@@ -114,9 +114,12 @@ export async function whoAmI(ctx: Ctx) {
         )
       : null
   // Inviting is a person's act in the web (domain/invitations.ts): the administration always; a curator
-  // when the installation allows it.
+  // when the installation allows it. A service account the administration lets invite does it with its main
+  // key, into the brains it created (domain/service-invite.ts).
   const person = w.kind === 'person' && w.credential.kind === 'web'
-  const canInvite = person && (w.isAdmin || (inst.curatorsInvite && Boolean(facts?.curates)))
+  const service = w.kind === 'service' && w.credential.kind === 'main'
+  const canInvite =
+    (person && (w.isAdmin || (inst.curatorsInvite && Boolean(facts?.curates)))) || (service && w.canInvite)
   return {
     account: {
       id: w.accountId,

@@ -360,6 +360,8 @@ function brain(
     role,
     stats: { ...ZERO, ...stats },
     notifyProposals: false,
+    // Whether the account asking created it: the scenario's brains were made by the setup, not by its people.
+    createdByYou: false,
   }
 }
 
@@ -996,11 +998,11 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         return err(409, 'brain_exists', `A brain named "${slug}" already exists.`, 'Choose another name.')
       const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : slug
       const purpose = typeof body.purpose === 'string' ? body.purpose.trim() : ''
-      const made = brain(slug, name, purpose, 'curator')
+      const made = { ...brain(slug, name, purpose, 'curator'), createdByYou: true }
       s.brains.push(made)
       s.life.set(slug, { entries: 0, agent: false })
       if (who.alone) who.joined = true
-      const { role: _role, stats: _stats, notifyProposals: _n, ...plain } = made
+      const { role: _role, stats: _stats, notifyProposals: _n, createdByYou: _c, ...plain } = made
       return { status: 201, body: { brain: plain } }
     },
   },
@@ -2945,7 +2947,7 @@ function archiving(c: Ctx, archived: boolean): Answer {
     )
   const row = c.s.brains.find((x) => x.slug === b.slug) as Brain
   row.status = archived ? 'archived' : 'active'
-  const { role: _r, stats: _s, notifyProposals: _n, ...brain } = row
+  const { role: _r, stats: _s, notifyProposals: _n, createdByYou: _c, ...brain } = row
   return { status: 200, body: { brain } }
 }
 
@@ -3145,6 +3147,8 @@ export type EmitOptions = {
   client?: string | null
   ref?: string | null
   query?: string | null
+  // A service account's key did it; by default when it has a reference (only short keys have one).
+  service?: boolean
 }
 
 function emit(s: Scen, slug: string, kind: string, o: EmitOptions = {}): void {
@@ -3183,7 +3187,7 @@ function emit(s: Scen, slug: string, kind: string, o: EmitOptions = {}): void {
     brain: slug,
     kind,
     who,
-    key: { id: o.ref ? 'crd_short' : 'crd_agent', ref: o.ref ?? null },
+    key: { id: o.ref ? 'crd_short' : 'crd_agent', ref: o.ref ?? null, service: o.service ?? o.ref != null },
     target:
       kind === 'search' ? null : (o.target ?? { id: 'ent_fixture', label: 'First thing the agent learnt' }),
     query: kind === 'search' ? (o.query ?? 'retention') : null,
@@ -3307,6 +3311,7 @@ export async function startFixture(
         if (b.client !== undefined) o.client = b.client as string | null
         if (b.ref !== undefined) o.ref = b.ref as string | null
         if (b.query !== undefined) o.query = b.query as string | null
+        if (b.service !== undefined) o.service = b.service === true
         if (b.sessionRef !== undefined) o.sessionRef = b.sessionRef as string | null
         if (b.summaryEntryId !== undefined) o.summaryEntryId = b.summaryEntryId as string | null
         if (b.onBehalf !== undefined) o.onBehalf = b.onBehalf as { id: string; name: string } | null
