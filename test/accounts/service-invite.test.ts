@@ -556,6 +556,13 @@ describe('a service invites people to the brains it created', { skip: skipPg }, 
       [mallory.id],
     )
     assert.equal(told.length, 1, 'the previous inviter is told once')
+    // The first request's link opens nothing: the person is told to use the latest working link, which also
+    // covers the brain that request was for (and only that one is named).
+    const hint = w.mails.filter((m) => m.to === email && /most recent/.test(m.subject))
+    assert.equal(hint.length, 1, 'one short follow-up')
+    assert.match(String(hint[0]?.text), /most recent working link/)
+    assert.match(String(hint[0]?.text), /^- made$/m)
+    assert.doesNotMatch(String(hint[0]?.text), /other-made|twice-src/)
   })
 
   it('CA6b: an open invitation of this service to the brain as reader is raised to curator, its link kept', async () => {

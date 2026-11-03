@@ -45,6 +45,15 @@ async function brainNames(db: Db, grants: Grant[]): Promise<Map<string, { slug: 
   return new Map(rows.map((r) => [String(r.id), { slug: String(r.slug), name: String(r.name) }]))
 }
 
+// "- <name>" for each of these brains that still exists.
+async function brainLines(db: Db, grants: Grant[]): Promise<string[]> {
+  const names = await brainNames(db, grants)
+  return grants.flatMap((g) => {
+    const b = names.get(g.brainId)
+    return b ? [`- ${b.name}`] : []
+  })
+}
+
 async function mailInvitation(
   db: Db,
   clock: Clock,
@@ -225,10 +234,15 @@ export async function sendInvitation(
   return { link, ...(await mailInvitation(db, clock, outbox, { ...o, link })) }
 }
 
-// A service takes over someone else's open invitation (F1-PR2 review, second pass): the new link is mailed
-// first, and only once the mail was accepted is the invitation changed, if it is still the one that was read
-// (same link, still open). Then the old link stops working; the takeover is audited with the previous inviter,
-// who is told in the app. Without a sent mail nothing changes: false, and the caller refuses that person.
+// A service takes over someone else's open invitation (F1-PR2 review): the new link is mailed first, and only once
+// the mail was accepted is the invitation changed, under the email's turn, if it is still open:
+// - same link as when it was read: taken over. Its grants are read again and this service's merged on top (raise
+//   only); the old link stops working; audited with the previous inviter, who is told in the app (no brain named);
+// - another link, but now this service's (another of its requests took it over first): this request's grants merge
+//   into it, its link kept; the person is told to use the most recent working link, which covers them too;
+// - otherwise (closed, or someone else's): nothing changes; the person is told the link just mailed is void, and
+//   the caller refuses that person. Without a sent mail nothing changes either.
+// Only the service invite route takes over: a brain is never made on a takeover (fourth pass).
 export async function takeOver(
   ctx: Ctx,
   brainId: string | null,
@@ -264,7 +278,7 @@ export async function takeOver(
     if (!now) return false
     if (now.token_hash !== t.expectHash) {
       // Another request of this same service took it over first (fourth pass): it is ours now, so ours merge in as
-      // the own path does, its link kept. Not a lost race: no refusal, no follow-up mail.
+      // the own path does, its link kept. Not a lost race: no refusal; the person is pointed at the newest link.
       if (now.invited_by !== ctx.who.accountId) return false
       await db.query('UPDATE invitations SET grants = $2 WHERE id = $1', [
         t.id,
@@ -289,11 +303,7 @@ export async function takeOver(
   if (!done) {
     // The link just mailed opens nothing: the person is told so, best effort (the send never throws), naming
     // only the brains this service was inviting them to, never the other invitation's.
-    const names = await brainNames(ctx.db, t.add)
-    const lines = t.add.flatMap((g) => {
-      const b = names.get(g.brainId)
-      return b ? [`- ${b.name}`] : []
-    })
+    const lines = await brainLines(ctx.db, t.add)
     await send(ctx.db, ctx.clock, ctx.mail, 'invitation', {
       to: t.email,
       subject: 'The rsc-brain invitation you just received is no longer valid',
@@ -306,8 +316,20 @@ export async function takeOver(
     })
     return failed('the invitation changed meanwhile')
   }
-  // The request that took it over told the previous inviter; one that merged into it says nothing more.
-  if (done === 'merged') return true
+  // The request that took it over told the previous inviter. One that merged into it tells the person only that
+  // its own link is void and the most recent one covers its brains too (the other link's token is not kept).
+  if (done === 'merged') {
+    await send(ctx.db, ctx.clock, ctx.mail, 'invitation', {
+      to: t.email,
+      subject: 'Use the most recent rsc-brain invitation link',
+      text: [
+        'The link in one of the rsc-brain invitations you just received does not work.',
+        'Use the most recent working link from rsc-brain; it also covers:',
+        ...(await brainLines(ctx.db, t.add)),
+      ].join('\n'),
+    })
+    return true
+  }
   const before = await ctx.db.one<{ kind: string }>('SELECT kind FROM accounts WHERE id = $1', [t.previousBy])
   if (before?.kind === 'person') {
     // No brain named: the previous inviter may not be in the brain the service invites to.
