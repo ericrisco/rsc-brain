@@ -10,6 +10,130 @@ Agents write down what they do in a **journal**. People approve what becomes the
 
 MIT. See [LICENSE](LICENSE).
 
+## Install
+
+rsc-brain runs in containers, on macOS or Linux. You need Docker with Compose v2 and git. One
+command installs it; it checks what it needs first and changes nothing when something is missing.
+
+Download the launcher from a published release (replace `vX.Y.Z` with the version), and check it
+against the SHA-256 the release notes give for `rsc-brain.sh` before you run it:
+
+```sh
+curl -fsSLO https://github.com/ericrisco/rsc-brain/releases/download/vX.Y.Z/rsc-brain.sh
+shasum -a 256 rsc-brain.sh      # Linux: sha256sum rsc-brain.sh; it must match the release notes
+sh rsc-brain.sh install --local
+```
+
+While the repository is private, installing needs access to it: pass `--repo` with an address git
+can read with your access (an SSH address, or HTTPS with git's credential helper; never a token in the
+address), or `--image` with an image you already have.
+
+It fetches the latest published version, builds its image, starts it with its own PostgreSQL and
+tells you the address. It only writes in its own folder: an empty folder, or one that holds only
+your `compose.override.yaml`; it refuses any other (a clone of this repository, say). Open it to finish the first-time setup, where you make the administration
+account. `sh rsc-brain.sh help` lists every command and option.
+
+### On this machine
+
+`install --local` publishes the web on `http://localhost:8090`, on this machine only (`127.0.0.1`).
+`--port N` picks another port; when the port is taken, the installer offers the next free one (or,
+with `--yes`, stops and says which to pass). The installation lives in `~/rsc-brain` (`--dir` moves
+it): its settings in `.env`, the copies in `backups/`.
+
+### On a server with a domain
+
+```sh
+sh rsc-brain.sh install --domain brain.example.com
+```
+
+Point the domain at the server first. Caddy runs in front of rsc-brain on ports 80 and 443 and gets
+the HTTPS certificate by itself (Let's Encrypt), and renews it; there is no certificate step. The
+installation lives in `/opt/rsc-brain`. rsc-brain believes the forwarded headers only from Caddy's
+fixed address in the installation's own network.
+
+### An existing PostgreSQL
+
+PostgreSQL 17 or newer, with the `unaccent` extension (it comes with PostgreSQL). Give the installer
+either a database that is for rsc-brain alone, or an administration login it uses once to make one
+(a role that is no superuser and a database only that role may connect to). Each goes in a file, or
+on the standard input with `-`; never on the command line.
+
+```sh
+sh rsc-brain.sh install --local --db existing --db-url-file db-url.txt         # a database for rsc-brain
+sh rsc-brain.sh install --local --db existing --db-admin-url-file admin-url.txt # let it make one
+```
+
+Inside the container, `localhost` is the container itself: a PostgreSQL on this machine is
+`host.docker.internal`. The installer refuses a PostgreSQL that is too old or lacks `unaccent`,
+before it makes anything.
+
+### Sharing PostgreSQL with rsc-factory
+
+```sh
+sh rsc-brain.sh install --local --db shared --db-admin-url-file admin-url.txt --factory-db rsc_factory
+```
+
+rsc-brain gets its own database and role on the same server. Neither program can connect to the
+other's database. If rsc-factory's login is a superuser, it can still reach everything; the installer
+says so.
+
+### Without questions
+
+With every answer as an option and `--yes`, the installer asks nothing; whatever is missing is an
+error that names the option giving it. With `--json`, standard output holds only a summary for
+programs: `url`, `mode`, `db`, `installationKey`, `keyId`, `version` and `dir`. Exit codes: 0 done,
+2 wrong usage, 3 a requirement is missing (nothing was changed), 4 it failed and put back what was
+there, 1 anything else.
+
+Running `install` again on an installation applies only what you change (the port, the domain) and
+keeps its key, its passwords, its data and its copies.
+
+### The installation key
+
+The installer makes the installation key and keeps it in `.env`, which only its owner can read. It
+opens every copy: without it a copy cannot be restored. Save it in a password manager.
+`sh rsc-brain.sh key show` prints it again (it asks first); the first-time setup and Administration ›
+Backups & system also give it to you.
+
+### Copies
+
+rsc-brain makes an encrypted copy every day at 03:00 and keeps the last 14, in `backups/`.
+
+```sh
+sh rsc-brain.sh backup                    # a copy now
+sh rsc-brain.sh backups                   # the list
+sh rsc-brain.sh restore --file rsc-brain-20261101T030000Z-manual.rscb --confirm "<installation name>"
+```
+
+`--file` takes a name as `backups` prints it (a copy in `backups/`) or the path of a copy from
+elsewhere. Restoring replaces everything with the copy, after a copy of what is there. `--confirm` takes the
+installation's name as the web shows it. To restore on another installation, pass the key of the
+copy's installation in a file with `--key-file`. Afterwards every key, session and connection made
+before stops working: everyone signs in again, and the administration issues new keys for programs.
+
+### Uninstall
+
+```sh
+sh rsc-brain.sh uninstall
+```
+
+This stops rsc-brain and removes its containers. The database, the copies and the key stay: running
+`install` again brings everything back as it was. To delete the data too:
+
+```sh
+sh rsc-brain.sh uninstall --delete-data --confirm rsc-brain
+```
+
+`--confirm` takes the installation's name on this machine (`--name` at install; `rsc-brain` by
+default). With its own PostgreSQL, the database and the copies go. With an existing PostgreSQL, pass
+`--db-admin-url-file` to remove its database and role as well; without it, the uninstaller tells you
+what to remove. The installation key is kept in `installation-key.txt` for the copies you downloaded.
+It only removes what it made: its containers, network and volumes, and its own files.
+
+Your own additions to the containers go in `compose.override.yaml` next to `compose.yaml`; the
+launcher keeps and loads it. Change settings by running `install` again, never by editing `.env` or
+`compose.yaml`: the published port and `RSC_BRAIN_PUBLISH` must stay one value.
+
 ## Development
 
 Requirements: Node 25 and, for the full test suite, PostgreSQL 17 or newer.

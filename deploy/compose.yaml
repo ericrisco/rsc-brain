@@ -1,0 +1,84 @@
+# rsc-brain as the launcher (rsc-brain.sh) runs it. Every value comes from .env, which the launcher writes: change a
+# setting by running `rsc-brain.sh install` again with the new option, never by editing this file or .env by hand.
+# Your own additions go in compose.override.yaml next to this file; the launcher keeps it and loads it.
+#
+# Profiles: `bundled` (rsc-brain's own PostgreSQL) and `server` (Caddy in front, with HTTPS for the domain).
+#
+# The port the web is published on and RSC_BRAIN_PUBLISH, which tells the service where it is published, are the same
+# value: with RSC_BRAIN_LOCAL_ONLY=1 the service treats requests from the container's gateway as this machine, which is
+# only true while the port is published on 127.0.0.1 alone.
+
+services:
+  app:
+    image: ${RSC_BRAIN_IMAGE:?run rsc-brain.sh install}
+    restart: unless-stopped
+    # The owner of ./backups on this machine, so the copies can be written there.
+    user: "${RSC_BRAIN_UID:-1000}:${RSC_BRAIN_GID:-1000}"
+    environment:
+      RSC_BRAIN_DATABASE_URL: ${RSC_BRAIN_DATABASE_URL:-}
+      RSC_BRAIN_SECRET: ${RSC_BRAIN_SECRET:?run rsc-brain.sh install}
+      RSC_BRAIN_PUBLISH: ${RSC_BRAIN_PUBLISH:?run rsc-brain.sh install}
+      RSC_BRAIN_LOCAL_ONLY: ${RSC_BRAIN_LOCAL_ONLY:-0}
+      RSC_BRAIN_TRUSTED_PROXIES: ${RSC_BRAIN_TRUSTED_PROXIES:-}
+      RSC_BRAIN_SETUP_URL: ${RSC_BRAIN_SETUP_URL:-}
+      RSC_BRAIN_TIMEZONE: ${RSC_BRAIN_TIMEZONE:-UTC}
+      RSC_BRAIN_BACKUPS: /backups
+    ports:
+      - "${RSC_BRAIN_PUBLISH:?run rsc-brain.sh install}:8090"
+    volumes:
+      - ./backups:/backups
+    # An existing PostgreSQL on this machine is reached as host.docker.internal (also on Linux).
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+
+  postgres:
+    profiles: [bundled]
+    image: postgres:17.11-alpine@sha256:266d3c257594e195b309ae9d1805e54c788f1d7b375f56bf6c367aac6c917e7b
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  caddy:
+    profiles: [server]
+    image: caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    restart: unless-stopped
+    environment:
+      RSC_BRAIN_DOMAIN: ${RSC_BRAIN_DOMAIN:-}
+      RSC_BRAIN_ACME_CA: ${RSC_BRAIN_ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
+    ports:
+      - "${RSC_BRAIN_HTTP_PORT:-80}:80"
+      - "${RSC_BRAIN_HTTPS_PORT:-443}:443"
+      - "${RSC_BRAIN_HTTPS_PORT:-443}:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [app]
+    # A fixed address: the only one whose X-Forwarded-* the service believes (RSC_BRAIN_TRUSTED_PROXIES).
+    networks:
+      default:
+        ipv4_address: ${RSC_BRAIN_PROXY_IP:?run rsc-brain.sh install}
+
+networks:
+  default:
+    ipam:
+      config:
+        # Others get addresses from the upper half; the proxy's fixed one is in the lower half.
+        - subnet: ${RSC_BRAIN_SUBNET:?run rsc-brain.sh install}
+          ip_range: ${RSC_BRAIN_IP_RANGE:?run rsc-brain.sh install}
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

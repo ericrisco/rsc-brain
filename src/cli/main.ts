@@ -68,7 +68,7 @@ Usage:
                                                       RSC_BRAIN_BACKUPS; R is manual (default), pre-update
                                                       (under maintenance) or pre-restore
   rsc-brain backups list [--json]                     the copies, newest first, and whether the last failed
-  rsc-brain restore --file F --confirm NAME [--key-file K] [--keep-keys] [--json]
+  rsc-brain restore --file F --confirm NAME [--key-file K] [--keep-keys] [--check] [--json]
                                                       replace everything with the copy F, after a copy of what
                                                       is there (pre-restore). NAME is this installation's name
                                                       (or the copy's, on a new installation). The key the copy
@@ -76,7 +76,8 @@ Usage:
                                                       (default: RSC_BRAIN_SECRET). Every key, session,
                                                       pending invitation and password link ends, but with
                                                       --keep-keys (only the rollback of an update, with the
-                                                      pre-update copy of this installation)
+                                                      pre-update copy of this installation). --check only checks
+                                                      the name, the key and the version, and changes nothing
   rsc-brain key id [--key-file K]                     the id of a key (K, the standard input or
                                                       RSC_BRAIN_SECRET); never the key
   rsc-brain key reseal --from-file OLD --to-file NEW  seal everything sealed with OLD with NEW (rotating the
@@ -621,7 +622,7 @@ function strictArgs<T>(
 // rollback of an update, which restores the copy it made moments before.
 async function restoreCommand(args: string[]): Promise<number> {
   const USAGE =
-    'Usage: rsc-brain restore --file <copy> --confirm <installation name> [--key-file <file>] [--keep-keys] [--json]'
+    'Usage: rsc-brain restore --file <copy> --confirm <installation name> [--key-file <file>] [--keep-keys] [--check] [--json]'
   const usage = (why: string) => {
     process.stderr.write(`${why} ${USAGE}; ${KEY_RULE}.\n`)
     return 2
@@ -631,12 +632,14 @@ async function restoreCommand(args: string[]): Promise<number> {
     'key-file'?: string
     confirm?: string
     'keep-keys'?: boolean
+    check?: boolean
     json?: boolean
   }>(args, {
     file: { type: 'string' },
     'key-file': { type: 'string' },
     confirm: { type: 'string' },
     'keep-keys': { type: 'boolean' },
+    check: { type: 'boolean' },
     json: { type: 'boolean' },
   })
   if (!values) return usage('Unknown option or argument.')
@@ -654,8 +657,9 @@ async function restoreCommand(args: string[]): Promise<number> {
     return usage((err as Error).message)
   }
   if (!key) return usage('Pass the key the copy was made with in --key-file or on the standard input.')
-  const dir = keepKeys ? undefined : backupsDir()
-  if (!keepKeys && !dir) return 2
+  const check = Boolean(values.check)
+  const dir = keepKeys || check ? undefined : backupsDir()
+  if (!keepKeys && !check && !dir) return 2
   const file = values.file
   return withDb(async (db) => {
     let pre: BackupInfo | null = null
@@ -667,6 +671,7 @@ async function restoreCommand(args: string[]): Promise<number> {
         keepKeys,
         clock: systemClock,
         confirm: values.confirm as string,
+        check,
         ...(dir
           ? {
               async before() {
@@ -686,6 +691,14 @@ async function restoreCommand(args: string[]): Promise<number> {
             }
           : {}),
       })
+      if (check) {
+        if (values.json) out(`${JSON.stringify({ check: true, copyAt: r.copyAt })}\n`)
+        else
+          out(
+            `The copy of ${r.copyAt} (${basename(file)}) can be restored here: the name, the key and the version match. Nothing was changed.\n`,
+          )
+        return 0
+      }
       const kept = pre as BackupInfo | null
       if (values.json) {
         out(

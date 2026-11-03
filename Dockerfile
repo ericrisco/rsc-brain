@@ -19,7 +19,12 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked \
 COPY tsconfig.json tsconfig.build.json ./
 COPY src src
 COPY web web
-RUN npm run build
+COPY migrations migrations
+COPY LICENSE ./
+# Whatever the permissions of the build context (a clone made under a strict umask has files only its owner reads),
+# what the image runs must be readable by the unprivileged user: everything that reaches the final stage from here
+# is made readable by all (and its folders listable).
+RUN npm run build && chmod -R a+rX dist migrations package.json LICENSE
 
 FROM node:25.9.0-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4
 ENV NODE_ENV=production \
@@ -29,8 +34,8 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY --from=deps /app/node_modules node_modules
 COPY --from=build /app/dist dist
-COPY package.json LICENSE ./
-COPY migrations migrations
+COPY --from=build /app/package.json /app/LICENSE ./
+COPY --from=build /app/migrations migrations
 # `rsc-brain <command>` on the PATH; the copies go to /backups (a volume), owned by the user that runs the service.
 RUN chmod 0755 dist/cli/main.js \
  && ln -s /app/dist/cli/main.js /usr/local/bin/rsc-brain \
