@@ -22,6 +22,8 @@ import {
   FIXTURE_KEY,
   FIXTURE_KEY_ID,
   logoAnswer,
+  MAINTENANCE_REFUSAL,
+  underMaintenance,
 } from './admin.ts'
 import { exportZip } from './export.ts'
 import * as G from './graph.ts'
@@ -3489,11 +3491,16 @@ export async function startFixture(
         })
         return res.end()
       }
-      if (url.pathname === '/v1/health')
-        return send(res, { status: 200, body: { ok: true, database: 'ok', maintenance: false } })
-
       const sid = String(req.headers['x-fixture-scenario'] ?? c.fixture_scenario ?? '')
       const s = scenarios.get(sid) ?? fallback
+      // Health says whether an update runs (B7 PR35); while it does, every write is refused as the server does.
+      if (url.pathname === '/v1/health')
+        return send(res, {
+          status: 200,
+          body: { ok: true, database: 'ok', maintenance: underMaintenance(s) },
+        })
+      if (underMaintenance(s) && url.pathname.startsWith('/v1/') && method !== 'GET' && method !== 'HEAD')
+        return send(res, MAINTENANCE_REFUSAL)
       // The live events of a brain (Server-Sent Events), never JSON: answered here, as the server does.
       const live = /^\/v1\/brains\/([^/]+)\/events$/.exec(url.pathname)
       if (live && method === 'GET') {

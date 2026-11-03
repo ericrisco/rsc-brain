@@ -19,6 +19,8 @@ import {
   failureText,
   keyFile,
   keyFileName,
+  lastUpdateOf,
+  lastUpdateText,
   reasonLabel,
   restoreBlocked,
   sizeLabel,
@@ -163,6 +165,7 @@ export function BackupsPart({ freeBytes }: { freeBytes: number | null | undefine
     }
   }
   const failed = bandOf(v)
+  const update = lastUpdateOf(v?.lastUpdate)
   const items = v?.items ?? []
   const shown = all ? items : items.slice(0, FIRST)
   return (
@@ -206,7 +209,23 @@ export function BackupsPart({ freeBytes }: { freeBytes: number | null | undefine
                 <dd>{sizeLabel(freeBytes)}</dd>
               </>
             ) : null}
+            <dt>{A.lastUpdate}</dt>
+            <dd data-state="last-update">
+              {update ? `${localWhen(update.at)}: ${lastUpdateText(update)}` : A.noUpdateYet}
+            </dd>
           </dl>
+          {update && !update.ok ? (
+            <div class="alert warn" role="note" data-state="update-failed">
+              <span class="kind">{A.updateFailedTitle}</span>
+              <span>{lastUpdateText(update)}</span>
+              {update.log ? (
+                <details class="update-log">
+                  <summary>{A.updateLog}</summary>
+                  <pre>{update.log}</pre>
+                </details>
+              ) : null}
+            </div>
+          ) : null}
           <FormAlert error={error} />
           <div class="actions">
             <Button

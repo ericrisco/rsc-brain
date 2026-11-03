@@ -29,7 +29,14 @@ import { createHandler } from '../http/app.ts'
 import { defaultGateway, dockerGateway } from '../http/conn.ts'
 import { providersFromEnv } from '../meaning/providers.ts'
 import { applyStored } from '../meaning/stored.ts'
-import { type BackupInfo, backup, backupJob, copyMemory, readStatus } from '../ops/backup/backup.ts'
+import {
+  type BackupInfo,
+  backup,
+  backupJob,
+  copyMemory,
+  readStatus,
+  recordUpdate,
+} from '../ops/backup/backup.ts'
 import { createCopies } from '../ops/backup/copies.ts'
 import { BACKUP_REASONS, type BackupReason, keyId, strongKey } from '../ops/backup/format.ts'
 import { restore } from '../ops/backup/restore.ts'
@@ -80,8 +87,14 @@ Usage:
                                                       the name, the key and the version, and changes nothing
   rsc-brain key id [--key-file K]                     the id of a key (K, the standard input or
                                                       RSC_BRAIN_SECRET); never the key
-  rsc-brain key reseal --from-file OLD --to-file NEW  seal everything sealed with OLD with NEW (rotating the
-                                                      key; with the service stopped, then set RSC_BRAIN_SECRET)
+  rsc-brain key reseal [--from-file OLD] [--to-file NEW]
+                                                      seal everything sealed with OLD (default RSC_BRAIN_SECRET)
+                                                      with NEW (default the standard input): rotating the key,
+                                                      with the service stopped; then set RSC_BRAIN_SECRET
+  rsc-brain update record --ok|--failed --from V --to V
+                                                      what the launcher says about the update it just made, for
+                                                      the web (Admin > Backups & system); with --failed, the
+                                                      service's last lines on the standard input
   rsc-brain db check [--db-url-file F | --url-stdin] [--json]
                                                       whether a PostgreSQL can hold rsc-brain (17 or newer,
                                                       unaccent) and what the login may do there; the URL comes
@@ -143,6 +156,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === 'backups') return backupsCommand(sub, rest)
   if (cmd === 'restore') return restoreCommand([sub, ...rest].filter((x) => x !== undefined))
   if (cmd === 'key') return keyCommand(sub, rest)
+  if (cmd === 'update') return updateCommand(sub, rest)
   if (cmd === 'db') return dbCommand(sub, [...rest])
   if (cmd === 'import') return importCommand([sub, ...rest].filter((x) => x !== undefined))
   if (cmd === 'bridge') return bridgeCommand([sub, ...rest].filter((x) => x !== undefined))
@@ -644,7 +658,8 @@ async function restoreCommand(args: string[]): Promise<number> {
   })
   if (!values) return usage('Unknown option or argument.')
   if (!values.file) return usage('Pass --file with the copy to restore.')
-  if (values.confirm === undefined)
+  // The rollback of an update names no installation: --keep-keys takes only this installation's own pre-update copy.
+  if (values.confirm === undefined && !values['keep-keys'])
     return usage(
       'Pass --confirm with the name of this installation (on a new installation, the name in the copy).',
     )
@@ -670,7 +685,7 @@ async function restoreCommand(args: string[]): Promise<number> {
         targetSecret: cfg.secret,
         keepKeys,
         clock: systemClock,
-        confirm: values.confirm as string,
+        ...(values.confirm === undefined ? {} : { confirm: values.confirm }),
         check,
         ...(dir
           ? {
@@ -734,9 +749,60 @@ async function restoreCommand(args: string[]): Promise<number> {
   })
 }
 
+// What the launcher's update says at its end (plan §3.9), for Admin › Backups & system: written by the service that
+// answers then (the new release, or the old one after a rollback) into status.json next to the copies.
+const VERSION_TEXT = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,39}$/
+async function updateCommand(which: string | undefined, args: string[]): Promise<number> {
+  const usage = (why: string) => {
+    process.stderr.write(
+      `${why} Usage: rsc-brain update record --ok|--failed --from <version> --to <version>\n`,
+    )
+    return 2
+  }
+  if (which !== 'record') return usage('Say record.')
+  const values = strictArgs<{ ok?: boolean; failed?: boolean; from?: string; to?: string }>(args, {
+    ok: { type: 'boolean' },
+    failed: { type: 'boolean' },
+    from: { type: 'string' },
+    to: { type: 'string' },
+  })
+  if (!values) return usage('Unknown option or argument.')
+  if (Boolean(values.ok) === Boolean(values.failed)) return usage('Pass --ok or --failed.')
+  if (!values.from || !VERSION_TEXT.test(values.from) || !values.to || !VERSION_TEXT.test(values.to))
+    return usage('Pass --from and --to with the two versions (such as 0.2.0).')
+  const dir = backupsDir()
+  if (!dir) return 2
+  let log: string | undefined
+  if (values.failed && !process.stdin.isTTY) {
+    const chunks: Buffer[] = []
+    for await (const c of process.stdin) chunks.push(c as Buffer)
+    log = Buffer.concat(chunks).toString('utf8')
+  }
+  const dbPassword = (() => {
+    try {
+      return decodeURIComponent(new URL(process.env.RSC_BRAIN_DATABASE_URL ?? '').password)
+    } catch {
+      return ''
+    }
+  })()
+  const u = await recordUpdate(
+    dir,
+    { ok: Boolean(values.ok), from: values.from, to: values.to, ...(log === undefined ? {} : { log }) },
+    systemClock(),
+    [process.env.RSC_BRAIN_SECRET ?? '', dbPassword, process.env.POSTGRES_PASSWORD ?? ''],
+  )
+  out(
+    u.ok
+      ? `Recorded: updated from ${u.from} to ${u.to}.\n`
+      : `Recorded: the update from ${u.from} to ${u.to} failed and was rolled back.\n`,
+  )
+  return 0
+}
+
 // The installation key: its id, and sealing everything again with another one (rotation; plan §3.3).
 async function keyCommand(which: string | undefined, args: string[]): Promise<number> {
-  const USAGE = 'Usage: rsc-brain key id [--key-file <file>] | key reseal --from-file <old> --to-file <new>'
+  const USAGE =
+    'Usage: rsc-brain key id [--key-file <file>] | key reseal [--from-file <old>] [--to-file <new>]'
   const usage = (why: string) => {
     process.stderr.write(`${why} ${USAGE}; ${KEY_RULE}.\n`)
     return 2
@@ -760,16 +826,18 @@ async function keyCommand(which: string | undefined, args: string[]): Promise<nu
       'to-file': { type: 'string' },
     })
     if (!values) return usage('Unknown option or argument.')
-    if (!values['from-file'] || !values['to-file'])
-      return usage('Pass --from-file with the key in use and --to-file with the new key.')
-    let from: string
-    let to: string
+    // The key in use: a file, or the service's own (RSC_BRAIN_SECRET); the new one: a file, or the standard input
+    // (how the launcher's `key rotate` passes it).
+    let from: string | undefined
+    let to: string | undefined
     try {
-      from = (await readKeyInput(values['from-file'])) as string
-      to = (await readKeyInput(values['to-file'])) as string
+      from = values['from-file'] ? await readKeyInput(values['from-file']) : process.env.RSC_BRAIN_SECRET
+      to = await readKeyInput(values['to-file'])
     } catch (err) {
       return usage((err as Error).message)
     }
+    if (!from) return usage('Pass --from-file with the key in use, or set RSC_BRAIN_SECRET to it.')
+    if (!to) return usage('Pass --to-file with the new key, or give it on the standard input.')
     if (keyId(from) === keyId(to)) return usage('The two files hold the same key.')
     if (!strongKey(to))
       return usage('The new key is too short: at least 32 characters (openssl rand -base64 48 makes one).')

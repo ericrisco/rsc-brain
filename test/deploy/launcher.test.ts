@@ -1414,7 +1414,7 @@ describe('the launcher: one at a time, and the rest (second pass on PR #35)', ()
     assert.equal(existsSync(join(c.dir, '.rsc-brain', 'lock')), false, 'the lock is let go')
   })
 
-  it('install, uninstall, restore and backup wait their turn; status does not', async () => {
+  it('install, uninstall, restore, backup, update and key rotate wait their turn; status does not', async () => {
     const c = fresh()
     assert.equal(launch(c, await local(c)).code, 0)
     mkdirSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true })
@@ -1426,6 +1426,8 @@ describe('the launcher: one at a time, and the rest (second pass on PR #35)', ()
       ['uninstall'],
       ['restore', '--file', copy, '--confirm', 'x'],
       ['backup'],
+      ['update', '--yes', '--image', 'rsc-brain:test'],
+      ['key', 'rotate', '--yes'],
     ]) {
       const r = launch(c, [...cmd, '--dir', c.dir])
       assert.equal(r.code, 3, `${cmd[0]}: ${r.stderr}`)
@@ -1454,6 +1456,7 @@ describe('the launcher: one at a time, and the rest (second pass on PR #35)', ()
 
   for (const name of [
     'installation-key.txt',
+    'installation-key-id0123456789.txt',
     'rsc-brain.sh',
     '.DS_Store',
     'lost+found',
@@ -1466,7 +1469,7 @@ describe('the launcher: one at a time, and the rest (second pass on PR #35)', ()
       const c = fresh()
       mkdirSync(c.dir)
       if (name === 'lost+found') mkdirSync(join(c.dir, name))
-      else writeFileSync(join(c.dir, name), name === 'installation-key.txt' ? `${'k'.repeat(64)}\n` : 'x')
+      else writeFileSync(join(c.dir, name), name.startsWith('installation-key') ? `${'k'.repeat(64)}\n` : 'x')
       const r = launch(c, await local(c))
       assert.equal(r.code, 0, r.stderr)
       // Left in place; the log of an earlier failed install goes once one succeeds.

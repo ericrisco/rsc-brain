@@ -306,6 +306,14 @@ kbd,
   font-weight: 600;
 }
 
+.update-log pre {
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
 .body {
   display: grid;
   grid-template-columns: var(--sidebar) minmax(0, 1fr);

@@ -185,6 +185,30 @@ async function writeStatus(
   }
 }
 
+// What the launcher says about the last update (plan §3.9): written into status.json, everything else there kept.
+// The log of a failed one is the service's last lines: never the installation key or a database password, and only
+// its end (what says why), at most LAST_UPDATE_LOG_MAX characters.
+export type LastUpdate = { ok: boolean; from: string; to: string; at: string; log?: string }
+export const LAST_UPDATE_LOG_MAX = 4000
+export async function recordUpdate(
+  dir: string,
+  u: { ok: boolean; from: string; to: string; log?: string },
+  now: Date,
+  secrets: string[] = [],
+): Promise<LastUpdate> {
+  const lastUpdate: LastUpdate = { ok: u.ok, from: u.from, to: u.to, at: now.toISOString() }
+  if (u.log !== undefined) {
+    let log = u.log
+    for (const s of secrets) if (s) log = log.split(s).join('[redacted]')
+    // Any password in a connection URL, whoever's it is.
+    log = log.replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^:/@\s]*:)[^@\s]*@/gi, '$1[redacted]@').trimEnd()
+    if (log.length > LAST_UPDATE_LOG_MAX) log = `…${log.slice(log.length - LAST_UPDATE_LOG_MAX + 1)}`
+    lastUpdate.log = log
+  }
+  await writeStatus(dir, { lastUpdate }, now)
+  return lastUpdate
+}
+
 const categories = new WeakMap<object, FailureCategory>()
 
 export function failureCategory(err: unknown): FailureCategory {

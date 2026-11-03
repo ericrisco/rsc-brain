@@ -218,15 +218,26 @@ test('the audit: the download holds exactly the lines of the filtered view, ever
   await admin.goto('/admin/audit')
   await admin.getByLabel('Action').fill('settings.update')
   await admin.getByLabel('Who').selectOption({ label: 'Eric' })
-  await admin.getByRole('button', { name: 'Apply filters' }).click()
   const rows = admin.getByRole('table', { name: 'Audit lines' }).locator('tbody tr')
+  // The view before the filters is a page of 100 too: the loop starts only once the filtered page is on screen (its
+  // first line), never on the old view (B7 debt, fixed in PR35: the loop once paged the old view and stopped at 100).
+  const audit = (r: { url(): string }, more: boolean) =>
+    r.url().includes('/v1/admin/audit?') &&
+    r.url().includes('action=settings.update') &&
+    r.url().includes('before=') === more
+  const [filtered] = await Promise.all([
+    admin.waitForResponse((r) => audit(r, false)),
+    admin.getByRole('button', { name: 'Apply filters' }).click(),
+  ])
+  const first = ((await filtered.json()) as { items: Array<{ id: string }> }).items[0]?.id
+  await expect(rows.first()).toHaveAttribute('id', `audit-${first}`)
   await expect(rows).toHaveCount(100)
   const more = admin.getByRole('button', { name: 'Show 100 more' })
   // More than a page: the button is there before the loop asks.
   await expect(more).toBeVisible()
   while (await more.isVisible()) {
     const before = await rows.count()
-    await more.click()
+    await Promise.all([admin.waitForResponse((r) => audit(r, true)), more.click()])
     await expect.poll(() => rows.count()).toBeGreaterThan(before)
   }
   const onScreen = await rows.evaluateAll((trs) => trs.map((tr) => tr.id.replace(/^audit-/, '')))

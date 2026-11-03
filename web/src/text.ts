@@ -45,6 +45,8 @@ export const T = {
     allBrains: '← All brains',
     offline:
       'You are offline. What you see may be out of date; changes are off until the connection is back.',
+    maintenance:
+      'rsc-brain is being updated or restored. Reading works; anything you save is refused until it ends, usually in a few minutes.',
   },
 
   // The kind of an alert or a state, as a word in sentence case.
@@ -54,6 +56,7 @@ export const T = {
     done: 'Done',
     error: 'Error',
     offline: 'Offline',
+    maintenance: 'Maintenance',
     noAccess: 'No access',
     notSafe: 'Not safe',
     noLink: 'Link not valid',
@@ -1196,6 +1199,9 @@ export const T = {
     releaseHow:
       'Update on the machine: rsc-brain.sh update (it makes a copy first and rolls back if anything fails).',
     lastUpdate: 'Last update',
+    noUpdateYet: 'None yet: rsc-brain.sh update records each one here.',
+    updateFailedTitle: 'Update failed',
+    updateLog: 'What the service said',
     databaseSize: 'Database size',
     maintenanceState: 'Maintenance',
     maintenanceOn: (until: string, reason: string) => `On (${reason}) until ${until}: writes are refused.`,

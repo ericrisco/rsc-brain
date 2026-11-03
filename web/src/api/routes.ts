@@ -5,6 +5,8 @@ export type Op = { route: string; public?: true }
 
 export const ROUTE_TABLE = {
   branding: { route: 'GET /v1/branding', public: true },
+  // Whether the server is under maintenance (the band of every page).
+  health: { route: 'GET /v1/health', public: true },
   setupState: { route: 'GET /v1/setup', public: true },
   setup: { route: 'POST /v1/setup', public: true },
   login: { route: 'POST /v1/auth/login', public: true },

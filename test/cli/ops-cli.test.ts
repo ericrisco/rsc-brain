@@ -13,6 +13,7 @@ import type { Db } from '../../src/db/db.ts'
 import { migrate } from '../../src/db/migrate.ts'
 import { createAccount } from '../../src/domain/accounts.ts'
 import { mintPersonToken } from '../../src/domain/keys.ts'
+import { maintenance } from '../../src/domain/maintenance.ts'
 import { backup } from '../../src/ops/backup/backup.ts'
 import { keyId } from '../../src/ops/backup/format.ts'
 import { freshDatabase, skipPg, type TestDb } from '../helpers/pg.ts'
@@ -21,8 +22,9 @@ const CLI = new URL('../../src/cli/main.ts', import.meta.url).pathname
 const SOURCE_KEY = 'source-installation-key-of-more-than-32-chars'
 const TARGET_KEY = 'target-installation-key-of-more-than-32-chars'
 const NEW_KEY = 'a-rotated-installation-key-longer-than-32-chars'
+const ROTATED_KEY = 'the-launchers-rotation-key-of-more-than-32-chars'
 const MAIL_PW = 'cli-mail-password-canary-7d21'
-const KEYS = [SOURCE_KEY, TARGET_KEY, NEW_KEY]
+const KEYS = [SOURCE_KEY, TARGET_KEY, NEW_KEY, ROTATED_KEY]
 
 function run(
   args: string[],
@@ -104,6 +106,13 @@ describe('rsc-brain key id and restore options (no database needed)', () => {
     const b = await run(['restore', '--file', 'x.rscb'], env)
     assert.equal(b.code, 2)
     assert.match(b.err, /--confirm/)
+  })
+
+  it('key reseal without --from-file and without RSC_BRAIN_SECRET: exit 2 saying where the key in use comes from', async () => {
+    const r = await run(['key', 'reseal'], { ...env, RSC_BRAIN_SECRET: '' }, `${NEW_KEY}\n`)
+    assert.equal(r.code, 2)
+    assert.match(r.err, /RSC_BRAIN_SECRET/)
+    noKeyIn(r)
   })
 
   it('a key file that cannot be read, or holds no key: exit 2', async () => {
@@ -302,5 +311,42 @@ describe('rsc-brain restore and key reseal', { skip: skipPg }, () => {
       env,
     )
     assert.equal(same.code, 2)
+  })
+
+  // The launcher's `key rotate` (plan §3.8, T042): the key in use is the service's own (RSC_BRAIN_SECRET), the new
+  // one arrives on the standard input; neither is ever on a command line.
+  it('key reseal for a rotation: the key in use from RSC_BRAIN_SECRET, the new one on the standard input', async () => {
+    const r = await run(['key', 'reseal'], { ...env, RSC_BRAIN_SECRET: NEW_KEY }, `${ROTATED_KEY}\n`)
+    assert.equal(r.code, 0, r.err)
+    noKeyIn(r)
+    assert.match(r.out, new RegExp(`key id ${keyId(NEW_KEY)} to key id ${keyId(ROTATED_KEY)}`))
+    const inst = await target.db.one<{ mail: { password: string } }>('SELECT mail FROM installation')
+    assert.equal(unseal(ROTATED_KEY, String(inst?.mail.password), 'mail.password'), MAIL_PW)
+    const empty = await run(['key', 'reseal'], { ...env, RSC_BRAIN_SECRET: ROTATED_KEY }, '')
+    assert.equal(empty.code, 2, 'no new key given')
+  })
+
+  // The rollback of an update (plan §3.9): the launcher restores the pre-update copy with --keep-keys and no name to
+  // type (the copy must be this installation's, made before an update, with its key: stricter than the name).
+  it('--keep-keys needs no --confirm: the pre-update copy of this installation comes back, keys kept', async () => {
+    const own = { ...env, RSC_BRAIN_SECRET: ROTATED_KEY }
+    await maintenance.on(target.db, new Date(), { reason: 'update' })
+    const info = await backup.create(target.db, {
+      dir: join(dir, 'pre'),
+      secret: ROTATED_KEY,
+      reason: 'pre-update',
+      clock: () => new Date(),
+      settleMs: 0,
+    })
+    const epoch = await target.db.one<{ e: number }>('SELECT key_epoch AS e FROM installation')
+    const r = await run(['restore', '--file', join(dir, 'pre', info.file), '--keep-keys'], own)
+    assert.equal(r.code, 0, r.err)
+    noKeyIn(r)
+    assert.match(r.out, /Keys, sessions and connections were kept/)
+    assert.deepEqual(await target.db.one('SELECT key_epoch AS e FROM installation'), epoch)
+    // Without --keep-keys the name is still asked.
+    const asked = await run(['restore', '--file', join(dir, 'pre', info.file)], own)
+    assert.equal(asked.code, 2)
+    assert.match(asked.err, /--confirm/)
   })
 })
