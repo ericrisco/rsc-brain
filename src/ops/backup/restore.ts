@@ -58,6 +58,9 @@ export type RestoreOptions = {
   confirm?: string
   // Runs once every check passed, under maintenance, before anything is replaced: the copy of what is there now.
   before?: () => Promise<void>
+  // Only the checks (key, version, the copy itself, the name, --keep-keys): nothing is changed (the launcher asks
+  // before it stops the service).
+  check?: boolean
 }
 
 export type RestoreResult = {
@@ -369,6 +372,14 @@ export async function restore(db: Pool, o: RestoreOptions): Promise<RestoreResul
       )
     )
       throw keepKeysRefused()
+    if (o.check)
+      return {
+        copyAt: h.createdAt,
+        restoredAt: '',
+        epoch: 0,
+        resealed: { resealed: 0, already: 0, notResealed: 0 },
+        ended: { invitations: 0, resets: 0 },
+      }
     // Under maintenance from here (writes refused with a clear answer), put back as it was if anything fails.
     if (now.maintenance) await maintenance.on(db, o.clock(), { reason: 'restore' })
     try {

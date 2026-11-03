@@ -10,7 +10,7 @@
 # there, 1 anything else.
 #
 # For tests: RSC_BRAIN_TTY is the terminal questions are asked on (default /dev/tty); RSC_BRAIN_REPO is where the
-# source is cloned from.
+# source is cloned from; RSC_BRAIN_TEST_STOP_AT=<step> makes a first install kill itself right after that step.
 
 set -u
 umask 077
@@ -55,6 +55,8 @@ Install options:
   --name N                  the installation's name on this machine (default rsc-brain)
   --version vX.Y.Z | --image I
                             build that version from the source (default: the latest), or use an image already built
+  --repo URL                where the source is fetched from (default the public repository); while it is
+                            private, an address git can read with your access (SSH, or git's credential helper)
   --yes                     ask nothing; whatever is missing is an error that names the option giving it
   --json                    print only a JSON summary on standard output; everything else goes to the error stream
 
@@ -153,6 +155,7 @@ while [ $# -gt 0 ]; do
   --name) only install && value "$@" && NAME=$2 && shift ;;
   --version) only install && value "$@" && VERSION=$2 && shift ;;
   --image) only install && value "$@" && IMAGE=$2 && shift ;;
+  --repo) only install && value "$@" && REPO=$2 && shift ;;
   --file) only restore && value "$@" && COPY_FILE=$2 && shift ;;
   --key-file) only restore && value "$@" && KEY_FILE=$2 && shift ;;
   --confirm) only restore uninstall && value "$@" && CONFIRM=$2 && CONFIRM_SET=1 && shift ;;
@@ -246,6 +249,55 @@ need_installation() {
   ENV_FILE=$DIR/.env
   NAME=$(env_get RSC_BRAIN_NAME)
   PROFILES=$(env_get COMPOSE_PROFILES)
+}
+
+# One launcher at a time per folder: <dir>/.rsc-brain/lock, made atomically, names the process and the machine. A lock
+# whose process is gone (on this machine) is taken over; the journal of an interrupted install is then taken back.
+LOCKED=0 LOCK_MADE_DIR=0 LOCK_MADE_STATE=0
+host_name() { uname -n 2>/dev/null; }
+take_lock() {
+  lock=$DIR/$STATE/lock
+  if [ ! -d "$DIR" ]; then
+    mkdir -p "$DIR" 2>/dev/null || missing "Cannot create \"$DIR\". Pass --dir with a folder you may write in (or run as root for /opt)."
+    chmod 700 "$DIR"
+    LOCK_MADE_DIR=1
+  fi
+  [ -d "$DIR/$STATE" ] || { mkdir "$DIR/$STATE" 2>/dev/null && LOCK_MADE_STATE=1; }
+  # From the moment the lock may exist, whatever ends this run lets it go (and what was made only to hold it).
+  trap release_lock EXIT
+  tries=0
+  until mkdir "$lock" 2>/dev/null; do
+    owner=$(cat "$lock/owner" 2>/dev/null)
+    if [ -z "$owner" ]; then
+      # Just made by another launcher, which has not written its name yet.
+      tries=$((tries + 1))
+      [ "$tries" -gt 5 ] && missing "Another rsc-brain launcher is working on \"$DIR\". Wait for it to finish."
+      sleep 1
+      continue
+    fi
+    pid=${owner%% *} who=${owner#* }
+    [ "$who" = "$(host_name)" ] ||
+      missing "Another rsc-brain launcher, on $who, is working on \"$DIR\" (process $pid). Wait for it to finish; if it is not running any more, remove \"$lock\"."
+    kill -0 "$pid" 2>/dev/null &&
+      missing "Another rsc-brain launcher is working on \"$DIR\" (process $pid). Wait for it to finish."
+    say "Taking over from a launcher that stopped (process $pid)."
+    rm -rf "${lock:?}"
+  done
+  printf '%s %s\n' "$$" "$(host_name)" >"$lock/owner"
+  LOCKED=1
+}
+release_lock() {
+  [ "$LOCKED" = 1 ] && rm -rf "${DIR:?}/${STATE:?}/lock"
+  LOCKED=0
+  # What was made only to hold the lock goes if it is still empty.
+  [ "$LOCK_MADE_STATE" = 1 ] && rmdir "$DIR/$STATE" 2>/dev/null
+  [ "$LOCK_MADE_DIR" = 1 ] && rmdir "$DIR" 2>/dev/null
+  return 0
+}
+# A test hook: stop dead right after a step, as a power cut would.
+checkpoint() {
+  [ "${RSC_BRAIN_TEST_STOP_AT:-}" = "$1" ] && kill -KILL $$
+  return 0
 }
 
 # What docker compose would take from this shell instead of the installation's file: the variables compose.yaml
@@ -538,11 +590,16 @@ save_state() {
 
 random_hex() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
 
-# Only these may be in a folder before the first install: the person's own additions, and the log of a failed one.
+# Only these may be in a folder before the first install: the person's own additions, the launcher itself, what an
+# earlier installation left on purpose (the log of a failed one, its saved key), the launcher's own folder, and what
+# file systems and desktops put everywhere.
 foreign_files() {
   for f in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$f" ] || [ -L "$f" ] || continue
-    case ${f##*/} in compose.override.yaml | last-failure.log) ;; *)
+    case ${f##*/} in
+    compose.override.yaml | last-failure.log | installation-key.txt | rsc-brain.sh | .rsc-brain | .DS_Store | lost+found | \
+      ._* | Thumbs.db) ;;
+    *)
       echo "${f##*/}"
       return
       ;;
@@ -657,6 +714,12 @@ install() {
     read_url "$ADMIN_URL_FILE"
     ADMIN_URL=$RU
   fi
+  # One launcher at a time: and what the folder was may have changed while this one asked.
+  take_lock
+  if { [ "$REINSTALL" = 1 ] && ! is_installation "$DIR"; } || { [ "$REINSTALL" = 0 ] && is_installation "$DIR"; } ||
+    { [ "$RESUME" = 0 ] && [ "$REINSTALL" = 0 ] && [ -f "$PENDING" ]; }; then
+    missing "\"$DIR\" changed while this launcher was getting ready. Run it again."
+  fi
   if [ "$RESUME" = 1 ]; then
     ENV_FILE=$PENDING
     if [ "$(env_get RSC_BRAIN_PENDING_PROVISIONED)" = 1 ] && [ "$(env_get RSC_BRAIN_DB)" != bundled ] && [ -z "$ADMIN_URL" ]; then
@@ -673,10 +736,15 @@ install() {
     saved="$NAME|$DB|$DB_NAME|$IMAGE|$PROFILES"
     NAME=$(env_get RSC_BRAIN_NAME) DB=$(env_get RSC_BRAIN_DB) DB_NAME=$(env_get RSC_BRAIN_DB_NAME)
     IMAGE=$(env_get RSC_BRAIN_IMAGE) PROFILES=$(env_get COMPOSE_PROFILES)
-    MADE_FILES=$(env_get RSC_BRAIN_PENDING_MADE) MADE_DIR=$(env_get RSC_BRAIN_PENDING_MADE_DIR)
+    MADE_FILES='' MADE_DIR=0
+    # Its own folder holds this run's lock: it stays, and what the other run made there goes.
+    for f in $(env_get RSC_BRAIN_PENDING_MADE); do [ "$f" = "$STATE" ] || MADE_FILES="$MADE_FILES $f"; done
     MADE_IMAGE=$(env_get RSC_BRAIN_PENDING_MADE_IMAGE) PROVISIONED=$(env_get RSC_BRAIN_PENDING_PROVISIONED)
     STARTED=$(env_get RSC_BRAIN_PENDING_STARTED)
+    adopt_dir=$(env_get RSC_BRAIN_PENDING_MADE_DIR) adopt_state=0
+    case " $(env_get RSC_BRAIN_PENDING_MADE) " in *" $STATE "*) adopt_state=1 ;; esac
     take_back
+    rm -rf "${DIR:?}/${STATE:?}/src" "${PENDING:?}"
     oldifs=$IFS
     IFS='|'
     # shellcheck disable=SC2086
@@ -684,6 +752,9 @@ install() {
     IFS=$oldifs
     NAME=$1 DB=$2 DB_NAME=$3 IMAGE=${4:-} PROFILES=${5:-}
     MADE_FILES='' MADE_DIR=0 MADE_IMAGE=0 PROVISIONED=0 STARTED=0 RESUME=0
+    # What the other run made of the folders is this run's to take back now.
+    [ "$adopt_dir" = 1 ] && LOCK_MADE_DIR=1
+    [ "$adopt_state" = 1 ] && LOCK_MADE_STATE=1
     [ -n "$(foreign_files "$DIR")" ] &&
       usage "\"$DIR\" still holds files that are not an rsc-brain installation. Choose another folder with --dir."
   fi
@@ -733,6 +804,21 @@ install() {
   else
     SITE=http://localhost:$PORT
   fi
+  # The key an installation deleted here kept for its copies: used again (asked, or with --yes), so they stay
+  # restorable; or a new one, and the saved file is left alone.
+  REUSED=''
+  if [ "$REINSTALL" = 0 ] && [ -f "$DIR/installation-key.txt" ]; then
+    saved=$(cat -- "$DIR/installation-key.txt" 2>/dev/null)
+    case $saved in *"$NL"* | *"$CR"* | *"'"* | *' '*) saved='' ;; esac
+    [ ${#saved} -ge 32 ] ||
+      usage "\"$DIR/installation-key.txt\" holds no usable installation key. Move it out of the folder (or choose another with --dir)."
+    if ! can_ask || yes_no "Reuse the installation key saved in \"$DIR/installation-key.txt\"? Copies made with it stay restorable." y; then
+      REUSED=$saved
+      say "Using the installation key saved in \"$DIR/installation-key.txt\"."
+    else
+      say "A new installation key was made; \"$DIR/installation-key.txt\" is left as it was (copies made before need it)."
+    fi
+  fi
   if can_ask; then
     if [ "$REINSTALL" = 1 ]; then q="Apply these settings to rsc-brain in \"$DIR\" ($MODE, $SITE)? Its key and data are kept."; else
       q="Install rsc-brain in \"$DIR\" ($MODE, $SITE, $DB database)?"
@@ -751,7 +837,7 @@ install() {
     DATABASE_URL=$(env_get RSC_BRAIN_DATABASE_URL)
     SUBNET=$(env_get RSC_BRAIN_SUBNET) IP_RANGE=$(env_get RSC_BRAIN_IP_RANGE) PROXY_IP=$(env_get RSC_BRAIN_PROXY_IP)
   else
-    SECRET=$(random_hex 48)
+    SECRET=${REUSED:-$(random_hex 48)}
     PG_PASSWORD=$(random_hex 32)
     DATABASE_URL=$DB_URL
   fi
@@ -763,20 +849,16 @@ install() {
 
   # From here on, a failure or a stop takes back what this run made.
   trap interrupted HUP INT TERM
-  if [ ! -d "$DIR" ]; then
-    mkdir -p "$DIR" || missing "Cannot create \"$DIR\". Pass --dir with a folder you may write in (or run as root for /opt)."
-    MADE_DIR=1
-    chmod 700 "$DIR"
-  fi
-  if [ ! -d "$DIR/$STATE" ]; then
-    mkdir "$DIR/$STATE" || failed 4 "Cannot create \"$DIR/$STATE\"."
-    MADE_FILES="$MADE_FILES $STATE"
-  fi
+  # The folders the lock needed are this run's from now on (a failure takes them back with the rest).
+  [ "$LOCK_MADE_DIR" = 1 ] && MADE_DIR=1
+  [ "$LOCK_MADE_STATE" = 1 ] && MADE_FILES="$MADE_FILES $STATE"
+  [ -d "$DIR/$STATE" ] || failed 4 "Cannot create \"$DIR/$STATE\"."
   if [ "$REINSTALL" = 1 ]; then
     cp -p "$DIR/.env" "$DIR/$STATE/env.previous" || failed 4 "Cannot keep a copy of \"$DIR/.env\"."
   else
     ENV_FILE=$PENDING
     save_state
+    checkpoint state
   fi
   if [ "$BUILD" = 1 ]; then
     docker image inspect "$IMAGE" >/dev/null 2>&1 </dev/null || MADE_IMAGE=1
@@ -798,9 +880,12 @@ install() {
       failed 3 'That PostgreSQL cannot hold rsc-brain (the line above says why).'
   fi
 
+  # Each thing it makes is written in the journal first: a run killed in between leaves nothing unnamed.
   if [ ! -d "$DIR/backups" ]; then
-    mkdir "$DIR/backups" || failed 4 "Cannot create \"$DIR/backups\"."
     MADE_FILES="$MADE_FILES backups"
+    save_state
+    mkdir "$DIR/backups" || failed 4 "Cannot create \"$DIR/backups\"."
+    checkpoint backups
   fi
   # The service writes the copies as the owner of the folder; as root, as the image's unprivileged user.
   [ "$(id -u)" = 0 ] && chown 1000:1000 "$DIR/backups"
@@ -810,8 +895,14 @@ install() {
   [ "$BUILD" = 1 ] && src=$DIR/$STATE/src/deploy
   for f in compose.yaml Caddyfile; do
     if [ -f "$src/$f" ]; then
-      [ -f "$DIR/$f" ] || MADE_FILES="$MADE_FILES $f"
-      cp "$src/$f" "$DIR/$f.new" && chmod 644 "$DIR/$f.new" && mv -f "$DIR/$f.new" "$DIR/$f"
+      if [ ! -f "$DIR/$f" ]; then
+        MADE_FILES="$MADE_FILES $f"
+        save_state
+      fi
+      if ! { cp "$src/$f" "$DIR/$f.new" && chmod 644 "$DIR/$f.new" && mv -f "$DIR/$f.new" "$DIR/$f"; }; then
+        failed 4 "Could not write \"$DIR/$f\"."
+      fi
+      checkpoint "$f"
     elif [ ! -f "$DIR/$f" ]; then
       failed 3 "$f is not next to the launcher. Run it from a copy of the repository (deploy/), or with --version."
     fi
@@ -928,6 +1019,7 @@ need_running() {
 
 backup() {
   need_installation
+  take_lock
   need_docker
   need_running
   set --
@@ -955,6 +1047,7 @@ restore() {
     ask "Restoring replaces everything in rsc-brain with the copy. Type the installation's name to go on: "
     CONFIRM=$ANSWER
   fi
+  take_lock
   need_docker
   base=$(basename -- "$COPY_FILE" | tr -c 'A-Za-z0-9._\n-' '_')
   target=$DIR/backups/$base
@@ -965,6 +1058,21 @@ restore() {
     cp -- "$COPY_FILE" "$target" || exit 1
     brought=1
     [ "$(id -u)" = 0 ] && chown 1000:1000 "$target"
+  fi
+  # The name, the key and the version, checked by rsc-brain itself before anything stops.
+  step "Checking $base"
+  if running; then set -- exec -T app; else set -- run --rm -T --no-deps app; fi
+  if [ -n "$KEY_FILE" ]; then
+    dc "$@" rsc-brain restore --check --file "/backups/$base" --confirm "$CONFIRM" <"$KEY_FILE" >&2
+  else
+    dc "$@" rsc-brain restore --check --file "/backups/$base" --confirm "$CONFIRM" </dev/null >&2
+  fi
+  code=$?
+  if [ "$code" != 0 ]; then
+    [ "$brought" = 1 ] && rm -f "${target:?}"
+    say 'Nothing was changed: rsc-brain kept running.'
+    [ "$code" = 2 ] && exit 2
+    exit 1
   fi
   step 'Stopping rsc-brain'
   dc stop app >&2 </dev/null
@@ -1002,6 +1110,7 @@ key_show() {
 
 uninstall() {
   need_installation
+  take_lock
   if [ "$DELETE_DATA" = 1 ]; then
     if [ "$CONFIRM_SET" = 0 ]; then
       can_ask || usage "Deleting the data needs --confirm $NAME (the installation's name). Nothing was deleted."

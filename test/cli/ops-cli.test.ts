@@ -202,6 +202,30 @@ describe('rsc-brain restore and key reseal', { skip: skipPg }, () => {
     assert.deepEqual(await state(target.db), before)
   })
 
+  it('--check says whether the restore would go ahead (name, key, version), and changes nothing', async () => {
+    const before = await state(target.db)
+    const ok = await run(
+      ['restore', '--check', '--file', copy, '--key-file', keyFile(SOURCE_KEY), '--confirm', 'Target'],
+      env,
+    )
+    assert.equal(ok.code, 0, ok.err)
+    assert.match(ok.out, /can be restored/)
+    const wrongName = await run(
+      ['restore', '--check', '--file', copy, '--key-file', keyFile(SOURCE_KEY), '--confirm', 'Source'],
+      env,
+    )
+    assert.equal(wrongName.code, 2)
+    const wrongKey = await run(
+      ['restore', '--check', '--file', copy, '--key-file', keyFile(NEW_KEY), '--confirm', 'Target'],
+      env,
+    )
+    assert.equal(wrongKey.code, 1)
+    assert.match(wrongKey.err, new RegExp(keyId(SOURCE_KEY)))
+    for (const r of [ok, wrongName, wrongKey]) noKeyIn(r)
+    assert.deepEqual(await state(target.db), before)
+    assert.deepEqual(await readdir(copies).catch(() => []), [], 'no pre-restore copy')
+  })
+
   it('restores with the key from a file: a copy of what was there first, secrets sealed with this key', async () => {
     const r = await run(
       ['restore', '--file', copy, '--key-file', keyFile(SOURCE_KEY), '--confirm', 'Target'],

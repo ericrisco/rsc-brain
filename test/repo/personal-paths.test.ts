@@ -21,7 +21,7 @@ const SHIPPED = [
 ]
 const PERSONAL = /\/Users\/[^/\s'"`]+|\/Volumes\/[^/\s'"`]+|\/home\/(?!node\b)[a-z][^/\s'"`]*|[A-Z]:\\Users\\/
 const REPO =
-  /(github\.com|githubusercontent\.com\/|api\.github\.com\/repos)\/?ericrisco\/rsc-brain|@ericrisco\/rsc-brain/g
+  /(github\.com|githubusercontent\.com\/|api\.github\.com\/repos)[/:]?ericrisco\/rsc-brain|@ericrisco\/rsc-brain/g
 
 export function personalPaths(text: string): string[] {
   const hits: string[] = []

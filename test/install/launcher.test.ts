@@ -610,4 +610,51 @@ describe('the launcher with real containers', { skip: why ?? false }, () => {
       assert.equal(await sql(`SELECT count(*) FROM pg_roles WHERE rolname = '${db}'`), '0')
     })
   })
+
+  describe('two launchers on one folder at once (second pass on PR #35)', () => {
+    const name = `rscb-pr34-test-twice-${ID}`
+    before(() => {
+      projects.push(name)
+    })
+
+    it('the second exits 3 naming the first; the first completes with the key it wrote', async () => {
+      const dir = join(BASE, 'twice')
+      const args = [
+        'install',
+        '--local',
+        '--yes',
+        '--json',
+        '--dir',
+        dir,
+        '--name',
+        name,
+        '--port',
+        String(await freePort()),
+        '--image',
+        IMAGE,
+      ]
+      let second: Promise<Run> | null = null
+      const first = await launch(args, {
+        onStderr: (all) => {
+          if (!second && /Starting PostgreSQL/.test(all)) second = launch(args)
+        },
+      })
+      assert.ok(second, 'the second launcher ran while the first worked')
+      const b = await (second as unknown as Promise<Run>)
+      assert.equal(b.code, 3, b.stderr)
+      assert.match(
+        b.stderr,
+        /Another rsc-brain launcher is working on .* \(process \d+\)\. Wait for it to finish\./,
+      )
+      assert.equal(first.code, 0, first.stderr)
+      const key = JSON.parse(first.stdout).installationKey
+      assert.equal(key, envOf(dir).RSC_BRAIN_SECRET)
+      const branding = (await (await fetch(`${JSON.parse(first.stdout).url}/v1/branding`)).json()) as {
+        setupRequired: boolean
+      }
+      assert.equal(branding.setupRequired, true)
+      const u = await launch(['uninstall', '--delete-data', '--confirm', name, '--dir', dir])
+      assert.equal(u.code, 0, u.stderr)
+    })
+  })
 })

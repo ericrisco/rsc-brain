@@ -63,6 +63,11 @@ case "$args" in
   echo '0.1.0'
   exit 0
   ;;
+*" rsc-brain restore --check "*)
+  take_stdin restore check
+  [ "${FAKE_RESTORE_CHECK_EXIT:-0}" = 2 ] && echo 'The name given to confirm does not match this installation.' >&2
+  exit "${FAKE_RESTORE_CHECK_EXIT:-0}"
+  ;;
 *" rsc-brain restore "*)
   take_stdin restore
   echo 'Restored the copy.'

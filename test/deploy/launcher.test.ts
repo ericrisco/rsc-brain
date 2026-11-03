@@ -55,6 +55,8 @@ const TOOLS = [
   'rmdir',
   'sed',
   'sort',
+  'uname',
+  'kill',
   'sleep',
   'tail',
   'tr',
@@ -110,7 +112,14 @@ const fresh = (): Case => {
   }
 }
 
-type Run = { code: number | null; stdout: string; stderr: string; calls: string[]; piped: string }
+type Run = {
+  code: number | null
+  signal: NodeJS.Signals | null
+  stdout: string
+  stderr: string
+  calls: string[]
+  piped: string
+}
 const launch = (
   c: Case,
   args: string[],
@@ -141,6 +150,7 @@ const launch = (
   assert.notEqual(r.signal, 'SIGTERM', `the launcher hung: ${r.stderr}`)
   return {
     code: r.status,
+    signal: r.signal,
     stdout: r.stdout,
     stderr: r.stderr,
     // This run's calls and input only (a case may run the launcher several times).
@@ -835,12 +845,16 @@ describe('the launcher: building from the source', () => {
         String(await freePort()),
         '--version',
         'v0.1.0',
+        '--repo',
+        'ssh://git@example.com/brain.git',
       ],
       { path: `${gitBin}:${FAKEBIN}:${SYSBIN}`, env: { FAKE_IMAGES: 'other:1' } },
     )
     assert.equal(r.code, 0, r.stderr)
     assert.ok(
-      r.calls.some((l) => /^git clone --depth 1 --branch v0\.1\.0 \S+ /.test(l)),
+      r.calls.some((l) =>
+        /^git clone --depth 1 --branch v0\.1\.0 ssh:\/\/git@example\.com\/brain\.git /.test(l),
+      ),
       r.calls.join('\n'),
     )
     assert.ok(
@@ -924,7 +938,7 @@ describe('the launcher: day to day', () => {
       readFileSync(join(c.dir, 'backups', 'rsc-brain-20261101T030000Z-manual.rscb'), 'utf8'),
       'copy',
     )
-    const i = r.calls.findIndex((l) => / rsc-brain restore /.test(l))
+    const i = r.calls.findIndex((l) => / rsc-brain restore --file /.test(l))
     assert.ok(i > 0)
     assert.match(
       r.calls[i] as string,
@@ -951,7 +965,7 @@ describe('the launcher: day to day', () => {
       env: { FAKE_RESTORE_EXIT: '2' },
     })
     assert.equal(r.code, 2)
-    const i = r.calls.findIndex((l) => / rsc-brain restore /.test(l))
+    const i = r.calls.findIndex((l) => / rsc-brain restore --file /.test(l))
     assert.ok(r.calls.slice(i).some((l) => / up -d/.test(l)))
   })
 
@@ -1337,5 +1351,251 @@ describe('the launcher: restore and ports (review of PR #35)', () => {
     )
     assert.equal(none.code, 0, none.stderr)
     assert.match(none.stderr, /cannot check whether port \d+ is free/)
+  })
+})
+
+// The second pass on PR #35: one launcher at a time per folder, the files a folder may hold, the journal at every
+// step, and a restore checked before the service stops.
+describe('the launcher: one at a time, and the rest (second pass on PR #35)', () => {
+  const host = spawnSync('uname', ['-n'], { encoding: 'utf8' }).stdout.trim()
+  const admin = (c: Case) => {
+    const f = join(c.state, 'admin-url')
+    writeFileSync(f, 'postgres://admin:adm1n-pw@db.internal:5432/postgres\n')
+    return f
+  }
+  const background = (c: Case, args: string[], env: Record<string, string>) => {
+    const p = spawn(join(SYSBIN, 'sh'), [LAUNCHER, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        PATH: `${FAKEBIN}:${SYSBIN}`,
+        HOME: c.home,
+        LANG: 'C',
+        FAKE_LOG: c.log,
+        FAKE_STDIN: c.stdin,
+        FAKE_STATE: c.state,
+        RSC_BRAIN_TTY: c.tty,
+        ...env,
+      },
+    })
+    let stdout = ''
+    let stderr = ''
+    p.stdout.on('data', (d) => {
+      stdout += d
+    })
+    p.stderr.on('data', (d) => {
+      stderr += d
+    })
+    const done = new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) =>
+      p.on('close', (code) => resolve({ code, stdout, stderr })),
+    )
+    return { p, done, stderr: () => stderr }
+  }
+  const until = async (f: () => boolean) => {
+    for (let i = 0; i < 200 && !f(); i++) await new Promise((r) => setTimeout(r, 50))
+    assert.ok(f(), 'timed out')
+  }
+
+  it('a second launcher on the same folder while one works: exit 3 naming its process; the first ends with its own key', async () => {
+    const c = fresh()
+    const args = await local(c, '--json', '--db', 'existing', '--db-admin-url-file', admin(c))
+    const a = background(c, args, { FAKE_PROVISION_SLEEP: '2' })
+    await until(() => existsSync(join(c.state, 'provision-started')))
+    const b = launch(c, args)
+    assert.equal(b.code, 3, b.stderr)
+    assert.match(
+      b.stderr,
+      new RegExp(
+        `Another rsc-brain launcher is working on "${c.dir}" \\(process ${a.p.pid}\\)\\. Wait for it to finish\\.`,
+      ),
+    )
+    const first = await a.done
+    assert.equal(first.code, 0, first.stderr)
+    assert.equal(JSON.parse(first.stdout).installationKey, readEnv(c.dir).RSC_BRAIN_SECRET)
+    assert.equal(existsSync(join(c.dir, '.rsc-brain', 'lock')), false, 'the lock is let go')
+  })
+
+  it('install, uninstall, restore and backup wait their turn; status does not', async () => {
+    const c = fresh()
+    assert.equal(launch(c, await local(c)).code, 0)
+    mkdirSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true })
+    writeFileSync(join(c.dir, '.rsc-brain', 'lock', 'owner'), `${process.pid} ${host}\n`)
+    const copy = join(c.state, 'x.rscb')
+    writeFileSync(copy, 'copy')
+    for (const cmd of [
+      ['install', '--local', '--yes'],
+      ['uninstall'],
+      ['restore', '--file', copy, '--confirm', 'x'],
+      ['backup'],
+    ]) {
+      const r = launch(c, [...cmd, '--dir', c.dir])
+      assert.equal(r.code, 3, `${cmd[0]}: ${r.stderr}`)
+      assert.match(r.stderr, new RegExp(`\\(process ${process.pid}\\)`))
+      assert.equal(
+        r.calls.some((l) => / (up|down|stop|run|exec) /.test(l)),
+        false,
+        cmd[0],
+      )
+    }
+    assert.equal(launch(c, ['status', '--dir', c.dir]).code, 0)
+  })
+
+  it('a lock left by a launcher that died is taken over (and said so)', async () => {
+    const c = fresh()
+    assert.equal(launch(c, await local(c)).code, 0)
+    // A process number nobody has: spawn one that ends, and take its number.
+    const gone = spawnSync('sh', ['-c', 'echo $$'], { encoding: 'utf8' }).stdout.trim()
+    mkdirSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true })
+    writeFileSync(join(c.dir, '.rsc-brain', 'lock', 'owner'), `${gone} ${host}\n`)
+    const r = launch(c, ['backup', '--dir', c.dir])
+    assert.equal(r.code, 0, r.stderr)
+    assert.match(r.stderr, new RegExp(`stopped \\(process ${gone}\\)`))
+    assert.equal(existsSync(join(c.dir, '.rsc-brain', 'lock')), false)
+  })
+
+  for (const name of [
+    'installation-key.txt',
+    'rsc-brain.sh',
+    '.DS_Store',
+    'lost+found',
+    '._compose.override.yaml',
+    'Thumbs.db',
+    'last-failure.log',
+    'compose.override.yaml',
+  ]) {
+    it(`a folder holding only ${name} may take a first install`, async () => {
+      const c = fresh()
+      mkdirSync(c.dir)
+      if (name === 'lost+found') mkdirSync(join(c.dir, name))
+      else writeFileSync(join(c.dir, name), name === 'installation-key.txt' ? `${'k'.repeat(64)}\n` : 'x')
+      const r = launch(c, await local(c))
+      assert.equal(r.code, 0, r.stderr)
+      // Left in place; the log of an earlier failed install goes once one succeeds.
+      assert.equal(existsSync(join(c.dir, name)), name !== 'last-failure.log')
+    })
+  }
+
+  it('uninstall --delete-data then install: the saved key is used again (--yes), so old copies stay restorable; it says which', async () => {
+    const c = fresh()
+    assert.equal(launch(c, await local(c)).code, 0)
+    const key = readEnv(c.dir).RSC_BRAIN_SECRET
+    assert.equal(launch(c, ['uninstall', '--delete-data', '--confirm', 'rsc-brain', '--dir', c.dir]).code, 0)
+    const again = launch(c, await local(c, '--json'))
+    assert.equal(again.code, 0, again.stderr)
+    assert.equal(readEnv(c.dir).RSC_BRAIN_SECRET, key)
+    assert.equal(JSON.parse(again.stdout).installationKey, key)
+    assert.ok(
+      again.stderr.includes(`Using the installation key saved in "${join(c.dir, 'installation-key.txt')}"`),
+      again.stderr,
+    )
+  })
+
+  it('asked, a new key instead of the saved one: says the saved file is left as it was', async () => {
+    const c = fresh()
+    mkdirSync(c.dir)
+    writeFileSync(join(c.dir, 'installation-key.txt'), `${'k'.repeat(64)}\n`)
+    const r = launch(
+      c,
+      ['install', '--local', '--db', 'bundled', '--dir', c.dir, '--port', String(await freePort()), ...IMAGE],
+      {
+        answers: 'n\ny\n',
+      },
+    )
+    assert.equal(r.code, 0, r.stderr)
+    assert.notEqual(readEnv(c.dir).RSC_BRAIN_SECRET, 'k'.repeat(64))
+    assert.match(r.stderr, /Reuse the installation key saved in/)
+    assert.match(r.stderr, /A new installation key was made/)
+    assert.equal(readFileSync(join(c.dir, 'installation-key.txt'), 'utf8'), `${'k'.repeat(64)}\n`)
+  })
+
+  it('a saved key file that holds no usable key is not used: exit 2, nothing changed', async () => {
+    const c = fresh()
+    mkdirSync(c.dir)
+    writeFileSync(join(c.dir, 'installation-key.txt'), "short'\n")
+    const r = launch(c, await local(c))
+    assert.equal(r.code, 2, r.stderr)
+    assert.deepEqual(readdirSync(c.dir), ['installation-key.txt'])
+  })
+
+  for (const at of ['state', 'backups', 'compose.yaml', 'Caddyfile']) {
+    it(`killed right after it makes ${at}: the journal already names it, and the next run takes it back`, async () => {
+      const c = fresh()
+      const args = await local(c)
+      const killed = launch(c, args, { env: { RSC_BRAIN_TEST_STOP_AT: at } })
+      assert.equal(killed.signal, 'SIGKILL', killed.stderr)
+      const pending = readFileSync(join(c.dir, '.rsc-brain', 'install.pending'), 'utf8')
+      const made = /^RSC_BRAIN_PENDING_MADE='(.*)'$/m.exec(pending)?.[1] ?? ''
+      assert.ok(made.split(' ').includes(at === 'state' ? '.rsc-brain' : at), made)
+      const again = launch(c, args)
+      assert.equal(again.code, 0, again.stderr)
+      assert.match(again.stderr, /interrupted/)
+    })
+  }
+
+  it('restore checks the name and the key before it stops anything: a wrong name never stops the service', async () => {
+    const c = fresh()
+    assert.equal(launch(c, await local(c)).code, 0)
+    const copy = join(c.state, 'brought.rscb')
+    writeFileSync(copy, 'copy')
+    const r = launch(c, ['restore', '--dir', c.dir, '--file', copy, '--confirm', 'wrong'], {
+      env: { FAKE_RESTORE_CHECK_EXIT: '2' },
+    })
+    assert.equal(r.code, 2, r.stderr)
+    assert.equal(
+      r.calls.some((l) => / stop /.test(l) || / run --rm .* restore --file/.test(l)),
+      false,
+    )
+    assert.ok(
+      r.calls.some((l) =>
+        / exec -T app rsc-brain restore --check --file \/backups\/brought\.rscb --confirm wrong/.test(l),
+      ),
+    )
+    assert.equal(existsSync(join(c.dir, 'backups', 'brought.rscb')), false)
+    const ok = launch(c, ['restore', '--dir', c.dir, '--file', copy, '--confirm', 'right'])
+    assert.equal(ok.code, 0, ok.stderr)
+    const check = ok.calls.findIndex((l) => / restore --check /.test(l))
+    const stop = ok.calls.findIndex((l) => / stop app/.test(l))
+    assert.ok(check >= 0 && check < stop, 'checked before stopping')
+  })
+})
+
+describe('the launcher: the folder changed while it asked (second pass on PR #35)', () => {
+  it('another launcher completed an install while this one waited on a question: exit 3, the installation untouched', {
+    skip: which('mkfifo') ? false : 'mkfifo is not installed here',
+  }, async () => {
+    const c = fresh()
+    const port = String(await freePort())
+    const tty = join(c.state, 'tty')
+    spawnSync(which('mkfifo') as string, [tty])
+    // B asks its questions on a terminal nobody has answered yet.
+    const b = spawn(join(SYSBIN, 'sh'), [LAUNCHER, 'install', '--dir', c.dir, '--port', port, ...IMAGE], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        PATH: `${FAKEBIN}:${SYSBIN}`,
+        HOME: c.home,
+        LANG: 'C',
+        FAKE_LOG: c.log,
+        FAKE_STDIN: c.stdin,
+        FAKE_STATE: c.state,
+        RSC_BRAIN_TTY: tty,
+      },
+    })
+    let stderr = ''
+    b.stderr.on('data', (d) => {
+      stderr += d
+    })
+    const done = new Promise<number | null>((resolve) => b.on('close', resolve))
+    // Meanwhile A installs into the same folder, start to end.
+    const a = launch(c, ['install', '--local', '--yes', '--dir', c.dir, '--port', port, ...IMAGE])
+    assert.equal(a.code, 0, a.stderr)
+    const before = readFileSync(join(c.dir, '.env'), 'utf8')
+    const { open } = await import('node:fs/promises')
+    const writer = await open(tty, 'w')
+    await new Promise((r) => setTimeout(r, 200))
+    await writer.write('\n1\ny\n')
+    const code = await done
+    await writer.close()
+    assert.equal(code, 3, stderr)
+    assert.match(stderr, /changed while this launcher was getting ready/)
+    assert.equal(readFileSync(join(c.dir, '.env'), 'utf8'), before)
   })
 })

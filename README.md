@@ -24,6 +24,10 @@ shasum -a 256 rsc-brain.sh      # Linux: sha256sum rsc-brain.sh; it must match t
 sh rsc-brain.sh install --local
 ```
 
+While the repository is private, installing needs access to it: pass `--repo` with an address git
+can read with your access (an SSH address, or HTTPS with git's credential helper; never a token in the
+address), or `--image` with an image you already have.
+
 It fetches the latest published version, builds its image, starts it with its own PostgreSQL and
 tells you the address. It only writes in its own folder: an empty folder, or one that holds only
 your `compose.override.yaml`; it refuses any other (a clone of this repository, say). Open it to finish the first-time setup, where you make the administration
