@@ -65,8 +65,11 @@ const TOOLS = [
   'nc',
   'lsof',
   'ss',
+  // A new session for what must not be stopped halfway by a Ctrl-C (without it, a job of its own).
+  'setsid',
   // The fake docker's own (never the launcher's).
   'cksum',
+  'perl',
 ]
 const VERSIONS = 'rsc-brain:test=0.1.0 rsc-brain:next=0.2.0 rsc-brain:broken=0.3.0 rsc-brain:old=0.0.9'
 const PRE = 'rsc-brain-20261103T120000Z-pre-update.rscb'
@@ -87,6 +90,14 @@ before(() => {
     const r = spawnSync('/bin/sh', ['-c', `command -v ${t}`], { encoding: 'utf8' })
     const p = r.stdout.trim()
     if (r.status === 0 && p.startsWith('/')) symlinkSync(p, join(SYSBIN, t))
+  }
+  // Linux has setsid (util-linux, busybox); macOS does not: a stand-in that does what it does.
+  if (!existsSync(join(SYSBIN, 'setsid'))) {
+    writeFileSync(
+      join(SYSBIN, 'setsid'),
+      `#!/bin/sh\nexec perl -MPOSIX -e 'POSIX::setsid() or die "setsid: $!"; exec @ARGV or die' "$@"\n`,
+    )
+    chmodSync(join(SYSBIN, 'setsid'), 0o755)
   }
   copyFileSync(FAKE, join(FAKEBIN, 'docker'))
   chmodSync(join(FAKEBIN, 'docker'), 0o755)
@@ -593,7 +604,7 @@ describe('the launcher: Ctrl-C during an update (review of PR #36)', () => {
     const r = await launchStopped(
       c,
       update(c, '--image', 'rsc-brain:broken'),
-      { FAKE_MIGRATE_FAIL: 'rsc-brain:broken', FAKE_RESTORE_SLEEP: '1' },
+      { FAKE_MIGRATE_FAIL: 'rsc-brain:broken', FAKE_RESTORE_SLEEP: '2' },
       [{ marker: 'restore-started', signal: 'SIGINT' }],
     )
     assert.equal(r.signal, null, `killed by ${r.signal}: ${r.stderr}`)
@@ -889,5 +900,152 @@ describe('the launcher: no secret on a command line (review of PR #36)', () => {
       'only the key changed',
     )
     noSecrets(c, [old.RSC_BRAIN_SECRET as string, now.RSC_BRAIN_SECRET as string])
+  })
+})
+
+describe('the launcher: second review of PR #36', () => {
+  // N1: the error stream and the standard output it started with are kept (4 and 5); one of them closed is no reason
+  // to stop before a word is said (dash stops a script whose `exec` cannot redirect).
+  for (const fd of [1, 2]) {
+    it(`runs with its ${fd === 1 ? 'standard output' : 'error stream'} closed`, () => {
+      const c = fresh()
+      const r = spawnSync(
+        '/bin/sh',
+        ['-c', `exec ${fd}>&-; exec "$0" "$@"`, shell(), LAUNCHER, 'status', '--dir', c.dir],
+        {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          timeout: 30_000,
+          env: environment(c, c.tty),
+        },
+      )
+      assert.equal(r.status, 3, r.stderr)
+      if (fd === 1) assert.match(r.stderr, /No rsc-brain installation in/)
+    })
+  }
+
+  // N2: a Ctrl-C right after the journal is written, before anything was switched.
+  it('a Ctrl-C between the journal and the switch leaves no journal: the next command takes nothing back', async () => {
+    const c = await installed()
+    const before = readFileSync(join(c.dir, '.env'), 'utf8')
+    const r = launch(c, update(c, '--image', 'rsc-brain:next'), {
+      env: { RSC_BRAIN_TEST_STOP_AT: 'update-journal', RSC_BRAIN_TEST_STOP_SIGNAL: 'INT' },
+    })
+    assert.equal(r.code, 1, r.stderr)
+    assert.match(r.stderr, /Interrupted\.[\s\S]*Nothing was changed/)
+    assert.equal(exists(c, 'update.pending'), false, 'no journal left behind')
+    assert.equal(readFileSync(join(c.dir, '.env'), 'utf8'), before)
+    const s = launch(c, ['status', '--dir', c.dir])
+    assert.equal(s.code, 0, s.stderr)
+    assert.equal(at(s.calls, / rsc-brain restore /), -1, 'nothing taken back')
+  })
+
+  // N3: with a rotation left halfway, the key in .env may not be the one the data is sealed with.
+  it('key show refuses while a key rotation is left halfway, and says to finish it with key rotate', async () => {
+    const env = { FAKE_KEY_ID_BY_KEY: '1' }
+    const c = await installed(env)
+    const killed = await launchStopped(
+      c,
+      ['key', 'rotate', '--yes', '--dir', c.dir],
+      { ...env, FAKE_RESEAL_SLEEP: '5' },
+      [{ marker: 'reseal-committed', signal: 'SIGKILL' }],
+    )
+    assert.equal(killed.signal, 'SIGKILL', killed.stderr)
+    const r = launch(c, ['key', 'show', '--yes', '--dir', c.dir], { env })
+    assert.equal(r.code, 1, r.stderr)
+    assert.equal(r.stdout, '', 'no key printed')
+    assert.match(r.stderr, /key rotation .*was interrupted/)
+    assert.match(r.stderr, /key rotate --dir/)
+  })
+
+  // Q2: a rollback whose restore failed leaves a mark every later command shows, until a restore goes well.
+  it('a rollback that could not restore leaves rollback.failed: shown by every command, status fails, a good restore clears it', async () => {
+    const c = await installed()
+    // The copy made before the update (the fake docker writes no file).
+    writeFileSync(join(c.dir, 'backups', PRE), 'a copy')
+    const failed = launch(c, update(c, '--image', 'rsc-brain:broken'), {
+      env: { FAKE_MIGRATE_FAIL: 'rsc-brain:broken', FAKE_RESTORE_EXIT: '1' },
+    })
+    assert.equal(failed.code, 1, failed.stderr)
+    assert.ok(exists(c, 'rollback.failed'), 'the mark is left')
+    const mark = readFileSync(join(c.dir, '.rsc-brain', 'rollback.failed'), 'utf8')
+    assert.ok(mark.includes(PRE), mark)
+    assert.match(mark, new RegExp(`restore --file ${PRE} --confirm `))
+    const shown = new RegExp(
+      `could not go back[\\s\\S]*${PRE.replace(/\./g, '\\.')}[\\s\\S]*restore --file ${PRE.replace(/\./g, '\\.')}`,
+    )
+    const s = launch(c, ['status', '--dir', c.dir])
+    assert.notEqual(s.code, 0, 'status fails while the mark is there')
+    assert.match(s.stderr, shown)
+    const sj = launch(c, ['status', '--json', '--dir', c.dir])
+    assert.notEqual(sj.code, 0)
+    assert.match(sj.stderr, shown)
+    for (const args of [
+      ['install', '--yes', '--dir', c.dir],
+      update(c, '--image', 'rsc-brain:next'),
+      ['backup', '--dir', c.dir],
+      ['key', 'rotate', '--yes', '--dir', c.dir],
+    ]) {
+      const r = launch(c, args)
+      assert.match(r.stderr, shown, args.join(' '))
+      assert.ok(exists(c, 'rollback.failed'), `${args[0]} leaves the mark`)
+    }
+    const failedRestore = launch(c, ['restore', '--file', PRE, '--confirm', 'rsc-brain', '--dir', c.dir], {
+      env: { FAKE_RESTORE_EXIT: '1' },
+    })
+    assert.notEqual(failedRestore.code, 0)
+    assert.match(failedRestore.stderr, shown)
+    assert.ok(exists(c, 'rollback.failed'), 'a restore that fails keeps the mark')
+    const restored = launch(c, ['restore', '--file', PRE, '--confirm', 'rsc-brain', '--dir', c.dir])
+    assert.equal(restored.code, 0, restored.stderr)
+    assert.equal(exists(c, 'rollback.failed'), false, 'a good restore clears it')
+    const again = launch(c, ['status', '--dir', c.dir])
+    assert.equal(again.code, 0, again.stderr)
+    assert.doesNotMatch(again.stderr, /could not go back/)
+  })
+
+  // Q1: docker compose takes back a SIGINT the launcher ignores, forwards it to the container and stops waiting for
+  // it (seen with real docker): what must not stop halfway runs in a session of its own.
+  it('a second Ctrl-C during the reseal of a key rotation does not stop it halfway', async () => {
+    const env = { FAKE_KEY_ID_BY_KEY: '1' }
+    const c = await installed(env)
+    const old = readEnv(c.dir).RSC_BRAIN_SECRET
+    const r = await launchStopped(
+      c,
+      ['key', 'rotate', '--yes', '--dir', c.dir],
+      { ...env, FAKE_RESEAL_SLEEP: '2' },
+      [{ marker: 'reseal-committed', signal: 'SIGINT' }],
+    )
+    assert.equal(r.signal, null, `killed by ${r.signal}: ${r.stderr}`)
+    assert.equal(r.code, 0, r.stderr)
+    assert.notEqual(readEnv(c.dir).RSC_BRAIN_SECRET, old)
+    assert.equal(readFileSync(join(c.state, 'sealed'), 'utf8').trim(), readEnv(c.dir).RSC_BRAIN_SECRET)
+    assert.equal(exists(c, 'env.rotated'), false)
+  })
+
+  const dash = /dash$/.test(shell())
+  it('without setsid, the way back runs as a job of its own: a second Ctrl-C does not stop the restore halfway', {
+    skip: dash
+      ? 'dash has no job control without a terminal (Linux, where /bin/sh is dash, has setsid)'
+      : false,
+  }, async () => {
+    const c = await installed()
+    const bin = join(c.state, 'nosetsid')
+    mkdirSync(bin)
+    for (const t of TOOLS) {
+      if (t !== 'setsid' && existsSync(join(SYSBIN, t))) symlinkSync(join(SYSBIN, t), join(bin, t))
+    }
+    const before = readFileSync(join(c.dir, '.env'), 'utf8')
+    const r = await launchStopped(
+      c,
+      update(c, '--image', 'rsc-brain:broken'),
+      { PATH: `${FAKEBIN}:${bin}`, FAKE_MIGRATE_FAIL: 'rsc-brain:broken', FAKE_RESTORE_SLEEP: '2' },
+      [{ marker: 'restore-started', signal: 'SIGINT' }],
+    )
+    assert.equal(r.signal, null, `killed by ${r.signal}: ${r.stderr}`)
+    assert.equal(r.code, 4, r.stderr)
+    assert.match(r.stderr, /went back to 0\.1\.0/)
+    assert.doesNotMatch(r.stderr, /Done|\[1\]/, 'no job notice')
+    assert.equal(readFileSync(join(c.dir, '.env'), 'utf8'), before)
   })
 })

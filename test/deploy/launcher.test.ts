@@ -65,6 +65,7 @@ const TOOLS = [
   'nc',
   'lsof',
   'ss',
+  'setsid',
 ]
 
 let BASE = ''

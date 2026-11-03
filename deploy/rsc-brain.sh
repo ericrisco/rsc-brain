@@ -10,8 +10,8 @@
 # there, 1 anything else.
 #
 # For tests: RSC_BRAIN_TTY is the terminal questions are asked on (default /dev/tty); RSC_BRAIN_REPO is where the
-# source is cloned from; RSC_BRAIN_TEST_STOP_AT=<step> makes a first install kill itself right after that step;
-# RSC_BRAIN_TEST_WAIT is how many seconds the service gets to answer (default 120).
+# source is cloned from; RSC_BRAIN_TEST_STOP_AT=<step> makes a first install (or an update, at update-journal) stop
+# itself right after that step, with RSC_BRAIN_TEST_STOP_SIGNAL (default KILL); RSC_BRAIN_TEST_WAIT is how many seconds the service gets to answer (default 120).
 
 set -u
 umask 077
@@ -344,9 +344,9 @@ release_lock() {
   [ "$LOCK_MADE_DIR" = 1 ] && rmdir "$DIR" 2>/dev/null
   return 0
 }
-# A test hook: stop dead right after a step, as a power cut would.
+# A test hook: stop dead right after a step, as a power cut would (or with another signal, as a Ctrl-C would).
 checkpoint() {
-  [ "${RSC_BRAIN_TEST_STOP_AT:-}" = "$1" ] && kill -KILL $$
+  [ "${RSC_BRAIN_TEST_STOP_AT:-}" = "$1" ] && kill -"${RSC_BRAIN_TEST_STOP_SIGNAL:-KILL}" $$
   return 0
 }
 
@@ -377,6 +377,12 @@ warn_shell_vars() {
 
 # docker compose, always for this installation's project and files (and never anything else's), with none of the
 # installation's values taken from this shell.
+# With SHIELD=1 (what must not stop halfway: the way back of an update, a key reseal) it runs out of the terminal's
+# process group. Ignoring SIGINT here is not enough: docker compose takes a Ctrl-C back even when it started with it
+# ignored, passes it to the container and stops waiting for it (Docker 29.1, Compose 5.0: `run --rm` exits 130 and
+# the container goes on, or stops). In a session of its own (setsid), or else a job of its own (job control), a Ctrl-C
+# at the terminal does not reach it.
+SHIELD=0
 dc() {
   if [ -f "$DIR/compose.override.yaml" ]; then
     set -- -f "$DIR/compose.yaml" -f "$DIR/compose.override.yaml" "$@"
@@ -388,7 +394,13 @@ dc() {
   done
   (
     for v in $(compose_vars "$DIR/compose.yaml" "$DIR/compose.override.yaml"); do unset "$v"; done
-    docker compose --project-directory "$DIR" -p "$NAME" --env-file "$ENV_FILE" "$@"
+    set -- compose --project-directory "$DIR" -p "$NAME" --env-file "$ENV_FILE" "$@"
+    [ "$SHIELD" = 1 ] || exec docker "$@"
+    command -v setsid >/dev/null 2>&1 && exec setsid docker "$@"
+    # (A script, unlike sh -c, prints no notice when the job is done; <&0 keeps the standard input it was given.)
+    set -m 2>/dev/null
+    docker "$@" <&0 &
+    wait $!
   )
 }
 
@@ -1051,6 +1063,7 @@ status() {
   fi
   [ -f "$DIR/$STATE/env.rotated" ] &&
     say "A key rotation in \"$DIR\" was interrupted (or is running now). Finish it with: sh $PROG key rotate --dir \"$DIR\""
+  rollback_failed_notice
   is_running=false is_healthy=false version=''
   if running; then
     is_running=true
@@ -1073,7 +1086,7 @@ status() {
       out "Not running. Start it with: sh $PROG install --dir \"$DIR\""
     fi
   fi
-  [ "$is_healthy" = true ]
+  [ "$is_healthy" = true ] && [ "$ROLLBACK_FAILED" = 0 ]
 }
 
 need_running() {
@@ -1160,6 +1173,7 @@ restore() {
     say "rsc-brain did not answer after the restore. See why with: docker compose --project-directory \"$DIR\" logs app"
   fi
   if [ "$code" = 0 ]; then
+    rm -f "${DIR:?}/${STATE:?}/rollback.failed"
     say 'Restored. Every key, session and connection made before no longer works: everyone has to sign in again.'
     return 0
   fi
@@ -1232,11 +1246,14 @@ last_copy_kb() {
 UPDATE_FROM='' UPDATE_TO='' PRE_COPY='' UPDATE_PHASE='' NEXT_SRC='' UPDATE_LOG=''
 # The source fetched for a version that is not installed after all.
 drop_next() { [ -n "$NEXT_SRC" ] && rm -rf "${NEXT_SRC:?}"; return 0; }
-# Before anything was switched: maintenance off again (when it was on), and nothing else to take back.
+# Before anything was switched: maintenance off again (when it was on), and nothing else to take back. A journal this
+# run wrote (a stop may come between writing it and the switch) goes too: it would make the next launcher take back
+# an update that never switched.
 update_abort() {
   trap '' HUP INT TERM
   say "$1"
   [ "$UPDATE_PHASE" = maintenance ] && dc exec -T app rsc-brain maintenance off </dev/null >&2
+  rm -f "${DIR:?}/${STATE:?}/update.pending" "${DIR:?}/${STATE:?}/update.pending.new"
   drop_next
   say "Nothing was changed: rsc-brain $UPDATE_FROM keeps running."
   exit 1
@@ -1256,8 +1273,9 @@ update_failure_log() {
 # After the switch: back to the version before, with the copy made before the update and its keys kept (exit 4); or,
 # when even that fails, what to do by hand (exit 1).
 rollback() {
-  # Nothing stops the way back halfway: a second Ctrl-C is ignored here and by what it runs.
+  # Nothing stops the way back halfway: a second Ctrl-C is ignored here, and does not reach what it runs.
   trap '' HUP INT TERM
+  SHIELD=1
   say "$1"
   update_failure_log
   step "Going back to rsc-brain $UPDATE_FROM"
@@ -1270,6 +1288,16 @@ rollback() {
   step "Restoring the copy made before the update ($PRE_COPY), keys and sessions kept"
   restored=0
   dc run --rm -T --no-deps app rsc-brain restore --file "/backups/$PRE_COPY" --keep-keys </dev/null >&2 && restored=1
+  # A restore that failed leaves a mark every later command shows (and status fails on) until a restore goes well:
+  # written before the journal goes, so a stop in between leaves one or the other.
+  if [ "$restored" = 0 ]; then
+    {
+      say_env RSC_BRAIN_ROLLBACK_FROM "$UPDATE_FROM"
+      say_env RSC_BRAIN_ROLLBACK_TO "$UPDATE_TO"
+      say_env RSC_BRAIN_ROLLBACK_COPY "$PRE_COPY"
+      say_env RSC_BRAIN_ROLLBACK_RESTORE "sh $PROG restore --file $PRE_COPY --confirm <the installation's name> --dir \"$DIR\""
+    } >"$DIR/$STATE/rollback.failed.new" && mv -f "$DIR/$STATE/rollback.failed.new" "$DIR/$STATE/rollback.failed"
+  fi
   step "Starting rsc-brain $UPDATE_FROM"
   started=0
   dc up -d --remove-orphans >&2 </dev/null && wait_healthy && started=1
@@ -1315,6 +1343,7 @@ update_interrupted() {
 # - <state>/env.rotated: a key rotation had made its new key. Only key rotate finishes it; the rest refuse until then,
 #   since the data may be sealed with either key.
 interrupted_work() {
+  rollback_failed_notice
   journal=$DIR/$STATE/update.pending
   if [ -f "$journal" ]; then
     ENV_FILE=$DIR/.env
@@ -1339,6 +1368,22 @@ interrupted_work() {
     say "\"$DIR/$STATE/env.rotated\". Finish it first with: sh $PROG key rotate --dir \"$DIR\". Nothing was changed."
     exit 1
   fi
+  return 0
+}
+# A rollback whose restore failed left <state>/rollback.failed: said loud by every command that changes something, and
+# by status (which then fails), until a restore goes well and removes it.
+ROLLBACK_FAILED=0
+rollback_failed_notice() {
+  mark=$DIR/$STATE/rollback.failed
+  [ -f "$mark" ] || return 0
+  [ "$ROLLBACK_FAILED" = 1 ] && return 0
+  ROLLBACK_FAILED=1
+  say ''
+  say "!! An update to $(file_get "$mark" RSC_BRAIN_ROLLBACK_TO) failed, and rsc-brain could not go back to"
+  say "!! $(file_get "$mark" RSC_BRAIN_ROLLBACK_FROM) by itself: the data may not be as it was. Everything up to that update is in the"
+  say "!! copy $(file_get "$mark" RSC_BRAIN_ROLLBACK_COPY). Restore it by hand (everyone signs in again afterwards):"
+  say "!!   $(file_get "$mark" RSC_BRAIN_ROLLBACK_RESTORE)"
+  say ''
   return 0
 }
 # Another launcher holds the lock of this folder, and is running.
@@ -1448,6 +1493,7 @@ update() {
       say_env RSC_BRAIN_UPDATE_IMAGE "$IMAGE"
     } >"$journal.new" && mv -f "$journal.new" "$journal"
   } || update_abort "Could not write \"$journal\"."
+  checkpoint update-journal
   # From here on, a failure goes back to the copy just made.
   UPDATE_PHASE=switched
   UPDATE_LOG=$DIR/$STATE/update.log
@@ -1552,6 +1598,7 @@ key_rotate() {
   fi
   # Between the reseal and the new .env nothing may stop it halfway.
   trap '' HUP INT TERM
+  SHIELD=1
   step 'Stopping rsc-brain'
   dc stop app >&2 </dev/null
   step 'Sealing everything sealed with the new key'
@@ -1581,6 +1628,7 @@ key_rotate() {
     exit 1
   }
   trap - HUP INT TERM
+  SHIELD=0
   step 'Starting rsc-brain'
   { dc up -d --remove-orphans >&2 </dev/null && wait_healthy; } ||
     say "rsc-brain did not answer after the rotation. See why with: docker compose --project-directory \"$DIR\" logs app"
@@ -1606,6 +1654,13 @@ key_rotate() {
 
 key_show() {
   need_installation
+  # With a rotation left halfway the data may be sealed with the new key, not the one in .env: printing that one could
+  # have it saved as the key that opens the copies.
+  if [ -f "$DIR/$STATE/env.rotated" ]; then
+    say "A key rotation in \"$DIR\" was interrupted: the key in .env may no longer be the one the data is sealed with."
+    say "Run sh $PROG key rotate --dir \"$DIR\" to finish the earlier rotation, then print the key. Nothing was printed."
+    exit 1
+  fi
   if [ "$YES" = 0 ]; then
     can_ask || usage 'There is no terminal to confirm on. Pass --yes to print the installation key.'
     yes_no 'The installation key opens every copy of this installation. Print it here?' n || exit 1
@@ -1661,7 +1716,11 @@ uninstall() {
 }
 
 warn_shell_vars
-exec 4>&2 5>&1
+# A closed error stream or standard output is no reason to stop (dash ends a script whose `exec` cannot redirect):
+# what would go there goes nowhere. Each is tried in a subshell, on another descriptor (dash takes >&1 as nothing to
+# do), and the error stream without 2>/dev/null, which would open it.
+if (exec 4>&2); then exec 4>&2; else exec 4>/dev/null; fi
+if (exec 5>&1) 2>/dev/null; then exec 5>&1; else exec 5>/dev/null; fi
 case $CMD in
 install) install ;;
 update) update ;;

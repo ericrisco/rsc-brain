@@ -32,6 +32,14 @@ version_of() {
   echo '0.1.0'
 }
 in_list() { case " $2 " in *" $1 "*) return 0 ;; esac; return 1; }
+# A wait as long as docker compose's for its container: compose takes SIGINT back even when it started with it
+# ignored (Go does), forwards it to the container and exits 130 without waiting for it (seen with Docker 29.1 and
+# Compose 5.0). The shell cannot take back a signal it inherited ignored; perl can. It says it started (the marker
+# $1) only once it listens, so a test that stops it then is never early.
+compose_wait() {
+  perl -e '$SIG{INT} = sub { exit 130 }; open(my $f, ">", shift) or die; close $f; sleep shift' "$state/$1" "$2" ||
+    exit 130
+}
 if [ "$1" = compose ]; then
   case "$args" in
   *" run "*) echo "run $(env_image)" >>"$state/images.log" ;;
@@ -109,8 +117,7 @@ case "$args" in
   printf '%s\n' "$to" >"$state/sealed"
   # FAKE_RESEAL_SLEEP: the reseal has written, and the launcher has not heard yet (a test kills it then).
   if [ -n "${FAKE_RESEAL_SLEEP:-}" ]; then
-    : >"$state/reseal-committed"
-    sleep "$FAKE_RESEAL_SLEEP"
+    compose_wait reseal-committed "$FAKE_RESEAL_SLEEP"
   fi
   if [ -n "${FAKE_RESEAL_FAIL_AFTER_COMMIT:-}" ] && [ ! -e "$state/failed-after-commit" ]; then
     : >"$state/failed-after-commit"
@@ -174,8 +181,7 @@ case "$args" in
   # FAKE_RESTORE_SLEEP: a long restore of the copy made before an update (the rollback's).
   case "$args" in *" --keep-keys "*)
     if [ -n "${FAKE_RESTORE_SLEEP:-}" ]; then
-      : >"$state/restore-started"
-      sleep "$FAKE_RESTORE_SLEEP"
+      compose_wait restore-started "$FAKE_RESTORE_SLEEP"
     fi
     ;;
   esac
