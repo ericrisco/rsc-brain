@@ -1,0 +1,11 @@
+# Caddy in front of rsc-brain on a server (the launcher's server mode): HTTPS for the domain in RSC_BRAIN_DOMAIN,
+# with a certificate it gets and renews by itself over ACME (Let's Encrypt unless RSC_BRAIN_ACME_CA names another).
+# Plain HTTP is redirected to HTTPS. Caddy replaces any X-Forwarded-* a client sends with what it saw, and rsc-brain
+# believes those headers only from Caddy's fixed address.
+{
+	acme_ca {$RSC_BRAIN_ACME_CA}
+}
+
+{$RSC_BRAIN_DOMAIN} {
+	reverse_proxy app:8090
+}

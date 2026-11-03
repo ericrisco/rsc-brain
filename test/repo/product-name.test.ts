@@ -126,6 +126,7 @@ describe('the product name', () => {
     const hits = [
       ...(await wrongNames(join(ROOT, 'src'))),
       ...(await wrongNames(join(ROOT, 'web', 'src'))),
+      ...(await wrongNames(join(ROOT, 'deploy'))),
       ...(WRONG.test(await readFile(join(ROOT, 'README.md'), 'utf8')) ? ['README.md'] : []),
       ...(WRONG.test(await readFile(join(ROOT, 'web', 'index.html'), 'utf8')) ? ['web/index.html'] : []),
     ]
@@ -153,8 +154,18 @@ describe('the product name', () => {
     assert.deepEqual(bareNames('a.md', 'Send the header `X-Brain-Cut: true` and `Brain`.'), [])
   })
 
-  it('never a bare «Brain» in the source, the web, index.html or the README', async () => {
+  it('never a bare «Brain» in the source, the web, index.html, the README or the launcher', async () => {
     const hits = [
+      // The launcher and its files are read line by line, like the README (code spans aside).
+      ...(
+        await Promise.all(
+          ['rsc-brain.sh', 'compose.yaml', 'Caddyfile'].map(async (f) =>
+            bareNames(`${f}.md`, await readFile(join(ROOT, 'deploy', f), 'utf8')).map(
+              (t) => `deploy/${f}: ${t}`,
+            ),
+          ),
+        )
+      ).flat(),
       ...(await bareIn(join(ROOT, 'src'))),
       ...(await bareIn(join(ROOT, 'web', 'src'))),
       ...bareNames('README.md', await readFile(join(ROOT, 'README.md'), 'utf8')).map(
