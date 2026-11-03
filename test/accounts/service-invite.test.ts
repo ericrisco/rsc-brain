@@ -415,6 +415,122 @@ describe('a service invites people to the brains it created', { skip: skipPg }, 
     assert.equal(await w.db.one("SELECT 1 FROM brains WHERE slug = 'fc-nomail'"), undefined)
   })
 
+  // Third pass.
+  it("third pass: a brain whose first curator's takeover fails is not made: 409, nothing left behind", async () => {
+    const email = 'fc-fails@corp.example'
+    const { held } = await curatorInvite(email, 'fc-fails-src')
+    w.mailFails = true
+    try {
+      const r = await w.call(factory.key, 'POST', '/v1/brains', { slug: 'fc-fails', firstCurator: email })
+      assert.equal(r.status, 409, r.text)
+      assert.equal(r.body.error?.code, 'invitation_pending_elsewhere')
+      assert.match(String(r.body.error?.howToProceed), /resend or withdraw/)
+    } finally {
+      w.mailFails = false
+    }
+    assert.equal(
+      await w.db.one("SELECT 1 FROM brains WHERE slug = 'fc-fails'"),
+      undefined,
+      'the brain is gone',
+    )
+    assert.equal((await look(held)).status, 200, 'the other invitation is untouched')
+    assert.equal((await openGrants(email))?.length, 1)
+    // The name is free again.
+    const again = await w.call(factory.key, 'POST', '/v1/brains', {
+      slug: 'fc-fails',
+      firstCurator: eric.email,
+    })
+    assert.equal(again.status, 201, again.text)
+  })
+
+  it('third pass: grants added to the invitation while its new link is mailed are kept', async () => {
+    const email = 'kept@corp.example'
+    const { held } = await curatorInvite(email, 'kept-src')
+    // Another service of its own makes the invitation its own in two of its brains (own path, link kept)…
+    const other = await w.service('Other service', { canInvite: true })
+    for (const slug of ['other-a', 'other-b'])
+      assert.equal(
+        (await w.call(other.key, 'POST', '/v1/brains', { slug, firstCurator: eric.email })).status,
+        201,
+      )
+    // …taking it over first, then (while rsc-factory mails its own new link) adding a brain to it.
+    assert.deepEqual(
+      (
+        await w.call(other.key, 'POST', '/v1/brains/other-a/invitations', {
+          people: [{ email, role: 'reader' }],
+        })
+      ).body.invited,
+      [{ email, status: 'invited' }],
+    )
+    assert.equal((await look(held)).status, 400)
+    w.beforeMail = async (m) => {
+      if (m.to !== email || !/^rsc-factory/.test(m.subject)) return
+      w.beforeMail = undefined
+      const r = await w.call(other.key, 'POST', '/v1/brains/other-b/invitations', {
+        people: [{ email, role: 'reader' }],
+      })
+      assert.deepEqual(r.body.invited, [{ email, status: 'invited' }])
+    }
+    try {
+      const r = await invite('made', [{ email, role: 'reader' }])
+      assert.deepEqual(r.body.invited, [{ email, status: 'invited' }])
+    } finally {
+      w.beforeMail = undefined
+    }
+    assert.deepEqual(
+      ((await openGrants(email)) ?? []).map((g) => g.brainId).sort(),
+      [
+        await brainId('kept-src'),
+        await brainId('made'),
+        await brainId('other-a'),
+        await brainId('other-b'),
+      ].sort(),
+      'no grant is lost',
+    )
+  })
+
+  it('third pass: the previous inviter is told without the brain (no slug), in general words', async () => {
+    const email = 'noslug@corp.example'
+    const { mallory } = await curatorInvite(email, 'noslug-src')
+    await invite('made', [{ email, role: 'reader' }])
+    const n = await w.db.one<{ brain_id: string | null; text: string }>(
+      "SELECT brain_id, text FROM notices WHERE account_id = $1 AND kind = 'invitation.taken_over'",
+      [mallory.id],
+    )
+    assert.equal(n?.brain_id, null)
+    assert.doesNotMatch(String(n?.text), /made/)
+  })
+
+  it('third pass: a takeover that loses its race after mailing tells the person the new link is void', async () => {
+    const email = 'lost@corp.example'
+    await curatorInvite(email, 'lost-src')
+    const admin = await w.web(eric.id)
+    w.beforeMail = async (m) => {
+      if (m.to !== email || !/^rsc-factory/.test(m.subject)) return
+      w.beforeMail = undefined
+      // Meanwhile the administration makes the invitation's link again: the takeover's compare-and-set loses.
+      const id = String(
+        (
+          await w.db.one(
+            'SELECT id FROM invitations WHERE email = $1 AND used_at IS NULL AND revoked_at IS NULL',
+            [email],
+          )
+        )?.id,
+      )
+      await w.db.query('UPDATE invitations SET resent_at = NULL WHERE id = $1', [id])
+      assert.equal((await w.callWeb(admin, 'POST', `/v1/invitations/${id}/resend`)).status, 200)
+    }
+    try {
+      const r = await invite('made', [{ email, role: 'reader' }])
+      assert.deepEqual(r.body.invited, [{ email, status: 'refused', reason: 'invitation_pending_elsewhere' }])
+    } finally {
+      w.beforeMail = undefined
+    }
+    const last = await w.mailTo(email)
+    assert.match(last.subject, /no longer valid/)
+    assert.match(last.text, /no longer valid/)
+  })
+
   it('CA6b: an open invitation of this service to the brain as reader is raised to curator, its link kept', async () => {
     const email = 'raise-me@example.com'
     await invite('other-made', [{ email, role: 'reader' }])

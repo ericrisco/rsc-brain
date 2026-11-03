@@ -25,6 +25,8 @@ export type Call = {
 }
 
 export type World = TestDb & {
+  // Runs while a mail is being sent, before it counts as sent.
+  beforeMail?: ((m: { to: string; subject: string; text: string }) => Promise<void>) | undefined
   clock: Clock
   now: Date
   advance(ms: number): void
@@ -138,6 +140,8 @@ export async function world(
       mailTransport: () => ({
         async send(m) {
           if (w.mailFails) throw new Error('connection refused by the test mail server')
+          // Something that happens while this mail is on its way (the takeover tests of F1-PR2).
+          if (w.beforeMail) await w.beforeMail(m)
           w.mails.push(m)
         },
       }),

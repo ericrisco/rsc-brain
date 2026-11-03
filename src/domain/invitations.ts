@@ -86,7 +86,20 @@ async function mailInvitation(
 // A closed expired invitation passes on the first-curator places of brains still waiting for this
 // email, never the administrator rights.
 export const INVITATION_LOCK = "SELECT pg_advisory_xact_lock(hashtext('rsc-brain invitation ' || $1))"
-export type Takeover = { previousBy: string; expectHash: string }
+// add: the grants this service adds; merged again, raise only, onto the invitation as it is when it is taken over,
+// so a grant someone added meanwhile (the own path of the service that holds it keeps the link) is not lost.
+export type Takeover = { previousBy: string; expectHash: string; add: Grant[] }
+
+// grants with `add` on top: a new brain is added; a brain already there only rises, never lowers.
+export function raiseGrants(base: Grant[], add: Grant[]): Grant[] {
+  const grants = [...base]
+  for (const g of add) {
+    const i = grants.findIndex((x) => x.brainId === g.brainId)
+    if (i < 0) grants.push(g)
+    else if (rank(g.role) > rank((grants[i] as Grant).role)) grants[i] = g
+  }
+  return grants
+}
 export type Stored = {
   id: string
   token: string | null
@@ -158,7 +171,11 @@ export async function storeInvitation(
         expiresAt,
         grants,
         isAdmin: Boolean(unused.is_admin),
-        takeover: { previousBy: String(unused.invited_by), expectHash: String(unused.token_hash) },
+        takeover: {
+          previousBy: String(unused.invited_by),
+          expectHash: String(unused.token_hash),
+          add: o.grants,
+        },
       }
     }
     const isAdmin = Boolean(unused.is_admin) || Boolean(o.isAdmin)
@@ -238,20 +255,46 @@ export async function takeOver(
   if (!sent.sent) return failed('the new link could not be mailed')
   const done = await ctx.db.tx(async (db) => {
     await db.query(INVITATION_LOCK, [t.email])
-    const r = await db.one(
-      `UPDATE invitations SET token_hash = $2, grants = $3, expires_at = $4, invited_by = $5, resent_at = NULL
-        WHERE id = $1 AND token_hash = $6 AND used_at IS NULL AND revoked_at IS NULL RETURNING id`,
-      [t.id, hashSecret(t.token), JSON.stringify(t.grants), t.expiresAt, ctx.who.accountId, t.expectHash],
+    // Still the invitation that was read (same link, open)? Its grants are read again and ours merged on top.
+    const now = await db.one<{ grants: Grant[] }>(
+      `SELECT grants FROM invitations
+        WHERE id = $1 AND token_hash = $2 AND used_at IS NULL AND revoked_at IS NULL FOR UPDATE`,
+      [t.id, t.expectHash],
     )
-    if (r) await ok({ ...ctx, db }, 'invitation.taken_over', brainId, t.email, `from ${t.previousBy}`)
-    return Boolean(r)
+    if (!now) return false
+    await db.query(
+      `UPDATE invitations SET token_hash = $2, grants = $3, expires_at = $4, invited_by = $5, resent_at = NULL
+        WHERE id = $1`,
+      [
+        t.id,
+        hashSecret(t.token),
+        JSON.stringify(raiseGrants(now.grants, t.add)),
+        t.expiresAt,
+        ctx.who.accountId,
+      ],
+    )
+    await ok({ ...ctx, db }, 'invitation.taken_over', brainId, t.email, `from ${t.previousBy}`)
+    return true
   })
-  if (!done) return failed('the invitation changed meanwhile')
+  if (!done) {
+    // The link just mailed opens nothing: the person is told so, best effort (the send never throws).
+    await send(ctx.db, ctx.clock, ctx.mail, 'invitation', {
+      to: t.email,
+      subject: 'The rsc-brain invitation you just received is no longer valid',
+      text: [
+        'The rsc-brain invitation you just received is no longer valid.',
+        '',
+        'You will get a new one if needed; nothing else needs doing.',
+      ].join('\n'),
+    })
+    return failed('the invitation changed meanwhile')
+  }
   const before = await ctx.db.one<{ kind: string }>('SELECT kind FROM accounts WHERE id = $1', [t.previousBy])
   if (before?.kind === 'person') {
+    // No brain named: the previous inviter may not be in the brain the service invites to.
     await notify(ctx.db, ctx.clock, ctx.mail, [t.previousBy], {
       kind: 'invitation.taken_over',
-      brainId,
+      brainId: null,
       subject: `Your invitation of ${t.email} was taken over`,
       text: `The service account "${ctx.who.name}" took over your invitation of ${t.email}: it mailed them a new link, and the one you had no longer works. The administration of rsc-brain can still see and withdraw it.`,
     })

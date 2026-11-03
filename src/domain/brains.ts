@@ -172,7 +172,7 @@ export async function createBrain(
   // taken over once its new link is mailed; if that fails it stays theirs and the brain waits for its curator
   // (audited as invitation.takeover_failed).
   if (made.invitation?.takeover && made.invitation.token && made.pendingEmail) {
-    await takeOver(ctx, made.brain.id, {
+    const taken = await takeOver(ctx, made.brain.id, {
       email: made.pendingEmail,
       id: made.invitation.id,
       token: made.invitation.token,
@@ -181,6 +181,15 @@ export async function createBrain(
       isAdmin: made.invitation.isAdmin,
       ...made.invitation.takeover,
     })
+    // No invitation grants its first curator: the brain undoes itself (third pass), as one made without mail
+    // would never have been made. Safe while nothing is in it: only the service as member, no entry, no page.
+    if (!taken && (await undoBrain(ctx, made.brain.id))) {
+      throw conflict(
+        'invitation_pending_elsewhere',
+        `${made.pendingEmail} has an open rsc-brain invitation from someone else, and the new one could not be mailed.`,
+        'Ask an administrator of rsc-brain to resend or withdraw that invitation, then create the brain again.',
+      )
+    }
   } else if (made.invitation?.token && made.pendingEmail) {
     await sendInvitation(ctx.db, ctx.clock, ctx.mail, {
       email: made.pendingEmail,
@@ -191,6 +200,22 @@ export async function createBrain(
     })
   }
   return made.brain
+}
+
+// Deletes a brain this service just made, if it is still empty: no member but the service, no entry, no page.
+async function undoBrain(ctx: Ctx, id: string): Promise<boolean> {
+  return ctx.db.tx(async (db) => {
+    const gone = await db.one(
+      `DELETE FROM brains b WHERE b.id = $1 AND b.created_by = $2
+          AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.brain_id = b.id AND m.account_id <> $2)
+          AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.brain_id = b.id)
+          AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.brain_id = b.id)
+        RETURNING b.id`,
+      [id, ctx.who.accountId],
+    )
+    if (gone) await ok({ ...ctx, db }, 'brain.delete', id, 'its first curator could not be invited')
+    return Boolean(gone)
+  })
 }
 
 // createdByYou: the account behind this key created the brain (a program that lost the reply to its creation
