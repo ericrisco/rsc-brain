@@ -3,6 +3,7 @@
 // only once it is whole and on disk, so a copy that failed halfway (a full disk) never shows in the list. Two
 // copies never run at once. Whether the last one went well lives next to the copies (status.json), not in the
 // database, so a restore does not erase it.
+
 import { randomBytes } from 'node:crypto'
 import { mkdir, open, readdir, readFile, rename, rm, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -15,6 +16,7 @@ import type { Db, Pool } from '../../db/db.ts'
 import { MIGRATIONS_DIR, migrationFiles, STEPS } from '../../db/migrate.ts'
 import { LOOKS } from '../../domain/events.ts'
 import { maintenance } from '../../domain/maintenance.ts'
+import { EXPORT_APP_NAME } from '../export/export.ts'
 import {
   BACKUP_REASONS,
   type BackupReason,
@@ -257,8 +259,10 @@ async function settle(db: Db, clock: Clock, settleMs: number, why: 'update' | 'r
     const open = await db.one<{ n: number }>(
       `SELECT count(*)::int AS n FROM pg_stat_activity
         WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend'
-          AND xact_start IS NOT NULL AND xact_start < $1`,
-      [mark?.t],
+          AND xact_start IS NOT NULL AND xact_start < $1
+          -- An export's snapshot only reads (READ ONLY): nothing of it can be lost (B7 PR31 second pass).
+          AND application_name IS DISTINCT FROM $2`,
+      [mark?.t, EXPORT_APP_NAME],
     )
     if (!open?.n) return
     if (Date.now() - started > PRE_UPDATE_MAX_WAIT_MS) {

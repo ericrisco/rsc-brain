@@ -296,3 +296,81 @@ describe('drafts', () => {
     assert.equal(s.m.size, 0)
   })
 })
+
+describe('a download through the client (an export, spec B7)', () => {
+  const streamOf = (parts: string[]) =>
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        for (const p of parts) c.enqueue(new TextEncoder().encode(p))
+        c.close()
+      },
+    })
+  const zipAnswer =
+    (parts: string[]): Transport =>
+    async () => ({
+      status: 200,
+      text: async () => parts.join(''),
+      headers: {
+        get: (n: string) =>
+          n === 'content-disposition'
+            ? 'attachment; filename="rsc-brain-growth-readable-20261102T101010Z.zip"'
+            : null,
+      },
+      body: streamOf(parts),
+    })
+
+  it('gives the file with the name the server gave, counting what arrives', async () => {
+    const seen: number[] = []
+    const api = createClient({
+      transport: zipAnswer(['PK', 'abc', 'def']),
+      onSignedOut: () => {},
+      here: () => '/',
+    })
+    const got = await api.download(
+      'exportBrain',
+      { path: { slug: 'growth' }, query: { format: 'readable' } },
+      (n) => seen.push(n),
+    )
+    assert.equal(got.name, 'rsc-brain-growth-readable-20261102T101010Z.zip')
+    assert.equal(got.bytes, 8)
+    assert.equal(await got.blob.text(), 'PKabcdef')
+    assert.deepEqual(seen, [2, 5, 8])
+  })
+
+  it('asks with the session cookie, at the address of the operation, with its query', async () => {
+    const f = fake(() => ({ status: 200, text: 'x' }))
+    const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })
+    await api.download('exportBrain', {
+      path: { slug: 'a b' },
+      query: { format: 'faithful', includeForgotten: 1 },
+    })
+    assert.equal(f.seen[0]?.url, '/v1/brains/a%20b/export?format=faithful&includeForgotten=1')
+    assert.equal(f.seen[0]?.method, 'GET')
+    assert.equal(f.seen[0]?.credentials, 'same-origin')
+    assert.equal(f.seen[0]?.headers['x-requested-with'], undefined)
+  })
+
+  it('a refusal arrives as an ApiError; a lost session leads to sign-in', async () => {
+    let to = ''
+    const f = fake(() => ({ status: 401, body: ERR('unauthorized') }))
+    const api = createClient({
+      transport: f.transport,
+      onSignedOut: (t) => (to = t),
+      here: () => '/b/x/settings',
+    })
+    await assert.rejects(api.download('exportBrain', { path: { slug: 'x' } }), (e: ApiError) => {
+      assert.equal(e.code, 'unauthorized')
+      return true
+    })
+    assert.match(to, /^\/sign-in/)
+    const g = fake(() => ({ status: 503, body: ERR('under_maintenance') }))
+    const api2 = createClient({ transport: g.transport, onSignedOut: () => {}, here: () => '/' })
+    await assert.rejects(api2.download('exportBrain', { path: { slug: 'x' } }), /under_maintenance happened/)
+    const h = fake(() => new Error('down'))
+    const api3 = createClient({ transport: h.transport, onSignedOut: () => {}, here: () => '/' })
+    await assert.rejects(
+      api3.download('exportBrain', { path: { slug: 'x' } }),
+      (e: ApiError) => e.code === 'offline',
+    )
+  })
+})

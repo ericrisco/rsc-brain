@@ -18,6 +18,7 @@ export type Actor = {
 export type Action =
   | 'brain.create'
   | 'brain.read'
+  | 'brain.export'
   | 'brain.archive'
   | 'brain.delete'
   | 'journal.write'
@@ -78,6 +79,7 @@ export function can(actor: Actor, action: Action, f: Facts = {}): Decision {
         'Ask the administration of this installation for the "can create brains" permission.',
       )
     case 'brain.archive':
+    case 'brain.export':
       return needRole(f.role, 'curator')
     case 'brain.delete':
       if (actor.isAdmin && actor.kind === 'person') return OK

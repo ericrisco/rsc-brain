@@ -23,6 +23,7 @@ import {
   FIXTURE_KEY_ID,
   logoAnswer,
 } from './admin.ts'
+import { exportZip } from './export.ts'
 import * as G from './graph.ts'
 import * as J from './journal.ts'
 import * as P from './proposals.ts'
@@ -90,6 +91,7 @@ export type Screen =
   | 'admin-system'
   | 'admin-backups'
   | 'connect'
+  | 'export'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
 // alone: the administrator the setup made, the only person in the installation.
@@ -1451,6 +1453,49 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
       return { status: 200, body: settingsView(settingsOf(c.s, b.slug)) }
     },
   },
+  // Exporting a brain (B7 PR31): its curators download a zip; the name says brain, format and moment.
+  'GET /v1/brains/{slug}/export': {
+    screen: 'export',
+    run: (c) => {
+      const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+      if (!b) return NO_BRAIN
+      const format = c.query.get('format') ?? ''
+      const forgotten = c.query.get('includeForgotten')
+      if (!['readable', 'faithful'].includes(format))
+        return err(
+          400,
+          'invalid_request',
+          '"format" is "readable" or "faithful".',
+          'Send format=readable (to read) or format=faithful (to import elsewhere).',
+        )
+      if (forgotten !== null && forgotten !== '0' && forgotten !== '1')
+        return err(
+          400,
+          'invalid_request',
+          '"includeForgotten" is 1 or 0.',
+          'Send includeForgotten=1 to include forgotten entries, or leave it out.',
+        )
+      if (b.role !== 'curator')
+        return err(
+          403,
+          'forbidden',
+          `This needs the curator role in the brain; you are ${b.role}.`,
+          'Ask a curator of the brain (Eric) for the curator role.',
+        )
+      const stamp = NOW()
+        .replace(/[-:]/g, '')
+        .replace(/\.\d{3}/, '')
+      return {
+        status: 200,
+        body: null,
+        raw: exportZip(format, forgotten === '1'),
+        headers: {
+          'content-type': 'application/zip',
+          'content-disposition': `attachment; filename="rsc-brain-${b.slug}-${format}-${stamp}.zip"`,
+        },
+      }
+    },
+  },
   'PUT /v1/brains/{slug}/wiki/settings': {
     run: (c) => {
       const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
@@ -2447,6 +2492,7 @@ function healthOf(slug: string, st: State | undefined) {
 const PRIVATE = new Set([
   ...ADMIN_PRIVATE,
   'POST /v1/setup/key',
+  'GET /v1/brains/{slug}/export',
   'GET /v1/brains/{slug}/wiki/settings',
   'PUT /v1/brains/{slug}/wiki/settings',
   'POST /v1/brains/{slug}/members',

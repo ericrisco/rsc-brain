@@ -2,6 +2,7 @@
 // Refusals carry { error: { code, message, howToProceed } }; an unexpected failure reveals nothing.
 import { createReadStream } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'node:zlib'
 import { bearer, resolveKey, sessionCookie } from '../auth/principal.ts'
@@ -17,6 +18,7 @@ import { mcpRoutes } from '../mcp/server.ts'
 import type { Providers } from '../meaning/providers.ts'
 import type { FetchPolicy } from '../oauth/fetch.ts'
 import type { Copies } from '../ops/backup/copies.ts'
+import { EXPORT_LIMITS, sweepExports } from '../ops/export/export.ts'
 import type { ReleaseChecker } from '../ops/releases.ts'
 import { boundJson } from './bounds.ts'
 import { connOf } from './conn.ts'
@@ -32,6 +34,7 @@ import { brandingRoutes } from './routes/branding.ts'
 import { connectRoutes } from './routes/connect.ts'
 import { decideRoutes } from './routes/decide.ts'
 import { eventRoutes } from './routes/events.ts'
+import { exportRoutes } from './routes/export.ts'
 import { journalRoutes } from './routes/journal.ts'
 import { keyRoutes } from './routes/keys.ts'
 import { meaningRoutes } from './routes/meaning.ts'
@@ -73,6 +76,8 @@ export type AppDeps = {
   copies?: Copies
   // Whether a newer release exists (plan §3.10).
   releases?: ReleaseChecker
+  // Where exports are prepared before they are sent (a private folder of the system's temporary space).
+  exportDir?: string
 }
 
 // How long the health address waits for the database before it says the database is down.
@@ -116,6 +121,7 @@ export const ROUTES: Route[] = [
   ...brandingRoutes,
   ...systemRoutes,
   ...backupRoutes,
+  ...exportRoutes,
 ]
 // The MCP endpoint calls the same routes a program would (spec B5 parity).
 ROUTES.push(...mcpRoutes(() => ROUTES))
@@ -347,6 +353,59 @@ async function sendFile(
   })
 }
 
+// A file prepared on disk (an export, review of PR31): sent at the client's pace, its size said up front. A client
+// that takes nothing for `stallMs` is let go; the file is removed whatever happens (sent, cut, stalled).
+export async function sendDownload(
+  res: ServerResponse,
+  d: NonNullable<Reply['download']>,
+  log: Log,
+  stallMs: number,
+): Promise<void> {
+  try {
+    // The client left while it was prepared: nothing to send, the file goes now.
+    if (res.destroyed || res.writableEnded) return
+    // From the handle it was written with: the file has no name any more.
+    const from = d.fh.createReadStream({ start: 0, autoClose: false, highWaterMark: 64 * 1024 })
+    res.writeHead(200, {
+      'content-type': d.type,
+      'content-disposition': `attachment; filename="${d.name}"`,
+      'content-length': d.bytes,
+      'cache-control': 'no-store',
+      'x-content-type-options': 'nosniff',
+    })
+    await new Promise<void>((resolve) => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const stall = () => {
+        clearTimeout(timer)
+        timer = setTimeout(() => res.destroy(), stallMs)
+      }
+      const finish = () => {
+        clearTimeout(timer)
+        from.destroy()
+        resolve()
+      }
+      from.on('data', (chunk) => {
+        if (!res.write(chunk)) {
+          from.pause()
+          stall()
+        }
+      })
+      res.on('drain', () => {
+        clearTimeout(timer)
+        from.resume()
+      })
+      from.once('end', () => res.end())
+      from.once('error', (err) => {
+        log.error('download_failed', failureFields(err))
+        res.destroy()
+      })
+      res.once('close', finish)
+    })
+  } finally {
+    await d.done()
+  }
+}
+
 export function createHandler(deps: AppDeps) {
   const routes = deps.routes ?? ROUTES
   const log = deps.log ?? stdoutLog
@@ -356,6 +415,11 @@ export function createHandler(deps: AppDeps) {
   const hub = eventHub(deps.db, timings, log)
   const web = deps.web === false ? null : openWeb(deps.web ?? WEB_ROOT)
   const startedAt = deps.clock()
+  // Where exports are prepared: the folder given, or one next to the copies (the server's data); without either, a
+  // private folder of the system's temporary space for this process (export.ts).
+  const exportDir = deps.exportDir ?? (deps.backups ? join(deps.backups, '.exports') : null)
+  // What a crash left of an export goes now (by the files' own times: the wall clock, not the service's).
+  if (exportDir) void sweepExports(exportDir, new Date())
   // Once the first-time setup is done it stays done: no need to ask the database again.
   let ready = false
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -365,6 +429,9 @@ export function createHandler(deps: AppDeps) {
     // the status and how long it took (plan §3.11).
     const started = performance.now()
     let template: string | undefined
+    // Whether the client is still there, from the very start: what is prepared for it stops when it leaves.
+    const left = new AbortController()
+    res.once('close', () => left.abort())
     res.once('close', () => {
       try {
         log.info('request', {
@@ -453,6 +520,8 @@ export function createHandler(deps: AppDeps) {
         backups: deps.backups ?? null,
         copies: deps.copies ?? null,
         releases: deps.releases ?? null,
+        exportDir,
+        signal: left.signal,
         log,
       }
       // Maintenance (spec B7 C12): a write without a key (signing in, the standard sign-in) is refused here;
@@ -490,6 +559,7 @@ export function createHandler(deps: AppDeps) {
       const reply = await found.route.handler({ ...base, body, who })
       if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)
       if (reply.file) return await sendFile(res, reply.file)
+      if (reply.download) return await sendDownload(res, reply.download, log, EXPORT_LIMITS.stallMs)
       send(res, reply.status ?? 200, reply.body, reply.headers, {
         route: Boolean(reply.compress),
         accepts: acceptsGzip(req.headers['accept-encoding']),

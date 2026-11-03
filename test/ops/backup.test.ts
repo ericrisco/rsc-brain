@@ -802,6 +802,35 @@ describe('backups on PostgreSQL', { skip: skipPg }, () => {
     }
   })
 
+  it('a copy before an update does not wait for an export: it only reads (B7 PR31 second pass)', {
+    timeout: 15_000,
+  }, async () => {
+    w.advance(60_000)
+    const reading = new pg.Client({ connectionString: w.url })
+    await reading.connect()
+    try {
+      // What an export holds open: a read-only snapshot, named as the export names it.
+      await reading.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+      await reading.query("SET LOCAL application_name = 'rsc-brain export'")
+      await reading.query('SELECT count(*) FROM entries')
+      await maintenance.on(w.db, w.clock(), { reason: 'update' })
+      const t0 = Date.now()
+      const c = await backup.create(w.db, {
+        dir,
+        secret: TEST_SECRET,
+        reason: 'pre-update',
+        clock: w.clock,
+        settleMs: 50,
+      })
+      assert.ok(Date.now() - t0 < 5000, 'it waited for the export')
+      await rm(join(dir, c.file))
+    } finally {
+      await maintenance.off(w.db)
+      await reading.query('ROLLBACK').catch(() => {})
+      await reading.end()
+    }
+  })
+
   it('a copy of a database with migrations this release does not know is refused', async () => {
     w.advance(60_000)
     await w.db.query("INSERT INTO schema_migrations (id) VALUES ('9999_from_the_future')")

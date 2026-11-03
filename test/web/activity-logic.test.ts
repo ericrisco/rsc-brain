@@ -49,6 +49,11 @@ describe('activity in words', () => {
       kind: 'writes',
       forWhom: null,
     })
+    // An export (spec B7): who exported, and in which format.
+    const exported = describeEvent(
+      ev('brain.exported', { target: { id: '', label: 'faithful, forgotten included' } }),
+    )
+    assert.deepEqual([exported.did, exported.what], ['exported the brain', 'faithful, forgotten included'])
     assert.equal(describeEvent(ev('search', { query: 'pricing', target: null })).did, 'searched')
     assert.equal(describeEvent(ev('search', { query: 'pricing', target: null })).what, '“pricing”')
     assert.equal(

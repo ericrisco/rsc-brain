@@ -706,9 +706,23 @@ export const T = {
     longHint: 'A page longer than this is suggested for a split.',
     every: 'Maintenance every (approvals)',
     everyHint: 'After this many approved proposals, Health suggests a maintenance pass.',
-    exportTitle: 'Export and import',
+    exportTitle: 'Export',
     exportLead:
-      'Exporting this brain (readable and complete) and importing a 02-DOCS folder or an Obsidian vault arrive with the install release of rsc-brain.',
+      'Save this brain as a zip file. Every export is recorded in the audit, and the curators see it in the activity.',
+    exportFormat: 'Format',
+    exportReadable: 'Readable',
+    exportReadableHint:
+      'Markdown files to read or open as an Obsidian vault: wiki pages with their links, the journal as one note per session, the map, the decisions and the log.',
+    exportFaithful: 'Faithful',
+    exportFaithfulHint:
+      'Everything, with its history, to import into another rsc-brain installation. People are named by email.',
+    exportForgotten: 'Include forgotten entries',
+    exportForgottenHint: 'They are marked as forgotten. Purged entries are never exported.',
+    exportButton: 'Download the export',
+    exportPreparing: 'Preparing…',
+    exportWorking: (received: string | null) =>
+      received ? `Preparing the export… ${received} received.` : 'Preparing the export…',
+    exportSaved: (name: string, size: string) => `Saved ${name} (${size}).`,
     archive: 'Archive',
     archiveLead: 'An archived brain is read-only: nothing new is written, proposed or approved.',
     archivedLead: 'This brain is archived. Reading, search and context keep working.',
@@ -2129,6 +2143,7 @@ export const T = {
       'proposal.withdrawn': 'withdrew the proposal',
       'proposal.decided': 'decided a proposal',
       'wiki.changed': 'changed the wiki',
+      'brain.exported': 'exported the brain',
     } as Record<string, string>,
     installation: 'rsc-brain',
     changed: {

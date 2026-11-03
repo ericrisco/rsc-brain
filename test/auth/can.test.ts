@@ -21,6 +21,7 @@ describe('can()', () => {
     const actions: Action[] = [
       'brain.create',
       'brain.read',
+      'brain.export',
       'brain.archive',
       'brain.delete',
       'journal.write',
@@ -59,6 +60,14 @@ describe('can()', () => {
     ] as Action[]) {
       assert.equal(can(ro, a, { role: 'curator', brainStatus: 'active' }).ok, false, a)
     }
+  })
+
+  it('exporting a brain (spec B7) is for its curators, archived or not, never with a read-only key', () => {
+    for (const role of [null, 'reader', 'contributor'] as (Role | null)[])
+      assert.equal(can(person({ isAdmin: true }), 'brain.export', { role }).ok, false, String(role))
+    assert.equal(can(person(), 'brain.export', { role: 'curator', brainStatus: 'archived' }).ok, true)
+    assert.equal(can(person({}, 'read'), 'brain.export', { role: 'curator' }).ok, false)
+    assert.equal(can(service('short'), 'brain.export', { role: 'curator' }).ok, true)
   })
 
   it('writing in the journal needs contributor and an active brain', () => {
