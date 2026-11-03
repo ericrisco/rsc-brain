@@ -1,6 +1,7 @@
 // The client the screens use: the browser's fetch, and sign-in when a session ends.
 import { signal } from '@preact/signals'
 import { leftAdmin } from '../lib/flags.ts'
+import { maintenanceOn } from '../lib/maintenance.ts'
 import { textDrafts } from '../lib/settings.ts'
 import { helpOpen, searchOpen } from '../shell/keys.ts'
 import { createClient, type Upload, xhrFailure } from './client.ts'
@@ -56,4 +57,7 @@ export const api = createClient({
     goTo.value = { to, replace: true }
   },
   here: () => location.pathname + location.search,
+  onMaintenance: () => {
+    maintenanceOn.value = true
+  },
 })

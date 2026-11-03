@@ -145,6 +145,9 @@ test.describe('settings of a brain', () => {
     await page.goto('/b/growth/settings')
     await member(page, 'Ana').getByLabel('Role of Ana').selectOption('curator')
     await member(page, 'Ana').getByRole('button', { name: 'Save role of Ana' }).click()
+    // Leaving needs another curator: the role is saved (and said) before Eric asks to leave. Without this wait, a
+    // slow save left the leave button refusing, and the test hung until its timeout (B7 debt, fixed in PR35).
+    await expect(page.getByRole('status').filter({ hasText: 'Ana is now a curator.' })).toBeVisible()
     const eric = member(page, 'Eric')
     await eric.getByRole('button', { name: 'Leave Growth' }).click()
     await expect(eric).toContainText('You will no longer be able to open Growth.')

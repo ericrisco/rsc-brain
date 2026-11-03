@@ -101,3 +101,21 @@ export function keyFileName(name: string, keyId: string): string {
     .replace(/^-+|-+$/g, '')
   return `rsc-brain-key-${slug ? `${slug}-` : ''}${keyId}.txt`
 }
+
+// The last update, as the launcher records it (plan §3.9): whether it went well, from and to which version, when, and
+// for a failed one the service's last lines. Anything else is no update.
+export type LastUpdate = { ok: boolean; from: string; to: string; at: string; log: string | null }
+export function lastUpdateOf(x: unknown): LastUpdate | null {
+  if (typeof x !== 'object' || x === null) return null
+  const u = x as Record<string, unknown>
+  if (typeof u.ok !== 'boolean' || typeof u.from !== 'string' || typeof u.to !== 'string') return null
+  if (typeof u.at !== 'string' || Number.isNaN(Date.parse(u.at))) return null
+  return { ok: u.ok, from: u.from, to: u.to, at: u.at, log: typeof u.log === 'string' ? u.log : null }
+}
+export function lastUpdateText(u: LastUpdate): string {
+  if (u.ok) return `Updated from ${u.from} to ${u.to}.`
+  return (
+    `The update from ${u.from} to ${u.to} failed. rsc-brain went back to ${u.from} with the data as it was just ` +
+    'before the update: nothing written was lost, and sessions and keys still work.'
+  )
+}

@@ -16,6 +16,7 @@ import { CreateBrainDialog } from './CreateBrainDialog.tsx'
 import { HelpDialog } from './HelpDialog.tsx'
 import { Keyboard } from './Keyboard.tsx'
 import { helpOpen, searchOpen } from './keys.ts'
+import { MaintenanceStrip } from './Maintenance.tsx'
 import { SearchDialog } from './SearchDialog.tsx'
 import { useSignOut } from './signOut.ts'
 
@@ -304,6 +305,7 @@ export function Shell({
         </div>
       </header>
       <OfflineStrip />
+      <MaintenanceStrip />
       <div class={`body${brain ? '' : ' no-side'}`}>
         {brain ? (
           <aside class="sidebar">

@@ -88,12 +88,55 @@ there, 1 anything else.
 Running `install` again on an installation applies only what you change (the port, the domain) and
 keeps its key, its passwords, its data and its copies.
 
+### Update
+
+```sh
+sh rsc-brain.sh update                    # the latest published version
+sh rsc-brain.sh update --version v0.2.0   # or that one (--image I: an image you already have)
+```
+
+The new version is fetched and built while the one installed keeps serving. Then rsc-brain goes
+into maintenance: writes are refused with «rsc-brain is under maintenance, retry after N seconds»
+(the web shows a band on every page), reads keep working. A copy of everything is made
+(`…-pre-update.rscb`), the data is migrated, and the new version starts; once it answers as the
+version asked, writes are taken again. If the migration or the start fails, the copy is restored, the
+version before starts again and the launcher exits with 4: nothing written before the update is lost,
+and sessions, tokens and connections keep working. Administration › Backups & system shows how the
+last update went, and `last-failure.log` keeps the service's last lines. An update needs free disk
+for twice the last copy and 1 GB more, and only moves forward (never to an older version; a release
+comes after its release candidates, and `0.2.0-rc.2` after `0.2.0-rc.1`). What each version changes
+is in [CHANGELOG.md](CHANGELOG.md) and in its release notes.
+
+Ctrl-C during an update goes back the same way (a second Ctrl-C does not stop it). If the launcher
+is killed outright once the new version has taken over (a power cut), the next `status`, or any
+command that changes something, finds the note it left in `.rsc-brain/update.pending` and goes back first. If the copy is
+restored but the version before does not start, the launcher says so: the data is back, and
+`sh rsc-brain.sh install` starts it again. If the copy cannot be restored, every later command says so
+(and `status` fails) until a `restore` of that copy goes well.
+
+The way back runs in a session of its own, so a Ctrl-C at the terminal cannot cut it short: with
+`setsid`, or with `perl` where there is no `setsid` (macOS). A machine with neither runs it like any
+other step: there, do not press Ctrl-C while it goes back.
+
 ### The installation key
 
 The installer makes the installation key and keeps it in `.env`, which only its owner can read. It
 opens every copy: without it a copy cannot be restored. Save it in a password manager.
 `sh rsc-brain.sh key show` prints it again (it asks first); the first-time setup and Administration ›
 Backups & system also give it to you.
+
+```sh
+sh rsc-brain.sh key rotate
+```
+
+makes a new key: rsc-brain stops for a moment, everything sealed (second factors, the mail password,
+the key of the meaning provider) is sealed again with the new key, and it starts again. Sessions,
+tokens and connections keep working. Copies made before need the previous key: it is kept in
+`installation-key-<id>.txt` next to `.env` (only its owner reads it), and the web marks those copies
+«Needs the older key». Save the new key in place of the old one. If a rotation is stopped halfway,
+the new key stays in `.rsc-brain/env.rotated` (the data may already be sealed with it): run
+`key rotate` again and it finishes with that key. Until then `install`, `update`, `backup`,
+`restore` and `uninstall` refuse, and `status` warns.
 
 ### Copies
 

@@ -132,7 +132,13 @@ export function createClient(o: {
   upload?: Upload
   onSignedOut: (signInAddress: string) => void
   here: () => string
+  // A request refused because the server is under maintenance (an update or a restore), with the seconds to wait.
+  onMaintenance?: (retryAfter: number | undefined) => void
 }): Client {
+  const refused = (err: ApiError) => {
+    if (err.code === 'under_maintenance') o.onMaintenance?.(err.retryAfter)
+    return err
+  }
   const offline = () =>
     new ApiError(0, 'offline', 'rsc-brain could not be reached.', 'Check your connection and try again.')
   return {
@@ -173,7 +179,7 @@ export function createClient(o: {
       }
       const text = await res.text()
       if (res.status >= 200 && res.status < 300) return (text ? JSON.parse(text) : {}) as T
-      const err = errorOf(res.status, text)
+      const err = refused(errorOf(res.status, text))
       if (res.status === 401 && !c.quiet) o.onSignedOut(signInPath(o.here()))
       throw err
     },
@@ -187,7 +193,7 @@ export function createClient(o: {
         throw offline()
       }
       if (res.status < 200 || res.status >= 300) {
-        const err = errorOf(res.status, await res.text())
+        const err = refused(errorOf(res.status, await res.text()))
         if (res.status === 401 && !c.quiet) o.onSignedOut(signInPath(o.here()))
         throw err
       }
@@ -243,7 +249,7 @@ export function createClient(o: {
       }
       const text = await res.text()
       if (res.status >= 200 && res.status < 300) return (text ? JSON.parse(text) : {}) as T
-      const err = errorOf(res.status, text)
+      const err = refused(errorOf(res.status, text))
       if (res.status === 401 && !('public' in def) && !c.quiet) o.onSignedOut(signInPath(o.here()))
       throw err
     },

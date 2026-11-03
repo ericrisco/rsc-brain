@@ -81,6 +81,9 @@ type Fx = {
   lastWarning: { at: string; code: string } | null
   nextCopy: 'ok' | 'disk_full'
   release: { latest: string | null; notes: string | null; checkedAt: string | null }
+  // What the launcher recorded about the last update (B7 PR35), and whether an update runs now (writes refused).
+  lastUpdate: unknown
+  maintenance: boolean
   // Imported authors (review of PR32): names on what an import brought in, anonymised by hand.
   authors: Array<{
     id: string
@@ -252,6 +255,8 @@ export function fxOf(s: AdminScen): Fx {
       lastWarning: null,
       nextCopy: 'ok',
       release: { latest: null, notes: null, checkedAt: null },
+      lastUpdate: null,
+      maintenance: false,
     }
     fxs.set(s, f)
   }
@@ -273,6 +278,25 @@ export function adminBehind(s: AdminScen, change: Record<string, unknown>): void
     f.lastWarning = { at: '2026-10-29T03:00:05.000Z', code: change.backupWarning }
   if (change.nextCopy === 'disk_full') f.nextCopy = 'disk_full'
   if (change.release && typeof change.release === 'object') f.release = change.release as Fx['release']
+  // An update (B7 PR35): what it recorded at its end, and maintenance while it runs.
+  if (change.lastUpdate !== undefined) f.lastUpdate = change.lastUpdate
+  if (typeof change.maintenance === 'boolean') f.maintenance = change.maintenance
+}
+
+// Under maintenance: GET /v1/health says so, and every write is refused as the server does.
+export const underMaintenance = (s: AdminScen): boolean => fxOf(s).maintenance
+export const MAINTENANCE_REFUSAL: Answer = {
+  status: 503,
+  headers: { 'retry-after': '20' },
+  body: {
+    error: {
+      code: 'under_maintenance',
+      message: 'rsc-brain is under maintenance, retry after 20 seconds',
+      howToProceed: 'Send it again after that time; reading keeps working meanwhile.',
+      retryAfter: 20,
+    },
+    retryAfter: 20,
+  },
 }
 
 // A copy by hand ends a moment after it starts: well, or as the next copy was told to.
@@ -304,7 +328,7 @@ function copiesView(s: AdminScen) {
     lastWarning: f.lastWarning,
     keyId: FIXTURE_KEY_ID,
     schedule: { at: '03:00', keep: 14, timezone: 'Europe/Madrid' },
-    lastUpdate: null,
+    lastUpdate: f.lastUpdate,
     running: f.running !== null,
   }
 }
