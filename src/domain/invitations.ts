@@ -255,13 +255,23 @@ export async function takeOver(
   if (!sent.sent) return failed('the new link could not be mailed')
   const done = await ctx.db.tx(async (db) => {
     await db.query(INVITATION_LOCK, [t.email])
-    // Still the invitation that was read (same link, open)? Its grants are read again and ours merged on top.
-    const now = await db.one<{ grants: Grant[] }>(
-      `SELECT grants FROM invitations
-        WHERE id = $1 AND token_hash = $2 AND used_at IS NULL AND revoked_at IS NULL FOR UPDATE`,
-      [t.id, t.expectHash],
+    // Still open? Its grants are read again and ours merged on top (raise only), so none added meanwhile is lost.
+    const now = await db.one<{ grants: Grant[]; token_hash: string; invited_by: string }>(
+      `SELECT grants, token_hash, invited_by FROM invitations
+        WHERE id = $1 AND used_at IS NULL AND revoked_at IS NULL FOR UPDATE`,
+      [t.id],
     )
     if (!now) return false
+    if (now.token_hash !== t.expectHash) {
+      // Another request of this same service took it over first (fourth pass): it is ours now, so ours merge in as
+      // the own path does, its link kept. Not a lost race: no refusal, no follow-up mail.
+      if (now.invited_by !== ctx.who.accountId) return false
+      await db.query('UPDATE invitations SET grants = $2 WHERE id = $1', [
+        t.id,
+        JSON.stringify(raiseGrants(now.grants, t.add)),
+      ])
+      return 'merged' as const
+    }
     await db.query(
       `UPDATE invitations SET token_hash = $2, grants = $3, expires_at = $4, invited_by = $5, resent_at = NULL
         WHERE id = $1`,
@@ -274,21 +284,30 @@ export async function takeOver(
       ],
     )
     await ok({ ...ctx, db }, 'invitation.taken_over', brainId, t.email, `from ${t.previousBy}`)
-    return true
+    return 'taken' as const
   })
   if (!done) {
-    // The link just mailed opens nothing: the person is told so, best effort (the send never throws).
+    // The link just mailed opens nothing: the person is told so, best effort (the send never throws), naming
+    // only the brains this service was inviting them to, never the other invitation's.
+    const names = await brainNames(ctx.db, t.add)
+    const lines = t.add.flatMap((g) => {
+      const b = names.get(g.brainId)
+      return b ? [`- ${b.name}`] : []
+    })
     await send(ctx.db, ctx.clock, ctx.mail, 'invitation', {
       to: t.email,
       subject: 'The rsc-brain invitation you just received is no longer valid',
       text: [
         'The rsc-brain invitation you just received is no longer valid.',
+        ...(lines.length ? ['', 'It was for:', ...lines] : []),
         '',
         'You will get a new one if needed; nothing else needs doing.',
       ].join('\n'),
     })
     return failed('the invitation changed meanwhile')
   }
+  // The request that took it over told the previous inviter; one that merged into it says nothing more.
+  if (done === 'merged') return true
   const before = await ctx.db.one<{ kind: string }>('SELECT kind FROM accounts WHERE id = $1', [t.previousBy])
   if (before?.kind === 'person') {
     // No brain named: the previous inviter may not be in the brain the service invites to.

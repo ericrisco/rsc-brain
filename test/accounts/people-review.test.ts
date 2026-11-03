@@ -305,32 +305,23 @@ describe('people: review', { skip: skipPg }, () => {
     w.advance(-73 * 3_600_000)
   })
 
-  it('F1-PR2 review: a service naming someone invited by another takes the invitation over with a new link', async () => {
+  it('F1-PR2 fourth pass: a service naming as first curator someone invited by another makes nothing (409)', async () => {
     const r = await w.callWeb(adminWeb, 'POST', '/v1/invitations', {
       emails: ['boss2@example.com'],
       isAdmin: true,
     })
     const link = (r.body.invitations as Array<{ link: string }>)[0]?.link ?? ''
-    await w.setUpMail()
-    const before = w.mails.filter((m) => m.to === 'boss2@example.com').length
     const svc = await w.service('Sneaky', { canInvite: true })
-    assert.equal(
-      (await w.call(svc.key, 'POST', '/v1/brains', { slug: 'sneak', firstCurator: 'boss2@example.com' }))
-        .status,
-      201,
-    )
-    // The link someone else held no longer opens it; the email alone gets the new one, with everything.
-    const seen = await w.raw('POST', '/v1/invitations/look', { body: { token: tokenOf(link) } })
-    assert.equal(seen.status, 400, seen.text)
-    const mails = w.mails.filter((m) => m.to === 'boss2@example.com')
-    assert.equal(mails.length, before + 1)
-    const fresh = await w.raw('POST', '/v1/invitations/look', {
-      body: { token: tokenOf(mails.at(-1)?.text ?? '') },
+    const made = await w.call(svc.key, 'POST', '/v1/brains', {
+      slug: 'sneak',
+      firstCurator: 'boss2@example.com',
     })
-    assert.equal(fresh.status, 200, fresh.text)
-    const inv = fresh.body.invitation as { isAdmin: boolean; brains: Array<{ slug: string; role: string }> }
-    assert.equal(inv.isAdmin, true)
-    assert.deepEqual(inv.brains, [{ slug: 'sneak', name: 'sneak', role: 'curator' }])
+    assert.equal(made.status, 409, made.text)
+    assert.equal(made.body.error?.code, 'invitation_pending_elsewhere')
+    // The administration's link still opens it, unchanged.
+    const seen = await w.raw('POST', '/v1/invitations/look', { body: { token: tokenOf(link) } })
+    assert.equal(seen.status, 200, seen.text)
+    assert.deepEqual((seen.body.invitation as { brains: unknown[] }).brains, [])
   })
 
   it('second pass: an invitation the administration widened names the administration as inviter', async () => {

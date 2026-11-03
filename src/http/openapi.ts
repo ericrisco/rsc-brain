@@ -1188,7 +1188,7 @@ const HAND: Record<string, Op> = {
   'GET /v1/brains': { summary: 'The brains this key can use.', reply: obj({ brains: list(BRAIN_ROLE) }) },
   'POST /v1/brains': {
     summary:
-      'Create a brain (with the right to create brains). A service account names its first curator; an email without an account gets an invitation, whose mail spends the service hourly quota (429 invite_quota: nothing is made). Someone else open invitation for that email is taken over only if its new link is mailed: without mail, or when the send fails, 409 invitation_pending_elsewhere and nothing is made (a brain made meanwhile undoes itself).',
+      'Create a brain (with the right to create brains). A service account names its first curator; an email without an account gets an invitation, whose mail spends the service hourly quota (429 invite_quota: nothing is made). An open invitation for that email made by someone else: 409 invitation_pending_elsewhere before anything is written (no brain, no mail, no quota spent); an administrator of rsc-brain resends or withdraws it. One this service made gains the brain, its link kept.',
     status: 201,
     body: obj(
       {

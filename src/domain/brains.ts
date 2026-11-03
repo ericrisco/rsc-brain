@@ -5,11 +5,10 @@ import { roleIn } from '../auth/principal.ts'
 import { brainNotFound, conflict, invalid } from '../core/errors.ts'
 import { newId } from '../core/ids.ts'
 import type { Db } from '../db/db.ts'
-import { mailConfigured } from '../mail/mail.ts'
 import { accountByEmail } from './accounts.ts'
 import { allow, type Brain, brainOf, type Ctx, inBrain, ok } from './context.ts'
 import { inWeb } from './guards.ts'
-import { INVITATION_LOCK, sendInvitation, storeInvitation, takeOver } from './invitations.ts'
+import { INVITATION_LOCK, sendInvitation, storeInvitation } from './invitations.ts'
 import { checkQuota, SERVICE_INVITES_PER_HOUR, serviceTurn, spendMail } from './invite-quota.ts'
 
 const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/
@@ -123,6 +122,23 @@ export async function createBrain(
         )
       }
     }
+    // Someone else's open invitation for the first curator: refused before anything is written (fourth pass).
+    // A takeover would need a mail sent after the commit, and a brain made and then undone raced with whatever
+    // used it meanwhile. Under the email's turn, so the answer holds until the commit.
+    if (pendingEmail) {
+      const open = await db.one<{ invited_by: string }>(
+        `SELECT invited_by FROM invitations
+          WHERE email = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $2`,
+        [pendingEmail, now],
+      )
+      if (open && open.invited_by !== ctx.who.accountId) {
+        throw conflict(
+          'invitation_pending_elsewhere',
+          `${pendingEmail} has an open rsc-brain invitation from someone else.`,
+          'Ask an administrator of rsc-brain to resend or withdraw that invitation, then create the brain again, or name another first curator.',
+        )
+      }
+    }
     try {
       await db.query(
         `INSERT INTO brains (id, slug, name, description, purpose, pending_curator_email, created_by, created_at, updated_at)
@@ -150,15 +166,6 @@ export async function createBrain(
           as: 'service',
         })
       : null
-    // Someone else's open invitation is taken over only if the new link can be mailed (takeOver, after the
-    // commit); without mail, nothing is made.
-    if (invitation?.takeover && !(await mailConfigured(db))) {
-      throw conflict(
-        'invitation_pending_elsewhere',
-        `${pendingEmail} has an open rsc-brain invitation from someone else, and rsc-brain cannot mail a new one.`,
-        'Ask an administrator of rsc-brain to resend or withdraw that invitation, or name another first curator.',
-      )
-    }
     if (invitation) await ok({ ...ctx, db }, 'invitation.create', id, pendingEmail ?? '', 'first curator')
     // Its mail spends the service's quota (429 invite_quota: nothing is made).
     if (invitation?.token && pendingEmail) {
@@ -168,29 +175,8 @@ export async function createBrain(
     const row = await db.one('SELECT * FROM brains WHERE id = $1', [id])
     return { brain: brainOf(row as Record<string, unknown>), invitation, pendingEmail }
   })
-  // A new invitation is mailed; one this service made just gains the brain (its link stays). Someone else's is
-  // taken over once its new link is mailed; if that fails it stays theirs and the brain waits for its curator
-  // (audited as invitation.takeover_failed).
-  if (made.invitation?.takeover && made.invitation.token && made.pendingEmail) {
-    const taken = await takeOver(ctx, made.brain.id, {
-      email: made.pendingEmail,
-      id: made.invitation.id,
-      token: made.invitation.token,
-      expiresAt: made.invitation.expiresAt,
-      grants: made.invitation.grants,
-      isAdmin: made.invitation.isAdmin,
-      ...made.invitation.takeover,
-    })
-    // No invitation grants its first curator: the brain undoes itself (third pass), as one made without mail
-    // would never have been made. Safe while nothing is in it: only the service as member, no entry, no page.
-    if (!taken && (await undoBrain(ctx, made.brain.id))) {
-      throw conflict(
-        'invitation_pending_elsewhere',
-        `${made.pendingEmail} has an open rsc-brain invitation from someone else, and the new one could not be mailed.`,
-        'Ask an administrator of rsc-brain to resend or withdraw that invitation, then create the brain again.',
-      )
-    }
-  } else if (made.invitation?.token && made.pendingEmail) {
+  // A new invitation is mailed; one this service made just gains the brain (its link stays).
+  if (made.invitation?.token && made.pendingEmail) {
     await sendInvitation(ctx.db, ctx.clock, ctx.mail, {
       email: made.pendingEmail,
       token: made.invitation.token,
@@ -200,22 +186,6 @@ export async function createBrain(
     })
   }
   return made.brain
-}
-
-// Deletes a brain this service just made, if it is still empty: no member but the service, no entry, no page.
-async function undoBrain(ctx: Ctx, id: string): Promise<boolean> {
-  return ctx.db.tx(async (db) => {
-    const gone = await db.one(
-      `DELETE FROM brains b WHERE b.id = $1 AND b.created_by = $2
-          AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.brain_id = b.id AND m.account_id <> $2)
-          AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.brain_id = b.id)
-          AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.brain_id = b.id)
-        RETURNING b.id`,
-      [id, ctx.who.accountId],
-    )
-    if (gone) await ok({ ...ctx, db }, 'brain.delete', id, 'its first curator could not be invited')
-    return Boolean(gone)
-  })
 }
 
 // createdByYou: the account behind this key created the brain (a program that lost the reply to its creation
