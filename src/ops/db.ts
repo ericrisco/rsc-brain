@@ -31,6 +31,7 @@ export type Simulate = {
   availableExtensions?: string[]
   beforeDatabase?: () => Promise<void>
   afterDatabase?: () => Promise<void>
+  afterIsolation?: () => Promise<void>
 }
 
 // What provision writes on the database and the role it makes, and what drop requires before removing anything.
@@ -135,14 +136,18 @@ export function scramVerifier(password: string, salt = randomBytes(16), iteratio
   return `SCRAM-SHA-256$${iterations}:${salt.toString('base64')}$${storedKey}:${serverKey}`
 }
 
+// What the driver (pg-connection-string) reads about TLS: with any of them, the administration URL used it, and the new
+// one must the same way, or rsc-brain would talk to its database in clear.
+const TLS_PARAMS = ['ssl', 'sslmode', 'sslrootcert', 'sslcert', 'sslkey', 'sslnegotiation', 'uselibpqcompat']
+
 // The URL of the new role, made from scratch: the scheme, host and port of the administration URL, the new role, its
-// password and its database, and of the query only how to reach the server safely (sslmode, sslrootcert) and, for a
-// socket, its folder and port. Anything else in the query (user, password, database, options) would override the rest
+// password and its database, and of the query only how to reach the server safely (TLS_PARAMS) and, for a socket,
+// its folder and port. Anything else in the query (user, password, dbname, options, passfile) would override the rest
 // for the driver: an administration login kept in the URL rsc-brain runs with.
 export function connectionUrl(adminUrl: string, role: string, password: string, database: string): string {
   const { url: a, host } = parseUrl(adminUrl)
   const q = new URLSearchParams()
-  for (const k of ['sslmode', 'sslrootcert']) {
+  for (const k of TLS_PARAMS) {
     const v = a.searchParams.get(k)
     if (v !== null) q.set(k, v)
   }
@@ -227,6 +232,30 @@ async function removeBoth(
     }
   }
   return left
+}
+
+// What closing the other program's database changed: the privileges given by name, and what PUBLIC had.
+type Isolation = {
+  database: string
+  connect: string[]
+  temp: string[]
+  public: { connect: boolean; temp: boolean }
+}
+
+// Puts the other program's database back as it was: PUBLIC first (nobody is locked out meanwhile), then the
+// privileges given by name taken away. Says what could not be put back.
+async function undoIsolation(c: pg.Client, x: Isolation): Promise<string[]> {
+  const on = `ON DATABASE ${ident(c, x.database)}`
+  const list = (names: string[]) => names.map((g) => ident(c, g)).join(', ')
+  try {
+    const back = [x.public.connect && 'CONNECT', x.public.temp && 'TEMPORARY'].filter(Boolean)
+    if (back.length) await c.query(`GRANT ${back.join(', ')} ${on} TO PUBLIC`)
+    if (x.connect.length) await c.query(`REVOKE CONNECT ${on} FROM ${list(x.connect)}`)
+    if (x.temp.length) await c.query(`REVOKE TEMPORARY ${on} FROM ${list(x.temp)}`)
+    return []
+  } catch {
+    return [`the privileges on ${x.database}`]
+  }
 }
 
 async function provision(
@@ -319,6 +348,7 @@ async function provision(
     )
     let createdDb = false
     let granted: string[] = []
+    let changed: Isolation | undefined
     try {
       await c.query(`COMMENT ON ROLE ${ident(c, role)} IS ${c.escapeLiteral(MARK)}`)
       await withMembership(c, role, found.isSuper, async () => {
@@ -334,25 +364,46 @@ async function provision(
         })
       })
       await sim?.afterDatabase?.()
-      // The other program's database: every login that could enter it keeps entering it (given CONNECT by name),
-      // except rsc-brain's (this one and any other installation's); then it is closed to PUBLIC.
+      // The other program's database: every login keeps exactly what it may do there now (CONNECT, TEMPORARY, each
+      // on its own), given by name where it has it only through PUBLIC; except rsc-brain's (this one and any other
+      // installation's). Then it is closed to PUBLIC. What was changed is kept, to put it back if a later step fails.
       if (isolateFrom !== undefined) {
-        granted = (
-          await c.query<{ name: string }>(
-            `SELECT r.rolname AS name FROM pg_roles r
-              WHERE (r.rolcanlogin OR r.rolname = $3) AND NOT r.rolsuper AND r.rolname <> $1 AND r.rolname !~ '^pg_'
-                AND coalesce(shobj_description(r.oid, 'pg_authid'), '') <> $4
-                AND has_database_privilege(r.oid, $2, 'CONNECT')
-              ORDER BY 1`,
-            [role, isolateFrom, other?.owner ?? '', MARK],
+        const plan = (
+          await c.query<{ name: string | null; connect: boolean; temp: boolean }>(
+            `WITH acl AS (
+               SELECT (aclexplode(coalesce(datacl, acldefault('d', datdba)))).* FROM pg_database WHERE datname = $2)
+             SELECT NULL AS name,
+                    EXISTS (SELECT 1 FROM acl WHERE grantee = 0 AND privilege_type = 'CONNECT') AS connect,
+                    EXISTS (SELECT 1 FROM acl WHERE grantee = 0 AND privilege_type = 'TEMPORARY') AS temp
+             UNION ALL
+             SELECT * FROM (
+               SELECT r.rolname,
+                      has_database_privilege(r.oid, $2, 'CONNECT')
+                        AND NOT EXISTS (SELECT 1 FROM acl WHERE grantee = r.oid AND privilege_type = 'CONNECT'),
+                      has_database_privilege(r.oid, $2, 'TEMPORARY')
+                        AND NOT EXISTS (SELECT 1 FROM acl WHERE grantee = r.oid AND privilege_type = 'TEMPORARY')
+                 FROM pg_roles r
+                WHERE r.rolcanlogin AND NOT r.rolsuper AND r.rolname <> $1 AND r.rolname !~ '^pg_'
+                  AND coalesce(shobj_description(r.oid, 'pg_authid'), '') <> $3
+                ORDER BY 1) x`,
+            [role, isolateFrom, MARK],
           )
-        ).rows.map((r) => r.name)
-        if (granted.length) {
-          await c.query(
-            `GRANT CONNECT, TEMPORARY ON DATABASE ${ident(c, isolateFrom)} TO ${granted.map((g) => ident(c, g)).join(', ')}`,
-          )
-        }
+        ).rows
+        const pub = plan[0] ?? { connect: false, temp: false }
+        const by = (what: 'connect' | 'temp') =>
+          plan
+            .slice(1)
+            .filter((r) => r[what])
+            .map((r) => r.name as string)
+        changed = { database: isolateFrom, connect: by('connect'), temp: by('temp'), public: pub }
+        granted = [...new Set([...changed.connect, ...changed.temp])].sort()
+        const list = (names: string[]) => names.map((g) => ident(c, g)).join(', ')
+        if (changed.connect.length)
+          await c.query(`GRANT CONNECT ON DATABASE ${ident(c, isolateFrom)} TO ${list(changed.connect)}`)
+        if (changed.temp.length)
+          await c.query(`GRANT TEMPORARY ON DATABASE ${ident(c, isolateFrom)} TO ${list(changed.temp)}`)
         await c.query(`REVOKE CONNECT, TEMPORARY ON DATABASE ${ident(c, isolateFrom)} FROM PUBLIC`)
+        await sim?.afterIsolation?.()
       }
       // What was asked is what holds: no connection across, either way (CA3).
       const across = (
@@ -373,13 +424,14 @@ async function provision(
       }
     } catch (err) {
       // Nothing half made stays behind; what cannot be removed is said.
-      const left = await removeBoth(c, createdDb ? database : null, role, found.isSuper)
+      const left = changed ? await undoIsolation(c, changed) : []
+      left.push(...(await removeBoth(c, createdDb ? database : null, role, found.isSuper)))
       if (left.length === 0) throw err
       const e = fail(
         500,
         'left_behind',
         `${err instanceof Error ? err.message : String(err)} Removing what was made failed too: ${left.join(' and ')} ${left.length > 1 ? 'are' : 'is'} still there.`,
-        `Remove ${left.length > 1 ? 'them' : 'it'} as a superuser (DROP DATABASE ${database}; DROP ROLE ${role}), then try again.`,
+        `Put ${left.length > 1 ? 'them' : 'it'} right as a superuser (DROP DATABASE ${database}; DROP ROLE ${role}; the privileges on ${isolateFrom ?? 'the other database'} as they were), then try again.`,
       )
       e.cause = err
       throw e

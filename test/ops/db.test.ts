@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -108,6 +109,36 @@ describe('the password verifier', () => {
 
 describe('the connection URL of the new role', () => {
   const parsed = (u: string) => parsePgUrl(u)
+
+  it('uses TLS exactly when the admin URL did, the same way (as the driver reads both)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rscb-tls-'))
+    try {
+      for (const f of ['ca.pem', 'cert.pem', 'key.pem']) writeFileSync(join(dir, f), `-----${f}-----\n`)
+      const f = (n: string) => encodeURIComponent(join(dir, n))
+      for (const query of [
+        'ssl=true',
+        'ssl=1',
+        'ssl=0',
+        'sslnegotiation=direct',
+        'sslnegotiation=direct&sslmode=require',
+        'sslmode=require',
+        `sslmode=verify-full&sslrootcert=${f('ca.pem')}`,
+        `sslmode=require&sslcert=${f('cert.pem')}&sslkey=${f('key.pem')}&sslrootcert=${f('ca.pem')}`,
+        'uselibpqcompat=true&sslmode=require',
+        'user=admin&password=x&options=-c%20role%3Dadmin&passfile=%2Fp&dbname=other&ssl=true',
+      ]) {
+        const admin = `postgres://admin:secret@db.example:5432/postgres?${query}`
+        const out = connectionUrl(admin, 'r', 'p', 'd')
+        assert.deepEqual(parsed(out).ssl, parsed(admin).ssl, query)
+        assert.equal(Boolean(parsed(out).ssl), Boolean(parsed(admin).ssl), query)
+        for (const k of ['user=', 'password=', 'options=', 'passfile=', 'dbname=', 'admin', 'secret']) {
+          assert.ok(!out.includes(k), `${k} in ${out}`)
+        }
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 
   it('is made from scratch: a user or password in the query of the admin URL never reaches it', () => {
     const u = connectionUrl(
@@ -291,7 +322,15 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
     // Factory still enters its own, with every login it had: closing PUBLIC first gave each one CONNECT by name.
     assert.equal(await connectError(as(factoryRole, factoryDb)), null)
     assert.equal(await connectError(as(factoryReader, factoryDb)), null)
-    assert.ok(r.granted.includes(factoryReader) && r.granted.includes(factoryRole), String(r.granted))
+    assert.ok(r.granted.includes(factoryReader), String(r.granted))
+    // It could make temporary tables there through PUBLIC; it still can.
+    assert.equal(
+      (await sql(`SELECT has_database_privilege('${factoryReader}', '${factoryDb}', 'TEMPORARY') AS p`))[0]
+        ?.p,
+      true,
+    )
+    // The owner keeps its own privileges: nothing is given to it, so nothing of its own is ever taken back.
+    assert.ok(!r.granted.includes(factoryRole), String(r.granted))
     assert.ok(!r.granted.includes(role))
     assert.match(String(await connectError(as(factoryReader, database))), /permission denied for database/)
     // Both are marked as rsc-brain's (what drop requires).
@@ -327,6 +366,71 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
     } finally {
       await c.end()
     }
+  })
+
+  it('the other logins keep exactly what they had there: CONNECT without TEMPORARY stays without', async () => {
+    const other = name('notemp')
+    const database = name('brain5')
+    const role = name('brainrole5')
+    made.push({ database: other, role: name('unused5') }, { database, role })
+    await sql(`CREATE DATABASE ${other} OWNER ${factoryRole}`)
+    await sql(`REVOKE TEMPORARY ON DATABASE ${other} FROM PUBLIC`)
+    const priv = async (who: string, what: string) =>
+      (await sql(`SELECT has_database_privilege('${who}', '${other}', '${what}') AS p`))[0]?.p
+    assert.deepEqual(
+      [await priv(factoryReader, 'CONNECT'), await priv(factoryReader, 'TEMPORARY')],
+      [true, false],
+    )
+    const r = await dbOps.provision(PG_URL as string, {
+      database,
+      role,
+      password: randomBytes(18).toString('base64url'),
+      isolateFrom: other,
+    })
+    assert.ok(r.granted.includes(factoryReader))
+    assert.deepEqual(
+      [await priv(factoryReader, 'CONNECT'), await priv(factoryReader, 'TEMPORARY')],
+      [true, false],
+    )
+    assert.deepEqual([await priv(role, 'CONNECT'), await priv(role, 'TEMPORARY')], [false, false])
+  })
+
+  it('a failure after the other database was closed puts its privileges back as they were', async () => {
+    const other = name('undo')
+    const database = name('brain6')
+    const role = name('brainrole6')
+    const group = name('tempgroup')
+    made.push({ database: other, role: group }, { database, role })
+    await sql(`CREATE DATABASE ${other} OWNER ${factoryRole}`)
+    // An explicit grant of its own, besides PUBLIC, and PUBLIC without TEMPORARY: both must be as they were after.
+    await sql(`GRANT CONNECT ON DATABASE ${other} TO ${outsider}`)
+    await sql(`REVOKE TEMPORARY ON DATABASE ${other} FROM PUBLIC`)
+    // TEMPORARY through a group: given by name while closing, it must be taken back again.
+    await sql(`CREATE ROLE ${group} NOLOGIN`)
+    await sql(`GRANT TEMPORARY ON DATABASE ${other} TO ${group}`)
+    await sql(`GRANT ${group} TO ${factoryReader}`)
+    const acl = async () =>
+      (
+        await sql(
+          `SELECT string_agg(e, ',' ORDER BY e) AS a FROM (
+             SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END || ':' || a.privilege_type AS e
+               FROM pg_database d, aclexplode(coalesce(d.datacl, acldefault('d', d.datdba))) a
+              WHERE d.datname = '${other}') x`,
+        )
+      )[0]?.a
+    const before = await acl()
+    await assert.rejects(
+      dbOps.provision(
+        PG_URL as string,
+        { database, role, password: randomBytes(18).toString('base64url'), isolateFrom: other },
+        // Something opens rsc-brain's database again before the final check: the check fails.
+        { afterIsolation: async () => void (await sql(`GRANT CONNECT ON DATABASE ${database} TO PUBLIC`)) },
+      ),
+      (err: Error & { code?: string }) => err.code === 'cannot_isolate',
+    )
+    assert.equal(await acl(), before)
+    assert.deepEqual([await exists('database', database), await exists('role', role)], [false, false])
+    assert.equal(await connectError(as(factoryReader, other)), null)
   })
 
   it('C14: when the other database belongs to a superuser, it warns that the separation is one way', async () => {
@@ -560,7 +664,9 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
     try {
       const database = name('cli')
       const role = name('clirole')
-      made.push({ database, role })
+      const otherDb = name('clidb')
+      made.push({ database, role }, { database: otherDb, role: name('unusedcli') })
+      await sql(`CREATE DATABASE ${otherDb} OWNER ${factoryRole}`)
       const file = join(dir, 'db-url')
       const r = await run(
         [
@@ -573,7 +679,7 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
           '--url-file',
           file,
           '--isolate-from',
-          factoryDb,
+          otherDb,
           '--json',
         ],
         PG_URL,
@@ -585,12 +691,12 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
       assert.ok(password.length >= 32)
       assert.ok(!r.out.includes(password) && !r.err.includes(password), 'the password was printed')
       const summary = JSON.parse(r.out)
-      assert.ok(summary.granted.includes(factoryRole), r.out)
+      assert.ok(summary.granted.includes(factoryReader), r.out)
       assert.deepEqual(
         { ...summary, granted: undefined },
         { database, role, urlFile: file, warnings: [], granted: undefined },
       )
-      assert.match(r.err, new RegExp(`Kept these logins able to connect to ${factoryDb}.*${factoryRole}`))
+      assert.match(r.err, new RegExp(`Kept these logins able to connect to ${otherDb}.*${factoryReader}`))
       assert.equal(await connectError(as(role, database)), null)
       // An existing file is never overwritten.
       made.push(
