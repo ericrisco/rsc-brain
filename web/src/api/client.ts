@@ -62,6 +62,13 @@ export type CallOptions = {
   quiet?: boolean
 }
 
+// How a file goes up (an import): the browser's XMLHttpRequest, which says how much has been sent; tests stand in.
+export type Upload = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; body: Blob },
+  progress?: (sent: number, total: number) => void,
+) => Promise<{ status: number; text(): Promise<string> }>
+
 // A file the server makes for the person to save (an export): its bytes, and the name the server gave it.
 export type Downloaded = { blob: Blob; name: string; bytes: number }
 
@@ -69,6 +76,13 @@ export type Client = {
   call<T = Record<string, unknown>>(op: OpName, o?: CallOptions): Promise<T>
   // `progress` hears how many bytes have arrived so far.
   download(op: OpName, o?: CallOptions, progress?: (bytes: number) => void): Promise<Downloaded>
+  // A file as the body of a write (an import's zip); `progress` hears how much of it has gone.
+  upload<T = Record<string, unknown>>(
+    op: OpName,
+    o: CallOptions,
+    file: Blob,
+    progress?: (sent: number, total: number) => void,
+  ): Promise<T>
 }
 
 const nameOf = (disposition: string | null | undefined) =>
@@ -115,12 +129,46 @@ function errorOf(status: number, text: string): ApiError {
 
 export function createClient(o: {
   transport: Transport
+  upload?: Upload
   onSignedOut: (signInAddress: string) => void
   here: () => string
 }): Client {
   const offline = () =>
     new ApiError(0, 'offline', 'rsc-brain could not be reached.', 'Check your connection and try again.')
   return {
+    async upload<T>(
+      op: OpName,
+      c: CallOptions,
+      file: Blob,
+      progress?: (sent: number, total: number) => void,
+    ) {
+      const def = ROUTE_TABLE[op]
+      const { method, url } = urlOf(def.route, c)
+      if (!o.upload) throw offline()
+      let res: Awaited<ReturnType<Upload>>
+      try {
+        res = await o.upload(
+          url,
+          {
+            method,
+            headers: {
+              accept: 'application/json',
+              'x-requested-with': WEB_HEADER,
+              'content-type': 'application/zip',
+            },
+            body: file,
+          },
+          progress,
+        )
+      } catch {
+        throw offline()
+      }
+      const text = await res.text()
+      if (res.status >= 200 && res.status < 300) return (text ? JSON.parse(text) : {}) as T
+      const err = errorOf(res.status, text)
+      if (res.status === 401 && !c.quiet) o.onSignedOut(signInPath(o.here()))
+      throw err
+    },
     async download(op, c = {}, progress) {
       const def = ROUTE_TABLE[op]
       const { method, url } = urlOf(def.route, c)

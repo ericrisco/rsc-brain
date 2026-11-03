@@ -99,6 +99,11 @@ export type Route = {
   maxBody?: number
   // Only the administration (web): checked before the body is read.
   admin?: boolean
+  // The body is a file (an import's zip), given to the handler as its bytes, up to maxBody; too big is
+  // `archive_too_large`.
+  raw?: boolean
+  // Who may send the body, decided before any of it is read (an import: its curators, into an empty brain).
+  before?: (r: Req) => Promise<void>
   // How the maintenance gate counts it (http/maintenance.ts). Unset: a write unless GET or HEAD. 'reads': not
   // GET but changes nothing; 'own': applies the gate itself (the MCP endpoint per tool, the sign-in forms with a
   // page); 'writes': a GET that writes (the audit export records itself), refused during maintenance.

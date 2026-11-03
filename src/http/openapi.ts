@@ -19,6 +19,8 @@ type Op = {
   file?: boolean
   // The answer is a zip to save (the export of a brain).
   zip?: boolean
+  // The body is a zip, sent as it is (an import).
+  upload?: boolean
   query?: Record<string, string>
 }
 
@@ -1810,6 +1812,44 @@ const HAND: Record<string, Op> = {
     },
     zip: true,
   },
+  'POST /v1/brains/{slug}/import': {
+    summary:
+      'Fill an empty brain (no pages, entries or proposals; else 409 brain_not_empty and nothing changes) from a .zip sent as the body, up to 50 MB (413 archive_too_large): a documentation folder (02-DOCS: wiki/, raw/, index, decisions, log; or an Obsidian vault) or a faithful export of another installation (with manifest.json). Curators, in the web only (a key gets 403 web_only); refused before the body is read. A zip with a name that leaves its folder, a link, an encrypted entry, sizes or a CRC that lie, or more than 200 MB or 20 000 files to unpack is refused whole (422 invalid_archive, 413 archive_too_large). Everything is redacted; one line goes to the wiki log; audited and shown in the activity.',
+    query: {
+      name: 'The name of the zip, kept as where the brain was imported from (at most 200 characters).',
+    },
+    upload: true,
+    reply: obj({
+      report: obj({
+        kind: s('"docs" or "faithful".', { enum: ['docs', 'faithful'] }),
+        pages: n('Pages that came in.'),
+        entries: n('Entries that came in.'),
+        links: n('Links between pages that came in.'),
+        unresolved: list(
+          obj({ from: s('The page.'), target: s('What its link named.') }),
+          'Links that lead nowhere (at most 500).',
+        ),
+        ignored: list(
+          obj({
+            path: s('The file or folder.'),
+            why: s('Why it was left out.', {
+              enum: ['binary', 'too_large', 'not_markdown', 'hidden', 'secret', 'outside', 'link'],
+            }),
+          }),
+          'What was left out (at most 500).',
+        ),
+        renamed: list(
+          obj({ path: s('The file.'), address: s('The address it became.') }),
+          'Names made into addresses (at most 500).',
+        ),
+        totals: obj({
+          unresolved: n('All of them.'),
+          ignored: n('All of them.'),
+          renamed: n('All of them.'),
+        }),
+      }),
+    }),
+  },
   'GET /v1/admin/system': {
     summary:
       'The health of the service (administration): version, start, database, meaning search, streams, mail, disk and maintenance.',
@@ -2244,11 +2284,18 @@ export function openapi(routes: Route[], serverUrl: string | null): Schema {
       operationId: operationId(o.method, o.path),
       summary: hand?.summary ?? `${o.method} ${o.path}`,
       ...(params.length || query.length ? { parameters: [...params, ...query] } : {}),
-      ...(hand?.body
-        ? { requestBody: { required: true, content: { 'application/json': { schema: hand.body } } } }
-        : ['POST', 'PUT', 'PATCH'].includes(o.method)
-          ? { requestBody: { content: { 'application/json': { schema: { type: 'object' } } } } }
-          : {}),
+      ...(hand?.upload
+        ? {
+            requestBody: {
+              required: true,
+              content: { 'application/zip': { schema: { type: 'string', format: 'binary' } } },
+            },
+          }
+        : hand?.body
+          ? { requestBody: { required: true, content: { 'application/json': { schema: hand.body } } } }
+          : ['POST', 'PUT', 'PATCH'].includes(o.method)
+            ? { requestBody: { content: { 'application/json': { schema: { type: 'object' } } } } }
+            : {}),
       responses: {
         [String(hand?.status ?? 200)]: ok,
         default: {

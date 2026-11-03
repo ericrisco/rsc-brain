@@ -1,0 +1,2 @@
+A transcript in plain text.
+Second line.

@@ -84,6 +84,8 @@ const BY_EVENT: Array<[RegExp, (brain: string) => string[]]> = [
   // A page that changed may be one an open proposal edits: its review shows the new base at once.
   [/^wiki\./, (b) => [`brain:${b}:wiki`, `brain:${b}:proposals:review`, `brain:${b}:overview`, 'brains']],
   [/^(entry|session)\./, (b) => [`brain:${b}:journal`, `brain:${b}:overview`]],
+  // An import fills the whole brain at once: everything of it is asked again.
+  [/^brain\.imported$/, (b) => [`brain:${b}`, 'brains']],
 ]
 
 export function invalidateByEvent(kind: string, brain: string): void {

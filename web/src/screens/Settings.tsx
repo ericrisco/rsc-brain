@@ -20,6 +20,7 @@ import { api } from '../api/index.ts'
 import { invalidate, resource } from '../api/resource.ts'
 import { ago } from '../lib/brains.ts'
 import { type ExportFormat, exportAsk, sizeLabel } from '../lib/exporting.ts'
+import { fileProblem, type ImportReport, importAsk, importDone, whyText } from '../lib/importing.ts'
 import { focusOnArrival } from '../lib/screen.ts'
 import {
   fieldDrafts,
@@ -42,7 +43,7 @@ import { Field } from '../ui/Field.tsx'
 import { writeBlocked } from '../ui/state.ts'
 import { ErrorState, FormAlert, Skeleton } from '../ui/states.tsx'
 import { TextArea } from '../ui/TextArea.tsx'
-import { brainResource } from './Brain.tsx'
+import { brainResource, overviewResource } from './Brain.tsx'
 import { curatorNames } from './journal/data.ts'
 
 const S = T.settings
@@ -51,7 +52,7 @@ type Settings = SettingsRead
 type Member = { accountId: string; kind: string; name: string; email: string | null; role: string }
 type Repo = { repo: string; linkedAt: string }
 type BrainInfo = { slug: string; name: string; role: string; status: string }
-export type SettingsTab = 'members' | 'agents' | 'health' | 'archive'
+export type SettingsTab = 'members' | 'agents' | 'health' | 'import' | 'archive'
 
 const settingsResource = (slug: string) =>
   resource<Settings>(`brain:${slug}:settings`, () => api.call<Settings>('wikiSettings', { path: { slug } }))
@@ -1148,6 +1149,186 @@ function Export({ brain }: { brain: BrainInfo }) {
   )
 }
 
+// Import (spec B7 «Importar»): a .zip of a documentation folder or a faithful export goes up into this brain while
+// it is empty. The file is checked before it goes (a .zip, not empty, at most 50 MB); while it goes the screen says
+// how much has; then that the server is writing; then what came in and what did not, and where to look. A refusal
+// keeps the file chosen and says what to do. A brain with content says so instead of offering the form.
+function Import({ brain }: { brain: BrainInfo }) {
+  const I = S.import
+  const ov = overviewResource(brain.slug)
+  const o = ov.data.value
+  const [file, setFile] = useState<File | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [sent, setSent] = useState<[number, number] | null>(null)
+  const [error, setError] = useState<ApiError | null>(null)
+  const [done, setDone] = useState<{ report: ImportReport; file: string } | null>(null)
+  const input = useRef<HTMLInputElement>(null)
+  const saidRef = useRef<HTMLHeadingElement>(null)
+  useEffect(() => {
+    if (done) saidRef.current?.focus()
+  }, [done])
+  const full = o
+    ? o.stats.pages + o.stats.entries + o.stats.pendingProposals > 0 || o.firstSteps.imported
+    : false
+  const go = async () => {
+    if (!file) {
+      setProblem(problem ?? I.choose)
+      input.current?.focus()
+      return
+    }
+    setBusy(true)
+    setError(null)
+    setSent([0, file.size])
+    try {
+      const got = await api.upload<{ report: ImportReport }>(
+        'importBrain',
+        importAsk(brain.slug, file.name),
+        file,
+        (s, t) => setSent([s, t]),
+      )
+      setDone({ report: got.report, file: file.name })
+      invalidate(`brain:${brain.slug}`)
+      invalidate('brains')
+    } catch (e) {
+      setError(e as ApiError)
+    } finally {
+      setBusy(false)
+      setSent(null)
+    }
+  }
+  const status =
+    busy && sent ? (sent[0] < sent[1] ? I.sending(sizeLabel(sent[0]), sizeLabel(sent[1])) : I.working) : null
+  const href = (p: string) => `/b/${encodeURIComponent(brain.slug)}${p}`
+  return (
+    <Part id="import" title={I.title} lead={I.lead}>
+      {done ? (
+        <section class="import-report" aria-labelledby="import-report-title">
+          <h3 id="import-report-title" tabIndex={-1} ref={saidRef}>
+            {I.reportTitle}
+          </h3>
+          <p class="said ok" role="status">
+            {importDone(done.report, done.file)}
+          </p>
+          {done.report.people ? (
+            <p>{I.people(done.report.people.matched, done.report.people.authors)}</p>
+          ) : null}
+          <div class="actions">
+            <a class="button primary" href={href('/wiki')}>
+              {I.openWiki}
+            </a>
+            <a class="button secondary" href={href('/wiki/graph')}>
+              {I.openGraph}
+            </a>
+          </div>
+          {done.report.totals.ignored ? (
+            <details>
+              <summary class="import-count">{I.ignored(done.report.totals.ignored)}</summary>
+              <ul class="plain-list">
+                {done.report.ignored.map((i) => (
+                  <li key={i.path}>
+                    <code>{i.path}</code> — {whyText(i.why)}
+                  </li>
+                ))}
+              </ul>
+              {done.report.totals.ignored > done.report.ignored.length ? (
+                <p class="muted">{I.more(done.report.totals.ignored - done.report.ignored.length)}</p>
+              ) : null}
+            </details>
+          ) : null}
+          {done.report.totals.unresolved ? (
+            <details>
+              <summary class="import-count">{I.unresolved(done.report.totals.unresolved)}</summary>
+              <ul class="plain-list">
+                {done.report.unresolved.map((u) => (
+                  <li key={`${u.from} ${u.target}`}>
+                    <code>{u.target}</code> {I.from(u.from)}
+                  </li>
+                ))}
+              </ul>
+              {done.report.totals.unresolved > done.report.unresolved.length ? (
+                <p class="muted">{I.more(done.report.totals.unresolved - done.report.unresolved.length)}</p>
+              ) : null}
+            </details>
+          ) : null}
+          {done.report.totals.renamed ? (
+            <details>
+              <summary class="import-count">{I.renamed(done.report.totals.renamed)}</summary>
+              <ul class="plain-list">
+                {done.report.renamed.map((r) => (
+                  <li key={r.path}>
+                    <code>{r.path}</code> {I.becomes} <code>{r.address}</code>
+                  </li>
+                ))}
+              </ul>
+              {done.report.totals.renamed > done.report.renamed.length ? (
+                <p class="muted">{I.more(done.report.totals.renamed - done.report.renamed.length)}</p>
+              ) : null}
+            </details>
+          ) : null}
+        </section>
+      ) : brain.status === 'archived' ? (
+        <p class="alert warn">{I.archived}</p>
+      ) : full ? (
+        <p class="alert warn">{I.already}</p>
+      ) : (
+        <form
+          class="import-form"
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (!busy) void go()
+          }}
+        >
+          <ul class="plain-list">
+            {I.what.map((w) => (
+              <li key={w}>{w}</li>
+            ))}
+          </ul>
+          <p>{I.emptyOnly}</p>
+          <p class="muted">{I.peopleLead}</p>
+          <FormAlert error={error} />
+          <div class="field">
+            <label for="import-file">{I.file}</label>
+            <span class="hint" id="import-file-hint">
+              {I.fileHint}
+            </span>
+            <input
+              ref={input}
+              id="import-file"
+              type="file"
+              accept=".zip,application/zip"
+              disabled={busy}
+              aria-describedby={`import-file-hint${problem ? ' import-file-problem' : ''}`}
+              aria-invalid={problem ? 'true' : undefined}
+              onChange={(e) => {
+                const f = e.currentTarget.files?.[0] ?? null
+                setError(null)
+                const p = f ? fileProblem(f) : null
+                setProblem(p)
+                setFile(f && !p ? f : null)
+              }}
+            />
+            {problem ? (
+              <span class="problem" id="import-file-problem">
+                {problem}
+              </span>
+            ) : null}
+          </div>
+          <div class="actions">
+            <Button type="submit" kind="primary" pending={busy} pendingLabel={I.pending} blocked={blocked()}>
+              {I.button}
+            </Button>
+          </div>
+          <p class="said" role="status">
+            {status}
+          </p>
+        </form>
+      )}
+    </Part>
+  )
+}
+
 function Delete({ brain }: { brain: BrainInfo }) {
   const [asking, setAsking] = useState(false)
   const [typed, setTyped] = useState('')
@@ -1246,6 +1427,7 @@ const TABS: Array<{ tab: SettingsTab; path: string; label: string }> = [
   { tab: 'members', path: '', label: S.tabs.members },
   { tab: 'agents', path: '/agents', label: S.tabs.agents },
   { tab: 'health', path: '/health', label: S.tabs.health },
+  { tab: 'import', path: '/import', label: S.tabs.import },
   { tab: 'archive', path: '/archive', label: S.tabs.archive },
 ]
 
@@ -1318,6 +1500,7 @@ export function BrainSettings({ slug, tab }: { slug: string; tab: SettingsTab })
           </>
         ) : null}
         {tab === 'health' ? <Health slug={brain.slug} archived={archived} account={who.account.id} /> : null}
+        {tab === 'import' ? <Import brain={info} /> : null}
         {tab === 'archive' ? (
           <>
             <Export brain={info} />

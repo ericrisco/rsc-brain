@@ -19,6 +19,7 @@ export type Action =
   | 'brain.create'
   | 'brain.read'
   | 'brain.export'
+  | 'brain.import'
   | 'brain.archive'
   | 'brain.delete'
   | 'journal.write'
@@ -81,6 +82,12 @@ export function can(actor: Actor, action: Action, f: Facts = {}): Decision {
     case 'brain.archive':
     case 'brain.export':
       return needRole(f.role, 'curator')
+    // Filling an empty brain from a folder or an export (spec B7): its curators, while it is not archived.
+    case 'brain.import': {
+      const r = needRole(f.role, 'curator')
+      if (!r.ok) return r
+      return f.brainStatus === 'archived' ? ARCHIVED : OK
+    }
     case 'brain.delete':
       if (actor.isAdmin && actor.kind === 'person') return OK
       return no('Only the administration can delete a brain.', 'Ask the administration of this installation.')

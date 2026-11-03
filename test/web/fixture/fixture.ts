@@ -92,6 +92,7 @@ export type Screen =
   | 'admin-backups'
   | 'connect'
   | 'export'
+  | 'import'
 export type State = 'normal' | 'loading' | 'empty' | 'filtered-empty' | 'error' | 'forbidden' | 'much-data'
 // member: signed in as a person who is not an administrator (Ana).
 // alone: the administrator the setup made, the only person in the installation.
@@ -136,7 +137,7 @@ const manyInvitations = (): Invitation[] =>
     expiresAt: '2026-09-04T10:00:00.000Z',
   }))
 // What has happened in a brain of the scenario (the overview's first steps, its numbers).
-type Life = { entries: number; agent: boolean }
+type Life = { entries: number; agent: boolean; imported?: boolean }
 type Scen = {
   id: string
   setupDone: boolean
@@ -273,6 +274,8 @@ type Ctx = {
   params: Record<string, string>
   query: URLSearchParams
   body: Record<string, unknown>
+  // The body as it came (a zip sent to import).
+  raw?: Buffer
   who: Account | null
   web: boolean
 }
@@ -1055,7 +1058,11 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
                   long: 0,
                   similarTitles: 0,
                 },
-          firstSteps: { agentConnected: life.agent, firstEntry: life.entries > 0, imported: false },
+          firstSteps: {
+            agentConnected: life.agent,
+            firstEntry: life.entries > 0,
+            imported: Boolean(life.imported),
+          },
         },
       }
     },
@@ -1492,6 +1499,81 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         headers: {
           'content-type': 'application/zip',
           'content-disposition': `attachment; filename="rsc-brain-${b.slug}-${format}-${stamp}.zip"`,
+        },
+      }
+    },
+  },
+  // Importing a folder (B7 PR32): its curators, into an empty brain; the zip must at least look like one. The report
+  // is the one of the sample docs (test/fixtures/docs-sample/), and the brain fills, as the server's would.
+  'POST /v1/brains/{slug}/import': {
+    screen: 'import',
+    run: (c) => {
+      const b = brainsOf(c.s, c.who).find((x) => x.slug === c.params.slug)
+      if (!b) return NO_BRAIN
+      if (b.role !== 'curator')
+        return err(
+          403,
+          'forbidden',
+          `This needs the curator role in the brain; you are ${b.role}.`,
+          'Ask a curator of the brain (Eric) for the curator role.',
+        )
+      if (b.status === 'archived')
+        return err(
+          403,
+          'forbidden',
+          'This brain is archived, so it is read-only.',
+          'A curator of the brain can unarchive it (POST /v1/brains/:slug/unarchive).',
+        )
+      const life = c.s.life.get(b.slug) ?? { entries: 0, agent: false }
+      if (life.imported || life.entries > 0 || b.stats.pages > 0 || b.stats.entries > 0)
+        return err(
+          409,
+          'brain_not_empty',
+          'This brain already has pages, entries or proposals; an import goes only into an empty brain. Nothing was changed.',
+          'Create a new brain and import into it.',
+        )
+      if (c.raw?.subarray(0, 2).toString('latin1') !== 'PK')
+        return err(
+          422,
+          'invalid_archive',
+          'This is not a zip rsc-brain can read: its end record is missing.',
+          'Make the zip again from the folder (with no links in it) and import it.',
+        )
+      c.s.life.set(b.slug, { ...life, imported: true })
+      b.stats = { ...b.stats, pages: 5, entries: 4 }
+      emit(c.s, b.slug, 'brain.imported', {
+        who: c.who ? { id: c.who.id, name: c.who.name } : null,
+        target: { id: '', label: 'docs' },
+        client: 'web',
+      })
+      const ignored = [
+        { path: '.obsidian/', why: 'hidden' },
+        { path: 'README.md', why: 'outside' },
+        { path: 'archive/', why: 'outside' },
+        { path: 'raw/images/photo.jpg', why: 'binary' },
+        { path: 'raw/keys/admin.totp', why: 'secret' },
+        { path: 'wiki/data.json', why: 'not_markdown' },
+        { path: 'wiki/diagram.png', why: 'binary' },
+      ]
+      const many = c.s.states.get('import') === 'much-data'
+      return {
+        status: 200,
+        body: {
+          report: {
+            kind: 'docs',
+            pages: 5,
+            entries: 4,
+            links: 5,
+            unresolved: [
+              { from: 'decisions/use-postgres', target: 'wiki/nowhere' },
+              { from: 'topics/retention', target: 'missing-page' },
+            ],
+            ignored: many
+              ? Array.from({ length: 500 }, (_, i) => ({ path: `raw/images/${i}.png`, why: 'binary' }))
+              : ignored,
+            renamed: [{ path: 'wiki/topics/Audience Notes.md', address: 'topics/audience-notes' }],
+            totals: { unresolved: 2, ignored: many ? 1234 : ignored.length, renamed: 1 },
+          },
         },
       }
     },
@@ -2493,6 +2575,7 @@ const PRIVATE = new Set([
   ...ADMIN_PRIVATE,
   'POST /v1/setup/key',
   'GET /v1/brains/{slug}/export',
+  'POST /v1/brains/{slug}/import',
   'GET /v1/brains/{slug}/wiki/settings',
   'PUT /v1/brains/{slug}/wiki/settings',
   'POST /v1/brains/{slug}/members',
@@ -3028,10 +3111,18 @@ function cookies(req: IncomingMessage): Record<string, string> {
   return out
 }
 
-async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function rawOf(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = []
   for await (const c of req) chunks.push(c as Buffer)
-  const text = Buffer.concat(chunks).toString('utf8')
+  return Buffer.concat(chunks)
+}
+
+async function bodyOf(req: IncomingMessage): Promise<Record<string, unknown>> {
+  return parsed(await rawOf(req))
+}
+
+function parsed(raw: Buffer): Record<string, unknown> {
+  const text = raw.toString('utf8')
   if (!text) return {}
   try {
     const v = JSON.parse(text) as unknown
@@ -3062,6 +3153,11 @@ function emit(s: Scen, slug: string, kind: string, o: EmitOptions = {}): void {
   }
   if (kind === 'proposal.submitted' && b)
     b.stats = { ...b.stats, pendingProposals: b.stats.pendingProposals + 1 }
+  // Another curator imported a folder: the brain fills and its third step is done.
+  if (kind === 'brain.imported') {
+    s.life.set(slug, { ...life, imported: true })
+    if (b) b.stats = { ...b.stats, pages: Math.max(b.stats.pages, 5), entries: Math.max(b.stats.entries, 4) }
+  }
   if (kind === 'entry.saved' || kind === 'session.opened') {
     life.agent = true
     if (kind === 'entry.saved') life.entries += 1
@@ -3448,7 +3544,8 @@ export async function startFixture(
       const session = c.rscb_session && s.sessions.has(c.rscb_session) ? c.rscb_session : null
       const who = session ? (s.accounts.find((a) => `fx.${a.id}` === session) ?? null) : null
       const isWeb = req.headers['x-requested-with'] === 'rsc-brain-web'
-      const body = await bodyOf(req)
+      const raw = await rawOf(req)
+      const body = parsed(raw)
       const state = def.screen ? s.states.get(def.screen) : undefined
       if (state === 'loading') await new Promise((r) => setTimeout(r, loadingMs))
       if (state === 'error') return send(res, INTERNAL)
@@ -3468,7 +3565,7 @@ export async function startFixture(
         if (!who) return send(res, UNAUTHORIZED)
         if (method !== 'GET' && !isWeb) return send(res, CSRF)
       }
-      send(res, def.run({ s, params: m.params, query: url.searchParams, body, who, web: isWeb }))
+      send(res, def.run({ s, params: m.params, query: url.searchParams, body, raw, who, web: isWeb }))
     })().catch((e: unknown) => {
       process.stderr.write(`fixture: ${e instanceof Error ? e.stack : String(e)}\n`)
       if (!res.headersSent) send(res, INTERNAL)

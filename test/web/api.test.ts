@@ -374,3 +374,94 @@ describe('a download through the client (an export, spec B7)', () => {
     )
   })
 })
+
+describe('the web client: uploading a file (an import, B7 PR32)', () => {
+  type Sent = { url: string; method: string; headers: Record<string, string>; size: number }
+  const uploader = (answer: { status: number; body?: unknown } | Error, steps: number[] = []) => {
+    const sent: Sent[] = []
+    return {
+      sent,
+      upload: async (
+        url: string,
+        init: { method: string; headers: Record<string, string>; body: Blob },
+        progress?: (sent: number, total: number) => void,
+      ) => {
+        sent.push({ url, method: init.method, headers: init.headers, size: init.body.size })
+        for (const n of steps) progress?.(n, init.body.size)
+        if (answer instanceof Error) throw answer
+        const text = answer.body === undefined ? '' : JSON.stringify(answer.body)
+        return { status: answer.status, text: async () => text }
+      },
+    }
+  }
+  const noFetch: Transport = async () => {
+    throw new Error('an upload never goes through the JSON transport')
+  }
+
+  it('sends the file as the body, with the header of the web, and says how much has gone', async () => {
+    const u = uploader({ status: 200, body: { report: { pages: 5 } } }, [3, 6])
+    const api = createClient({ transport: noFetch, upload: u.upload, onSignedOut: () => {}, here: () => '/' })
+    const seen: Array<[number, number]> = []
+    const got = await api.upload<{ report: { pages: number } }>(
+      'importBrain',
+      { path: { slug: 'my brain' }, query: { name: 'docs.zip' } },
+      new Blob(['PKzip']),
+      (s, t) => seen.push([s, t]),
+    )
+    assert.equal(got.report.pages, 5)
+    assert.deepEqual(u.sent, [
+      {
+        url: '/v1/brains/my%20brain/import?name=docs.zip',
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'x-requested-with': 'rsc-brain-web',
+          'content-type': 'application/zip',
+        },
+        size: 5,
+      },
+    ])
+    assert.deepEqual(seen, [
+      [3, 5],
+      [6, 5],
+    ])
+  })
+
+  it('a refusal is an ApiError with the words of the server; a lost session leads to sign-in; no network is offline', async () => {
+    const no = uploader({ status: 409, body: ERR('brain_not_empty') })
+    const api = createClient({
+      transport: noFetch,
+      upload: no.upload,
+      onSignedOut: () => {},
+      here: () => '/',
+    })
+    await assert.rejects(
+      api.upload('importBrain', { path: { slug: 'x' } }, new Blob(['x'])),
+      (e: ApiError) => {
+        assert.deepEqual([e.status, e.code], [409, 'brain_not_empty'])
+        return true
+      },
+    )
+    let to = ''
+    const gone = uploader({ status: 401, body: ERR('unauthorized') })
+    const api2 = createClient({
+      transport: noFetch,
+      upload: gone.upload,
+      onSignedOut: (t) => (to = t),
+      here: () => '/b/x/settings/import',
+    })
+    await assert.rejects(api2.upload('importBrain', { path: { slug: 'x' } }, new Blob(['x'])))
+    assert.equal(to, '/sign-in?next=%2Fb%2Fx%2Fsettings%2Fimport')
+    const down = uploader(new Error('down'))
+    const api3 = createClient({
+      transport: noFetch,
+      upload: down.upload,
+      onSignedOut: () => {},
+      here: () => '/',
+    })
+    await assert.rejects(
+      api3.upload('importBrain', { path: { slug: 'x' } }, new Blob(['x'])),
+      (e: ApiError) => e.code === 'offline',
+    )
+  })
+})

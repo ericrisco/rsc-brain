@@ -1452,6 +1452,24 @@ describe('the v1 contract', { skip: skipPg }, () => {
     EXPORT_LIMITS.minFreeBytes = Number.MAX_SAFE_INTEGER
     await add('export_no_space', w.callWeb(ericWeb, 'GET', '/v1/brains/contract/export?format=readable'))
     EXPORT_LIMITS.minFreeBytes = room
+    // Imports (B7 PR32): into a brain with content; a zip it cannot read; one over 50 MB.
+    const upload = async (slug: string, bytes: Buffer): Promise<Call> => {
+      const res = await fetch(`${w.base}/v1/brains/${slug}/import?name=x.zip`, {
+        method: 'POST',
+        headers: {
+          cookie: `rscb_session=${ericWeb}`,
+          'x-requested-with': 'rsc-brain-web',
+          'content-type': 'application/zip',
+        },
+        body: new Uint8Array(bytes),
+      })
+      const text = await res.text()
+      return { status: res.status, body: text ? JSON.parse(text) : {}, text }
+    }
+    await add('brain_not_empty', upload('contract', Buffer.from('PK')))
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'contract-import', name: 'Contract import' })
+    await add('invalid_archive', upload('contract-import', Buffer.from('not a zip')))
+    await add('archive_too_large', upload('contract-import', Buffer.alloc(50 * 1024 * 1024 + 1)))
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))
     await add('setup_done', w.raw('GET', '/v1/setup'))
     await add(

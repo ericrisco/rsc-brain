@@ -136,6 +136,9 @@ function SettingsAgentsPage({ slug }: { slug?: string }) {
 function SettingsHealthPage({ slug }: { slug?: string }) {
   return <BrainSettings key={slug} slug={slug ?? ''} tab="health" />
 }
+function SettingsImportPage({ slug }: { slug?: string }) {
+  return <BrainSettings key={slug} slug={slug ?? ''} tab="import" />
+}
 function SettingsArchivePage({ slug }: { slug?: string }) {
   return <BrainSettings key={slug} slug={slug ?? ''} tab="archive" />
 }
@@ -217,6 +220,7 @@ function SignedIn() {
           <Route path="/b/:slug/settings" component={SettingsPage} />
           <Route path="/b/:slug/settings/agents" component={SettingsAgentsPage} />
           <Route path="/b/:slug/settings/health" component={SettingsHealthPage} />
+          <Route path="/b/:slug/settings/import" component={SettingsImportPage} />
           <Route path="/b/:slug/settings/archive" component={SettingsArchivePage} />
           <Route path="/people" component={People} />
           <Route path="/admin" component={AdminHome} />

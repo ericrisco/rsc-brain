@@ -3,7 +3,7 @@ import { signal } from '@preact/signals'
 import { leftAdmin } from '../lib/flags.ts'
 import { textDrafts } from '../lib/settings.ts'
 import { helpOpen, searchOpen } from '../shell/keys.ts'
-import { createClient } from './client.ts'
+import { createClient, type Upload } from './client.ts'
 import { clearDrafts } from './draft.ts'
 import { resetResources } from './resource.ts'
 
@@ -25,8 +25,23 @@ export function forgetSession(): void {
   helpOpen.value = false
 }
 
+// An upload by XMLHttpRequest: fetch cannot say how much of a body has gone yet.
+const xhrUpload: Upload = (url, init, progress) =>
+  new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest()
+    x.open(init.method, url)
+    x.withCredentials = true
+    for (const [k, v] of Object.entries(init.headers)) x.setRequestHeader(k, v)
+    x.upload.onprogress = (e) => progress?.(e.loaded, e.lengthComputable ? e.total : init.body.size)
+    x.onload = () => resolve({ status: x.status, text: async () => x.responseText })
+    x.onerror = () => reject(new Error('network'))
+    x.onabort = () => reject(new Error('aborted'))
+    x.send(init.body)
+  })
+
 export const api = createClient({
   transport: (url, init) => fetch(url, init),
+  upload: xhrUpload,
   onSignedOut: (to) => {
     // Already on the way to sign-in (another request ended first): keep the address it carries.
     if (location.pathname === '/sign-in') return

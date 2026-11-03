@@ -188,7 +188,7 @@ export async function brainOverview(ctx: Ctx, slug: string) {
       : ctx.who.credential.kind === 'short'
         ? { sql: 't.credential_id = $2', id: ctx.who.credential.id }
         : { sql: 't.account_id = $2', id: ctx.who.accountId }
-  const steps = await db.one<{ agent: boolean; entry: boolean }>(
+  const steps = await db.one<{ agent: boolean; entry: boolean; imported: boolean }>(
     // An agent connected: a key that is not a web session did something in this brain — opened a
     // session, saved, proposed, or only read (a search, a read or asking for context: the trail of B3).
     `SELECT EXISTS (SELECT 1 FROM sessions s JOIN credentials c ON c.id = s.credential_id
@@ -197,7 +197,10 @@ export async function brainOverview(ctx: Ctx, slug: string) {
                      WHERE p.brain_id = $1 AND c.kind <> 'web')
          OR EXISTS (SELECT 1 FROM trail t JOIN credentials c ON c.id = t.credential_id
                      WHERE t.brain_id = $1 AND c.kind <> 'web'${mine ? ` AND ${mine.sql}` : ''}) AS agent,
-            EXISTS (SELECT 1 FROM entries e WHERE e.brain_id = $1) AS entry`,
+            -- What an import brought is not the brain's first entry: only what came after it.
+            EXISTS (SELECT 1 FROM entries e JOIN brains b ON b.id = e.brain_id
+                     WHERE e.brain_id = $1 AND (b.imported_at IS NULL OR e.created_at > b.imported_at)) AS entry,
+            EXISTS (SELECT 1 FROM brains b WHERE b.id = $1 AND b.imported_at IS NOT NULL) AS imported`,
     mine ? [brain.id, mine.id] : [brain.id],
   )
   const h = await wikiHealth(ctx, slug)
@@ -230,7 +233,11 @@ export async function brainOverview(ctx: Ctx, slug: string) {
       long: h.long.length,
       similarTitles: h.similarTitles.length,
     },
-    // Importing a folder arrives with B7 (rsc-brain-install); until then it is never done.
-    firstSteps: { agentConnected: Boolean(steps?.agent), firstEntry: Boolean(steps?.entry), imported: false },
+    // Done once the brain was filled by an import (spec B7 «Importar»).
+    firstSteps: {
+      agentConnected: Boolean(steps?.agent),
+      firstEntry: Boolean(steps?.entry),
+      imported: Boolean(steps?.imported),
+    },
   }
 }

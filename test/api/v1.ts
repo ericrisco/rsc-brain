@@ -101,6 +101,7 @@ export const V1 = [
   'POST /v1/brains/{slug}/corrections/relay',
   'POST /v1/brains/{slug}/corrections',
   'POST /v1/brains/{slug}/entries',
+  'POST /v1/brains/{slug}/import',
   'POST /v1/brains/{slug}/members',
   'POST /v1/brains/{slug}/proposals',
   'POST /v1/brains/{slug}/relations',
@@ -217,6 +218,10 @@ export const ERROR_STATUS: Record<string, number> = {
   // Exporting a brain (B7 PR31 review): two exports are being prepared already; the disk is short of room.
   export_busy: 409,
   export_no_space: 507,
+  // Importing into a brain (B7 PR32): a brain with content already; a zip it cannot read; one too big.
+  brain_not_empty: 409,
+  invalid_archive: 422,
+  archive_too_large: 413,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }

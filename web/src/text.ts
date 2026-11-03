@@ -469,11 +469,14 @@ export const T = {
     step2Lead: 'Paste this to your agent:',
     step2Ask: (slug: string) =>
       `Save to the brain "${slug}" one thing worth remembering about this project, and keep saving what we learn as we work.`,
-    step3: 'Tip: bring in a documentation folder',
+    step3: 'Import a documentation folder',
     step3Lead:
-      'Importing a folder (a 02-DOCS folder or an Obsidian vault) is not in this version yet. Meanwhile your agent can do it: paste this to it.',
-    step3Ask: (slug: string) =>
-      `Read the documentation in ./docs and save to the brain "${slug}" each decision and fact worth keeping, one entry each.`,
+      'Bring in a 02-DOCS folder or an Obsidian vault, as a .zip: its pages with their links, and its notes. Only while the brain is empty. This step marks itself when the import is done.',
+    step3Go: 'Import a folder',
+    step3Ask:
+      'A curator of this brain can import a documentation folder (Settings › Import), while it is empty.',
+    step3Done: 'Imported. Its pages are in the wiki and its notes in the journal.',
+    step3Closed: 'An import goes only into an empty brain, and this one has content already.',
     copyAsk: 'Copy the request',
     numbers: 'In numbers',
     pages: (n: number) => [fmt(n), n === 1 ? 'page' : 'pages'] as const,
@@ -632,7 +635,13 @@ export const T = {
     theirsIn: 'This brain is in meaning search.',
     editGuide: 'Edit the guide',
     tabsLabel: 'Parts of the settings',
-    tabs: { members: 'Members', agents: 'Agents', health: 'Health thresholds', archive: 'Archive' },
+    tabs: {
+      members: 'Members',
+      agents: 'Agents',
+      health: 'Health thresholds',
+      import: 'Import',
+      archive: 'Archive',
+    },
     removeShort: 'Remove',
     leaveShort: 'Leave',
     leave: (brain: string) => `Leave ${brain}`,
@@ -706,6 +715,54 @@ export const T = {
     longHint: 'A page longer than this is suggested for a split.',
     every: 'Maintenance every (approvals)',
     everyHint: 'After this many approved proposals, Health suggests a maintenance pass.',
+    import: {
+      title: 'Import a documentation folder',
+      lead: 'Fill this brain from a folder: a 02-DOCS folder (wiki/ and raw/) or an Obsidian vault, as a .zip, or a faithful export of another rsc-brain installation.',
+      what: [
+        'Each markdown file of wiki/ (of the vault) becomes a page; links between files become links between pages.',
+        'Each text file of raw/ becomes a note in the journal; the index, decisions and log are read too.',
+        'Images, files over 1 MB, hidden folders and files named like keys are left out, and the report says so.',
+        'Private parts and anything shaped like a secret are removed, as everywhere in rsc-brain.',
+      ],
+      emptyOnly: 'Only into an empty brain: one with no pages, entries or proposals yet.',
+      peopleLead:
+        'From a faithful export, people are found by email when they are members of this brain; add them first. Everyone else comes in as an author: their name, with no account.',
+      file: 'Zip to import',
+      fileHint:
+        'A .zip of up to 50 MB. A bigger folder can be imported by an administrator from the command line.',
+      button: 'Import the folder',
+      pending: 'Importing…',
+      choose: 'Choose a .zip to import first.',
+      notZip: 'This is not a .zip. Make a .zip of the folder (on a Mac: Compress) and choose it.',
+      emptyFile: 'This file is empty. Choose the .zip of the folder.',
+      tooBig: (size: string) =>
+        `This zip is ${size}; the web takes up to 50 MB. Import a smaller folder, or ask an administrator to import it from the command line.`,
+      sending: (sent: string, total: string) => `Uploading… ${sent} of ${total}.`,
+      working: 'Uploaded. Reading the folder and writing the brain; this can take a minute.',
+      reportTitle: 'What came in',
+      openWiki: 'Open the wiki',
+      openGraph: 'See the graph',
+      people: (matched: number, authors: number) =>
+        `${matched} ${matched === 1 ? 'person' : 'people'} found by email; ${authors} came in as ${authors === 1 ? 'an author' : 'authors'}.`,
+      ignored: (n: number) => `Left out (${n.toLocaleString('en-US')})`,
+      unresolved: (n: number) => `Links that lead nowhere (${n.toLocaleString('en-US')})`,
+      renamed: (n: number) => `Names made into addresses (${n.toLocaleString('en-US')})`,
+      more: (n: number) => `And ${n.toLocaleString('en-US')} more, not listed here.`,
+      from: (page: string) => `from ${page}`,
+      becomes: 'becomes',
+      why: {
+        binary: 'not text (an image or another binary file)',
+        too_large: 'over 1 MB, or too long for a page',
+        not_markdown: 'text that is not markdown, in the wiki',
+        hidden: 'a hidden file or folder',
+        secret: 'named like a key or a secret: never read',
+        outside: 'outside wiki/ and raw/: not read',
+        link: 'a link to elsewhere: never followed',
+      } as Record<string, string>,
+      already:
+        'This brain already has content: an import goes only into an empty brain. Create a new brain to import a folder.',
+      archived: 'This brain is archived: nothing can be imported into it.',
+    },
     exportTitle: 'Export',
     exportLead:
       'Save this brain as a zip file. Every export is recorded in the audit, and the curators see it in the activity.',
@@ -2144,6 +2201,7 @@ export const T = {
       'proposal.decided': 'decided a proposal',
       'wiki.changed': 'changed the wiki',
       'brain.exported': 'exported the brain',
+      'brain.imported': 'imported into the brain',
     } as Record<string, string>,
     installation: 'rsc-brain',
     changed: {

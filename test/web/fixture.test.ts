@@ -1412,6 +1412,53 @@ describe('the fixture API', () => {
     seen.add('GET /v1/brains/{slug}/export')
   })
 
+  it('imports a zip into an empty brain, and refuses like the server', async () => {
+    const s = fx.scenario('signed-in')
+    const send = async (slug: string, bytes: Buffer, signedIn = true) => {
+      const cookie = signedIn ? s.cookie : undefined
+      const res = await fetch(`${fx.url}/v1/brains/${slug}/import?name=docs.zip`, {
+        method: 'POST',
+        headers: {
+          'x-fixture-scenario': s.id,
+          'x-requested-with': 'rsc-brain-web',
+          'content-type': 'application/zip',
+          ...(cookie ? { cookie } : {}),
+        },
+        body: new Uint8Array(bytes),
+      })
+      const text = await res.text()
+      const body = text ? JSON.parse(text) : {}
+      assert.deepEqual(
+        validate(doc, 'POST', `/v1/brains/${slug}/import`, res.status, body),
+        [],
+        text.slice(0, 300),
+      )
+      return { status: res.status, code: (body as { error?: { code: string } }).error?.code, body }
+    }
+    const zip = Buffer.from('PK\u0003\u0004 a zip', 'latin1')
+    assert.equal((await send('growth', zip)).code, 'brain_not_empty')
+    assert.equal((await send('nowhere', zip)).code, 'brain_not_found')
+    assert.equal((await send('growth', zip, false)).status, 401)
+    assert.equal(
+      (
+        await call('POST', '/v1/brains', {
+          scenario: s.id,
+          cookie: s.cookie,
+          body: { slug: 'fresh-one', name: 'Fresh' },
+        })
+      ).status,
+      201,
+    )
+    assert.equal((await send('fresh-one', Buffer.from('not a zip'))).code, 'invalid_archive')
+    const ok = await send('fresh-one', zip)
+    assert.equal(ok.status, 200)
+    assert.equal((ok.body as { report: { pages: number } }).report.pages, 5)
+    const ov = await call('GET', '/v1/brains/fresh-one/overview', { scenario: s.id, cookie: s.cookie })
+    assert.equal((ov.body as { firstSteps: { imported: boolean } }).firstSteps.imported, true)
+    assert.equal((await send('fresh-one', zip)).code, 'brain_not_empty')
+    seen.add('POST /v1/brains/{slug}/import')
+  })
+
   it('every operation the fixture answers was checked against the description', () => {
     assert.deepEqual(
       [...fx.operations].filter((op) => !seen.has(op)),

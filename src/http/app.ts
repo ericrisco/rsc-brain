@@ -35,6 +35,7 @@ import { connectRoutes } from './routes/connect.ts'
 import { decideRoutes } from './routes/decide.ts'
 import { eventRoutes } from './routes/events.ts'
 import { exportRoutes } from './routes/export.ts'
+import { importRoutes } from './routes/import.ts'
 import { journalRoutes } from './routes/journal.ts'
 import { keyRoutes } from './routes/keys.ts'
 import { meaningRoutes } from './routes/meaning.ts'
@@ -122,6 +123,7 @@ export const ROUTES: Route[] = [
   ...systemRoutes,
   ...backupRoutes,
   ...exportRoutes,
+  ...importRoutes,
 ]
 // The MCP endpoint calls the same routes a program would (spec B5 parity).
 ROUTES.push(...mcpRoutes(() => ROUTES))
@@ -194,6 +196,42 @@ async function readBody(req: IncomingMessage, max = MAX_BODY): Promise<unknown> 
   const bad = badText(parsed)
   if (bad) throw invalid(bad, 'Fix it and retry.')
   return parsed
+}
+
+// A body that is a file (an import's zip): its bytes, up to `max` and not one more, read like readBody.
+const archiveTooLarge = (max: number) => {
+  const e = new AppError(
+    413,
+    'archive_too_large',
+    `The zip is larger than ${Math.round(max / 1_048_576)} MB.`,
+    'Import a smaller zip, or ask an administrator to import the folder from the command line.',
+  )
+  e.headers = { connection: 'close' }
+  return e
+}
+async function readRaw(req: IncomingMessage, max = MAX_BODY): Promise<Buffer> {
+  const declared = Number(req.headers['content-length'])
+  if (Number.isFinite(declared) && declared > max) throw archiveTooLarge(max)
+  const chunks: Buffer[] = []
+  let size = 0
+  await new Promise<void>((resolve, reject) => {
+    const onData = (chunk: Buffer) => {
+      size += chunk.length
+      if (size > max) {
+        req.off('data', onData)
+        req.off('end', resolve)
+        req.pause()
+        chunks.length = 0
+        reject(archiveTooLarge(max))
+        return
+      }
+      chunks.push(chunk)
+    }
+    req.on('data', onData)
+    req.on('end', resolve)
+    req.on('error', reject)
+  })
+  return Buffer.concat(chunks)
 }
 
 export const MAX_DEPTH = 32
@@ -554,7 +592,10 @@ export function createHandler(deps: AppDeps) {
       rate.take(who.credential.id, who.rateLimit)
       // A route only the administration uses refuses anyone else before reading a (large) body.
       if (found.route.admin) adminOnly({ db: deps.db, clock: deps.clock, who })
-      const body = await readBody(req, found.route.maxBody)
+      if (found.route.before) await found.route.before({ ...base, body: undefined, who })
+      const body = found.route.raw
+        ? await readRaw(req, found.route.maxBody)
+        : await readBody(req, found.route.maxBody)
       bodyRead = true
       const reply = await found.route.handler({ ...base, body, who })
       if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)

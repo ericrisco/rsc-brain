@@ -115,6 +115,8 @@ export const ROUTE_TABLE = {
   auditExport: { route: 'GET /v1/admin/audit/export' },
   // Exporting a brain (spec B7): a download, read through the client to say how it goes.
   exportBrain: { route: 'GET /v1/brains/{slug}/export' },
+  // Importing a folder into an empty brain (B7 PR32): the zip goes up as the body.
+  importBrain: { route: 'POST /v1/brains/{slug}/import' },
   system: { route: 'GET /v1/admin/system' },
   // Copies, the installation key and restoring (B7 PR30).
   backups: { route: 'GET /v1/admin/backups' },
