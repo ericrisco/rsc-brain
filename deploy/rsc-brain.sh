@@ -380,8 +380,10 @@ warn_shell_vars() {
 # With SHIELD=1 (what must not stop halfway: the way back of an update, a key reseal) it runs out of the terminal's
 # process group. Ignoring SIGINT here is not enough: docker compose takes a Ctrl-C back even when it started with it
 # ignored, passes it to the container and stops waiting for it (Docker 29.1, Compose 5.0: `run --rm` exits 130 and
-# the container goes on, or stops). In a session of its own (setsid), or else a job of its own (job control), a Ctrl-C
-# at the terminal does not reach it.
+# the container goes on, or stops). In a session of its own a Ctrl-C at the terminal does not reach it: setsid
+# (util-linux, busybox), or perl's (macOS has perl, not setsid). A session has no terminal, so `stty tostop` cannot stop
+# it either; job control (set -m) was no way: dash has none in a subshell, and tostop stops a background job that
+# writes. With neither, it runs as any other call (the known limit, said in the README).
 SHIELD=0
 dc() {
   if [ -f "$DIR/compose.override.yaml" ]; then
@@ -397,10 +399,10 @@ dc() {
     set -- compose --project-directory "$DIR" -p "$NAME" --env-file "$ENV_FILE" "$@"
     [ "$SHIELD" = 1 ] || exec docker "$@"
     command -v setsid >/dev/null 2>&1 && exec setsid docker "$@"
-    # (A script, unlike sh -c, prints no notice when the job is done; <&0 keeps the standard input it was given.)
-    set -m 2>/dev/null
-    docker "$@" <&0 &
-    wait $!
+    # This subshell is not a process group leader (no job control here), so setsid() does not fail.
+    command -v perl >/dev/null 2>&1 &&
+      exec perl -MPOSIX -e 'POSIX::setsid() or die "setsid: $!\n"; exec @ARGV or die "$ARGV[0]: $!\n"' docker "$@"
+    exec docker "$@"
   )
 }
 
@@ -1288,9 +1290,12 @@ rollback() {
   step "Restoring the copy made before the update ($PRE_COPY), keys and sessions kept"
   restored=0
   dc run --rm -T --no-deps app rsc-brain restore --file "/backups/$PRE_COPY" --keep-keys </dev/null >&2 && restored=1
-  # A restore that failed leaves a mark every later command shows (and status fails on) until a restore goes well:
-  # written before the journal goes, so a stop in between leaves one or the other.
-  if [ "$restored" = 0 ]; then
+  # A restore that failed leaves a mark every later command shows (and status fails on) until a restore goes well,
+  # this one done again (a launcher killed after a failed restore leaves the journal too) or a restore by hand. Written
+  # before the journal goes, so a stop in between leaves one or the other.
+  if [ "$restored" = 1 ]; then
+    rm -f "${DIR:?}/${STATE:?}/rollback.failed"
+  else
     {
       say_env RSC_BRAIN_ROLLBACK_FROM "$UPDATE_FROM"
       say_env RSC_BRAIN_ROLLBACK_TO "$UPDATE_TO"

@@ -17,7 +17,6 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
-  realpathSync,
   rmSync,
   statfsSync,
   statSync,
@@ -70,6 +69,7 @@ const TOOLS = [
   'setsid',
   // The fake docker's own (never the launcher's).
   'cksum',
+  // Both: the launcher's way to a session of its own without setsid, and the fake docker's compose-like waits.
   'perl',
 ]
 const VERSIONS = 'rsc-brain:test=0.1.0 rsc-brain:next=0.2.0 rsc-brain:broken=0.3.0 rsc-brain:old=0.0.9'
@@ -1024,29 +1024,66 @@ describe('the launcher: second review of PR #36', () => {
     assert.equal(exists(c, 'env.rotated'), false)
   })
 
-  it('without setsid, the way back runs as a job of its own: a second Ctrl-C does not stop the restore halfway', async (t) => {
-    // The shell itself, not its name (on Debian and Ubuntu, sh is dash), known only once before() has run.
-    if (/dash$/.test(realpathSync(shell()))) {
-      t.skip('dash has no job control without a terminal (Linux, where /bin/sh is dash, has setsid)')
-      return
-    }
-    const c = await installed()
-    const bin = join(c.state, 'nosetsid')
+  // Every tool but those named: what a machine without them has.
+  const without = (c: Case, ...gone: string[]) => {
+    const bin = join(c.state, `without-${gone.join('-')}`)
     mkdirSync(bin)
     for (const t of TOOLS) {
-      if (t !== 'setsid' && existsSync(join(SYSBIN, t))) symlinkSync(join(SYSBIN, t), join(bin, t))
+      if (!gone.includes(t) && existsSync(join(SYSBIN, t))) symlinkSync(join(SYSBIN, t), join(bin, t))
     }
+    return `${FAKEBIN}:${bin}`
+  }
+
+  it('without setsid, perl gives the way back a session of its own: a second Ctrl-C does not stop the restore halfway', async () => {
+    const c = await installed()
     const before = readFileSync(join(c.dir, '.env'), 'utf8')
     const r = await launchStopped(
       c,
       update(c, '--image', 'rsc-brain:broken'),
-      { PATH: `${FAKEBIN}:${bin}`, FAKE_MIGRATE_FAIL: 'rsc-brain:broken', FAKE_RESTORE_SLEEP: '2' },
+      { PATH: without(c, 'setsid'), FAKE_MIGRATE_FAIL: 'rsc-brain:broken', FAKE_RESTORE_SLEEP: '2' },
       [{ marker: 'restore-started', signal: 'SIGINT' }],
     )
     assert.equal(r.signal, null, `killed by ${r.signal}: ${r.stderr}`)
     assert.equal(r.code, 4, r.stderr)
     assert.match(r.stderr, /went back to 0\.1\.0/)
-    assert.doesNotMatch(r.stderr, /Done|\[1\]/, 'no job notice')
     assert.equal(readFileSync(join(c.dir, '.env'), 'utf8'), before)
+  })
+
+  it('without setsid or perl, the way back still runs (unshielded: the known limit)', async () => {
+    const c = await installed()
+    const before = readFileSync(join(c.dir, '.env'), 'utf8')
+    const r = launch(c, update(c, '--image', 'rsc-brain:broken'), {
+      env: { PATH: without(c, 'setsid', 'perl'), FAKE_MIGRATE_FAIL: 'rsc-brain:broken' },
+    })
+    assert.equal(r.code, 4, r.stderr)
+    assert.match(r.stderr, /went back to 0\.1\.0/)
+    assert.equal(readFileSync(join(c.dir, '.env'), 'utf8'), before)
+  })
+
+  // Third review: a rollback that failed to restore, killed while it starts the old version; the next command goes
+  // back again and this time the restore works.
+  it('a later rollback whose restore works clears rollback.failed: status is healthy again', async () => {
+    const c = await installed()
+    writeFileSync(join(c.dir, 'backups', PRE), 'a copy')
+    const killed = await launchStopped(
+      c,
+      update(c, '--image', 'rsc-brain:broken'),
+      {
+        FAKE_MIGRATE_FAIL: 'rsc-brain:broken',
+        FAKE_RESTORE_EXIT: '1',
+        FAKE_HEALTH_SLEEP: 'rsc-brain:test=5',
+      },
+      [{ marker: 'health-started', signal: 'SIGKILL' }],
+    )
+    assert.equal(killed.signal, 'SIGKILL', killed.stderr)
+    assert.ok(exists(c, 'rollback.failed'), 'the failed restore left its mark')
+    assert.ok(exists(c, 'update.pending'), 'killed before the journal went')
+    const again = launch(c, ['status', '--dir', c.dir])
+    assert.equal(again.code, 4, again.stderr)
+    assert.match(again.stderr, /went back to 0\.1\.0/)
+    assert.equal(exists(c, 'rollback.failed'), false, 'the restore worked this time')
+    const s = launch(c, ['status', '--dir', c.dir])
+    assert.equal(s.code, 0, s.stderr)
+    assert.doesNotMatch(s.stderr, /could not go back/)
   })
 })

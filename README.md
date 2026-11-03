@@ -111,7 +111,12 @@ Ctrl-C during an update goes back the same way (a second Ctrl-C does not stop it
 is killed outright once the new version has taken over (a power cut), the next `status`, or any
 command that changes something, finds the note it left in `.rsc-brain/update.pending` and goes back first. If the copy is
 restored but the version before does not start, the launcher says so: the data is back, and
-`sh rsc-brain.sh install` starts it again.
+`sh rsc-brain.sh install` starts it again. If the copy cannot be restored, every later command says so
+(and `status` fails) until a `restore` of that copy goes well.
+
+The way back runs in a session of its own, so a Ctrl-C at the terminal cannot cut it short: with
+`setsid`, or with `perl` where there is no `setsid` (macOS). A machine with neither runs it like any
+other step: there, do not press Ctrl-C while it goes back.
 
 ### The installation key
 
