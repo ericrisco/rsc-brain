@@ -28,6 +28,9 @@ export const LOG_EVENTS = [
   'backup_kept_with_warning',
   // A download (an export) that failed after it started: the client keeps a cut file, never a short whole one.
   'download_failed',
+  // RSC_BRAIN_LOCAL_ONLY at start: whether the container's gateway was found (code gateway / no_gateway), or a warning
+  // when it does not look like a Docker network's (unusual_gateway).
+  'local_only',
 ] as const
 export type LogEvent = (typeof LOG_EVENTS)[number]
 
