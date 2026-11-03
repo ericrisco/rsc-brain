@@ -12,6 +12,7 @@ import { stepOf, totpAt } from '../../src/auth/totp.ts'
 import { ROUTES } from '../../src/http/app.ts'
 import { backup } from '../../src/ops/backup/backup.ts'
 import { EXPORT_LIMITS, EXPORT_STATE } from '../../src/ops/export/export.ts'
+import { IMPORT_STATE } from '../../src/ops/import/import.ts'
 import { png, SVG } from '../helpers/images.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type Call, type World, world } from '../helpers/world.ts'
@@ -1470,6 +1471,9 @@ describe('the v1 contract', { skip: skipPg }, () => {
     await w.call(eric.key, 'POST', '/v1/brains', { slug: 'contract-import', name: 'Contract import' })
     await add('invalid_archive', upload('contract-import', Buffer.from('not a zip')))
     await add('archive_too_large', upload('contract-import', Buffer.alloc(50 * 1024 * 1024 + 1)))
+    IMPORT_STATE.running = 1
+    await add('import_busy', upload('contract-import', Buffer.from('PK')))
+    IMPORT_STATE.running = 0
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))
     await add('setup_done', w.raw('GET', '/v1/setup'))
     await add(

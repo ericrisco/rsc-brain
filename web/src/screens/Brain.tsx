@@ -43,7 +43,7 @@ type Overview = {
   todaySessions: Session[]
   pending: Pending[]
   health: Record<string, number>
-  firstSteps: { agentConnected: boolean; firstEntry: boolean; imported: boolean }
+  firstSteps: { agentConnected: boolean; firstEntry: boolean; imported: boolean; importable: boolean }
 }
 
 export const brainResource = (slug: string) =>
@@ -85,17 +85,15 @@ function Step({
 function FirstSteps({
   slug,
   steps,
-  stats,
   curator,
 }: {
   slug: string
   steps: Overview['firstSteps']
-  stats: Stats
   curator: boolean
 }) {
   const o = T.overview
   // An import goes only into an empty brain: once it has anything, the step can no longer be taken.
-  const closed = !steps.imported && stats.pages + stats.entries + stats.pendingProposals > 0
+  const closed = !steps.imported && !steps.importable
   return (
     <section class="first-steps" aria-labelledby="steps-title">
       <h2 id="steps-title">{o.stepsTitle}</h2>
@@ -355,9 +353,7 @@ export function Brain({ slug }: { slug: string }) {
         )
       ) : (
         <div class="overview">
-          {fresh ? (
-            <FirstSteps slug={b.slug} steps={o.firstSteps} stats={o.stats} curator={b.role === 'curator'} />
-          ) : null}
+          {fresh ? <FirstSteps slug={b.slug} steps={o.firstSteps} curator={b.role === 'curator'} /> : null}
           <Numbers slug={slug} stats={o.stats} />
           <div class="overview-grid">
             <Today slug={slug} sessions={o.todaySessions} />

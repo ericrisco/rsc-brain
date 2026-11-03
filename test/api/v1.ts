@@ -21,6 +21,7 @@ export const V1 = [
   'GET /v1/admin/accounts/{id}/apps',
   'GET /v1/admin/accounts/{id}/keys',
   'GET /v1/admin/audit',
+  'GET /v1/admin/authors',
   'GET /v1/admin/audit/export',
   'GET /v1/admin/backups',
   'GET /v1/admin/backups/{id}/download',
@@ -82,6 +83,7 @@ export const V1 = [
   'POST /v1/admin/accounts/{id}/remove',
   'POST /v1/admin/accounts/{id}/reset-link',
   'POST /v1/admin/accounts/{id}/restore',
+  'POST /v1/admin/authors/{id}/anonymise',
   'POST /v1/admin/backups',
   'POST /v1/admin/backups/{id}/restore',
   'POST /v1/admin/brains/{slug}/curator',
@@ -222,6 +224,7 @@ export const ERROR_STATUS: Record<string, number> = {
   brain_not_empty: 409,
   invalid_archive: 422,
   archive_too_large: 413,
+  import_busy: 409,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }

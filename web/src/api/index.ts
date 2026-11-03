@@ -3,7 +3,7 @@ import { signal } from '@preact/signals'
 import { leftAdmin } from '../lib/flags.ts'
 import { textDrafts } from '../lib/settings.ts'
 import { helpOpen, searchOpen } from '../shell/keys.ts'
-import { createClient, type Upload } from './client.ts'
+import { createClient, type Upload, xhrFailure } from './client.ts'
 import { clearDrafts } from './draft.ts'
 import { resetResources } from './resource.ts'
 
@@ -34,7 +34,11 @@ const xhrUpload: Upload = (url, init, progress) =>
     for (const [k, v] of Object.entries(init.headers)) x.setRequestHeader(k, v)
     x.upload.onprogress = (e) => progress?.(e.loaded, e.lengthComputable ? e.total : init.body.size)
     x.onload = () => resolve({ status: x.status, text: async () => x.responseText })
-    x.onerror = () => reject(new Error('network'))
+    x.onerror = () => {
+      const f = xhrFailure(x, navigator.onLine !== false)
+      if (f instanceof Error) reject(f)
+      else resolve(f)
+    }
     x.onabort = () => reject(new Error('aborted'))
     x.send(init.body)
   })

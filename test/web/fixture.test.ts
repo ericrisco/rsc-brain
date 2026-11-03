@@ -356,6 +356,7 @@ describe('the fixture API', () => {
       agentConnected: false,
       firstEntry: false,
       imported: false,
+      importable: true,
     })
     assert.equal((await call('GET', '/v1/brains/nowhere/overview', { scenario: s.id, cookie })).status, 404)
   })
@@ -455,6 +456,7 @@ describe('the fixture API', () => {
       agentConnected: true,
       firstEntry: true,
       imported: false,
+      importable: false,
     })
     assert.equal(
       (await fetch(`${fx.url}/v1/brains/live-one/events`, { headers: { 'x-fixture-scenario': s.id } }))
@@ -1315,6 +1317,24 @@ describe('the fixture API', () => {
       assert.equal(code(await call(m, p, ana)), 'forbidden', p)
   })
 
+  it('imported authors: listed apart and anonymised by the administration (review of PR32)', async () => {
+    const admin = fx.scenario('signed-in')
+    const o = { scenario: admin.id, cookie: 'rscb_session=fx.acc_eric' }
+    const list = (await call('GET', '/v1/admin/authors', o)).body as {
+      authors: Array<{ id: string; name: string }>
+    }
+    assert.deepEqual(
+      list.authors.map((a) => a.name),
+      ['Old Colleague (imported)'],
+    )
+    const done = await call('POST', `/v1/admin/authors/${list.authors[0]?.id}/anonymise`, o)
+    assert.deepEqual((done.body as { author: unknown }).author, { id: 'acc_author1', name: 'Former author' })
+    assert.equal((await call('POST', '/v1/admin/authors/acc_nobody/anonymise', o)).status, 404)
+    const member = fx.scenario('member')
+    const ana = { scenario: member.id, cookie: 'rscb_session=fx.acc_ana' }
+    assert.equal((await call('GET', '/v1/admin/authors', ana)).status, 403)
+  })
+
   it('the copies, the installation key and restoring (B7 PR30), as the server answers them', async () => {
     const admin = fx.scenario('signed-in')
     const o = { scenario: admin.id, cookie: 'rscb_session=fx.acc_eric' }
@@ -1454,6 +1474,10 @@ describe('the fixture API', () => {
     assert.equal(ok.status, 200)
     assert.equal((ok.body as { report: { pages: number } }).report.pages, 5)
     const ov = await call('GET', '/v1/brains/fresh-one/overview', { scenario: s.id, cookie: s.cookie })
+    assert.deepEqual(
+      (ov.body as { firstSteps: { imported: boolean; importable: boolean } }).firstSteps.importable,
+      false,
+    )
     assert.equal((ov.body as { firstSteps: { imported: boolean } }).firstSteps.imported, true)
     assert.equal((await send('fresh-one', zip)).code, 'brain_not_empty')
     seen.add('POST /v1/brains/{slug}/import')

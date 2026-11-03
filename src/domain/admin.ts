@@ -53,6 +53,44 @@ export async function listAccounts(ctx: Ctx) {
   }))
 }
 
+// Imported authors (spec B7, review of PR32): names on what was imported, never people who sign in. The
+// administration sees them apart, with the brains they wrote in and when they came in, and can erase a name.
+export const FORMER_AUTHOR = 'Former author'
+export async function listAuthors(ctx: Ctx) {
+  adminOnly(ctx)
+  const rows = await ctx.db.query(
+    `SELECT a.id, a.name, a.created_at,
+            (SELECT coalesce(json_agg(json_build_object('slug', b.slug, 'name', b.name) ORDER BY b.slug), '[]')
+               FROM brains b
+              WHERE EXISTS (SELECT 1 FROM entries e WHERE e.brain_id = b.id AND (e.author_id = a.id OR e.on_behalf_id = a.id))
+                 OR EXISTS (SELECT 1 FROM sessions s WHERE s.brain_id = b.id AND s.account_id = a.id)
+                 OR EXISTS (SELECT 1 FROM proposals p WHERE p.brain_id = b.id AND p.author_id = a.id)
+                 OR EXISTS (SELECT 1 FROM wiki_log l WHERE l.brain_id = b.id AND l.actor_id = a.id)
+                 OR EXISTS (SELECT 1 FROM page_revisions r JOIN pages g ON g.id = r.page_id
+                             WHERE g.brain_id = b.id AND r.author_id = a.id)) AS brains
+       FROM accounts a WHERE a.kind = 'author' ORDER BY lower(a.name), a.id`,
+  )
+  return rows.map((a) => ({
+    id: String(a.id),
+    name: String(a.name),
+    brains: a.brains as Array<{ slug: string; name: string }>,
+    importedAt: (a.created_at as Date).toISOString(),
+  }))
+}
+
+export async function anonymiseAuthor(ctx: Ctx, id: string) {
+  adminOnly(ctx)
+  return ctx.db.tx(async (db) => {
+    const a = await db.one("UPDATE accounts SET name = $2 WHERE id = $1 AND kind = 'author' RETURNING id", [
+      id,
+      FORMER_AUTHOR,
+    ])
+    if (!a) throw notFound('author')
+    await ok({ ...ctx, db }, 'author.anonymise', null, id)
+    return { id, name: FORMER_AUTHOR }
+  })
+}
+
 // Changes to who administers take turns, so two administrators demoting each other cannot both pass
 // the "another administrator remains" check.
 const adminTurn = (db: Ctx['db']) =>

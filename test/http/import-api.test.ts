@@ -77,6 +77,34 @@ function trickle(
   })
 }
 
+// An upload that has started and keeps its body coming until stopped.
+function hold(base: string, path: string, cookie: string): Promise<{ stop(): void }> {
+  const u = new URL(base)
+  return new Promise((resolve) => {
+    let tick: NodeJS.Timeout | undefined
+    const s = connect(Number(u.port), u.hostname, () => {
+      s.write(
+        `POST ${path} HTTP/1.1\r\nHost: ${u.host}\r\nContent-Type: application/zip\r\nX-Requested-With: rsc-brain-web\r\nCookie: rscb_session=${cookie}\r\nContent-Length: ${40 * MB}\r\n\r\n`,
+      )
+      tick = setInterval(() => {
+        if (!s.destroyed) s.write(Buffer.alloc(1024, 0x20))
+      }, 20)
+      // Long enough for the server to take its turn.
+      setTimeout(
+        () =>
+          resolve({
+            stop: () => {
+              clearInterval(tick)
+              s.destroy()
+            },
+          }),
+        300,
+      )
+    })
+    s.on('error', () => {})
+  })
+}
+
 function run(
   args: string[],
   env: Record<string, string>,
@@ -143,7 +171,8 @@ describe('the import route and the command (CA19)', { skip: skipPg }, () => {
     assert.equal(r.status, 200, r.text)
     const report = r.body.report as Record<string, unknown>
     assert.deepEqual([report.kind, report.pages, report.entries], ['docs', 5, 4])
-    assert.deepEqual(report.totals, { unresolved: 2, ignored: 7, renamed: 1 })
+    assert.deepEqual(report.totals, { unresolved: 2, ignored: 7, renamed: 1, recoded: 0 })
+    assert.deepEqual(report.recoded, [])
     const b = await w.db.one("SELECT imported_from FROM brains WHERE slug = 'fresh'")
     assert.equal(b?.imported_from, 'docs-sample.zip')
     const audit = await w.db.one("SELECT outcome, actor_id, detail FROM audit WHERE action = 'brain.import'")
@@ -234,6 +263,28 @@ describe('the import route and the command (CA19)', { skip: skipPg }, () => {
     assert.deepEqual(await counts('keyed'), { pages: 0, entries: 0, log: 0, imported: null })
   })
 
+  it('the report names a file read as Windows-1252 and a link to a file left out (review of PR32)', async () => {
+    await w.call(P('eric').key, 'POST', '/v1/brains', { slug: 'latin', name: 'Latin' })
+    const { rawZip } = await import('../helpers/rawzip.ts')
+    const z = rawZip([
+      { name: 'wiki/caf.md', data: Buffer.from('# Caf\xe9\n\nSee ![d](d.png).\n', 'latin1') },
+      { name: 'raw/x.md', data: 'note' },
+      { name: 'wiki/d.png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 1]) },
+    ])
+    const r = await upload(w, { session: S('eric') }, 'latin', z)
+    assert.equal(r.status, 200, r.text.slice(0, 300))
+    const report = r.body.report as {
+      recoded: string[]
+      unresolved: Array<{ target: string; why: string }>
+      totals: { recoded: number }
+    }
+    assert.deepEqual([report.recoded, report.totals.recoded], [['wiki/caf.md'], 1])
+    assert.deepEqual(
+      report.unresolved.map((u) => u.why),
+      ['left_out'],
+    )
+  })
+
   it('takes a zip of more than 1 MB (the route has its own limit)', async () => {
     await w.call(P('eric').key, 'POST', '/v1/brains', { slug: 'big-ok', name: 'Big ok' })
     const { rawZip } = await import('../helpers/rawzip.ts')
@@ -248,6 +299,29 @@ describe('the import route and the command (CA19)', { skip: skipPg }, () => {
     const report = r.body.report as { pages: number; ignored: unknown[] }
     assert.equal(report.pages, 1)
     assert.deepEqual(report.ignored, [{ path: 'raw/blob.bin', why: 'too_large' }])
+  })
+
+  it('one import at a time in the installation: another, into any brain, is told to wait (review of PR32)', async () => {
+    for (const slug of ['slow', 'other'])
+      await w.call(P('eric').key, 'POST', '/v1/brains', { slug, name: slug })
+    const first = await hold(w.base, '/v1/brains/slow/import?name=a.zip', S('eric'))
+    try {
+      for (const slug of ['other', 'slow']) {
+        const r = await upload(w, { session: S('eric') }, slug, zip)
+        assert.deepEqual([r.status, r.body.error?.code], [409, 'import_busy'], slug)
+        assert.match(r.text, /Another import is running/)
+      }
+    } finally {
+      first.stop()
+    }
+    // Once the first one is gone, the next goes.
+    let r: Answer | null = null
+    for (let i = 0; i < 40; i++) {
+      r = await upload(w, { session: S('eric') }, 'other', zip)
+      if (r.body.error?.code !== 'import_busy') break
+      await new Promise((ok) => setTimeout(ok, 50))
+    }
+    assert.equal(r?.status, 200, r?.text)
   })
 
   it('refuses what is not a zip it can read, and changes nothing', async () => {

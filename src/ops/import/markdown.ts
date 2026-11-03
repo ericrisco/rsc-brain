@@ -41,7 +41,8 @@ const unquote = (v: string) => (/^(['"]).*\1$/.test(v) ? v.slice(1, -1) : v)
 // `- item` lines under `key:`; anything else in it is left out, never an error.
 export function splitFrontmatter(text: string): { fields: Fields; body: string } {
   const t = text.replace(/^﻿/, '')
-  const m = /^---[ \t]*\r?\n([\s\S]*?)\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(t)
+  // An empty header ("---" then "---") is a header too (review of PR32).
+  const m = /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/.exec(t)
   if (!m) return { fields: {}, body: t }
   const fields: Fields = {}
   let list: string | null = null
@@ -178,8 +179,8 @@ export function rewriteLinks(
   body: string,
   fromPath: string,
   resolve: (target: string, fromPath: string, relative: boolean) => LinkTarget,
-): { body: string; files: string[]; unresolved: string[] } {
-  const files: string[] = []
+): { body: string; files: Array<{ path: string; target: string }>; unresolved: string[] } {
+  const files: Array<{ path: string; target: string }> = []
   const unresolved: string[] = []
   const mask = maskCode(body)
   const re =
@@ -195,6 +196,11 @@ export function rewriteLinks(
     if (m[2] !== undefined) {
       const target = (m[2] as string).trim()
       const words = m[3]?.trim()
+      // A part of this same page ([[#Heading]]): nothing to resolve, and the wiki does not read it as a link.
+      if (target.startsWith('#')) {
+        out += whole
+        continue
+      }
       const t = resolve(target.replace(/#.*$/, ''), fromPath, false)
       if (t?.kind === 'page') {
         out +=
@@ -202,7 +208,7 @@ export function rewriteLinks(
             ? `[[${t.address}|${words.replace(/\]\]/g, '] ]')}]]`
             : `[[${t.address}]]`
       } else {
-        if (t?.kind === 'file') files.push(t.path)
+        if (t?.kind === 'file') files.push({ path: t.path, target })
         else unresolved.push(target)
         out += whole.replaceAll('[[', '\\[\\[')
       }
@@ -224,7 +230,7 @@ export function rewriteLinks(
     const t = resolve(target, fromPath, true)
     if (t?.kind === 'page') out += `[[${t.address}|${words.replace(/\]\]/g, '] ]') || t.address}]]`
     else {
-      if (t?.kind === 'file') files.push(t.path)
+      if (t?.kind === 'file') files.push({ path: t.path, target })
       else if (/\.(md|markdown)$/i.test(target)) unresolved.push(target)
       out += whole
     }

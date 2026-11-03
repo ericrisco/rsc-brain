@@ -1062,6 +1062,8 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
             agentConnected: life.agent,
             firstEntry: life.entries > 0,
             imported: Boolean(life.imported),
+            // As the import route below decides it.
+            importable: !(life.imported || life.entries > 0 || b.stats.pages > 0 || b.stats.entries > 0),
           },
         },
       }
@@ -1565,14 +1567,16 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
             entries: 4,
             links: 5,
             unresolved: [
-              { from: 'decisions/use-postgres', target: 'wiki/nowhere' },
-              { from: 'topics/retention', target: 'missing-page' },
+              { from: 'decisions/use-postgres', target: 'wiki/nowhere', why: 'missing' },
+              { from: 'topics/retention', target: 'missing-page', why: 'missing' },
+              { from: 'topics/retention', target: 'wiki/diagram.png', why: 'left_out' },
             ],
             ignored: many
               ? Array.from({ length: 500 }, (_, i) => ({ path: `raw/images/${i}.png`, why: 'binary' }))
               : ignored,
             renamed: [{ path: 'wiki/topics/Audience Notes.md', address: 'topics/audience-notes' }],
-            totals: { unresolved: 2, ignored: many ? 1234 : ignored.length, renamed: 1 },
+            recoded: ['wiki/latin.md'],
+            totals: { unresolved: 3, ignored: many ? 1234 : ignored.length, renamed: 1, recoded: 1 },
           },
         },
       }

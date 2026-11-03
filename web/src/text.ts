@@ -749,6 +749,9 @@ export const T = {
       renamed: (n: number) => `Names made into addresses (${n.toLocaleString('en-US')})`,
       more: (n: number) => `And ${n.toLocaleString('en-US')} more, not listed here.`,
       from: (page: string) => `from ${page}`,
+      leftOut: 'points to a file that was left out',
+      recoded: (n: number) => `Read as Windows-1252 (${n.toLocaleString('en-US')})`,
+      recodedLead: 'These files were not UTF-8; they were read as Windows-1252. Check their accents.',
       becomes: 'becomes',
       why: {
         binary: 'not text (an image or another binary file)',
@@ -872,6 +875,18 @@ export const T = {
     reactivate: (name: string) => `Reactivate ${name}`,
     reactivateShort: 'Reactivate',
     reactivated: (name: string) => `${name} is active again.`,
+    authorsTitle: 'Imported authors',
+    authorsLead:
+      'Names on what an import brought in. They cannot sign in and have no account here; anonymise one to erase the name.',
+    authorBrains: (names: string[]) => (names.length ? `Wrote in ${names.join(', ')}` : 'Wrote nothing kept'),
+    authorImported: (when: string) => `imported ${when}`,
+    formerAuthor: 'Former author',
+    anonymise: (name: string) => `Anonymise ${name}`,
+    anonymiseShort: 'Anonymise',
+    anonymiseTitle: (name: string) => `Anonymise ${name}?`,
+    anonymiseLead: (name: string) =>
+      `Everything ${name} wrote stays, signed as «Former author» from now on. The old name cannot be brought back.`,
+    anonymised: (name: string) => `${name} now signs as Former author.`,
     ownAccount: 'This is you: another administrator changes your rights.',
     show: 'Show',
     showAll: 'All',

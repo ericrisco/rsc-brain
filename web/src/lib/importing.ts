@@ -11,10 +11,11 @@ export type ImportReport = {
   pages: number
   entries: number
   links: number
-  unresolved: Array<{ from: string; target: string }>
+  unresolved: Array<{ from: string; target: string; why: 'missing' | 'left_out' }>
   ignored: Array<{ path: string; why: ImportWhy }>
   renamed: Array<{ path: string; address: string }>
-  totals: { unresolved: number; ignored: number; renamed: number }
+  recoded: string[]
+  totals: { unresolved: number; ignored: number; renamed: number; recoded: number }
   people?: { matched: number; authors: number }
 }
 

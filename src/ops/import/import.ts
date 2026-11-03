@@ -26,10 +26,13 @@ export type ImportReport = {
   pages: number
   entries: number
   links: number
-  unresolved: Array<{ from: string; target: string }>
+  // missing: no such page; left_out: it points to a file that was left out (review of PR32).
+  unresolved: Array<{ from: string; target: string; why: 'missing' | 'left_out' }>
   ignored: Ignored[]
   renamed: Array<{ path: string; address: string }>
-  totals: { unresolved: number; ignored: number; renamed: number }
+  // Files that were not UTF-8, read as Windows-1252 (review of PR32).
+  recoded: string[]
+  totals: { unresolved: number; ignored: number; renamed: number; recoded: number }
   // A faithful import: how many people were found here by their email, and how many came in as authors.
   people?: { matched: number; authors: number }
 }
@@ -41,6 +44,28 @@ export const notEmpty = () =>
     'This brain already has pages, entries or proposals; an import goes only into an empty brain. Nothing was changed.',
     'Create a new brain and import into it.',
   )
+
+// One import at a time in this process (review of PR32): its zip is held in memory (up to 50 MB) and read whole, so a
+// second waits instead of doubling that; it also keeps two imports off one brain. Mutable for the tests only.
+export const IMPORT_STATE = { running: 0 }
+export const importBusy = () =>
+  new AppError(
+    409,
+    'import_busy',
+    'Another import is running. Try again in a minute.',
+    'Wait a minute and import again.',
+  )
+// The turn of an import: taken before its body is read, given back once its answer is sent (or the client left).
+export function takeImportTurn(): () => void {
+  if (IMPORT_STATE.running >= 1) throw importBusy()
+  IMPORT_STATE.running += 1
+  let given = false
+  return () => {
+    if (given) return
+    given = true
+    IMPORT_STATE.running -= 1
+  }
+}
 
 // What the reader refuses, said as the API says it.
 export function archiveError(err: unknown): unknown {
@@ -120,8 +145,9 @@ export async function importTree(
           links: done.links,
           unresolved: [],
           ignored: [],
-          renamed: [],
-          totals: { unresolved: 0, ignored: 0, renamed: 0 },
+          renamed: capped(done.renamed),
+          recoded: [],
+          totals: { unresolved: 0, ignored: 0, renamed: done.renamed.length, recoded: 0 },
           people: done.people,
         }
       } else {
@@ -133,13 +159,15 @@ export async function importTree(
           pages: done.pages,
           entries: done.entries,
           links: done.links,
-          unresolved: capped(plan.unresolved),
+          unresolved: capped(plan.unresolved).map((u) => ({ ...u, why: u.why ?? 'missing' })),
           ignored: capped(plan.ignored),
           renamed: capped(plan.renamed),
+          recoded: capped(plan.recoded),
           totals: {
             unresolved: plan.unresolved.length,
             ignored: plan.ignored.length,
             renamed: plan.renamed.length,
+            recoded: plan.recoded.length,
           },
         }
       }

@@ -1228,7 +1228,10 @@ const HAND: Record<string, Op> = {
       firstSteps: obj({
         agentConnected: b('A key that is not a web session opened a session or proposed here.'),
         firstEntry: b('The journal has an entry.'),
-        imported: b('A folder was imported (always false until importing exists).'),
+        imported: b('A folder or an export was imported into this brain.'),
+        importable: b(
+          'An import still goes in: never imported, and no page, entry or proposal (whatever its status).',
+        ),
       }),
     }),
   },
@@ -1303,6 +1306,25 @@ const HAND: Record<string, Op> = {
         }),
       ),
     }),
+  },
+  'GET /v1/admin/authors': {
+    summary:
+      'Imported authors: names on what a faithful import brought in, never people who sign in (administration).',
+    reply: obj({
+      authors: list(
+        obj({
+          id: s('Author id.'),
+          name: s('The name it signs with, «(imported)» added, or «Former author» once anonymised.'),
+          brains: list(obj({ slug: s('A brain.'), name: s('Its name.') }), 'The brains it wrote in.'),
+          importedAt: s('When it came in.', { format: 'date-time' }),
+        }),
+      ),
+    }),
+  },
+  'POST /v1/admin/authors/{id}/anonymise': {
+    summary:
+      'Erase the name of an imported author: it signs as «Former author» from now on (administration).',
+    reply: obj({ author: obj({ id: s('Author id.'), name: s('«Former author».') }) }),
   },
   'POST /v1/admin/accounts/{id}/reset-link': {
     summary:
@@ -1826,7 +1848,13 @@ const HAND: Record<string, Op> = {
         entries: n('Entries that came in.'),
         links: n('Links between pages that came in.'),
         unresolved: list(
-          obj({ from: s('The page.'), target: s('What its link named.') }),
+          obj({
+            from: s('The page.'),
+            target: s('What its link named.'),
+            why: s('missing: no such page; left_out: it points to a file that was left out.', {
+              enum: ['missing', 'left_out'],
+            }),
+          }),
           'Links that lead nowhere (at most 500).',
         ),
         ignored: list(
@@ -1842,10 +1870,12 @@ const HAND: Record<string, Op> = {
           obj({ path: s('The file.'), address: s('The address it became.') }),
           'Names made into addresses (at most 500).',
         ),
+        recoded: list(s('The file.'), 'Files that were not UTF-8, read as Windows-1252 (at most 500).'),
         totals: obj({
           unresolved: n('All of them.'),
           ignored: n('All of them.'),
           renamed: n('All of them.'),
+          recoded: n('All of them.'),
         }),
       }),
     }),

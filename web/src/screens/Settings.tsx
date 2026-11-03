@@ -1168,9 +1168,9 @@ function Import({ brain }: { brain: BrainInfo }) {
   useEffect(() => {
     if (done) saidRef.current?.focus()
   }, [done])
-  const full = o
-    ? o.stats.pages + o.stats.entries + o.stats.pendingProposals > 0 || o.firstSteps.imported
-    : false
+  // As the server decides it (any page, entry or proposal, or an earlier import); until the overview is read,
+  // there is no form to send (review of PR32).
+  const full = o ? !o.firstSteps.importable : false
   const go = async () => {
     if (!file) {
       setProblem(problem ?? I.choose)
@@ -1243,11 +1243,28 @@ function Import({ brain }: { brain: BrainInfo }) {
                 {done.report.unresolved.map((u) => (
                   <li key={`${u.from} ${u.target}`}>
                     <code>{u.target}</code> {I.from(u.from)}
+                    {u.why === 'left_out' ? ` ${I.leftOut}` : null}
                   </li>
                 ))}
               </ul>
               {done.report.totals.unresolved > done.report.unresolved.length ? (
                 <p class="muted">{I.more(done.report.totals.unresolved - done.report.unresolved.length)}</p>
+              ) : null}
+            </details>
+          ) : null}
+          {done.report.totals.recoded ? (
+            <details>
+              <summary class="import-count">{I.recoded(done.report.totals.recoded)}</summary>
+              <p class="muted">{I.recodedLead}</p>
+              <ul class="plain-list">
+                {done.report.recoded.map((f) => (
+                  <li key={f}>
+                    <code>{f}</code>
+                  </li>
+                ))}
+              </ul>
+              {done.report.totals.recoded > done.report.recoded.length ? (
+                <p class="muted">{I.more(done.report.totals.recoded - done.report.recoded.length)}</p>
               ) : null}
             </details>
           ) : null}
@@ -1269,6 +1286,12 @@ function Import({ brain }: { brain: BrainInfo }) {
         </section>
       ) : brain.status === 'archived' ? (
         <p class="alert warn">{I.archived}</p>
+      ) : !o ? (
+        ov.error.value ? (
+          <ErrorState error={ov.error.value} onRetry={() => void ov.reload()} />
+        ) : (
+          <Skeleton rows={2} />
+        )
       ) : full ? (
         <p class="alert warn">{I.already}</p>
       ) : (

@@ -188,7 +188,7 @@ export async function brainOverview(ctx: Ctx, slug: string) {
       : ctx.who.credential.kind === 'short'
         ? { sql: 't.credential_id = $2', id: ctx.who.credential.id }
         : { sql: 't.account_id = $2', id: ctx.who.accountId }
-  const steps = await db.one<{ agent: boolean; entry: boolean; imported: boolean }>(
+  const steps = await db.one<{ agent: boolean; entry: boolean; imported: boolean; importable: boolean }>(
     // An agent connected: a key that is not a web session did something in this brain — opened a
     // session, saved, proposed, or only read (a search, a read or asking for context: the trail of B3).
     `SELECT EXISTS (SELECT 1 FROM sessions s JOIN credentials c ON c.id = s.credential_id
@@ -200,7 +200,13 @@ export async function brainOverview(ctx: Ctx, slug: string) {
             -- What an import brought is not the brain's first entry: only what came after it.
             EXISTS (SELECT 1 FROM entries e JOIN brains b ON b.id = e.brain_id
                      WHERE e.brain_id = $1 AND (b.imported_at IS NULL OR e.created_at > b.imported_at)) AS entry,
-            EXISTS (SELECT 1 FROM brains b WHERE b.id = $1 AND b.imported_at IS NOT NULL) AS imported`,
+            EXISTS (SELECT 1 FROM brains b WHERE b.id = $1 AND b.imported_at IS NOT NULL) AS imported,
+            -- An import still goes in: never imported, and nothing in it (any page, entry or proposal, whatever
+            -- its status), the same test the import makes (review of PR32).
+            NOT EXISTS (SELECT 1 FROM brains b WHERE b.id = $1 AND b.imported_at IS NOT NULL)
+              AND NOT EXISTS (SELECT 1 FROM pages WHERE brain_id = $1)
+              AND NOT EXISTS (SELECT 1 FROM entries WHERE brain_id = $1)
+              AND NOT EXISTS (SELECT 1 FROM proposals WHERE brain_id = $1) AS importable`,
     mine ? [brain.id, mine.id] : [brain.id],
   )
   const h = await wikiHealth(ctx, slug)
@@ -238,6 +244,7 @@ export async function brainOverview(ctx: Ctx, slug: string) {
       agentConnected: Boolean(steps?.agent),
       firstEntry: Boolean(steps?.entry),
       imported: Boolean(steps?.imported),
+      importable: Boolean(steps?.importable),
     },
   }
 }

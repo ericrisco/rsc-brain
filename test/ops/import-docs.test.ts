@@ -227,6 +227,103 @@ describe('reading a documentation folder (CA14, CI)', () => {
   })
 })
 
+describe('review of PR32: limits and the fine print of a folder (CI)', () => {
+  const never = (path: string, size = 10) => ({
+    path,
+    size,
+    tooLarge: false,
+    read: async (): Promise<Buffer> => {
+      throw new Error(`${path} is never read`)
+    },
+  })
+
+  it('a manifest.json that is not a faithful export keeps the 1 MB limit of a folder', async () => {
+    const big = Buffer.alloc(MB + 500_000, 0x61)
+    for (const manifest of ['{"name":"my app"}', '{}', 'not json']) {
+      const { rawZip } = await import('../helpers/rawzip.ts')
+      const z = rawZip([
+        { name: 'manifest.json', data: manifest },
+        { name: 'wiki/big.md', data: big },
+        { name: 'wiki/a.md', data: '# A' },
+      ])
+      const t = treeFromZip(z)
+      assert.equal(t.files.find((f) => f.path === 'wiki/big.md')?.tooLarge, true, manifest)
+      const dir = await mkdtemp(join(tmpdir(), 'rsc-brain-import-manifest-'))
+      try {
+        await mkdir(join(dir, 'wiki'))
+        await writeFile(join(dir, 'manifest.json'), manifest)
+        await writeFile(join(dir, 'wiki', 'big.md'), big)
+        const f = await treeFromFolder(dir)
+        assert.equal(f.files.find((x) => x.path === 'wiki/big.md')?.tooLarge, true, manifest)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    }
+    // A faithful one takes the limit of the whole import for each file.
+    const { rawZip } = await import('../helpers/rawzip.ts')
+    const faithful = treeFromZip(
+      rawZip([
+        { name: 'manifest.json', data: '{"format":"rsc-brain-faithful","version":1}' },
+        { name: 'entries.ndjson', data: big },
+      ]),
+    )
+    assert.equal(faithful.files.find((f) => f.path === 'entries.ndjson')?.tooLarge, false)
+  })
+
+  it('says why a file that is not markdown is left out by its name alone, never reading it', async () => {
+    const plan = await planDocs({
+      skipped: [],
+      files: [
+        never('wiki/data.json'),
+        never('wiki/photo.png'),
+        never('wiki/thing.xyz'),
+        { ...never('wiki/a.md'), read: async () => Buffer.from('# A') },
+      ],
+    })
+    assert.deepEqual(plan.ignored, [
+      { path: 'wiki/data.json', why: 'not_markdown' },
+      { path: 'wiki/photo.png', why: 'binary' },
+      { path: 'wiki/thing.xyz', why: 'not_markdown' },
+    ])
+  })
+
+  it('a link to the same page, to a file left out; empty headers; CRLF; Windows-1252 text', async () => {
+    const plan = await planDocs(
+      memTree(
+        {
+          'wiki/a.md': '---\n---\n# Alpha\r\n\r\nSee [[#Usage]], ![[pic.png]] and [[huge]].\r\nLine two.',
+          'wiki/pic.png': Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0]),
+          'wiki/latin.md': Buffer.from('# Caf\xe9\n\nAu lait, \x93quoted\x94.', 'latin1'),
+          'raw/n.md': 'note',
+        },
+        ['wiki/huge.md'],
+      ),
+    )
+    const a = plan.pages.find((p) => p.address === 'a')
+    assert.equal(a?.title, 'Alpha')
+    assert.ok(!a?.body.includes('\r'))
+    assert.ok(!a?.body.includes('---'))
+    assert.match(a?.body ?? '', /See \[\[#Usage\]\],/)
+    assert.deepEqual(plan.unresolved, [
+      { from: 'a', target: 'pic.png', why: 'left_out' },
+      { from: 'a', target: 'huge', why: 'left_out' },
+    ])
+    const latin = plan.pages.find((p) => p.address === 'latin')
+    assert.equal(latin?.title, 'Café')
+    assert.match(latin?.body ?? '', /Au lait, “quoted”\./)
+    assert.deepEqual(plan.recoded, ['wiki/latin.md'])
+  })
+
+  it('an Obsidian vault with a raw/ folder but no wiki/ is a vault: every note is a page', async () => {
+    const plan = await planDocs(memTree({ 'Note.md': '# Note', 'raw/x.md': '# X' }))
+    assert.deepEqual(
+      plan.pages.map((p) => p.address),
+      ['note', 'raw/x'],
+    )
+    assert.equal(plan.notes.length, 0)
+  })
+})
+
 describe('importing a documentation folder (CA14, PostgreSQL)', { skip: skipPg }, () => {
   let w: World
   let eric: { id: string; key: string }

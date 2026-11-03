@@ -160,7 +160,15 @@ export function createClient(o: {
           },
           progress,
         )
-      } catch {
+      } catch (e) {
+        // The server closed the connection before taking the file, and its answer did not come through.
+        if ((e as Error).message === 'refused')
+          throw new ApiError(
+            0,
+            'upload_refused',
+            'The server refused the upload; reload to see why.',
+            'Reload the page: it shows whether this brain can still be imported into.',
+          )
         throw offline()
       }
       const text = await res.text()
@@ -240,4 +248,18 @@ export function createClient(o: {
       throw err
     },
   }
+}
+
+// What an upload's network error means (review of PR32): a server that refuses early (a brain not empty, another
+// import running) answers and closes while the file is still going. When its answer arrived, it is the answer;
+// otherwise "refused", or "offline" when the browser knows it is.
+export function xhrFailure(
+  x: { status: number; responseText: string },
+  online: boolean,
+): { status: number; text: () => Promise<string> } | Error {
+  if (x.status > 0) {
+    const t = x.responseText
+    return { status: x.status, text: async () => t }
+  }
+  return new Error(online ? 'refused' : 'offline')
 }

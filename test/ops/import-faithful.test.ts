@@ -29,6 +29,7 @@ const COMPARED = [
   'proposals',
   'proposal_ops',
   'wiki_settings',
+  'sessions',
 ] as const
 // What is this installation's own, not the brain's: never compared.
 const LOCAL = new Set(['brain_id', 'credential_id', 'search'])
@@ -44,7 +45,10 @@ const PEOPLE = new Set([
   'base_reviewed_by',
   'actor_id',
 ])
+// A session open in A comes in closed (its key is A's): its state is the one thing that may differ.
+const MAY_DIFFER: Record<string, string[]> = { sessions: ['status', 'closed_at'] }
 const SCOPE: Record<string, string> = {
+  sessions: 'brain_id = $1',
   pages: 'brain_id = $1',
   page_addresses: 'brain_id = $1',
   page_links: 'brain_id = $1',
@@ -72,7 +76,7 @@ async function fingerprint(w: World, slug: string, table: string): Promise<strin
       const r = row.r as Json
       const out: Json = {}
       for (const k of Object.keys(r).sort()) {
-        if (LOCAL.has(k)) continue
+        if (LOCAL.has(k) || MAY_DIFFER[table]?.includes(k)) continue
         out[k] = PEOPLE.has(k) && r[k] != null ? `person:${names.get(String(r[k]))}` : r[k]
       }
       return JSON.stringify(out)
@@ -133,6 +137,26 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
     ids.e3 = await entry(P('dora').key, 'Audience', 'Teams of five.')
     ids.e4 = await entry(svc.key, 'From the factory', 'A step the factory saved.')
     ids.e5 = await entry(P('eric').key, 'Forgotten', 'Not true after all.')
+    // A session with its summary (the summary is an entry the session points at).
+    const ses = await a.call(P('carl').key, 'POST', '/v1/brains/faith/sessions', {
+      purpose: 'A summarised session',
+    })
+    assert.equal(ses.status, 201, ses.text)
+    const sid = (ses.body.session as { id: string }).id
+    const inSes = await a.call(P('carl').key, 'POST', '/v1/brains/faith/entries', {
+      type: 'fact',
+      title: 'In the session',
+      content: 'Said in a session that ends with a summary.',
+      sessionId: sid,
+    })
+    assert.equal(inSes.status, 201, inSes.text)
+    const sum = await a.call(P('carl').key, 'POST', `/v1/sessions/${sid}/summary`, {
+      content: 'What the session did.',
+    })
+    assert.equal(sum.status, 201, sum.text)
+    assert.ok(
+      (await a.db.one('SELECT summary_entry_id FROM sessions WHERE id = $1', [sid]))?.summary_entry_id,
+    )
     // An entry revised, one forgotten, one superseding another, a relation between two.
     const revised = await a.call(P('eric').key, 'PATCH', `/v1/entries/${ids.e1}`, {
       baseRevision: 1,
@@ -251,11 +275,15 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
     const report = await imp(b, bWeb, 'copy', exported)
     assert.equal(report.kind, 'faithful')
     assert.equal(report.pages, 2)
-    assert.equal(report.entries, 5)
+    assert.equal(report.entries, 7)
     for (const t of COMPARED) {
       const [x, y] = await Promise.all([fingerprint(a, 'faith', t), fingerprint(b, 'copy', t)])
       // People by name: in B, Carl and Dora are authors with the names they had in A, and Eric is Eric B.
-      const rename = (rows: string[]) => rows.map((r) => r.replaceAll('person:Eric B', 'person:Eric'))
+      // Imported authors carry the label in their name ("Carl (imported)").
+      const rename = (rows: string[]) =>
+        rows.map((r) =>
+          r.replaceAll('person:Eric B', 'person:Eric').replace(/person:([^"]+) \(imported\)/g, 'person:$1'),
+        )
       assert.equal(y.length, x.length, `${t}: ${y.length} rows, ${x.length} in A`)
       assert.deepEqual(rename(y), x, t)
     }
@@ -272,12 +300,12 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
     assert.equal((await authorOf(ids.e1 as string)).id, P('beric').id)
     // Carl has an account in B with that email, but is not a member of this brain: his work is not given to it.
     const carl = await authorOf(ids.e2 as string)
-    assert.deepEqual([carl.kind, carl.name, carl.email], ['author', 'Carl', null])
+    assert.deepEqual([carl.kind, carl.name, carl.email], ['author', 'Carl (imported)', null])
     assert.notEqual(carl.id, P('bcarl').id)
     const dora = await authorOf(ids.e3 as string)
-    assert.deepEqual([dora.kind, dora.name, dora.email], ['author', 'Dora', null])
+    assert.deepEqual([dora.kind, dora.name, dora.email], ['author', 'Dora (imported)', null])
     const svc = await authorOf(ids.e4 as string)
-    assert.deepEqual([svc.kind, svc.name], ['author', 'Factory'])
+    assert.deepEqual([svc.kind, svc.name], ['author', 'Factory (imported)'])
     // Authors: no key, no membership, no password.
     const n = await b.db.one(
       `SELECT (SELECT count(*)::int FROM credentials c JOIN accounts a ON a.id = c.account_id WHERE a.kind = 'author') AS keys,
@@ -319,11 +347,11 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
     )
     assert.equal(carls?.kind, 'author')
     assert.notEqual(carls?.id, P('bcarl').id)
-    assert.deepEqual([report.pages, report.entries], [2, 5])
+    assert.deepEqual([report.pages, report.entries], [2, 7])
     const two = (await b.db.one("SELECT id FROM brains WHERE slug = 'copy-two'"))?.id
     assert.equal((await b.db.one('SELECT count(*)::int AS n FROM entries WHERE id = $1', [ids.e1]))?.n, 1)
     const e = await b.db.query('SELECT id, title FROM entries WHERE brain_id = $1 ORDER BY title', [two])
-    assert.equal(e.length, 5)
+    assert.equal(e.length, 7)
     for (const r of e) assert.ok(!Object.values(ids).includes(String(r.id)))
     // References follow the new ids: the relation, the superseding entry, the sources of the pages.
     const rel = await b.db.one(
@@ -339,7 +367,15 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
     )
     assert.ok(src.length > 0)
     for (const s of src) assert.equal(s.brain_id, two)
-    for (const t of ['pages', 'entries', 'relations', 'proposals', 'page_revisions', 'page_links'] as const) {
+    for (const t of [
+      'pages',
+      'entries',
+      'relations',
+      'proposals',
+      'page_revisions',
+      'page_links',
+      'sessions',
+    ] as const) {
       const strip = (rows: string[]) =>
         rows
           .map((r) => JSON.parse(r) as Json)
@@ -356,6 +392,7 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
               'superseded_by',
               'proposal_id',
               'sources',
+              'summary_entry_id',
             ])
               delete r[k]
             return JSON.stringify(r)
@@ -454,5 +491,44 @@ describe('a faithful export imported into another installation (CA13)', { skip: 
       )?.n,
       0,
     )
+  })
+
+  it('every link between the tables it fills is filled in order, or set once every row is in', async () => {
+    const { importOrderProblems } = await import('../../src/ops/import/faithful.ts')
+    assert.deepEqual(await importOrderProblems(b.db), [])
+  })
+
+  it('an address that is not one becomes one, and the report says how', async () => {
+    const files = new Map(readZip(exported).map((e) => [e.name, e.data]))
+    const fix = (name: string, f: (text: string) => string) =>
+      files.set(name, Buffer.from(f(String(files.get(name)))))
+    // Every place the export names the address of the page "topics/audience" (it moved to a name that is no address).
+    for (const n of [
+      'pages.ndjson',
+      'page_addresses.ndjson',
+      'page_revisions.ndjson',
+      'page_links.ndjson',
+      'wiki_log.ndjson',
+      'proposal_ops.ndjson',
+    ])
+      fix(n, (t) => t.replaceAll('"topics/audience"', '"Topics/Audience Page"'))
+    await b.call(P('beric').key, 'POST', '/v1/brains', { slug: 'renamed', name: 'Renamed' })
+    const report = await imp(b, bWeb, 'renamed', await zipOf(files))
+    assert.deepEqual(report.renamed, [{ path: 'Topics/Audience Page', address: 'topics/audience-page' }])
+    const brain = (await b.db.one("SELECT id FROM brains WHERE slug = 'renamed'"))?.id
+    const addrs = await b.db.query(
+      'SELECT address FROM page_addresses WHERE brain_id = $1 ORDER BY address',
+      [brain],
+    )
+    assert.deepEqual(
+      addrs.map((r) => r.address),
+      ['topics/audience-page', 'topics/retention'],
+    )
+    // The mention from the other page leads to it still.
+    const m = await b.db.one(
+      "SELECT to_address FROM page_links WHERE brain_id = $1 AND kind = 'mentions' AND to_address LIKE 'topics/aud%'",
+      [brain],
+    )
+    assert.equal(m?.to_address, 'topics/audience-page')
   })
 })

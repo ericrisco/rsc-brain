@@ -4,7 +4,7 @@
 // an address inside the web.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { ApiError, createClient, type Transport } from '../../web/src/api/client.ts'
+import { ApiError, createClient, type Transport, xhrFailure } from '../../web/src/api/client.ts'
 import { draft } from '../../web/src/api/draft.ts'
 import {
   invalidate,
@@ -462,6 +462,32 @@ describe('the web client: uploading a file (an import, B7 PR32)', () => {
     await assert.rejects(
       api3.upload('importBrain', { path: { slug: 'x' } }, new Blob(['x'])),
       (e: ApiError) => e.code === 'offline',
+    )
+  })
+  // Review of PR32: the server can refuse before the body is sent (a brain not empty, another import running) and
+  // close the connection; the browser may then report a network error. Its answer is shown when there is one;
+  // otherwise the web says the server refused, unless the browser is offline.
+  it('an early refusal shows the server answer when it came, else says the server refused (review of PR32)', async () => {
+    const answered = xhrFailure({ status: 409, responseText: JSON.stringify(ERR('import_busy')) }, true)
+    assert.ok(!(answered instanceof Error))
+    assert.equal(answered.status, 409)
+    assert.equal(JSON.parse(await answered.text()).error.code, 'import_busy')
+    assert.equal((xhrFailure({ status: 0, responseText: '' }, true) as Error).message, 'refused')
+    assert.equal((xhrFailure({ status: 0, responseText: '' }, false) as Error).message, 'offline')
+    const refused = uploader(new Error('refused'))
+    const api = createClient({
+      transport: noFetch,
+      upload: refused.upload,
+      onSignedOut: () => {},
+      here: () => '/',
+    })
+    await assert.rejects(
+      api.upload('importBrain', { path: { slug: 'x' } }, new Blob(['x'])),
+      (e: ApiError) => {
+        assert.equal(e.code, 'upload_refused')
+        assert.match(e.message, /The server refused the upload; reload to see why/)
+        return true
+      },
     )
   })
 })

@@ -68,8 +68,15 @@ test.describe('importing a documentation folder', () => {
     await expect(report).toContainText('Imported 5 pages, 4 entries and 5 links from docs-sample.zip.')
     await report.getByText('Left out (7)').click()
     await expect(report).toContainText('raw/keys/admin.totp — named like a key or a secret: never read')
-    await report.getByText('Links that lead nowhere (2)').click()
+    await report.getByText('Links that lead nowhere (3)').click()
     await expect(report).toContainText('missing-page from topics/retention')
+    // A link to a file that was left out says so (review of PR32).
+    await expect(report).toContainText(
+      'wiki/diagram.png from topics/retention points to a file that was left out',
+    )
+    // A file that was not UTF-8 was read as Windows-1252, and the report says which.
+    await report.getByText('Read as Windows-1252 (1)').click()
+    await expect(report).toContainText('wiki/latin.md')
     await report.getByText('Names made into addresses (1)').click()
     await expect(report).toContainText('wiki/topics/Audience Notes.md becomes topics/audience-notes')
     await expect(report.getByRole('link', { name: 'Open the wiki' })).toHaveAttribute(
@@ -132,6 +139,20 @@ test.describe('importing a documentation folder', () => {
     await expect(alert).toBeFocused()
     await expect(p.getByRole('region', { name: 'What came in' })).toHaveCount(0)
     await audit(page, 'import refused')
+  })
+
+  test('the form waits for the overview: nothing to send until the brain is known to be empty', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', { overview: 'loading' })
+    await newBrain(page, 'Slow')
+    await page.goto('/b/slow/settings/import')
+    const p = part(page)
+    await expect(p).toBeVisible()
+    await expect(p.getByLabel('Zip to import')).toHaveCount(0)
+    await expect(p.getByLabel('Zip to import')).toBeVisible({ timeout: 10_000 })
   })
 
   test('a brain with content says why it cannot import, instead of a form', async ({

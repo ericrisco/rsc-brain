@@ -69,7 +69,10 @@ export type DocsPlan = {
   pages: PlannedPage[]
   notes: PlannedNote[]
   mapIntro: string | null
-  unresolved: Array<{ from: string; target: string }>
+  // `why: 'left_out'`: it names a file of the import that was left out (an image, a file too large).
+  unresolved: Array<{ from: string; target: string; why?: 'left_out' }>
+  // Files that were not UTF-8 and were read as Windows-1252 (Latin-1).
+  recoded: string[]
   ignored: Ignored[]
   renamed: Array<{ path: string; address: string }>
 }
@@ -84,14 +87,20 @@ const SPECIAL = new Set(['index.md', 'log.md', 'decisions.md'])
 const MAP_INTRO_MAX = 4000
 
 const utf8 = new TextDecoder('utf-8', { fatal: true })
-// Text, or null for a binary (a NUL, or not UTF-8).
-export function textOf(buf: Buffer): string | null {
+const cp1252 = new TextDecoder('windows-1252')
+// Text, or null for a binary (a NUL). Not UTF-8: read as Windows-1252, the Latin-1 of older editors, and said so
+// (review of PR32). Line ends are "\n".
+export function textOf(buf: Buffer): { text: string; recoded: boolean } | null {
   if (buf.includes(0)) return null
+  let text: string
+  let recoded = false
   try {
-    return utf8.decode(buf)
+    text = utf8.decode(buf)
   } catch {
-    return null
+    text = cp1252.decode(buf)
+    recoded = true
   }
+  return { text: text.replace(/\r\n?/g, '\n'), recoded }
 }
 
 const TYPE_WORDS: Record<string, PageType> = {
@@ -167,11 +176,17 @@ export async function planDocs(tree: FileTree): Promise<DocsPlan> {
       (f) => !f.path.startsWith('__MACOSX/') && !f.path.endsWith('/.DS_Store') && f.path !== '.DS_Store',
     ),
   )
-  const docs = files.some((f) => f.path.startsWith('wiki/') || f.path.startsWith('raw/'))
+  // A 02-DOCS folder has both wiki/ and raw/; anything else (a vault with a raw/ of its own) is a vault.
+  const docs = files.some((f) => f.path.startsWith('wiki/')) && files.some((f) => f.path.startsWith('raw/'))
+  const recoded: string[] = []
+  const read = async (f: TreeFile): Promise<string | null> => {
+    const t = textOf(await f.read())
+    if (t?.recoded) recoded.push(f.path)
+    return t ? t.text : null
+  }
   const wikiFiles: Array<{ f: TreeFile; rel: string }> = []
   const rawFiles: TreeFile[] = []
   const special: Array<{ f: TreeFile; name: string }> = []
-  const others = new Set<string>()
   for (const f of files) {
     const parts = f.path.split('/')
     const hidden = parts.findIndex((p) => p.startsWith('.'))
@@ -195,7 +210,7 @@ export async function planDocs(tree: FileTree): Promise<DocsPlan> {
       leave(f.path, 'too_large')
       continue
     }
-    if (top === 'raw') {
+    if (docs && top === 'raw') {
       rawFiles.push(f)
       continue
     }
@@ -203,20 +218,15 @@ export async function planDocs(tree: FileTree): Promise<DocsPlan> {
     if (!rel.includes('/') && SPECIAL.has(name)) special.push({ f, name })
     else if (MD.test(name) && (name === 'decisions.md' || name === 'log.md')) special.push({ f, name })
     else if (MD.test(name)) wikiFiles.push({ f, rel })
-    else if (BINARY_EXT.test(name)) leave(f.path, 'binary')
-    else others.add(f.path)
-  }
-  // Text that is not markdown in the wiki; a file whose name says text but holds bytes is binary.
-  for (const path of others) {
-    const f = files.find((x) => x.path === path) as TreeFile
-    leave(path, textOf(await f.read()) === null ? 'binary' : 'not_markdown')
+    // Not markdown: why, by its name alone (never read; review of PR32).
+    else leave(f.path, BINARY_EXT.test(name) ? 'binary' : 'not_markdown')
   }
 
   // The pages: read, with their header; too long for the wiki, left out.
   type Draft = { path: string; rel: string; fm: Fields; body: string }
   const drafts: Draft[] = []
   for (const { f, rel } of wikiFiles.sort((a, b) => (a.f.path < b.f.path ? -1 : 1))) {
-    const text = textOf(await f.read())
+    const text = await read(f)
     if (text === null) {
       leave(f.path, 'binary')
       continue
@@ -297,6 +307,9 @@ export async function planDocs(tree: FileTree): Promise<DocsPlan> {
   }
 
   const unresolved: DocsPlan['unresolved'] = []
+  // Links of the bodies to files of the import that are not pages: notes of raw/ become sources; a file left out is
+  // said (review of PR32).
+  const linked: Array<{ from: string; target: string; path: string }> = []
   const pages: PlannedPage[] = []
   for (const d of drafts) {
     const address = addressByPath.get(d.path) as string
@@ -350,7 +363,10 @@ export async function planDocs(tree: FileTree): Promise<DocsPlan> {
         if (t?.kind === 'file') sources.push({ file: t.path })
       }
     }
-    for (const f of rewritten.files) sources.push({ file: f })
+    for (const f of rewritten.files) {
+      sources.push({ file: f.path })
+      linked.push({ from: address, target: f.target, path: f.path })
+    }
     const status = field(d.fm, 'status')?.toLowerCase()
     let st: PageStatus =
       status && (PAGE_STATUSES as readonly string[]).includes(status) ? (status as PageStatus) : 'current'
@@ -415,7 +431,7 @@ export async function planDocs(tree: FileTree): Promise<DocsPlan> {
       leave(f.path, 'binary')
       continue
     }
-    const text = textOf(await f.read())
+    const text = await read(f)
     if (text === null) {
       leave(f.path, 'binary')
       continue
@@ -433,7 +449,7 @@ export async function planDocs(tree: FileTree): Promise<DocsPlan> {
   for (const { f, name } of special.sort(
     (a, b) => a.f.path.split('/').length - b.f.path.split('/').length || (a.f.path < b.f.path ? -1 : 1),
   )) {
-    const text = textOf(await f.read())
+    const text = await read(f)
     if (text === null) {
       leave(f.path, 'binary')
       continue
@@ -459,10 +475,14 @@ export async function planDocs(tree: FileTree): Promise<DocsPlan> {
       addNotes(f.path, it.heading || `${label} ${i + 1}`, it.text, type, [], i + 1)
     })
   }
+  for (const l of linked)
+    if (said.has(l.path)) unresolved.push({ from: l.from, target: l.target, why: 'left_out' })
+  for (const p of pages) p.sources = p.sources.filter((x) => !('file' in x) || !said.has(x.file))
   return {
     pages,
     notes,
     mapIntro,
+    recoded,
     unresolved: dedupe(unresolved),
     ignored: ignored.sort((a, b) => (a.path < b.path ? -1 : 1)),
     renamed,

@@ -2,7 +2,7 @@
 // body. Who may not, or a brain that is not empty, is refused before any of the body is read; the report comes
 // back whole (its lists are capped, their totals say how many there were).
 import { invalid } from '../../core/errors.ts'
-import { archiveError, importTree, mayImport } from '../../ops/import/import.ts'
+import { archiveError, importTree, mayImport, takeImportTurn } from '../../ops/import/import.ts'
 import { treeFromZip } from '../../ops/import/tree.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
@@ -28,6 +28,13 @@ export const importRoutes: Route[] = [
     }),
     raw: true,
     maxBody: IMPORT_MAX_BODY,
-    before: (r) => mayImport(ctxOf(r), r.params.slug as string),
+    // Who may, into an empty brain, and one at a time: all before any of the body is read (no second 50 MB body
+    // waits in memory). The turn is given back when the request ends, however it ends.
+    before: async (r) => {
+      await mayImport(ctxOf(r), r.params.slug as string)
+      const release = takeImportTurn()
+      if (r.signal.aborted) release()
+      else r.signal.addEventListener('abort', release, { once: true })
+    },
   },
 ]

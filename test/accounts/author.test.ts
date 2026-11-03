@@ -130,4 +130,42 @@ describe('imported authors (migration 0023)', { skip: skipPg }, () => {
       [page, author],
     )
   })
+  // Review of PR32: an author must be erasable. The administration lists them apart (name, the brains they wrote
+  // in, when they came in) and can anonymise one, which renames it «Former author» everywhere it signs, audited.
+  it('the administration lists imported authors apart and can anonymise one (review of PR32)', async () => {
+    const reader = await w.person('Rita')
+    const ritaWeb = await w.web(reader.id)
+    assert.equal((await w.callWeb(ritaWeb, 'GET', '/v1/admin/authors')).status, 403)
+    assert.equal((await w.callWeb(ritaWeb, 'POST', `/v1/admin/authors/${author}/anonymise`)).status, 403)
+    const list = await w.callWeb(adminWeb, 'GET', '/v1/admin/authors')
+    assert.equal(list.status, 200, list.text)
+    const authors = list.body.authors as Array<{
+      id: string
+      name: string
+      brains: unknown
+      importedAt: string
+    }>
+    assert.deepEqual(
+      authors.map((a) => ({ id: a.id, name: a.name, brains: a.brains })),
+      [{ id: author, name: 'Old Colleague', brains: [{ slug: 'past', name: 'Past' }] }],
+    )
+    assert.ok(!Number.isNaN(Date.parse(authors[0]?.importedAt ?? '')))
+    // Only an author: a person is not anonymised this way, and an unknown id is not found.
+    for (const id of [admin.id, 'acc_nobody']) {
+      const r = await w.callWeb(adminWeb, 'POST', `/v1/admin/authors/${id}/anonymise`)
+      assert.equal(r.status, 404, r.text)
+    }
+    const done = await w.callWeb(adminWeb, 'POST', `/v1/admin/authors/${author}/anonymise`)
+    assert.equal(done.status, 200, done.text)
+    assert.deepEqual(done.body.author, { id: author, name: 'Former author' })
+    assert.equal((await w.db.one('SELECT name FROM accounts WHERE id = $1', [author]))?.name, 'Former author')
+    const audit = await w.db.one(
+      "SELECT actor_id, target, outcome FROM audit WHERE action = 'author.anonymise' ORDER BY id DESC LIMIT 1",
+    )
+    assert.deepEqual(audit, { actor_id: admin.id, target: author, outcome: 'ok' })
+    // Still an author that cannot sign in, and still listed (now as «Former author»).
+    const again = await w.callWeb(adminWeb, 'GET', '/v1/admin/authors')
+    assert.equal((again.body.authors as Array<{ name: string }>)[0]?.name, 'Former author')
+    assert.equal((await w.db.one('SELECT kind FROM accounts WHERE id = $1', [author]))?.kind, 'author')
+  })
 })

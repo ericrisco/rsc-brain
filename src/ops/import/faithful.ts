@@ -15,8 +15,9 @@ import { newId } from '../../core/ids.ts'
 import { UnzipError } from '../../core/unzip.ts'
 import type { Db } from '../../db/db.ts'
 import type { Ctx } from '../../domain/context.ts'
+import { isAddress } from '../../domain/wiki/model.ts'
 import { FAITHFUL_FORMAT, FAITHFUL_VERSION } from '../export/faithful.ts'
-import { redactText } from './markdown.ts'
+import { addressOf, redactText } from './markdown.ts'
 import type { FileTree, TreeFile } from './tree.ts'
 
 const bad = (why: string) =>
@@ -62,6 +63,8 @@ export const FILES: Record<string, Spec> = {
       ),
     people: people('account_id'),
     refs: { summary_entry_id: 'entry' },
+    // The summary is an entry, and entries come after their sessions (review of PR32: the blocker).
+    later: ['summary_entry_id'],
   },
   entries: {
     table: 'entries',
@@ -186,11 +189,19 @@ const ID = /^[A-Za-z0-9_-]{1,80}$/
 type Person = { ref: string; kind: string; name: string; email: string | null }
 export type FaithfulPlan = { people: Person[]; rows: Record<string, Array<Record<string, unknown>>> }
 
+// The files of a tree by path, made once per tree.
+const byPath = new WeakMap<FileTree, Map<string, TreeFile>>()
 const find = (tree: FileTree, name: string): TreeFile | undefined => {
-  const direct = tree.files.find((f) => f.path === name)
+  let m = byPath.get(tree)
+  if (!m) {
+    m = new Map(tree.files.map((f) => [f.path, f]))
+    byPath.set(tree, m)
+  }
+  const direct = m.get(name)
   if (direct) return direct
   // A zip of the folder the export was unpacked to: one folder around everything.
-  return tree.files.find((f) => f.path.endsWith(`/${name}`) && f.path.split('/').length === 2)
+  const top = tree.files[0]?.path.split('/')[0]
+  return top ? m.get(`${top}/${name}`) : undefined
 }
 
 export async function isFaithful(tree: FileTree): Promise<boolean> {
@@ -294,6 +305,68 @@ const fits = async <T>(table: string, f: () => Promise<T>): Promise<T> => {
   }
 }
 
+// Every link (foreign key) between the tables an import fills, read from the database: each must point at a table
+// filled before, or be in its table's `later` (set once every row is in). Asked at every import and by a test, so a
+// link a later migration adds fails here and not halfway through someone's import (review of PR32). No DDL: an import
+// runs while the installation serves, so its links are never made deferrable (that would lock every table).
+export async function importOrderProblems(db: Db): Promise<string[]> {
+  const tables = new Set(ORDER)
+  const links = await db.query<{ t: string; col: string; ref: string }>(
+    `SELECT conrelid::regclass::text AS t, a.attname::text AS col, confrelid::regclass::text AS ref
+       FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+      WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace`,
+  )
+  const out: string[] = []
+  for (const l of links) {
+    if (!tables.has(l.t) || !tables.has(l.ref)) continue
+    const spec = FILES[l.t] as Spec
+    if (ORDER.indexOf(l.ref) < ORDER.indexOf(l.t)) continue
+    if (spec.later?.includes(l.col)) continue
+    out.push(`${l.t}.${l.col} -> ${l.ref}`)
+  }
+  return out.sort()
+}
+
+// Addresses that are not addresses (a file made by hand, another release): made into one, each the same everywhere it
+// is named, and said in the report.
+function addressFixes(plan: FaithfulPlan): Map<string, string> {
+  const named = new Set<string>()
+  for (const r of plan.rows.pages ?? []) if (typeof r.address === 'string') named.add(r.address)
+  for (const r of plan.rows.page_addresses ?? []) if (typeof r.address === 'string') named.add(r.address)
+  const taken = new Set([...named].filter((a) => isAddress(a)))
+  const fixes = new Map<string, string>()
+  for (const a of [...named].sort()) {
+    if (isAddress(a)) continue
+    let to = addressOf(a)
+    if (taken.has(to)) {
+      let n = 2
+      while (taken.has(`${to.slice(0, 195)}-${n}`)) n += 1
+      to = `${to.slice(0, 195)}-${n}`
+    }
+    taken.add(to)
+    fixes.set(a, to)
+  }
+  return fixes
+}
+
+// The same, inside the operations of a proposal and the links of a revision: every value of a key that names a page.
+const ADDRESS_KEYS = new Set(['address', 'to', 'from', 'supersededBy'])
+function fixAddresses(v: unknown, fixes: Map<string, string>, key = ''): unknown {
+  if (typeof v === 'string') return ADDRESS_KEYS.has(key) ? (fixes.get(v) ?? v) : v
+  if (Array.isArray(v)) return v.map((x) => fixAddresses(x, fixes, key))
+  if (v && typeof v === 'object')
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fixAddresses(x, fixes, k)]))
+  return v
+}
+
+// What an imported author is called: their name, and that they were imported (a name alone could pass for someone
+// of this installation; review of PR32).
+export const IMPORTED = ' (imported)'
+export const authorName = (name: string) => {
+  const n = redactText(name.replace(/\s+/g, ' ').trim()) || 'Someone'
+  return n.endsWith(IMPORTED) ? n.slice(0, 80) : `${n.slice(0, 80 - IMPORTED.length)}${IMPORTED}`
+}
+
 export async function writeFaithful(
   db: Db,
   ctx: Ctx,
@@ -306,7 +379,11 @@ export async function writeFaithful(
   links: number
   addresses: string[]
   people: { matched: number; authors: number }
+  renamed: Array<{ path: string; address: string }>
 }> {
+  const wrong = await importOrderProblems(db)
+  if (wrong.length) throw new Error(`The faithful import does not know how to fill ${wrong.join(', ')}.`)
+  const fixes = addressFixes(plan)
   // People: a member of this brain with that email, or an author made now.
   const who = new Map<string, string>()
   let matched = 0
@@ -325,7 +402,7 @@ export async function writeFaithful(
       continue
     }
     const id = newId('acc')
-    const name = redactText(p.name.replace(/\s+/g, ' ').trim()).slice(0, 80) || 'Someone'
+    const name = authorName(p.name)
     await db.query("INSERT INTO accounts (id, kind, name, created_at) VALUES ($1, 'author', $2, $3)", [
       id,
       name,
@@ -391,6 +468,14 @@ export async function writeFaithful(
     const out: Array<Record<string, unknown>> = []
     for (const raw of plan.rows[name] ?? []) {
       const r = redactDeep(raw) as Record<string, unknown>
+      if (fixes.size) {
+        if (typeof r.address === 'string') r.address = fixes.get(r.address) ?? r.address
+        if (typeof r.to_address === 'string') r.to_address = fixes.get(r.to_address) ?? r.to_address
+        if (Array.isArray(r.pages))
+          r.pages = r.pages.map((a) => (typeof a === 'string' ? (fixes.get(a) ?? a) : a))
+        if (r.links !== undefined) r.links = fixAddresses(r.links, fixes, 'links')
+        if (r.op !== undefined) r.op = fixAddresses(r.op, fixes)
+      }
       const row: Record<string, unknown> = {}
       for (const c of spec.columns) {
         if (!(c in r)) continue
@@ -466,5 +551,6 @@ export async function writeFaithful(
     links: await count('SELECT count(*)::int AS n FROM page_links WHERE brain_id = $1'),
     addresses,
     people: { matched, authors },
+    renamed: [...fixes].map(([path, address]) => ({ path, address })),
   }
 }

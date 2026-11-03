@@ -4,9 +4,10 @@
 // folder is walked without following links; in a 02-DOCS folder only `wiki/`, `raw/` and the files at its root
 // are walked (the rest is said to be outside what an import reads, not read).
 import { constants } from 'node:fs'
-import { lstat, open, readdir } from 'node:fs/promises'
+import { lstat, open, readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { openZip, UNZIP_LIMITS, UnzipError } from '../../core/unzip.ts'
+import { FAITHFUL_FORMAT } from '../export/faithful.ts'
 
 export type Why = 'binary' | 'too_large' | 'not_markdown' | 'hidden' | 'secret' | 'outside' | 'link'
 export type Ignored = { path: string; why: Why }
@@ -16,13 +17,22 @@ export type TreeFile = { path: string; size: number; tooLarge: boolean; read(): 
 export type FileTree = { files: TreeFile[]; skipped: Ignored[] }
 
 // A faithful export (a manifest.json at its root, or in the one folder around it) is a few large files: each may
-// take the whole of the limit instead of 1 MB.
+// take the whole of the limit instead of 1 MB. Only once its manifest is read and says it is one: any folder may hold a
+// manifest.json of its own (review of PR32).
 const manifestAt = (path: string) => path === 'manifest.json' || /^[^/]+\/manifest\.json$/.test(path)
 const faithfulLimits = (limits: typeof UNZIP_LIMITS) => ({ ...limits, fileBytes: limits.totalBytes })
+export function saysFaithful(manifest: Buffer): boolean {
+  try {
+    return (JSON.parse(manifest.toString('utf8')) as { format?: unknown } | null)?.format === FAITHFUL_FORMAT
+  } catch {
+    return false
+  }
+}
 
 export function treeFromZip(buf: Buffer, limits = UNZIP_LIMITS): FileTree {
   let items = openZip(buf, limits)
-  if (items.some((i) => manifestAt(i.path))) items = openZip(buf, faithfulLimits(limits))
+  const m = items.find((i) => manifestAt(i.path) && !i.tooLarge)
+  if (m && saysFaithful(m.read())) items = openZip(buf, faithfulLimits(limits))
   const files = items.map((i) => ({
     path: i.path,
     size: i.size,
@@ -37,15 +47,17 @@ const MB = 1024 * 1024
 export const DOCS_FOLDERS = new Set(['wiki', 'raw'])
 
 export async function treeFromFolder(root: string, given = UNZIP_LIMITS): Promise<FileTree> {
-  const limits = (await lstat(join(root, 'manifest.json')).catch(() => null))?.isFile()
-    ? faithfulLimits(given)
-    : given
+  const m = await lstat(join(root, 'manifest.json')).catch(() => null)
+  const faithful =
+    m?.isFile() && m.size <= given.fileBytes && saysFaithful(await readFile(join(root, 'manifest.json')))
+  const limits = faithful ? faithfulLimits(given) : given
   const files: TreeFile[] = []
   const skipped: Ignored[] = []
   let total = 0
   let seen = 0
   const top = await readdir(root, { withFileTypes: true })
-  const docs = top.some((d) => d.isDirectory() && DOCS_FOLDERS.has(d.name))
+  // A 02-DOCS folder has both; a vault with a raw/ of its own is a vault (review of PR32).
+  const docs = [...DOCS_FOLDERS].every((n) => top.some((d) => d.isDirectory() && d.name === n))
   const walk = async (dir: string, rel: string) => {
     const items = (await readdir(dir, { withFileTypes: true })).sort((a, b) => (a.name < b.name ? -1 : 1))
     for (const d of items) {
