@@ -11,6 +11,7 @@ import { hashPassword } from '../../src/auth/password.ts'
 import { stepOf, totpAt } from '../../src/auth/totp.ts'
 import { ROUTES } from '../../src/http/app.ts'
 import { backup } from '../../src/ops/backup/backup.ts'
+import { EXPORT_LIMITS, EXPORT_STATE } from '../../src/ops/export/export.ts'
 import { png, SVG } from '../helpers/images.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type Call, type World, world } from '../helpers/world.ts'
@@ -1443,6 +1444,14 @@ describe('the v1 contract', { skip: skipPg }, () => {
     await w.callWeb(bossWeb, 'DELETE', '/v1/admin/meaning')
     await w.callWeb(bossWeb, 'DELETE', '/v1/admin/mail')
     await add('mail_not_set_up', w.callWeb(bossWeb, 'POST', '/v1/admin/mail/test', {}))
+    // Exports (review of PR31): two being prepared already; a disk short of room.
+    EXPORT_STATE.building = EXPORT_LIMITS.building
+    await add('export_busy', w.callWeb(ericWeb, 'GET', '/v1/brains/contract/export?format=readable'))
+    EXPORT_STATE.building = 0
+    const room = EXPORT_LIMITS.minFreeBytes
+    EXPORT_LIMITS.minFreeBytes = Number.MAX_SAFE_INTEGER
+    await add('export_no_space', w.callWeb(ericWeb, 'GET', '/v1/brains/contract/export?format=readable'))
+    EXPORT_LIMITS.minFreeBytes = room
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))
     await add('setup_done', w.raw('GET', '/v1/setup'))
     await add(

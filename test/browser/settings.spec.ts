@@ -44,7 +44,7 @@ test.describe('settings of a brain', () => {
       Members: ['Members'],
       Agents: ['Repositories', 'Usage note', 'Compile guide', 'Meaning search'],
       'Health thresholds': ['Health thresholds'],
-      Archive: ['Export and import', 'Archive', 'Delete this brain'],
+      Archive: ['Export', 'Archive', 'Delete this brain'],
     }
     for (const [name, regions] of Object.entries(parts)) {
       await tab(page, name).click()
@@ -57,8 +57,6 @@ test.describe('settings of a brain', () => {
       ).toHaveAttribute('aria-current', /page|true/)
       await audit(page, `settings ${name}`)
     }
-    await expect(region(page, 'Export and import')).toContainText('arrive with the install release')
-    await expect(region(page, 'Export and import').getByRole('button')).toHaveCount(0)
     // A part heading reads stronger than a field label.
     await tab(page, 'Health thresholds').click()
     const size = async (sel: string) =>

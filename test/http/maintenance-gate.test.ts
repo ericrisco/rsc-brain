@@ -28,6 +28,8 @@ const GET_WRITES: Record<string, 'writes'> = {
   'GET /v1/admin/audit/export': 'writes',
   // B7 PR30: downloading a copy records it.
   'GET /v1/admin/backups/:id/download': 'writes',
+  // Exporting a brain (B7 PR31) records itself in the audit and the brain's activity.
+  'GET /v1/brains/:slug/export': 'writes',
 }
 
 // The only routes other than GET that the gate lets through, and why. Adding one here is a decision.
@@ -433,6 +435,12 @@ describe('the maintenance gate', { skip: skipPg }, () => {
 
   it('the audit export, a GET that writes its own record, is refused while maintenance lasts', async () => {
     const r = await w.callWeb(web, 'GET', '/v1/admin/audit/export')
+    assert.equal(r.status, 503, r.text)
+    assert.equal((r.body.error as Record<string, unknown>).code, 'under_maintenance')
+  })
+
+  it('exporting a brain, a GET that writes its record, is refused while maintenance lasts', async () => {
+    const r = await w.call(eric.key, 'GET', '/v1/brains/alpha/export?format=readable')
     assert.equal(r.status, 503, r.text)
     assert.equal((r.body.error as Record<string, unknown>).code, 'under_maintenance')
   })

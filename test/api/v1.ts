@@ -37,6 +37,7 @@ export const V1 = [
   'GET /v1/brains/{slug}/context',
   'GET /v1/brains/{slug}/entries',
   'GET /v1/brains/{slug}/events',
+  'GET /v1/brains/{slug}/export',
   'GET /v1/brains/{slug}/forgotten',
   'GET /v1/brains/{slug}/members',
   'GET /v1/brains/{slug}/overview',
@@ -213,6 +214,9 @@ export const ERROR_STATUS: Record<string, number> = {
   backup_running: 409,
   backups_not_set_up: 409,
   wrong_key: 409,
+  // Exporting a brain (B7 PR31 review): two exports are being prepared already; the disk is short of room.
+  export_busy: 409,
+  export_no_space: 507,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }

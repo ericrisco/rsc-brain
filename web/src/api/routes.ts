@@ -113,6 +113,8 @@ export const ROUTE_TABLE = {
   auditLines: { route: 'GET /v1/admin/audit' },
   // Reached by a plain link (a download), not through the client; listed so the table covers it.
   auditExport: { route: 'GET /v1/admin/audit/export' },
+  // Exporting a brain (spec B7): a download, read through the client to say how it goes.
+  exportBrain: { route: 'GET /v1/brains/{slug}/export' },
   system: { route: 'GET /v1/admin/system' },
   // Copies, the installation key and restoring (B7 PR30).
   backups: { route: 'GET /v1/admin/backups' },

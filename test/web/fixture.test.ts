@@ -8,6 +8,7 @@ import { after, before, describe, it } from 'node:test'
 import { ROUTES } from '../../src/http/app.ts'
 import { openapi } from '../../src/http/openapi.ts'
 import { generate } from '../../web/test/data/generate.ts'
+import { filesOf } from '../helpers/unzip.ts'
 import { type Fixture, startFixture } from './fixture/fixture.ts'
 import { validate, validateSchema } from './fixture/schema.ts'
 
@@ -1382,6 +1383,33 @@ describe('the fixture API', () => {
       /^fixture-/,
     )
     assert.equal(code(await call('POST', '/v1/setup/key', { ...f, body: {} })), 'not_found')
+  })
+
+  it('exports a brain as a zip to save, and refuses like the server', async () => {
+    const code = (a: Ans) => (a.body as { error?: { code: string } }).error?.code
+    const s = fx.scenario('signed-in')
+    const o = { scenario: s.id, cookie: s.cookie }
+    assert.equal(code(await call('GET', '/v1/brains/growth/export?format=pdf', o)), 'invalid_request')
+    assert.equal(
+      code(await call('GET', '/v1/brains/growth/export?format=readable&includeForgotten=yes', o)),
+      'invalid_request',
+    )
+    assert.equal(code(await call('GET', '/v1/brains/nowhere/export?format=readable', o)), 'brain_not_found')
+    assert.equal(
+      (await call('GET', '/v1/brains/growth/export?format=readable', { scenario: s.id })).status,
+      401,
+    )
+    const res = await fetch(`${fx.url}/v1/brains/growth/export?format=faithful&includeForgotten=1`, {
+      headers: { 'x-fixture-scenario': s.id, cookie: s.cookie },
+    })
+    assert.equal(res.headers.get('content-type'), 'application/zip')
+    assert.match(
+      String(res.headers.get('content-disposition')),
+      /^attachment; filename="rsc-brain-growth-faithful-\d{8}T\d{6}Z\.zip"$/,
+    )
+    const files = filesOf(Buffer.from(await res.arrayBuffer()))
+    assert.match(files.get('README.md') ?? '', /includeForgotten: true/)
+    seen.add('GET /v1/brains/{slug}/export')
   })
 
   it('every operation the fixture answers was checked against the description', () => {

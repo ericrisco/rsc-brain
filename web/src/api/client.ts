@@ -46,7 +46,13 @@ export class ApiError extends Error {
 export type Transport = (
   url: string,
   init: { method: string; headers: Record<string, string>; body?: string; credentials: 'same-origin' },
-) => Promise<{ status: number; text(): Promise<string> }>
+) => Promise<{
+  status: number
+  text(): Promise<string>
+  // A download reads these (the browser's fetch has both).
+  headers?: { get(name: string): string | null }
+  body?: ReadableStream<Uint8Array> | null
+}>
 
 export type CallOptions = {
   path?: Record<string, string>
@@ -56,7 +62,17 @@ export type CallOptions = {
   quiet?: boolean
 }
 
-export type Client = { call<T = Record<string, unknown>>(op: OpName, o?: CallOptions): Promise<T> }
+// A file the server makes for the person to save (an export): its bytes, and the name the server gave it.
+export type Downloaded = { blob: Blob; name: string; bytes: number }
+
+export type Client = {
+  call<T = Record<string, unknown>>(op: OpName, o?: CallOptions): Promise<T>
+  // `progress` hears how many bytes have arrived so far.
+  download(op: OpName, o?: CallOptions, progress?: (bytes: number) => void): Promise<Downloaded>
+}
+
+const nameOf = (disposition: string | null | undefined) =>
+  /filename="([^"]+)"/.exec(disposition ?? '')?.[1] ?? 'rsc-brain-export.zip'
 
 function urlOf(route: string, o: CallOptions): { method: string; url: string } {
   const [method, template] = route.split(' ') as [string, string]
@@ -102,7 +118,56 @@ export function createClient(o: {
   onSignedOut: (signInAddress: string) => void
   here: () => string
 }): Client {
+  const offline = () =>
+    new ApiError(0, 'offline', 'rsc-brain could not be reached.', 'Check your connection and try again.')
   return {
+    async download(op, c = {}, progress) {
+      const def = ROUTE_TABLE[op]
+      const { method, url } = urlOf(def.route, c)
+      let res: Awaited<ReturnType<Transport>>
+      try {
+        res = await o.transport(url, { method, headers: {}, credentials: 'same-origin' })
+      } catch {
+        throw offline()
+      }
+      if (res.status < 200 || res.status >= 300) {
+        const err = errorOf(res.status, await res.text())
+        if (res.status === 401 && !c.quiet) o.onSignedOut(signInPath(o.here()))
+        throw err
+      }
+      const parts: Array<Uint8Array<ArrayBuffer> | string> = []
+      let bytes = 0
+      try {
+        if (res.body) {
+          const reader = res.body.getReader()
+          for (;;) {
+            const { done, value } = await reader.read()
+            if (done) break
+            parts.push(value as Uint8Array<ArrayBuffer>)
+            bytes += value.length
+            progress?.(bytes)
+          }
+        } else {
+          const text = await res.text()
+          parts.push(text)
+          bytes = new TextEncoder().encode(text).length
+          progress?.(bytes)
+        }
+      } catch {
+        // The connection was cut while the file came: what arrived is not the whole file.
+        throw new ApiError(
+          0,
+          'download_cut',
+          'The download stopped before the end.',
+          'Try again; if it keeps stopping, tell an administrator.',
+        )
+      }
+      return {
+        blob: new Blob(parts, { type: 'application/zip' }),
+        name: nameOf(res.headers?.get('content-disposition')),
+        bytes,
+      }
+    },
     async call<T>(op: OpName, c: CallOptions = {}): Promise<T> {
       const def = ROUTE_TABLE[op]
       const { method, url } = urlOf(def.route, c)
@@ -118,12 +183,7 @@ export function createClient(o: {
       try {
         res = await o.transport(url, init)
       } catch {
-        throw new ApiError(
-          0,
-          'offline',
-          'rsc-brain could not be reached.',
-          'Check your connection and try again.',
-        )
+        throw offline()
       }
       const text = await res.text()
       if (res.status >= 200 && res.status < 300) return (text ? JSON.parse(text) : {}) as T
