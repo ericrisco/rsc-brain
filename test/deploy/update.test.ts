@@ -17,6 +17,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statfsSync,
   statSync,
@@ -1023,12 +1024,12 @@ describe('the launcher: second review of PR #36', () => {
     assert.equal(exists(c, 'env.rotated'), false)
   })
 
-  const dash = /dash$/.test(shell())
-  it('without setsid, the way back runs as a job of its own: a second Ctrl-C does not stop the restore halfway', {
-    skip: dash
-      ? 'dash has no job control without a terminal (Linux, where /bin/sh is dash, has setsid)'
-      : false,
-  }, async () => {
+  it('without setsid, the way back runs as a job of its own: a second Ctrl-C does not stop the restore halfway', async (t) => {
+    // The shell itself, not its name (on Debian and Ubuntu, sh is dash), known only once before() has run.
+    if (/dash$/.test(realpathSync(shell()))) {
+      t.skip('dash has no job control without a terminal (Linux, where /bin/sh is dash, has setsid)')
+      return
+    }
     const c = await installed()
     const bin = join(c.state, 'nosetsid')
     mkdirSync(bin)
