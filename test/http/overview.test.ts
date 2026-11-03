@@ -456,7 +456,12 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
     it('a new brain shows the three first steps, none done; importing waits for its operation', async () => {
       const r = await w.call(eric.key, 'GET', '/v1/brains/empty/overview')
       assert.equal(r.status, 200, r.text)
-      assert.deepEqual(r.body.firstSteps, { agentConnected: false, firstEntry: false, imported: false })
+      assert.deepEqual(r.body.firstSteps, {
+        agentConnected: false,
+        firstEntry: false,
+        imported: false,
+        importable: true,
+      })
       assert.deepEqual(r.body.todaySessions, [])
       assert.deepEqual(r.body.pending, [])
       assert.equal((r.body.stats as Stats).entries, 0)
@@ -471,10 +476,29 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
       })
     })
 
+    it('a brain holding only a withdrawn proposal is no longer importable (review of PR32)', async () => {
+      assert.equal((await w.call(eric.key, 'POST', '/v1/brains', { slug: 'withdrawn' })).status, 201)
+      const ov = async () =>
+        ((await w.call(eric.key, 'GET', '/v1/brains/withdrawn/overview')).body.firstSteps as Json).importable
+      assert.equal(await ov(), true)
+      await w.db.query(
+        `INSERT INTO proposals (id, brain_id, title, author_id, credential_id, status, created_at)
+         SELECT 'prp_withdrawn', id, 'Gone', $1, 'crd_x', 'withdrawn', now() FROM brains WHERE slug = 'withdrawn'`,
+        [eric.id],
+      )
+      assert.equal(await ov(), false)
+    })
+
     it('the first entry of an agent marks steps 1 and 2', async () => {
       await save(eric.key, 'empty', 'First thing the agent learnt')
       const r = await w.call(eric.key, 'GET', '/v1/brains/empty/overview')
-      assert.deepEqual(r.body.firstSteps, { agentConnected: true, firstEntry: true, imported: false })
+      // Something is in it now: it can no longer be imported into (review of PR32: any proposal counts too).
+      assert.deepEqual(r.body.firstSteps, {
+        agentConnected: true,
+        firstEntry: true,
+        imported: false,
+        importable: false,
+      })
     })
 
     it("today's sessions: client, purpose, reference, status, entries and summary; and what waits", async () => {
@@ -536,7 +560,12 @@ describe('home and overview (G5, G7, G8)', { skip: skipPg }, () => {
       })
       if (wrote.status === 201) {
         const r = await w.call(eric.key, 'GET', '/v1/brains/by-hand/overview')
-        assert.deepEqual(r.body.firstSteps, { agentConnected: false, firstEntry: true, imported: false })
+        assert.deepEqual(r.body.firstSteps, {
+          agentConnected: false,
+          firstEntry: true,
+          imported: false,
+          importable: false,
+        })
       } else assert.equal(wrote.status, 403, wrote.text)
     })
 

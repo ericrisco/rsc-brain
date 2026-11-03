@@ -291,6 +291,17 @@ export const ROWS: Row[] = [
     much: { na: READ_ONLY_FORM },
   },
   {
+    // Growth has content: the part says why it cannot import (the form and its states: import.spec.ts).
+    name: 'settings · import',
+    path: '/b/growth/settings/import',
+    route: '/b/:slug/settings/import',
+    key: 'brain',
+    ready: heading('Import a documentation folder'),
+    empty: { na: 'one form for an empty brain: nothing of its own to be empty' },
+    filtered: { na: NO_FILTERS },
+    much: { na: 'the long report (500 listed, the rest counted) is checked in import.spec.ts' },
+  },
+  {
     name: 'settings · archive',
     path: '/b/growth/settings/archive',
     route: '/b/:slug/settings/archive',

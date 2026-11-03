@@ -32,7 +32,7 @@ export async function listAccounts(ctx: Ctx) {
             (SELECT count(*)::int FROM memberships m WHERE m.account_id = a.id) AS brains,
             (SELECT coalesce(json_agg(json_build_object('slug', b.slug, 'name', b.name, 'role', m.role) ORDER BY b.slug), '[]')
                FROM memberships m JOIN brains b ON b.id = m.brain_id WHERE m.account_id = a.id) AS roles
-       FROM accounts a ORDER BY a.kind, lower(a.name)`,
+       FROM accounts a WHERE a.kind <> 'author' ORDER BY a.kind, lower(a.name)`,
   )
   return rows.map((a) => ({
     id: String(a.id),
@@ -51,6 +51,44 @@ export async function listAccounts(ctx: Ctx) {
     lastSeenAt: a.last_seen == null ? null : (a.last_seen as Date).toISOString(),
     createdAt: (a.created_at as Date).toISOString(),
   }))
+}
+
+// Imported authors (spec B7, review of PR32): names on what was imported, never people who sign in. The
+// administration sees them apart, with the brains they wrote in and when they came in, and can erase a name.
+export const FORMER_AUTHOR = 'Former author'
+export async function listAuthors(ctx: Ctx) {
+  adminOnly(ctx)
+  const rows = await ctx.db.query(
+    `SELECT a.id, a.name, a.created_at,
+            (SELECT coalesce(json_agg(json_build_object('slug', b.slug, 'name', b.name) ORDER BY b.slug), '[]')
+               FROM brains b
+              WHERE EXISTS (SELECT 1 FROM entries e WHERE e.brain_id = b.id AND (e.author_id = a.id OR e.on_behalf_id = a.id))
+                 OR EXISTS (SELECT 1 FROM sessions s WHERE s.brain_id = b.id AND s.account_id = a.id)
+                 OR EXISTS (SELECT 1 FROM proposals p WHERE p.brain_id = b.id AND p.author_id = a.id)
+                 OR EXISTS (SELECT 1 FROM wiki_log l WHERE l.brain_id = b.id AND l.actor_id = a.id)
+                 OR EXISTS (SELECT 1 FROM page_revisions r JOIN pages g ON g.id = r.page_id
+                             WHERE g.brain_id = b.id AND r.author_id = a.id)) AS brains
+       FROM accounts a WHERE a.kind = 'author' ORDER BY lower(a.name), a.id`,
+  )
+  return rows.map((a) => ({
+    id: String(a.id),
+    name: String(a.name),
+    brains: a.brains as Array<{ slug: string; name: string }>,
+    importedAt: (a.created_at as Date).toISOString(),
+  }))
+}
+
+export async function anonymiseAuthor(ctx: Ctx, id: string) {
+  adminOnly(ctx)
+  return ctx.db.tx(async (db) => {
+    const a = await db.one("UPDATE accounts SET name = $2 WHERE id = $1 AND kind = 'author' RETURNING id", [
+      id,
+      FORMER_AUTHOR,
+    ])
+    if (!a) throw notFound('author')
+    await ok({ ...ctx, db }, 'author.anonymise', null, id)
+    return { id, name: FORMER_AUTHOR }
+  })
 }
 
 // Changes to who administers take turns, so two administrators demoting each other cannot both pass
@@ -86,7 +124,7 @@ export async function updateAccount(
   }
   return ctx.db.tx(async (db) => {
     await adminTurn(db)
-    const a = await db.one<Row>('SELECT * FROM accounts WHERE id = $1 FOR UPDATE', [id])
+    const a = await db.one<Row>("SELECT * FROM accounts WHERE id = $1 AND kind <> 'author' FOR UPDATE", [id])
     if (!a) throw notFound('account')
     if (a.kind === 'service' && input.isAdmin === true) {
       throw invalid('A service account cannot be an administrator.', 'Choose a person.')
@@ -138,7 +176,7 @@ export async function removeAccount(ctx: Ctx, id: string) {
         WHERE m.account_id = $1 AND m.role = 'curator' ORDER BY b.id FOR UPDATE OF b`,
       [id],
     )
-    const a = await db.one<Row>('SELECT * FROM accounts WHERE id = $1 FOR UPDATE', [id])
+    const a = await db.one<Row>("SELECT * FROM accounts WHERE id = $1 AND kind <> 'author' FOR UPDATE", [id])
     if (!a) throw notFound('account')
     if (a.status === 'removed') return { removed: true, keysRevoked: 0, brainsWithoutCurator: [] }
     if (a.is_admin && (await otherAdmins(db, id)) === 0) throw lastAdmin()
@@ -175,7 +213,7 @@ export async function removeAccount(ctx: Ctx, id: string) {
 export async function restoreAccount(ctx: Ctx, id: string) {
   adminOnly(ctx)
   const r = await ctx.db.one(
-    "UPDATE accounts SET status = 'active', removed_at = NULL WHERE id = $1 RETURNING id",
+    "UPDATE accounts SET status = 'active', removed_at = NULL WHERE id = $1 AND kind <> 'author' RETURNING id",
     [id],
   )
   if (!r) throw notFound('account')
@@ -438,7 +476,7 @@ export async function newMainKey(ctx: Ctx, serviceId: string, name: unknown): Pr
 // The keys of an account, as the administration sees them: never the secret, its last 4 characters.
 export async function accountKeys(ctx: Ctx, accountId: string) {
   adminOnly(ctx)
-  const a = await ctx.db.one('SELECT id FROM accounts WHERE id = $1', [accountId])
+  const a = await ctx.db.one("SELECT id FROM accounts WHERE id = $1 AND kind <> 'author'", [accountId])
   if (!a) throw notFound('account')
   const rows = await ctx.db.query(
     `SELECT c.*, (SELECT count(*)::int FROM credentials s WHERE s.parent_id = c.id AND s.revoked_at IS NULL AND s.expires_at > $2) AS live_short,

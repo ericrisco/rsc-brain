@@ -28,7 +28,8 @@ export const BACKUP_TABLES: readonly BackupTable[] = [
   ),
   t(
     'brains',
-    `id slug name description purpose status pending_curator_email created_by created_at updated_at wiki_purges`,
+    `id slug name description purpose status pending_curator_email created_by created_at updated_at wiki_purges
+     imported_at imported_from`,
   ),
   t('oauth_clients', 'client_id kind name redirect_uris fetched_at created_at', 'client_id'),
   t(

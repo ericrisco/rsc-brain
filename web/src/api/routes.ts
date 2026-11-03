@@ -29,6 +29,7 @@ export const ROUTE_TABLE = {
   inviteResend: { route: 'POST /v1/invitations/{id}/resend' },
   inviteWithdraw: { route: 'DELETE /v1/invitations/{id}' },
   accounts: { route: 'GET /v1/admin/accounts' },
+  authors: { route: 'GET /v1/admin/authors' },
   resetLink: { route: 'POST /v1/admin/accounts/{id}/reset-link' },
   allBrains: { route: 'GET /v1/admin/brains' },
   createToken: { route: 'POST /v1/me/tokens' },
@@ -94,6 +95,7 @@ export const ROUTE_TABLE = {
   // The administration of people and service accounts (PR25a).
   updateAccount: { route: 'PATCH /v1/admin/accounts/{id}' },
   removeAccount: { route: 'POST /v1/admin/accounts/{id}/remove' },
+  anonymiseAuthor: { route: 'POST /v1/admin/authors/{id}/anonymise' },
   restoreAccount: { route: 'POST /v1/admin/accounts/{id}/restore' },
   accountKeys: { route: 'GET /v1/admin/accounts/{id}/keys' },
   createService: { route: 'POST /v1/admin/services' },
@@ -115,6 +117,8 @@ export const ROUTE_TABLE = {
   auditExport: { route: 'GET /v1/admin/audit/export' },
   // Exporting a brain (spec B7): a download, read through the client to say how it goes.
   exportBrain: { route: 'GET /v1/brains/{slug}/export' },
+  // Importing a folder into an empty brain (B7 PR32): the zip goes up as the body.
+  importBrain: { route: 'POST /v1/brains/{slug}/import' },
   system: { route: 'GET /v1/admin/system' },
   // Copies, the installation key and restoring (B7 PR30).
   backups: { route: 'GET /v1/admin/backups' },

@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 // rsc-brain command line. Each command says what it did, or what to do when it cannot.
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { basename } from 'node:path'
 import { parseArgs } from 'node:util'
+import type { Principal } from '../auth/principal.ts'
 import { resealV1 } from '../auth/reseal.ts'
+import { hashSecret, newSecret } from '../auth/secrets.ts'
 import { readConfig } from '../config.ts'
 import { systemClock } from '../core/clock.ts'
 import { AppError } from '../core/errors.ts'
+import { newId } from '../core/ids.ts'
 import { failureFields, stdoutLog as log } from '../core/log.ts'
+import { UNZIP_LIMITS, UnzipError } from '../core/unzip.ts'
 import { VERSION } from '../core/version.ts'
 import { openPool } from '../db/db.ts'
 import { migrate } from '../db/migrate.ts'
@@ -30,6 +34,8 @@ import { createCopies } from '../ops/backup/copies.ts'
 import { BACKUP_REASONS, type BackupReason, keyId, strongKey } from '../ops/backup/format.ts'
 import { restore } from '../ops/backup/restore.ts'
 import { createScheduler } from '../ops/backup/schedule.ts'
+import { type ImportReport, importTree } from '../ops/import/import.ts'
+import { type FileTree, treeFromFolder, treeFromZip } from '../ops/import/tree.ts'
 import { resealAll } from '../ops/key.ts'
 import { releaseChecker, releasesUrl } from '../ops/releases.ts'
 import { runBridge } from './bridge.ts'
@@ -89,6 +95,11 @@ Usage:
   rsc-brain db drop --database D --role R --confirm D [--db-admin-url-file F]
                                                       remove that database and that role, only if provision
                                                       made them
+  rsc-brain import --brain B --from F --as EMAIL [--json]
+                                                      fill the empty brain B from F: a documentation folder
+                                                      (02-DOCS or an Obsidian vault), a .zip of one, or a faithful
+                                                      export; EMAIL is an administrator who joined B and made
+                                                      itself its curator. Prints what came in and what did not
   rsc-brain version                                   print the version of rsc-brain
   rsc-brain help                                      show this help
 
@@ -132,6 +143,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === 'restore') return restoreCommand([sub, ...rest].filter((x) => x !== undefined))
   if (cmd === 'key') return keyCommand(sub, rest)
   if (cmd === 'db') return dbCommand(sub, [...rest])
+  if (cmd === 'import') return importCommand([sub, ...rest].filter((x) => x !== undefined))
   if (cmd === 'bridge') return bridgeCommand([sub, ...rest].filter((x) => x !== undefined))
   if (cmd === 'hook') return hookCommand(sub, rest)
   if (cmd === 'migrate') {
@@ -772,6 +784,115 @@ async function keyCommand(which: string | undefined, args: string[]): Promise<nu
 }
 
 // The bridge: a wrong option or a missing token stops it before the agent sends anything.
+// Importing a folder or a zip into an empty brain (plan §3.6), as an administrator of this installation who joined
+// the brain and made itself its curator (pack rule 3): the same rules as the web. What it writes is named by a key
+// made for this one command, a web session ended at once: it never opens anything.
+async function importCommand(args: string[]): Promise<number> {
+  const USAGE =
+    'Usage: rsc-brain import --brain <slug> --from <folder or .zip> --as <administrator email> [--json]'
+  const values = strictArgs<{ brain?: string; from?: string; as?: string; json?: boolean }>(args, {
+    brain: { type: 'string' },
+    from: { type: 'string' },
+    as: { type: 'string' },
+    json: { type: 'boolean' },
+  })
+  if (!values?.brain || !values.from || !values.as) {
+    process.stderr.write(`${USAGE}\n`)
+    return 2
+  }
+  const { brain, from, as } = values
+  let tree: FileTree
+  try {
+    const st = await stat(from)
+    if (st.isDirectory()) tree = await treeFromFolder(from)
+    else {
+      // A zip is read whole into memory, at most as much as an import reads.
+      if (st.size > UNZIP_LIMITS.totalBytes)
+        throw new UnzipError('archive_too_large', 'The zip is larger than 200 MB.')
+      tree = treeFromZip(await readFile(from))
+    }
+  } catch (err) {
+    process.stderr.write(
+      `${err instanceof UnzipError ? err.message : `${from} cannot be read (${(err as NodeJS.ErrnoException).code ?? 'error'}).`}\n`,
+    )
+    return 1
+  }
+  return withDb(async (db) => {
+    const a = await db.one(
+      "SELECT * FROM accounts WHERE email = lower($1) AND kind = 'person' AND status = 'active' AND is_admin",
+      [as.trim()],
+    )
+    if (!a) {
+      process.stderr.write(`There is no active administrator with the email ${as.trim().slice(0, 320)}.\n`)
+      return 1
+    }
+    // The key is made in the import's own transaction: an import refused leaves none behind (its refusal is still
+    // audited, through the pool).
+    let report: ImportReport
+    try {
+      report = await db.tx(async (tx) => {
+        const now = systemClock()
+        const id = newId('crd')
+        await tx.query(
+          `INSERT INTO credentials (id, account_id, kind, name, secret_hash, last4, perm, all_brains, created_at,
+             expires_at, revoked_at, epoch)
+           VALUES ($1, $2, 'web', 'Command line import', $3, '----', 'write', true, $4, $4, $4,
+             (SELECT key_epoch FROM installation WHERE id = 1))`,
+          [id, a.id, hashSecret(newSecret()), now],
+        )
+        const who: Principal = {
+          accountId: String(a.id),
+          kind: 'person',
+          name: String(a.name),
+          email: String(a.email),
+          isAdmin: true,
+          canCreateBrains: Boolean(a.can_create_brains),
+          canInvite: Boolean(a.can_invite),
+          credential: {
+            id,
+            kind: 'web',
+            perm: 'write',
+            allBrains: true,
+            brainIds: [],
+            writeBrainId: null,
+            readBrainIds: [],
+            ref: null,
+            agent: null,
+            onBehalfId: null,
+            parentId: null,
+          },
+          rateLimit: 0,
+          client: 'rsc-brain import',
+        }
+        return importTree({ db: tx, root: db, clock: systemClock, who }, brain, tree, {
+          from: basename(from),
+        })
+      })
+    } catch (err) {
+      if (err instanceof AppError) {
+        process.stderr.write(`${err.message} ${err.howToProceed}\n`)
+        return 1
+      }
+      throw err
+    }
+    if (values.json) {
+      out(`${JSON.stringify(report)}\n`)
+      return 0
+    }
+    out(
+      `Imported ${report.pages} pages and ${report.entries} entries into ${brain} (${report.links} links).\n` +
+        `${report.totals.ignored} files left out, ${report.totals.unresolved} links that lead nowhere, ` +
+        `${report.totals.renamed} names made into addresses.\n`,
+    )
+    for (const i of report.ignored) out(`  left out  ${i.path} (${i.why.replace('_', ' ')})\n`)
+    for (const u of report.unresolved) out(`  no page   ${u.target} (from ${u.from})\n`)
+    for (const r of report.renamed) out(`  renamed   ${r.path} -> ${r.address}\n`)
+    if (report.people)
+      out(`${report.people.matched} people found by email, ${report.people.authors} imported as authors.\n`)
+    return 0
+  })
+}
+
 async function bridgeCommand(args: string[]): Promise<number> {
   try {
     const { values } = parseArgs({

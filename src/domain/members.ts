@@ -99,7 +99,7 @@ async function accountOf(db: Db, ref: unknown) {
   const v = typeof ref === 'string' ? ref.trim() : ''
   if (!v || v.length > 320) throw invalid('"account" is an account id or an email.', 'Name who to add.')
   const a = await db.one<{ id: string; kind: string; name: string; status: string }>(
-    'SELECT id, kind, name, status FROM accounts WHERE id = $1 OR (email IS NOT NULL AND email = lower($1))',
+    "SELECT id, kind, name, status FROM accounts WHERE kind <> 'author' AND (id = $1 OR (email IS NOT NULL AND email = lower($1)))",
     [v],
   )
   if (!a) {

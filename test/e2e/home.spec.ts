@@ -59,12 +59,12 @@ test('CA19: a new brain shows three first steps; an agent writing marks steps 1 
   await dialog.getByRole('button', { name: 'Create brain' }).click()
   await expect(page).toHaveURL(/\/b\/lifecycle$/)
   const steps = page.getByRole('region', { name: 'First steps' }).getByRole('listitem')
-  await expect(steps).toHaveCount(2)
+  await expect(steps).toHaveCount(3)
   await expect(steps.nth(0)).toContainText('To do')
   await expect(steps.nth(1)).toContainText('To do')
-  await expect(page.getByRole('region', { name: 'First steps' }).getByRole('note')).toContainText(
-    'not in this version yet',
-  )
+  // The third, importing a folder (B7 PR32): its own walk is test/e2e/import.spec.ts.
+  await expect(steps.nth(2)).toContainText('Import a documentation folder')
+  await expect(steps.nth(2)).toContainText('To do')
   // The agent: a token of the administrator, used by a program that is not the web.
   const made = await page.request.post('/v1/me/tokens', {
     headers: WEB,
@@ -81,6 +81,8 @@ test('CA19: a new brain shows three first steps; an agent writing marks steps 1 
   expect(saved.status()).toBe(201)
   await expect(steps.nth(0)).toContainText('Done', { timeout: 5_000 })
   await expect(steps.nth(1)).toContainText('Done')
+  // With an entry, the brain is no longer empty: the third step says an import can no longer be taken.
+  await expect(steps.nth(2)).toContainText('only into an empty brain')
   expect(page.url()).toBe(url)
   await expect(page.getByRole('region', { name: 'In numbers' })).toContainText('1 entry')
   await expect(page.getByRole('region', { name: "Today's sessions" }).getByRole('listitem')).toHaveCount(1)

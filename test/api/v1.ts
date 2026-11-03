@@ -21,6 +21,7 @@ export const V1 = [
   'GET /v1/admin/accounts/{id}/apps',
   'GET /v1/admin/accounts/{id}/keys',
   'GET /v1/admin/audit',
+  'GET /v1/admin/authors',
   'GET /v1/admin/audit/export',
   'GET /v1/admin/backups',
   'GET /v1/admin/backups/{id}/download',
@@ -82,6 +83,7 @@ export const V1 = [
   'POST /v1/admin/accounts/{id}/remove',
   'POST /v1/admin/accounts/{id}/reset-link',
   'POST /v1/admin/accounts/{id}/restore',
+  'POST /v1/admin/authors/{id}/anonymise',
   'POST /v1/admin/backups',
   'POST /v1/admin/backups/{id}/restore',
   'POST /v1/admin/brains/{slug}/curator',
@@ -101,6 +103,7 @@ export const V1 = [
   'POST /v1/brains/{slug}/corrections/relay',
   'POST /v1/brains/{slug}/corrections',
   'POST /v1/brains/{slug}/entries',
+  'POST /v1/brains/{slug}/import',
   'POST /v1/brains/{slug}/members',
   'POST /v1/brains/{slug}/proposals',
   'POST /v1/brains/{slug}/relations',
@@ -217,6 +220,12 @@ export const ERROR_STATUS: Record<string, number> = {
   // Exporting a brain (B7 PR31 review): two exports are being prepared already; the disk is short of room.
   export_busy: 409,
   export_no_space: 507,
+  // Importing into a brain (B7 PR32): a brain with content already; a zip it cannot read; one too big.
+  brain_not_empty: 409,
+  invalid_archive: 422,
+  archive_too_large: 413,
+  import_busy: 409,
+  upload_timeout: 408,
   // Any failure that is not a refusal; never provoked on purpose (app.ts answers it).
   internal: 500,
 }

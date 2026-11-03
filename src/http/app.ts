@@ -35,6 +35,7 @@ import { connectRoutes } from './routes/connect.ts'
 import { decideRoutes } from './routes/decide.ts'
 import { eventRoutes } from './routes/events.ts'
 import { exportRoutes } from './routes/export.ts'
+import { importRoutes } from './routes/import.ts'
 import { journalRoutes } from './routes/journal.ts'
 import { keyRoutes } from './routes/keys.ts'
 import { meaningRoutes } from './routes/meaning.ts'
@@ -122,6 +123,7 @@ export const ROUTES: Route[] = [
   ...systemRoutes,
   ...backupRoutes,
   ...exportRoutes,
+  ...importRoutes,
 ]
 // The MCP endpoint calls the same routes a program would (spec B5 parity).
 ROUTES.push(...mcpRoutes(() => ROUTES))
@@ -194,6 +196,85 @@ async function readBody(req: IncomingMessage, max = MAX_BODY): Promise<unknown> 
   const bad = badText(parsed)
   if (bad) throw invalid(bad, 'Fix it and retry.')
   return parsed
+}
+
+// A body that is a file (an import's zip): its bytes, up to `max` and not one more, read like readBody.
+const archiveTooLarge = (max: number) => {
+  const e = new AppError(
+    413,
+    'archive_too_large',
+    `The zip is larger than ${Math.round(max / 1_048_576)} MB.`,
+    'Import a smaller zip, or ask an administrator to import the folder from the command line.',
+  )
+  e.headers = { connection: 'close' }
+  return e
+}
+// A body that stops coming, or takes too long in all (second pass on PR32): refused, and the connection ends.
+const uploadTimeout = () => {
+  const e = new AppError(
+    408,
+    'upload_timeout',
+    'The upload stopped or took too long, so rsc-brain stopped waiting for it. Nothing was changed.',
+    'Check your connection and upload the zip again.',
+  )
+  e.headers = { connection: 'close' }
+  return e
+}
+async function readRaw(
+  req: IncomingMessage,
+  max = MAX_BODY,
+  deadline?: { stallMs: number; totalMs: number },
+): Promise<Buffer> {
+  const declared = Number(req.headers['content-length'])
+  if (Number.isFinite(declared) && declared > max) throw archiveTooLarge(max)
+  const chunks: Buffer[] = []
+  let size = 0
+  await new Promise<void>((resolve, reject) => {
+    let stall: NodeJS.Timeout | undefined
+    let total: NodeJS.Timeout | undefined
+    const stop = (err?: unknown) => {
+      clearTimeout(stall)
+      clearTimeout(total)
+      req.off('data', onData)
+      req.off('end', onEnd)
+      req.off('close', onClose)
+      if (err === undefined) return resolve()
+      req.pause()
+      chunks.length = 0
+      reject(err)
+    }
+    const wait = () => {
+      if (!deadline) return
+      clearTimeout(stall)
+      stall = setTimeout(() => stop(uploadTimeout()), deadline.stallMs)
+    }
+    const onData = (chunk: Buffer) => {
+      size += chunk.length
+      if (size > max) return stop(archiveTooLarge(max))
+      chunks.push(chunk)
+      wait()
+    }
+    const onEnd = () => stop()
+    // The client left before the body was whole: nothing to answer, nothing to keep.
+    const onClose = () => {
+      if (!req.complete)
+        stop(
+          new AppError(
+            400,
+            'invalid_request',
+            'The upload ended before the whole zip arrived.',
+            'Upload the zip again.',
+          ),
+        )
+    }
+    if (deadline) total = setTimeout(() => stop(uploadTimeout()), deadline.totalMs)
+    wait()
+    req.on('data', onData)
+    req.on('end', onEnd)
+    req.on('close', onClose)
+    req.on('error', (e) => stop(e))
+  })
+  return Buffer.concat(chunks)
 }
 
 export const MAX_DEPTH = 32
@@ -554,16 +635,26 @@ export function createHandler(deps: AppDeps) {
       rate.take(who.credential.id, who.rateLimit)
       // A route only the administration uses refuses anyone else before reading a (large) body.
       if (found.route.admin) adminOnly({ db: deps.db, clock: deps.clock, who })
-      const body = await readBody(req, found.route.maxBody)
-      bodyRead = true
-      const reply = await found.route.handler({ ...base, body, who })
-      if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)
-      if (reply.file) return await sendFile(res, reply.file)
-      if (reply.download) return await sendDownload(res, reply.download, log, EXPORT_LIMITS.stallMs)
-      send(res, reply.status ?? 200, reply.body, reply.headers, {
-        route: Boolean(reply.compress),
-        accepts: acceptsGzip(req.headers['accept-encoding']),
-      })
+      const over = found.route.before
+        ? await found.route.before({ ...base, body: undefined, who })
+        : undefined
+      try {
+        const body = found.route.raw
+          ? await readRaw(req, found.route.maxBody, found.route.rawDeadline)
+          : await readBody(req, found.route.maxBody)
+        bodyRead = true
+        const reply = await found.route.handler({ ...base, body, who })
+        if (reply.stream) return await stream(res, reply.stream, log, timings.bufferBytes)
+        if (reply.file) return await sendFile(res, reply.file)
+        if (reply.download) return await sendDownload(res, reply.download, log, EXPORT_LIMITS.stallMs)
+        send(res, reply.status ?? 200, reply.body, reply.headers, {
+          route: Boolean(reply.compress),
+          accepts: acceptsGzip(req.headers['accept-encoding']),
+        })
+      } finally {
+        // Only once the work is settled (a client that left does not end it early: second pass on PR32).
+        if (typeof over === 'function') over()
+      }
     } catch (err) {
       // A refusal before the body was read (401, 403, 404, 413…): the rest of it is never read, so the
       // connection ends. The answer goes first; the socket is let go a moment after it is sent, so the client

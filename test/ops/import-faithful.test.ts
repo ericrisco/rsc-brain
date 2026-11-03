@@ -1,0 +1,604 @@
+// Spec B7 «Importar» (plan §3.6, T029, CA13, C17), on PostgreSQL: a faithful export of a brain in one installation
+// (A), imported into an empty brain of another (B, its own database and key), is the same brain: pages, revisions,
+// links, entries, relations and proposals equal in number and in content. People are found by their email only
+// when they are members of the brain imported into; everyone else comes in as an author (a name, never an account
+// that signs in). The ids are kept, or all made new when this installation already has one of them (the same
+// export twice). A file that points at anything outside itself, or carries columns it should not, is refused whole.
+import assert from 'node:assert/strict'
+import { after, before, describe, it } from 'node:test'
+import { zipWriter } from '../../src/core/zip.ts'
+import { authorName } from '../../src/ops/import/faithful.ts'
+import { importTree } from '../../src/ops/import/import.ts'
+import { treeFromZip } from '../../src/ops/import/tree.ts'
+import { download } from '../helpers/download.ts'
+import { skipPg } from '../helpers/pg.ts'
+import { principalOfSession } from '../helpers/principal.ts'
+import { readZip } from '../helpers/unzip.ts'
+import { type World, world } from '../helpers/world.ts'
+
+type Json = Record<string, unknown>
+// CA13's tables, and the rest of what a faithful export carries.
+const COMPARED = [
+  'pages',
+  'page_addresses',
+  'page_revisions',
+  'page_links',
+  'page_sources',
+  'entries',
+  'entry_revisions',
+  'relations',
+  'proposals',
+  'proposal_ops',
+  'wiki_settings',
+  'sessions',
+] as const
+// What is this installation's own, not the brain's: never compared.
+const LOCAL = new Set(['brain_id', 'credential_id', 'search'])
+const PEOPLE = new Set([
+  'account_id',
+  'author_id',
+  'on_behalf_id',
+  'forgotten_by',
+  'created_by',
+  'decided_by',
+  'purged_by',
+  'corrected_by',
+  'base_reviewed_by',
+  'actor_id',
+])
+// A session open in A comes in closed (its key is A's): its state is the one thing that may differ.
+const MAY_DIFFER: Record<string, string[]> = { sessions: ['status', 'closed_at'] }
+const SCOPE: Record<string, string> = {
+  sessions: 'brain_id = $1',
+  pages: 'brain_id = $1',
+  page_addresses: 'brain_id = $1',
+  page_links: 'brain_id = $1',
+  entries: 'brain_id = $1',
+  relations: 'brain_id = $1',
+  proposals: 'brain_id = $1',
+  wiki_settings: 'brain_id = $1',
+  wiki_log: 'brain_id = $1',
+  page_revisions: 'page_id IN (SELECT id FROM pages WHERE brain_id = $1)',
+  page_sources: 'page_id IN (SELECT id FROM pages WHERE brain_id = $1)',
+  entry_revisions: 'entry_id IN (SELECT id FROM entries WHERE brain_id = $1)',
+  proposal_ops: 'proposal_id IN (SELECT id FROM proposals WHERE brain_id = $1)',
+}
+
+// A table of a brain as text that can be compared between installations: every column but those of the
+// installation, people by name, rows sorted.
+async function fingerprint(w: World, slug: string, table: string): Promise<string[]> {
+  const brain = (await w.db.one('SELECT id FROM brains WHERE slug = $1', [slug]))?.id
+  const names = new Map(
+    (await w.db.query('SELECT id, name FROM accounts')).map((a) => [String(a.id), String(a.name)]),
+  )
+  const rows = await w.db.query(`SELECT to_jsonb(t) AS r FROM ${table} t WHERE ${SCOPE[table]}`, [brain])
+  return rows
+    .map((row) => {
+      const r = row.r as Json
+      const out: Json = {}
+      for (const k of Object.keys(r).sort()) {
+        if (LOCAL.has(k) || MAY_DIFFER[table]?.includes(k)) continue
+        out[k] = PEOPLE.has(k) && r[k] != null ? `person:${names.get(String(r[k]))}` : r[k]
+      }
+      return JSON.stringify(out)
+    })
+    .sort()
+}
+
+async function zipOf(files: Map<string, Buffer | string>): Promise<Buffer> {
+  const chunks: Buffer[] = []
+  const z = zipWriter(async (b) => {
+    chunks.push(Buffer.from(b))
+  })
+  for (const [n, d] of files) await z.file(n, d)
+  await z.end()
+  return Buffer.concat(chunks)
+}
+
+describe('a faithful export imported into another installation (CA13)', { skip: skipPg }, () => {
+  let a: World
+  let b: World
+  let exported: Buffer
+  const ids: Record<string, string> = {}
+  const people: Record<string, { id: string; key: string; email: string }> = {}
+  const P = (k: string) => people[k] as { id: string; key: string; email: string }
+  let bWeb: string
+
+  before(async () => {
+    a = await world()
+    b = await world({ secret: 'another-installation-secret-of-32-characters-at-least' })
+    const person = async (w: World, name: string, email: string, o: Json = {}) => {
+      const p = await w.person(name, { email, ...o })
+      return { ...p, email }
+    }
+    people.eric = await person(a, 'Eric', 'eric@example.com')
+    people.carl = await person(a, 'Carl', 'carl@example.com')
+    people.dora = await person(a, 'Dora', 'dora@example.com')
+    const svc = await a.service('Factory')
+    const aWeb = await a.web(P('eric').id)
+    await a.call(P('eric').key, 'POST', '/v1/brains', {
+      slug: 'faith',
+      name: 'Faith',
+      purpose: 'Round trips.',
+    })
+    await a.member('faith', P('carl').id, 'contributor')
+    await a.member('faith', P('dora').id, 'contributor')
+    await a.member('faith', svc.id, 'contributor')
+    const entry = async (key: string, title: string, content: string) => {
+      const r = await a.call(key, 'POST', '/v1/brains/faith/entries', { type: 'learning', title, content })
+      assert.equal(r.status, 201, r.text)
+      return String((r.body.receipt as Json).entryId)
+    }
+    ids.e1 = await entry(P('eric').key, 'Retention', 'People come back after a first win.')
+    ids.e2 = await entry(
+      P('carl').key,
+      'Retention again',
+      'A first win in five minutes. password: hunter2hunter2',
+    )
+    ids.e3 = await entry(P('dora').key, 'Audience', 'Teams of five.')
+    ids.e4 = await entry(svc.key, 'From the factory', 'A step the factory saved.')
+    ids.e5 = await entry(P('eric').key, 'Forgotten', 'Not true after all.')
+    // A session with its summary (the summary is an entry the session points at).
+    const ses = await a.call(P('carl').key, 'POST', '/v1/brains/faith/sessions', {
+      purpose: 'A summarised session',
+    })
+    assert.equal(ses.status, 201, ses.text)
+    const sid = (ses.body.session as { id: string }).id
+    const inSes = await a.call(P('carl').key, 'POST', '/v1/brains/faith/entries', {
+      type: 'fact',
+      title: 'In the session',
+      content: 'Said in a session that ends with a summary.',
+      sessionId: sid,
+    })
+    assert.equal(inSes.status, 201, inSes.text)
+    const sum = await a.call(P('carl').key, 'POST', `/v1/sessions/${sid}/summary`, {
+      content: 'What the session did.',
+    })
+    assert.equal(sum.status, 201, sum.text)
+    assert.ok(
+      (await a.db.one('SELECT summary_entry_id FROM sessions WHERE id = $1', [sid]))?.summary_entry_id,
+    )
+    // An entry revised, one forgotten, one superseding another, a relation between two.
+    const revised = await a.call(P('eric').key, 'PATCH', `/v1/entries/${ids.e1}`, {
+      baseRevision: 1,
+      content: 'People come back after a first win, revised.',
+    })
+    assert.equal(revised.status, 200, revised.text)
+    const forgot = await a.call(P('eric').key, 'POST', `/v1/entries/${ids.e5}/forget`, { reason: 'Wrong.' })
+    assert.equal(forgot.status, 200, forgot.text)
+    const rel = await a.call(P('eric').key, 'POST', '/v1/brains/faith/relations', {
+      from: ids.e1,
+      to: ids.e2,
+      kind: 'contradicts',
+    })
+    assert.equal(rel.status, 201, rel.text)
+    await a.db.query('UPDATE entries SET superseded_by = $2 WHERE id = $1', [ids.e3, ids.e2])
+    // Pages: one by hand, edited; one by an approved proposal, with a typed link; one pending proposal.
+    const change = (body: Json) => a.callWeb(aWeb, 'POST', '/v1/brains/faith/wiki/changes', body)
+    assert.equal(
+      (
+        await change({
+          op: 'create',
+          address: 'topics/retention',
+          type: 'topic',
+          title: 'Retention',
+          summary: 'Why people return.',
+          body: 'See [[topics/audience]].',
+          tags: ['growth'],
+          sources: [{ entryId: ids.e1 }, { url: 'https://example.com/r', title: 'A paper' }],
+          reason: 'Seeding.',
+        })
+      ).status,
+      201,
+    )
+    const p1 = await a.call(P('carl').key, 'POST', '/v1/brains/faith/proposals', {
+      title: 'Audience',
+      ops: [
+        {
+          op: 'create',
+          address: 'topics/audience',
+          type: 'topic',
+          title: 'Audience',
+          summary: 'Who reads.',
+          body: 'Back to [[topics/retention]].',
+          sources: [{ entryId: ids.e3 }],
+          links: [{ kind: 'related', to: 'topics/retention' }],
+          reason: 'Carl saw it.',
+        },
+      ],
+    })
+    assert.equal(p1.status, 201, p1.text)
+    const pid = (p1.body.proposal as { id: string }).id
+    const fp = ((await a.callWeb(aWeb, 'GET', `/v1/proposals/${pid}/review`)).body as { fingerprint: string })
+      .fingerprint
+    const approved = await a.callWeb(aWeb, 'POST', `/v1/proposals/${pid}/approve`, { fingerprint: fp })
+    assert.equal(approved.status, 200, approved.text)
+    const edit = await a.callWeb(aWeb, 'PATCH', '/v1/brains/faith/pages/topics/retention', {
+      baseRevision: 1,
+      body: 'See [[topics/audience]], twice.',
+      reason: 'Clearer.',
+    })
+    assert.equal(edit.status, 200, edit.text)
+    const p2 = await a.call(P('dora').key, 'POST', '/v1/brains/faith/proposals', {
+      title: 'Pending',
+      ops: [
+        {
+          op: 'edit',
+          address: 'topics/audience',
+          baseRevision: 1,
+          summary: 'Who reads us.',
+          sources: [{ entryId: ids.e2 }],
+          reason: 'Better.',
+        },
+      ],
+    })
+    assert.equal(p2.status, 201, p2.text)
+    assert.equal(
+      (
+        await a.callWeb(aWeb, 'PUT', '/v1/brains/faith/wiki/settings', {
+          mapIntro: 'The map of faith.',
+          staleDays: 30,
+        })
+      ).status,
+      200,
+    )
+    // Dora leaves: what she wrote stays, by her name.
+    assert.equal((await a.callWeb(aWeb, 'DELETE', `/v1/brains/faith/members/${P('dora').id}`)).status, 200)
+    const d = await download(
+      a,
+      { session: aWeb },
+      '/v1/brains/faith/export?format=faithful&includeForgotten=1',
+    )
+    assert.equal(d.status, 200)
+    exported = d.bytes
+    // B: Eric and Carl have accounts with the same emails; only Eric is a member of the brain imported into.
+    people.beric = await person(b, 'Eric B', 'eric@example.com')
+    people.bcarl = await person(b, 'Carl B', 'carl@example.com')
+    bWeb = await b.web(P('beric').id)
+    await b.call(P('beric').key, 'POST', '/v1/brains', { slug: 'copy', name: 'Copy' })
+  })
+  after(async () => {
+    await a.close()
+    await b.close()
+  })
+
+  const imp = async (w: World, session: string, slug: string, zip: Buffer) =>
+    importTree(
+      { db: w.db, clock: w.clock, who: await principalOfSession(w, session) },
+      slug,
+      treeFromZip(zip),
+      {
+        from: 'faith.zip',
+      },
+    )
+
+  it('CA13: the same pages, revisions, links, entries, relations and proposals, in number and content', async () => {
+    const report = await imp(b, bWeb, 'copy', exported)
+    assert.equal(report.kind, 'faithful')
+    assert.equal(report.pages, 2)
+    assert.equal(report.entries, 7)
+    for (const t of COMPARED) {
+      const [x, y] = await Promise.all([fingerprint(a, 'faith', t), fingerprint(b, 'copy', t)])
+      // People by name: in B, Carl and Dora are authors with the names they had in A, and Eric is Eric B.
+      // Imported authors carry the label in their name ("Carl (imported)").
+      const rename = (rows: string[]) =>
+        rows.map((r) =>
+          r.replaceAll('person:Eric B', 'person:Eric').replace(/person:([^"]+) \(imported\)/g, 'person:$1'),
+        )
+      assert.equal(y.length, x.length, `${t}: ${y.length} rows, ${x.length} in A`)
+      assert.deepEqual(rename(y), x, t)
+    }
+    // The ids are the original ones (no clash in B).
+    assert.ok(await b.db.one('SELECT 1 FROM entries WHERE id = $1', [ids.e1]))
+  })
+
+  it("finds people by email only among the brain's members; everyone else is an author who never signs in", async () => {
+    const authorOf = async (entryId: string) =>
+      (await b.db.one(
+        'SELECT a.id, a.kind, a.name, a.email FROM entries e JOIN accounts a ON a.id = e.author_id WHERE e.id = $1',
+        [entryId],
+      )) as Json
+    assert.equal((await authorOf(ids.e1 as string)).id, P('beric').id)
+    // Carl has an account in B with that email, but is not a member of this brain: his work is not given to it.
+    const carl = await authorOf(ids.e2 as string)
+    assert.deepEqual([carl.kind, carl.name, carl.email], ['author', 'Carl (imported)', null])
+    assert.notEqual(carl.id, P('bcarl').id)
+    const dora = await authorOf(ids.e3 as string)
+    assert.deepEqual([dora.kind, dora.name, dora.email], ['author', 'Dora (imported)', null])
+    const svc = await authorOf(ids.e4 as string)
+    assert.deepEqual([svc.kind, svc.name], ['author', 'Factory (imported)'])
+    // Authors: no key, no membership, no password.
+    const n = await b.db.one(
+      `SELECT (SELECT count(*)::int FROM credentials c JOIN accounts a ON a.id = c.account_id WHERE a.kind = 'author') AS keys,
+              (SELECT count(*)::int FROM memberships m JOIN accounts a ON a.id = m.account_id WHERE a.kind = 'author') AS members,
+              (SELECT count(*)::int FROM accounts WHERE kind = 'author' AND password_hash IS NOT NULL) AS passwords`,
+    )
+    assert.deepEqual(n, { keys: 0, members: 0, passwords: 0 })
+  })
+
+  it('leaves the history whole: the wiki log of A, then one line for the import; sessions closed', async () => {
+    const [x, y] = await Promise.all([
+      fingerprint(a, 'faith', 'wiki_log'),
+      fingerprint(b, 'copy', 'wiki_log'),
+    ])
+    const imported = y.filter((r) => r.includes('"kind":"import"'))
+    assert.equal(imported.length, 1)
+    assert.match(imported[0] as string, /"summary":"Imported from faith\.zip"/)
+    assert.match(imported[0] as string, /person:Eric B/)
+    assert.deepEqual(
+      y
+        .filter((r) => !r.includes('"kind":"import"'))
+        .map((r) => r.replaceAll('person:Eric B', 'person:Eric')),
+      x,
+    )
+    const open = await b.db.one("SELECT count(*)::int AS n FROM sessions WHERE status = 'open'")
+    assert.equal(open?.n, 0)
+  })
+
+  it('the same export again, into another brain of B: every id made new, the same content', async () => {
+    await b.call(P('beric').key, 'POST', '/v1/brains', { slug: 'copy-two', name: 'Copy two' })
+    // Carl has an account here and is a member of this brain, but his account was removed: not him any more.
+    await b.member('copy-two', P('bcarl').id, 'contributor')
+    await b.db.query("UPDATE accounts SET status = 'removed', removed_at = now() WHERE id = $1", [
+      P('bcarl').id,
+    ])
+    const report = await imp(b, bWeb, 'copy-two', exported)
+    const carls = await b.db.one(
+      `SELECT a.id, a.kind FROM entries e JOIN brains x ON x.id = e.brain_id JOIN accounts a ON a.id = e.author_id
+        WHERE x.slug = 'copy-two' AND e.title = 'Retention again'`,
+    )
+    assert.equal(carls?.kind, 'author')
+    assert.notEqual(carls?.id, P('bcarl').id)
+    assert.deepEqual([report.pages, report.entries], [2, 7])
+    const two = (await b.db.one("SELECT id FROM brains WHERE slug = 'copy-two'"))?.id
+    assert.equal((await b.db.one('SELECT count(*)::int AS n FROM entries WHERE id = $1', [ids.e1]))?.n, 1)
+    const e = await b.db.query('SELECT id, title FROM entries WHERE brain_id = $1 ORDER BY title', [two])
+    assert.equal(e.length, 7)
+    for (const r of e) assert.ok(!Object.values(ids).includes(String(r.id)))
+    // References follow the new ids: the relation, the superseding entry, the sources of the pages.
+    const rel = await b.db.one(
+      `SELECT f.title AS f, t.title AS t FROM relations r JOIN entries f ON f.id = r.from_id JOIN entries t ON t.id = r.to_id
+        WHERE r.brain_id = $1`,
+      [two],
+    )
+    assert.deepEqual(rel, { f: 'Retention', t: 'Retention again' })
+    const src = await b.db.query(
+      `SELECT e.brain_id FROM page_sources s JOIN pages p ON p.id = s.page_id JOIN entries e ON e.id = s.entry_id
+        WHERE p.brain_id = $1`,
+      [two],
+    )
+    assert.ok(src.length > 0)
+    for (const s of src) assert.equal(s.brain_id, two)
+    for (const t of [
+      'pages',
+      'entries',
+      'relations',
+      'proposals',
+      'page_revisions',
+      'page_links',
+      'sessions',
+    ] as const) {
+      const strip = (rows: string[]) =>
+        rows
+          .map((r) => JSON.parse(r) as Json)
+          .map((r) => {
+            for (const k of [
+              'id',
+              'page_id',
+              'entry_id',
+              'from_id',
+              'to_id',
+              'from_page',
+              'to_page',
+              'session_id',
+              'superseded_by',
+              'proposal_id',
+              'sources',
+              'summary_entry_id',
+            ])
+              delete r[k]
+            return JSON.stringify(r)
+          })
+          .sort()
+      assert.deepEqual(strip(await fingerprint(b, 'copy-two', t)), strip(await fingerprint(b, 'copy', t)), t)
+    }
+  })
+
+  it('refuses, and writes nothing, a file pointing outside itself, with columns of its own, or from a newer release', async () => {
+    const files = new Map(readZip(exported).map((e) => [e.name, e.data]))
+    const other = await b.db.one(
+      "SELECT p.id FROM pages p JOIN brains x ON x.id = p.brain_id WHERE x.slug = 'copy-two' LIMIT 1",
+    )
+    const tamper = (name: string, f: (rows: Json[]) => Json[]) => {
+      const m = new Map<string, Buffer | string>(files)
+      const rows = String(m.get(name))
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l) as Json)
+      m.set(
+        name,
+        `${f(rows)
+          .map((r) => JSON.stringify(r))
+          .join('\n')}\n`,
+      )
+      return m
+    }
+    const cases: Array<[string, Map<string, Buffer | string>]> = [
+      // A link to a page of another brain of this installation.
+      [
+        'link out',
+        tamper('page_links.ndjson', (r) =>
+          r.map((x, i) => (i === 0 ? { ...x, to_page: other?.id, to_address: null, kind: 'related' } : x)),
+        ),
+      ],
+      // A source that is an entry of another brain.
+      [
+        'source out',
+        tamper('page_sources.ndjson', (r) => [
+          ...r,
+          { page_id: r[0]?.page_id, entry_id: 'ent_000000000000', url: null, title: null },
+        ]),
+      ],
+      // A column the export never writes (the brain, a key).
+      ['brain_id', tamper('pages.ndjson', (r) => r.map((x) => ({ ...x, brain_id: 'brn_000000000000' })))],
+      ['credential_id', tamper('entries.ndjson', (r) => r.map((x) => ({ ...x, credential_id: 'crd_x' })))],
+      // Someone the manifest does not name.
+      ['unknown person', tamper('entries.ndjson', (r) => r.map((x) => ({ ...x, author: 'p999' })))],
+      [
+        'unknown person, where one may be left out',
+        tamper('entries.ndjson', (r) => r.map((x) => ({ ...x, on_behalf: 'p999' }))),
+      ],
+      // A value the schema refuses.
+      ['bad value', tamper('pages.ndjson', (r) => r.map((x) => ({ ...x, type: 'weapon' })))],
+      ['purged', tamper('entries.ndjson', (r) => r.map((x) => ({ ...x, state: 'purged' })))],
+      [
+        'newer',
+        new Map<string, Buffer | string>([
+          ...files,
+          [
+            'manifest.json',
+            JSON.stringify({ ...JSON.parse(String(files.get('manifest.json'))), version: 2 }),
+          ],
+        ]),
+      ],
+    ]
+    for (const [i, [label, m]] of cases.entries()) {
+      const slug = `bad-${i}`
+      await b.call(P('beric').key, 'POST', '/v1/brains', { slug, name: `Bad ${i}` })
+      await assert.rejects(
+        imp(b, bWeb, slug, await zipOf(m)),
+        (e: { status?: number; code?: string }) => {
+          assert.deepEqual([e.status, e.code], [422, 'invalid_archive'], label)
+          return true
+        },
+        label,
+      )
+      const left = await b.db.one(
+        `SELECT (SELECT count(*)::int FROM pages p JOIN brains x ON x.id = p.brain_id WHERE x.slug = $1) +
+                (SELECT count(*)::int FROM entries e JOIN brains x ON x.id = e.brain_id WHERE x.slug = $1) AS n,
+                (SELECT imported_at FROM brains WHERE slug = $1) AS at`,
+        [slug],
+      )
+      assert.deepEqual(left, { n: 0, at: null }, label)
+    }
+    // Nothing of a refused import made an author either.
+    const authors = await b.db.one("SELECT count(*)::int AS n FROM accounts WHERE kind = 'author'")
+    assert.equal(authors?.n, 6)
+    // Nothing of any of them in the log either.
+    assert.equal(
+      (
+        await b.db.one(
+          "SELECT count(*)::int AS n FROM wiki_log l JOIN brains x ON x.id = l.brain_id WHERE x.slug LIKE 'bad-%'",
+        )
+      )?.n,
+      0,
+    )
+  })
+
+  it('every link between the tables it fills is filled in order, or set once every row is in', async () => {
+    const { importOrderProblems } = await import('../../src/ops/import/faithful.ts')
+    assert.deepEqual(await importOrderProblems(b.db), [])
+  })
+
+  it('an address that is not one becomes one, and the report says how', async () => {
+    const files = new Map(readZip(exported).map((e) => [e.name, e.data]))
+    const fix = (name: string, f: (text: string) => string) =>
+      files.set(name, Buffer.from(f(String(files.get(name)))))
+    // Every place the export names the address of the page "topics/audience" (it moved to a name that is no address).
+    for (const n of [
+      'pages.ndjson',
+      'page_addresses.ndjson',
+      'page_revisions.ndjson',
+      'page_links.ndjson',
+      'wiki_log.ndjson',
+      'proposal_ops.ndjson',
+    ])
+      fix(n, (t) => t.replaceAll('"topics/audience"', '"Topics/Audience Page"'))
+    await b.call(P('beric').key, 'POST', '/v1/brains', { slug: 'renamed', name: 'Renamed' })
+    const report = await imp(b, bWeb, 'renamed', await zipOf(files))
+    assert.deepEqual(report.renamed, [{ path: 'Topics/Audience Page', address: 'topics/audience-page' }])
+    const brain = (await b.db.one("SELECT id FROM brains WHERE slug = 'renamed'"))?.id
+    const addrs = await b.db.query(
+      'SELECT address FROM page_addresses WHERE brain_id = $1 ORDER BY address',
+      [brain],
+    )
+    assert.deepEqual(
+      addrs.map((r) => r.address),
+      ['topics/audience-page', 'topics/retention'],
+    )
+    // The mention from the other page leads to it still.
+    const m = await b.db.one(
+      "SELECT to_address FROM page_links WHERE brain_id = $1 AND kind = 'mentions' AND to_address LIKE 'topics/aud%'",
+      [brain],
+    )
+    assert.equal(m?.to_address, 'topics/audience-page')
+  })
+  // Second pass on PR32: the names of an export's import lines are not copied (they could not be anonymised): the
+  // line says «Imported» and its actor is the author.
+  it('the import lines of the export come in without the name they held', async () => {
+    const files = new Map(readZip(exported).map((e) => [e.name, e.data]))
+    const manifest = JSON.parse(String(files.get('manifest.json'))) as {
+      people: Array<{ ref: string; name: string }>
+    }
+    const dora = manifest.people.find((p) => p.name === 'Dora')?.ref
+    const lines = String(files.get('wiki_log.ndjson')).trim().split('\n')
+    const one = JSON.parse(lines[0] as string) as Json
+    lines.push(
+      JSON.stringify({
+        ...one,
+        id: 'wlg_000000000099',
+        kind: 'import',
+        actor: dora,
+        proposal_id: null,
+        pages: [],
+        summary: 'Imported by Dora Realname from old.zip',
+      }),
+    )
+    files.set('wiki_log.ndjson', Buffer.from(`${lines.join('\n')}\n`))
+    await b.call(P('beric').key, 'POST', '/v1/brains', { slug: 'relog', name: 'Relog' })
+    await imp(b, bWeb, 'relog', await zipOf(files))
+    const log = await b.db.query(
+      `SELECT l.summary, a.name FROM wiki_log l JOIN brains x ON x.id = l.brain_id JOIN accounts a ON a.id = l.actor_id
+        WHERE x.slug = 'relog' AND l.kind = 'import' ORDER BY l.at`,
+    )
+    assert.ok(!log.some((r) => String(r.summary).includes('Realname')), JSON.stringify(log))
+    assert.ok(
+      log.some((r) => r.summary === 'Imported' && r.name === 'Dora (imported)'),
+      JSON.stringify(log),
+    )
+  })
+
+  // Second pass on PR32: the folder around the export is the one that holds its manifest, whatever comes first in the
+  // zip (a Mac adds __MACOSX/ and .DS_Store), and __MACOSX/ is never read.
+  it('a zip of the folder of the export, with what a Mac adds first', async () => {
+    const inner = readZip(exported)
+    const files = new Map<string, Buffer | string>([
+      ['.DS_Store', Buffer.from([0, 0, 0, 1])],
+      ['__MACOSX/faith/._manifest.json', Buffer.from([0, 5, 22, 7])],
+      ['__MACOSX/manifest.json', '{"format":"nothing"}'],
+      ...inner.map((e) => [`faith/${e.name}`, e.data] as [string, Buffer]),
+    ])
+    const tree = treeFromZip(await zipOf(files))
+    assert.ok(!tree.files.some((f) => f.path.startsWith('__MACOSX/')))
+    await b.call(P('beric').key, 'POST', '/v1/brains', { slug: 'wrapped', name: 'Wrapped' })
+    const report = await imp(b, bWeb, 'wrapped', await zipOf(files))
+    assert.equal(report.kind, 'faithful')
+  })
+})
+
+// Second pass on PR32: an imported author always says so, whatever its name holds (invisible characters, a suffix of
+// its own, a long name).
+describe('the name of an imported author', () => {
+  it('is cleaned, cut and always marked as imported', () => {
+    const padded = `${'X'.repeat(60)}${'\u200B'.repeat(30)} (imported)`
+    const n = authorName(padded)
+    assert.ok(n.endsWith(' (imported)'), n)
+    assert.ok(!/\p{Cf}/u.test(n), n)
+    assert.ok(n.length <= 80)
+    const long = authorName(`${'A'.repeat(100)} (imported)`)
+    assert.ok(long.endsWith(' (imported)') && long.length === 80, long)
+    assert.equal(authorName('Dora (imported)'), 'Dora (imported)')
+    assert.equal(authorName('  Dora\t  Smith \u200D'), 'Dora Smith (imported)')
+    assert.equal(authorName('\u200B\u200B'), 'Someone (imported)')
+  })
+})

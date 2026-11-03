@@ -43,7 +43,7 @@ type Overview = {
   todaySessions: Session[]
   pending: Pending[]
   health: Record<string, number>
-  firstSteps: { agentConnected: boolean; firstEntry: boolean; imported: boolean }
+  firstSteps: { agentConnected: boolean; firstEntry: boolean; imported: boolean; importable: boolean }
 }
 
 export const brainResource = (slug: string) =>
@@ -51,7 +51,7 @@ export const brainResource = (slug: string) =>
     api.call<{ brain: BrainOne }>('brain', { path: { slug } }),
   )
 
-const overviewResource = (slug: string) =>
+export const overviewResource = (slug: string) =>
   resource<Overview>(`brain:${slug}:overview`, () => api.call<Overview>('overview', { path: { slug } }))
 
 function Step({
@@ -82,8 +82,18 @@ function Step({
   )
 }
 
-function FirstSteps({ slug, steps }: { slug: string; steps: Overview['firstSteps'] }) {
+function FirstSteps({
+  slug,
+  steps,
+  curator,
+}: {
+  slug: string
+  steps: Overview['firstSteps']
+  curator: boolean
+}) {
   const o = T.overview
+  // An import goes only into an empty brain: once it has anything, the step can no longer be taken.
+  const closed = !steps.imported && !steps.importable
   return (
     <section class="first-steps" aria-labelledby="steps-title">
       <h2 id="steps-title">{o.stepsTitle}</h2>
@@ -100,17 +110,23 @@ function FirstSteps({ slug, steps }: { slug: string; steps: Overview['firstSteps
           <blockquote class="ask">{o.step2Ask(slug)}</blockquote>
           <CopyButton text={o.step2Ask(slug)} label={o.copyAsk} />
         </Step>
+        <Step n={3} done={steps.imported} title={o.step3}>
+          {steps.imported ? (
+            <p>{o.step3Done}</p>
+          ) : closed ? (
+            <p class="muted">{o.step3Closed}</p>
+          ) : curator ? (
+            <>
+              <p>{o.step3Lead}</p>
+              <a class="button secondary" href={`/b/${encodeURIComponent(slug)}/settings/import`}>
+                {o.step3Go}
+              </a>
+            </>
+          ) : (
+            <p>{o.step3Ask}</p>
+          )}
+        </Step>
       </ol>
-      {/* Importing a folder is not in this version (B7): a tip with what works today, not a step that
-          cannot be done. It becomes step 3 once importing exists. */}
-      {steps.imported ? null : (
-        <div class="step-tip" role="note" aria-labelledby="tip-title">
-          <h3 id="tip-title">{o.step3}</h3>
-          <p>{o.step3Lead}</p>
-          <blockquote class="ask">{o.step3Ask(slug)}</blockquote>
-          <CopyButton text={o.step3Ask(slug)} label={o.copyAsk} />
-        </div>
-      )}
     </section>
   )
 }
@@ -337,7 +353,7 @@ export function Brain({ slug }: { slug: string }) {
         )
       ) : (
         <div class="overview">
-          {fresh ? <FirstSteps slug={b.slug} steps={o.firstSteps} /> : null}
+          {fresh ? <FirstSteps slug={b.slug} steps={o.firstSteps} curator={b.role === 'curator'} /> : null}
           <Numbers slug={slug} stats={o.stats} />
           <div class="overview-grid">
             <Today slug={slug} sessions={o.todaySessions} />

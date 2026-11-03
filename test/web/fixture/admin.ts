@@ -81,6 +81,13 @@ type Fx = {
   lastWarning: { at: string; code: string } | null
   nextCopy: 'ok' | 'disk_full'
   release: { latest: string | null; notes: string | null; checkedAt: string | null }
+  // Imported authors (review of PR32): names on what an import brought in, anonymised by hand.
+  authors: Array<{
+    id: string
+    name: string
+    brains: Array<{ slug: string; name: string }>
+    importedAt: string
+  }>
 }
 type Copy = { id: string; createdAt: string; bytes: number; reason: string; keyId: string }
 
@@ -186,6 +193,17 @@ export function fxOf(s: AdminScen): Fx {
   let f = fxs.get(s)
   if (!f) {
     f = {
+      authors:
+        s.states.get('people') === 'empty'
+          ? []
+          : [
+              {
+                id: 'acc_author1',
+                name: 'Old Colleague (imported)',
+                brains: [{ slug: 'growth', name: 'Growth' }],
+                importedAt: '2026-10-20T10:00:00.000Z',
+              },
+            ],
       rateLimit: 600,
       mail: s.mail
         ? {
@@ -497,6 +515,23 @@ const admin =
   }
 
 export const ADMIN_OPS: Record<string, Op> = {
+  'GET /v1/admin/authors': {
+    screen: 'people',
+    run: admin(({ s }) => ({ status: 200, body: { authors: fxOf(s).authors } })),
+  },
+  'POST /v1/admin/authors/{id}/anonymise': {
+    run: admin(
+      (c) => {
+        const a = fxOf(c.s).authors.find((x) => x.id === c.params.id)
+        if (!a)
+          return err(404, 'not_found', 'No author with that id is available to you.', 'Check the author id.')
+        a.name = 'Former author'
+        audited(c, 'author.anonymise', '')
+        return { status: 200, body: { author: { id: a.id, name: a.name } } }
+      },
+      { write: true },
+    ),
+  },
   'GET /v1/admin/settings': {
     screen: 'admin-settings',
     run: admin(({ s }) => ({ status: 200, body: settingsView(s) })),

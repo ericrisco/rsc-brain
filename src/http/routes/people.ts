@@ -5,12 +5,14 @@ import { invalid } from '../../core/errors.ts'
 import {
   accountKeys,
   adminBrains,
+  anonymiseAuthor,
   createService,
   deleteMail,
   getMail,
   getSettings,
   joinBrain,
   listAccounts,
+  listAuthors,
   newMainKey,
   removeAccount,
   restoreAccount,
@@ -173,6 +175,11 @@ export const peopleRoutes: Route[] = [
   })),
   route('POST /v1/admin/accounts/:id/restore', async (r) => ({
     body: await restoreAccount(ctxOf(r), r.params.id as string),
+  })),
+  // Imported authors: listed apart, and erasable (review of PR32).
+  route('GET /v1/admin/authors', async (r) => ({ body: { authors: await listAuthors(ctxOf(r)) } })),
+  route('POST /v1/admin/authors/:id/anonymise', async (r) => ({
+    body: { author: await anonymiseAuthor(ctxOf(r), r.params.id as string) },
   })),
   route('GET /v1/admin/accounts/:id/keys', async (r) => ({
     body: { keys: await accountKeys(ctxOf(r), r.params.id as string) },

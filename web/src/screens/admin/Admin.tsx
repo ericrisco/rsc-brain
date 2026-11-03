@@ -506,8 +506,110 @@ function PeopleList({ who }: { who: Me }) {
   )
 }
 
+type Author = { id: string; name: string; brains: Array<{ slug: string; name: string }>; importedAt: string }
+const authorsResource = () =>
+  resource<{ authors: Author[] }>('admin:authors', () => api.call<{ authors: Author[] }>('authors'))
+
+// Imported authors (review of PR32): names a faithful import brought in, apart from the people who sign in.
+// Anonymising one renames it «Former author» everywhere it signs, after asking. No author, no section.
+function ImportedAuthors() {
+  const r = authorsResource()
+  useFresh(r)
+  const said = useSaid()
+  const [asking, setAsking] = useState<Author | null>(null)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<ApiError | null>(null)
+  const authors = r.data.value?.authors
+  if (!authors?.length) return null
+  return (
+    <section aria-labelledby="authors-title">
+      <h2 id="authors-title" class="section-title">
+        {A.authorsTitle}
+      </h2>
+      <p class="muted">{A.authorsLead}</p>
+      <Said text={said.said} focus={said.focus} />
+      <ul class="list admin-list">
+        {authors.map((a) => (
+          <li key={a.id} class="with-actions" data-author={a.id}>
+            <div>
+              <p class="list-title">{a.name}</p>
+              <p class="meta">
+                {A.authorBrains(a.brains.map((b) => b.name))} · {A.authorImported(ago(a.importedAt) ?? '')}
+              </p>
+            </div>
+            {a.name === A.formerAuthor ? null : (
+              <div class="actions admin-actions">
+                <Button
+                  kind="quiet"
+                  blocked={blocked()}
+                  aria-label={A.anonymise(a.name)}
+                  onClick={() => {
+                    setError(null)
+                    setAsking(a)
+                  }}
+                >
+                  {A.anonymiseShort}
+                </Button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+      <Dialog
+        open={asking !== null}
+        title={asking ? A.anonymiseTitle(asking.name) : ''}
+        onClose={() => setAsking(null)}
+      >
+        {asking ? (
+          <>
+            <p>{A.anonymiseLead(asking.name)}</p>
+            <FormAlert error={error} />
+            <div class="actions">
+              <Button
+                kind="primary"
+                pending={pending}
+                pendingLabel={T.states.pending}
+                blocked={blocked()}
+                onClick={async () => {
+                  const { id, name } = asking
+                  setPending(true)
+                  setError(null)
+                  try {
+                    await api.call('anonymiseAuthor', { path: { id } })
+                    setAsking(null)
+                    await r.reload()
+                    said.say(A.anonymised(name), true)
+                  } catch (e) {
+                    setError(e as ApiError)
+                  } finally {
+                    setPending(false)
+                  }
+                }}
+              >
+                {A.anonymiseShort}
+              </Button>
+              <Button kind="quiet" onClick={() => setAsking(null)}>
+                {T.settings.cancel}
+              </Button>
+            </div>
+          </>
+        ) : null}
+      </Dialog>
+    </section>
+  )
+}
+
 export function AdminPeople() {
-  return <AdminFrame>{(who) => <PeopleList who={who} />}</AdminFrame>
+  return (
+    <AdminFrame>
+      {(who) => (
+        <>
+          <PeopleList who={who} />
+          <ImportedAuthors />
+        </>
+      )}
+    </AdminFrame>
+  )
 }
 
 export function AdminInvitations() {

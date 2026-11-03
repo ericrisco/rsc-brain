@@ -1,11 +1,11 @@
 // Spec B6 «Overview de un cerebro» and CA19 (T015, PR18): a brain at a glance — purpose, numbers,
 // today's sessions with their summary, what waits for review, health — and, for a new brain, the three
 // first steps, each marked by itself when it happens (an agent's first entry arrives by the live feed,
-// without reloading). Importing waits for its operation (B7): the screen says so and offers what works.
+// without reloading). Importing a folder is the third (B7 PR32, test/browser/import.spec.ts).
 import { expect, noSideScroll, scenario, test } from './fixture.ts'
 
 test.describe('a new brain', () => {
-  test("CA19: two first steps and a tip; the agent's first entry marks both without reloading", async ({
+  test("CA19: three first steps; the agent's first entry marks the first two without reloading", async ({
     page,
     context,
     baseURL,
@@ -19,8 +19,7 @@ test.describe('a new brain', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Onboarding' })).toBeVisible()
     const steps = page.getByRole('region', { name: 'First steps' })
     const items = steps.getByRole('listitem')
-    // Two steps that work today; importing a folder is a tip under them, not a step that cannot be done.
-    await expect(items).toHaveCount(2)
+    await expect(items).toHaveCount(3)
     await expect(items.nth(0)).toContainText('Connect your agent')
     // A screen reader hears each step with its number.
     await expect(steps.getByRole('heading', { level: 3, name: '1. Connect your agent' })).toBeVisible()
@@ -29,10 +28,8 @@ test.describe('a new brain', () => {
     await expect(items.nth(0)).toContainText('when your agent opens a session, searches, reads or saves')
     await expect(items.nth(1)).toContainText('first entry')
     await expect(items.nth(1)).toContainText('To do')
-    const tip = steps.getByRole('note')
-    await expect(tip).toContainText('Import')
-    await expect(tip).toContainText('not in this version yet')
-    await expect(tip.getByRole('button', { name: /Copy/ })).toBeVisible()
+    await expect(items.nth(2)).toContainText('Import a documentation folder')
+    await expect(items.nth(2).getByRole('link', { name: 'Import a folder' })).toBeVisible()
     await expect(steps).not.toContainText('Not available yet')
     // The first step leads to «Connect your agent» for this brain, and back.
     await items.nth(0).getByRole('link', { name: 'Connect your agent' }).click()
@@ -45,6 +42,8 @@ test.describe('a new brain', () => {
     await s.emit('onboarding')
     await expect(items.nth(0)).toContainText('Done', { timeout: 5_000 })
     await expect(items.nth(1)).toContainText('Done')
+    // The brain has an entry now: an import can no longer be taken, and the step says why.
+    await expect(items.nth(2)).toContainText('only into an empty brain')
     expect(page.url()).toBe(url)
     await expect(page.getByText('1 entry', { exact: false }).first()).toBeVisible()
   })

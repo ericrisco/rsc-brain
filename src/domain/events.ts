@@ -21,6 +21,9 @@ export type EventKind =
   | 'wiki.changed'
   // A curator exported the brain (spec B7): its curators see it; the label is the format.
   | 'brain.exported'
+  // A curator filled the brain from a folder or a faithful export (spec B7): everyone in it sees it; the label is
+  // the kind ("docs" or "faithful").
+  | 'brain.imported'
 
 // What someone looked at, as opposed to what they changed: only curators and whoever looked see these.
 // An export too (review of PR31): it says who took a copy of everything; curators and whoever exported see it.
