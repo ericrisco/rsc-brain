@@ -25,4 +25,7 @@ The first release: a knowledge server for AI agents that anyone can install.
 - **Export and import.** A brain exported as a folder that opens as an Obsidian vault, or as a
   faithful copy; a documentation folder (or a faithful export) imported into an empty brain.
 - **Update with rollback.** `rsc-brain.sh update` makes a copy first, refuses writes while it
-  migrates, and goes back to the version before by itself if anything fails.
+  migrates, and goes back to the version before by itself if anything fails, Ctrl-C included. An
+  update killed halfway is taken back by the next command; a key rotation
+  killed halfway is finished by the next `key rotate`. Release candidates are ordered as semver
+  says.

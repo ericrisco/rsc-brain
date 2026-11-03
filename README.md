@@ -103,8 +103,15 @@ version asked, writes are taken again. If the migration or the start fails, the 
 version before starts again and the launcher exits with 4: nothing written before the update is lost,
 and sessions, tokens and connections keep working. Administration › Backups & system shows how the
 last update went, and `last-failure.log` keeps the service's last lines. An update needs free disk
-for twice the last copy and 1 GB more, and only moves forward (never to an older version). What each
-version changes is in [CHANGELOG.md](CHANGELOG.md) and in its release notes.
+for twice the last copy and 1 GB more, and only moves forward (never to an older version; a release
+comes after its release candidates, and `0.2.0-rc.2` after `0.2.0-rc.1`). What each version changes
+is in [CHANGELOG.md](CHANGELOG.md) and in its release notes.
+
+Ctrl-C during an update goes back the same way (a second Ctrl-C does not stop it). If the launcher
+is killed outright once the new version has taken over (a power cut), the next `status`, or any
+command that changes something, finds the note it left in `.rsc-brain/update.pending` and goes back first. If the copy is
+restored but the version before does not start, the launcher says so: the data is back, and
+`sh rsc-brain.sh install` starts it again.
 
 ### The installation key
 
@@ -121,7 +128,10 @@ makes a new key: rsc-brain stops for a moment, everything sealed (second factors
 the key of the meaning provider) is sealed again with the new key, and it starts again. Sessions,
 tokens and connections keep working. Copies made before need the previous key: it is kept in
 `installation-key-<id>.txt` next to `.env` (only its owner reads it), and the web marks those copies
-«Needs the older key». Save the new key in place of the old one.
+«Needs the older key». Save the new key in place of the old one. If a rotation is stopped halfway,
+the new key stays in `.rsc-brain/env.rotated` (the data may already be sealed with it): run
+`key rotate` again and it finishes with that key. Until then `install`, `update`, `backup`,
+`restore` and `uninstall` refuse, and `status` warns.
 
 ### Copies
 

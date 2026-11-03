@@ -6,7 +6,7 @@
 // migration or the start restores the pre-update copy with the old image and --keep-keys, starts the old one, records
 // the failure for the web and exits 4. The real containers are test/install/update.test.ts.
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
   chmodSync,
   closeSync,
@@ -74,6 +74,9 @@ const PRE = 'rsc-brain-20261103T120000Z-pre-update.rscb'
 let BASE = ''
 let SYSBIN = ''
 let FAKEBIN = ''
+// The shell that runs the launcher: this system's sh, or another one to try the same tests with
+// (RSC_BRAIN_TEST_SHELL=/usr/bin/dash node --test test/deploy/update.test.ts).
+const shell = () => process.env.RSC_BRAIN_TEST_SHELL ?? join(SYSBIN, 'sh')
 before(() => {
   BASE = mkdtempSync(join(tmpdir(), 'rscb-update-'))
   SYSBIN = join(BASE, 'sysbin')
@@ -115,6 +118,19 @@ type Run = {
 }
 const tail = (file: string, from: number) => (existsSync(file) ? readFileSync(file, 'utf8').slice(from) : '')
 const size = (file: string) => (existsSync(file) ? readFileSync(file, 'utf8').length : 0)
+const environment = (c: Case, tty: string, env: Record<string, string> = {}) => ({
+  PATH: `${FAKEBIN}:${SYSBIN}`,
+  HOME: c.home,
+  LANG: 'C',
+  FAKE_LOG: c.log,
+  FAKE_STDIN: c.stdin,
+  FAKE_STATE: c.state,
+  FAKE_IMAGE_VERSIONS: VERSIONS,
+  RSC_BRAIN_TTY: tty,
+  // The launcher waits up to 2 minutes for the service to answer; here, 2 seconds.
+  RSC_BRAIN_TEST_WAIT: '2',
+  ...env,
+})
 const launch = (c: Case, args: string[], o: { env?: Record<string, string>; answers?: string } = {}): Run => {
   const seen = size(c.log)
   const seenIn = size(c.stdin)
@@ -124,23 +140,11 @@ const launch = (c: Case, args: string[], o: { env?: Record<string, string>; answ
     tty = join(c.state, `answers-${++n}`)
     writeFileSync(tty, o.answers)
   }
-  const r = spawnSync(join(SYSBIN, 'sh'), [LAUNCHER, ...args], {
+  const r = spawnSync(shell(), [LAUNCHER, ...args], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 30_000,
-    env: {
-      PATH: `${FAKEBIN}:${SYSBIN}`,
-      HOME: c.home,
-      LANG: 'C',
-      FAKE_LOG: c.log,
-      FAKE_STDIN: c.stdin,
-      FAKE_STATE: c.state,
-      FAKE_IMAGE_VERSIONS: VERSIONS,
-      RSC_BRAIN_TTY: tty,
-      // The launcher waits up to 2 minutes for the service to answer; here, 2 seconds.
-      RSC_BRAIN_TEST_WAIT: '2',
-      ...o.env,
-    },
+    env: environment(c, tty, o.env),
   })
   assert.notEqual(r.signal, 'SIGTERM', `the launcher hung: ${r.stderr}`)
   return {
@@ -489,5 +493,401 @@ describe('the launcher: key rotate (spec C10)', () => {
       { env },
     )
     assert.equal(again.code, 0, again.stderr)
+  })
+})
+
+// Review of PR #36: what an interrupted update or key rotation leaves, and what the next launcher command does with it.
+// Ctrl-C at a terminal reaches the whole foreground process group (the launcher, docker, what docker runs): the
+// launcher is started in a group of its own, and each signal goes to that group once the fake says a step started.
+type Stop = { marker: string; signal: NodeJS.Signals }
+const launchStopped = (c: Case, args: string[], env: Record<string, string>, stops: Stop[]) =>
+  new Promise<{
+    code: number | null
+    signal: NodeJS.Signals | null
+    stdout: string
+    stderr: string
+    calls: string[]
+  }>((resolve) => {
+    const seen = size(c.log)
+    const p = spawn(shell(), [LAUNCHER, ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: true,
+      env: environment(c, c.tty, env),
+    })
+    let stdout = ''
+    let stderr = ''
+    p.stdout.on('data', (d) => {
+      stdout += d
+    })
+    p.stderr.on('data', (d) => {
+      stderr += d
+    })
+    const pending = [...stops]
+    const poll = setInterval(() => {
+      const next = pending[0]
+      if (next && existsSync(join(c.state, next.marker))) {
+        pending.shift()
+        rmSync(join(c.state, next.marker))
+        try {
+          process.kill(-(p.pid as number), next.signal)
+        } catch {}
+      }
+    }, 50)
+    const guard = setTimeout(() => {
+      try {
+        process.kill(-(p.pid as number), 'SIGKILL')
+      } catch {}
+    }, 30_000)
+    p.on('close', (code, signal) => {
+      clearInterval(poll)
+      clearTimeout(guard)
+      resolve({ code, signal, stdout, stderr, calls: tail(c.log, seen).trim().split('\n').filter(Boolean) })
+    })
+  })
+const exists = (c: Case, f: string) => existsSync(join(c.dir, '.rsc-brain', f))
+
+describe('the launcher: Ctrl-C during an update (review of PR #36)', () => {
+  it('during the migration: the way back is printed on the terminal, not lost in the migration log', async () => {
+    const c = await installed()
+    const before = readFileSync(join(c.dir, '.env'), 'utf8')
+    const r = await launchStopped(c, update(c, '--image', 'rsc-brain:next'), { FAKE_MIGRATE_SLEEP: '2' }, [
+      { marker: 'migrate-started', signal: 'SIGINT' },
+    ])
+    assert.equal(r.code, 4, r.stderr)
+    assert.match(r.stderr, /Interrupted: going back/)
+    assert.match(r.stderr, /went back to 0\.1\.0/)
+    assert.match(r.stderr, /Restoring the copy made before the update/)
+    assert.equal(readFileSync(join(c.dir, '.env'), 'utf8'), before)
+  })
+
+  it('during the health check of the new version: the same, on the terminal', async () => {
+    const c = await installed()
+    const r = await launchStopped(
+      c,
+      update(c, '--image', 'rsc-brain:next'),
+      { FAKE_HEALTH_SLEEP: 'rsc-brain:next=2' },
+      [{ marker: 'health-started', signal: 'SIGINT' }],
+    )
+    assert.equal(r.code, 4, r.stderr)
+    assert.match(r.stderr, /Interrupted: going back/)
+    assert.match(r.stderr, /went back to 0\.1\.0/)
+  })
+
+  it('during the health check of a first install: what it takes back is printed on the terminal', async () => {
+    const c = fresh()
+    const port = String(await freePort())
+    const r = await launchStopped(
+      c,
+      ['install', '--local', '--yes', '--dir', c.dir, '--port', port, '--image', 'rsc-brain:test'],
+      { FAKE_HEALTH_SLEEP: 'rsc-brain:test=2' },
+      [{ marker: 'health-started', signal: 'SIGINT' }],
+    )
+    assert.equal(r.code, 4, r.stderr)
+    assert.match(r.stderr, /Interrupted: taking back what this run made/)
+    assert.match(r.stderr, /Removing the containers/)
+  })
+
+  it('a second Ctrl-C while it goes back does not stop the restore halfway', async () => {
+    const c = await installed()
+    const before = readFileSync(join(c.dir, '.env'), 'utf8')
+    const r = await launchStopped(
+      c,
+      update(c, '--image', 'rsc-brain:broken'),
+      { FAKE_MIGRATE_FAIL: 'rsc-brain:broken', FAKE_RESTORE_SLEEP: '1' },
+      [{ marker: 'restore-started', signal: 'SIGINT' }],
+    )
+    assert.equal(r.signal, null, `killed by ${r.signal}: ${r.stderr}`)
+    assert.equal(r.code, 4, r.stderr)
+    assert.match(r.stderr, /went back to 0\.1\.0/)
+    assert.equal(readFileSync(join(c.dir, '.env'), 'utf8'), before)
+  })
+})
+
+describe('the launcher: an update killed after the switch is taken back by the next command (review of PR #36)', () => {
+  // Killed outright (a power cut) while the new version migrates, or while it is asked whether it answers.
+  const killedAfterSwitch = async (during: 'migrate' | 'health') => {
+    const c = await installed()
+    const before = readFileSync(join(c.dir, '.env'), 'utf8')
+    const env: Record<string, string> =
+      during === 'migrate' ? { FAKE_MIGRATE_SLEEP: '5' } : { FAKE_HEALTH_SLEEP: 'rsc-brain:next=5' }
+    const r = await launchStopped(c, update(c, '--image', 'rsc-brain:next'), env, [
+      { marker: `${during}-started`, signal: 'SIGKILL' },
+    ])
+    assert.equal(r.signal, 'SIGKILL', r.stderr)
+    assert.equal(readEnv(c.dir).RSC_BRAIN_IMAGE, 'rsc-brain:next', 'killed after the switch')
+    return { c, before }
+  }
+  const tookBack = (c: Case, r: Run, before: string) => {
+    assert.equal(r.code, 4, r.stderr)
+    assert.match(r.stderr, /update to 0\.2\.0 was interrupted/)
+    assert.match(r.stderr, /went back to 0\.1\.0/)
+    const i = at(r.calls, / rsc-brain restore /)
+    assert.ok(i >= 0, r.calls.join('\n'))
+    assert.match(r.calls[i] as string, new RegExp(`restore --file /backups/${PRE} --keep-keys$`))
+    assert.equal(r.images.at(-1), 'up rsc-brain:test', 'the old one started')
+    assert.equal(readFileSync(join(c.dir, '.env'), 'utf8'), before, 'the settings are as they were')
+    assert.equal(exists(c, 'update.pending'), false)
+    assert.equal(exists(c, 'env.previous'), false)
+  }
+
+  it('install: goes back (never copies the new settings over the way back)', async () => {
+    const { c, before } = await killedAfterSwitch('migrate')
+    const r = launch(c, ['install', '--yes', '--dir', c.dir])
+    tookBack(c, r, before)
+  })
+
+  it('update: goes back instead of saying to start it with install', async () => {
+    const { c, before } = await killedAfterSwitch('migrate')
+    const r = launch(c, update(c, '--image', 'rsc-brain:next'))
+    tookBack(c, r, before)
+  })
+
+  it('status: goes back, then a second status finds the old version running', async () => {
+    const { c, before } = await killedAfterSwitch('health')
+    const r = launch(c, ['status', '--dir', c.dir])
+    tookBack(c, r, before)
+    const again = launch(c, ['status', '--json', '--dir', c.dir])
+    assert.equal(again.code, 0, again.stderr)
+    assert.equal(JSON.parse(again.stdout).version, '0.1.0')
+  })
+
+  it('status leaves alone an update another launcher is running right now', async () => {
+    const { c } = await killedAfterSwitch('migrate')
+    // A live launcher on this machine holds the lock (this test's own process stands in for it).
+    const host = spawnSync('uname', ['-n'], { encoding: 'utf8' }).stdout.trim()
+    mkdirSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true })
+    writeFileSync(join(c.dir, '.rsc-brain', 'lock', 'owner'), `${process.pid} ${host}\n`)
+    const r = launch(c, ['status', '--dir', c.dir])
+    assert.doesNotMatch(r.stderr, /Another rsc-brain launcher/)
+    assert.equal(at(r.calls, / rsc-brain restore /), -1, 'nothing taken back')
+    assert.ok(exists(c, 'update.pending'))
+    assert.match(r.stdout, /rsc-brain in /)
+  })
+
+  it('a good update leaves no journal behind', async () => {
+    const c = await installed()
+    const r = launch(c, update(c, '--image', 'rsc-brain:next'))
+    assert.equal(r.code, 0, r.stderr)
+    assert.equal(exists(c, 'update.pending'), false)
+  })
+})
+
+describe('the launcher: what a rollback says when it does not finish (review of PR #36)', () => {
+  it('the copy is back but the old version does not start: says the data is back and how to start it', async () => {
+    const c = await installed()
+    const r = launch(c, update(c, '--image', 'rsc-brain:broken'), {
+      env: { FAKE_MIGRATE_FAIL: 'rsc-brain:broken', FAKE_UP_EXIT: '1' },
+    })
+    assert.equal(r.code, 1, r.stderr)
+    assert.doesNotMatch(r.stderr, /Restore it by hand/)
+    assert.match(r.stderr, /data is back as it was just before the update/)
+    assert.match(r.stderr, new RegExp(`install --dir "${c.dir}"`))
+  })
+
+  it('the copy could not be restored: update.log is kept', async () => {
+    const c = await installed()
+    const r = launch(c, update(c, '--image', 'rsc-brain:broken'), {
+      env: { FAKE_MIGRATE_FAIL: 'rsc-brain:broken', FAKE_RESTORE_EXIT: '1' },
+    })
+    assert.equal(r.code, 1, r.stderr)
+    assert.ok(exists(c, 'update.log'), 'the log of what failed stays')
+    assert.match(
+      readFileSync(join(c.dir, '.rsc-brain', 'update.log'), 'utf8'),
+      /Migration 0024_broken\.sql failed/,
+    )
+  })
+})
+
+describe('the launcher: release candidates are ordered as semver says (review of PR #36)', () => {
+  const pairs: Array<[string, string, boolean]> = [
+    ['0.2.0-rc.1', '0.2.0-rc.2', true],
+    ['0.2.0-rc.2', '0.2.0-rc.10', true],
+    ['0.2.0-rc.2', '0.2.0-rc.1', false],
+    ['0.2.0-alpha', '0.2.0-beta', true],
+    ['0.2.0-alpha.1', '0.2.0-alpha', false],
+    ['0.2.0-alpha', '0.2.0-alpha.1', true],
+    ['0.2.0-rc.1', '0.2.0', true],
+    ['0.2.0', '0.2.0-rc.3', false],
+    ['0.2.0-1', '0.2.0-a', true],
+    ['0.2.0-a', '0.2.0-1', false],
+  ]
+  for (const [from, to, ok] of pairs) {
+    it(`${from} to ${to}: ${ok ? 'updates' : 'refused (exit 2)'}`, async () => {
+      const versions = `rsc-brain:test=${from} rsc-brain:next=${to}`
+      const c = await installed({ FAKE_IMAGE_VERSIONS: versions })
+      const r = launch(c, update(c, '--image', 'rsc-brain:next'), { env: { FAKE_IMAGE_VERSIONS: versions } })
+      assert.equal(r.code, ok ? 0 : 2, r.stderr)
+      if (!ok) assert.match(r.stderr, /not newer than/)
+    })
+  }
+})
+
+describe('the launcher: a key rotation that was interrupted (review of PR #36)', () => {
+  const env = { FAKE_KEY_ID_BY_KEY: '1' }
+  const sealed = (c: Case) => readFileSync(join(c.state, 'sealed'), 'utf8').trim()
+  const rotatedKey = (c: Case) =>
+    /^RSC_BRAIN_SECRET='(.*)'$/m.exec(
+      readFileSync(join(c.dir, '.rsc-brain', 'env.rotated'), 'utf8'),
+    )?.[1] as string
+  // Killed outright while it stops the service (before the reseal), or once the reseal has written.
+  const killedRotating = (c: Case, marker: 'stop-started' | 'reseal-committed') =>
+    launchStopped(
+      c,
+      ['key', 'rotate', '--yes', '--dir', c.dir],
+      { ...env, ...(marker === 'stop-started' ? { FAKE_STOP_SLEEP: '5' } : { FAKE_RESEAL_SLEEP: '5' }) },
+      [{ marker, signal: 'SIGKILL' }],
+    )
+
+  it('killed after the reseal: the next key rotate finishes it with the key the data is sealed with', async () => {
+    const c = await installed(env)
+    const killed = await killedRotating(c, 'reseal-committed')
+    assert.equal(killed.signal, 'SIGKILL', killed.stderr)
+    const pending = rotatedKey(c)
+    assert.equal(sealed(c), pending, 'the data is sealed with the new key')
+    const r = launch(c, ['key', 'rotate', '--yes', '--json', '--dir', c.dir], { env })
+    assert.equal(r.code, 0, r.stderr)
+    assert.match(r.stderr, /interrupted/)
+    assert.equal(readEnv(c.dir).RSC_BRAIN_SECRET, pending, '.env holds the key the data is sealed with')
+    assert.equal(sealed(c), pending)
+    assert.equal(JSON.parse(r.stdout).installationKey, pending)
+    assert.equal(exists(c, 'env.rotated'), false)
+  })
+
+  it('killed before the reseal: the next key rotate finishes it too', async () => {
+    const c = await installed(env)
+    const killed = await killedRotating(c, 'stop-started')
+    assert.equal(killed.signal, 'SIGKILL', killed.stderr)
+    const pending = rotatedKey(c)
+    const r = launch(c, ['key', 'rotate', '--yes', '--dir', c.dir], { env })
+    assert.equal(r.code, 0, r.stderr)
+    assert.equal(readEnv(c.dir).RSC_BRAIN_SECRET, pending)
+    assert.equal(sealed(c), pending)
+  })
+
+  it('a reseal that reports a failure after it wrote: the key that seals the data is never deleted', async () => {
+    const c = await installed(env)
+    const r = launch(c, ['key', 'rotate', '--yes', '--dir', c.dir], {
+      env: { ...env, FAKE_RESEAL_FAIL_AFTER_COMMIT: '1' },
+    })
+    assert.equal(r.code, 1, r.stderr)
+    const kept = [readEnv(c.dir).RSC_BRAIN_SECRET]
+    if (exists(c, 'env.rotated')) kept.push(rotatedKey(c))
+    assert.ok(kept.includes(sealed(c)), 'the key the data is sealed with is still on disk')
+    assert.equal(sealed(c), readEnv(c.dir).RSC_BRAIN_SECRET, 'and it is the one in .env')
+  })
+
+  it('with a rotation left halfway, install, update, backup and restore refuse and say how to finish it; status warns', async () => {
+    const c = await installed(env)
+    writeFileSync(join(c.dir, 'backups', 'rsc-brain-20261101T030000Z-manual.rscb'), 'a copy')
+    const killed = await killedRotating(c, 'reseal-committed')
+    assert.equal(killed.signal, 'SIGKILL', killed.stderr)
+    const before = readFileSync(join(c.dir, '.env'), 'utf8')
+    for (const args of [
+      ['install', '--yes', '--dir', c.dir],
+      update(c, '--image', 'rsc-brain:next'),
+      ['backup', '--dir', c.dir],
+      [
+        'restore',
+        '--file',
+        'rsc-brain-20261101T030000Z-manual.rscb',
+        '--confirm',
+        'rsc-brain',
+        '--dir',
+        c.dir,
+      ],
+    ]) {
+      const r = launch(c, args, { env })
+      assert.equal(r.code, 1, `${args[0]}: ${r.stderr}`)
+      assert.match(r.stderr, /key rotation .*was interrupted/, args[0])
+      assert.match(r.stderr, /key rotate --dir/, args[0])
+      assert.equal(at(r.calls, / maintenance | stop app| migrate| restore | backup /), -1, args[0])
+    }
+    assert.equal(readFileSync(join(c.dir, '.env'), 'utf8'), before)
+    assert.ok(exists(c, 'env.rotated'))
+    const s = launch(c, ['status', '--dir', c.dir], { env })
+    assert.match(s.stderr, /key rotation .*was interrupted/)
+  })
+})
+
+describe('the launcher: no secret on a command line (review of PR #36)', () => {
+  // Every program the launcher runs is wrapped: its arguments are written down, then the real one runs. A secret in
+  // an argument is readable by anyone on the machine (ps); the key and the passwords go through files, the standard
+  // input or the environment only.
+  let SPYBIN = ''
+  before(() => {
+    SPYBIN = join(BASE, 'spybin')
+    mkdirSync(SPYBIN)
+    const sh = spawnSync('/bin/sh', ['-c', 'command -v sh'], { encoding: 'utf8' }).stdout.trim()
+    for (const t of TOOLS) {
+      if (t === 'sh' || !existsSync(join(SYSBIN, t))) continue
+      writeFileSync(
+        join(SPYBIN, t),
+        `#!${sh}\nprintf '%s %s\\n' ${t} "$*" >>"$SPY_LOG"\nexec ${join(SYSBIN, t)} "$@"\n`,
+      )
+      chmodSync(join(SPYBIN, t), 0o755)
+    }
+  })
+  const spied = (c: Case, env: Record<string, string> = {}) => ({
+    ...env,
+    PATH: `${FAKEBIN}:${SPYBIN}:${join(SYSBIN, 'only-sh')}`,
+    SPY_LOG: join(c.state, 'spy.log'),
+  })
+  // Long hex runs are what the launcher's keys and passwords look like.
+  const noSecrets = (c: Case, secrets: string[]) => {
+    const log = readFileSync(join(c.state, 'spy.log'), 'utf8')
+    for (const s of secrets) assert.equal(log.includes(s), false, 'a secret was on a command line')
+    assert.doesNotMatch(log, /[0-9a-f]{40,}/, 'something like a key was on a command line')
+  }
+  before(() => {
+    mkdirSync(join(SYSBIN, 'only-sh'))
+    symlinkSync(join(SYSBIN, 'sh'), join(SYSBIN, 'only-sh', 'sh'))
+  })
+
+  it('a first install that fails keeps the service log without the key, and never names it to sed', async () => {
+    const c = fresh()
+    mkdirSync(c.dir)
+    const key = 'f'.repeat(24) + '0123456789abcdef'.repeat(4)
+    writeFileSync(join(c.dir, 'installation-key.txt'), `${key}\n`)
+    const port = String(await freePort())
+    const r = launch(
+      c,
+      ['install', '--local', '--yes', '--dir', c.dir, '--port', port, '--image', 'rsc-brain:test'],
+      { env: spied(c, { FAKE_HEALTH_EXIT: '1' }) },
+    )
+    assert.equal(r.code, 4, r.stderr)
+    const log = readFileSync(join(c.dir, 'last-failure.log'), 'utf8')
+    assert.match(log, /\[redacted\]/)
+    assert.equal(log.includes(key), false)
+    noSecrets(c, [key])
+  })
+
+  it('an update that fails keeps the log without the key or the password, and never names them to sed', async () => {
+    const c = await installed()
+    const e = readEnv(c.dir)
+    const r = launch(c, update(c, '--image', 'rsc-brain:broken'), {
+      env: spied(c, { FAKE_MIGRATE_FAIL: 'rsc-brain:broken' }),
+    })
+    assert.equal(r.code, 4, r.stderr)
+    const log = readFileSync(join(c.dir, 'last-failure.log'), 'utf8')
+    assert.match(log, /\[redacted\]/)
+    assert.equal(log.includes(e.RSC_BRAIN_SECRET as string), false)
+    noSecrets(c, [e.RSC_BRAIN_SECRET as string, e.POSTGRES_PASSWORD as string])
+  })
+
+  it('key rotate writes the new key into .env without naming it to sed', async () => {
+    const c = await installed({ FAKE_KEY_ID_BY_KEY: '1' })
+    const old = readEnv(c.dir)
+    const r = launch(c, ['key', 'rotate', '--yes', '--dir', c.dir], {
+      env: spied(c, { FAKE_KEY_ID_BY_KEY: '1' }),
+    })
+    assert.equal(r.code, 0, r.stderr)
+    const now = readEnv(c.dir)
+    assert.notEqual(now.RSC_BRAIN_SECRET, old.RSC_BRAIN_SECRET)
+    assert.deepEqual(
+      { ...now, RSC_BRAIN_SECRET: '' },
+      { ...old, RSC_BRAIN_SECRET: '' },
+      'only the key changed',
+    )
+    noSecrets(c, [old.RSC_BRAIN_SECRET as string, now.RSC_BRAIN_SECRET as string])
   })
 })

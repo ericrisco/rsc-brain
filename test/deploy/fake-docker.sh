@@ -13,10 +13,11 @@ if [ "$1" = compose ] && [ "${2:-}" != version ]; then
   env | grep -E '^(RSC_BRAIN_|POSTGRES_|COMPOSE_)' | grep -vE '^RSC_BRAIN_(TTY|REPO)=' | sed 's/^/LEAK /' >>"$FAKE_LOG"
 fi
 # The env file a compose call reads (for the logs below).
-env_file=''
+env_file='' project_dir=''
 prev=''
 for a in "$@"; do
   [ "$prev" = --env-file ] && env_file=$a
+  [ "$prev" = --project-directory ] && project_dir=$a
   prev=$a
 done
 
@@ -85,10 +86,36 @@ case "$args" in
   exit 0
   ;;
 *" rsc-brain key reseal"*)
-  take_stdin key reseal
-  if [ "${FAKE_RESEAL_EXIT:-0}" != 0 ]; then
+  # The key the data is sealed with is kept in $FAKE_STATE/sealed (at first, the installation's own). The reseal goes
+  # from the key in the env file (the container's RSC_BRAIN_SECRET) to the key on the standard input, as the real one
+  # does: already sealed with the new key, nothing to do; sealed with neither, refused. FAKE_RESEAL_EXIT fails it
+  # before anything is written; FAKE_RESEAL_FAIL_AFTER_COMMIT (once) writes, then reports a failure.
+  to=$(cat)
+  printf '<<< key reseal\n%s\n' "$to" >>"$FAKE_STDIN"
+  secret_of() { sed -n "s/^RSC_BRAIN_SECRET='\\(.*\\)'$/\\1/p" "$1" 2>/dev/null; }
+  from=$(secret_of "$env_file")
+  sealed=$(cat "$state/sealed" 2>/dev/null)
+  [ -n "$sealed" ] || sealed=$(secret_of "$project_dir/.env")
+  if [ "$sealed" = "$to" ]; then
+    echo 'Resealed 0 values; 3 were sealed with the new key already.'
+    exit 0
+  fi
+  if [ "$sealed" != "$from" ] || [ "${FAKE_RESEAL_EXIT:-0}" != 0 ]; then
     echo 'None of the 3 sealed values opens with key id x: it is not the key in use. Nothing was changed.' >&2
-    exit "$FAKE_RESEAL_EXIT"
+    code=${FAKE_RESEAL_EXIT:-1}
+    [ "$code" = 0 ] && code=1
+    exit "$code"
+  fi
+  printf '%s\n' "$to" >"$state/sealed"
+  # FAKE_RESEAL_SLEEP: the reseal has written, and the launcher has not heard yet (a test kills it then).
+  if [ -n "${FAKE_RESEAL_SLEEP:-}" ]; then
+    : >"$state/reseal-committed"
+    sleep "$FAKE_RESEAL_SLEEP"
+  fi
+  if [ -n "${FAKE_RESEAL_FAIL_AFTER_COMMIT:-}" ] && [ ! -e "$state/failed-after-commit" ]; then
+    : >"$state/failed-after-commit"
+    echo 'Connection lost after the commit.' >&2
+    exit 1
   fi
   echo 'Resealed 3 values.'
   exit 0
@@ -115,6 +142,11 @@ case "$args" in
   exit 0
   ;;
 *" rsc-brain migrate "*)
+  # FAKE_MIGRATE_SLEEP: a long migration (it says when it started, so a test can stop the launcher then).
+  if [ -n "${FAKE_MIGRATE_SLEEP:-}" ]; then
+    : >"$state/migrate-started"
+    sleep "$FAKE_MIGRATE_SLEEP"
+  fi
   if in_list "$(env_image)" "${FAKE_MIGRATE_FAIL:-}"; then
     echo 'Migration 0024_broken.sql failed: division by zero. Nothing of it was applied.' >&2
     exit 1
@@ -139,6 +171,14 @@ case "$args" in
   ;;
 *" rsc-brain restore "*)
   take_stdin restore
+  # FAKE_RESTORE_SLEEP: a long restore of the copy made before an update (the rollback's).
+  case "$args" in *" --keep-keys "*)
+    if [ -n "${FAKE_RESTORE_SLEEP:-}" ]; then
+      : >"$state/restore-started"
+      sleep "$FAKE_RESTORE_SLEEP"
+    fi
+    ;;
+  esac
   echo 'Restored the copy.'
   exit "${FAKE_RESTORE_EXIT:-0}"
   ;;
@@ -163,6 +203,11 @@ case "$args" in
   ;;
 *" wget "*"/v1/health"*)
   take_stdin health
+  # FAKE_HEALTH_SLEEP="image=seconds": that image takes a while to answer (it says when it started).
+  if [ -n "${FAKE_HEALTH_SLEEP:-}" ] && [ "${FAKE_HEALTH_SLEEP%%=*}" = "$(up_image)" ]; then
+    : >"$state/health-started"
+    sleep "${FAKE_HEALTH_SLEEP#*=}"
+  fi
   in_list "$(up_image)" "${FAKE_HEALTH_FAIL:-}" && exit 1
   exit "${FAKE_HEALTH_EXIT:-0}"
   ;;
@@ -241,10 +286,15 @@ compose)
   *" logs "*)
     # A service that prints its own key at start (it never should): the launcher must not keep it.
     secret=$(sed -n "s/^RSC_BRAIN_SECRET='\\(.*\\)'$/\\1/p" "$env_file" 2>/dev/null)
-    echo "app-1  | boot failed: database refused (key $secret)"
+    echo "app-1  | boot failed: database refused (key $secret; again: $secret)"
     exit 0
     ;;
   *" down "* | *" stop "*)
+    # FAKE_STOP_SLEEP: a slow stop (it says when it started).
+    if [ -n "${FAKE_STOP_SLEEP:-}" ]; then
+      : >"$state/stop-started"
+      sleep "$FAKE_STOP_SLEEP"
+    fi
     rm -f "$state/up"
     exit 0
     ;;

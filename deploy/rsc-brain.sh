@@ -33,7 +33,8 @@ Commands:
   update [--version vX.Y.Z | --image I]
                     move to a newer version (default: the latest published): writes wait, a copy is made, the
                     data is migrated and the new version started; if anything fails, the copy is restored and
-                    the version before comes back (exit 4). Sessions and keys keep working either way
+                    the version before comes back (exit 4). Sessions and keys keep working either way. An
+                    update stopped halfway is taken back by the next command (status, or any that changes something)
   status [--json]   whether rsc-brain runs and answers
   backup [--json]   make an encrypted copy of everything now
   backups [--json]  list the copies
@@ -43,7 +44,8 @@ Commands:
                     installation's). Everyone signs in again afterwards
   key show          print the installation key (it opens the copies; keep it safe)
   key rotate        make a new installation key and seal everything with it (rsc-brain stops for a moment).
-                    Copies made before need the previous key: it is kept in installation-key-<id>.txt
+                    Copies made before need the previous key: it is kept in installation-key-<id>.txt.
+                    A rotation stopped halfway is finished by running key rotate again
   uninstall         stop rsc-brain and remove its containers; the data, the copies and the key are kept
     --delete-data --confirm NAME [--db-admin-url-file F]
                     also remove the database and the copies (NAME: the name given at install, default rsc-brain)
@@ -81,6 +83,9 @@ usage() {
   say "Run 'sh $PROG help' for the commands and options."
   exit 2
 }
+# A stop may come while a command's output goes to a log or to /dev/null: what the launcher says then goes to the
+# error stream and the standard output it started with, kept in 4 and 5 (3 is the terminal questions are read from).
+to_terminal() { exec 2>&4 1>&5; }
 json_str() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
 
 # ----------------------------------------------------------------------------------------------------------- input
@@ -239,7 +244,39 @@ fi
 # RSC_BRAIN_LAUNCHER='1'); .env is written only once an install has completed.
 STATE=.rsc-brain
 ENV_FILE='' PROFILES=''
-env_get() { sed -n "s/^$1='\\(.*\\)'\$/\\1/p" "$ENV_FILE" 2>/dev/null | head -n 1; }
+# file_get FILE NAME: a value of a settings file (.env, or a journal) as say_env wrote it.
+file_get() { sed -n "s/^$2='\\(.*\\)'\$/\\1/p" "$1" 2>/dev/null | head -n 1; }
+env_get() { file_get "$ENV_FILE" "$1"; }
+# env_with NAME VALUE <IN >OUT: the settings with NAME set to VALUE. The value never goes on a command line (it can be
+# the installation key, and a command line is readable by anyone on the machine).
+env_with() {
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in
+    "$1="*) printf "%s='%s'\n" "$1" "$2" ;;
+    *) printf '%s\n' "$line" ;;
+    esac
+  done
+}
+# redact SECRET... <IN >OUT: every secret given replaced by [redacted], with no other program seeing them.
+redact() {
+  while IFS= read -r line || [ -n "$line" ]; do
+    for s in "$@"; do
+      [ -n "$s" ] || continue
+      done_part=''
+      while :; do
+        case $line in
+        *"$s"*)
+          done_part="$done_part${line%%"$s"*}[redacted]"
+          line=${line#*"$s"}
+          ;;
+        *) break ;;
+        esac
+      done
+      line=$done_part$line
+    done
+    printf '%s\n' "$line"
+  done
+}
 is_installation() { [ -f "$1/.env" ] && grep -q "^RSC_BRAIN_LAUNCHER='1'\$" "$1/.env"; }
 
 # Where an installation is when --dir is not given: the one for this machine, or the one for a server.
@@ -521,15 +558,11 @@ take_back() {
 }
 
 # The service's last lines, kept before the containers go, with the key and the passwords taken out.
-sed_escape() { printf '%s' "$1" | sed 's/[][\/.*^$&]/\\&/g'; }
 url_password() { printf '%s' "$1" | sed -n 's|^[a-z]*://[^:/@]*:\([^@]*\)@.*|\1|p'; }
 keep_failure_log() {
   [ "$STARTED" = 1 ] || return 0
-  script=''
-  for s in "$SECRET" "$PG_PASSWORD" "$(url_password "$DATABASE_URL")" "$(url_password "$ADMIN_URL")"; do
-    [ -n "$s" ] && script="${script}s/$(sed_escape "$s")/[redacted]/g;"
-  done
-  dc logs --no-color --tail 200 app </dev/null 2>&1 | sed "${script:-p;d}" >"$DIR/last-failure.log.new" &&
+  dc logs --no-color --tail 200 app </dev/null 2>&1 |
+    redact "$SECRET" "$PG_PASSWORD" "$(url_password "$DATABASE_URL")" "$(url_password "$ADMIN_URL")" >"$DIR/last-failure.log.new" &&
     chmod 600 "$DIR/last-failure.log.new" && mv -f "$DIR/last-failure.log.new" "$DIR/last-failure.log" &&
     FAILURE_LOG=$DIR/last-failure.log
   return 0
@@ -549,6 +582,7 @@ failed() {
 }
 interrupted() {
   trap - HUP INT TERM
+  to_terminal
   say ''
   say 'Interrupted: taking back what this run made.'
   take_back
@@ -750,6 +784,7 @@ install() {
   # Requirements: nothing is changed until all of them are met.
   step 'Checking what rsc-brain needs'
   need_docker
+  [ "$REINSTALL" = 1 ] && interrupted_work
   if [ "$RESUME" = 1 ]; then
     # Take back the interrupted install with what it wrote down, then go on as a first install.
     step "Taking back an install in \"$DIR\" that was interrupted"
@@ -873,6 +908,11 @@ install() {
   [ "$LOCK_MADE_STATE" = 1 ] && MADE_FILES="$MADE_FILES $STATE"
   [ -d "$DIR/$STATE" ] || failed 4 "Cannot create \"$DIR/$STATE\"."
   if [ "$REINSTALL" = 1 ]; then
+    # env.previous is an update's way back while its journal is there: never written over then.
+    if [ -f "$DIR/$STATE/update.pending" ]; then
+      say "An update in \"$DIR\" was interrupted: run sh $PROG update --dir \"$DIR\" to go back first. Nothing was changed."
+      exit 1
+    fi
     cp -p "$DIR/.env" "$DIR/$STATE/env.previous" || failed 4 "Cannot keep a copy of \"$DIR/.env\"."
   else
     ENV_FILE=$PENDING
@@ -1004,6 +1044,13 @@ install() {
 status() {
   need_installation
   need_docker
+  # An update killed halfway is taken back here too, unless a launcher is at work on it right now.
+  if [ -f "$DIR/$STATE/update.pending" ] && ! lock_held; then
+    take_lock
+    interrupted_work update-only
+  fi
+  [ -f "$DIR/$STATE/env.rotated" ] &&
+    say "A key rotation in \"$DIR\" was interrupted (or is running now). Finish it with: sh $PROG key rotate --dir \"$DIR\""
   is_running=false is_healthy=false version=''
   if running; then
     is_running=true
@@ -1040,6 +1087,7 @@ backup() {
   need_installation
   take_lock
   need_docker
+  interrupted_work
   need_running
   set --
   [ "$JSON" = 1 ] && set -- --json
@@ -1068,6 +1116,7 @@ restore() {
   fi
   take_lock
   need_docker
+  interrupted_work
   base=$(basename -- "$COPY_FILE" | tr -c 'A-Za-z0-9._\n-' '_')
   target=$DIR/backups/$base
   copy_dir=$(cd -- "$(dirname -- "$COPY_FILE")" && pwd)
@@ -1134,8 +1183,38 @@ newer() {
   [ "$1" -ne "$4" ] && { [ "$1" -gt "$4" ]; return; }
   [ "$2" -ne "$5" ] && { [ "$2" -gt "$5" ]; return; }
   [ "$3" -ne "$6" ] && { [ "$3" -gt "$6" ]; return; }
-  # The same numbers: a release comes after its previews.
-  [ "$va" = "$ca" ] && [ "$vb" != "$cb" ]
+  # The same numbers: a release comes after its previews, and previews come in semver's order.
+  if [ "$va" = "$ca" ]; then
+    [ "$vb" != "$cb" ]
+    return
+  fi
+  [ "$vb" = "$cb" ] && return 1
+  preview_after "${va#*-}" "${vb#*-}"
+}
+# preview_after A B: the preview part A (such as rc.10) comes after B (rc.2), as semver orders them: the parts between
+# dots one by one, numbers by their value and before words, words in ASCII order, and more parts after fewer.
+preview_after() {
+  pa=$1 pb=$2
+  while :; do
+    [ -z "$pa" ] && return 1
+    [ -z "$pb" ] && return 0
+    ia=${pa%%.*} ib=${pb%%.*}
+    case $pa in *.*) pa=${pa#*.} ;; *) pa='' ;; esac
+    case $pb in *.*) pb=${pb#*.} ;; *) pb='' ;; esac
+    [ "$ia" = "$ib" ] && continue
+    case $ia in '' | *[!0-9]*) na=0 ;; *) na=1 ;; esac
+    case $ib in '' | *[!0-9]*) nb=0 ;; *) nb=1 ;; esac
+    if [ "$na" = 1 ] && [ "$nb" = 1 ]; then
+      # Numbers of any length: the longer one is larger; the same length, the first that differs.
+      [ ${#ia} -ne ${#ib} ] && { [ ${#ia} -gt ${#ib} ]; return; }
+    elif [ "$na" = 1 ]; then
+      return 1
+    elif [ "$nb" = 1 ]; then
+      return 0
+    fi
+    [ "$(printf '%s\n%s\n' "$ia" "$ib" | LC_ALL=C sort | head -n 1)" = "$ib" ]
+    return
+  done
 }
 same_version() { [ "${1#v}" = "${2#v}" ]; }
 
@@ -1155,7 +1234,7 @@ UPDATE_FROM='' UPDATE_TO='' PRE_COPY='' UPDATE_PHASE='' NEXT_SRC='' UPDATE_LOG='
 drop_next() { [ -n "$NEXT_SRC" ] && rm -rf "${NEXT_SRC:?}"; return 0; }
 # Before anything was switched: maintenance off again (when it was on), and nothing else to take back.
 update_abort() {
-  trap - HUP INT TERM
+  trap '' HUP INT TERM
   say "$1"
   [ "$UPDATE_PHASE" = maintenance ] && dc exec -T app rsc-brain maintenance off </dev/null >&2
   drop_next
@@ -1164,15 +1243,12 @@ update_abort() {
 }
 # The new version's output and the service's last lines, without the key or a password, for the person and the web.
 update_failure_log() {
-  script=''
-  for s in "$(env_get RSC_BRAIN_SECRET)" "$(env_get POSTGRES_PASSWORD)" "$(url_password "$(env_get RSC_BRAIN_DATABASE_URL)")"; do
-    [ -n "$s" ] && script="${script}s/$(sed_escape "$s")/[redacted]/g;"
-  done
   # The service's lines first, the new version's own output last: the end of the log says why (the web keeps the end).
   {
     dc logs --no-color --tail 200 app </dev/null 2>&1
     [ -f "$UPDATE_LOG" ] && cat "$UPDATE_LOG"
-  } | sed "${script:-p;d}" >"$DIR/last-failure.log.new" &&
+  } | redact "$(env_get RSC_BRAIN_SECRET)" "$(env_get POSTGRES_PASSWORD)" \
+    "$(url_password "$(env_get RSC_BRAIN_DATABASE_URL)")" >"$DIR/last-failure.log.new" &&
     chmod 600 "$DIR/last-failure.log.new" && mv -f "$DIR/last-failure.log.new" "$DIR/last-failure.log" &&
     FAILURE_LOG=$DIR/last-failure.log
   return 0
@@ -1180,7 +1256,8 @@ update_failure_log() {
 # After the switch: back to the version before, with the copy made before the update and its keys kept (exit 4); or,
 # when even that fails, what to do by hand (exit 1).
 rollback() {
-  trap - HUP INT TERM
+  # Nothing stops the way back halfway: a second Ctrl-C is ignored here and by what it runs.
+  trap '' HUP INT TERM
   say "$1"
   update_failure_log
   step "Going back to rsc-brain $UPDATE_FROM"
@@ -1197,8 +1274,10 @@ rollback() {
   started=0
   dc up -d --remove-orphans >&2 </dev/null && wait_healthy && started=1
   drop_next
-  rm -f "${UPDATE_LOG:?}"
+  # The settings are back: there is no update in progress any more (a restore that failed is said below).
+  rm -f "${DIR:?}/${STATE:?}/update.pending"
   if [ "$restored" = 1 ] && [ "$started" = 1 ]; then
+    rm -f "${UPDATE_LOG:?}"
     dc exec -T app rsc-brain maintenance off </dev/null >&2
     if [ -n "$FAILURE_LOG" ]; then
       dc exec -T app rsc-brain update record --failed --from "$UPDATE_FROM" --to "$UPDATE_TO" <"$FAILURE_LOG" >&2
@@ -1210,14 +1289,63 @@ rollback() {
     [ -n "$FAILURE_LOG" ] && say "The last lines of the service are in \"$FAILURE_LOG\"."
     exit 4
   fi
-  say "rsc-brain could not go back to $UPDATE_FROM by itself. Everything up to the update is in the copy $PRE_COPY."
-  say "Restore it by hand (everyone signs in again afterwards): sh $PROG restore --file $PRE_COPY --confirm <the installation's name> --dir \"$DIR\""
+  if [ "$restored" = 1 ]; then
+    say "The data is back as it was just before the update (the copy $PRE_COPY), with sessions and keys kept, and the"
+    say "settings of $UPDATE_FROM are back, but rsc-brain $UPDATE_FROM did not start. See why with: docker compose --project-directory \"$DIR\" logs app"
+    say "Then start it with: sh $PROG install --dir \"$DIR\""
+  else
+    say "rsc-brain could not go back to $UPDATE_FROM by itself. Everything up to the update is in the copy $PRE_COPY."
+    say "Restore it by hand (everyone signs in again afterwards): sh $PROG restore --file $PRE_COPY --confirm <the installation's name> --dir \"$DIR\""
+    say "What the update printed is kept in \"$UPDATE_LOG\"."
+  fi
   [ -n "$FAILURE_LOG" ] && say "The last lines of the service are in \"$FAILURE_LOG\"."
   exit 1
 }
+# Ctrl-C (or a stop) may come while a command's output goes to update.log or /dev/null: what the way back says goes to
+# the error stream the launcher started with.
 update_interrupted() {
+  to_terminal
   if [ "$UPDATE_PHASE" = switched ]; then rollback 'Interrupted: going back.'; fi
   update_abort 'Interrupted.'
+}
+
+# What a launcher killed halfway left behind, found by the next one (with the lock held):
+# - <state>/update.pending: an update had switched to the new version. It is taken back, as a failed update would be
+#   (the copy made before, with its keys kept, and the settings before), and the launcher exits as that did.
+# - <state>/env.rotated: a key rotation had made its new key. Only key rotate finishes it; the rest refuse until then,
+#   since the data may be sealed with either key.
+interrupted_work() {
+  journal=$DIR/$STATE/update.pending
+  if [ -f "$journal" ]; then
+    ENV_FILE=$DIR/.env
+    NAME=$(env_get RSC_BRAIN_NAME) PROFILES=$(env_get COMPOSE_PROFILES)
+    UPDATE_FROM=$(file_get "$journal" RSC_BRAIN_UPDATE_FROM) UPDATE_TO=$(file_get "$journal" RSC_BRAIN_UPDATE_TO)
+    PRE_COPY=$(file_get "$journal" RSC_BRAIN_UPDATE_COPY)
+    UPDATE_LOG=$DIR/$STATE/update.log
+    [ -d "$DIR/$STATE/src.next" ] && NEXT_SRC=$DIR/$STATE/src.next
+    case $PRE_COPY in
+    rsc-brain-*-pre-update.rscb) ;;
+    *)
+      say "An update in \"$DIR\" was interrupted, and its journal \"$journal\" cannot be read. Restore the copy made"
+      say "before it by hand (the newest *-pre-update.rscb in \"$DIR/backups\"): sh $PROG restore --file F --confirm <the installation's name> --dir \"$DIR\""
+      exit 1
+      ;;
+    esac
+    rollback "An update to $UPDATE_TO was interrupted after it had switched to the new version: going back to $UPDATE_FROM."
+  fi
+  [ "${1:-}" = update-only ] && return 0
+  if [ -f "$DIR/$STATE/env.rotated" ]; then
+    say "A key rotation in \"$DIR\" was interrupted: the data may already be sealed with the new key, kept in"
+    say "\"$DIR/$STATE/env.rotated\". Finish it first with: sh $PROG key rotate --dir \"$DIR\". Nothing was changed."
+    exit 1
+  fi
+  return 0
+}
+# Another launcher holds the lock of this folder, and is running.
+lock_held() {
+  owner=$(cat "$DIR/$STATE/lock/owner" 2>/dev/null) || return 1
+  [ "${owner#* }" = "$(host_name)" ] || return 0
+  kill -0 "${owner%% *}" 2>/dev/null
 }
 
 update() {
@@ -1227,6 +1355,7 @@ update() {
   fi
   take_lock
   need_docker
+  interrupted_work
   need_running
   old_image=$(env_get RSC_BRAIN_IMAGE)
   UPDATE_FROM=$(dc exec -T app rsc-brain version </dev/null 2>/dev/null)
@@ -1307,10 +1436,22 @@ update() {
     cp -p "$DIR/Caddyfile" "$DIR/$STATE/Caddyfile.previous" || update_abort "Could not keep a copy of \"$DIR/Caddyfile\"."
   fi
 
+  # The journal, before anything is switched: a launcher killed from here on is taken back by the next one.
+  journal=$DIR/$STATE/update.pending
+  {
+    {
+      say_env RSC_BRAIN_UPDATE_PHASE switched
+      say_env RSC_BRAIN_UPDATE_FROM "$UPDATE_FROM"
+      say_env RSC_BRAIN_UPDATE_TO "$UPDATE_TO"
+      say_env RSC_BRAIN_UPDATE_COPY "$PRE_COPY"
+      say_env RSC_BRAIN_UPDATE_PREVIOUS_IMAGE "$old_image"
+      say_env RSC_BRAIN_UPDATE_IMAGE "$IMAGE"
+    } >"$journal.new" && mv -f "$journal.new" "$journal"
+  } || update_abort "Could not write \"$journal\"."
   # From here on, a failure goes back to the copy just made.
   UPDATE_PHASE=switched
   UPDATE_LOG=$DIR/$STATE/update.log
-  { sed "s|^RSC_BRAIN_IMAGE='.*'\$|RSC_BRAIN_IMAGE='$IMAGE'|" "$DIR/$STATE/env.previous" >"$DIR/.env.new" &&
+  { env_with RSC_BRAIN_IMAGE "$IMAGE" <"$DIR/$STATE/env.previous" >"$DIR/.env.new" &&
     chmod 600 "$DIR/.env.new" && mv -f "$DIR/.env.new" "$DIR/.env"; } || rollback "Could not write \"$DIR/.env\"."
   if [ "$BUILD" = 1 ]; then
     for f in compose.yaml Caddyfile; do
@@ -1332,6 +1473,8 @@ update() {
   now=$(dc exec -T app rsc-brain version </dev/null 2>/dev/null)
   [ "$now" = "$UPDATE_TO" ] || rollback "The service answers as rsc-brain ${now:-(no version)}, not $UPDATE_TO."
 
+  # The new version runs: nothing to take back any more.
+  rm -f "${journal:?}"
   trap - HUP INT TERM
   step 'Turning maintenance off: writes are taken again'
   dc exec -T app rsc-brain maintenance off </dev/null >&2 ||
@@ -1373,6 +1516,7 @@ key_rotate() {
   fi
   take_lock
   need_docker
+  interrupted_work update-only
   old=$(env_get RSC_BRAIN_SECRET)
   old_id=$(key_id_of "$old")
   case $old_id in '' | *[!0-9A-Za-z_-]*)
@@ -1387,22 +1531,49 @@ key_rotate() {
       exit 1
     }
   fi
-  new=$(random_hex 48)
+  # The new key lives in <state>/env.rotated (the settings with it) until it is in .env. A rotation killed halfway left
+  # it there, and the data may be sealed with it already: it is finished with that key, never with another.
   rotated=$DIR/$STATE/env.rotated
-  { sed "s/^RSC_BRAIN_SECRET='.*'\$/RSC_BRAIN_SECRET='$new'/" "$DIR/.env" >"$rotated" && chmod 600 "$rotated"; } || {
-    say "Could not write \"$rotated\". Nothing was changed."
-    exit 1
-  }
+  if [ -f "$rotated" ]; then
+    new=$(file_get "$rotated" RSC_BRAIN_SECRET)
+    if [ ${#new} -lt 32 ] || [ "$new" = "$old" ]; then
+      say "A key rotation was interrupted, and \"$rotated\" holds no new key. Nothing was changed: look at that file (it may"
+      say 'hold the key the data is sealed with) and remove it only if it does not.'
+      exit 1
+    fi
+    say "A key rotation in \"$DIR\" was interrupted: finishing it with the key it had made."
+  else
+    new=$(random_hex 48)
+    { env_with RSC_BRAIN_SECRET "$new" <"$DIR/.env" >"$rotated.new" && chmod 600 "$rotated.new" && mv -f "$rotated.new" "$rotated"; } || {
+      rm -f "${rotated:?}.new"
+      say "Could not write \"$rotated\". Nothing was changed."
+      exit 1
+    }
+  fi
   # Between the reseal and the new .env nothing may stop it halfway.
   trap '' HUP INT TERM
   step 'Stopping rsc-brain'
   dc stop app >&2 </dev/null
   step 'Sealing everything sealed with the new key'
+  # The reseal goes from the key in the settings it runs with to the key on its standard input; done again, it finds
+  # what is sealed with the new key already and changes nothing more.
   if ! printf '%s\n' "$new" | dc run --rm -T --no-deps app rsc-brain key reseal >&2; then
-    rm -f "${rotated:?}"
+    # It may have written before it failed: the new key is dropped only once everything is sealed with the old one
+    # again (that reseal, from the new key to the old, finds nothing to do when nothing was written).
+    step 'Making sure everything is sealed with the key in use'
+    ENV_FILE=$rotated
+    printf '%s\n' "$old" | dc run --rm -T --no-deps app rsc-brain key reseal >&2
+    back=$?
+    ENV_FILE=$DIR/.env
+    if [ "$back" = 0 ]; then rm -f "${rotated:?}"; fi
     step 'Starting rsc-brain again'
     { dc up -d --remove-orphans >&2 </dev/null && wait_healthy; } || say "rsc-brain did not answer. See why with: docker compose --project-directory \"$DIR\" logs app"
-    say 'The key was not changed (the lines above say why). rsc-brain runs with the key it had.'
+    if [ "$back" = 0 ]; then
+      say 'The key was not changed (the lines above say why). rsc-brain runs with the key it had.'
+    else
+      say "The key was not changed, but it cannot be told which key the data is sealed with: the new one is kept in"
+      say "\"$rotated\". Run sh $PROG key rotate --dir \"$DIR\" again to finish the rotation once the lines above are dealt with."
+    fi
     exit 1
   fi
   mv -f "$rotated" "$DIR/.env" || {
@@ -1454,6 +1625,7 @@ uninstall() {
     [ "$CONFIRM" = "$NAME" ] || usage "That is not the installation's name ($NAME). Nothing was deleted."
   fi
   need_docker
+  interrupted_work
   db=$(env_get RSC_BRAIN_DB)
   if [ "$DELETE_DATA" = 0 ]; then
     step 'Stopping rsc-brain and removing its containers'
@@ -1489,6 +1661,7 @@ uninstall() {
 }
 
 warn_shell_vars
+exec 4>&2 5>&1
 case $CMD in
 install) install ;;
 update) update ;;
