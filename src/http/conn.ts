@@ -21,6 +21,9 @@ export type ConnOptions = {
 
 const plain = (ip: string) => (ip.startsWith('::ffff:') ? ip.slice(7) : ip)
 
+// What a browser on this machine names in Host: the loopback address it opened, with any port.
+const LOCAL_HOST_HEADER = /^(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?$/i
+
 export function connOf(req: IncomingMessage, o: ConnOptions): Conn {
   const remote = req.socket.remoteAddress ?? ''
   const h = req.headers
@@ -41,7 +44,10 @@ export function connOf(req: IncomingMessage, o: ConnOptions): Conn {
       userAgent,
     }
   }
-  const fromGateway = remote !== '' && o.localGateways.includes(plain(remote))
+  // From the gateway, and for the address this machine opens: a request relayed from elsewhere (host networking, a
+  // port published by hand) names another host.
+  const fromGateway =
+    remote !== '' && o.localGateways.includes(plain(remote)) && LOCAL_HOST_HEADER.test(String(h.host ?? ''))
   return {
     encrypted: Boolean((req.socket as TLSSocket).encrypted),
     local: (LOOPBACK.has(remote) || fromGateway) && !proxied,
@@ -60,4 +66,13 @@ export function defaultGateway(routeTable: string): string | null {
     return [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, n >>> 24].join('.')
   }
   return null
+}
+
+// Whether a gateway looks like a Docker network's (172.16.0.0/12 or 192.168.0.0/16, where Docker takes its networks).
+// Anything else (host networking, another runtime) is warned about at start: the flag is then likely misplaced.
+export function dockerGateway(ip: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(ip)
+  if (!m) return false
+  const [a, b] = [Number(m[1]), Number(m[2])]
+  return (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
 }

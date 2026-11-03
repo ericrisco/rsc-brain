@@ -228,7 +228,8 @@ run by an unprivileged user, healthy when `GET /v1/health` answers. `rsc-brain s
 In a container, a browser on the same machine arrives through the container's gateway, not from
 `127.0.0.1`, so the rule above would refuse its password. When the port is published on `127.0.0.1`
 alone, set `RSC_BRAIN_PUBLISH=127.0.0.1:<port>` and `RSC_BRAIN_LOCAL_ONLY=1`: a request straight
-from the gateway, with no forwarded headers, then counts as this machine. The service refuses to
+from the gateway, with no forwarded headers and addressed to `localhost`, `127.0.0.1` or `[::1]`,
+then counts as this machine. The service refuses to
 start with `RSC_BRAIN_LOCAL_ONLY=1` and any other `RSC_BRAIN_PUBLISH`: published to the network,
 every visitor would arrive from the gateway and a password would cross it in clear. Never publish
 the port elsewhere by hand with the flag on; for access from other machines use a domain with HTTPS.
@@ -237,5 +238,7 @@ the port elsewhere by hand with the flag on; for access from other machines use 
 `unaccent`): `provision` takes an administration login (from a file or the standard input, never
 kept) and creates a role that is no superuser and cannot create databases or roles, and a database
 only it may connect to. `--isolate-from <database>` also closes another program's database to it,
-and rsc-brain's to that program. The new connection URL goes to a new `0600` file
+and rsc-brain's to that program: every other login that could connect there is first given that
+right by name (the command lists them), then the database is closed to everyone else. `db drop`
+removes only a database and a role that `provision` made. The new connection URL goes to a new `0600` file
 (`--url-file`) or is printed once.

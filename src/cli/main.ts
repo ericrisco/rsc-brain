@@ -22,7 +22,7 @@ import { remindExpiringTokens } from '../domain/notices.ts'
 import { closeIdle } from '../domain/sessions.ts'
 import { foldTrail } from '../domain/trail.ts'
 import { createHandler } from '../http/app.ts'
-import { defaultGateway } from '../http/conn.ts'
+import { defaultGateway, dockerGateway } from '../http/conn.ts'
 import { providersFromEnv } from '../meaning/providers.ts'
 import { applyStored } from '../meaning/stored.ts'
 import { type BackupInfo, backup, backupJob, copyMemory, readStatus } from '../ops/backup/backup.ts'
@@ -75,17 +75,20 @@ Usage:
                                                       RSC_BRAIN_SECRET); never the key
   rsc-brain key reseal --from-file OLD --to-file NEW  seal everything sealed with OLD with NEW (rotating the
                                                       key; with the service stopped, then set RSC_BRAIN_SECRET)
-  rsc-brain db check [--db-url-file F] [--json]       whether a PostgreSQL can hold rsc-brain (17 or newer,
+  rsc-brain db check [--db-url-file F | --url-stdin] [--json]
+                                                      whether a PostgreSQL can hold rsc-brain (17 or newer,
                                                       unaccent) and what the login may do there; the URL comes
-                                                      from F, the standard input or RSC_BRAIN_DATABASE_URL
+                                                      from F (- or --url-stdin: the standard input) or
+                                                      RSC_BRAIN_DATABASE_URL
   rsc-brain db provision --database D --role R [--isolate-from NAME] [--db-admin-url-file F] [--url-file OUT]
                                                       with an administration login (F or the standard input; never
                                                       kept): a role that is no superuser and a database only it
                                                       may connect to; NAME, another program's database, is closed
-                                                      to it and back. The new URL goes to OUT (a new 0600 file) or
+                                                      to it and back (its other logins keep CONNECT by name). The new URL goes to OUT (a new 0600 file) or
                                                       standard output, once
   rsc-brain db drop --database D --role R --confirm D [--db-admin-url-file F]
-                                                      remove that database and that role, and nothing else
+                                                      remove that database and that role, only if provision
+                                                      made them
   rsc-brain version                                   print the version of rsc-brain
   rsc-brain help                                      show this help
 
@@ -170,7 +173,8 @@ async function main(argv: string[]): Promise<number> {
     if (cfg.localOnly) {
       const gateway = defaultGateway(await readFile('/proc/net/route', 'utf8').catch(() => ''))
       if (gateway) localGateways.push(gateway)
-      log.info('local_only', { code: gateway ? 'gateway' : 'no_gateway' })
+      if (gateway && !dockerGateway(gateway)) log.warn('local_only', { code: 'unusual_gateway' })
+      else log.info('local_only', { code: gateway ? 'gateway' : 'no_gateway' })
     }
     const server = createServer(
       createHandler({

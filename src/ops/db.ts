@@ -24,13 +24,17 @@ export type DbCheck = {
 }
 export type TooOld = { code: 'too_old'; min: number; version: number }
 
-// Only the tests pretend another server: an older version, or no unaccent installed (CA21); and someone taking the
-// database name in the moment between the checks and its creation.
+// Only the tests pretend another server: an older version, or no unaccent installed (CA21); someone taking the
+// database name in the moment between the checks and its creation; a failure once the database is made.
 export type Simulate = {
   serverVersionNum?: string
   availableExtensions?: string[]
   beforeDatabase?: () => Promise<void>
+  afterDatabase?: () => Promise<void>
 }
+
+// What provision writes on the database and the role it makes, and what drop requires before removing anything.
+export const MARK = 'rsc-brain'
 
 export type ProvisionInput = {
   database: string
@@ -131,19 +135,105 @@ export function scramVerifier(password: string, salt = randomBytes(16), iteratio
   return `SCRAM-SHA-256$${iterations}:${salt.toString('base64')}$${storedKey}:${serverKey}`
 }
 
-function urlFor(adminUrl: string, role: string, password: string, database: string): string {
-  const u = new URL(adminUrl)
-  u.username = role
-  u.password = encodeURIComponent(password)
-  u.pathname = `/${database}`
-  return u.toString()
+// The URL of the new role, made from scratch: the scheme, host and port of the administration URL, the new role, its
+// password and its database, and of the query only how to reach the server safely (sslmode, sslrootcert) and, for a
+// socket, its folder and port. Anything else in the query (user, password, database, options) would override the rest
+// for the driver: an administration login kept in the URL rsc-brain runs with.
+export function connectionUrl(adminUrl: string, role: string, password: string, database: string): string {
+  const { url: a, host } = parseUrl(adminUrl)
+  const q = new URLSearchParams()
+  for (const k of ['sslmode', 'sslrootcert']) {
+    const v = a.searchParams.get(k)
+    if (v !== null) q.set(k, v)
+  }
+  const socket = a.searchParams.get('host')
+  if (socket?.startsWith('/')) {
+    q.set('host', socket)
+    const port = a.searchParams.get('port')
+    if (port && /^\d{1,5}$/.test(port)) q.set('port', port)
+  }
+  const query = q.size ? `?${q}` : ''
+  return `${a.protocol}//${encodeURIComponent(role)}:${encodeURIComponent(password)}@${host}/${database}${query}`
+}
+
+// A URL as the driver reads it, the socket form with a login and no host (postgres://u:p@/db?host=/run) included,
+// which the URL standard refuses.
+function parseUrl(url: string): { url: URL; host: string } {
+  try {
+    const u = new URL(url)
+    return { url: u, host: u.host }
+  } catch {
+    const m = /^(postgres(?:ql)?:\/\/[^/@]*@)\//.exec(url)
+    if (!m) throw fail(400, 'invalid_url', 'That is not a PostgreSQL connection URL.', 'Use postgres://…')
+    return { url: new URL(`${m[1]}socket.invalid/${url.slice(m[0].length)}`), host: '' }
+  }
+}
+
+const ident = (c: pg.Client, s: string) => c.escapeIdentifier(s)
+
+// A login that is no superuser holds the role it created WITH ADMIN only; for `fn` it may also act as it (to give it a
+// database), and then not any more.
+async function withMembership<T>(
+  c: pg.Client,
+  role: string,
+  isSuper: boolean,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (isSuper) return fn()
+  await c.query(`GRANT ${ident(c, role)} TO CURRENT_USER WITH SET TRUE, INHERIT FALSE`)
+  try {
+    return await fn()
+  } finally {
+    await c.query(`REVOKE ${ident(c, role)} FROM CURRENT_USER`)
+  }
+}
+
+// As the owner (inside withMembership): only the owner closes its database, comments it or removes it.
+async function actAs<T>(c: pg.Client, role: string, isSuper: boolean, fn: () => Promise<T>): Promise<T> {
+  if (isSuper) return fn()
+  await c.query(`SET ROLE ${ident(c, role)}`)
+  try {
+    return await fn()
+  } finally {
+    await c.query('RESET ROLE')
+  }
+}
+
+const asOwner = <T>(c: pg.Client, role: string, isSuper: boolean, fn: () => Promise<T>) =>
+  withMembership(c, role, isSuper, () => actAs(c, role, isSuper, fn))
+
+// Removes the database (as its owner) and then the role; says what could not be removed, never hides it.
+async function removeBoth(
+  c: pg.Client,
+  database: string | null,
+  role: string | null,
+  isSuper: boolean,
+): Promise<string[]> {
+  const left: string[] = []
+  if (database && role) {
+    try {
+      await asOwner(c, role, isSuper, () =>
+        c.query(`DROP DATABASE IF EXISTS ${ident(c, database)} WITH (FORCE)`),
+      )
+    } catch {
+      left.push(`the database ${database}`)
+    }
+  }
+  if (role) {
+    try {
+      await c.query(`DROP ROLE IF EXISTS ${ident(c, role)}`)
+    } catch {
+      left.push(`the role ${role}`)
+    }
+  }
+  return left
 }
 
 async function provision(
   adminUrl: string,
   input: ProvisionInput,
   sim?: Simulate,
-): Promise<{ url: string; warnings: string[] }> {
+): Promise<{ url: string; warnings: string[]; granted: string[] }> {
   const { database, role, password, isolateFrom } = input
   plainName('database', database)
   plainName('role', role)
@@ -223,36 +313,47 @@ async function provision(
         )
       }
     }
-    const ident = (s: string) => c.escapeIdentifier(s)
     await c.query(
-      `CREATE ROLE ${ident(role)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT ` +
+      `CREATE ROLE ${ident(c, role)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT ` +
         `PASSWORD ${c.escapeLiteral(scramVerifier(password))}`,
     )
     let createdDb = false
+    let granted: string[] = []
     try {
-      // A login that is no superuser must act as the owner to give it the database and to close it (only the owner
-      // changes who may connect); only for that moment.
-      if (!found.isSuper) await c.query(`GRANT ${ident(role)} TO CURRENT_USER WITH SET TRUE, INHERIT FALSE`)
-      try {
+      await c.query(`COMMENT ON ROLE ${ident(c, role)} IS ${c.escapeLiteral(MARK)}`)
+      await withMembership(c, role, found.isSuper, async () => {
         await sim?.beforeDatabase?.()
         await c.query(
-          `CREATE DATABASE ${ident(database)} OWNER ${ident(role)} ENCODING 'UTF8' TEMPLATE template0`,
+          `CREATE DATABASE ${ident(c, database)} OWNER ${ident(c, role)} ENCODING 'UTF8' TEMPLATE template0`,
         )
         createdDb = true
-        // Only its role (and superusers) may connect to rsc-brain's database.
-        if (!found.isSuper) await c.query(`SET ROLE ${ident(role)}`)
-        try {
-          await c.query(`REVOKE ALL ON DATABASE ${ident(database)} FROM PUBLIC`)
-        } finally {
-          if (!found.isSuper) await c.query('RESET ROLE')
+        await actAs(c, role, found.isSuper, async () => {
+          await c.query(`COMMENT ON DATABASE ${ident(c, database)} IS ${c.escapeLiteral(MARK)}`)
+          // Only its role (and superusers) may connect to rsc-brain's database.
+          await c.query(`REVOKE ALL ON DATABASE ${ident(c, database)} FROM PUBLIC`)
+        })
+      })
+      await sim?.afterDatabase?.()
+      // The other program's database: every login that could enter it keeps entering it (given CONNECT by name),
+      // except rsc-brain's (this one and any other installation's); then it is closed to PUBLIC.
+      if (isolateFrom !== undefined) {
+        granted = (
+          await c.query<{ name: string }>(
+            `SELECT r.rolname AS name FROM pg_roles r
+              WHERE (r.rolcanlogin OR r.rolname = $3) AND NOT r.rolsuper AND r.rolname <> $1 AND r.rolname !~ '^pg_'
+                AND coalesce(shobj_description(r.oid, 'pg_authid'), '') <> $4
+                AND has_database_privilege(r.oid, $2, 'CONNECT')
+              ORDER BY 1`,
+            [role, isolateFrom, other?.owner ?? '', MARK],
+          )
+        ).rows.map((r) => r.name)
+        if (granted.length) {
+          await c.query(
+            `GRANT CONNECT, TEMPORARY ON DATABASE ${ident(c, isolateFrom)} TO ${granted.map((g) => ident(c, g)).join(', ')}`,
+          )
         }
-      } finally {
-        if (!found.isSuper) await c.query(`REVOKE ${ident(role)} FROM CURRENT_USER`)
+        await c.query(`REVOKE CONNECT, TEMPORARY ON DATABASE ${ident(c, isolateFrom)} FROM PUBLIC`)
       }
-      // The other program's database: closed to everyone but its owner (who keeps its own privileges) and the
-      // privileges given by name.
-      if (isolateFrom !== undefined)
-        await c.query(`REVOKE CONNECT, TEMPORARY ON DATABASE ${ident(isolateFrom)} FROM PUBLIC`)
       // What was asked is what holds: no connection across, either way (CA3).
       const across = (
         await c.query<{ there: boolean; back: boolean; others: boolean }>(
@@ -271,46 +372,90 @@ async function provision(
         )
       }
     } catch (err) {
-      // Nothing half made stays behind.
-      if (createdDb) await c.query(`DROP DATABASE IF EXISTS ${ident(database)} WITH (FORCE)`).catch(() => {})
-      await c.query(`DROP ROLE IF EXISTS ${ident(role)}`).catch(() => {})
-      throw err
+      // Nothing half made stays behind; what cannot be removed is said.
+      const left = await removeBoth(c, createdDb ? database : null, role, found.isSuper)
+      if (left.length === 0) throw err
+      const e = fail(
+        500,
+        'left_behind',
+        `${err instanceof Error ? err.message : String(err)} Removing what was made failed too: ${left.join(' and ')} ${left.length > 1 ? 'are' : 'is'} still there.`,
+        `Remove ${left.length > 1 ? 'them' : 'it'} as a superuser (DROP DATABASE ${database}; DROP ROLE ${role}), then try again.`,
+      )
+      e.cause = err
+      throw e
     }
-    return { url: urlFor(adminUrl, role, password, database), warnings }
+    return { url: connectionUrl(adminUrl, role, password, database), warnings, granted }
   } finally {
     await c.end()
   }
 }
 
-async function drop(adminUrl: string, input: { database: string; role: string }): Promise<void> {
+// What was removed. Only what provision made and marked: a database not owned by the role, or either without the
+// mark, is someone else's.
+async function drop(
+  adminUrl: string,
+  input: { database: string; role: string },
+): Promise<{ database: boolean; role: boolean }> {
   plainName('database', input.database)
   plainName('role', input.role)
   const c = await connect(adminUrl)
   try {
     const s = (
-      await c.query<{ owner: string | null; role_super: boolean | null; me: string; here: string }>(
+      await c.query<{
+        owner: string | null
+        db_mark: string | null
+        role_found: boolean
+        role_super: boolean | null
+        role_mark: string | null
+        me: string
+        here: string
+        is_super: boolean
+      }>(
         `SELECT (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = $1) AS owner,
+                (SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = $1) AS db_mark,
+                EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $2) AS role_found,
                 (SELECT rolsuper FROM pg_roles WHERE rolname = $2) AS role_super,
-                current_user AS me, current_database() AS here`,
+                (SELECT shobj_description(oid, 'pg_authid') FROM pg_roles WHERE rolname = $2) AS role_mark,
+                current_user AS me, current_database() AS here,
+                (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS is_super`,
         [input.database, input.role],
       )
     ).rows[0]
     if (!s) throw new Error('The login could not read the catalog.')
+    const dbFound = s.owner !== null
     const notOurs = (what: string) =>
       fail(
         409,
         'not_ours',
-        `${what}, so it is not rsc-brain's and nothing was removed.`,
-        'Check the database and role names of this installation.',
+        `${what}. Nothing was removed.`,
+        'Check the database and role names of this installation: drop removes only what rsc-brain db provision made.',
       )
-    if (s.owner !== null && s.owner !== input.role)
-      throw notOurs(`The database ${input.database} belongs to ${s.owner}`)
-    if (s.role_super || input.role === s.me)
+    if (dbFound && s.owner !== input.role)
+      throw notOurs(`The database ${input.database} belongs to ${s.owner}, not to ${input.role}`)
+    if (dbFound && s.db_mark !== MARK)
+      throw notOurs(`The database ${input.database} was not made by rsc-brain`)
+    if (s.role_found && (s.role_super || input.role === s.me))
       throw notOurs(`The role ${input.role} is a superuser or the login in use`)
+    if (s.role_found && s.role_mark !== MARK)
+      throw notOurs(`The role ${input.role} was not made by rsc-brain`)
     if (input.database === s.here)
       throw notOurs(`The database ${input.database} is the one this login is connected to`)
-    if (s.owner !== null) await c.query(`DROP DATABASE ${c.escapeIdentifier(input.database)} WITH (FORCE)`)
-    if (s.role_super !== null) await c.query(`DROP ROLE ${c.escapeIdentifier(input.role)}`)
+    if (!dbFound && !s.role_found) return { database: false, role: false }
+    const left = await removeBoth(
+      c,
+      dbFound ? input.database : null,
+      s.role_found ? input.role : null,
+      s.is_super,
+    )
+    if (left.length) {
+      throw fail(
+        500,
+        'not_removed',
+        `Could not remove ${left.join(' and ')}.`,
+        'Remove what is left as a superuser, or with the login that made it.',
+      )
+    }
+    return { database: dbFound, role: s.role_found }
   } finally {
     await c.end()
   }

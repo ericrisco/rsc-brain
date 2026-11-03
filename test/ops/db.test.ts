@@ -11,9 +11,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import pg from 'pg'
+import { parse as parsePgUrl } from 'pg-connection-string'
 import { openPool } from '../../src/db/db.ts'
 import { migrate } from '../../src/db/migrate.ts'
-import { db as dbOps, MIN_POSTGRES, scramVerifier } from '../../src/ops/db.ts'
+import { connectionUrl, db as dbOps, MIN_POSTGRES, scramVerifier } from '../../src/ops/db.ts'
 import { PG_URL, skipPg } from '../helpers/pg.ts'
 
 const CLI = new URL('../../src/cli/main.ts', import.meta.url).pathname
@@ -62,9 +63,15 @@ const exists = async (kind: 'role' | 'database', n: string) =>
     )
   ).length === 1
 
-function run(args: string[], input = ''): Promise<{ code: number; out: string; err: string }> {
+function run(
+  args: string[],
+  input = '',
+  env: Record<string, string> = {},
+): Promise<{ code: number; out: string; err: string }> {
   return new Promise((resolve) => {
-    const p = spawn(process.execPath, [CLI, ...args], { env: { ...process.env, RSC_BRAIN_DATABASE_URL: '' } })
+    const p = spawn(process.execPath, [CLI, ...args], {
+      env: { ...process.env, RSC_BRAIN_DATABASE_URL: '', ...env },
+    })
     let out = ''
     let err = ''
     p.stdout.on('data', (d) => {
@@ -95,6 +102,53 @@ describe('the password verifier', () => {
     assert.equal(
       scramVerifier('pencil', Buffer.from('W22ZaJ0SNY7soEsUEjb6gQ==', 'base64'), 4096),
       'SCRAM-SHA-256$4096:W22ZaJ0SNY7soEsUEjb6gQ==$WG5d8oPm3OtcPnkdi4Uo7BkeZkBFzpcXkuLmtbsT4qY=:wfPLwcE6nTWhTAmQ7tl2KeoiWGPlZqQxSrmfPwDl2dU=',
+    )
+  })
+})
+
+describe('the connection URL of the new role', () => {
+  const parsed = (u: string) => parsePgUrl(u)
+
+  it('is made from scratch: a user or password in the query of the admin URL never reaches it', () => {
+    const u = connectionUrl(
+      'postgres://localhost:5432/postgres?user=admin&password=admin-canary&sslmode=require&sslrootcert=%2Fca.pem&options=-c%20x&database=other',
+      'rsc_brain',
+      'new-pass',
+      'rsc_brain',
+    )
+    assert.ok(!u.includes('admin') && !u.includes('options') && !u.includes('other'), u)
+    // (The driver opens sslrootcert while parsing: read without it.)
+    const p = parsed(u.replace(/&?sslrootcert=[^&]*/, ''))
+    assert.deepEqual(
+      [p.user, p.password, p.host, p.port, p.database],
+      ['rsc_brain', 'new-pass', 'localhost', '5432', 'rsc_brain'],
+    )
+    assert.equal(new URL(u).searchParams.get('sslmode'), 'require')
+    assert.equal(new URL(u).searchParams.get('sslrootcert'), '/ca.pem')
+  })
+
+  it('keeps the user and password of the admin URL out when they are in its user part too', () => {
+    const u = connectionUrl('postgresql://admin:admin-canary@db.example:6543/postgres', 'r', 'p@ss/w:rd', 'd')
+    assert.ok(!u.includes('admin'), u)
+    const p = parsed(u)
+    assert.deepEqual(
+      [p.user, p.password, p.host, p.port, p.database],
+      ['r', 'p@ss/w:rd', 'db.example', '6543', 'd'],
+    )
+  })
+
+  it('a socket-form admin URL (?host=/path) gives a socket-form URL', () => {
+    const u = connectionUrl(
+      'postgres://admin:admin-canary@/postgres?host=%2Fvar%2Frun%2Fpostgresql&port=5433',
+      'r',
+      'p',
+      'd',
+    )
+    assert.ok(!u.includes('admin'), u)
+    const p = parsed(u)
+    assert.deepEqual(
+      [p.user, p.password, p.host, p.port, p.database],
+      ['r', 'p', '/var/run/postgresql', '5433', 'd'],
     )
   })
 })
@@ -152,6 +206,13 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
   const outsider = name('outsider')
   const limitedAdmin = name('limitedadmin')
   const noCreate = name('cannot')
+  const factoryReader = name('factoryreader')
+  const foreignRole = name('foreign')
+  const foreignDb = name('foreigndb')
+  // A role marked as rsc-brain's with a database that is not; a database marked but owned by a role that is not.
+  const markedRole = name('markedrole')
+  const unmarkedDb = name('unmarkeddb')
+  const markedOnlyDb = name('markedonlydb')
   const made: { database: string; role: string }[] = []
 
   before(async () => {
@@ -164,14 +225,31 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
     // Its sessions would hash a password sent in clear as MD5: what is stored shows whether it was sent hashed.
     await sql(`ALTER ROLE ${limitedAdmin} SET password_encryption = 'md5'`)
     await sql(`CREATE ROLE ${noCreate} LOGIN`)
+    // Another login of the other program, with no privilege of its own: it entered through PUBLIC.
+    await sql(`CREATE ROLE ${factoryReader} LOGIN`)
+    // A database someone else made for a role of theirs: not rsc-brain's, whatever the names.
+    await sql(`CREATE ROLE ${foreignRole} LOGIN`)
+    await sql(`CREATE DATABASE ${foreignDb} OWNER ${foreignRole}`)
+    await sql(`CREATE ROLE ${markedRole} LOGIN`)
+    await sql(`COMMENT ON ROLE ${markedRole} IS 'rsc-brain'`)
+    await sql(`CREATE DATABASE ${unmarkedDb} OWNER ${markedRole}`)
+    await sql(`CREATE DATABASE ${markedOnlyDb} OWNER ${foreignRole}`)
+    await sql(`COMMENT ON DATABASE ${markedOnlyDb} IS 'rsc-brain'`)
   })
   after(async () => {
-    for (const m of made) {
-      await sql(`DROP DATABASE IF EXISTS ${m.database} WITH (FORCE)`)
-      await sql(`DROP ROLE IF EXISTS ${m.role}`)
-    }
-    for (const d of [factoryDb, superOwnedDb]) await sql(`DROP DATABASE IF EXISTS ${d} WITH (FORCE)`)
-    for (const r of [factoryRole, outsider, limitedAdmin, noCreate]) await sql(`DROP ROLE IF EXISTS ${r}`)
+    // Every database first (a role with privileges on one cannot be removed), then every role; one failure never
+    // stops the rest.
+    const databases = [
+      ...made.map((m) => m.database),
+      factoryDb,
+      superOwnedDb,
+      foreignDb,
+      markedOnlyDb,
+      unmarkedDb,
+    ]
+    const roles = [...made.map((m) => m.role), factoryRole, outsider, limitedAdmin, noCreate, factoryReader]
+    for (const d of databases) await sql(`DROP DATABASE IF EXISTS ${d} WITH (FORCE)`).catch(() => {})
+    for (const r of [...roles, foreignRole, markedRole]) await sql(`DROP ROLE IF EXISTS ${r}`).catch(() => {})
   })
 
   it('CA3: its own role and database, no superuser or creator on either side, no connection across', async () => {
@@ -210,13 +288,45 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
     assert.match(String(await connectError(as(role, factoryDb))), /permission denied for database/)
     assert.match(String(await connectError(as(factoryRole, database))), /permission denied for database/)
     assert.match(String(await connectError(as(outsider, database))), /permission denied for database/)
-    // Factory still enters its own.
+    // Factory still enters its own, with every login it had: closing PUBLIC first gave each one CONNECT by name.
     assert.equal(await connectError(as(factoryRole, factoryDb)), null)
+    assert.equal(await connectError(as(factoryReader, factoryDb)), null)
+    assert.ok(r.granted.includes(factoryReader) && r.granted.includes(factoryRole), String(r.granted))
+    assert.ok(!r.granted.includes(role))
+    assert.match(String(await connectError(as(factoryReader, database))), /permission denied for database/)
+    // Both are marked as rsc-brain's (what drop requires).
+    const marks = await sql(
+      `SELECT shobj_description((SELECT oid FROM pg_database WHERE datname = '${database}'), 'pg_database') AS d,
+              shobj_description((SELECT oid FROM pg_roles WHERE rolname = '${role}'), 'pg_authid') AS r`,
+    )
+    assert.deepEqual([marks[0]?.d, marks[0]?.r], ['rsc-brain', 'rsc-brain'])
     // The password is stored as a SCRAM verifier made from it (sent hashed, never in clear).
     const stored = String(
       (await sql(`SELECT rolpassword FROM pg_authid WHERE rolname = '${role}'`))[0]?.rolpassword,
     )
     assert.equal(stored, scramOf(stored, password))
+  })
+
+  it('an admin URL with its user and password in the query gives a URL of the new role only', async () => {
+    const database = name('query')
+    const role = name('queryrole')
+    made.push({ database, role })
+    const admin = new URL(PG_URL as string)
+    const adminUrl = `postgres://${admin.host}${admin.pathname}?user=${admin.username}&password=admin-canary-9f3`
+    const r = await dbOps.provision(adminUrl, {
+      database,
+      role,
+      password: randomBytes(18).toString('base64url'),
+    })
+    assert.ok(!r.url.includes(admin.username) && !r.url.includes('admin-canary'), 'the admin login leaked')
+    assert.equal(parsePgUrl(r.url).user, role)
+    const c = new pg.Client({ connectionString: r.url })
+    await c.connect()
+    try {
+      assert.equal((await c.query('SELECT current_user AS u')).rows[0]?.u, role)
+    } finally {
+      await c.end()
+    }
   })
 
   it('C14: when the other database belongs to a superuser, it warns that the separation is one way', async () => {
@@ -229,6 +339,12 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
       password: randomBytes(18).toString('base64url'),
       isolateFrom: superOwnedDb,
     })
+    // Another installation's role (the one of CA3, marked as rsc-brain's) is not let into the other program's database.
+    assert.ok(!r.granted.includes(name('brainrole')), String(r.granted))
+    assert.match(
+      String(await connectError(as(name('brainrole'), superOwnedDb))),
+      /permission denied for database/,
+    )
     assert.equal(r.warnings.length, 1)
     assert.match(
       String(r.warnings[0]),
@@ -260,6 +376,52 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
         WHERE r.rolname = '${role}' AND u.rolname = '${limitedAdmin}' AND (m.set_option OR m.inherit_option)`,
     )
     assert.equal(member.length, 0)
+    // And it removes them again (a managed PostgreSQL: no superuser to own everything).
+    await dbOps.drop(as(limitedAdmin, 'postgres'), { database, role })
+    assert.deepEqual([await exists('database', database), await exists('role', role)], [false, false])
+  })
+
+  it('a failure after the database is made, with an administration login that is no superuser: nothing is left', async () => {
+    const database = name('late')
+    const role = name('laterole')
+    made.push({ database, role })
+    await assert.rejects(
+      dbOps.provision(
+        as(limitedAdmin, 'postgres'),
+        { database, role, password: randomBytes(18).toString('base64url') },
+        {
+          afterDatabase: async () => {
+            throw new Error('simulated failure')
+          },
+        },
+      ),
+      /simulated failure/,
+    )
+    assert.deepEqual([await exists('database', database), await exists('role', role)], [false, false])
+  })
+
+  it('when even the cleanup fails, the error says what was left behind', async () => {
+    const database = name('stuck')
+    const role = name('stuckrole')
+    made.push({ database, role })
+    await assert.rejects(
+      dbOps.provision(
+        as(limitedAdmin, 'postgres'),
+        { database, role, password: randomBytes(18).toString('base64url') },
+        {
+          // The administration loses its hold on the new role: it can neither act as it nor remove it.
+          afterDatabase: async () => {
+            await sql(`REVOKE ADMIN OPTION FOR ${role} FROM ${limitedAdmin} CASCADE`)
+            throw new Error('simulated failure')
+          },
+        },
+      ),
+      (err: Error & { code?: string }) =>
+        err.code === 'left_behind' &&
+        /simulated failure/.test(err.message) &&
+        err.message.includes(`the database ${database}`) &&
+        err.message.includes(`the role ${role}`),
+    )
   })
 
   it('a login that cannot change who connects to the other database is refused before anything is made', async () => {
@@ -368,10 +530,29 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
       (err: Error & { code?: string }) => err.code === 'not_ours',
     )
     assert.equal(await exists('database', factoryDb), true)
-    await dbOps.drop(PG_URL as string, { database, role })
+    // A database owned by its role but not made by rsc-brain: refused too.
+    await assert.rejects(
+      dbOps.drop(PG_URL as string, { database: foreignDb, role: foreignRole }),
+      (err: Error & { code?: string }) =>
+        err.code === 'not_ours' && /not made by rsc-brain/.test(err.message),
+    )
+    assert.deepEqual([await exists('database', foreignDb), await exists('role', foreignRole)], [true, true])
+    // Either mark missing is enough to refuse: the role's, or the database's.
+    for (const [database, role] of [
+      [unmarkedDb, markedRole],
+      [markedOnlyDb, foreignRole],
+    ] as const) {
+      await assert.rejects(
+        dbOps.drop(PG_URL as string, { database, role }),
+        (err: Error & { code?: string }) =>
+          err.code === 'not_ours' && /not made by rsc-brain/.test(err.message),
+      )
+      assert.deepEqual([await exists('database', database), await exists('role', role)], [true, true])
+    }
+    assert.deepEqual(await dbOps.drop(PG_URL as string, { database, role }), { database: true, role: true })
     assert.deepEqual([await exists('database', database), await exists('role', role)], [false, false])
     // Again: nothing left to remove is not a failure.
-    await dbOps.drop(PG_URL as string, { database, role })
+    assert.deepEqual(await dbOps.drop(PG_URL as string, { database, role }), { database: false, role: false })
   })
 
   it('the command line: the admin login on the standard input, the URL to a 0600 file, no secret in the output', async () => {
@@ -403,7 +584,13 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
       const password = decodeURIComponent(new URL(url).password)
       assert.ok(password.length >= 32)
       assert.ok(!r.out.includes(password) && !r.err.includes(password), 'the password was printed')
-      assert.deepEqual(JSON.parse(r.out), { database, role, urlFile: file, warnings: [] })
+      const summary = JSON.parse(r.out)
+      assert.ok(summary.granted.includes(factoryRole), r.out)
+      assert.deepEqual(
+        { ...summary, granted: undefined },
+        { database, role, urlFile: file, warnings: [], granted: undefined },
+      )
+      assert.match(r.err, new RegExp(`Kept these logins able to connect to ${factoryDb}.*${factoryRole}`))
       assert.equal(await connectError(as(role, database)), null)
       // An existing file is never overwritten.
       made.push(
@@ -465,8 +652,46 @@ describe('db.provision and db.drop', { skip: skipPg }, () => {
       )
       assert.equal(denied.code, 3)
       assert.match(denied.err, /--db-url-file/)
+      // A name that is not a plain name is a usage error (2), like any other wrong option.
+      const badName = await run(['db', 'provision', '--database', 'Bad-Name', '--role', name('x')], PG_URL)
+      assert.equal(badName.code, 2, badName.err)
+      // Removing what is not there: said, and not a failure.
+      const nothing = await run(
+        ['db', 'drop', '--database', name('none'), '--role', name('nonerole'), '--confirm', name('none')],
+        PG_URL,
+      )
+      assert.equal(nothing.code, 0, nothing.err)
+      assert.match(nothing.out, /^Nothing to remove: /)
+      // check reads the standard input only when asked (--db-url-file -); otherwise RSC_BRAIN_DATABASE_URL.
+      const fromEnv = await run(['db', 'check', '--json'], 'postgres://nobody@127.0.0.1:1/x', {
+        RSC_BRAIN_DATABASE_URL: PG_URL as string,
+      })
+      assert.equal(fromEnv.code, 0, fromEnv.err)
+      const fromStdin = await run(['db', 'check', '--db-url-file', '-', '--json'], PG_URL)
+      assert.equal(fromStdin.code, 0, fromStdin.err)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('db command line: a database that does not answer', () => {
+  it('says each address it tried and why, and that localhost in a container is the container', async () => {
+    for (const host of ['localhost', '127.0.0.1']) {
+      const r = await run(['db', 'check', '--db-url-file', '-'], `postgres://nobody@${host}:1/x`)
+      assert.equal(r.code, 1, r.err)
+      assert.match(r.err, /(127\.0\.0\.1|\[::1\]):1 ECONNREFUSED|ECONNREFUSED (127\.0\.0\.1|::1):1/, r.err)
+      assert.ok(!/^\s*$/.test(r.err.split('\n')[0] ?? ''), 'a blank first line')
+      assert.match(
+        r.err,
+        /Inside a container, localhost is the container itself; use the database's host name/,
+      )
+    }
+    const other = await run(
+      ['db', 'check', '--db-url-file', '-'],
+      'postgres://nobody@192.0.2.1:1/x?connect_timeout=1',
+    )
+    assert.equal(other.code, 1)
+    assert.doesNotMatch(other.err, /Inside a container/)
   })
 })

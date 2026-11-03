@@ -9,9 +9,10 @@ import type { IncomingMessage } from 'node:http'
 import { describe, it } from 'node:test'
 import { readConfig } from '../../src/config.ts'
 import { requireSecure } from '../../src/domain/installation.ts'
-import { connOf, defaultGateway } from '../../src/http/conn.ts'
+import { connOf, defaultGateway, dockerGateway } from '../../src/http/conn.ts'
 
-const req = (remoteAddress: string, headers: Record<string, string> = {}) =>
+// A browser on this machine names the address it opened: 127.0.0.1:<port> (or localhost, [::1]).
+const req = (remoteAddress: string, headers: Record<string, string> = { host: '127.0.0.1:8090' }) =>
   ({ socket: { remoteAddress }, headers }) as unknown as IncomingMessage
 
 const GATEWAY = '172.18.0.1'
@@ -33,6 +34,30 @@ describe('RSC_BRAIN_LOCAL_ONLY: a password over http from the container gateway'
     assert.equal(connOf(req(`::ffff:${GATEWAY}`), { trusted: [], localGateways: [GATEWAY] }).local, true)
   })
 
+  it('with the flag, a request from the gateway for another host name is refused (not what this machine opens)', () => {
+    for (const host of ['localhost', 'localhost:8090', '[::1]:8090', '127.0.0.1']) {
+      assert.equal(
+        connOf(req(GATEWAY, { host }), { trusted: [], localGateways: [GATEWAY] }).local,
+        true,
+        host,
+      )
+    }
+    for (const host of [
+      '192.168.1.5:8090',
+      'brain.example.com',
+      '127.0.0.1.nip.io:8090',
+      'localhost.evil:80',
+      '',
+    ]) {
+      assert.equal(
+        connOf(req(GATEWAY, { host }), { trusted: [], localGateways: [GATEWAY] }).local,
+        false,
+        host,
+      )
+    }
+    assert.equal(connOf(req(GATEWAY, {}), { trusted: [], localGateways: [GATEWAY] }).local, false, 'no Host')
+  })
+
   it('without the flag, the same request over http is refused', () => {
     assert.equal(connOf(req(GATEWAY), { trusted: [], localGateways: [] }).local, false)
     assert.equal(passwordAccepted(req(GATEWAY), { trusted: [], localGateways: [] }), false)
@@ -50,7 +75,13 @@ describe('RSC_BRAIN_LOCAL_ONLY: a password over http from the container gateway'
       { 'x-forwarded-proto': 'http' },
       { forwarded: 'for=127.0.0.1' },
     ]) {
-      assert.equal(passwordAccepted(req(GATEWAY, h), { trusted: [], localGateways: [GATEWAY] }), false)
+      assert.equal(
+        passwordAccepted(req(GATEWAY, { host: '127.0.0.1:8090', ...h }), {
+          trusted: [],
+          localGateways: [GATEWAY],
+        }),
+        false,
+      )
     }
     // Even when the gateway is also a trusted proxy: what a proxy relays is never «this machine».
     const viaProxy = connOf(req(GATEWAY, { 'x-forwarded-for': '203.0.113.7', 'x-forwarded-proto': 'http' }), {
@@ -67,6 +98,15 @@ describe('RSC_BRAIN_LOCAL_ONLY: a password over http from the container gateway'
 })
 
 describe('the container gateway', () => {
+  it('looks like a Docker network gateway in 172.16.0.0/12 or 192.168.0.0/16; anything else is warned about', () => {
+    for (const ip of ['172.17.0.1', '172.18.0.1', '172.31.255.1', '192.168.65.1', '192.168.0.1']) {
+      assert.equal(dockerGateway(ip), true, ip)
+    }
+    for (const ip of ['172.15.0.1', '172.32.0.1', '10.0.0.1', '203.0.113.1', '1.2.3.4', 'x']) {
+      assert.equal(dockerGateway(ip), false, ip)
+    }
+  })
+
   // /proc/net/route: the default route (destination 00000000) and its gateway, little-endian hex.
   const ROUTES = [
     'Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT',

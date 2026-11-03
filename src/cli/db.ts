@@ -1,6 +1,6 @@
 // `rsc-brain db check|provision|drop` (plan §3.7): what the launcher runs to prepare an existing or shared PostgreSQL.
-// A connection URL holds a password, so it never comes on the command line: from a file, the standard input or (for
-// check) RSC_BRAIN_DATABASE_URL. The password of the new role is generated here and leaves once: written to a new
+// A connection URL holds a password, so it never comes on the command line: from a file (`-` is the standard input),
+// or for check RSC_BRAIN_DATABASE_URL; provision and drop also read an administration URL piped in. The password of the new role is generated here and leaves once: written to a new
 // file only its owner reads (0600), or printed on standard output. Exit codes: 0 done, 2 usage, 3 a missing
 // requirement (nothing changed), 1 anything else.
 import { randomBytes } from 'node:crypto'
@@ -10,12 +10,16 @@ import { AppError } from '../core/errors.ts'
 import { db, tooOldError } from '../ops/db.ts'
 
 const USAGE = `Usage:
-  rsc-brain db check [--db-url-file F] [--json]
+  rsc-brain db check [--db-url-file F | --url-stdin] [--json]
   rsc-brain db provision --database D --role R [--isolate-from NAME] [--db-admin-url-file F] [--url-file OUT] [--json]
   rsc-brain db drop --database D --role R --confirm D [--db-admin-url-file F]
-A connection URL is read from a file or the standard input, never from the command line.`
+A connection URL is read from a file (- for the standard input), never from the command line.`
 
 const MISSING = new Set(['too_old', 'cannot_create_database', 'cannot_isolate'])
+const USAGE_ERRORS = new Set(['invalid_name', 'invalid_password'])
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+// The host of the URL in use, for the hint when it does not answer (never the URL itself).
+let urlHost = ''
 
 const out = (s: string) => process.stdout.write(s)
 const say = (s: string) => process.stderr.write(s)
@@ -38,33 +42,60 @@ function strict<T>(
 }
 
 class InputError extends Error {}
-async function readUrl(file: string | undefined, fallback?: string): Promise<string> {
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const c of process.stdin) chunks.push(c as Buffer)
+  return Buffer.concat(chunks).toString('utf8')
+}
+
+// From the file, `-` (the standard input), the standard input when piped and `piped` allows it, or the fallback.
+async function readUrl(
+  file: string | undefined,
+  o: { piped: boolean; fallback?: string | undefined },
+): Promise<string> {
   let text: string | undefined
-  if (file !== undefined) {
+  if (file === '-') text = await readStdin()
+  else if (file !== undefined) {
     try {
       text = await readFile(file, 'utf8')
     } catch {
       throw new InputError(`The file ${file} cannot be read.`)
     }
-  } else if (!process.stdin.isTTY) {
-    const chunks: Buffer[] = []
-    for await (const c of process.stdin) chunks.push(c as Buffer)
-    text = Buffer.concat(chunks).toString('utf8')
-  }
-  const url = text?.trim() || fallback
+  } else if (o.piped && !process.stdin.isTTY) text = await readStdin()
+  const url = text?.trim() || o.fallback
   if (!url) throw new InputError('No connection URL: pass it in a file or on the standard input.')
   if (!/^postgres(ql)?:\/\//.test(url))
     throw new InputError('That is not a PostgreSQL connection URL (postgres://…).')
+  try {
+    urlHost = new URL(url).hostname
+  } catch {
+    throw new InputError('That is not a PostgreSQL connection URL (postgres://…).')
+  }
   return url
 }
+
+type NetError = Error & { code?: string; address?: string; port?: number }
+const where = (e: NetError) =>
+  `${e.address ? `${e.address.includes(':') ? `[${e.address}]` : e.address}${e.port ? `:${e.port}` : ''} ` : ''}${e.code ?? e.message}`
 
 function failed(err: unknown): number {
   if (err instanceof AppError) {
     say(`${err.message} ${err.howToProceed}\n`)
-    return MISSING.has(err.code) ? 3 : 1
+    return USAGE_ERRORS.has(err.code) ? 2 : MISSING.has(err.code) ? 3 : 1
   }
-  // A connection failure says what PostgreSQL said; pg never puts the password in it.
-  say(`${err instanceof Error ? err.message : String(err)}\n`)
+  // A connection failure says what PostgreSQL or the network said (pg never puts the password in it). Trying every
+  // address of a name fails with all of them at once and no message of its own: each one is said.
+  const inner = err instanceof AggregateError && err.errors.length ? (err.errors as NetError[]) : null
+  const text = inner
+    ? `Could not connect to PostgreSQL: ${inner.map(where).join('; ')}.`
+    : err instanceof Error
+      ? err.message || (err as NetError).code || 'Could not connect to PostgreSQL.'
+      : String(err)
+  say(`${text}\n`)
+  const network = inner !== null || /^E[A-Z]+$/.test(String((err as NetError)?.code ?? ''))
+  if (network && LOOPBACK_HOSTS.has(urlHost)) {
+    say("Inside a container, localhost is the container itself; use the database's host name.\n")
+  }
   return 1
 }
 
@@ -81,12 +112,19 @@ export async function dbCommand(which: string | undefined, args: string[]): Prom
 }
 
 async function checkCommand(args: string[]): Promise<number> {
-  const v = strict<{ 'db-url-file'?: string; json?: boolean }>(args, {
+  const v = strict<{ 'db-url-file'?: string; 'url-stdin'?: boolean; json?: boolean }>(args, {
     'db-url-file': { type: 'string' },
+    'url-stdin': { type: 'boolean' },
     json: { type: 'boolean' },
   })
   if (!v) return usage('Unknown option or argument.')
-  const url = await readUrl(v['db-url-file'], process.env.RSC_BRAIN_DATABASE_URL || undefined)
+  if (v['url-stdin'] && v['db-url-file'] !== undefined)
+    return usage('Pass --db-url-file or --url-stdin, not both.')
+  // The standard input only when asked: a program that runs check with its own input open is not read.
+  const url = await readUrl(v['url-stdin'] ? '-' : v['db-url-file'], {
+    piped: false,
+    fallback: process.env.RSC_BRAIN_DATABASE_URL || undefined,
+  })
   const r = await db.check(url)
   if ('code' in r) return failed(tooOldError(r))
   if (v.json) out(`${JSON.stringify(r)}\n`)
@@ -125,7 +163,7 @@ async function provisionCommand(args: string[]): Promise<number> {
   })
   if (!v) return usage('Unknown option or argument.')
   if (!v.database || !v.role) return usage('Pass --database and --role.')
-  const adminUrl = await readUrl(v['db-admin-url-file'])
+  const adminUrl = await readUrl(v['db-admin-url-file'], { piped: true })
   // The file is made first, new and only for its owner: an existing one is never overwritten, and nothing is
   // created on the server when it cannot be written.
   let file: FileHandle | undefined
@@ -147,6 +185,11 @@ async function provisionCommand(args: string[]): Promise<number> {
       isolateFrom: v['isolate-from'],
     })
     for (const w of r.warnings) say(`Warning: ${w}\n`)
+    if (r.granted.length) {
+      say(
+        `Kept these logins able to connect to ${v['isolate-from']} (given CONNECT by name before closing it): ${r.granted.join(', ')}.\n`,
+      )
+    }
     if (file) {
       await file.writeFile(`${r.url}\n`)
       await file.close()
@@ -158,7 +201,7 @@ async function provisionCommand(args: string[]): Promise<number> {
         role: v.role,
         ...(target ? { urlFile: target } : { url: r.url }),
       }
-      out(`${JSON.stringify({ ...summary, warnings: r.warnings })}\n`)
+      out(`${JSON.stringify({ ...summary, warnings: r.warnings, granted: r.granted })}\n`)
     } else if (target) {
       out(`Created the role ${v.role} and the database ${v.database}; the connection URL is in ${target}.\n`)
     } else {
@@ -194,8 +237,13 @@ async function dropCommand(args: string[]): Promise<number> {
       `This removes the database ${v.database} and everything in it: pass --confirm ${v.database}.`,
     )
   }
-  const adminUrl = await readUrl(v['db-admin-url-file'])
-  await db.drop(adminUrl, { database: v.database, role: v.role })
-  out(`Removed the database ${v.database} and the role ${v.role}.\n`)
+  const adminUrl = await readUrl(v['db-admin-url-file'], { piped: true })
+  const r = await db.drop(adminUrl, { database: v.database, role: v.role })
+  if (!r.database && !r.role) {
+    out(`Nothing to remove: there is no database ${v.database} and no role ${v.role}.\n`)
+    return 0
+  }
+  const gone = [r.database && `the database ${v.database}`, r.role && `the role ${v.role}`].filter(Boolean)
+  out(`Removed ${gone.join(' and ')}.\n`)
   return 0
 }
