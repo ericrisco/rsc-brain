@@ -1,6 +1,7 @@
 // POST /v1/brains/:slug/invitations (plan rsc-factory-brain §3.1, spec C6, CA6b): a service account that
 // may invite brings people into a brain it created, as curator or reader. It never takes a role away nor
-// changes one, it cannot touch a brain someone else made, and the brain's curators are told.
+// lowers one (it raises one, CA6b), never adopts a link someone else holds, cannot touch a brain someone else
+// made, and the brain's curators are told.
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 import { skipPg } from '../helpers/pg.ts'
