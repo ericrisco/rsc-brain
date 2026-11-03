@@ -45,7 +45,12 @@ export const brainRoutes: Route[] = [
   // A service account brings people into a brain it created (plan rsc-factory-brain §3.1, spec C6).
   route('POST /v1/brains/:slug/invitations', async (r) => ({
     status: 201,
-    body: await serviceInvite(ctxOf(r), r.params.slug as string, { people: obj(r.body).people }),
+    body: await serviceInvite(
+      ctxOf(r),
+      r.params.slug as string,
+      { people: obj(r.body).people },
+      r.serviceInvitesPerHour,
+    ),
   })),
   route('GET /v1/brains/:slug/repos', async (r) => ({
     body: { repos: await listRepos(ctxOf(r), r.params.slug as string) },

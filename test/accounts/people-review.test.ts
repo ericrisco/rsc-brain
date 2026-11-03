@@ -305,7 +305,7 @@ describe('people: review', { skip: skipPg }, () => {
     w.advance(-73 * 3_600_000)
   })
 
-  it('second pass: a service naming someone already invited keeps their link and mails nothing new', async () => {
+  it('F1-PR2 review: a service naming someone invited by another takes the invitation over with a new link', async () => {
     const r = await w.callWeb(adminWeb, 'POST', '/v1/invitations', {
       emails: ['boss2@example.com'],
       isAdmin: true,
@@ -319,12 +319,18 @@ describe('people: review', { skip: skipPg }, () => {
         .status,
       201,
     )
+    // The link someone else held no longer opens it; the email alone gets the new one, with everything.
     const seen = await w.raw('POST', '/v1/invitations/look', { body: { token: tokenOf(link) } })
-    assert.equal(seen.status, 200)
-    assert.ok(
-      (seen.body.invitation as { brains: Array<{ slug: string }> }).brains.some((b) => b.slug === 'sneak'),
-    )
-    assert.equal(w.mails.filter((m) => m.to === 'boss2@example.com').length, before)
+    assert.equal(seen.status, 400, seen.text)
+    const mails = w.mails.filter((m) => m.to === 'boss2@example.com')
+    assert.equal(mails.length, before + 1)
+    const fresh = await w.raw('POST', '/v1/invitations/look', {
+      body: { token: tokenOf(mails.at(-1)?.text ?? '') },
+    })
+    assert.equal(fresh.status, 200, fresh.text)
+    const inv = fresh.body.invitation as { isAdmin: boolean; brains: Array<{ slug: string; role: string }> }
+    assert.equal(inv.isAdmin, true)
+    assert.deepEqual(inv.brains, [{ slug: 'sneak', name: 'sneak', role: 'curator' }])
   })
 
   it('second pass: an invitation the administration widened names the administration as inviter', async () => {

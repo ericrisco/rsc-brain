@@ -1,5 +1,5 @@
 {
-  "$comment": "What rsc-factory reads from each rsc-brain answer (plan rsc-factory-brain §3.1–§3.2): the consumer contract. The same file lives in both repositories: rsc-factory checks its fake rsc-brain against test/memory/brain-shapes.json, rsc-brain checks its real server against test/contract/brain-shapes.json (factory-consumer.test.ts). Change both copies in the same pair of PRs, reviewed by hand.",
+  "$comment": "What rsc-factory reads from each rsc-brain answer, and the bodies it sends (plan rsc-factory-brain §3.1–§3.2): the consumer contract. The same file lives in both repositories: rsc-factory's fake rsc-brain answers with these replies and refuses a body that breaks these requests (test/memory/brain-shapes.json); rsc-brain sends these requests to its real server and checks its replies (test/contract/brain-shapes.json, factory-consumer.test.ts). Each side's test pins the SHA-256 of its copy to the same constant: changing one copy fails its own test until the constant changes, and the constant is changed in both repositories in the same pair of PRs. That catches an edit made on one side only; it does not prove the two repositories agree at every commit.",
   "error": {
     "type": "object",
     "required": ["error"],
@@ -198,7 +198,10 @@
                   "type": "string"
                 },
                 "status": {
-                  "enum": ["added", "invited", "already"]
+                  "enum": ["added", "invited", "raised", "already", "refused"]
+                },
+                "reason": {
+                  "enum": ["account_removed"]
                 }
               }
             }
@@ -482,6 +485,177 @@
           "total": {
             "type": "integer"
           }
+        }
+      }
+    }
+  },
+  "requests": {
+    "$comment": "The body rsc-factory sends with each operation that has one (src/memory/brain-client.ts). No other field: a renamed or added field breaks the shape.",
+    "POST /v1/brains": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "name", "purpose"],
+      "properties": {
+        "slug": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "firstCurator": {
+          "type": "string"
+        }
+      }
+    },
+    "POST /v1/brains/{slug}/invitations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["people"],
+      "properties": {
+        "people": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["email", "role"],
+            "properties": {
+              "email": {
+                "type": "string"
+              },
+              "role": {
+                "enum": ["curator", "reader"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "POST /v1/access": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["person", "brains"],
+      "properties": {
+        "person": {
+          "type": "string"
+        },
+        "brains": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "POST /v1/keys/short": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["writeBrain", "readBrains", "ref", "agent", "ttlMinutes"],
+      "properties": {
+        "writeBrain": {
+          "type": "string"
+        },
+        "readBrains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ref": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "onBehalf": {
+          "type": "string"
+        },
+        "ttlMinutes": {
+          "type": "integer"
+        }
+      }
+    },
+    "POST /v1/brains/{slug}/sessions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["forKey", "purpose", "ref"],
+      "properties": {
+        "forKey": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "ref": {
+          "type": "string"
+        }
+      }
+    },
+    "POST /v1/sessions/{id}/end": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [],
+      "properties": {}
+    },
+    "POST /v1/brains/{slug}/entries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "title", "content", "refs", "requestKey"],
+      "properties": {
+        "type": {
+          "enum": ["preference"]
+        },
+        "title": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "appliesTo": {
+          "type": "string"
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requestKey": {
+          "type": "string"
+        }
+      }
+    },
+    "POST /v1/brains/{slug}/corrections/relay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["onBehalf", "title", "content", "refs", "requestKey"],
+      "properties": {
+        "onBehalf": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "appliesTo": {
+          "type": "string"
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "requestKey": {
+          "type": "string"
         }
       }
     }

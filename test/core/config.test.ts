@@ -38,4 +38,15 @@ describe('configuration', () => {
       )
     }
   })
+  it('service invitation mails: 100 an hour, unless RSC_BRAIN_SERVICE_INVITES_PER_HOUR says otherwise (1..100000)', () => {
+    assert.equal(readConfig({ RSC_BRAIN_DATABASE_URL: 'postgres://x' }).serviceInvitesPerHour, 100)
+    const c = readConfig({ RSC_BRAIN_DATABASE_URL: 'postgres://x', RSC_BRAIN_SERVICE_INVITES_PER_HOUR: '7' })
+    assert.equal(c.serviceInvitesPerHour, 7)
+    for (const n of ['0', '100001', '2.5', 'lots', '']) {
+      assert.throws(
+        () => readConfig({ RSC_BRAIN_DATABASE_URL: 'postgres://x', RSC_BRAIN_SERVICE_INVITES_PER_HOUR: n }),
+        /RSC_BRAIN_SERVICE_INVITES_PER_HOUR must be a whole number from 1 to 100000/,
+      )
+    }
+  })
 })

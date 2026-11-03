@@ -13,6 +13,7 @@ import type { Db } from '../db/db.ts'
 import { adminOnly } from '../domain/guards.ts'
 import { installation, setupDone } from '../domain/installation.ts'
 import { activeAt } from '../domain/maintenance.ts'
+import { SERVICE_INVITES_PER_HOUR } from '../domain/service-invite.ts'
 import type { Outbox } from '../mail/mail.ts'
 import { mcpRoutes } from '../mcp/server.ts'
 import type { Providers } from '../meaning/providers.ts'
@@ -79,6 +80,8 @@ export type AppDeps = {
   releases?: ReleaseChecker
   // Where exports are prepared before they are sent (a private folder of the system's temporary space).
   exportDir?: string
+  // The invitation mails one service account may have sent in an hour (RSC_BRAIN_SERVICE_INVITES_PER_HOUR).
+  serviceInvitesPerHour?: number
 }
 
 // How long the health address waits for the database before it says the database is down.
@@ -602,6 +605,7 @@ export function createHandler(deps: AppDeps) {
         copies: deps.copies ?? null,
         releases: deps.releases ?? null,
         exportDir,
+        serviceInvitesPerHour: deps.serviceInvitesPerHour ?? SERVICE_INVITES_PER_HOUR,
         signal: left.signal,
         log,
       }

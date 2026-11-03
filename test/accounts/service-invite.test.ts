@@ -34,6 +34,12 @@ describe('a service invites people to the brains it created', { skip: skipPg }, 
         [email],
       )
     )?.grants ?? null) as Array<{ brainId: string; role: string }> | null
+  const tokenOf = (v: unknown) => /#token=([A-Za-z0-9_-]+)/.exec(String(v))?.[1] ?? ''
+  const accept = (token: string, name: string) =>
+    w.raw('POST', '/v1/invitations/accept', {
+      headers: { 'x-requested-with': 'rsc-brain-web' },
+      body: { token, name, password: 'correct horse battery staple' },
+    })
   const brainId = async (slug: string) =>
     String((await w.db.one('SELECT id FROM brains WHERE slug = $1', [slug]))?.id)
 
@@ -85,7 +91,7 @@ describe('a service invites people to the brains it created', { skip: skipPg }, 
     assert.match(mail.subject, /^rsc-factory invited you/)
   })
 
-  it('C6: a member keeps the role they have: nobody is lowered nor raised ("already")', async () => {
+  it('C6, CA6b: a member is never lowered; a reader asked for as curator is raised ("raised")', async () => {
     const r = await invite('made', [
       { email: eric.email, role: 'reader' },
       { email: rita.email, role: 'curator' },
@@ -93,10 +99,14 @@ describe('a service invites people to the brains it created', { skip: skipPg }, 
     assert.equal(r.status, 201, r.text)
     assert.deepEqual(r.body.invited, [
       { email: eric.email, status: 'already' },
-      { email: rita.email, status: 'already' },
+      { email: rita.email, status: 'raised' },
     ])
     assert.equal(await roleOf('made', eric.id), 'curator')
-    assert.equal(await roleOf('made', rita.id), 'reader')
+    assert.equal(await roleOf('made', rita.id), 'curator')
+    // Asked again as reader: never lowered.
+    const again = await invite('made', [{ email: rita.email, role: 'reader' }])
+    assert.deepEqual(again.body.invited, [{ email: rita.email, status: 'already' }])
+    assert.equal(await roleOf('made', rita.id), 'curator')
   })
 
   it('an open invitation that already brings the person to this brain is left as it is', async () => {
@@ -172,15 +182,21 @@ describe('a service invites people to the brains it created', { skip: skipPg }, 
     assert.equal(await openGrants('x@example.com'), null)
   })
 
-  it('a removed account is not brought back: the whole request is refused and nothing changes', async () => {
+  it('a removed account is not brought back: that person is refused, the others go ahead', async () => {
     const r = await invite('made', [
       { email: 'first@example.com', role: 'reader' },
       { email: gone.email, role: 'reader' },
     ])
-    assert.equal(r.status, 409, r.text)
-    assert.equal(r.body.error?.code, 'email_taken')
-    assert.equal(await openGrants('first@example.com'), null)
+    assert.equal(r.status, 201, r.text)
+    assert.deepEqual(r.body.invited, [
+      { email: 'first@example.com', status: 'invited' },
+      { email: gone.email, status: 'refused', reason: 'account_removed' },
+    ])
+    assert.deepEqual(await openGrants('first@example.com'), [
+      { brainId: await brainId('made'), role: 'reader' },
+    ])
     assert.equal(await roleOf('made', gone.id), null)
+    assert.equal(await openGrants(gone.email), null)
   })
 
   it('a malformed request says what to fix', async () => {
@@ -228,7 +244,8 @@ describe('a service invites people to the brains it created', { skip: skipPg }, 
       'SELECT account_id, kind, brain_id, text FROM notices WHERE id > $1 ORDER BY account_id',
       [noticed?.id],
     )
-    const curators = [eric.id, ana.id].sort()
+    // Rita among them since she was raised to curator (CA6b).
+    const curators = [eric.id, ana.id, rita.id].sort()
     assert.deepEqual(
       told.map((n) => n.account_id),
       curators,
@@ -239,6 +256,76 @@ describe('a service invites people to the brains it created', { skip: skipPg }, 
       assert.match(String(n.text), /rsc-factory/)
       assert.match(String(n.text), /audited@example\.com/)
     }
+  })
+
+  it('F1: an open invitation someone else made is taken over: its old link stops working, the person gets a new one', async () => {
+    const mallory = await w.person('Mallory')
+    await w.call(eric.key, 'POST', '/v1/brains', { slug: 'mallorys' })
+    await w.member('mallorys', mallory.id, 'curator')
+    await w.db.query('UPDATE installation SET curators_invite = true WHERE id = 1')
+    const email = 'alice@corp.example'
+    const web = await w.web(mallory.id)
+    const sent = await w.callWeb(web, 'POST', '/v1/invitations', {
+      emails: [email],
+      brains: [{ slug: 'mallorys', role: 'reader' }],
+    })
+    assert.equal(sent.status, 201, sent.text)
+    const mine = (sent.body.invitations as Json[])[0] as Json
+    const held = tokenOf(mine.link)
+    const r = await invite('made', [{ email, role: 'curator' }])
+    assert.deepEqual(r.body.invited, [{ email, status: 'invited' }])
+    // Mallory's link no longer opens anything: she cannot accept it as alice.
+    const stolen = await accept(held, 'Mallory again')
+    assert.equal(stolen.status, 400, stolen.text)
+    assert.equal(stolen.body.error?.code, 'invitation_invalid')
+    // Nor can she make a new link of it: it is no longer hers.
+    const resent = await w.callWeb(web, 'POST', `/v1/invitations/${String(mine.id)}/resend`)
+    assert.equal(resent.status, 404, resent.text)
+    // Alice gets one fresh link, from rsc-factory, that covers every grant.
+    const mail = await w.mailTo(email, /^rsc-factory invited you/)
+    const fresh = tokenOf(mail.text)
+    assert.notEqual(fresh, held)
+    const joined = await accept(fresh, 'Alice')
+    assert.equal(joined.status, 201, joined.text)
+    assert.deepEqual((joined.body.brains as Json[]).map((b) => [b.slug, b.role]).sort(), [
+      ['made', 'curator'],
+      ['mallorys', 'reader'],
+    ])
+    await w.db.query('UPDATE installation SET curators_invite = false WHERE id = 1')
+  })
+
+  it('F1: a brain made with a first curator takes over an open invitation of someone else the same way', async () => {
+    const email = 'bob@corp.example'
+    const admin = await w.callWeb(await w.web(eric.id), 'POST', '/v1/invitations', {
+      emails: [email],
+      brains: [{ slug: 'erics', role: 'reader' }],
+    })
+    assert.equal(admin.status, 201, admin.text)
+    const held = tokenOf(((admin.body.invitations as Json[])[0] as Json).link)
+    const made = await w.call(factory.key, 'POST', '/v1/brains', { slug: 'bobs', firstCurator: email })
+    assert.equal(made.status, 201, made.text)
+    assert.equal((await accept(held, 'Not Bob')).status, 400)
+    const fresh = tokenOf((await w.mailTo(email, /^rsc-factory invited you/)).text)
+    assert.notEqual(fresh, held)
+  })
+
+  it('CA6b: an open invitation of this service to the brain as reader is raised to curator, its link kept', async () => {
+    const email = 'raise-me@example.com'
+    await invite('other-made', [{ email, role: 'reader' }])
+    const mailsTo = () => w.mails.filter((m) => m.to === email).length
+    const before = mailsTo()
+    const noticed = await w.db.one<{ id: string }>('SELECT coalesce(max(id), 0) AS id FROM notices')
+    const r = await invite('other-made', [{ email, role: 'curator' }])
+    assert.deepEqual(r.body.invited, [{ email, status: 'raised' }])
+    assert.deepEqual(await openGrants(email), [{ brainId: await brainId('other-made'), role: 'curator' }])
+    assert.equal(mailsTo(), before, 'the link already mailed still works')
+    const told = await w.db.query('SELECT text FROM notices WHERE id > $1', [noticed?.id])
+    assert.ok(told.length > 0, 'the curators are told')
+    for (const n of told) assert.match(String(n.text), /raise-me@example\.com \(curator, raised\)/)
+    // Asked as reader again: never lowered.
+    const down = await invite('other-made', [{ email, role: 'reader' }])
+    assert.deepEqual(down.body.invited, [{ email, status: 'already' }])
+    assert.deepEqual(await openGrants(email), [{ brainId: await brainId('other-made'), role: 'curator' }])
   })
 
   it('nothing to tell when nobody new came in', async () => {

@@ -49,6 +49,27 @@ export async function addMember(
   )
 }
 
+// A person joins a brain with a role, or rises to it; never lowered (spec C6: a service never takes a role
+// away). One statement, so a role given at the same time by someone else is never overwritten with a lower
+// one: the row it conflicts with is re-read under its lock, and only a higher role replaces it.
+const RANK_SQL = (r: string) => `array_position(ARRAY['reader', 'contributor', 'curator'], ${r})`
+export async function raiseMember(
+  db: Db,
+  brainId: string,
+  accountId: string,
+  role: Role,
+  at: Date,
+): Promise<'added' | 'raised' | 'already'> {
+  const r = await db.one<{ added: boolean }>(
+    `INSERT INTO memberships (brain_id, account_id, role, created_at) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (brain_id, account_id) DO UPDATE SET role = EXCLUDED.role
+       WHERE ${RANK_SQL('memberships.role')} < ${RANK_SQL('EXCLUDED.role')}
+     RETURNING (xmax = 0) AS added`,
+    [brainId, accountId, role, at],
+  )
+  return !r ? 'already' : r.added ? 'added' : 'raised'
+}
+
 export async function createBrain(ctx: Ctx, input: NewBrain): Promise<Brain> {
   await allow(ctx, 'brain.create', {})
   const slug = (input.slug ?? '').trim()

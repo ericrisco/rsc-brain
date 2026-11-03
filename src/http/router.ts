@@ -55,6 +55,8 @@ export type PublicReq = {
   releases: ReleaseChecker | null
   // Where exports are prepared before they are sent (null: a private folder of this process).
   exportDir: string | null
+  // The invitation mails one service account may have sent in an hour.
+  serviceInvitesPerHour: number
   // Aborted when the client leaves (from the start of the request).
   signal: AbortSignal
   // The log of the server (src/core/log.ts).

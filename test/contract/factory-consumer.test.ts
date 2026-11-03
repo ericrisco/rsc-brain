@@ -1,10 +1,14 @@
 // The consumer contract of rsc-factory (plan rsc-factory-brain §3.2, T010): every call its rsc-brain client
-// makes, sent the way it sends it, answered by the real server with the shapes it reads. The shapes are a
-// reviewed copy of rsc-factory's test/memory/brain-shapes.json (brain-shapes.json here); its fake rsc-brain is
-// checked against the same file, so neither side can drift alone. It also pins what that fake models of
-// rsc-brain's behaviour: relayed corrections and their refusals, request keys per credential, the start-up
-// context of each agent, and "mine" among the pending proposals.
+// makes, sent with a body that fits the request shape rsc-factory sends (brain-shapes.json "requests"),
+// answered by the real server with the reply shapes it reads. brain-shapes.json is a reviewed copy of
+// rsc-factory's test/memory/brain-shapes.json: its fake rsc-brain answers with the same replies and refuses a
+// body that breaks the same requests. Both sides pin the SHA-256 of their copy to the same constant (below):
+// an edit to one copy fails its own side until the constant changes, and the constant changes in both
+// repositories in the same pair of PRs. That catches a one-sided edit; it cannot see the other repository.
+// It also pins what that fake models of rsc-brain's behaviour: relayed corrections and their refusals,
+// request keys per credential, the start-up context of each agent, and "mine" among the pending proposals.
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { after, before, describe, it } from 'node:test'
 import { skipPg } from '../helpers/pg.ts'
@@ -17,15 +21,26 @@ type Schema = {
   properties?: Record<string, Schema>
   items?: Schema
   enum?: unknown[]
+  additionalProperties?: boolean
+  minItems?: number
+  maxItems?: number
 }
-type Shapes = { error: Schema; operations: Record<string, { status: number; reply: Schema }> }
+type Shapes = {
+  error: Schema
+  operations: Record<string, { status: number; reply: Schema }>
+  requests: Record<string, Schema>
+}
 
-const SHAPES = JSON.parse(readFileSync(new URL('./brain-shapes.json', import.meta.url), 'utf8')) as Shapes
+// The same constant is in rsc-factory's test/memory/brain-client.test.ts: change both, with both copies.
+const BRAIN_SHAPES_SHA256 = 'b4de57ce52c6a89ddbaf758562ec452920387c75ff5fabf2a1b4ce484e1af4aa'
+const SHAPES_TEXT = readFileSync(new URL('./brain-shapes.json', import.meta.url), 'utf8')
+const SHAPES = JSON.parse(SHAPES_TEXT) as Shapes
 
 const typeOf = (v: unknown) =>
   v === null ? 'null' : Array.isArray(v) ? 'array' : Number.isInteger(v) ? 'integer' : typeof v
 
-// The part of JSON Schema the shapes use: type (one or several), required, properties, items, enum.
+// The part of JSON Schema the shapes use: type (one or several), required, properties, additionalProperties
+// (false only), items, minItems, maxItems, enum.
 function problems(s: Schema, v: unknown, at = 'body', out: string[] = []): string[] {
   const types = s.type === undefined ? [] : Array.isArray(s.type) ? s.type : [s.type]
   const t = typeOf(v)
@@ -39,9 +54,17 @@ function problems(s: Schema, v: unknown, at = 'body', out: string[] = []): strin
     const o = v as Json
     for (const k of s.required ?? []) if (!(k in o)) out.push(`${at}: "${k}" is missing`)
     for (const [k, p] of Object.entries(s.properties)) if (k in o) problems(p, o[k], `${at}.${k}`, out)
+    if (s.additionalProperties === false)
+      for (const k of Object.keys(o)) if (!(k in s.properties)) out.push(`${at}: "${k}" is not in the shape`)
   }
-  if (t === 'array' && s.items)
-    for (const [i, x] of (v as unknown[]).entries()) problems(s.items, x, `${at}[${i}]`, out)
+  if (t === 'array') {
+    const n = (v as unknown[]).length
+    if (s.minItems !== undefined && n < s.minItems)
+      out.push(`${at}: ${n} items, the shape says ${s.minItems} or more`)
+    if (s.maxItems !== undefined && n > s.maxItems)
+      out.push(`${at}: ${n} items, the shape says ${s.maxItems} or fewer`)
+    if (s.items) for (const [i, x] of (v as unknown[]).entries()) problems(s.items, x, `${at}[${i}]`, out)
+  }
   return out
 }
 
@@ -59,6 +82,11 @@ describe('the consumer contract of rsc-factory', { skip: skipPg }, () => {
     const shape = SHAPES.operations[op]
     assert.ok(shape, `no shape for ${op}`)
     const method = op.split(' ')[0] as string
+    // Sent as rsc-factory sends it: an operation with a body has the request shape of rsc-factory's client.
+    const request = SHAPES.requests[op]
+    assert.equal(body === undefined, request === undefined, `${op}: a body exactly when the shapes give one`)
+    if (request)
+      assert.deepEqual(problems(request, body), [], `${op}: the body is not what rsc-factory sends`)
     const r = await w.call(key, method, path, body)
     assert.equal(r.status, shape.status, `${op}: ${r.text}`)
     assert.deepEqual(problems(shape.reply, r.body), [], `${op}: ${r.text.slice(0, 400)}`)
@@ -128,6 +156,21 @@ describe('the consumer contract of rsc-factory', { skip: skipPg }, () => {
       (inv.invited as Json[]).map((x) => x.status),
       ['added', 'invited'],
     )
+    // A reader asked for as curator rises (CA6b); a removed account is refused for that person alone.
+    const rae = await w.person('Rae')
+    await w.member('youtube-channel', rae.id, 'reader')
+    const gone = await w.person('Gone')
+    await w.db.query("UPDATE accounts SET status = 'removed' WHERE id = $1", [gone.id])
+    const again = await call('POST /v1/brains/{slug}/invitations', '/v1/brains/youtube-channel/invitations', {
+      people: [
+        { email: await emailOf(rae.id), role: 'curator' },
+        { email: await emailOf(gone.id), role: 'reader' },
+      ],
+    })
+    assert.deepEqual(again.invited, [
+      { email: await emailOf(rae.id), status: 'raised' },
+      { email: await emailOf(gone.id), status: 'refused', reason: 'account_removed' },
+    ])
     const acc = await call('POST /v1/access', '/v1/access', {
       person: eric.email,
       brains: ['youtube-channel', 'company'],
@@ -333,6 +376,19 @@ describe('the consumer contract of rsc-factory', { skip: skipPg }, () => {
     const listed = await call('GET /v1/brains', '/v1/brains')
     const stats = (listed.brains as Json[]).find((b) => b.slug === 'youtube-channel')?.stats as Json
     assert.equal(stats.pendingProposals, 2)
+  })
+
+  it('the shapes are the copy rsc-factory pins (SHA-256), and every request names an operation', () => {
+    assert.equal(createHash('sha256').update(SHAPES_TEXT).digest('hex'), BRAIN_SHAPES_SHA256)
+    const ops = Object.keys(SHAPES.operations)
+    for (const op of Object.keys(SHAPES.requests).filter((k) => k !== '$comment'))
+      assert.ok(ops.includes(op), op)
+    // The checker refuses what a request shape leaves out, so a renamed field cannot pass.
+    const people = SHAPES.requests['POST /v1/brains/{slug}/invitations'] as Schema
+    assert.deepEqual(problems(people, { people: [{ email: 'a@b.c', role: 'reader' }] }), [])
+    assert.notDeepEqual(problems(people, { people: [{ mail: 'a@b.c', role: 'reader' }] }), [])
+    assert.notDeepEqual(problems(people, { people: [{ email: 'a@b.c', role: 'reader', name: 'A' }] }), [])
+    assert.notDeepEqual(problems(people, { people: [] }), [])
   })
 
   it('every operation of the shapes was called', () => {

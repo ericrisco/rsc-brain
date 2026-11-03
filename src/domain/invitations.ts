@@ -1,7 +1,7 @@
 // Invitations (spec B4 «Invitar»): the administration (or a curator, when the installation allows it)
 // invites emails to brains with a role each. The link works once and for 72 hours; it goes by mail, and
 // the administration can always copy it (no mail set up, or a failed send). Only its hash is kept.
-import { atLeast, ROLES, type Role } from '../auth/can.ts'
+import { atLeast, ROLES, type Role, rank } from '../auth/can.ts'
 import { checkPassword, hashPassword } from '../auth/password.ts'
 import { memberRole } from '../auth/principal.ts'
 import { hashSecret, newSecret } from '../auth/secrets.ts'
@@ -77,10 +77,13 @@ async function mailInvitation(
 // - a curator never touches it (409): its link, and whatever it grants, stay with whoever made it;
 // - the administration adds these grants to an open one, takes it over and makes its link again (the
 //   old link stops working). An expired one is closed, and a new one is made;
-// - a service naming a first curator adds the grant to an open one, keeping its link (nothing new is
-//   mailed, and the link stays with whoever has it); an expired one is closed, and a new one is made.
+// - a service adds its grants to an open one, never lowering a role there. When that service made it, the
+//   link is kept (nothing new is mailed). When someone else made it, the service takes it over and makes its
+//   link again: the old link stops working, so whoever held it gains nothing, and the new link goes to the
+//   email only (F1-PR2 review). An expired one is closed, and a new one is made.
 // A closed expired invitation passes on the first-curator places of brains still waiting for this
 // email, never the administrator rights.
+export const INVITATION_LOCK = "SELECT pg_advisory_xact_lock(hashtext('rsc-brain invitation ' || $1))"
 export async function storeInvitation(
   db: Db,
   clock: Clock,
@@ -96,7 +99,7 @@ export async function storeInvitation(
   const now = clock()
   const token = newSecret()
   const expiresAt = new Date(now.getTime() + INVITE_HOURS * 3_600_000)
-  await db.query("SELECT pg_advisory_xact_lock(hashtext('rsc-brain invitation ' || $1))", [o.email])
+  await db.query(INVITATION_LOCK, [o.email])
   const unused = await db.one<Row>(
     'SELECT * FROM invitations WHERE email = $1 AND used_at IS NULL AND revoked_at IS NULL FOR UPDATE',
     [o.email],
@@ -113,7 +116,7 @@ export async function storeInvitation(
     for (const g of o.grants) {
       const i = grants.findIndex((x) => x.brainId === g.brainId)
       if (i < 0) grants.push(g)
-      else grants[i] = g
+      else if (o.as !== 'service' || rank(g.role) > rank((grants[i] as Grant).role)) grants[i] = g
     }
     return grants
   }
@@ -125,7 +128,7 @@ export async function storeInvitation(
     carried = (unused.grants as Grant[]).filter((g) => g.role === 'curator' && ids.has(g.brainId))
   } else if (unused) {
     const grants = merge(unused.grants as Grant[])
-    if (o.as === 'service') {
+    if (o.as === 'service' && unused.invited_by === o.by) {
       await db.query('UPDATE invitations SET grants = $2 WHERE id = $1', [unused.id, JSON.stringify(grants)])
       return {
         id: String(unused.id),
@@ -530,6 +533,13 @@ export async function acceptInvitation(
   const hash = await hashPassword(password)
   const now = clock()
   const out = await db.tx(async (tx) => {
+    // The email's turn first, as everything that makes or changes its invitation takes it (a service
+    // inviting the same email at once then sees the account this makes); then the invitation, read again.
+    const peek = await tx.one<{ email: string }>('SELECT email FROM invitations WHERE token_hash = $1', [
+      hashSecret(input.token as string),
+    ])
+    if (!peek) throw badInvitation()
+    await tx.query(INVITATION_LOCK, [peek.email])
     const r = await tx.one<Row>(
       'SELECT * FROM invitations WHERE token_hash = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $2 FOR UPDATE',
       [hashSecret(input.token as string), now],

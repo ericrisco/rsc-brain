@@ -89,6 +89,8 @@ export async function world(
     releases?: ReleaseChecker
     // Where exports are prepared before they are sent (B7 PR31 review).
     exportDir?: string
+    // The invitation mails a service may have sent in an hour (F1-PR2 review).
+    serviceInvitesPerHour?: number
   } = {},
 ): Promise<World> {
   const t = await freshDatabase()
@@ -132,6 +134,7 @@ export async function world(
       ...(o.releases ? { releases: o.releases } : {}),
       ...(o.backups ? { backups: o.backups } : {}),
       ...(o.exportDir ? { exportDir: o.exportDir } : {}),
+      ...(o.serviceInvitesPerHour ? { serviceInvitesPerHour: o.serviceInvitesPerHour } : {}),
       mailTransport: () => ({
         async send(m) {
           if (w.mailFails) throw new Error('connection refused by the test mail server')
