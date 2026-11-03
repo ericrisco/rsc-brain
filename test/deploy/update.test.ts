@@ -18,6 +18,7 @@ import {
   openSync,
   readFileSync,
   rmSync,
+  statfsSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -286,9 +287,11 @@ describe('the launcher: update (CA6 with a fake docker)', () => {
 
   it('too little disk for twice the last copy and 1 GB: exit 3 saying how much, nothing done', async () => {
     const c = await installed()
-    // A copy of 100 TB (sparse: it takes no room).
+    // A copy half the size of the free space (sparse: it takes no room), so twice it and 1 GB never fit. Sized from
+    // this disk: some file systems refuse a sparse file far larger than the disk.
+    const fs = statfsSync(c.dir)
     const fd = openSync(join(c.dir, 'backups', 'rsc-brain-20261102T030000Z-scheduled.rscb'), 'w')
-    ftruncateSync(fd, 100 * 2 ** 40)
+    ftruncateSync(fd, Math.ceil((fs.bavail * fs.bsize) / 2))
     closeSync(fd)
     const r = launch(c, update(c, '--image', 'rsc-brain:next'))
     assert.equal(r.code, 3, r.stderr)
