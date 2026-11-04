@@ -4,10 +4,12 @@
 // entry type, external reference, dates and «not in the wiki yet» are kept in the address (they survive a
 // reload) and applied together with one button. Clients and authors are picked from what the brain
 // holds, never typed as ids. New sessions arrive from the live feed of the brain without reloading.
+
 import { useEffect, useRef, useState } from 'preact/hooks'
 import type { ApiError } from '../../api/client.ts'
 import { useFresh } from '../../api/fresh.ts'
 import { api } from '../../api/index.ts'
+import { useOnChange } from '../../lib/follow.ts'
 import {
   byline,
   mergeById,
@@ -55,7 +57,7 @@ function Filters({
   const j = T.journal
   const [v, setV] = useState<SessionFilters>(values)
   // The address changed (Back, Clear): the form shows it.
-  useEffect(() => setV(values), [JSON.stringify(values)])
+  useOnChange(JSON.stringify(values), () => setV(values))
   const set = (k: keyof SessionFilters) => (e: Event) =>
     setV({ ...v, [k]: (e.currentTarget as HTMLInputElement | HTMLSelectElement).value })
   const pick = (k: keyof SessionFilters, label: string, any: string, options: Array<[string, string]>) => (

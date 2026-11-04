@@ -20,6 +20,7 @@ import { api } from '../api/index.ts'
 import { invalidate, resource } from '../api/resource.ts'
 import { ago } from '../lib/brains.ts'
 import { type ExportFormat, exportAsk, sizeLabel } from '../lib/exporting.ts'
+import { useOnChange } from '../lib/follow.ts'
 import { fileProblem, type ImportReport, importAsk, importDone, whyText } from '../lib/importing.ts'
 import { focusOnArrival } from '../lib/screen.ts'
 import {
@@ -136,15 +137,8 @@ function MemberItem({
   const [asking, setAsking] = useState(false)
   const [selfDemote, setSelfDemote] = useState(false)
   const { route } = useLocation()
-  // The choice follows the saved role only when that role changes (a save, or another curator's change read
-  // again). On the first render it is already the saved role: copying it again in an effect, which runs after
-  // paint, put back a role picked before it ran.
-  const saved = useRef(m.role)
-  useEffect(() => {
-    if (saved.current === m.role) return
-    saved.current = m.role
-    setPick(m.role)
-  }, [m.role])
+  // The choice follows the saved role when that role changes (a save, another curator's change read again).
+  useOnChange(m.role, () => setPick(m.role))
   useEffect(() => {
     if (asking) document.getElementById(`remove-yes-${m.accountId}`)?.focus()
   }, [asking])
