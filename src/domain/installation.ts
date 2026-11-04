@@ -254,10 +254,25 @@ export async function companionSetup(
       canInvite: true,
     })
     const key = await mintMainKey(tx, clock, { accountId: serviceId, name: 'main' })
+    await markCompanionService(tx, clock(), serviceId)
     return { serviceId, serviceKey: key.secret }
   })
   if (!more) throw new Error('companion setup made no service account')
   return { adminId, ...more }
+}
+
+// Which service account is rsc-factory's (plan F1 §3.1): written in the transaction that makes it, as an audit row
+// (append-only, kept in copies; F1 adds no migration). Reconnecting reaches that account and no other.
+export const COMPANION_SERVICE = 'installation.companion.service'
+export async function markCompanionService(db: Db, at: Date, serviceId: string): Promise<void> {
+  await audit(db, {
+    at,
+    actorId: null,
+    credentialId: null,
+    action: COMPANION_SERVICE,
+    target: serviceId,
+    outcome: 'ok',
+  })
 }
 
 // Restoring a copy (B7) calls this: every key, session and connection made before stops working.

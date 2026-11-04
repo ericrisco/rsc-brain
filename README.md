@@ -101,8 +101,10 @@ sh rsc-brain.sh install --companion --attach-network rsc-shared --factory-url ht
   through a proxy or from this machine), and only once: two calls at once set it up once.
 - If rsc-factory loses its main key afterwards (an answer that never arrived, a restore), it gets a
   new one with `POST /v1/setup/companion/reconnect`: the same one-time key plus the email and
-  password of an administrator of rsc-brain (wrong passwords wait as signing in does). The main key
-  before, and the keys made from it, stop working.
+  password of an administrator of rsc-brain (wrong passwords wait as signing in does). It reaches
+  only the account the first handshake made; the main key before, and the keys made from it, stop
+  working. If an administrator removed that account, it says so (`service_removed`): reactivate it
+  in Admin › People first.
 - The shared network is IPv4 only: one with IPv6 on is refused (exit 2).
 - It needs a PostgreSQL that is not rsc-brain's own (`--db shared` by default, or `--db existing`).
   With `--local`, also Docker Engine 28 and Docker Compose 2.33 or newer.

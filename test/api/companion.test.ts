@@ -283,11 +283,17 @@ describe('companion mode: reconnecting rsc-factory', { skip: skipPg }, () => {
   let w: World
   let first = { serviceKey: '', serviceId: '', adminId: '' }
   const reconnect = (
-    o: { token?: string; email?: string; password?: string; headers?: Record<string, string> } = {},
+    o: {
+      token?: string
+      email?: string
+      password?: string
+      headers?: Record<string, string>
+      body?: Record<string, unknown>
+    } = {},
   ) =>
     w.raw('POST', '/v1/setup/companion/reconnect', {
       headers: { ...auth(o.token), ...(o.headers ?? {}) },
-      body: { email: o.email ?? admin.email, password: o.password ?? admin.password },
+      body: { email: o.email ?? admin.email, password: o.password ?? admin.password, ...(o.body ?? {}) },
     })
   before(async () => {
     w = await companionWorld()
@@ -341,16 +347,19 @@ describe('companion mode: reconnecting rsc-factory', { skip: skipPg }, () => {
     assert.equal((await w.call(String(r.body.serviceKey), 'GET', '/v1/me')).status, 200)
   })
 
-  it('the service account gone (renamed by hand): a new rsc-factory account that may create brains and invite', async () => {
+  it('pinned to the account the first handshake made: renamed by hand, still that one; another named rsc-factory, never', async () => {
     await w.db.query("UPDATE accounts SET name = 'old factory' WHERE id = $1", [first.serviceId])
-    const r = await reconnect()
+    const other = await w.service('rsc-factory')
+    const r = await reconnect({ body: { serviceName: 'rsc-factory' } })
     assert.equal(r.status, 201, r.text)
-    assert.notEqual(r.body.serviceId, first.serviceId)
-    const svc = await w.db.one<{ name: string; c: boolean; i: boolean }>(
-      'SELECT name, can_create_brains AS c, can_invite AS i FROM accounts WHERE id = $1',
-      [r.body.serviceId],
+    assert.equal(r.body.serviceId, first.serviceId)
+    assert.equal((await w.call(other.key, 'GET', '/v1/me')).status, 200)
+    const otherKeys = await w.db.one<{ n: number }>(
+      "SELECT count(*)::int AS n FROM credentials WHERE account_id = $1 AND kind = 'main' AND revoked_at IS NULL",
+      [other.id],
     )
-    assert.deepEqual([svc?.name, svc?.c, svc?.i], ['rsc-factory', true, true])
+    assert.equal(otherKeys?.n, 1)
+    first.serviceKey = String(r.body.serviceKey)
   })
 
   it('refused: without the one-time key (401, audited), through a proxy (404), by someone who is not an administrator (403)', async () => {
@@ -378,6 +387,25 @@ describe('companion mode: reconnecting rsc-factory', { skip: skipPg }, () => {
     assert.equal(denied?.n, 2)
   })
 
+  it('an account an administrator removed: 409 service_removed, nothing made, its keys stay dead', async () => {
+    await w.db.query("UPDATE accounts SET status = 'removed' WHERE id = $1", [first.serviceId])
+    const before = await counts(w)
+    const r = await reconnect()
+    assert.deepEqual([r.status, r.body.error?.code], [409, 'service_removed'], r.text)
+    assert.match(errorOf(r).message ?? '', /removed the rsc-factory account/)
+    assert.match(errorOf(r).howToProceed ?? '', /[Rr]eactivate it/)
+    assert.deepEqual(await counts(w), before)
+    const live = await w.db.one<{ n: number }>(
+      'SELECT count(*)::int AS n FROM credentials WHERE account_id = $1 AND revoked_at IS NULL',
+      [first.serviceId],
+    )
+    assert.equal(live?.n, 1)
+    const audited = await w.db.one<{ n: number }>(
+      "SELECT count(*)::int AS n FROM audit WHERE action = 'installation.companion.reconnect' AND outcome = 'denied' AND detail LIKE 'service removed%'",
+    )
+    assert.equal(audited?.n, 1)
+  })
+
   it('wrong passwords: the brake of signing in, shared with signing in', async () => {
     // As signing in: four wrong ones are told so; the fifth starts the wait; then even the right one waits.
     for (let i = 0; i < 4; i++) {
@@ -393,5 +421,40 @@ describe('companion mode: reconnecting rsc-factory', { skip: skipPg }, () => {
       body: { email: admin.email, password: admin.password },
     })
     assert.deepEqual([login.status, login.body.error?.code], [429, 'too_many_attempts'])
+  })
+})
+
+// Set up without the handshake (rsc-brain admin bootstrap, say): no account was ever made for rsc-factory, so
+// reconnecting makes one, and from then on it is that one.
+describe('companion mode: reconnecting when no account was ever made', { skip: skipPg }, () => {
+  let w: World
+  before(async () => {
+    w = await companionWorld()
+  })
+  after(async () => w.close())
+
+  it('makes the rsc-factory account once (may create brains and invite), then keeps to it', async () => {
+    const id = await w.person('Eric', { email: admin.email, isAdmin: true })
+    await w.db.query('UPDATE accounts SET password_hash = $2 WHERE id = $1', [
+      id.id,
+      await hashPassword(admin.password),
+    ])
+    await w.db.query('UPDATE installation SET setup_done_at = now() WHERE id = 1')
+    const call = () =>
+      w.raw('POST', '/v1/setup/companion/reconnect', {
+        headers: auth(),
+        body: { email: admin.email, password: admin.password },
+      })
+    const r = await call()
+    assert.equal(r.status, 201, r.text)
+    const svc = await w.db.one<{ name: string; c: boolean; i: boolean }>(
+      'SELECT name, can_create_brains AS c, can_invite AS i FROM accounts WHERE id = $1',
+      [r.body.serviceId],
+    )
+    assert.deepEqual([svc?.name, svc?.c, svc?.i], ['rsc-factory', true, true])
+    const again = await call()
+    assert.equal(again.status, 201, again.text)
+    assert.equal(again.body.serviceId, r.body.serviceId)
+    assert.deepEqual(await counts(w), { people: 1, services: 1 })
   })
 })

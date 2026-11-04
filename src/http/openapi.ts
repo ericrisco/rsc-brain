@@ -975,16 +975,15 @@ const HAND: Record<string, Op> = {
   },
   'POST /v1/setup/companion/reconnect': {
     summary:
-      'Companion mode, after the setup: a new main key for the service account rsc-factory uses (made again if it is gone), when the one before was lost (an answer that never arrived, a restore). The one-time key (Authorization: Bearer <companionToken>) and the email and password (and code, with a second factor) of an administrator of rsc-brain; wrong passwords take the brake of signing in (429 too_many_attempts). The main keys before, and the keys made from them, stop working. From the network shared with rsc-factory only (404 no_such_route elsewhere); 409 companion_pending before the setup; 401 unauthorized with a wrong one-time key; 401 bad_credentials; 403 forbidden for someone who is not an administrator. Audited.',
+      'Companion mode, after the setup: a new main key for the service account the first handshake made for rsc-factory (never another account; made once here only if rsc-brain was set up without the handshake), when the one before was lost (an answer that never arrived, a restore). The one-time key (Authorization: Bearer <companionToken>) and the email and password (and code, with a second factor) of an administrator of rsc-brain; wrong passwords take the brake of signing in (429 too_many_attempts). The main keys before, and the keys made from them, stop working. From the network shared with rsc-factory only (404 no_such_route elsewhere); 409 companion_pending before the setup; 401 unauthorized with a wrong one-time key; 401 bad_credentials (or code_required, bad_code); 403 forbidden for someone who is not an administrator; 409 service_removed when an administrator removed that account (reactivate it first). Audited.',
     status: 201,
     body: obj(
       {
         email: s('The email of an administrator of rsc-brain.'),
         password: s('Their password.'),
         code: s('The 6 digits of their authenticator app, with a second factor.'),
-        serviceName: s('The name of the service account (default rsc-factory).'),
       },
-      ['code', 'serviceName'],
+      ['code'],
     ),
     reply: obj({
       serviceKey: s('The new main key of the service account, shown once.'),

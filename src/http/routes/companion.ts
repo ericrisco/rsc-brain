@@ -80,8 +80,6 @@ export const companionRoutes: Route[] = [
         email: b.email,
         password: b.password,
         code: b.code,
-        serviceName:
-          typeof b.serviceName === 'string' && b.serviceName.trim() ? b.serviceName.trim() : 'rsc-factory',
       })
       return { status: 201, body: out }
     },
