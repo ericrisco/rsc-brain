@@ -59,11 +59,14 @@ const until = async <T>(what: string, f: () => Promise<T | null>, seconds = 120)
 
 // A call made from a container on the shared network, as rsc-factory's web makes it. The key and the body go on the
 // standard input, never on a command line.
-const fromShared = (input: { token: string; body: unknown }): Promise<{ status: number; body: string }> =>
+const fromShared = (
+  input: { token: string; body: unknown },
+  path = '/v1/setup/companion',
+): Promise<{ status: number; body: string }> =>
   new Promise((resolve, reject) => {
     const script =
       "let s='';process.stdin.on('data',d=>s+=d).on('end',async()=>{const i=JSON.parse(s);" +
-      "const r=await fetch('http://rsc-brain:8090/v1/setup/companion',{method:'POST'," +
+      `const r=await fetch('http://rsc-brain:8090${path}',{method:'POST',` +
       "headers:{'content-type':'application/json',authorization:'Bearer '+i.token},body:JSON.stringify(i.body)});" +
       'process.stdout.write(JSON.stringify({status:r.status,body:await r.text()}))})'
     const p = spawn(
@@ -98,6 +101,7 @@ describe('companion mode with real containers', { skip: why ?? false }, () => {
     url: '',
     installationKey: '',
   }
+  let firstKey = ''
   const local = (path: string, init: RequestInit = {}) => fetch(`http://127.0.0.1:${port}${path}`, init)
 
   before(async () => {
@@ -224,6 +228,7 @@ describe('companion mode with real containers', { skip: why ?? false }, () => {
     ])
     assert.deepEqual(both.map((b) => b.status).sort(), [201, 404], both.map((b) => b.body).join('\n'))
     const made = JSON.parse((both.find((b) => b.status === 201) as { body: string }).body)
+    firstKey = made.serviceKey
     assert.deepEqual(Object.keys(made).sort(), ['adminId', 'serviceId', 'serviceKey'])
     const again = await fromShared({ token: summary.companionToken, body: { admin: ADMIN } })
     assert.equal(again.status, 404, again.body)
@@ -271,5 +276,29 @@ describe('companion mode with real containers', { skip: why ?? false }, () => {
     const gw = /^\S+\s+00000000\s+([0-9A-F]{8})/m.exec(route)?.[1] ?? ''
     const n = Number.parseInt(gw, 16)
     assert.equal([n & 255, (n >>> 8) & 255, (n >>> 16) & 255, n >>> 24].join('.'), net)
+  })
+
+  it('reconnecting from the shared network: a new main key with an administrator’s password; the one before stops', async () => {
+    const me = (key: string) => local('/v1/me', { headers: { authorization: `Bearer ${key}` } })
+    assert.equal((await me(firstKey)).status, 200)
+    let got: { status: number; body: string } | null = null
+    for (const email of [ADMIN.email, 'other@example.com']) {
+      got = await fromShared(
+        { token: summary.companionToken, body: { email, password: ADMIN.password } },
+        '/v1/setup/companion/reconnect',
+      )
+      if (got.status === 201) break
+    }
+    assert.equal(got?.status, 201, got?.body)
+    const next = JSON.parse(got?.body ?? '{}') as { serviceKey: string }
+    assert.equal((await me(next.serviceKey)).status, 200)
+    assert.equal((await me(firstKey)).status, 401)
+    // From this machine, through the published port, it is not there.
+    const fromHere = await local('/v1/setup/companion/reconnect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${summary.companionToken}` },
+      body: JSON.stringify({ email: ADMIN.email, password: ADMIN.password }),
+    })
+    assert.equal(fromHere.status, 404)
   })
 })

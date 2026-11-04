@@ -1732,6 +1732,28 @@ describe('the launcher: companion mode (F1)', () => {
       assert.equal(existsSync(c.dir), false)
     })
   }
+  it('a server needs no newer Docker: no gw_priority there («this machine only» is off), any Compose v2', async () => {
+    const c = fresh()
+    const r = launch(c, await server(c, '--trusted-proxy', '192.168.230.2'), {
+      env: { FAKE_NETWORKS: NET, FAKE_COMPOSE_VERSION: 'v2.20.3', FAKE_ENGINE_VERSION: '24.0.9' },
+    })
+    assert.equal(r.code, 0, r.stderr)
+    assert.doesNotMatch(readFileSync(join(c.dir, 'compose.companion.yaml'), 'utf8'), /gw_priority/)
+  })
+
+  for (const [what, nets] of [
+    ['an IPv6 subnet', 'rsc-shared=192.168.230.0/24|192.168.230.1,fd00:1::/64|fd00:1::1'],
+    ['IPv6 turned on', 'rsc-shared=192.168.230.0/24|192.168.230.1,ipv6'],
+  ] as const) {
+    it(`a shared network with ${what}: exit 2 saying IPv4 only, nothing created`, async () => {
+      const c = fresh()
+      const r = launch(c, await companion(c), { env: { FAKE_NETWORKS: nets } })
+      assert.equal(r.code, 2, r.stderr)
+      assert.match(r.stderr, /IPv6/)
+      assert.equal(existsSync(c.dir), false)
+    })
+  }
+
   it('Docker Compose 5 is newer than 2.33', async () => {
     const c = fresh()
     const r = launch(c, await companion(c), { env: { FAKE_NETWORKS: NET, FAKE_COMPOSE_VERSION: 'v5.0.1' } })
@@ -1785,6 +1807,32 @@ describe('the launcher: companion mode (F1)', () => {
     [
       'rsc-factory in clear on a server address',
       ['--companion', '--attach-network', 'n', '--factory-url', 'http://factory.example.com'],
+      /--factory-url/,
+    ],
+    [
+      'rsc-factory on [::1] (the service refuses it too)',
+      ['--companion', '--attach-network', 'n', '--factory-url', 'http://[::1]:3000'],
+      /--factory-url/,
+    ],
+    [
+      'a port past 65535 in the address of rsc-factory',
+      ['--companion', '--attach-network', 'n', '--factory-url', 'https://factory.example.com:65536'],
+      /--factory-url/,
+    ],
+    [
+      'an address of rsc-factory longer than 300 characters',
+      [
+        '--companion',
+        '--attach-network',
+        'n',
+        '--factory-url',
+        `https://factory.example.com/${'a'.repeat(290)}`,
+      ],
+      /--factory-url/,
+    ],
+    [
+      'an address of rsc-factory with credentials',
+      ['--companion', '--attach-network', 'n', '--factory-url', 'https://me@factory.example.com'],
       /--factory-url/,
     ],
     [

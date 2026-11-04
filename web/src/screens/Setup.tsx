@@ -106,15 +106,29 @@ export function Setup() {
     if (problems[f]) setProblems({ ...problems, [f]: undefined })
   }
 
-  const look = async (url: string) => {
+  // Installed with rsc-factory: asking again whether it set rsc-brain up, and what the last ask found.
+  const [checking, setChecking] = useState(false)
+  const [stillWaiting, setStillWaiting] = useState(false)
+  const look = async (url: string): Promise<ApiError | null> => {
     try {
       const s = await api.call<SetupState>('setupState', { query: { publicUrl: url } })
       setState(s)
       setWarning(s.warning)
       setLoadError(null)
+      return null
     } catch (e) {
       setLoadError(e as ApiError)
+      return e as ApiError
     }
+  }
+  const checkAgain = async () => {
+    if (checking) return
+    setChecking(true)
+    setStillWaiting(false)
+    resetResources()
+    const e = await look(publicUrl)
+    setChecking(false)
+    setStillWaiting(e?.code === 'companion_pending')
   }
   useEffect(() => {
     void look(publicUrl)
@@ -199,14 +213,16 @@ export function Setup() {
           ) : null}
           <Button
             kind={loadError.factoryUrl ? 'quiet' : 'primary'}
-            onClick={() => {
-              resetResources()
-              void look(publicUrl)
-            }}
+            pending={checking}
+            pendingLabel={T.setup.companionChecking}
+            onClick={() => void checkAgain()}
           >
             {T.setup.companionCheck}
           </Button>
         </div>
+        <p class="meta" role="status" aria-live="polite">
+          {stillWaiting ? T.setup.companionStill : ''}
+        </p>
       </Door>
     )
   }

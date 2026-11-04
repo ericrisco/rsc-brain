@@ -99,8 +99,13 @@ sh rsc-brain.sh install --companion --attach-network rsc-shared --factory-url ht
   only its owner reads): `POST /v1/setup/companion` with `Authorization: Bearer <companionToken>`.
   rsc-brain answers that call only while it is not set up, only from the shared network (never
   through a proxy or from this machine), and only once: two calls at once set it up once.
-- It needs Docker Engine 28 and Docker Compose 2.33 or newer, and a PostgreSQL that is not
-  rsc-brain's own (`--db shared` by default, or `--db existing`).
+- If rsc-factory loses its main key afterwards (an answer that never arrived, a restore), it gets a
+  new one with `POST /v1/setup/companion/reconnect`: the same one-time key plus the email and
+  password of an administrator of rsc-brain (wrong passwords wait as signing in does). The main key
+  before, and the keys made from it, stop working.
+- The shared network is IPv4 only: one with IPv6 on is refused (exit 2).
+- It needs a PostgreSQL that is not rsc-brain's own (`--db shared` by default, or `--db existing`).
+  With `--local`, also Docker Engine 28 and Docker Compose 2.33 or newer.
 - Running `install` again keeps companion mode, the network and the key. An installation made
   without `--companion` does not become one.
 

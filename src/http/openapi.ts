@@ -973,6 +973,25 @@ const HAND: Record<string, Op> = {
       adminId: s('The administrator account.'),
     }),
   },
+  'POST /v1/setup/companion/reconnect': {
+    summary:
+      'Companion mode, after the setup: a new main key for the service account rsc-factory uses (made again if it is gone), when the one before was lost (an answer that never arrived, a restore). The one-time key (Authorization: Bearer <companionToken>) and the email and password (and code, with a second factor) of an administrator of rsc-brain; wrong passwords take the brake of signing in (429 too_many_attempts). The main keys before, and the keys made from them, stop working. From the network shared with rsc-factory only (404 no_such_route elsewhere); 409 companion_pending before the setup; 401 unauthorized with a wrong one-time key; 401 bad_credentials; 403 forbidden for someone who is not an administrator. Audited.',
+    status: 201,
+    body: obj(
+      {
+        email: s('The email of an administrator of rsc-brain.'),
+        password: s('Their password.'),
+        code: s('The 6 digits of their authenticator app, with a second factor.'),
+        serviceName: s('The name of the service account (default rsc-factory).'),
+      },
+      ['code', 'serviceName'],
+    ),
+    reply: obj({
+      serviceKey: s('The new main key of the service account, shown once.'),
+      serviceId: s('The service account.'),
+      adminId: s('The administrator who allowed it.'),
+    }),
+  },
   'POST /v1/auth/login': {
     summary: 'Sign in to the web (the rsc-brain web only): sets the session cookie.',
     body: obj(

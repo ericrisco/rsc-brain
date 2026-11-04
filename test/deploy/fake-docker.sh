@@ -261,12 +261,13 @@ network)
     exit 0
   fi
   if [ "$2" = inspect ]; then
-    # A network asked for by name (companion mode): FAKE_NETWORKS="name=subnet|gateway ...", or not found.
+    # A network asked for by name (companion mode): FAKE_NETWORKS="name=subnet|gateway[,more] ...", or not found.
     case "$args" in
     *'|{{.Gateway}}'*)
       for a in "$@"; do last=$a; done
       for pair in ${FAKE_NETWORKS:-}; do
-        [ "${pair%%=*}" = "$last" ] && printf '%s \n' "${pair#*=}" && exit 0
+        # Several entries of one network are written with commas between them.
+        [ "${pair%%=*}" = "$last" ] && printf '%s \n' "${pair#*=}" | tr ',' ' ' && exit 0
       done
       echo "Error response from daemon: network $last not found" >&2
       exit 1

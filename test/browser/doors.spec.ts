@@ -154,6 +154,18 @@ test.describe('first run', () => {
       'https://factory.example.test',
     )
     await expect(page.locator('input')).toHaveCount(0)
+    // Checking again while rsc-factory has not finished: busy while it asks, then said aloud (a live region).
+    await s.state('setup', 'loading')
+    await page.getByRole('button', { name: 'Check again' }).click()
+    await expect(page.getByRole('button', { name: 'Checking…' })).toHaveAttribute('aria-busy', 'true')
+    await expect(page.getByRole('status')).toHaveText('Still waiting for rsc-factory.')
+    await expect(page.getByRole('heading', { name: 'Finish the setup in rsc-factory' })).toBeVisible()
+    await s.state('setup', 'normal')
+    // At 320 px nothing goes past the edge.
+    await page.setViewportSize({ width: 320, height: 700 })
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
+    ).toBe(true)
     // rsc-factory finishes its setup meanwhile: checking again leads to signing in.
     await s.setUpElsewhere()
     await page.getByRole('button', { name: 'Check again' }).click()

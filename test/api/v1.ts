@@ -142,6 +142,7 @@ export const V1 = [
   'POST /v1/sessions/{id}/summary',
   'POST /v1/setup',
   'POST /v1/setup/companion',
+  'POST /v1/setup/companion/reconnect',
   'POST /v1/setup/key',
   'PUT /v1/admin/branding/logo',
   'PUT /v1/admin/mail',

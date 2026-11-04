@@ -254,7 +254,13 @@ if [ "$CMD" = install ]; then
       usage '--attach-network takes the name of a Docker network, such as rsc-shared.'
     if [ -n "$FACTORY_URL" ]; then
       FACTORY_URL=${FACTORY_URL%/}
-      matches "$FACTORY_URL" '^(https://[a-z0-9.-]+|http://(localhost|127\.0\.0\.1))(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$' ||
+      # As the service checks it (factoryUrlOf): https, or http on this machine; no credentials, query or fragment;
+      # only characters a shell reads as text; a real port; at most 300 characters.
+      fu_rest=${FACTORY_URL#*://} fu_port=''
+      fu_host=${fu_rest%%/*}
+      case $fu_host in *:*) fu_port=${fu_host##*:} ;; esac
+      { [ ${#FACTORY_URL} -le 300 ] && { [ -z "$fu_port" ] || is_port "$fu_port"; } &&
+        matches "$FACTORY_URL" '^(https://[a-z0-9.-]+|http://(localhost|127\.0\.0\.1))(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'; } ||
         usage '--factory-url takes the address of rsc-factory: https://factory.example.com, or http://localhost:PORT on this machine (lower-case, no query).'
     fi
     [ -z "$TRUSTED_PROXY" ] || is_ipv4 "$TRUSTED_PROXY" || usage '--trusted-proxy takes an IPv4 address, such as 192.168.210.2.'
@@ -591,12 +597,25 @@ version_at_least() {
 }
 SHARED_CIDR='' SHARED_GW='' COMPANION_TOKEN=''
 companion_requirements() {
-  version_at_least "$(docker compose version 2>/dev/null </dev/null)" 2 33 ||
-    missing 'Companion mode needs Docker Compose 2.33 or newer (and Docker Engine 28 or newer). Update Docker and run this again.'
-  version_at_least "$(docker version --format '{{.Server.Version}}' 2>/dev/null </dev/null)" 28 0 ||
-    missing 'Companion mode needs Docker Engine 28 or newer (and Docker Compose 2.33 or newer). Update Docker and run this again.'
-  info=$(docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}}|{{.Gateway}} {{end}}' "$SHARED_NET" 2>/dev/null </dev/null) ||
+  # On this machine only (--local), «this machine only» trusts the gateway of the installation's own network, and a
+  # request through the published port arrives from the network that holds the default route: gw_priority keeps it
+  # on the own network (measured with Docker 29.1: without it, the order of the names decides). A server needs neither.
+  if [ "$MODE" = local ]; then
+    version_at_least "$(docker compose version 2>/dev/null </dev/null)" 2 33 ||
+      missing 'Companion mode on this machine needs Docker Compose 2.33 or newer (and Docker Engine 28 or newer). Update Docker and run this again.'
+    version_at_least "$(docker version --format '{{.Server.Version}}' 2>/dev/null </dev/null)" 28 0 ||
+      missing 'Companion mode on this machine needs Docker Engine 28 or newer (and Docker Compose 2.33 or newer). Update Docker and run this again.'
+  fi
+  info=$(docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}}|{{.Gateway}} {{end}}{{if .EnableIPv6}}ipv6{{end}}' "$SHARED_NET" 2>/dev/null </dev/null) ||
     missing "There is no Docker network $SHARED_NET. rsc-factory's installer makes it before it installs rsc-brain; pass --attach-network with the network rsc-factory uses."
+  # IPv4 only: the handshake answers by the IPv4 subnet, and over IPv6 rsc-factory could reach rsc-brain from an address
+  # it does not know.
+  for e in $info; do
+    case $e in ipv6 | *:*)
+      usage "The Docker network $SHARED_NET has IPv6 on. Companion mode works over IPv4 only: make the network without --ipv6 (docker network create --subnet <IPv4/24> $SHARED_NET)."
+      ;;
+    esac
+  done
   SHARED_CIDR='' SHARED_GW=''
   for e in $info; do
     case ${e%%|*} in
@@ -628,8 +647,12 @@ write_companion_compose() {
     echo 'services:'
     echo '  app:'
     echo '    networks:'
-    echo '      default:'
-    echo '        gw_priority: 1'
+    if [ "$MODE" = local ]; then
+      echo '      default:'
+      echo '        gw_priority: 1'
+    else
+      echo '      default: {}'
+    fi
     echo '      shared:'
     echo '        aliases:'
     echo '          - rsc-brain'

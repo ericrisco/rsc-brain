@@ -172,6 +172,8 @@ export const T = {
     companionOpen: 'Open rsc-factory',
     companionNoLink: 'Open rsc-factory at the address it was installed on.',
     companionCheck: 'Check again',
+    companionChecking: 'Checking…',
+    companionStill: 'Still waiting for rsc-factory.',
     doneTitle: 'rsc-brain is already set up',
     doneLead: 'The first-time setup runs once. Sign in with your account.',
     goSignIn: 'Go to sign in',

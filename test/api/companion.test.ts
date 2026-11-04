@@ -4,7 +4,10 @@
 // main key of its service account. Once set up, the key serves nothing.
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
+import pg from 'pg'
+import { hashPassword } from '../../src/auth/password.ts'
 import type { CompanionConfig } from '../../src/config.ts'
+import { bumpKeyEpoch } from '../../src/domain/installation.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
 
@@ -68,6 +71,12 @@ describe('companion mode: waiting for rsc-factory', { skip: skipPg }, () => {
       body: { name: 'Mine', publicUrl: 'http://localhost', admin },
     })
     assert.deepEqual([post.status, post.body.error?.code], [409, 'companion_pending'])
+    // Reconnecting is for after the setup.
+    const early = await w.raw('POST', '/v1/setup/companion/reconnect', {
+      headers: auth(),
+      body: { email: admin.email, password: admin.password },
+    })
+    assert.deepEqual([early.status, early.body.error?.code], [409, 'companion_pending'])
     assert.equal(await setUp(w), false)
     assert.deepEqual(await counts(w), { people: 0, services: 0 })
   })
@@ -218,5 +227,171 @@ describe('companion mode: only where it is meant to be', { skip: skipPg }, () =>
     } finally {
       await w.close()
     }
+  })
+})
+
+// Without the row lock of the setup, two calls that both read «not set up» would both set up. Made deterministic: the
+// accounts table is held in SHARE mode, so each call stops at its first INSERT (or, with the lock, the second at the
+// lock itself); once both wait, the table is let go.
+describe('companion mode: the setup takes its row lock (deterministic)', { skip: skipPg }, () => {
+  let w: World
+  before(async () => {
+    w = await companionWorld()
+  })
+  after(async () => w.close())
+
+  it('two calls held at the same point: one sets up, the other is told it is done', async () => {
+    // One connection holds the table; another watches (pg_stat_activity is a snapshot frozen within a transaction).
+    const hold = new pg.Client({ connectionString: w.url })
+    const watch = new pg.Client({ connectionString: w.url })
+    await hold.connect()
+    await watch.connect()
+    try {
+      await hold.query('BEGIN')
+      await hold.query('LOCK TABLE accounts IN SHARE MODE')
+      const calls = [0, 1].map((i) =>
+        w.raw('POST', '/v1/setup/companion', {
+          headers: auth(),
+          body: { ...body, admin: { ...admin, email: `held${i}@example.com` } },
+        }),
+      )
+      const end = Date.now() + 20_000
+      for (;;) {
+        const r = await watch.query(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        if (r.rows[0].n >= 2) break
+        if (Date.now() > end) throw new Error('the two calls never both waited')
+        await new Promise((res) => setTimeout(res, 20))
+      }
+      await hold.query('COMMIT')
+      const got = await Promise.all(calls)
+      assert.deepEqual(got.map((c) => c.status).sort(), [201, 404], got.map((c) => c.text).join('\n'))
+      assert.deepEqual(await counts(w), { people: 1, services: 1 })
+    } finally {
+      await hold.query('ROLLBACK').catch(() => {})
+      await hold.end()
+      await watch.end()
+    }
+  })
+})
+
+// After the setup (spec F1 C24 «Finish connecting rsc-brain»): a lost answer, or a restore that killed every key,
+// leaves rsc-factory without its main key. With the one-time key and an administrator's email and password it gets a
+// new one; the one before stops working.
+describe('companion mode: reconnecting rsc-factory', { skip: skipPg }, () => {
+  let w: World
+  let first = { serviceKey: '', serviceId: '', adminId: '' }
+  const reconnect = (
+    o: { token?: string; email?: string; password?: string; headers?: Record<string, string> } = {},
+  ) =>
+    w.raw('POST', '/v1/setup/companion/reconnect', {
+      headers: { ...auth(o.token), ...(o.headers ?? {}) },
+      body: { email: o.email ?? admin.email, password: o.password ?? admin.password },
+    })
+  before(async () => {
+    w = await companionWorld()
+    const r = await w.raw('POST', '/v1/setup/companion', { headers: auth(), body })
+    assert.equal(r.status, 201, r.text)
+    first = r.body as typeof first
+  })
+  after(async () => w.close())
+
+  it('a new main key for the same service account; the one before (and what hangs from it) stops working', async () => {
+    // A short key made from the main key before (an agent's step): it goes with it.
+    const brain = await w.call(first.serviceKey, 'POST', '/v1/brains', {
+      slug: 'project',
+      firstCurator: admin.email,
+    })
+    assert.equal(brain.status, 201, brain.text)
+    const short = await w.call(first.serviceKey, 'POST', '/v1/keys/short', {
+      writeBrain: 'project',
+      ref: 'run r_0000abcd step 1',
+      ttlMinutes: 60,
+    })
+    assert.equal(short.status, 201, short.text)
+    const shortKey = (short.body.key as { secret: string }).secret
+    assert.equal((await w.call(shortKey, 'GET', '/v1/me')).status, 200)
+    const r = await reconnect()
+    assert.equal(r.status, 201, r.text)
+    assert.deepEqual(Object.keys(r.body).sort(), ['adminId', 'serviceId', 'serviceKey'])
+    assert.equal(r.body.serviceId, first.serviceId)
+    assert.equal(r.body.adminId, first.adminId)
+    assert.notEqual(r.body.serviceKey, first.serviceKey)
+    assert.equal((await w.call(String(r.body.serviceKey), 'GET', '/v1/me')).status, 200)
+    assert.equal((await w.call(first.serviceKey, 'GET', '/v1/me')).status, 401)
+    assert.equal((await w.call(shortKey, 'GET', '/v1/me')).status, 401)
+    const live = await w.db.one<{ n: number }>(
+      'SELECT count(*)::int AS n FROM credentials WHERE account_id = $1 AND revoked_at IS NULL',
+      [first.serviceId],
+    )
+    assert.equal(live?.n, 1)
+    const audited = await w.db.one<{ actor_id: string }>(
+      "SELECT actor_id FROM audit WHERE action = 'installation.companion.reconnect' AND outcome = 'ok'",
+    )
+    assert.equal(audited?.actor_id, first.adminId)
+    first.serviceKey = String(r.body.serviceKey)
+  })
+
+  it('after a restore killed every key: reconnecting gives one that works', async () => {
+    await bumpKeyEpoch(w.db)
+    assert.equal((await w.call(first.serviceKey, 'GET', '/v1/me')).status, 401)
+    const r = await reconnect()
+    assert.equal(r.status, 201, r.text)
+    assert.equal((await w.call(String(r.body.serviceKey), 'GET', '/v1/me')).status, 200)
+  })
+
+  it('the service account gone (renamed by hand): a new rsc-factory account that may create brains and invite', async () => {
+    await w.db.query("UPDATE accounts SET name = 'old factory' WHERE id = $1", [first.serviceId])
+    const r = await reconnect()
+    assert.equal(r.status, 201, r.text)
+    assert.notEqual(r.body.serviceId, first.serviceId)
+    const svc = await w.db.one<{ name: string; c: boolean; i: boolean }>(
+      'SELECT name, can_create_brains AS c, can_invite AS i FROM accounts WHERE id = $1',
+      [r.body.serviceId],
+    )
+    assert.deepEqual([svc?.name, svc?.c, svc?.i], ['rsc-factory', true, true])
+  })
+
+  it('refused: without the one-time key (401, audited), through a proxy (404), by someone who is not an administrator (403)', async () => {
+    const before = await w.db.one<{ n: number }>(
+      "SELECT count(*)::int AS n FROM credentials WHERE kind = 'main' AND revoked_at IS NULL",
+    )
+    const wrongKey = await reconnect({ token: 'f'.repeat(66) })
+    assert.deepEqual([wrongKey.status, wrongKey.body.error?.code], [401, 'unauthorized'])
+    const proxied = await reconnect({ headers: { 'x-forwarded-for': '203.0.113.7' } })
+    assert.deepEqual([proxied.status, proxied.body.error?.code], [404, 'no_such_route'])
+    const ana = await w.person('Ana', { email: 'ana@example.com' })
+    await w.db.query('UPDATE accounts SET password_hash = $2 WHERE id = $1', [
+      ana.id,
+      await hashPassword('ana long password'),
+    ])
+    const notAdmin = await reconnect({ email: 'ana@example.com', password: 'ana long password' })
+    assert.deepEqual([notAdmin.status, notAdmin.body.error?.code], [403, 'forbidden'])
+    const after = await w.db.one<{ n: number }>(
+      "SELECT count(*)::int AS n FROM credentials WHERE kind = 'main' AND revoked_at IS NULL",
+    )
+    assert.equal(after?.n, before?.n)
+    const denied = await w.db.one<{ n: number }>(
+      "SELECT count(*)::int AS n FROM audit WHERE action LIKE 'installation.companion%' AND outcome = 'denied'",
+    )
+    assert.equal(denied?.n, 2)
+  })
+
+  it('wrong passwords: the brake of signing in, shared with signing in', async () => {
+    // As signing in: four wrong ones are told so; the fifth starts the wait; then even the right one waits.
+    for (let i = 0; i < 4; i++) {
+      const r = await reconnect({ password: 'not the password at all' })
+      assert.deepEqual([r.status, r.body.error?.code], [401, 'bad_credentials'], r.text)
+    }
+    const fifth = await reconnect({ password: 'not the password at all' })
+    assert.deepEqual([fifth.status, fifth.body.error?.code], [429, 'too_many_attempts'])
+    const braked = await reconnect()
+    assert.deepEqual([braked.status, braked.body.error?.code], [429, 'too_many_attempts'])
+    const login = await w.raw('POST', '/v1/auth/login', {
+      headers: WEB,
+      body: { email: admin.email, password: admin.password },
+    })
+    assert.deepEqual([login.status, login.body.error?.code], [429, 'too_many_attempts'])
   })
 })

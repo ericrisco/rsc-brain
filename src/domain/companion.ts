@@ -8,9 +8,14 @@
 //   from elsewhere; anywhere else the route is not there;
 // - with the key, compared in constant time.
 import { createHash, timingSafeEqual } from 'node:crypto'
-import { AppError } from '../core/errors.ts'
+import type { Clock } from '../core/clock.ts'
+import { AppError, denied } from '../core/errors.ts'
 import type { Db } from '../db/db.ts'
-import { setupDone } from './installation.ts'
+import { createAccount } from './accounts.ts'
+import { audit } from './audit.ts'
+import { type ConnFacts, setupDone } from './installation.ts'
+import { mintMainKey } from './keys.ts'
+import { checkCredentials } from './login.ts'
 
 // The address of an IPv4 dotted quad as a number, or null.
 export function ipv4(s: string): number | null {
@@ -77,4 +82,65 @@ export const companionPending = (factoryUrl: string) => {
 // The setup of the web, while rsc-factory is to set rsc-brain up: refused, with where to finish.
 export async function refuseWhileCompanion(db: Db, c: { factoryUrl: string } | null): Promise<void> {
   if (c && !(await setupDone(db))) throw companionPending(c.factoryUrl)
+}
+
+// After the setup (spec F1 C24 «Finish connecting rsc-brain»): rsc-factory lost its main key (an answer that never
+// arrived, a restore that killed every key). With the one-time key it already holds and an administrator's email and
+// password (the brake of signing in, shared with it), it gets a new main key for its service account; the ones before,
+// and what hangs from them, stop working. The account is made again if it is gone. Audited either way.
+export async function companionReconnect(
+  db: Db,
+  clock: Clock,
+  conn: ConnFacts,
+  secret: string | undefined,
+  input: { email: unknown; password: unknown; code?: unknown; serviceName: string },
+): Promise<{ serviceKey: string; serviceId: string; adminId: string }> {
+  const who = await checkCredentials(db, clock, conn, secret, input)
+  if (!who.isAdmin) {
+    await audit(db, {
+      at: clock(),
+      actorId: who.id,
+      credentialId: null,
+      action: 'installation.companion.reconnect',
+      outcome: 'denied',
+      detail: `not an administrator, from ${conn.ip}`,
+    })
+    throw denied(
+      'Only an administrator of rsc-brain can reconnect rsc-factory.',
+      'Use the email and password of an administrator of rsc-brain.',
+    )
+  }
+  return db.tx(async (tx) => {
+    // One reconnect at a time: the row of the installation is the lock.
+    await tx.query('SELECT 1 FROM installation WHERE id = 1 FOR UPDATE')
+    const found = await tx.one<{ id: string }>(
+      "SELECT id FROM accounts WHERE kind = 'service' AND name = $1 AND status = 'active' ORDER BY created_at LIMIT 1",
+      [input.serviceName],
+    )
+    const serviceId =
+      found?.id ??
+      (await createAccount(tx, clock, {
+        kind: 'service',
+        name: input.serviceName,
+        canCreateBrains: true,
+        canInvite: true,
+      }))
+    const now = clock()
+    await tx.query(
+      `UPDATE credentials SET revoked_at = $2
+        WHERE revoked_at IS NULL AND ((account_id = $1 AND kind = 'main')
+           OR parent_id IN (SELECT id FROM credentials WHERE account_id = $1 AND kind = 'main'))`,
+      [serviceId, now],
+    )
+    const key = await mintMainKey(tx, clock, { accountId: serviceId, name: 'main' })
+    await audit(tx, {
+      at: now,
+      actorId: who.id,
+      credentialId: null,
+      action: 'installation.companion.reconnect',
+      outcome: 'ok',
+      detail: `${found ? 'new main key for' : 'made again'} ${serviceId}, from ${conn.ip}`,
+    })
+    return { serviceKey: key.secret, serviceId, adminId: who.id }
+  })
 }
