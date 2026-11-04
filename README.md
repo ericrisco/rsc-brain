@@ -111,6 +111,21 @@ sh rsc-brain.sh install --companion --attach-network rsc-shared --factory-url ht
 - Running `install` again keeps companion mode, the network and the key. An installation made
   without `--companion` does not become one.
 
+Day to day, rsc-factory drives it (see rsc-factory's README, «Memory (rsc-brain)»):
+
+- **Update:** rsc-factory's `update.sh` runs this launcher's `update` first, with everything under
+  [Update](#update): maintenance, a copy, and the version before back if it fails. Then rsc-factory
+  is not touched and its `update.sh` exits with 4.
+- **Reconnect:** after a `restore`, rsc-factory's keys stop working. In rsc-factory, Administration ›
+  Memory takes a new main key for the `rsc-factory` service account (make it in Admin › Service
+  accounts here), or reconnects with the one-time key and your administrator's email and password.
+- **Uninstall:** `sh <dir>/.rsc-brain/src/deploy/rsc-brain.sh uninstall --dir <dir>` stops it and
+  keeps the data; rsc-factory's `install.sh` starts it again. With `--delete-data --confirm <name>
+  --db-admin-url-file F` its database and role in rsc-factory's PostgreSQL go too (F: a superuser
+  login of that PostgreSQL), and rsc-factory forgets it at its next `update.sh` or `install.sh`.
+- rsc-factory fetches the newest `vX.Y.Z` tag of this repository: a version is usable as a companion
+  only from the first tag that has `--companion`.
+
 ### Without questions
 
 With every answer as an option and `--yes`, the installer asks nothing; whatever is missing is an
