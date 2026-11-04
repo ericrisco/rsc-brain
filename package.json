@@ -1,6 +1,6 @@
 {
   "name": "@ericrisco/rsc-brain",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Self-hosted knowledge server for AI agents: a journal agents write freely, a wiki people approve, searchable over MCP and HTTP.",
   "license": "MIT",
   "author": "Eric Risco",
