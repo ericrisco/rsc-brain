@@ -143,7 +143,15 @@ keeps its key, its passwords, its data and its copies.
 ```sh
 sh rsc-brain.sh update                    # the latest published version
 sh rsc-brain.sh update --version v0.2.0   # or that one (--image I: an image you already have)
+sh rsc-brain.sh update --check            # only look: what runs, the newest published, what it changes
 ```
+
+A published version is a `vX.Y.Z` tag of the repository. `update --check` (with `--json` for programs:
+`installed`, `latest`, `newer`, `notes`) asks with this machine's own access, so it also works on a private
+repository, stops nothing and writes nothing in the installation; it exits with 3 when it cannot say. The
+web asks once a day, without credentials: on a private repository Administration › Backups & system says
+«Could not check for a new version» and gives that command. It asks `RSC_BRAIN_REPO_URL` in `.env`, which
+`install --repo` sets without credentials; empty, the web never asks.
 
 The new version is fetched and built while the one installed keeps serving. Then rsc-brain goes
 into maintenance: writes are refused with «rsc-brain is under maintenance, retry after N seconds»
@@ -156,6 +164,11 @@ last update went, and `last-failure.log` keeps the service's last lines. An upda
 for twice the last copy and 1 GB more, and only moves forward (never to an older version; a release
 comes after its release candidates, and `0.2.0-rc.2` after `0.2.0-rc.1`). What each version changes
 is in [CHANGELOG.md](CHANGELOG.md) and in its release notes.
+
+While the service is stopped (the migration, the start and the whole restore of a way back), a small stand-in
+holds its port and its name: a browser sees a page with the current step, and anything else gets 503 with
+`Retry-After` and the same `under_maintenance` answer as a refused write. An installation whose `compose.yaml`
+has no stand-in yet (updated with `--image` from before) gets it with its next update from a version.
 
 Ctrl-C during an update goes back the same way (a second Ctrl-C does not stop it). If the launcher
 is killed outright once the new version has taken over (a power cut), the next `status`, or any

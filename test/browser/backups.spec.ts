@@ -185,7 +185,7 @@ test.describe('Admin › Backups & system: the copies', () => {
     const s = await scenario(context, baseURL as string, 'signed-in')
     await behind(baseURL as string, s.id, {
       backupFailure: 'no_permission',
-      release: { latest: '0.2.0', notes: 'x'.repeat(400), checkedAt: '2026-10-29T08:00:00.000Z' },
+      release: { latest: 'v0.2.0', notes: 'x'.repeat(400), checkedAt: '2026-10-29T08:00:00.000Z' },
     })
     await page.setViewportSize({ width: 320, height: 700 })
     await page.goto('/admin/system')
@@ -401,8 +401,8 @@ test.describe('Admin › Backups & system: the installation key', () => {
   })
 })
 
-test.describe('Admin › Backups & system: the release', () => {
-  test('a newer release says so, with what it changes and how to update; none checked says so', async ({
+test.describe('Admin › Backups & system: the version', () => {
+  test('a newer version says so in the exact words, with what it changes and how to update; none checked says so', async ({
     page,
     context,
     baseURL,
@@ -410,16 +410,87 @@ test.describe('Admin › Backups & system: the release', () => {
     const s = await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/admin/system')
     const service = page.getByRole('region', { name: 'Service' })
-    await expect(service).toContainText('rsc-brain 0.1.0')
-    await expect(service).toContainText('Not checked')
+    await expect(service).toContainText('Version v0.1.0 is running. Not checked for a new version yet.')
     await behind(baseURL as string, s.id, {
-      release: { latest: '0.2.0', notes: '## 0.2.0\n- Faster search.', checkedAt: new Date().toISOString() },
+      release: { latest: 'v0.2.0', notes: '- Faster search.', checkedAt: new Date().toISOString() },
     })
     await page.reload()
-    await expect(service).toContainText('rsc-brain 0.2.0 is available.')
-    await service.getByText('What changes in 0.2.0').click()
+    await expect(service).toContainText('Version v0.1.0 is running. Version v0.2.0 is available.')
+    await service.getByText('What changes in v0.2.0').click()
     await expect(service).toContainText('- Faster search.')
     await expect(service).toContainText('rsc-brain.sh update')
+  })
+
+  test('the newest says so; ahead of what is published says that, not that a new one exists', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await behind(baseURL as string, s.id, {
+      release: { latest: 'v0.1.0', notes: '', checkedAt: new Date().toISOString() },
+    })
+    await page.goto('/admin/system')
+    const service = page.getByRole('region', { name: 'Service' })
+    await expect(service).toContainText('Version v0.1.0 is running. This is the newest.')
+    await behind(baseURL as string, s.id, {
+      release: { latest: 'v0.0.9', notes: '', checkedAt: new Date().toISOString() },
+    })
+    await page.reload()
+    await expect(service).toContainText('ahead of the newest published version (v0.0.9)')
+    await expect(service).not.toContainText('This is the newest')
+  })
+
+  test('a private repository: Could not check, with the command; never up to date, even if it knew the answer before', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    const at = new Date().toISOString()
+    await behind(baseURL as string, s.id, {
+      release: { latest: null, notes: null, checkedAt: null, error: 'no_access', lastAttemptAt: at },
+    })
+    await page.goto('/admin/system')
+    const service = page.getByRole('region', { name: 'Service' })
+    await expect(service).toContainText('Could not check for a new version')
+    await expect(service).toContainText('Version v0.1.0 is running.')
+    await expect(service.locator('code', { hasText: 'rsc-brain.sh update --check' })).toBeVisible()
+    await behind(baseURL as string, s.id, {
+      release: { latest: 'v0.1.0', notes: '', checkedAt: at, error: 'network', lastAttemptAt: at },
+    })
+    await page.reload()
+    await expect(service).toContainText('Could not check for a new version')
+    await expect(service).not.toContainText('This is the newest')
+  })
+
+  test('a newer version it knew stays said when the last check failed', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    const at = new Date().toISOString()
+    await behind(baseURL as string, s.id, {
+      release: { latest: 'v0.2.0', notes: '- Two.', checkedAt: at, error: 'network', lastAttemptAt: at },
+    })
+    await page.goto('/admin/system')
+    const service = page.getByRole('region', { name: 'Service' })
+    await expect(service).toContainText('Version v0.1.0 is running. Version v0.2.0 is available.')
+    await expect(service).not.toContainText('Could not check')
+    await expect(service).toContainText('Checked')
+  })
+
+  test('no version published says that, not a failure', async ({ page, context, baseURL }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    const at = new Date().toISOString()
+    await behind(baseURL as string, s.id, {
+      release: { latest: null, notes: null, checkedAt: at, error: 'none', lastAttemptAt: at },
+    })
+    await page.goto('/admin/system')
+    const service = page.getByRole('region', { name: 'Service' })
+    await expect(service).toContainText('Cannot update: no published version yet')
+    await expect(service).not.toContainText('Could not check')
   })
 })
 

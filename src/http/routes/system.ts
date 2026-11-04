@@ -10,7 +10,7 @@ import { maintenance } from '../../domain/maintenance.ts'
 import { meaningProgress, meaningSettings } from '../../domain/meaning.ts'
 import { mailConfigured } from '../../mail/mail.ts'
 import { keyId } from '../../ops/backup/format.ts'
-import { newer } from '../../ops/releases.ts'
+import { releaseView } from '../../ops/releases.ts'
 import { type Route, route } from '../router.ts'
 import { backupsOfSystem } from './backups.ts'
 import { ctxOf } from './brains.ts'
@@ -23,17 +23,6 @@ async function freeBytes(dir: string | null): Promise<number | null> {
     return Number(s.bavail) * Number(s.bsize)
   } catch {
     return null
-  }
-}
-
-// The installed release and, once checked, the newest published one with its notes (plan §3.10).
-function release(s: { latest: string | null; notes: string | null; checkedAt: string | null } | null) {
-  return {
-    installed: VERSION,
-    latest: s?.latest ?? null,
-    notes: s?.notes ?? null,
-    checkedAt: s?.checkedAt ?? null,
-    newer: s?.latest ? newer(s.latest, VERSION) : false,
   }
 }
 
@@ -72,7 +61,7 @@ export const systemRoutes: Route[] = [
         maintenance: m2 ? { until: m2.until.toISOString(), reason: m2.reason } : null,
         backups: await backupsOfSystem(r),
         keyId: r.secret ? keyId(r.secret) : null,
-        release: release(r.releases?.state() ?? null),
+        release: releaseView(r.releases?.state() ?? null, VERSION),
       },
     }
   }),

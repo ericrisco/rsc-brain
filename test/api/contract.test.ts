@@ -201,7 +201,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
   },
   'POST /v1/admin/installation-key': { '': ['key', 'keyId'] },
   'POST /v1/setup/key': { '': ['key', 'keyId'] },
-  // B7 (C20): what an outside watcher reads; never the version.
+  // B7 (C20): what an outside watcher reads; never the version (a valid key adds it: test/http/health.test.ts).
   'GET /v1/health': {
     '': ['ok', 'database', 'maintenance'],
   },

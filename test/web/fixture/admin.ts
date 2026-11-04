@@ -80,7 +80,13 @@ type Fx = {
   lastFailure: { at: string; category: string } | null
   lastWarning: { at: string; code: string } | null
   nextCopy: 'ok' | 'disk_full'
-  release: { latest: string | null; notes: string | null; checkedAt: string | null }
+  release: {
+    latest: string | null
+    notes: string | null
+    checkedAt: string | null
+    error?: 'no_access' | 'network' | 'none' | null
+    lastAttemptAt?: string | null
+  }
   // What the launcher recorded about the last update (B7 PR35), and whether an update runs now (writes refused).
   lastUpdate: unknown
   maintenance: boolean
@@ -931,9 +937,13 @@ export const ADMIN_OPS: Record<string, Op> = {
           ),
           keyId: FIXTURE_KEY_ID,
           release: {
-            installed: '0.1.0',
+            installed: 'v0.1.0',
+            error: null,
+            lastAttemptAt: null,
             ...f.release,
-            newer: f.release.latest !== null && f.release.latest !== '0.1.0',
+            newer:
+              f.release.latest !== null && f.release.latest !== 'v0.1.0' && f.release.latest !== 'v0.0.9',
+            ahead: f.release.latest === 'v0.0.9',
           },
         },
       }

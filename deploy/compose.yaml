@@ -2,7 +2,8 @@
 # setting by running `rsc-brain.sh install` again with the new option, never by editing this file or .env by hand.
 # Your own additions go in compose.override.yaml next to this file; the launcher keeps it and loads it.
 #
-# Profiles: `bundled` (rsc-brain's own PostgreSQL) and `server` (Caddy in front, with HTTPS for the domain).
+# Profiles: `bundled` (rsc-brain's own PostgreSQL), `server` (Caddy in front, with HTTPS for the domain) and `door` (what
+# answers while an update has the service stopped; only the launcher starts it).
 #
 # The port the web is published on and RSC_BRAIN_PUBLISH, which tells the service where it is published, are the same
 # value: with RSC_BRAIN_LOCAL_ONLY=1 the service treats requests from the container's gateway as this machine, which is
@@ -27,6 +28,8 @@ services:
       RSC_BRAIN_COMPANION_GATEWAY: ${RSC_BRAIN_COMPANION_GATEWAY:-}
       RSC_BRAIN_FACTORY_URL: ${RSC_BRAIN_FACTORY_URL:-}
       RSC_BRAIN_TIMEZONE: ${RSC_BRAIN_TIMEZONE:-UTC}
+      # Where the service asks for new versions; empty, it never asks. An installation from before has no such setting.
+      RSC_BRAIN_REPO_URL: ${RSC_BRAIN_REPO_URL-https://github.com/ericrisco/rsc-brain}
       RSC_BRAIN_BACKUPS: /backups
     ports:
       - "${RSC_BRAIN_PUBLISH:?run rsc-brain.sh install}:8090"
@@ -53,6 +56,22 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  # Takes the port and the name of the service while it is stopped, in either mode: locally it holds the port, on a
+  # server Caddy keeps pointing at app:8090. The launcher takes it down before the service starts.
+  door:
+    profiles: [door]
+    image: caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    restart: "no"
+    ports:
+      - "${RSC_BRAIN_PUBLISH:?run rsc-brain.sh install}:8090"
+    volumes:
+      - ./door.Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./.rsc-brain/door:/door:ro
+    networks:
+      default:
+        aliases:
+          - app
 
   caddy:
     profiles: [server]

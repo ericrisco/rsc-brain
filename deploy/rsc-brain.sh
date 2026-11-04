@@ -18,11 +18,15 @@ umask 077
 
 PROG=rsc-brain.sh
 REPO=${RSC_BRAIN_REPO:-https://github.com/ericrisco/rsc-brain.git}
+# Whether this run was told where the repository is; if not, the installation's own address counts (RSC_BRAIN_REPO_URL).
+REPO_GIVEN=0
+[ -n "${RSC_BRAIN_REPO:-}" ] && REPO_GIVEN=1
 TTY=${RSC_BRAIN_TTY:-/dev/tty}
 HERE=$(cd -- "$(dirname -- "$0")" && pwd)
 NL='
 '
 CR=$(printf '\r')
+TAB=$(printf '\t')
 MIN_FREE_KB=2097152
 WAIT_SECONDS=${RSC_BRAIN_TEST_WAIT:-120}
 
@@ -35,6 +39,9 @@ Commands:
                     data is migrated and the new version started; if anything fails, the copy is restored and
                     the version before comes back (exit 4). Sessions and keys keep working either way. An
                     update stopped halfway is taken back by the next command (status, or any that changes something)
+  update --check [--json] [--repo URL]
+                    only look: the version running, the newest published and what it changes, with this machine's
+                    access to the repository. Nothing is stopped or written. Exit 3 when it cannot say
   status [--json]   whether rsc-brain runs and answers
   backup [--json]   make an encrypted copy of everything now
   backups [--json]  list the copies
@@ -149,7 +156,7 @@ esac
 
 MODE='' DOMAIN='' DB='' DB_URL_FILE='' ADMIN_URL_FILE='' FACTORY_DB='' PORT='' HTTP_PORT='' HTTPS_PORT=''
 DIR='' DIR_GIVEN=0 NAME='' VERSION='' IMAGE='' COPY_FILE='' KEY_FILE='' CONFIRM='' CONFIRM_SET=0 DELETE_DATA=0
-COMPANION=0 SHARED_NET='' FACTORY_URL='' TRUSTED_PROXY=''
+COMPANION=0 SHARED_NET='' FACTORY_URL='' TRUSTED_PROXY='' CHECK=0
 OPT=''
 # The option goes with these commands only.
 only() {
@@ -181,7 +188,8 @@ while [ $# -gt 0 ]; do
   --trusted-proxy) only install && value "$@" && TRUSTED_PROXY=$2 && shift ;;
   --version) only install update && value "$@" && VERSION=$2 && shift ;;
   --image) only install update && value "$@" && IMAGE=$2 && shift ;;
-  --repo) only install update && value "$@" && REPO=$2 && shift ;;
+  --repo) only install update && value "$@" && REPO=$2 && REPO_GIVEN=1 && shift ;;
+  --check) only update && CHECK=1 ;;
   --file) only restore && value "$@" && COPY_FILE=$2 && shift ;;
   --key-file) only restore && value "$@" && KEY_FILE=$2 && shift ;;
   --confirm) only restore uninstall && value "$@" && CONFIRM=$2 && CONFIRM_SET=1 && shift ;;
@@ -213,6 +221,8 @@ is_ipv4() {
 
 if [ "$CMD" = install ] || [ "$CMD" = update ]; then
   [ -n "$VERSION" ] && [ -n "$IMAGE" ] && usage 'Pass --version or --image, not both.'
+  [ "$CHECK" = 1 ] && [ -n "$VERSION$IMAGE" ] && usage '--check only looks: it does not go with --version or --image.'
+  case $REPO in *"'"* | *"$NL"*) usage '--repo cannot hold a quote or a line break.' ;; esac
   [ -z "$VERSION" ] || matches "$VERSION" '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' ||
     usage '--version takes a published version such as v1.2.0.'
   [ -z "$IMAGE" ] || matches "$IMAGE" '^[A-Za-z0-9][A-Za-z0-9._/:@-]*$' || usage '--image takes an image name such as rsc-brain:v1.2.0.'
@@ -656,6 +666,25 @@ write_companion_compose() {
     echo '      shared:'
     echo '        aliases:'
     echo '          - rsc-brain'
+    # The stand-in door answers there under the same name; only where the compose file has one (a service without an
+    # image would stop every compose call).
+    if grep -q '^  door:$' "$DIR/compose.yaml" 2>/dev/null; then
+      echo '  door:'
+      echo '    networks:'
+      if [ "$MODE" = local ]; then
+        echo '      default:'
+        echo '        gw_priority: 1'
+        echo '        aliases:'
+        echo '          - app'
+      else
+        echo '      default:'
+        echo '        aliases:'
+        echo '          - app'
+      fi
+      echo '      shared:'
+      echo '        aliases:'
+      echo '          - rsc-brain'
+    fi
     echo 'networks:'
     echo '  shared:'
     # shellcheck disable=SC2016
@@ -741,6 +770,7 @@ write_env() {
     say_env RSC_BRAIN_MODE "$MODE"
     say_env RSC_BRAIN_DB "$DB"
     say_env RSC_BRAIN_IMAGE "$IMAGE"
+    say_env RSC_BRAIN_REPO_URL "$(repo_setting)"
     say_env RSC_BRAIN_SITE "$SITE"
     say_env RSC_BRAIN_SETUP_URL "$SITE"
     say_env RSC_BRAIN_DOMAIN "$DOMAIN"
@@ -782,12 +812,34 @@ save_state() {
 }
 
 random_hex() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
-# The newest published version (a vX.Y.Z tag of the repository), or nothing.
-latest_version() {
-  v=$(git ls-remote --tags --refs "$REPO" 'v*' 2>/dev/null </dev/null | sed -n 's|.*refs/tags/\(v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' |
-    sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
+# What is published (rsc-updates §0): a tag vX.Y.Z of the repository, exactly, in numeric order; the same definition as
+# the service's src/ops/releases.ts and rsc-factory's, pinned by test/fixtures/published-vectors.json.
+# newest_of: from the lines of `git ls-remote`, the newest, or nothing.
+newest_of() {
+  v=$(LC_ALL=C sed -n 's|^[0-9a-f]\{1,\}[[:space:]]\{1,\}refs/tags/\(v[0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\)$|\1|p' |
+    sed 's/^v//' | LC_ALL=C sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
   [ -n "$v" ] && echo "v$v"
   return 0
+}
+latest_version() { git ls-remote --tags --refs "$REPO" 'v*' 2>/dev/null </dev/null | newest_of; }
+# An address as it may be kept and said: nothing that opens it. Over http(s), no user; elsewhere (ssh's git@), no password.
+repo_public() {
+  printf '%s' "$1" | sed -e 's|^\(https\{0,1\}://\)[^/@]*@|\1|' -e 's|^\([a-z+]*://[^/:@]*\):[^/@]*@|\1@|'
+}
+# RSC_BRAIN_REPO_URL, where the service asks for new versions: what this run was told or, on an installation that has
+# one, what it has (empty: the service never asks).
+repo_setting() {
+  if [ "$REPO_GIVEN" = 0 ] && grep -q '^RSC_BRAIN_REPO_URL=' "$DIR/.env" 2>/dev/null; then
+    file_get "$DIR/.env" RSC_BRAIN_REPO_URL
+  else
+    repo_public "$REPO"
+  fi
+}
+# The launcher asks the repository of the installation, unless told another. Its being empty only silences the service.
+installation_repo() {
+  [ "$REPO_GIVEN" = 0 ] || return 0
+  ir=$(env_get RSC_BRAIN_REPO_URL)
+  [ -z "$ir" ] || REPO=$ir
 }
 
 # Only these may be in a folder before the first install: the person's own additions, the launcher itself, what an
@@ -1126,10 +1178,11 @@ install() {
   # The service writes the copies as the owner of the folder; as root, as the image's unprivileged user.
   [ "$(id -u)" = 0 ] && chown 1000:1000 "$DIR/backups"
   chmod 700 "$DIR/backups"
-  # The compose file and the Caddyfile of the version installed.
+  # The compose file and the Caddyfiles of the version installed (a version from before has no door).
   src=$HERE
   [ "$BUILD" = 1 ] && src=$DIR/$STATE/src/deploy
-  for f in compose.yaml Caddyfile; do
+  for f in compose.yaml Caddyfile door.Caddyfile; do
+    [ "$f" != door.Caddyfile ] || [ -f "$src/$f" ] || continue
     if [ -f "$src/$f" ]; then
       if [ ! -f "$DIR/$f" ]; then
         MADE_FILES="$MADE_FILES $f"
@@ -1364,6 +1417,12 @@ restore() {
 # ----------------------------------------------------------------------------------------------------------- update
 # Versions are X.Y.Z (or vX.Y.Z), maybe with a -preview part. rsc-brain only moves forward: migrations go one way.
 version_ok() { matches "$1" '^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; }
+# number_after A B: the number A is larger, whatever its length.
+number_after() {
+  na=${1#"${1%%[!0]*}"} nb=${2#"${2%%[!0]*}"}
+  [ ${#na} -ne ${#nb} ] && { [ ${#na} -gt ${#nb} ]; return; }
+  [ "$na" != "$nb" ] && [ "$(printf '%s\n%s\n' "$na" "$nb" | LC_ALL=C sort | tail -n 1)" = "$na" ]
+}
 # newer A B: A comes after B.
 newer() {
   version_ok "$1" && version_ok "$2" || return 1
@@ -1374,9 +1433,12 @@ newer() {
   # shellcheck disable=SC2086
   set -- $ca $cb
   IFS=$oldifs
-  [ "$1" -ne "$4" ] && { [ "$1" -gt "$4" ]; return; }
-  [ "$2" -ne "$5" ] && { [ "$2" -gt "$5" ]; return; }
-  [ "$3" -ne "$6" ] && { [ "$3" -gt "$6" ]; return; }
+  number_after "$1" "$4" && return 0
+  number_after "$4" "$1" && return 1
+  number_after "$2" "$5" && return 0
+  number_after "$5" "$2" && return 1
+  number_after "$3" "$6" && return 0
+  number_after "$6" "$3" && return 1
   # The same numbers: a release comes after its previews, and previews come in semver's order.
   if [ "$va" = "$ca" ]; then
     [ "$vb" != "$cb" ]
@@ -1450,21 +1512,64 @@ update_failure_log() {
     FAILURE_LOG=$DIR/last-failure.log
   return 0
 }
+# The stand-in door (compose profile door): while the service is stopped something answers on its port, 503 with
+# Retry-After. It never decides an update: not starting is said, and the update goes on as it did without one.
+has_door() { grep -q '^  door:$' "$DIR/compose.yaml" 2>/dev/null && [ -f "$DIR/door.Caddyfile" ]; }
+# The image of the door named by a compose file; nothing when that file has no door.
+door_image() {
+  sed -n -e '/^  door:$/,/^  [a-z]/{' -e 's/^    image: *//p' -e '}' "$1" 2>/dev/null | head -n 1
+}
+# Companion mode: the file follows the compose file it goes with.
+door_companion() {
+  [ -f "$DIR/compose.companion.yaml" ] || return 0
+  MODE=$(env_get RSC_BRAIN_MODE)
+  write_companion_compose || say "Could not write \"$DIR/compose.companion.yaml\"."
+  return 0
+}
+door_step() {
+  [ -d "$DIR/$STATE/door" ] || return 0
+  printf '%s\n' "$1" >"$DIR/$STATE/door/step.txt.new" && chmod 644 "$DIR/$STATE/door/step.txt.new" &&
+    mv -f "$DIR/$STATE/door/step.txt.new" "$DIR/$STATE/door/step.txt"
+  return 0
+}
+door_up() {
+  door_companion
+  has_door || return 0
+  mkdir -p "$DIR/$STATE/door" && chmod 755 "$DIR/$STATE/door"
+  door_step "$1"
+  dc --profile door up -d --no-deps door >&2 </dev/null ||
+    say 'The stand-in for the service did not start: until rsc-brain is back, its address does not answer.'
+  checkpoint door-up
+  return 0
+}
+# By compose while the file knows it, and by its labels otherwise (an update going back to a version without a door).
+door_down() {
+  has_door && dc --profile door rm -fsv door >&2 </dev/null
+  dd_left=$(docker ps -aq --filter "label=com.docker.compose.project=$NAME" --filter 'label=com.docker.compose.service=door' 2>/dev/null </dev/null)
+  # shellcheck disable=SC2086
+  [ -z "$dd_left" ] || docker rm -fv $dd_left >/dev/null 2>&1 </dev/null
+  return 0
+}
 # After the switch: back to the version before, with the copy made before the update and its keys kept (exit 4); or,
 # when even that fails, what to do by hand (exit 1).
 rollback() {
   # Nothing stops the way back halfway: a second Ctrl-C is ignored here, and does not reach what it runs.
   trap '' HUP INT TERM
   SHIELD=1
+  # A launcher killed between the files below leaves them apart: every compose call needs them to agree.
+  door_companion
   say "$1"
   update_failure_log
   step "Going back to rsc-brain $UPDATE_FROM"
   dc stop app >&2 </dev/null
-  for f in compose.yaml Caddyfile; do
+  door_up "Going back to rsc-brain $UPDATE_FROM."
+  for f in compose.yaml Caddyfile door.Caddyfile; do
     [ -f "$DIR/$STATE/$f.previous" ] && mv -f "$DIR/$STATE/$f.previous" "$DIR/$f"
   done
   [ -f "$DIR/$STATE/env.previous" ] && mv -f "$DIR/$STATE/env.previous" "$DIR/.env"
   ENV_FILE=$DIR/.env
+  door_companion
+  door_step 'Restoring the copy made before the update. Everything comes back as it was.'
   step "Restoring the copy made before the update ($PRE_COPY), keys and sessions kept"
   restored=0
   dc run --rm -T --no-deps app rsc-brain restore --file "/backups/$PRE_COPY" --keep-keys </dev/null >&2 && restored=1
@@ -1482,6 +1587,7 @@ rollback() {
     } >"$DIR/$STATE/rollback.failed.new" && mv -f "$DIR/$STATE/rollback.failed.new" "$DIR/$STATE/rollback.failed"
   fi
   step "Starting rsc-brain $UPDATE_FROM"
+  door_down
   started=0
   dc up -d --remove-orphans >&2 </dev/null && wait_healthy && started=1
   drop_next
@@ -1576,8 +1682,117 @@ lock_held() {
   kill -0 "${owner%% *}" 2>/dev/null
 }
 
+# ---------------------------------------------------------------------------------------------------- update --check
+# Only looks (CA29b): no lock, no journal taken back, nothing stopped, nothing written in the installation. What it
+# fetches goes to a temporary folder that goes with it, also when it is stopped.
+CHECK_TMP='' CHECK_PID=''
+check_git() {
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=${GIT_SSH_COMMAND:-ssh -oBatchMode=yes} git "$@" &
+  CHECK_PID=$!
+  wait "$CHECK_PID"
+}
+# notes_of TAG, from a CHANGELOG.md on the standard input: its section, as text, at most 4000 whole characters.
+notes_of() {
+  no_in=0 no_text=''
+  while IFS= read -r no_line || [ -n "$no_line" ]; do
+    no_line=${no_line%"$CR"}
+    if [ "$no_in" = 0 ]; then
+      case $no_line in "## $1" | "## $1 "* | "## $1$TAB"*) no_in=1 ;; esac
+    else
+      case $no_line in '## '*) break ;; esac
+      no_text=$no_text$no_line$NL
+    fi
+  done
+  no_text=${no_text#"${no_text%%[![:space:]]*}"}
+  no_text=${no_text%"${no_text##*[![:space:]]}"}
+  no_size=$(printf '%s' "$no_text" | wc -c | tr -d ' ')
+  if [ "$no_size" -gt 4000 ]; then
+    # Up to 4 bytes a character; a character starts at any byte but 10xxxxxx.
+    no_count=0 no_bytes=0
+    for no_byte in $(printf '%s' "$no_text" | head -c 16004 | od -An -tu1 -v); do
+      if [ "$no_byte" -lt 128 ] || [ "$no_byte" -ge 192 ]; then
+        no_count=$((no_count + 1))
+        [ "$no_count" -gt 4000 ] && break
+      fi
+      no_bytes=$((no_bytes + 1))
+    done
+    printf '%s' "$no_text" | head -c "$no_bytes"
+    return 0
+  fi
+  printf '%s' "$no_text"
+}
+# A JSON string of any text: without control characters but line ends and tabs.
+json_text() {
+  printf '"%s"' "$(printf '%s' "$1" | LC_ALL=C tr -d '\001-\010\013-\037' |
+    LC_ALL=C sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/$TAB/\\\\t/g" -e ':a' -e '$!{' -e 'N' -e 'ba' -e '}' -e 's/\n/\\n/g')"
+}
+check_answer() { # latest newer notes [error]
+  printf '{"installed":%s,"latest":%s,"newer":%s,"notes":%s' "$(json_str "$CHECK_INSTALLED")" \
+    "$(if [ -n "$1" ]; then json_str "$1"; else printf null; fi)" "$2" "$(json_text "$3")"
+  [ -z "${4:-}" ] || printf ',"error":%s' "$(json_str "$4")"
+  printf '}\n'
+}
+check_failed() { # error, what to say
+  [ "$JSON" = 0 ] || check_answer '' false '' "$1"
+  say "$2"
+  exit 3
+}
+update_check() {
+  need_installation
+  need_docker
+  installation_repo
+  rollback_failed_notice
+  command -v git >/dev/null 2>&1 ||
+    missing 'git is not installed (it asks the repository for its versions). Install it: https://git-scm.com/downloads'
+  if ! running; then
+    say "rsc-brain is not running, so its version cannot be read. Start it with: sh $PROG install --dir \"$DIR\""
+    exit 3
+  fi
+  CHECK_INSTALLED=$(dc exec -T app rsc-brain version </dev/null 2>/dev/null)
+  if ! version_ok "$CHECK_INSTALLED"; then
+    say "rsc-brain in \"$DIR\" does not say its version. Check it with: sh $PROG status --dir \"$DIR\""
+    exit 3
+  fi
+  CHECK_INSTALLED=v${CHECK_INSTALLED#v}
+  CHECK_TMP=$(mktemp -d "${TMPDIR:-/tmp}/rsc-brain-check.XXXXXX") || missing 'Could not make a temporary folder.'
+  trap '[ -z "$CHECK_PID" ] || kill "$CHECK_PID" 2>/dev/null; rm -rf "${CHECK_TMP:?}"' EXIT
+  trap 'exit 130' HUP INT TERM
+  shown=$(repo_public "$REPO")
+  if ! check_git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 ls-remote --tags --refs -- "$REPO" 'v*' \
+    >"$CHECK_TMP/refs" 2>"$CHECK_TMP/err" </dev/null; then
+    # What git said stays here: it may carry the address with its credentials.
+    if grep -Eiq 'could not read (username|password)|terminal prompts disabled|authentication|permission denied|publickey|not found|access denied|host key verification|\b40[13]\b' "$CHECK_TMP/err"; then
+      check_failed no_access "Could not check for a new version: $shown does not answer with the access of this machine. Give it read access (an SSH key or git's credential helper), or pass --repo."
+    fi
+    check_failed network "Could not check for a new version: $shown did not answer. Check the network and run this again."
+  fi
+  latest=$(newest_of <"$CHECK_TMP/refs")
+  [ -n "$latest" ] || check_failed none "Cannot update: no published version yet ($shown has no version tag)."
+  notes=''
+  if check_git clone -q --depth 1 --no-checkout --single-branch --branch "$latest" -- "$REPO" "$CHECK_TMP/src" \
+    >/dev/null 2>&1 </dev/null &&
+    git -C "$CHECK_TMP/src" show "refs/tags/$latest:CHANGELOG.md" >"$CHECK_TMP/changelog" 2>/dev/null </dev/null; then
+    notes=$(notes_of "$latest" <"$CHECK_TMP/changelog")
+  fi
+  is_newer=false
+  newer "$latest" "$CHECK_INSTALLED" && is_newer=true
+  if [ "$JSON" = 1 ]; then
+    check_answer "$latest" "$is_newer" "$notes"
+  elif [ "$is_newer" = true ]; then
+    out "Version $CHECK_INSTALLED is running. Version $latest is available."
+    [ -z "$notes" ] || out "$NL""What changes in $latest:$NL$notes$NL"
+    out "Update with: sh $PROG update --dir \"$DIR\""
+  elif newer "$CHECK_INSTALLED" "$latest"; then
+    out "Version $CHECK_INSTALLED is running. This installation is ahead of the newest published version ($latest)."
+  else
+    out "Version $CHECK_INSTALLED is running. This is the newest."
+  fi
+  return 0
+}
+
 update() {
   need_installation
+  installation_repo
   if ! can_ask && [ "$YES" = 0 ]; then
     usage 'There is no terminal to ask on. Pass --yes to update without questions.'
   fi
@@ -1647,6 +1862,16 @@ update() {
     usage "$IMAGE is rsc-brain $UPDATE_TO, not newer than $UPDATE_FROM (installed). rsc-brain only moves forward: its migrations go one way. Nothing was changed."
   fi
 
+  # The door's image is here before anything moves: once the service stops is no time to fetch it.
+  door_from=$DIR/compose.yaml
+  [ "$BUILD" = 1 ] && [ -f "$NEXT_SRC/deploy/compose.yaml" ] && door_from=$NEXT_SRC/deploy/compose.yaml
+  door_img=$(door_image "$door_from")
+  if [ -n "$door_img" ] && ! docker image inspect "$door_img" >/dev/null 2>&1 </dev/null &&
+    ! docker pull "$door_img" >&2 </dev/null; then
+    drop_next
+    missing "Could not fetch the image $door_img, which answers while rsc-brain is stopped. Check the network and run this again."
+  fi
+
   step 'Turning maintenance on: writes wait («retry after»); reads keep working'
   dc exec -T app rsc-brain maintenance on --reason update </dev/null >&2 ||
     update_abort 'Maintenance could not be turned on (the lines above say why).'
@@ -1660,9 +1885,11 @@ update() {
   esac
   { cp -p "$DIR/.env" "$DIR/$STATE/env.previous" && cp -p "$DIR/compose.yaml" "$DIR/$STATE/compose.yaml.previous"; } ||
     update_abort "Could not keep a copy of the settings in \"$DIR/$STATE\"."
-  if [ -f "$DIR/Caddyfile" ]; then
-    cp -p "$DIR/Caddyfile" "$DIR/$STATE/Caddyfile.previous" || update_abort "Could not keep a copy of \"$DIR/Caddyfile\"."
-  fi
+  for f in Caddyfile door.Caddyfile; do
+    if [ -f "$DIR/$f" ]; then
+      cp -p "$DIR/$f" "$DIR/$STATE/$f.previous" || update_abort "Could not keep a copy of \"$DIR/$f\"."
+    fi
+  done
 
   # The journal, before anything is switched: a launcher killed from here on is taken back by the next one.
   journal=$DIR/$STATE/update.pending
@@ -1683,7 +1910,7 @@ update() {
   { env_with RSC_BRAIN_IMAGE "$IMAGE" <"$DIR/$STATE/env.previous" >"$DIR/.env.new" &&
     chmod 600 "$DIR/.env.new" && mv -f "$DIR/.env.new" "$DIR/.env"; } || rollback "Could not write \"$DIR/.env\"."
   if [ "$BUILD" = 1 ]; then
-    for f in compose.yaml Caddyfile; do
+    for f in compose.yaml Caddyfile door.Caddyfile; do
       [ -f "$NEXT_SRC/deploy/$f" ] || continue
       { cp "$NEXT_SRC/deploy/$f" "$DIR/$f.new" && chmod 644 "$DIR/$f.new" && mv -f "$DIR/$f.new" "$DIR/$f"; } ||
         rollback "Could not write \"$DIR/$f\"."
@@ -1691,12 +1918,14 @@ update() {
   fi
   step "Stopping rsc-brain $UPDATE_FROM"
   dc stop app >&2 </dev/null || rollback "rsc-brain $UPDATE_FROM could not be stopped."
+  door_up "Migrating the data for rsc-brain $UPDATE_TO."
   step "Migrating the data for rsc-brain $UPDATE_TO"
   dc run --rm -T --no-deps app rsc-brain migrate </dev/null >"$UPDATE_LOG" 2>&1
   code=$?
   cat "$UPDATE_LOG" >&2
   [ "$code" = 0 ] || rollback "The migration of $UPDATE_TO failed (the lines above say why)."
   step "Starting rsc-brain $UPDATE_TO"
+  door_down
   dc up -d --remove-orphans >&2 </dev/null || rollback "rsc-brain $UPDATE_TO did not start."
   wait_healthy || rollback "rsc-brain $UPDATE_TO did not answer within $WAIT_SECONDS seconds."
   now=$(dc exec -T app rsc-brain version </dev/null 2>/dev/null)
@@ -1711,7 +1940,8 @@ update() {
   dc exec -T app rsc-brain update record --ok --from "$UPDATE_FROM" --to "$UPDATE_TO" </dev/null >&2 ||
     say 'The web could not be told about this update (Admin > Backups & system); the update itself went well.'
   rm -f "${DIR:?}/${STATE:?}/env.previous" "${DIR:?}/${STATE:?}/compose.yaml.previous" \
-    "${DIR:?}/${STATE:?}/Caddyfile.previous" "${UPDATE_LOG:?}" "${DIR:?}/last-failure.log"
+    "${DIR:?}/${STATE:?}/Caddyfile.previous" "${DIR:?}/${STATE:?}/door.Caddyfile.previous" "${UPDATE_LOG:?}" \
+    "${DIR:?}/last-failure.log"
   if [ "$BUILD" = 1 ]; then
     rm -rf "${DIR:?}/${STATE:?}/src"
     mv "$NEXT_SRC" "$DIR/$STATE/src"
@@ -1886,7 +2116,7 @@ uninstall() {
   dc down -v --remove-orphans >&2 </dev/null || exit 1
   printf '%s\n' "$(env_get RSC_BRAIN_SECRET)" >"$DIR/installation-key.txt"
   chmod 600 "$DIR/installation-key.txt"
-  rm -rf "${DIR:?}/backups" "${DIR:?}/${STATE:?}" "${DIR:?}/compose.yaml" "${DIR:?}/Caddyfile" "${DIR:?}/.env" \
+  rm -rf "${DIR:?}/backups" "${DIR:?}/${STATE:?}" "${DIR:?}/compose.yaml" "${DIR:?}/Caddyfile" "${DIR:?}/door.Caddyfile" "${DIR:?}/.env" \
     "${DIR:?}/compose.companion.yaml" "${DIR:?}/last-failure.log"
   out "rsc-brain and its copies were deleted from \"$DIR\"."
   if [ "$db" != bundled ] && [ -z "$ADMIN_URL_FILE" ]; then
@@ -1906,7 +2136,7 @@ if (exec 4>&2); then exec 4>&2; else exec 4>/dev/null; fi
 if (exec 5>&1) 2>/dev/null; then exec 5>&1; else exec 5>/dev/null; fi
 case $CMD in
 install) install ;;
-update) update ;;
+update) if [ "$CHECK" = 1 ]; then update_check; else update; fi ;;
 status) status ;;
 backup) backup ;;
 backups) backups ;;

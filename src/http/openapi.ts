@@ -1048,12 +1048,16 @@ const HAND: Record<string, Op> = {
   },
   'GET /v1/health': {
     summary:
-      'Whether the service and its database answer, and whether it is under maintenance (writes refused). 503 when the database does not answer. Never the version.',
-    reply: obj({
-      ok: b('The service and its database answer.'),
-      database: s('ok, or down (then the answer is 503).', { enum: ['ok', 'down'] }),
-      maintenance: b('Writes are refused for now (503 under_maintenance); reads work.'),
-    }),
+      'Whether the service and its database answer, and whether it is under maintenance (writes refused). 503 when the database does not answer. No key is needed; the version is said only with a valid key in Authorization: Bearer.',
+    reply: obj(
+      {
+        ok: b('The service and its database answer.'),
+        database: s('ok, or down (then the answer is 503).', { enum: ['ok', 'down'] }),
+        maintenance: b('Writes are refused for now (503 under_maintenance); reads work.'),
+        version: s('The version running, without its v: only with a valid key.'),
+      },
+      ['version'],
+    ),
   },
   'GET /v1/openapi.json': { summary: 'This description.', reply: { type: 'object' } },
   'GET /v1/me': {
@@ -1996,13 +2000,22 @@ const HAND: Record<string, Op> = {
         s('The id of the installation key (never the key): each copy says the id of the key it needs.'),
       ),
       release: obj({
-        installed: s('The release running.'),
+        installed: s('The version running, as vX.Y.Z.'),
         latest: nul(
-          s('The newest published release, once checked (daily; null when off or not checked yet).'),
+          s(
+            'The newest published version, a vX.Y.Z tag of the repository, once known (asked daily; null when off, not asked yet or none is published).',
+          ),
         ),
-        notes: nul(s('What the newest release changes, from its notes.')),
-        checkedAt: nul(s('When the list of releases was last read.', { format: 'date-time' })),
-        newer: b('The newest published release is newer than the one running.'),
+        notes: nul(s('What the newest version changes, from the CHANGELOG.md in its tag, as text.')),
+        checkedAt: nul(s('When the repository last answered about its versions.', { format: 'date-time' })),
+        error: nul(
+          s(
+            'What went wrong the last time it was asked: no_access (a private repository: `rsc-brain.sh update --check` has the access of the server), network, or none (no version published). Null when that went well. Never means up to date.',
+          ),
+        ),
+        lastAttemptAt: nul(s('When the repository was last asked.', { format: 'date-time' })),
+        newer: b('The newest published version is newer than the one running.'),
+        ahead: b('The one running is newer than the newest published version.'),
       }),
     }),
   },

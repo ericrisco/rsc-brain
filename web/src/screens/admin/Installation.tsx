@@ -164,7 +164,10 @@ type System = {
     latest: string | null
     notes: string | null
     checkedAt: string | null
+    error: 'no_access' | 'network' | 'none' | null
+    lastAttemptAt: string | null
     newer: boolean
+    ahead: boolean
   }
 }
 const systemResource = () => resource<System>('admin:system', () => api.call<System>('system'))
@@ -310,23 +313,68 @@ function Factory({ account }: { account: string }) {
   )
 }
 
-// The release running and, once checked, a newer one with what it changes (plan §3.10).
+// The version running against what is published (rsc-updates §0, §3.9). A newer one it knows is always said; apart
+// from that, a check that failed is said as failed, and never as up to date (CA29b).
 function Release({ r }: { r: NonNullable<System['release']> }) {
+  const when = r.checkedAt ?? r.lastAttemptAt
+  const failed = !r.newer && r.error !== null && r.error !== 'none'
+  const state = r.newer
+    ? 'newer'
+    : r.error === 'none'
+      ? 'none'
+      : failed
+        ? 'failed'
+        : r.ahead
+          ? 'ahead'
+          : r.latest
+            ? 'newest'
+            : 'not-checked'
   return (
-    <div class="release" data-state={r.newer ? 'newer' : 'current'}>
+    <div class="release" data-state={state}>
       <h3 class="part-title">{A.release}</h3>
-      <p>
-        {A.releaseRunning(r.installed)}.{' '}
-        {r.newer && r.latest ? (
-          <strong>{A.releaseNewer(r.latest)}</strong>
-        ) : r.latest ? (
-          A.releaseUpToDate
-        ) : null}
-      </p>
-      <p class="meta">
-        {r.checkedAt ? A.releaseChecked(ago(r.checkedAt) ?? localWhen(r.checkedAt)) : A.releaseNotChecked}
-      </p>
-      {r.newer && r.latest ? (
+      {state === 'newer' && r.latest ? (
+        <p>
+          <strong>{A.releaseNewer(r.installed, r.latest)}</strong>
+        </p>
+      ) : state === 'none' ? (
+        <>
+          <p>{A.releaseRunning(r.installed)}</p>
+          <p>
+            <strong>{A.releaseNone}</strong>
+          </p>
+        </>
+      ) : state === 'failed' ? (
+        <>
+          <p>{A.releaseRunning(r.installed)}</p>
+          <p>
+            <strong>{A.releaseCouldNot}</strong>
+          </p>
+          <p class="meta">{r.error === 'no_access' ? A.releaseNoAccess : A.releaseNoAnswer}</p>
+          <p class="meta">
+            <code>rsc-brain.sh update --check</code>
+          </p>
+        </>
+      ) : state === 'ahead' && r.latest ? (
+        <p>{A.releaseAhead(r.installed, r.latest)}</p>
+      ) : state === 'newest' ? (
+        <p>{A.releaseNewest(r.installed)}</p>
+      ) : (
+        <>
+          <p>{A.releaseNotChecked(r.installed)}</p>
+          <p class="meta">{A.releaseNotCheckedHow}</p>
+          <p class="meta">
+            <code>rsc-brain.sh update --check</code>
+          </p>
+        </>
+      )}
+      {when ? (
+        <p class="meta">
+          {r.checkedAt && !failed
+            ? A.releaseChecked(ago(when) ?? localWhen(when))
+            : A.releaseTried(ago(when) ?? localWhen(when))}
+        </p>
+      ) : null}
+      {state === 'newer' && r.latest ? (
         <>
           {r.notes ? (
             <details>

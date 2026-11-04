@@ -1,0 +1,56 @@
+# The stand-in door of an update (rsc-brain.sh, rsc-updates §3.9). While the service is stopped (the migration, the start,
+# and all of the restore when an update goes back), this answers on the service's port and under its name, so a person
+# sees a page and a program sees the refusal it already knows, not a refused connection or a 502. It has no state: the
+# launcher keeps the step in /door/step.txt, and takes the door down before the service starts.
+{
+	admin off
+	auto_https off
+	persist_config off
+}
+
+:8090 {
+	header Retry-After 30
+	header Cache-Control no-store
+
+	@page {
+		method GET HEAD
+		header Accept *text/html*
+	}
+	handle @page {
+		root * /door
+		header Content-Type "text/html; charset=utf-8"
+		header Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+		templates
+		respond <<PAGE
+			<!doctype html>
+			<html lang="en">
+			<head>
+			<meta charset="utf-8">
+			<meta name="viewport" content="width=device-width, initial-scale=1">
+			<meta name="robots" content="noindex">
+			<meta http-equiv="refresh" content="10">
+			<title>rsc-brain is being updated</title>
+			<style>
+			:root { color-scheme: light dark; }
+			body { margin: 0; padding: 16px; font: 16px/1.5 system-ui, sans-serif; }
+			main { max-width: 34rem; margin: 15vh auto 0; }
+			h1 { margin: 0 0 12px; font-size: 1.5rem; line-height: 1.25; }
+			p { margin: 0 0 12px; overflow-wrap: anywhere; }
+			</style>
+			</head>
+			<body>
+			<main>
+			<h1>rsc-brain is being updated</h1>
+			<p>{{if fileExists "/step.txt"}}{{include "/step.txt" | html}}{{else}}Getting ready.{{end}}</p>
+			<p>Your work is safe. This page reloads every 10 seconds and goes back to rsc-brain when the update ends.</p>
+			<p><a href="">Reload now</a></p>
+			</main>
+			</body>
+			</html>
+			PAGE 503
+	}
+	handle {
+		header Content-Type application/json
+		respond `{"error":{"code":"under_maintenance","message":"rsc-brain is under maintenance, retry after 30 seconds","howToProceed":"Send it again after that time."},"retryAfter":30}` 503
+	}
+}
