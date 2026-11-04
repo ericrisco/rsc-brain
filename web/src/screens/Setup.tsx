@@ -106,15 +106,29 @@ export function Setup() {
     if (problems[f]) setProblems({ ...problems, [f]: undefined })
   }
 
-  const look = async (url: string) => {
+  // Installed with rsc-factory: asking again whether it set rsc-brain up, and what the last ask found.
+  const [checking, setChecking] = useState(false)
+  const [stillWaiting, setStillWaiting] = useState(false)
+  const look = async (url: string): Promise<ApiError | null> => {
     try {
       const s = await api.call<SetupState>('setupState', { query: { publicUrl: url } })
       setState(s)
       setWarning(s.warning)
       setLoadError(null)
+      return null
     } catch (e) {
       setLoadError(e as ApiError)
+      return e as ApiError
     }
+  }
+  const checkAgain = async () => {
+    if (checking) return
+    setChecking(true)
+    setStillWaiting(false)
+    resetResources()
+    const e = await look(publicUrl)
+    setChecking(false)
+    setStillWaiting(e?.code === 'companion_pending')
   }
   useEffect(() => {
     void look(publicUrl)
@@ -181,6 +195,34 @@ export function Setup() {
             {T.setup.goSignIn}
           </a>
         </div>
+      </Door>
+    )
+  }
+  if (loadError?.code === 'companion_pending') {
+    // Installed with rsc-factory (F1-PR11): nothing to fill in here; its own setup makes the administration.
+    return (
+      <Door brand={false}>
+        <h1 class="title">{T.setup.companionTitle}</h1>
+        <p class="lead">{T.setup.companionLead}</p>
+        {loadError.factoryUrl ? null : <p>{T.setup.companionNoLink}</p>}
+        <div class="actions">
+          {loadError.factoryUrl ? (
+            <a class="button primary" href={loadError.factoryUrl} rel="noopener noreferrer">
+              {T.setup.companionOpen}
+            </a>
+          ) : null}
+          <Button
+            kind={loadError.factoryUrl ? 'quiet' : 'primary'}
+            pending={checking}
+            pendingLabel={T.setup.companionChecking}
+            onClick={() => void checkAgain()}
+          >
+            {T.setup.companionCheck}
+          </Button>
+        </div>
+        <p class="meta" role="status" aria-live="polite">
+          {stillWaiting ? T.setup.companionStill : ''}
+        </p>
       </Door>
     )
   }

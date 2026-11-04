@@ -130,6 +130,48 @@ test.describe('first run', () => {
     await expect(page.getByRole('heading', { name: 'rsc-brain is already set up' })).toBeVisible()
   })
 
+  test('installed with rsc-factory: says to finish there, links to it, asks for nothing; then leads to sign in', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(
+      context,
+      baseURL as string,
+      'fresh',
+      {},
+      {
+        companion: true,
+        factoryUrl: 'https://factory.example.test',
+      },
+    )
+    await page.goto('/b/growth')
+    await expect(page).toHaveURL(/\/setup$/)
+    await expect(page.getByRole('heading', { name: 'Finish the setup in rsc-factory' })).toBeVisible()
+    await expect(page.getByText('rsc-brain was installed with rsc-factory')).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Open rsc-factory' })).toHaveAttribute(
+      'href',
+      'https://factory.example.test',
+    )
+    await expect(page.locator('input')).toHaveCount(0)
+    // Checking again while rsc-factory has not finished: busy while it asks, then said aloud (a live region).
+    await s.state('setup', 'loading')
+    await page.getByRole('button', { name: 'Check again' }).click()
+    await expect(page.getByRole('button', { name: 'Checking…' })).toHaveAttribute('aria-busy', 'true')
+    await expect(page.getByRole('status')).toHaveText('Still waiting for rsc-factory.')
+    await expect(page.getByRole('heading', { name: 'Finish the setup in rsc-factory' })).toBeVisible()
+    await s.state('setup', 'normal')
+    // At 320 px nothing goes past the edge.
+    await page.setViewportSize({ width: 320, height: 700 })
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
+    ).toBe(true)
+    // rsc-factory finishes its setup meanwhile: checking again leads to signing in.
+    await s.setUpElsewhere()
+    await page.getByRole('button', { name: 'Check again' }).click()
+    await expect(page.getByRole('heading', { name: 'rsc-brain is already set up' })).toBeVisible()
+  })
+
   test('over a connection that is not safe, it explains and does not ask for a password', async ({
     page,
     context,

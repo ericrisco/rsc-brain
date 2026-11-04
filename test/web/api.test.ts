@@ -117,6 +117,30 @@ describe('the API client', () => {
     assert.deepEqual(plain.problems, [])
   })
 
+  // Companion mode (F1-PR11): the setup waits for rsc-factory, and the web links to it only by a plain address.
+  it('companion_pending keeps the address of rsc-factory, only when it is plain http(s)', async () => {
+    const pending = async (factoryUrl: unknown) => {
+      const f = fake(() => ({
+        status: 409,
+        body: { error: { ...ERR('companion_pending').error, factoryUrl } },
+      }))
+      const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })
+      const err = await api.call('brains').catch((e: unknown) => e)
+      assert.ok(err instanceof ApiError)
+      return err.factoryUrl
+    }
+    assert.equal(await pending('https://factory.example.com'), 'https://factory.example.com')
+    assert.equal(await pending('http://localhost:3000'), 'http://localhost:3000')
+    for (const bad of [
+      'javascript:alert(1)',
+      '//evil.example.com',
+      'https://x.example.com/"onmouseover=',
+      3,
+      null,
+    ])
+      assert.equal(await pending(bad), null, String(bad))
+  })
+
   it('a reply that is not the envelope still says what to do', async () => {
     const f = fake(() => ({ status: 502, text: '<html>bad gateway</html>' }))
     const api = createClient({ transport: f.transport, onSignedOut: () => {}, here: () => '/' })

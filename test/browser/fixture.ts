@@ -27,6 +27,8 @@ type Scenario = {
   close(brain: string, reason: string, message: string): Promise<void>
   // Another curator saves the settings of a brain meanwhile (PR25a).
   settingsEdit(brain: string, change: Record<string, unknown>): Promise<void>
+  // rsc-factory sets the installation up meanwhile (companion mode, F1-PR11).
+  setUpElsewhere(): Promise<void>
 }
 
 export type EmitOptions = {
@@ -48,7 +50,7 @@ export async function scenario(
   preset: Preset,
   states: States = {},
   // seeded: the brains' wiki is the seeded one of 300 or 5 000 pages (the graph, CA5 and CA6).
-  o: { mail?: boolean; seeded?: 300 | 5000 | 'lumpy'; factoryUrl?: string } = {},
+  o: { mail?: boolean; seeded?: 300 | 5000 | 'lumpy'; factoryUrl?: string; companion?: boolean } = {},
 ): Promise<Scenario> {
   const res = await fetch(`${baseURL}/__fixture/scenarios`, {
     method: 'POST',
@@ -59,6 +61,7 @@ export async function scenario(
       ...(o.mail === false ? { mail: false } : {}),
       ...(o.seeded ? { seeded: o.seeded } : {}),
       ...(o.factoryUrl ? { factoryUrl: o.factoryUrl } : {}),
+      ...(o.companion ? { companion: true } : {}),
     }),
   })
   const { id } = (await res.json()) as { id: string }
@@ -75,6 +78,9 @@ export async function scenario(
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ screen, state }),
       })
+    },
+    setUpElsewhere: async () => {
+      await fetch(`${baseURL}/__fixture/scenarios/${id}/set-up`, { method: 'POST' })
     },
     endSessions: async () => {
       await fetch(`${baseURL}/__fixture/scenarios/${id}/end-sessions`, { method: 'POST' })

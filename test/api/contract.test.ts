@@ -1560,6 +1560,20 @@ describe('the v1 contract', { skip: skipPg }, () => {
     )
     await add('no_such_route', w.raw('GET', '/v1/nowhere'))
     await add('setup_done', w.raw('GET', '/v1/setup'))
+    // Companion mode (F1-PR11), on an installation of its own that waits for rsc-factory.
+    const waiting = await world({
+      fresh: true,
+      trustedProxies: [],
+      companion: {
+        token: 'c0ffee'.repeat(11),
+        network: '127.0.0.0/8',
+        gateway: null,
+        factoryUrl: 'https://factory.example.com',
+        publicUrl: null,
+      },
+    })
+    await add('companion_pending', waiting.raw('GET', '/v1/setup'))
+    await waiting.close()
     await add(
       'setup_done',
       w.raw('POST', '/v1/setup', {

@@ -156,6 +156,29 @@ export async function signIn(
   input: { email: unknown; password: unknown; code?: unknown },
 ): Promise<SignedIn> {
   requireSecure(conn)
+  const a = await checkCredentials(db, clock, conn, secret, input)
+  const s = await mintWebSession(db, clock, { accountId: a.id })
+  await audit(db, {
+    at: clock(),
+    actorId: a.id,
+    credentialId: s.id,
+    action: 'auth.signin',
+    outcome: 'ok',
+    detail: `from ${conn.ip}`,
+  })
+  return { session: s.secret, account: a }
+}
+
+// The email, password and (with a second factor) code of an active person, behind the same brake as signing in:
+// wrong attempts count per email and wait longer each time; each failure is audited. Signing in, and reconnecting
+// rsc-factory in companion mode (domain/companion.ts), go through it.
+export async function checkCredentials(
+  db: Db,
+  clock: Clock,
+  conn: ConnFacts,
+  secret: string | undefined,
+  input: { email: unknown; password: unknown; code?: unknown },
+): Promise<SignedIn['account']> {
   const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : ''
   const password = typeof input.password === 'string' ? input.password : ''
   if (!email || email.length > 320 || !password || password.length > 200) throw wrong()
@@ -217,19 +240,7 @@ export async function signIn(
     }
   }
   await clearBrake(db, email)
-  const s = await mintWebSession(db, clock, { accountId: id })
-  await audit(db, {
-    at: now,
-    actorId: id,
-    credentialId: s.id,
-    action: 'auth.signin',
-    outcome: 'ok',
-    detail: `from ${conn.ip}`,
-  })
-  return {
-    session: s.secret,
-    account: { id, name: String(a.name), email, isAdmin: Boolean(a.is_admin) },
-  }
+  return { id, name: String(a.name), email, isAdmin: Boolean(a.is_admin) }
 }
 
 // A seed sealed with another installation secret cannot be read: say so, not "internal error".

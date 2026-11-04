@@ -4,6 +4,7 @@
 
 import { SESSION_COOKIE, WEB_SESSION_DAYS } from '../../auth/principal.ts'
 import { AppError } from '../../core/errors.ts'
+import { refuseWhileCompanion } from '../../domain/companion.ts'
 import { runSetup, setupState } from '../../domain/installation.ts'
 import {
   adminResetLink,
@@ -42,15 +43,17 @@ export function fromWeb(r: PublicReq): void {
 export const authRoutes: Route[] = [
   publicRoute(
     'GET /v1/setup',
-    async (r) => ({
-      body: await setupState(r.db, r.conn, r.query.get('publicUrl') ?? undefined),
-    }),
+    async (r) => {
+      await refuseWhileCompanion(r.db, r.companion)
+      return { body: await setupState(r.db, r.conn, r.query.get('publicUrl') ?? undefined) }
+    },
     { beforeSetup: true },
   ),
   publicRoute(
     'POST /v1/setup',
     async (r) => {
       fromWeb(r)
+      await refuseWhileCompanion(r.db, r.companion)
       const b = obj(r.body)
       const out = await runSetup(r.db, r.clock, r.conn, {
         name: b.name,

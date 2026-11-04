@@ -165,6 +165,15 @@ export const T = {
     keyLater: 'Download it later in Administration › Backups & system, with your password.',
     keyFailedLater:
       'You can download the key later in Admin › Backups & system, with your password. Do it before the first copy you would need.',
+    // Companion mode (F1-PR11): installed with rsc-factory, which makes the administration in its own setup.
+    companionTitle: 'Finish the setup in rsc-factory',
+    companionLead:
+      'rsc-brain was installed with rsc-factory. Its administration is made when you finish the first-time setup of rsc-factory; then sign in here with the same email and password.',
+    companionOpen: 'Open rsc-factory',
+    companionNoLink: 'Open rsc-factory at the address it was installed on.',
+    companionCheck: 'Check again',
+    companionChecking: 'Checking…',
+    companionStill: 'Still waiting for rsc-factory.',
     doneTitle: 'rsc-brain is already set up',
     doneLead: 'The first-time setup runs once. Sign in with your account.',
     goSignIn: 'Go to sign in',

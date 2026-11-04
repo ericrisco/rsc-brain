@@ -4,6 +4,7 @@
 import type { FileHandle } from 'node:fs/promises'
 import type { IncomingHttpHeaders } from 'node:http'
 import type { Principal } from '../auth/principal.ts'
+import type { CompanionConfig } from '../config.ts'
 import type { Clock } from '../core/clock.ts'
 import type { Log } from '../core/log.ts'
 import type { Db } from '../db/db.ts'
@@ -59,6 +60,8 @@ export type PublicReq = {
   serviceInvitesPerHour: number
   // Aborted when the client leaves (from the start of the request).
   signal: AbortSignal
+  // Companion mode (plan F1 §3.1), with the proxies believed (never a source of the handshake); null otherwise.
+  companion: (CompanionConfig & { proxies: string[] }) | null
   // The log of the server (src/core/log.ts).
   log: Log
 }

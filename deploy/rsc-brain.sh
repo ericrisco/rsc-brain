@@ -67,6 +67,11 @@ Install options:
                             build that version from the source (default: the latest), or use an image already built
   --repo URL                where the source is fetched from (default the public repository); while it is
                             private, an address git can read with your access (SSH, or git's credential helper)
+  --companion               installed by rsc-factory (needs --attach-network and --factory-url): no Caddy of its
+                            own, and the first-time setup is rsc-factory's, with a one-time key (companionToken)
+  --attach-network NAME     companion: the Docker network shared with rsc-factory; rsc-brain joins it as rsc-brain
+  --factory-url URL         companion: the address of rsc-factory (https, or http://localhost on this machine)
+  --trusted-proxy IP        companion with --domain: the fixed address of rsc-factory's Caddy on that network
   --yes                     ask nothing; whatever is missing is an error that names the option giving it
   --json                    print only a JSON summary on standard output; everything else goes to the error stream
 
@@ -144,6 +149,7 @@ esac
 
 MODE='' DOMAIN='' DB='' DB_URL_FILE='' ADMIN_URL_FILE='' FACTORY_DB='' PORT='' HTTP_PORT='' HTTPS_PORT=''
 DIR='' DIR_GIVEN=0 NAME='' VERSION='' IMAGE='' COPY_FILE='' KEY_FILE='' CONFIRM='' CONFIRM_SET=0 DELETE_DATA=0
+COMPANION=0 SHARED_NET='' FACTORY_URL='' TRUSTED_PROXY=''
 OPT=''
 # The option goes with these commands only.
 only() {
@@ -169,6 +175,10 @@ while [ $# -gt 0 ]; do
   --http-port) only install && value "$@" && HTTP_PORT=$2 && shift ;;
   --https-port) only install && value "$@" && HTTPS_PORT=$2 && shift ;;
   --name) only install && value "$@" && NAME=$2 && shift ;;
+  --companion) only install && COMPANION=1 ;;
+  --attach-network) only install && value "$@" && SHARED_NET=$2 && shift ;;
+  --factory-url) only install && value "$@" && FACTORY_URL=$2 && shift ;;
+  --trusted-proxy) only install && value "$@" && TRUSTED_PROXY=$2 && shift ;;
   --version) only install update && value "$@" && VERSION=$2 && shift ;;
   --image) only install update && value "$@" && IMAGE=$2 && shift ;;
   --repo) only install update && value "$@" && REPO=$2 && shift ;;
@@ -191,6 +201,15 @@ is_port() {
   [ ${#1} -le 5 ] && [ "$1" -le 65535 ]
 }
 matches() { printf '%s\n' "$1" | grep -Eq "$2"; }
+is_ipv4() {
+  matches "$1" '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' || return 1
+  oldifs=$IFS
+  IFS=.
+  # shellcheck disable=SC2086
+  set -- $1
+  IFS=$oldifs
+  for o in "$@"; do [ "$o" -le 255 ] || return 1; done
+}
 
 if [ "$CMD" = install ] || [ "$CMD" = update ]; then
   [ -n "$VERSION" ] && [ -n "$IMAGE" ] && usage 'Pass --version or --image, not both.'
@@ -225,6 +244,31 @@ if [ "$CMD" = install ]; then
   [ -n "$FACTORY_DB" ] && [ "$DB" != shared ] && usage '--factory-db goes with --db shared.'
   [ "$DB" = bundled ] && { [ -n "$DB_URL_FILE" ] || [ -n "$ADMIN_URL_FILE" ]; } && usage '--db bundled takes no URL file.'
   [ -z "$DB" ] && { [ -n "$DB_URL_FILE" ] || [ -n "$ADMIN_URL_FILE" ]; } && DB=existing
+  # Companion mode (installed by rsc-factory): its options go with --companion, and are checked before anything runs.
+  if [ "$COMPANION" = 0 ]; then
+    for o in "--attach-network:$SHARED_NET" "--factory-url:$FACTORY_URL" "--trusted-proxy:$TRUSTED_PROXY"; do
+      [ -z "${o#*:}" ] || usage "${o%%:*} goes with --companion (rsc-brain installed by rsc-factory)."
+    done
+  else
+    [ -z "$SHARED_NET" ] || matches "$SHARED_NET" '^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$' ||
+      usage '--attach-network takes the name of a Docker network, such as rsc-shared.'
+    if [ -n "$FACTORY_URL" ]; then
+      FACTORY_URL=${FACTORY_URL%/}
+      # As the service checks it (factoryUrlOf): https, or http on this machine; no credentials, query or fragment;
+      # only characters a shell reads as text; a real port; at most 300 characters.
+      fu_rest=${FACTORY_URL#*://} fu_port=''
+      fu_host=${fu_rest%%/*}
+      case $fu_host in *:*) fu_port=${fu_host##*:} ;; esac
+      { [ ${#FACTORY_URL} -le 300 ] && { [ -z "$fu_port" ] || is_port "$fu_port"; } &&
+        matches "$FACTORY_URL" '^(https://[a-z0-9.-]+|http://(localhost|127\.0\.0\.1))(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$'; } ||
+        usage '--factory-url takes the address of rsc-factory: https://factory.example.com, or http://localhost:PORT on this machine (lower-case, no query).'
+    fi
+    [ -z "$TRUSTED_PROXY" ] || is_ipv4 "$TRUSTED_PROXY" || usage '--trusted-proxy takes an IPv4 address, such as 192.168.210.2.'
+    [ "$DB" = bundled ] &&
+      usage '--companion uses the PostgreSQL of rsc-factory (--db shared) or an existing one (--db existing), not --db bundled.'
+    [ -n "$HTTP_PORT$HTTPS_PORT" ] &&
+      usage "--http-port and --https-port do not go with --companion: rsc-factory's Caddy serves rsc-brain."
+  fi
 fi
 if [ "$CMD" = restore ]; then
   [ -n "$COPY_FILE" ] || usage 'Pass --file with the copy to restore.'
@@ -354,7 +398,7 @@ checkpoint() {
 # names, and Compose's own. They are removed for every compose call.
 FIXED_VARS='COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_FILE COMPOSE_ENV_FILES COMPOSE_PATH_SEPARATOR
 POSTGRES_PASSWORD RSC_BRAIN_SECRET RSC_BRAIN_DATABASE_URL RSC_BRAIN_PUBLISH RSC_BRAIN_IMAGE RSC_BRAIN_DOMAIN
-RSC_BRAIN_ACME_CA'
+RSC_BRAIN_ACME_CA RSC_BRAIN_SHARED_NETWORK'
 compose_vars() {
   {
     # shellcheck disable=SC2086
@@ -367,7 +411,7 @@ compose_vars() {
 }
 warn_shell_vars() {
   set_here=''
-  for v in $(compose_vars "$HERE/compose.yaml" "${DIR:-/nonexistent}/compose.yaml"); do
+  for v in $(compose_vars "$HERE/compose.yaml" "${DIR:-/nonexistent}/compose.yaml" "${DIR:-/nonexistent}/compose.companion.yaml"); do
     eval "isset=\${$v+x}"
     [ -n "$isset" ] && set_here="$set_here $v"
   done
@@ -386,16 +430,15 @@ warn_shell_vars() {
 # writes. With neither, it runs as any other call (the known limit, said in the README).
 SHIELD=0
 dc() {
-  if [ -f "$DIR/compose.override.yaml" ]; then
-    set -- -f "$DIR/compose.yaml" -f "$DIR/compose.override.yaml" "$@"
-  else
-    set -- -f "$DIR/compose.yaml" "$@"
-  fi
+  [ -f "$DIR/compose.override.yaml" ] && set -- -f "$DIR/compose.override.yaml" "$@"
+  # Companion mode: the app also joins the network shared with rsc-factory (written by install).
+  [ -f "$DIR/compose.companion.yaml" ] && set -- -f "$DIR/compose.companion.yaml" "$@"
+  set -- -f "$DIR/compose.yaml" "$@"
   for p in $(printf '%s' "$PROFILES" | tr ',' ' '); do
     set -- --profile "$p" "$@"
   done
   (
-    for v in $(compose_vars "$DIR/compose.yaml" "$DIR/compose.override.yaml"); do unset "$v"; done
+    for v in $(compose_vars "$DIR/compose.yaml" "$DIR/compose.companion.yaml" "$DIR/compose.override.yaml"); do unset "$v"; done
     set -- compose --project-directory "$DIR" -p "$NAME" --env-file "$ENV_FILE" "$@"
     [ "$SHIELD" = 1 ] || exec docker "$@"
     command -v setsid >/dev/null 2>&1 && exec setsid docker "$@"
@@ -540,6 +583,88 @@ pick_subnet() {
   missing 'No free 192.168.200-254.0/24 network for rsc-brain: remove unused Docker networks (docker network prune) and run this again.'
 }
 
+# Companion mode: Docker new enough to keep the default route on the installation's own network (gw_priority), and the
+# network shared with rsc-factory, which rsc-factory's installer makes: its IPv4 subnet and gateway go to the service
+# (the handshake answers only from that subnet, never from its gateway).
+int_ip() { echo "$(($1 >> 24 & 255)).$(($1 >> 16 & 255)).$(($1 >> 8 & 255)).$(($1 & 255))"; }
+# version_at_least VERSION MAJOR MINOR: VERSION (such as v2.38.2 or 29.1.5) is MAJOR.MINOR or newer.
+version_at_least() {
+  v=$(printf '%s' "$1" | sed -n 's/^[^0-9]*\([0-9][0-9]*\)\.\([0-9][0-9]*\).*/\1 \2/p')
+  [ -n "$v" ] || return 1
+  # shellcheck disable=SC2086
+  set -- $v "$2" "$3"
+  [ "$1" -gt "$3" ] || { [ "$1" -eq "$3" ] && [ "$2" -ge "$4" ]; }
+}
+SHARED_CIDR='' SHARED_GW='' COMPANION_TOKEN=''
+companion_requirements() {
+  # On this machine only (--local), «this machine only» trusts the gateway of the installation's own network, and a
+  # request through the published port arrives from the network that holds the default route: gw_priority keeps it
+  # on the own network (measured with Docker 29.1: without it, the order of the names decides). A server needs neither.
+  if [ "$MODE" = local ]; then
+    version_at_least "$(docker compose version 2>/dev/null </dev/null)" 2 33 ||
+      missing 'Companion mode on this machine needs Docker Compose 2.33 or newer (and Docker Engine 28 or newer). Update Docker and run this again.'
+    version_at_least "$(docker version --format '{{.Server.Version}}' 2>/dev/null </dev/null)" 28 0 ||
+      missing 'Companion mode on this machine needs Docker Engine 28 or newer (and Docker Compose 2.33 or newer). Update Docker and run this again.'
+  fi
+  info=$(docker network inspect --format '{{range .IPAM.Config}}{{.Subnet}}|{{.Gateway}} {{end}}{{if .EnableIPv6}}ipv6{{end}}' "$SHARED_NET" 2>/dev/null </dev/null) ||
+    missing "There is no Docker network $SHARED_NET. rsc-factory's installer makes it before it installs rsc-brain; pass --attach-network with the network rsc-factory uses."
+  # IPv4 only: the handshake answers by the IPv4 subnet, and over IPv6 rsc-factory could reach rsc-brain from an address
+  # it does not know.
+  for e in $info; do
+    case $e in ipv6 | *:*)
+      usage "The Docker network $SHARED_NET has IPv6 on. Companion mode works over IPv4 only: make the network without --ipv6 (docker network create --subnet <IPv4/24> $SHARED_NET)."
+      ;;
+    esac
+  done
+  SHARED_CIDR='' SHARED_GW=''
+  for e in $info; do
+    case ${e%%|*} in
+    *.*.*.*/*)
+      SHARED_CIDR=${e%%|*} SHARED_GW=${e#*|}
+      break
+      ;;
+    esac
+  done
+  len=${SHARED_CIDR#*/}
+  case $len in '' | *[!0-9]*) len=0 ;; esac
+  { [ "$len" -ge 8 ] && [ "$len" -le 30 ]; } ||
+    missing "The Docker network $SHARED_NET has no IPv4 subnet from /8 to /30. rsc-factory's installer makes it with one (docker network create --subnet)."
+  net=$(($(ip_int "${SHARED_CIDR%/*}") >> (32 - len)))
+  [ -n "$SHARED_GW" ] || SHARED_GW=$(int_ip $(((net << (32 - len)) + 1)))
+  if [ -n "$TRUSTED_PROXY" ]; then
+    if [ $(($(ip_int "$TRUSTED_PROXY") >> (32 - len))) -ne "$net" ] || [ "$TRUSTED_PROXY" = "$SHARED_GW" ]; then
+      usage "--trusted-proxy $TRUSTED_PROXY is not an address of $SHARED_NET ($SHARED_CIDR) other than its gateway: give the fixed address of rsc-factory's Caddy on that network."
+    fi
+  fi
+}
+# The app joins the shared network as rsc-brain; its own network keeps the default route (RSC_BRAIN_LOCAL_ONLY trusts
+# that gateway as this machine).
+write_companion_compose() {
+  {
+    echo '# Companion mode, written by rsc-brain.sh install --companion (do not edit: install writes it again). The app'
+    echo "# joins the Docker network it shares with rsc-factory, which reaches it there as http://rsc-brain:8090; rsc-factory's"
+    echo '# Caddy serves its web address. Its own network keeps the default route.'
+    echo 'services:'
+    echo '  app:'
+    echo '    networks:'
+    if [ "$MODE" = local ]; then
+      echo '      default:'
+      echo '        gw_priority: 1'
+    else
+      echo '      default: {}'
+    fi
+    echo '      shared:'
+    echo '        aliases:'
+    echo '          - rsc-brain'
+    echo 'networks:'
+    echo '  shared:'
+    # shellcheck disable=SC2016
+    echo '    name: ${RSC_BRAIN_SHARED_NETWORK:?run rsc-brain.sh install}'
+    echo '    external: true'
+  } >"$DIR/compose.companion.yaml.new" && chmod 644 "$DIR/compose.companion.yaml.new" &&
+    mv -f "$DIR/compose.companion.yaml.new" "$DIR/compose.companion.yaml"
+}
+
 # ---------------------------------------------------------------------------------------------------------- install
 # What this run made, so a failure (or a stop) takes back exactly that. During a first install the same is kept in
 # <dir>/.rsc-brain/install.pending, so a run that was killed can be taken back by the next one.
@@ -631,6 +756,13 @@ write_env() {
     say_env RSC_BRAIN_GID "$RUN_GID"
     say_env RSC_BRAIN_DB_NAME "$DB_NAME"
     say_env RSC_BRAIN_FACTORY_DB "$FACTORY_DB"
+    say_env RSC_BRAIN_COMPANION "$COMPANION"
+    say_env RSC_BRAIN_SHARED_NETWORK "$SHARED_NET"
+    say_env RSC_BRAIN_COMPANION_NETWORK "$SHARED_CIDR"
+    say_env RSC_BRAIN_COMPANION_GATEWAY "$SHARED_GW"
+    say_env RSC_BRAIN_COMPANION_PROXY "$TRUSTED_PROXY"
+    say_env RSC_BRAIN_FACTORY_URL "$FACTORY_URL"
+    say_env RSC_BRAIN_COMPANION_TOKEN "$COMPANION_TOKEN"
     [ "$DB" = bundled ] && say_env POSTGRES_PASSWORD "$PG_PASSWORD"
     say_env RSC_BRAIN_DATABASE_URL "$DATABASE_URL"
     say_env RSC_BRAIN_SECRET "$SECRET"
@@ -704,6 +836,15 @@ install() {
       MODE=$(env_get RSC_BRAIN_MODE)
       DOMAIN=$(env_get RSC_BRAIN_DOMAIN)
     fi
+    # Installed by rsc-factory or not: install keeps that (and the shared network and addresses it is not given).
+    if [ "$(env_get RSC_BRAIN_COMPANION)" = 1 ]; then
+      COMPANION=1
+      [ -n "$SHARED_NET" ] || SHARED_NET=$(env_get RSC_BRAIN_SHARED_NETWORK)
+      [ -n "$FACTORY_URL" ] || FACTORY_URL=$(env_get RSC_BRAIN_FACTORY_URL)
+      [ -n "$TRUSTED_PROXY" ] || [ "$MODE" != server ] || TRUSTED_PROXY=$(env_get RSC_BRAIN_COMPANION_PROXY)
+    elif [ "$COMPANION" = 1 ]; then
+      usage "The installation in \"$DIR\" was not installed by rsc-factory, and install keeps that (--companion). To move it: make a copy (backup), uninstall, install anew with --companion and restore the copy."
+    fi
     [ -n "$PORT" ] || PORT=$(env_get RSC_BRAIN_PUBLISH | sed 's/.*://')
     [ -n "$HTTP_PORT" ] || HTTP_PORT=$(env_get RSC_BRAIN_HTTP_PORT)
     [ -n "$HTTPS_PORT" ] || HTTPS_PORT=$(env_get RSC_BRAIN_HTTPS_PORT)
@@ -738,6 +879,17 @@ install() {
       [ -n "$(foreign_files "$DIR")" ] &&
         usage "\"$DIR\" already holds files that are not an rsc-brain installation. Choose another folder with --dir."
     fi
+  fi
+  if [ "$COMPANION" = 1 ]; then
+    [ -n "$SHARED_NET" ] || usage '--companion needs --attach-network NAME: the Docker network shared with rsc-factory (its installer makes it).'
+    [ -n "$FACTORY_URL" ] || usage '--companion needs --factory-url URL: the address of rsc-factory.'
+    if [ "$MODE" = server ]; then
+      [ -n "$TRUSTED_PROXY" ] ||
+        usage "--companion with --domain needs --trusted-proxy IP: the fixed address of rsc-factory's Caddy on $SHARED_NET."
+    else
+      [ -z "$TRUSTED_PROXY" ] || usage '--trusted-proxy goes with --domain: on this machine only, nothing stands in front of rsc-brain.'
+    fi
+    [ -n "$DB" ] || DB=shared
   fi
   if [ -z "$DB" ]; then
     if can_ask; then
@@ -798,6 +950,7 @@ install() {
   # Requirements: nothing is changed until all of them are met.
   step 'Checking what rsc-brain needs'
   need_docker
+  [ "$COMPANION" = 1 ] && companion_requirements
   [ "$REINSTALL" = 1 ] && interrupted_work
   if [ "$RESUME" = 1 ]; then
     # Take back the interrupted install with what it wrote down, then go on as a first install.
@@ -853,7 +1006,7 @@ install() {
   OWN=0
   [ "$REINSTALL" = 1 ] && PROFILES=$(env_get COMPOSE_PROFILES) && running && OWN=1
   if [ "$OWN" = 0 ] || [ "127.0.0.1:$PORT" != "$(env_get RSC_BRAIN_PUBLISH)" ]; then free_port PORT --port; fi
-  if [ "$MODE" = server ]; then
+  if [ "$MODE" = server ] && [ "$COMPANION" = 0 ]; then
     if [ "$OWN" = 0 ] || [ "$(env_get RSC_BRAIN_MODE)" != server ] || [ "$HTTP_PORT" != "$(env_get RSC_BRAIN_HTTP_PORT)" ]; then free_port HTTP_PORT --http-port; fi
     if [ "$OWN" = 0 ] || [ "$(env_get RSC_BRAIN_MODE)" != server ] || [ "$HTTPS_PORT" != "$(env_get RSC_BRAIN_HTTPS_PORT)" ]; then free_port HTTPS_PORT --https-port; fi
   fi
@@ -868,7 +1021,8 @@ install() {
   fi
   if [ "$MODE" = server ]; then
     SITE=https://$DOMAIN
-    [ "$HTTPS_PORT" = 443 ] || SITE=$SITE:$HTTPS_PORT
+    # In companion mode rsc-factory's Caddy serves it, on 443.
+    [ "$HTTPS_PORT" = 443 ] || [ "$COMPANION" = 1 ] || SITE=$SITE:$HTTPS_PORT
   else
     SITE=http://localhost:$PORT
   fi
@@ -904,16 +1058,22 @@ install() {
     PG_PASSWORD=$(env_get POSTGRES_PASSWORD)
     DATABASE_URL=$(env_get RSC_BRAIN_DATABASE_URL)
     SUBNET=$(env_get RSC_BRAIN_SUBNET) IP_RANGE=$(env_get RSC_BRAIN_IP_RANGE) PROXY_IP=$(env_get RSC_BRAIN_PROXY_IP)
+    COMPANION_TOKEN=$(env_get RSC_BRAIN_COMPANION_TOKEN)
   else
     SECRET=${REUSED:-$(random_hex 48)}
     PG_PASSWORD=$(random_hex 32)
     DATABASE_URL=$DB_URL
+    # The one-time key of the companion setup: for rsc-factory, which sets rsc-brain up with it (POST
+    # /v1/setup/companion); once set up it serves nothing.
+    [ "$COMPANION" = 1 ] && COMPANION_TOKEN=$(random_hex 32)
   fi
   [ "$DB" = bundled ] || PG_PASSWORD=''
   PROFILES=''
   [ "$DB" = bundled ] && PROFILES=bundled
-  [ "$MODE" = server ] && PROFILES=${PROFILES:+$PROFILES,}server
+  [ "$MODE" = server ] && [ "$COMPANION" = 0 ] && PROFILES=${PROFILES:+$PROFILES,}server
   if [ "$MODE" = server ]; then LOCAL_ONLY=0 TRUSTED=$PROXY_IP; else LOCAL_ONLY=1 TRUSTED=''; fi
+  # In companion mode, rsc-factory's Caddy is the only proxy believed.
+  [ "$COMPANION" = 1 ] && [ "$MODE" = server ] && TRUSTED=$TRUSTED_PROXY
 
   # From here on, a failure or a stop takes back what this run made.
   trap interrupted HUP INT TERM
@@ -949,7 +1109,10 @@ install() {
   [ -n "$ADMIN_URL" ] && check_url=$ADMIN_URL
   if [ -n "$check_url" ]; then
     step 'Checking the PostgreSQL'
-    printf '%s\n' "$check_url" | docker run --rm -i --add-host host.docker.internal:host-gateway "$IMAGE" rsc-brain db check --url-stdin --json >/dev/null ||
+    # In companion mode the PostgreSQL is reached on the shared network, as the service will.
+    set -- --rm -i --add-host host.docker.internal:host-gateway
+    [ "$COMPANION" = 1 ] && set -- "$@" --network "$SHARED_NET"
+    printf '%s\n' "$check_url" | docker run "$@" "$IMAGE" rsc-brain db check --url-stdin --json >/dev/null ||
       failed 3 'That PostgreSQL cannot hold rsc-brain (the line above says why).'
   fi
 
@@ -980,6 +1143,13 @@ install() {
       failed 3 "$f is not next to the launcher. Run it from a copy of the repository (deploy/), or with --version."
     fi
   done
+  if [ "$COMPANION" = 1 ]; then
+    if [ ! -f "$DIR/compose.companion.yaml" ]; then
+      MADE_FILES="$MADE_FILES compose.companion.yaml"
+      save_state
+    fi
+    write_companion_compose || failed 4 "Could not write \"$DIR/compose.companion.yaml\"."
+  fi
   if [ "$REINSTALL" = 1 ]; then write_env "$DIR/.env" || failed 4 "Could not write \"$DIR/.env\"."; fi
   STARTED=1
   save_state
@@ -1025,9 +1195,12 @@ install() {
   trap - HUP INT TERM
 
   if [ "$JSON" = 1 ]; then
-    printf '{"url":%s,"mode":%s,"db":%s,"installationKey":%s,"keyId":%s,"version":%s,"dir":%s}\n' \
+    companion_json=''
+    [ "$COMPANION" = 1 ] &&
+      companion_json=",\"companionToken\":$(json_str "$COMPANION_TOKEN"),\"internalUrl\":\"http://rsc-brain:8090\""
+    printf '{"url":%s,"mode":%s,"db":%s,"installationKey":%s,"keyId":%s,"version":%s,"dir":%s%s}\n' \
       "$(json_str "$SITE")" "$(json_str "$MODE")" "$(json_str "$DB")" "$(json_str "$SECRET")" \
-      "$(json_str "$key_id")" "$(json_str "$version")" "$(json_str "$DIR")"
+      "$(json_str "$key_id")" "$(json_str "$version")" "$(json_str "$DIR")" "$companion_json"
     return 0
   fi
   out ''
@@ -1036,8 +1209,13 @@ install() {
     out 'Its settings were applied; the installation key, the data and the copies are as they were.'
     return 0
   fi
-  out 'Open it to finish the first-time setup: there you make the administration account.'
-  [ "$MODE" = server ] && out "($DOMAIN must point at this server; the certificate arrives by itself on the first visit.)"
+  if [ "$COMPANION" = 1 ]; then
+    out "It waits for rsc-factory ($FACTORY_URL): finish the first-time setup of rsc-factory, and rsc-brain is set up"
+    out "with the same administration. rsc-factory reaches it as http://rsc-brain:8090 on the network $SHARED_NET."
+  else
+    out 'Open it to finish the first-time setup: there you make the administration account.'
+  fi
+  [ "$MODE" = server ] && [ "$COMPANION" = 0 ] && out "($DOMAIN must point at this server; the certificate arrives by itself on the first visit.)"
   out ''
   if [ -t 1 ]; then
     out "The installation key (id $key_id) opens your copies; without it they cannot be restored. Save it now in a"
@@ -1709,7 +1887,7 @@ uninstall() {
   printf '%s\n' "$(env_get RSC_BRAIN_SECRET)" >"$DIR/installation-key.txt"
   chmod 600 "$DIR/installation-key.txt"
   rm -rf "${DIR:?}/backups" "${DIR:?}/${STATE:?}" "${DIR:?}/compose.yaml" "${DIR:?}/Caddyfile" "${DIR:?}/.env" \
-    "${DIR:?}/last-failure.log"
+    "${DIR:?}/compose.companion.yaml" "${DIR:?}/last-failure.log"
   out "rsc-brain and its copies were deleted from \"$DIR\"."
   if [ "$db" != bundled ] && [ -z "$ADMIN_URL_FILE" ]; then
     out "Its database is on your PostgreSQL and was not touched: remove the database rsc-brain used (and its role) there,"

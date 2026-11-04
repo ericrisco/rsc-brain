@@ -6,6 +6,14 @@ forward.
 
 ## Unreleased
 
+- **Installed by rsc-factory (companion mode).** `rsc-brain.sh install --companion --attach-network
+  NAME --factory-url URL` joins the network rsc-factory shares as `rsc-brain`, with no Caddy of its own,
+  and waits: its setup page says to finish in rsc-factory. rsc-factory's setup then calls
+  `POST /v1/setup/companion` with the one-time key from the `--json` summary (`companionToken`) and
+  gets the administration and its service account in one go. The call answers only while rsc-brain is
+  not set up, only from the shared network, and only once. A main key lost afterwards is replaced with
+  `POST /v1/setup/companion/reconnect` (the one-time key and an administrator's password).
+
 ## v0.1.0
 
 The first release: a knowledge server for AI agents that anyone can install.
