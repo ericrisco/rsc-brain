@@ -10,6 +10,7 @@ import { after, before, describe, it } from 'node:test'
 import { hashPassword } from '../../src/auth/password.ts'
 import { stepOf, totpAt } from '../../src/auth/totp.ts'
 import { silentLog } from '../../src/core/log.ts'
+import { VERSION } from '../../src/core/version.ts'
 import { backup, backupJob, type CopyMemory, LOCK } from '../../src/ops/backup/backup.ts'
 import { keyId } from '../../src/ops/backup/format.ts'
 import { skipPg } from '../helpers/pg.ts'
@@ -322,7 +323,7 @@ describe('copies, the installation key and versions from the web (§3.4)', { ski
     assert.deepEqual(Object.keys(b).sort(), ['lastFailure', 'lastOk', 'lastWarning'])
     assert.ok(b.lastOk)
     assert.deepEqual(r.body.release, {
-      installed: '0.1.0',
+      installed: VERSION,
       latest: null,
       notes: null,
       checkedAt: null,
@@ -376,13 +377,13 @@ describe('a copy that fails where its status cannot be written either: the web s
 
   it('without a folder for the copies: the list says so and a copy is refused with how to set it; a newer release is said', async () => {
     const latest = {
-      latest: '0.2.0',
-      notes: '## 0.2.0\n- Faster search.',
+      latest: '9.9.9',
+      notes: '## 9.9.9\n- Faster search.',
       checkedAt: '2026-11-02T10:00:00.000Z',
     }
     const v = await world({
       releases: {
-        state: () => ({ installed: '0.1.0', ...latest }),
+        state: () => ({ installed: VERSION, ...latest }),
         check: async () => {},
         start: () => {},
         stop: () => {},
@@ -392,7 +393,7 @@ describe('a copy that fails where its status cannot be written either: the web s
       const a = await v.person('Ada', { isAdmin: true })
       const web = await v.web(a.id)
       const sys = await v.callWeb(web, 'GET', '/v1/admin/system')
-      assert.deepEqual(sys.body.release, { installed: '0.1.0', ...latest, newer: true })
+      assert.deepEqual(sys.body.release, { installed: VERSION, ...latest, newer: true })
       assert.deepEqual(sys.body.backups, { lastOk: null, lastFailure: null, lastWarning: null })
       const r = await v.callWeb(web, 'GET', '/v1/admin/backups')
       assert.equal(r.status, 200, r.text)
