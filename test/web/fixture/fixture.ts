@@ -3304,6 +3304,7 @@ export async function startFixture(
         if (b.seeded === 300 || b.seeded === 5000 || b.seeded === 'lumpy') s.seeded = b.seeded
         if (typeof b.factoryUrl === 'string') s.factoryUrl = b.factoryUrl
         if (b.companion === true) s.companion = true
+        if (typeof b.publicUrl === 'string') s.publicUrl = b.publicUrl
         return send(res, { status: 201, body: { id: s.id } })
       }
       const control = /^\/__fixture\/scenarios\/([\w]+)\/state$/.exec(url.pathname)

@@ -788,10 +788,19 @@ pre.command code {
   font: inherit;
 }
 
+/* Each command of a block on a row of its own; when one wraps, its next rows are indented under it. */
+pre.command .line {
+  display: block;
+  padding-left: 2ch;
+  text-indent: -2ch;
+}
+
 /* A word of a command ("--scope") wraps whole; only a word wider than the box breaks inside. */
 pre.command .word {
   display: inline-block;
   max-width: 100%;
+  /* Not the hanging indent of its line (text-indent is inherited). */
+  text-indent: 0;
 }
 
 .copy {
