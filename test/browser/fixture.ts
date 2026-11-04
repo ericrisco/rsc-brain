@@ -50,7 +50,14 @@ export async function scenario(
   preset: Preset,
   states: States = {},
   // seeded: the brains' wiki is the seeded one of 300 or 5 000 pages (the graph, CA5 and CA6).
-  o: { mail?: boolean; seeded?: 300 | 5000 | 'lumpy'; factoryUrl?: string; companion?: boolean } = {},
+  o: {
+    mail?: boolean
+    seeded?: 300 | 5000 | 'lumpy'
+    factoryUrl?: string
+    companion?: boolean
+    // The installation's public address (its kit's commands use it).
+    publicUrl?: string
+  } = {},
 ): Promise<Scenario> {
   const res = await fetch(`${baseURL}/__fixture/scenarios`, {
     method: 'POST',
@@ -62,6 +69,7 @@ export async function scenario(
       ...(o.seeded ? { seeded: o.seeded } : {}),
       ...(o.factoryUrl ? { factoryUrl: o.factoryUrl } : {}),
       ...(o.companion ? { companion: true } : {}),
+      ...(o.publicUrl ? { publicUrl: o.publicUrl } : {}),
     }),
   })
   const { id } = (await res.json()) as { id: string }

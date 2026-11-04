@@ -94,6 +94,75 @@ describe('keys over HTTP', { skip: skipPg }, () => {
     assert.match(missing.body.error?.howToProceed ?? '', /onBehalf/)
   })
 
+  // Found by rsc-factory's end-to-end pass (F1-PR13): the entry carried the reference but not the person, so the
+  // web read «RSC Factory (run r_z, step 1)» without «on behalf of Ana».
+  it('CA20: what a short key on behalf of Ana writes reads «on behalf of Ana»; Ana gains no access', async () => {
+    const r = await mint({
+      writeBrain: 'project',
+      ref: 'run r_z step 1',
+      onBehalf: ana.email,
+      ttlMinutes: 10,
+    })
+    const k = (r.body.key as { secret: string }).secret
+    const saved = await w.call(k, 'POST', '/v1/brains/project/entries', {
+      type: 'step',
+      title: 'Step record',
+      content: 'What the step did, on behalf of Ana.',
+    })
+    assert.equal(saved.status, 201, saved.text)
+    const id = (saved.body.receipt as { entryId: string }).entryId
+    const e = (await w.call(eric.key, 'GET', `/v1/entries/${id}`)).body.entry as Record<string, unknown>
+    assert.equal(e.ref, 'run r_z step 1')
+    assert.deepEqual(e.author, { id: factory.id, name: 'RSC Factory' })
+    assert.equal(e.onBehalfId, ana.id)
+    assert.deepEqual(e.onBehalf, { id: ana.id, name: 'Ana' })
+    // Without onBehalf, nobody is named.
+    const plain = await mint({ writeBrain: 'project', ref: 'run r_z step 2', ttlMinutes: 10 })
+    const p = await w.call(
+      (plain.body.key as { secret: string }).secret,
+      'POST',
+      '/v1/brains/project/entries',
+      {
+        type: 'step',
+        title: 'Step record',
+        content: 'What the step did, for nobody in particular.',
+      },
+    )
+    const pe = (
+      await w.call(eric.key, 'GET', `/v1/entries/${(p.body.receipt as { entryId: string }).entryId}`)
+    ).body.entry as Record<string, unknown>
+    assert.equal(pe.onBehalfId, null)
+    // Ana is still not a member of project.
+    assert.equal((await w.call(ana.key, 'GET', '/v1/brains/project')).status, 404)
+  })
+
+  // The session summary is the other way an agent writes (summarizeSession): it signs on behalf of the same person.
+  it('CA20: the session summary a short key on behalf of Ana writes reads «on behalf of Ana» too', async () => {
+    const r = await mint({
+      writeBrain: 'project',
+      ref: 'run r_z step 3',
+      onBehalf: ana.email,
+      ttlMinutes: 10,
+    })
+    const k = (r.body.key as { secret: string }).secret
+    const opened = await w.call(k, 'POST', '/v1/brains/project/sessions', {
+      purpose: 'A step on behalf of Ana',
+    })
+    assert.equal(opened.status, 201, opened.text)
+    const id = (opened.body.session as { id: string }).id
+    const summary = await w.call(k, 'POST', `/v1/sessions/${id}/summary`, {
+      title: 'Summary of the step',
+      content: 'What the step did, summed up on behalf of Ana.',
+    })
+    assert.equal(summary.status, 201, summary.text)
+    const e = (
+      await w.call(eric.key, 'GET', `/v1/entries/${(summary.body.receipt as { entryId: string }).entryId}`)
+    ).body.entry as Record<string, unknown>
+    assert.equal(e.type, 'summary')
+    assert.equal(e.onBehalfId, ana.id)
+    assert.deepEqual(e.onBehalf, { id: ana.id, name: 'Ana' })
+  })
+
   it('CA17: a short key is never wider than the service account', async () => {
     const r = await mint({ writeBrain: 'company', ref: 'x', ttlMinutes: 5 })
     assert.equal(r.status, 403)

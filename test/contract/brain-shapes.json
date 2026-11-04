@@ -364,6 +364,34 @@
           },
           "omitted": {
             "type": "object"
+          },
+          "items": {
+            "$comment": "Added in F1-PR13 (CA17): what went in, item by item. Optional: an rsc-brain from before it answers without it.",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["section", "kind", "id", "type", "title"],
+              "properties": {
+                "section": {
+                  "type": "string"
+                },
+                "kind": {
+                  "enum": ["entry", "page"]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "address": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }

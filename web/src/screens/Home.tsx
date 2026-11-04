@@ -61,11 +61,19 @@ function ConnectCommand() {
       <>
         <pre class="command">
           <code>
-            {command.split(' ').map((w, i) => (
-              <Fragment key={i}>
-                {i ? ' ' : ''}
-                <span class="word">{w}</span>
-              </Fragment>
+            {/* One line per command (each starts its own row); a long one wraps at its spaces, a word only
+                where it is wider than the box. The copy is the command itself, whatever is shown. */}
+            {command.split('\n').map((line, n, all) => (
+              <span key={n} class="line">
+                {line.split(' ').map((w, i) => (
+                  <Fragment key={i}>
+                    {i ? ' ' : ''}
+                    <span class="word">{w}</span>
+                  </Fragment>
+                ))}
+                {/* The text of the block is still the command: a selection copies its line break. */}
+                {n < all.length - 1 ? '\n' : ''}
+              </span>
             ))}
           </code>
         </pre>

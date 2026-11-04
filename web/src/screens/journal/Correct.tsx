@@ -4,11 +4,13 @@
 // agent. Done when: the correction is saved and the person sees it as an entry. It goes first in the
 // context of the agents it touches. Pages and entries are picked by searching their words, never by
 // pasting an id. What is typed is kept in a draft of this tab, per person and brain, until it is sent.
+
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import type { ApiError } from '../../api/client.ts'
 import { draft } from '../../api/draft.ts'
 import { api } from '../../api/index.ts'
+import { useOnChange } from '../../lib/follow.ts'
 import { correctionAbout, journalDraftKey } from '../../lib/journal.ts'
 import { pageHref } from '../../lib/markdown.ts'
 import { me } from '../../session.ts'
@@ -78,7 +80,8 @@ function Picker<T>({
   pick: (x: T) => void
 }) {
   const [text, setText] = useState(picked ?? '')
-  useEffect(() => setText(picked ?? ''), [picked])
+  // A pick shows its title; what was typed before the first render's effect stays.
+  useOnChange(picked, () => setText(picked ?? ''))
   const choose = (x: T) => {
     pick(x)
     look.close()

@@ -254,6 +254,10 @@ function prepare(i: EntryInput): Prepared {
 
 type Writer = { onBehalfId: string | null }
 
+// An agent's own writing: a short key "on behalf of" a person signs it for that person (spec B4 CA20, «RSC
+// Factory (run r_x, step 3) on behalf of Eric»); any other key speaks for nobody else.
+const agentWriter = (ctx: Ctx): Writer => ({ onBehalfId: ctx.who.credential.onBehalfId ?? null })
+
 // The heart of saving, shared by agents (`saveEntry`) and by the correction relay.
 async function write(
   ctx: Ctx,
@@ -494,7 +498,7 @@ export async function saveEntry(ctx: Ctx, slug: string, input: EntryInput): Prom
     const c = { ...ctx, db }
     const { brain, role } = await inBrain(c, { slug }, 'share')
     await allow(c, 'journal.write', { role, brainStatus: brain.status }, brain.id)
-    return write(ctx, db, brain.id, p, { onBehalfId: null }, compactO(input))
+    return write(ctx, db, brain.id, p, agentWriter(ctx), compactO(input))
   })
 }
 
@@ -701,17 +705,10 @@ export async function summarizeSession(
       }
       throw conflict('session_closed', 'That session is already closed.', 'Open a new session for new work.')
     }
-    const receipt = await write(
-      ctx,
-      db,
-      brain.id,
-      p,
-      { onBehalfId: null },
-      {
-        sessionId,
-        ...(input.requestKey !== undefined ? { requestKey: input.requestKey } : {}),
-      },
-    )
+    const receipt = await write(ctx, db, brain.id, p, agentWriter(ctx), {
+      sessionId,
+      ...(input.requestKey !== undefined ? { requestKey: input.requestKey } : {}),
+    })
     await db.query(
       "UPDATE sessions SET status = 'closed', summary_entry_id = $2, closed_at = $3 WHERE id = $1",
       [sessionId, receipt.entryId, ctx.clock()],

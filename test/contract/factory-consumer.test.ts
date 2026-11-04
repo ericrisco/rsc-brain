@@ -32,7 +32,7 @@ type Shapes = {
 }
 
 // The same constant is in rsc-factory's test/memory/brain-client.test.ts: change both, with both copies.
-const BRAIN_SHAPES_SHA256 = 'f13c26dace0938a68c208664a5230b5708c4d0cb136c5e591377ebac89af42a3'
+const BRAIN_SHAPES_SHA256 = '3564df2b6f4cd5c873711f95c4c04475a8f87f8b4819d7b63bb8f345e5ddcce0'
 const SHAPES_TEXT = readFileSync(new URL('./brain-shapes.json', import.meta.url), 'utf8')
 const SHAPES = JSON.parse(SHAPES_TEXT) as Shapes
 
@@ -322,6 +322,18 @@ describe('the consumer contract of rsc-factory', { skip: skipPg }, () => {
     assert.doesNotMatch(narrator, /thumbnail text is too long/)
     assert.match(designer, /thumbnail text is too long/)
     assert.doesNotMatch(designer, /the hook is too slow/)
+    // F1-PR13 (CA17): the items name what went in, so rsc-factory's board can name the correction.
+    const reply = await call(
+      'GET /v1/brains/{slug}/context',
+      `/v1/brains/youtube-channel/context?${new URLSearchParams({ task: 'Make the next video', agent: 'narrator', ref: 'run r_5678abcd step 1', max: '12000' })}`,
+    )
+    const items = reply.items as Array<{ section: string; kind: string; id: string; type: string }>
+    const fixes = items.filter((i) => i.kind === 'entry' && i.type === 'correction')
+    assert.ok(fixes.length > 0, JSON.stringify(items))
+    for (const f of fixes) {
+      assert.equal(f.section, 'corrections')
+      assert.ok(String(reply.text).includes(`<<<entry id=${f.id} type=correction`))
+    }
   })
 
   it('pending proposals: all of them oldest first, and "mine" counts only those of the service', async () => {

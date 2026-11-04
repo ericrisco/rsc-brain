@@ -140,6 +140,32 @@ test.describe('settings of a brain', () => {
     )
   })
 
+  // The root cause of the B7 flake (F1-PR13): the row copied its saved role into the choice in an effect that
+  // runs after paint. A role picked before that first effect (Playwright's selectOption does not wait for
+  // stability, and a loaded machine delays effects) was put back, so «Save role of Ana» never appeared and
+  // the next click waited until its timeout. Here the role is picked the moment the row is in the page.
+  test('a role picked the moment the row appears is kept', async ({ page, context, baseURL }) => {
+    await page.addInitScript(() => {
+      const watch = new MutationObserver(() => {
+        const s = document.querySelector<HTMLSelectElement>('select[aria-label="Role of Ana"]')
+        if (!s) return
+        watch.disconnect()
+        s.value = 'curator'
+        s.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      document.addEventListener('DOMContentLoaded', () =>
+        watch.observe(document.body, { childList: true, subtree: true }),
+      )
+    })
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/b/growth/settings')
+    const ana = member(page, 'Ana')
+    await expect(ana.getByRole('button', { name: 'Save role of Ana' })).toBeVisible()
+    await expect(ana.getByLabel('Role of Ana', { exact: true })).toHaveValue('curator')
+    await ana.getByRole('button', { name: 'Save role of Ana' }).click()
+    await expect(page.getByRole('status').filter({ hasText: 'Ana is now a curator.' })).toBeVisible()
+  })
+
   test('leaving a brain speaks to you, by your row', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/b/growth/settings')

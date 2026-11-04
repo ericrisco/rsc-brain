@@ -2,9 +2,11 @@
 // the wiki, when and by whom. Done when: the person found the change and opened its page. Newest first, by
 // pages of 50 («Show more»); filtered on the server by kind of change and by page, the filters in the
 // address.
+
 import { useEffect, useRef, useState } from 'preact/hooks'
 import type { ApiError } from '../../api/client.ts'
 import { api } from '../../api/index.ts'
+import { useOnChange } from '../../lib/follow.ts'
 import { online } from '../../session.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
@@ -51,7 +53,7 @@ export function WikiLog({ slug }: { slug: string }) {
       live = false
     }
   }, [brain?.slug, f.values.kind, f.values.page, tries])
-  useEffect(() => setPageText(f.values.page), [f.values.page])
+  useOnChange(f.values.page, () => setPageText(f.values.page))
   if (!brain) return gate
   const w = T.wiki
   const loadMore = async () => {

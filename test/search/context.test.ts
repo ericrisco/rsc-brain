@@ -148,6 +148,44 @@ describe('start-up context with the wiki', { skip: skipPg }, () => {
     assert.match(c.text, /<<<map brain=yt>>>\n(- .+\n)*- style\/intros — Intros\n/)
   })
 
+  // F1-PR13 (CA17): what went in, item by item, so a consumer (rsc-factory's board) can name it without
+  // reading the text. Additive: text, chars, included and omitted are as before.
+  it('the context lists each item it includes: section, kind, id, type, title (and address of a page)', async () => {
+    const c = (await context(
+      ana.key,
+      'yt',
+      `agent=narrator&task=${encodeURIComponent('write the intro for a video about cameras')}`,
+    )) as unknown as Context & {
+      items: Array<{
+        section: string
+        kind: string
+        id: string
+        type: string
+        title: string
+        address?: string
+      }>
+    }
+    assert.ok(Array.isArray(c.items))
+    const fix = c.items.find((i) => i.kind === 'entry' && i.title === 'intros under 30s')
+    assert.ok(fix, JSON.stringify(c.items))
+    assert.equal(fix.section, 'corrections')
+    assert.equal(fix.type, 'correction')
+    assert.ok(c.text.includes(`<<<entry id=${fix.id} type=correction`))
+    const intros = c.items.find((i) => i.kind === 'page' && i.address === 'style/intros')
+    assert.ok(intros, JSON.stringify(c.items))
+    assert.deepEqual(
+      [intros.section, intros.type, intros.title],
+      ['pages about your task', 'guide', 'Intros'],
+    )
+    assert.ok(!c.items.some((i) => i.title === 'use the blue logo'))
+    // Each item once, as many as the sections counted.
+    assert.equal(new Set(c.items.map((i) => i.id)).size, c.items.length)
+    const counted = Object.entries(c.included)
+      .filter(([k]) => k !== 'map')
+      .reduce((n, [, v]) => n + v, 0)
+    assert.equal(c.items.length, counted)
+  })
+
   it('CA11b: an entry and a page that imitate the delimiters cannot close their block', async () => {
     await save(ana.key, 'yt', {
       type: 'note',

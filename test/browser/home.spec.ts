@@ -2,6 +2,7 @@
 // entries, what waits for review and the last activity; the count of proposals waiting for me in the
 // top bar; «Create brain» for whoever may; «Connect your agent» always; and, for an administrator still
 // alone in the installation, the way to invite people.
+import assert from 'node:assert/strict'
 import { expect, INVITE, noSideScroll, PASSWORD, scenario, test } from './fixture.ts'
 
 test.describe('the cards', () => {
@@ -214,4 +215,53 @@ test.describe('invite people from home', () => {
     await expect(page.getByRole('link', { name: 'Growth' })).toBeVisible()
     await expect(page.getByRole('region', { name: 'Invite people' })).toHaveCount(0)
   })
+})
+
+// F1-PR13: with a long address (rsc-factory's brain.<its domain>) the command of «Get started» wrapped in a
+// muddle: a word was split on spaces only, so «user» and the next command were one block and «--scope» came
+// after «user». Each command is its own line; a long one wraps at its spaces, and the copy is the command.
+test.describe('Get started: the command to connect an agent', () => {
+  const LONG = 'https://brain.factory.a-rather-long-company-name.example.test'
+  for (const width of [320, 1280])
+    test(`at ${width} px a long address wraps cleanly, in reading order, and the copy is the command`, async ({
+      page,
+      context,
+      baseURL,
+    }) => {
+      await scenario(context, baseURL as string, 'alone', {}, { publicUrl: LONG })
+      await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: baseURL as string })
+      await page.setViewportSize({ width, height: 900 })
+      await page.goto('/')
+      const block = page.locator('pre.command').first()
+      await expect(block).toContainText(`${LONG}/mcp`)
+      // Every word, top to bottom and left to right in the order of the command.
+      const words = await block.locator('.word').evaluateAll((els) =>
+        els.map((e) => {
+          const r = e.getBoundingClientRect()
+          return { text: e.textContent ?? '', top: Math.round(r.top), left: Math.round(r.left) }
+        }),
+      )
+      const command = `claude mcp add --transport http rsc-brain ${LONG}/mcp --scope user\nclaude mcp login rsc-brain`
+      assert.deepEqual(
+        words.map((w) => w.text),
+        command.split(/\s+/),
+      )
+      for (let i = 1; i < words.length; i++) {
+        const [a, b] = [words[i - 1], words[i]] as [(typeof words)[0], (typeof words)[0]]
+        assert.ok(b.top > a.top || (b.top === a.top && b.left > a.left), `${a.text} then ${b.text}`)
+      }
+      // The second command starts a line of its own.
+      const login = words.findIndex((w) => w.text === 'login') - 2
+      assert.ok(
+        (words[login]?.top ?? 0) > (words[login - 1]?.top ?? 0),
+        'claude mcp login starts its own line',
+      )
+      // Nothing sticks out of the block, and the page does not scroll sideways.
+      const fits = await block.evaluate((el) => el.scrollWidth <= el.clientWidth)
+      assert.equal(fits, true)
+      await noSideScroll(page)
+      await page.getByRole('button', { name: 'Copy the command' }).click()
+      assert.equal(await page.evaluate(() => navigator.clipboard.readText()), command)
+      if (width === 320) await page.screenshot({ path: 'test-results/get-started-320.png', fullPage: true })
+    })
 })

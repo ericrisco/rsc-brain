@@ -1698,6 +1698,20 @@ const HAND: Record<string, Op> = {
       chars: n('Its length.'),
       included: { type: 'object' },
       omitted: { type: 'object' },
+      items: list(
+        obj(
+          {
+            section: s('The part it is in, as counted in included.'),
+            kind: s('entry or page.', { enum: ['entry', 'page'] }),
+            id: s('The entry or page id, as in its delimiter.'),
+            type: s('Its type.'),
+            title: s('Its title.'),
+            address: s('A page: its address.'),
+          },
+          ['address'],
+        ),
+        'Each entry and page included, in the order of the text (added in F1-PR13; the map lines are not items).',
+      ),
       max: n('The size it was built for.'),
     }),
   },

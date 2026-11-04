@@ -20,6 +20,7 @@ import { api } from '../api/index.ts'
 import { invalidate, resource } from '../api/resource.ts'
 import { ago } from '../lib/brains.ts'
 import { type ExportFormat, exportAsk, sizeLabel } from '../lib/exporting.ts'
+import { useOnChange } from '../lib/follow.ts'
 import { fileProblem, type ImportReport, importAsk, importDone, whyText } from '../lib/importing.ts'
 import { focusOnArrival } from '../lib/screen.ts'
 import {
@@ -136,7 +137,8 @@ function MemberItem({
   const [asking, setAsking] = useState(false)
   const [selfDemote, setSelfDemote] = useState(false)
   const { route } = useLocation()
-  useEffect(() => setPick(m.role), [m.role])
+  // The choice follows the saved role when that role changes (a save, another curator's change read again).
+  useOnChange(m.role, () => setPick(m.role))
   useEffect(() => {
     if (asking) document.getElementById(`remove-yes-${m.accountId}`)?.focus()
   }, [asking])
