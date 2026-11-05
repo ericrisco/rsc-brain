@@ -2018,8 +2018,11 @@ update() {
 #   updater/         the updater's files and, in credentials/, the access to a private repository   0700
 # The updater mounts the Docker socket and <dir> at its own path, nothing else (deploy/compose.updater.yaml).
 UPD_FILES='loop.sh credentials.sh Dockerfile'
-# Where a working updater is kept aside while `enable` runs again over it; empty when there was none.
-UPD_PREV=''
+# `enable` over an updater that works keeps aside, in updater/ itself (so disable and uninstall remove it with the rest),
+# the files that hold no secret (updater/previous) and, by a rename, the credential (updater/credentials.old): there is
+# never a second copy of a credential. UPD_WAS_ON: there was one.
+UPD_WAS_ON=0
+UPD_KEPT='compose.updater.yaml rsc-brain.sh loop.sh credentials.sh Dockerfile updater.env passwd'
 updater_names() {
   UPD_PROJECT=$NAME-updater
   UPD_IMAGE=rsc-brain-updater:$NAME
@@ -2080,13 +2083,26 @@ updater_refresh() {
   return 0
 }
 # What a failed or refused enable leaves behind is taken back: the container, the image it built, the folder.
+# Whatever is kept aside comes back, and nothing is left over. Safe to run again, and after a run that was cut short.
+updater_put_back() {
+  if [ -d "$DIR/updater/credentials.old" ]; then
+    rm -rf "${DIR:?}/updater/credentials"
+    mv "$DIR/updater/credentials.old" "$DIR/updater/credentials"
+  fi
+  if [ -d "$DIR/updater/previous" ]; then
+    for pb in $UPD_KEPT; do
+      [ -f "$DIR/updater/previous/$pb" ] || continue
+      { cp -p "$DIR/updater/previous/$pb" "$DIR/updater/$pb.new" && mv -f "$DIR/updater/$pb.new" "$DIR/updater/$pb"; } 2>/dev/null
+    done
+    rm -rf "${DIR:?}/updater/previous"
+  fi
+  return 0
+}
 updater_take_back() {
-  if [ -n "$UPD_PREV" ] && [ -d "$UPD_PREV" ]; then
-    # It was working before this run: only what this run changed is undone, its files and its credential come back,
-    # and it keeps running (started again only if this run's start had stopped it).
-    rm -rf "${DIR:?}/updater"
-    mv "$UPD_PREV" "$DIR/updater"
-    UPD_PREV=''
+  if [ "$UPD_WAS_ON" = 1 ]; then
+    # It was working before this run: only what this run changed is undone, and it keeps running (started again only
+    # if this run's start had stopped it). Running this twice does the same as once.
+    updater_put_back
     [ -n "$(uc ps -q 2>/dev/null </dev/null)" ] || uc up -d >/dev/null 2>&1 </dev/null
     return 0
   fi
@@ -2097,11 +2113,16 @@ updater_take_back() {
   rm -rf "${DIR:?}/updater"
   return 0
 }
+# Every copy of the credential: the one in use, the one kept aside by an enable, and what an enable that was cut short left.
+updater_drop_credentials() {
+  rm -rf "${DIR:?}/updater/credentials" "${DIR:?}/updater/credentials.old" "${DIR:?}/updater/previous" \
+    "${DIR:?}/${STATE:?}/updater.previous"
+}
 # updater_remove: no container, no image, no credential, none of what it said. 0 when all is gone.
 updater_remove() {
   ur_ok=0
   # The credential first: it goes whatever Docker says.
-  rm -rf "${DIR:?}/updater/credentials"
+  updater_drop_credentials
   if [ -d "$DIR/updater" ] || [ -f "$DIR/update/report/updater.json" ]; then
     if docker info >/dev/null 2>&1 </dev/null; then
       if [ -f "$DIR/updater/compose.updater.yaml" ] && [ -f "$DIR/updater/updater.env" ]; then
@@ -2176,10 +2197,24 @@ web_updates_enable() {
   take_lock
   src=$(updater_source) ||
     missing 'The updater files (updater/, compose.updater.yaml) are not next to the launcher. Run it from a copy of the repository (deploy/), or update rsc-brain to a version that has them.'
+  # An enable that was cut short (killed, a power cut) left things aside: back to how it was before anything else.
+  if [ -d "$DIR/updater/previous" ] || [ -d "$DIR/updater/credentials.old" ]; then
+    say 'An earlier turning on was cut short: the updater goes back to how it was before it.'
+    updater_put_back
+  fi
   if [ -f "$DIR/updater/updater.env" ]; then
-    rm -rf "${DIR:?}/${STATE:?}/updater.previous"
-    cp -Rp "$DIR/updater" "$DIR/$STATE/updater.previous" 2>/dev/null || failed 4 "Could not keep the updater that runs aside."
-    UPD_PREV=$DIR/$STATE/updater.previous
+    UPD_WAS_ON=1
+    if ! { mkdir "$DIR/updater/previous" && chmod 700 "$DIR/updater/previous"; }; then
+      rm -rf "${DIR:?}/updater/previous"
+      failed 4 'Could not keep the updater that runs aside.'
+    fi
+    for we_f in $UPD_KEPT; do
+      [ -f "$DIR/updater/$we_f" ] || continue
+      if ! cp -p "$DIR/updater/$we_f" "$DIR/updater/previous/$we_f" 2>/dev/null; then
+        rm -rf "${DIR:?}/updater/previous"
+        failed 4 'Could not keep the updater that runs aside.'
+      fi
+    done
   fi
   trap 'to_terminal; updater_take_back; exit 4' HUP INT TERM
   if ! { mkdir -p "$DIR/updater/credentials" "$DIR/updater/home" 2>/dev/null &&
@@ -2195,7 +2230,15 @@ web_updates_enable() {
     updater_take_back
     failed 4 "Could not write the updater's files in \"$DIR/updater\"."
   }
-  # The access, copied for the updater alone; a secret goes by file, never by argument.
+  # The access, copied for the updater alone; a secret goes by file, never by argument. One that works is moved aside
+  # (a rename, no second copy) until this run has gone well.
+  if [ "$UPD_WAS_ON" = 1 ] && { [ -n "$REPO_TOKEN" ] || [ -n "$REPO_KEY" ]; }; then
+    if ! { mv "$DIR/updater/credentials" "$DIR/updater/credentials.old" && mkdir "$DIR/updater/credentials" &&
+      chmod 700 "$DIR/updater/credentials"; }; then
+      updater_take_back
+      failed 4 'Could not set the credential aside.'
+    fi
+  fi
   if [ -n "$REPO_TOKEN" ]; then
     rm -f "$DIR/updater/credentials/key" "$DIR/updater/credentials/known_hosts"
     { cat "$REPO_TOKEN" >"$DIR/updater/credentials/token.new" && chmod 600 "$DIR/updater/credentials/token.new" &&
@@ -2266,9 +2309,9 @@ web_updates_enable() {
     updater_take_back
     failed 4 'The updater did not start (the lines above say why). Everything it made was removed.'
   }
+  # What was kept aside goes first: a signal after this finds nothing to put back over the new updater.
+  rm -rf "${DIR:?}/updater/previous" "${DIR:?}/updater/credentials.old"
   trap - HUP INT TERM
-  [ -z "$UPD_PREV" ] || rm -rf "${UPD_PREV:?}"
-  UPD_PREV=''
   out 'Updates from the web are on.'
   out 'An administrator signed in on the web can now update rsc-brain; the updater takes the request and runs the update.'
   out "It controls Docker on this machine. Turn it off with: sh $PROG web-updates disable --dir \"$DIR\""
@@ -2277,8 +2320,10 @@ web_updates_enable() {
 web_updates_disable() {
   need_installation
   updater_names
-  # The credential goes first, whatever else is going on: a launcher at work must not keep it on disk.
-  rm -rf "${DIR:?}/updater/credentials"
+  # The credential goes first, whatever else is going on: a launcher at work must not keep it on disk. Another launcher
+  # that holds the lock keeps it until we have it, so nothing of an enable still running can bring a copy back after
+  # this has said it is gone: this only says so once it has the lock and has removed the whole folder.
+  updater_drop_credentials
   take_lock
   updater_remove || {
     say 'The credential is removed, but the updater could not be fully removed (the lines above say why).'

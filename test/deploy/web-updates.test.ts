@@ -532,18 +532,139 @@ describe('web-updates enable', () => {
         false,
         `${why}: its image stays`,
       )
-      assert.equal(
-        existsSync(join(c.dir, '.rsc-brain', 'updater.previous')),
-        false,
-        `${why}: nothing left over`,
-      )
+      assert.equal(existsSync(join(c.dir, 'updater', 'previous')), false, `${why}: nothing left over`)
       assert.equal((r.stdout + r.stderr).includes('AnotherToken'), false, why)
     }
     // And a run that goes well replaces the credential and leaves nothing over.
     const ok = launch(c, enable(c, '--repo-token-file', other))
     assert.equal(ok.code, 0, ok.stderr)
     assert.match(readFileSync(join(c.dir, 'updater', 'credentials', 'token'), 'utf8'), /AnotherToken/)
-    assert.equal(existsSync(join(c.dir, '.rsc-brain', 'updater.previous')), false)
+    assert.equal(existsSync(join(c.dir, 'updater', 'credentials.old')), false)
+    assert.deepEqual(filesWith(c.dir, TOKEN), [], 'the one it replaced is nowhere')
+    assert.equal(existsSync(join(c.dir, 'updater', 'previous')), false)
+  })
+
+  const OTHER = 'ghp_AnotherTokenValue99887766'
+  const filesWith = (dir: string, text: string) =>
+    everyFile(dir).filter((f) => readFileSync(f, 'utf8').includes(text))
+  // An enable that was killed outright (SIGKILL, a power cut) while it started the container.
+  const killedEnable = async (c: Case, token: string) => {
+    const child = spawn(shell(), [LAUNCHER, ...enable(c, '--repo-token-file', tokenFile(c, `${token}\n`))], {
+      stdio: 'ignore',
+      detached: true,
+      env: {
+        PATH: `${FAKEBIN}:${SYSBIN}`,
+        HOME: c.home,
+        FAKE_LOG: c.log,
+        FAKE_STDIN: c.stdin,
+        FAKE_STATE: c.state,
+        FAKE_UPDATER_UP_SLEEP: '30',
+      },
+    })
+    for (let i = 0; i < 200 && !existsSync(join(c.state, 'updater-up-started')); i++)
+      await new Promise((r) => setTimeout(r, 50))
+    assert.equal(existsSync(join(c.state, 'updater-up-started')), true, 'it was starting the container')
+    const closed = new Promise((resolve) => child.on('exit', resolve))
+    process.kill(-(child.pid as number), 'SIGKILL')
+    await closed
+    rmSync(join(c.state, 'updater-up-started'))
+  }
+
+  it('an enable killed outright leaves no credential that disable would not remove', async () => {
+    const c = await installed()
+    assert.equal(launch(c, enable(c, '--repo-token-file', tokenFile(c))).code, 0)
+    await killedEnable(c, OTHER)
+    rmSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true, force: true })
+    const r = launch(c, ['web-updates', 'disable', '--dir', c.dir])
+    assert.equal(r.code, 0, r.stderr)
+    for (const secret of [TOKEN, 'AnotherToken']) assert.deepEqual(filesWith(c.dir, secret), [], secret)
+    assert.equal(existsSync(join(c.dir, 'updater')), false)
+  })
+
+  it('an enable killed outright leaves no credential that uninstall would not remove', async () => {
+    const c = await installed()
+    assert.equal(launch(c, enable(c, '--repo-token-file', tokenFile(c))).code, 0)
+    await killedEnable(c, OTHER)
+    rmSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true, force: true })
+    assert.equal(launch(c, ['uninstall', '--dir', c.dir]).code, 0)
+    for (const secret of [TOKEN, 'AnotherToken']) assert.deepEqual(filesWith(c.dir, secret), [], secret)
+  })
+
+  it('the next enable after a killed one goes back to the last working state first, then does its own work', async () => {
+    const c = await installed()
+    assert.equal(launch(c, enable(c, '--repo-token-file', tokenFile(c))).code, 0)
+    await killedEnable(c, OTHER)
+    rmSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true, force: true })
+    const r = launch(c, enable(c))
+    assert.equal(r.code, 0, r.stderr)
+    assert.equal(
+      readFileSync(join(c.dir, 'updater', 'credentials', 'token'), 'utf8'),
+      `${TOKEN}\n`,
+      'the credential of the working one',
+    )
+    assert.deepEqual(filesWith(c.dir, 'AnotherToken'), [])
+    for (const left of ['previous', 'credentials.old'])
+      assert.equal(existsSync(join(c.dir, 'updater', left)), false, left)
+  })
+
+  it('disable removes every copy of the credential, also when another launcher is at work', async () => {
+    const c = await installed()
+    launch(c, enable(c, '--repo-token-file', tokenFile(c)))
+    for (const left of ['credentials.old', 'previous/credentials']) {
+      mkdirSync(join(c.dir, 'updater', left), { recursive: true })
+      writeFileSync(join(c.dir, 'updater', left, 'token'), `${OTHER}\n`)
+    }
+    mkdirSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true })
+    writeFileSync(
+      join(c.dir, '.rsc-brain', 'lock', 'owner'),
+      `${process.pid} ${spawnSync('uname', ['-n'], { encoding: 'utf8' }).stdout.trim()}\n`,
+    )
+    const busy = launch(c, ['web-updates', 'disable', '--dir', c.dir])
+    assert.equal(busy.code, 3, busy.stderr)
+    for (const secret of [TOKEN, 'AnotherToken'])
+      assert.deepEqual(filesWith(c.dir, secret), [], `${secret}: gone before the lock`)
+  })
+
+  it('a copy that fails partway leaves no partial copy and the updater as it was', async (t) => {
+    if (process.getuid?.() === 0) return t.skip('root reads anything')
+    const c = await installed()
+    assert.equal(launch(c, enable(c, '--repo-token-file', tokenFile(c))).code, 0)
+    chmodSync(join(c.dir, 'updater', 'passwd'), 0)
+    try {
+      const r = launch(c, enable(c, '--repo-token-file', tokenFile(c, `${OTHER}\n`)))
+      assert.equal(r.code, 4, r.stderr)
+    } finally {
+      chmodSync(join(c.dir, 'updater', 'passwd'), 0o644)
+    }
+    assert.equal(existsSync(join(c.dir, 'updater', 'previous')), false)
+    assert.equal(existsSync(join(c.dir, 'updater', 'credentials.old')), false)
+    assert.equal(readFileSync(join(c.dir, 'updater', 'credentials', 'token'), 'utf8'), `${TOKEN}\n`)
+    assert.deepEqual(filesWith(c.dir, 'AnotherToken'), [])
+    assert.equal(existsSync(join(c.state, 'updater-up')), true)
+  })
+
+  it('the largest token and key it takes, and one more', async () => {
+    const c = await installed()
+    assert.equal(
+      launch(c, enable(c, '--repo-token-file', tokenFile(c, `${'a'.repeat(7)}\n`))).code,
+      2,
+      '7 characters',
+    )
+    assert.equal(
+      launch(c, enable(c, '--repo-token-file', tokenFile(c, `${'a'.repeat(8)}\n`))).code,
+      0,
+      '8 characters',
+    )
+    const k = await installed(['--repo', 'git@github.com:acme/brain.git'])
+    const head = '-----BEGIN OPENSSH PRIVATE KEY-----\n'
+    const key = (size: number) => {
+      const f = join(k.files, `key-${++fileNo}`)
+      writeFileSync(f, head + 'A'.repeat(size - head.length - 1) + '\n', { mode: 0o600 })
+      assert.equal(statSync(f).size, size)
+      return f
+    }
+    assert.equal(launch(k, enable(k, '--repo-key', key(16385))).code, 2, '16385 bytes')
+    assert.equal(launch(k, enable(k, '--repo-key', key(16384))).code, 0, '16384 bytes')
   })
 
   it('a stop (Ctrl-C) while turning it on again leaves the working updater as it was', async () => {
