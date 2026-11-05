@@ -1560,6 +1560,81 @@ describe('the launcher: update --check, the review of PR #41', () => {
     assert.deepEqual(JSON.parse(r.stdout), { installed: 'v0.1.0', latest: 'v0.2.0', newer: true, notes: '' })
   })
 
+  it('notes cannot move the terminal: both modes drop the same control characters, and keep text', async () => {
+    const c = await installed()
+    const hostile = '\x1b[2A\x1b[2K fake\rline \u009b2K\x7f\x07 café ok'
+    const safe = '[2A[2K fakeline 2K café ok'
+    const env = fakeGit(c, { tags: ['v1.0.0'], changelog: `## v1.0.0\n\n${hostile}\n\n- Two.\tTab.\n` })
+    const words = check(c, env)
+    assert.equal(words.code, 0, words.stderr)
+    assert.ok(words.stdout.includes(`${safe}\n\n- Two.\tTab.`), JSON.stringify(words.stdout))
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: what must not get through
+    assert.doesNotMatch(words.stdout, /[\x00-\x08\x0b-\x1f\x7f\u0080-\u009f]/)
+    const json = check(c, env, '--json')
+    assert.equal(JSON.parse(json.stdout).notes, `${safe}\n\n- Two.\tTab.`)
+  })
+
+  it('--json escapes every line of the notes, not only the first: a later line cannot break out', async () => {
+    const c = await installed()
+    const notes = 'first\nsecond "quoted" \\back\tTab\n","error":"none'
+    const r = check(c, fakeGit(c, { tags: ['v1.0.0'], changelog: `## v1.0.0\n\n${notes}\n` }), '--json')
+    assert.deepEqual(JSON.parse(r.stdout), { installed: 'v0.1.0', latest: 'v1.0.0', newer: true, notes })
+  })
+
+  it('a section of nothing but control characters is no notes', async () => {
+    const c = await installed()
+    const r = check(c, fakeGit(c, { tags: ['v1.0.0'], changelog: '## v1.0.0\n\n\x1b\r\x07\n' }), '--json')
+    assert.equal(JSON.parse(r.stdout).notes, '')
+    const edge = check(
+      c,
+      fakeGit(c, { tags: ['v1.0.0'], changelog: '## v1.0.0\n\n\x1b  - Two. \x07\n' }),
+      '--json',
+    )
+    assert.equal(
+      JSON.parse(edge.stdout).notes,
+      '- Two.',
+      'blanks behind a control character are at the edge too',
+    )
+  })
+
+  for (const [given, kept] of [
+    ['https://user:p@ss@github.com/a/b.git', 'https://github.com/a/b.git'],
+    ['HTTPS://user:p@ss@github.com/a/b.git', 'HTTPS://github.com/a/b.git'],
+    ['http://token@github.com/a/b.git', 'http://github.com/a/b.git'],
+    ['ssh://git:p@ss@h.com/x', 'ssh://git@h.com/x'],
+    ['SSH://git:p@ss@h.com/x', 'SSH://git@h.com/x'],
+    ['git+ssh://git:p@ss@h.com/x', 'git+ssh://git@h.com/x'],
+    ['ssh://a@b:p@ss@h.com/x', 'ssh://a@b@h.com/x'],
+    ['ssh://:p@ss@h.com/x', 'ssh://h.com/x'],
+    // Nothing to take: a user alone, a port, an @ in the path, the short form.
+    ['ssh://git@h.com:22/x@y', 'ssh://git@h.com:22/x@y'],
+    ['ssh://h.com:22/x', 'ssh://h.com:22/x'],
+    ['https://github.com/a@b/x.git', 'https://github.com/a@b/x.git'],
+    ['git@github.com:a/b.git', 'git@github.com:a/b.git'],
+    ['https://github.com/a\x1b[2Kb.git', 'https://github.com/a[2Kb.git'],
+  ] as const)
+    it(`the address ${JSON.stringify(given)} is kept and said as ${kept}`, async () => {
+      const c = fresh()
+      const r = launch(c, [
+        'install',
+        '--local',
+        '--yes',
+        '--dir',
+        c.dir,
+        '--port',
+        String(await freePort()),
+        '--image',
+        'rsc-brain:test',
+        '--repo',
+        given,
+      ])
+      assert.equal(r.code, 0, r.stderr)
+      assert.equal(readEnv(c.dir).RSC_BRAIN_REPO_URL, kept)
+      const failed = check(c, fakeGit(c, { fail: 'fatal: not found' }), '--repo', given)
+      assert.equal(failed.code, 3)
+      assert.ok(failed.stderr.includes(`: ${kept} does not answer`), failed.stderr)
+    })
+
   it('--version with leading zeros is not a published version', async () => {
     const c = await installed()
     const r = launch(c, update(c, '--version', 'v01.0.0'))

@@ -29,6 +29,7 @@ CR=$(printf '\r')
 TAB=$(printf '\t')
 # The whitespace of the definition of a published version; a no-break space is text.
 BLANK=" $TAB$NL"
+C1_CONTROLS=$(printf '\302[\200-\237]')
 MIN_FREE_KB=2097152
 WAIT_SECONDS=${RSC_BRAIN_TEST_WAIT:-120}
 
@@ -827,8 +828,15 @@ newest_of() {
 }
 latest_version() { git ls-remote --tags --refs "$REPO" 'v*' 2>/dev/null </dev/null | newest_of; }
 # An address as it may be kept and said: nothing that opens it. Over http(s), no user; elsewhere (ssh's git@), no password.
+# Git and curl take the host after the last @ before the first /, and a password may hold an @.
 repo_public() {
-  printf '%s' "$1" | sed -e 's|^\([hH][tT][tT][pP][sS]\{0,1\}://\)[^/@]*@|\1|' -e 's|^\([a-zA-Z+]*://[^/:@]*\):[^/@]*@|\1@|'
+  printf '%s' "$1" | printable | LC_ALL=C sed -e 's|^\([hH][tT][tT][pP][sS]\{0,1\}://\)[^/]*@|\1|' \
+    -e 's|^\([a-zA-Z0-9+.-]*://[^/:]*\):[^/]*@|\1@|' -e 's|^\([a-zA-Z0-9+.-]*://\)@|\1|'
+}
+# Text from outside (a CHANGELOG.md, an address) as it may reach a terminal: without what moves the cursor or clears
+# lines. All control characters but tabs and line ends, DEL, and the C1 ones as UTF-8 (U+0080 to U+009F).
+printable() {
+  LC_ALL=C tr -d '\001-\010\013-\037\177' | LC_ALL=C sed "s/$C1_CONTROLS//g"
 }
 # RSC_BRAIN_REPO_URL, where the service asks for new versions: what this run was told or, on an installation that has
 # one, what it has (empty: the service never asks).
@@ -1710,6 +1718,7 @@ notes_of() {
       no_text=$no_text$no_line$NL
     fi
   done
+  no_text=$(printf '%s' "$no_text" | printable)
   no_text=${no_text#"${no_text%%[!"$BLANK"]*}"}
   no_text=${no_text%"${no_text##*[!"$BLANK"]}"}
   no_size=$(printf '%s' "$no_text" | wc -c | tr -d ' ')
@@ -1728,10 +1737,12 @@ notes_of() {
   fi
   printf '%s' "$no_text"
 }
-# A JSON string of any text: without control characters but line ends and tabs.
+# A JSON string of any text: without control characters but line ends and tabs. Every line is escaped before they are
+# joined (a sed that joins as it goes only sees the first).
 json_text() {
   printf '"%s"' "$(printf '%s' "$1" | LC_ALL=C tr -d '\001-\010\013-\037' |
-    LC_ALL=C sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/$TAB/\\\\t/g" -e ':a' -e '$!{' -e 'N' -e 'ba' -e '}' -e 's/\n/\\n/g')"
+    LC_ALL=C sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/$TAB/\\\\t/g" |
+    LC_ALL=C sed -e ':a' -e '$!{' -e 'N' -e 'ba' -e '}' -e 's/\n/\\n/g')"
 }
 check_answer() { # latest newer notes [error]
   printf '{"installed":%s,"latest":%s,"newer":%s,"notes":%s' \
