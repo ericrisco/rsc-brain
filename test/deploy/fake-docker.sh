@@ -43,8 +43,14 @@ compose_wait() {
 if [ "$1" = compose ]; then
   case "$args" in
   *" run "*) echo "run $(env_image)" >>"$state/images.log" ;;
+  *" up "*" door "*) ;;
   *" up "*) echo "up $(env_image)" >>"$state/images.log" ;;
   esac
+fi
+
+# What the page of the stand-in door says at each compose call.
+if [ "$1" = compose ] && [ -f "$project_dir/.rsc-brain/door/step.txt" ]; then
+  echo "any: $(cat "$project_dir/.rsc-brain/door/step.txt")" >>"$state/door-steps.log"
 fi
 
 # Whatever the call is given on its standard input (the launcher closes it, or pipes a secret in).
@@ -149,6 +155,7 @@ case "$args" in
   exit 0
   ;;
 *" rsc-brain migrate "*)
+  [ -f "$project_dir/.rsc-brain/door/step.txt" ] && echo "migrate: $(cat "$project_dir/.rsc-brain/door/step.txt")" >>"$state/door-steps.log"
   # FAKE_MIGRATE_SLEEP: a long migration (it says when it started, so a test can stop the launcher then).
   if [ -n "${FAKE_MIGRATE_SLEEP:-}" ]; then
     : >"$state/migrate-started"
@@ -178,6 +185,7 @@ case "$args" in
   ;;
 *" rsc-brain restore "*)
   take_stdin restore
+  [ -f "$project_dir/.rsc-brain/door/step.txt" ] && echo "restore: $(cat "$project_dir/.rsc-brain/door/step.txt")" >>"$state/door-steps.log"
   # FAKE_RESTORE_SLEEP: a long restore of the copy made before an update (the rollback's).
   case "$args" in *" --keep-keys "*)
     if [ -n "${FAKE_RESTORE_SLEEP:-}" ]; then
@@ -251,7 +259,20 @@ volume)
   fi
   exit 0
   ;;
+pull)
+  exit "${FAKE_PULL_EXIT:-0}"
+  ;;
+rm)
+  rm -f "$state/door"
+  exit 0
+  ;;
 ps)
+  # The stand-in door, asked for by its labels.
+  case "$args" in *service=door*)
+    [ -e "$state/door" ] && echo d00r
+    exit 0
+    ;;
+  esac
   [ -n "${FAKE_PROJECTS:-}" ] && echo deadbeef
   exit 0
   ;;
@@ -292,7 +313,22 @@ compose)
     exit 0
   fi
   case "$args" in
+  *" up "*" door "*)
+    # The stand-in door takes the port of the service; it has a marker of its own, and is not the service.
+    [ "${FAKE_DOOR_UP_EXIT:-0}" = 0 ] || exit "$FAKE_DOOR_UP_EXIT"
+    : >"$state/door"
+    exit 0
+    ;;
+  *" rm "*" door "*)
+    rm -f "$state/door"
+    exit 0
+    ;;
   *" up "*)
+    # The port is taken while the door is up, as it would be.
+    if [ -e "$state/door" ]; then
+      echo 'Error response from daemon: Bind for 127.0.0.1 failed: port is already allocated' >&2
+      exit 1
+    fi
     if [ -n "${FAKE_UP_FAIL_ONCE:-}" ] && [ ! -e "$state/failed-once" ]; then
       : >"$state/failed-once"
       echo 'Error response from daemon: failed to start' >&2

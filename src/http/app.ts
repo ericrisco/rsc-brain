@@ -10,6 +10,7 @@ import type { CompanionConfig } from '../config.ts'
 import type { Clock } from '../core/clock.ts'
 import { AppError, invalid } from '../core/errors.ts'
 import { failureFields, type Log, stdoutLog } from '../core/log.ts'
+import { VERSION } from '../core/version.ts'
 import type { Db } from '../db/db.ts'
 import { adminOnly } from '../domain/guards.ts'
 import { installation, setupDone } from '../domain/installation.ts'
@@ -92,7 +93,8 @@ export type AppDeps = {
 export const HEALTH_TIMEOUT_MS = 2000
 
 // GET /v1/health (spec B7 C20): whether the service and its database answer, and whether it is under
-// maintenance; 503 when the database does not answer in time. Never the version, nothing of an error.
+// maintenance; 503 when the database does not answer in time. Nothing of an error, and the version only for a valid
+// key (rsc-updates §3.9): an outside watcher learns nothing to aim at.
 async function health(db: Db, now: Date): Promise<{ status: number; body: Record<string, unknown> }> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
@@ -105,6 +107,28 @@ async function health(db: Db, now: Date): Promise<{ status: number; body: Record
     return { status: 200, body: { ok: true, database: 'ok', maintenance: activeAt(row, now) !== null } }
   } catch {
     return { status: 503, body: { ok: false, database: 'down', maintenance: false } }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+// The version, for a valid key sent as a bearer; a key that cannot be checked in time is no key.
+async function versionFor(
+  db: Db,
+  key: string | null,
+  now: Date,
+): Promise<{ version: string } | Record<string, never>> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      resolveKey(db, key, now, 'bearer'),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), HEALTH_TIMEOUT_MS)
+      }),
+    ])
+    return { version: VERSION }
+  } catch {
+    return {}
   } finally {
     clearTimeout(timer)
   }
@@ -540,7 +564,9 @@ export function createHandler(deps: AppDeps) {
       if (url.pathname === '/v1/health' && (method === 'GET' || method === 'HEAD')) {
         template = '/v1/health'
         const h = await health(deps.db, deps.clock())
-        return send(res, h.status, h.body)
+        if (h.status !== 200) return send(res, h.status, h.body)
+        const said = await versionFor(deps.db, bearer(req.headers.authorization), deps.clock())
+        return send(res, h.status, { ...h.body, ...said })
       }
       // The web answers before the first-time setup (it is what runs the setup) and never on the API's
       // prefixes (spec B6, plan §3.1).

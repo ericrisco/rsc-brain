@@ -4,7 +4,7 @@
 // the system's temporary folder).
 //
 // Three images are built here: the tree as it is (installed first); «next», the same with one more migration, added
-// and harmless, that says 0.2.0; and «broken», next plus a migration that fails, saying 0.3.0.
+// and harmless, that says 98.0.0; and «broken», next plus a migration that fails, saying 99.0.0.
 // CA6: an installation with data (brains, accounts, entries, a token, the audit) updates to next: a pre-update copy
 // exists, every table has the same rows (counted and fingerprinted), an earlier token and session still answer 200.
 // CA7 + CA7b: during an update to broken, a loop of writes runs with a token: writes are refused with 503
@@ -25,10 +25,15 @@ const run = promisify(execFile)
 const ROOT = new URL('../..', import.meta.url).pathname
 const LAUNCHER = join(ROOT, 'deploy', 'rsc-brain.sh')
 const ID = randomBytes(4).toString('hex')
-const BASE_IMAGE = `rscb-pr35-test-image:${ID}`
-const NEXT = `rscb-pr35-test-next:${ID}`
-const BROKEN = `rscb-pr35-test-broken:${ID}`
-const NAME = `rscb-pr35-test-update-${ID}`
+// The version of the tree, which is what the first image says.
+const INSTALLED = (JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')) as { version: string })
+  .version
+// RSC_BRAIN_INSTALL_PREFIX: another prefix for its resources, for a run beside others.
+const PREFIX = process.env.RSC_BRAIN_INSTALL_PREFIX ?? 'rscb-pr35-test'
+const BASE_IMAGE = `${PREFIX}-image:${ID}`
+const NEXT = `${PREFIX}-next:${ID}`
+const BROKEN = `${PREFIX}-broken:${ID}`
+const NAME = `${PREFIX}-update-${ID}`
 const DB = NAME.replaceAll('-', '_')
 const WEB = { 'x-requested-with': 'rsc-brain-web', 'content-type': 'application/json' }
 const PASSWORD = 'a long test password 35'
@@ -142,12 +147,12 @@ describe('updating with real containers (CA6, CA7, CA7b, CA17)', { skip: why ?? 
     })
 
   before(async () => {
-    BASE = mkdtempSync(join(process.env.RSC_BRAIN_INSTALL_TMP ?? tmpdir(), 'rscb-pr35-test-'))
+    BASE = mkdtempSync(join(process.env.RSC_BRAIN_INSTALL_TMP ?? tmpdir(), `${PREFIX}-`))
     dir = join(BASE, 'install')
     let started = Date.now()
     await run('docker', ['build', '-q', '-t', BASE_IMAGE, ROOT], { maxBuffer: 64 << 20 })
     measured(`docker build of rsc-brain ${((Date.now() - started) / 1000).toFixed(1)} s`)
-    // next: one more migration, added and harmless; it says 0.2.0. broken: next and a migration that fails; 0.3.0.
+    // next: one more migration, added and harmless; it says 98.0.0. broken: next and a migration that fails; 99.0.0.
     started = Date.now()
     const ctx = join(BASE, 'images')
     mkdirSync(ctx)
@@ -164,13 +169,13 @@ describe('updating with real containers (CA6, CA7, CA7b, CA17)', { skip: why ?? 
         `RUN chmod a+r /app/migrations/*.sql && sed -i "s/VERSION = '[^']*'/VERSION = '${version}'/" /app/dist/core/version.js`,
         'USER node',
       ].join('\n')
-    writeFileSync(join(ctx, 'Dockerfile.next'), derive(BASE_IMAGE, '0.2.0', ['0024_test_next.sql']))
-    writeFileSync(join(ctx, 'Dockerfile.broken'), derive(NEXT, '0.3.0', ['0025_test_broken.sql']))
+    writeFileSync(join(ctx, 'Dockerfile.next'), derive(BASE_IMAGE, '98.0.0', ['0024_test_next.sql']))
+    writeFileSync(join(ctx, 'Dockerfile.broken'), derive(NEXT, '99.0.0', ['0025_test_broken.sql']))
     await run('docker', ['build', '-q', '-t', NEXT, '-f', join(ctx, 'Dockerfile.next'), ctx])
     await run('docker', ['build', '-q', '-t', BROKEN, '-f', join(ctx, 'Dockerfile.broken'), ctx])
     measured(`images next and broken ${((Date.now() - started) / 1000).toFixed(1)} s`)
-    assert.equal(await docker('run', '--rm', NEXT, 'rsc-brain', 'version'), '0.2.0')
-    assert.equal(await docker('run', '--rm', BROKEN, 'rsc-brain', 'version'), '0.3.0')
+    assert.equal(await docker('run', '--rm', NEXT, 'rsc-brain', 'version'), '98.0.0')
+    assert.equal(await docker('run', '--rm', BROKEN, 'rsc-brain', 'version'), '99.0.0')
 
     // An installation with data: the administrator, a brain, entries, a token, the audit.
     const port = await freePort()
@@ -251,10 +256,10 @@ describe('updating with real containers (CA6, CA7, CA7b, CA17)', { skip: why ?? 
     const before = await tables()
     const r = await launch(['update', '--yes', '--json', '--dir', dir, '--image', NEXT])
     assert.equal(r.code, 0, r.stderr)
-    measured(`CA6 update 0.1.0 → 0.2.0 ${r.seconds.toFixed(1)} s`)
+    measured(`CA6 update ${INSTALLED} → 98.0.0 ${r.seconds.toFixed(1)} s`)
     const s = JSON.parse(r.stdout)
-    assert.equal(s.from, '0.1.0')
-    assert.equal(s.to, '0.2.0')
+    assert.equal(s.from, INSTALLED)
+    assert.equal(s.to, '98.0.0')
     assert.match(s.copy, /^rsc-brain-\d{8}T\d{6}Z-pre-update\.rscb$/)
     assert.ok(readdirSync(join(dir, 'backups')).includes(s.copy))
     const afterUpdate = await tables()
@@ -271,11 +276,11 @@ describe('updating with real containers (CA6, CA7, CA7b, CA17)', { skip: why ?? 
     }
     assert.deepEqual(
       { ok: copies.lastUpdate.ok, from: copies.lastUpdate.from, to: copies.lastUpdate.to },
-      { ok: true, from: '0.1.0', to: '0.2.0' },
+      { ok: true, from: INSTALLED, to: '98.0.0' },
     )
   })
 
-  it('CA7 + CA7b: an update to broken under a loop of writes: refused while it lasts, back to 0.2.0, no accepted write lost, keys kept, the failure on the web', async () => {
+  it('CA7 + CA7b: an update to broken under a loop of writes: refused while it lasts, back to 98.0.0, no accepted write lost, keys kept, the failure on the web', async () => {
     const receipts: string[] = []
     let refused = 0
     let retryAfter = 0
@@ -325,7 +330,7 @@ describe('updating with real containers (CA6, CA7, CA7b, CA17)', { skip: why ?? 
           ]
         })()
       }
-      if (!seen.atCopy && all.includes('==> Stopping rsc-brain 0.2.0')) seen.atCopy = tables()
+      if (!seen.atCopy && all.includes('==> Stopping rsc-brain 98.0.0')) seen.atCopy = tables()
       if (all.includes('==> Going back to')) paused = true
     })
     const duringMaintenance = await seen.during
@@ -340,7 +345,7 @@ describe('updating with real containers (CA6, CA7, CA7b, CA17)', { skip: why ?? 
       `CA7b update to broken ${r.seconds.toFixed(1)} s: ${receipts.length} writes accepted (201), ${refused} refused with 503 under_maintenance (Retry-After ${retryAfter} s), ${unreachable} while stopped, ${others} other`,
     )
     assert.equal(r.code, 4, r.stderr)
-    assert.match(r.stderr, /went back to 0\.2\.0/)
+    assert.match(r.stderr, /went back to 98\.0\.0/)
     assert.ok(refused > 0, 'writes were refused during the maintenance')
     assert.equal(others, 0, 'no other answer than 201, 503 or no connection')
     assert.deepEqual(duringMaintenance, [
@@ -353,7 +358,7 @@ describe('updating with real containers (CA6, CA7, CA7b, CA17)', { skip: why ?? 
     assert.equal(await psql(`SELECT count(*) FROM entries WHERE id IN (${ids})`), String(receipts.length))
     // The version before answers; its tables are as the copy held them (the writes after it was back apart).
     const status = await launch(['status', '--json', '--dir', dir])
-    assert.equal(JSON.parse(status.stdout).version, '0.2.0')
+    assert.equal(JSON.parse(status.stdout).version, '98.0.0')
     assert.equal(envOf(dir).RSC_BRAIN_IMAGE, NEXT)
     assert.equal(await psql("SELECT count(*) FROM schema_migrations WHERE id LIKE '0025_test_broken%'"), '0')
     assert.ok(atCopy && Object.keys(atCopy).length > 0, 'the tables were read when the copy was made')
@@ -369,7 +374,7 @@ describe('updating with real containers (CA6, CA7, CA7b, CA17)', { skip: why ?? 
       lastUpdate: { ok: boolean; from: string; to: string; log?: string }
     }
     assert.equal(copies.lastUpdate.ok, false)
-    assert.equal(copies.lastUpdate.to, '0.3.0')
+    assert.equal(copies.lastUpdate.to, '99.0.0')
     assert.ok(!String(copies.lastUpdate.log).includes(envOf(dir).RSC_BRAIN_SECRET as string))
     assert.match(String(copies.lastUpdate.log), /division by zero|0025_test_broken/)
     const { chromium } = await import('@playwright/test')
@@ -381,7 +386,7 @@ describe('updating with real containers (CA6, CA7, CA7b, CA17)', { skip: why ?? 
       await page.goto(`${site}/admin/system`)
       await page
         .locator('[data-state="update-failed"]')
-        .getByText('The update from 0.2.0 to 0.3.0 failed')
+        .getByText('The update from 98.0.0 to 99.0.0 failed')
         .waitFor({ timeout: 30_000 })
     } finally {
       await browser.close()

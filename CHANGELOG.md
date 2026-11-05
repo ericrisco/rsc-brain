@@ -6,6 +6,19 @@ forward.
 
 ## Unreleased
 
+- **What is published has one definition.** A `vX.Y.Z` tag of the repository, and what it changes from the
+  `## vX.Y.Z` section of the `CHANGELOG.md` in that tag, for the launcher, the web and rsc-factory. The web
+  asks the repository without credentials instead of the list of releases; `RSC_BRAIN_REPO_URL` says where,
+  and empty (or an empty `RSC_BRAIN_RELEASES_URL`) turns it off.
+- **`rsc-brain.sh update --check [--json]`.** Only looks: the version running, the newest published and what
+  it changes, with the machine's own access. Nothing stops and nothing is written.
+- **A private repository says so.** Administration › Backups & system says «Could not check for a new
+  version» and gives that command, never that it is up to date.
+- **`GET /v1/health` says the version to a valid key.** Without one it still does not.
+- **Something answers during an update.** While the service is stopped, also through the restore of a way
+  back, a stand-in holds its port and name: a page with the step for a browser, 503 with `Retry-After` and
+  `under_maintenance` for the rest.
+
 ## v0.2.0
 
 rsc-brain as rsc-factory's memory: rsc-factory can install it, set it up and work with it.

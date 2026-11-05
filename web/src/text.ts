@@ -1197,13 +1197,22 @@ export const T = {
     downloadKey: 'Download the key (.txt)',
     hideTheKey: 'Done, hide the key',
     keyHidden: 'The key is hidden. You can show it again with your password.',
-    // The release.
-    release: 'Release',
-    releaseRunning: (v: string) => `rsc-brain ${v}`,
-    releaseNewer: (v: string) => `rsc-brain ${v} is available.`,
-    releaseUpToDate: 'Up to date.',
+    // The version: the exact words of rsc-updates §0.
+    release: 'Version',
+    releaseRunning: (v: string) => `Version ${v} is running.`,
+    releaseNewer: (v: string, y: string) => `Version ${v} is running. Version ${y} is available.`,
+    releaseNewest: (v: string) => `Version ${v} is running. This is the newest.`,
+    releaseAhead: (v: string, y: string) =>
+      `Version ${v} is running. This installation is ahead of the newest published version (${y}).`,
+    releaseCouldNot: 'Could not check for a new version',
+    releaseNoAccess:
+      'The repository does not answer without credentials. This command, on the server, uses its access:',
+    releaseNoAnswer: 'The repository did not answer. It is asked again soon, or on the server:',
+    releaseNone: 'Cannot update: no published version yet',
     releaseChecked: (when: string) => `Checked ${when}.`,
-    releaseNotChecked: 'Not checked: the check of new releases is off, or has not run yet.',
+    releaseTried: (when: string) => `Tried ${when}.`,
+    releaseNotChecked: (v: string) => `Version ${v} is running. Not checked for a new version yet.`,
+    releaseNotCheckedHow: 'The check is off on this installation, or has not run yet. On the server:',
     releaseNotes: (v: string) => `What changes in ${v}`,
     releaseHow:
       'Update on the machine: rsc-brain.sh update (it makes a copy first and rolls back if anything fails).',

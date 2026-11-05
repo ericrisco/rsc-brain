@@ -323,11 +323,14 @@ describe('copies, the installation key and versions from the web (§3.4)', { ski
     assert.deepEqual(Object.keys(b).sort(), ['lastFailure', 'lastOk', 'lastWarning'])
     assert.ok(b.lastOk)
     assert.deepEqual(r.body.release, {
-      installed: VERSION,
+      installed: `v${VERSION}`,
       latest: null,
       notes: null,
       checkedAt: null,
+      error: null,
+      lastAttemptAt: null,
       newer: false,
+      ahead: false,
     })
     assert.doesNotMatch(r.text, new RegExp(TEST_SECRET))
   })
@@ -377,13 +380,15 @@ describe('a copy that fails where its status cannot be written either: the web s
 
   it('without a folder for the copies: the list says so and a copy is refused with how to set it; a newer release is said', async () => {
     const latest = {
-      latest: '9.9.9',
-      notes: '## 9.9.9\n- Faster search.',
+      latest: 'v9.9.9',
+      notes: '- Faster search.',
       checkedAt: '2026-11-02T10:00:00.000Z',
+      error: null,
+      lastAttemptAt: '2026-11-02T10:00:00.000Z',
     }
     const v = await world({
       releases: {
-        state: () => ({ installed: VERSION, ...latest }),
+        state: () => ({ installed: `v${VERSION}`, ...latest }),
         check: async () => {},
         start: () => {},
         stop: () => {},
@@ -393,7 +398,7 @@ describe('a copy that fails where its status cannot be written either: the web s
       const a = await v.person('Ada', { isAdmin: true })
       const web = await v.web(a.id)
       const sys = await v.callWeb(web, 'GET', '/v1/admin/system')
-      assert.deepEqual(sys.body.release, { installed: VERSION, ...latest, newer: true })
+      assert.deepEqual(sys.body.release, { installed: `v${VERSION}`, ...latest, newer: true, ahead: false })
       assert.deepEqual(sys.body.backups, { lastOk: null, lastFailure: null, lastWarning: null })
       const r = await v.callWeb(web, 'GET', '/v1/admin/backups')
       assert.equal(r.status, 200, r.text)
