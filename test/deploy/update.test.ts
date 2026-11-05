@@ -1098,7 +1098,10 @@ const VECTORS = JSON.parse(
   compare: Array<{ name: string; installed: string; newest: string; result: string }>
   notes: Array<{ name: string; tag: string; changelog: string; notes: string }>
 }
-const fakeGit = (c: Case, o: { tags?: string[]; refs?: string; changelog?: string; fail?: string } = {}) => {
+const fakeGit = (
+  c: Case,
+  o: { tags?: string[]; refs?: string; changelog?: string; fail?: string; cloneFail?: boolean } = {},
+) => {
   const bin = join(c.state, 'gitbin')
   mkdirSync(bin, { recursive: true })
   const refs = o.refs ?? (o.tags ?? []).map((t) => `${'a'.repeat(40)}\trefs/tags/${t}`).join('\n')
@@ -1112,7 +1115,7 @@ case " $* " in
 *" ls-remote "*)
   ${o.fail ? `printf '%s\\n' ${JSON.stringify(o.fail)} >&2; exit 128` : `cat "${join(c.state, 'refs.txt')}"; exit 0`}
   ;;
-*" clone "*) for last; do :; done; mkdir -p "$last"; exit 0 ;;
+*" clone "*) ${o.cloneFail ? 'exit 128' : 'for last; do :; done; mkdir -p "$last"; exit 0'} ;;
 *" show "*) cat "${join(c.state, 'changelog.md')}"; exit 0 ;;
 esac
 exit 0
@@ -1399,6 +1402,188 @@ describe('the launcher: update --check', () => {
   })
 })
 
+describe('the launcher: update --check, the review of PR #41', () => {
+  const SECRET = 'hunter2token'
+  const shouting = `HTTPS://user:${SECRET}@github.com/acme/private.git`
+
+  it('--json answers in the same shape when rsc-brain is stopped', async () => {
+    const c = await installed()
+    const env = fakeGit(c, { tags: ['v0.2.0'] })
+    rmSync(join(c.state, 'up'))
+    const r = check(c, env, '--json')
+    assert.equal(r.code, 3, r.stderr)
+    assert.deepEqual(JSON.parse(r.stdout), {
+      installed: null,
+      latest: null,
+      newer: false,
+      notes: '',
+      error: 'not_running',
+    })
+    assert.match(r.stderr, /not running/)
+  })
+
+  it('while an update runs it says so, and does not send anyone to install', async () => {
+    const c = await installed()
+    const env = fakeGit(c, { tags: ['v0.2.0'] })
+    rmSync(join(c.state, 'up'))
+    mkdirSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true })
+    const host = spawnSync('uname', ['-n'], { encoding: 'utf8' }).stdout.trim()
+    writeFileSync(join(c.dir, '.rsc-brain', 'lock', 'owner'), `${process.pid} ${host}`)
+    writeFileSync(join(c.dir, '.rsc-brain', 'update.pending'), `RSC_BRAIN_UPDATE_COPY='${PRE}'\n`)
+    const r = check(c, env, '--json')
+    assert.equal(r.code, 3, r.stderr)
+    assert.equal(JSON.parse(r.stdout).error, 'updating')
+    assert.match(r.stderr, /An update is running/)
+    assert.doesNotMatch(r.stderr, /rsc-brain\.sh install/)
+  })
+
+  it('an update that was killed halfway says how it is taken back, not install', async () => {
+    const c = await installed()
+    const env = fakeGit(c, { tags: ['v0.2.0'] })
+    rmSync(join(c.state, 'up'))
+    mkdirSync(join(c.dir, '.rsc-brain'), { recursive: true })
+    writeFileSync(join(c.dir, '.rsc-brain', 'update.pending'), `RSC_BRAIN_UPDATE_COPY='${PRE}'\n`)
+    const r = check(c, env, '--json')
+    assert.equal(r.code, 3, r.stderr)
+    assert.equal(JSON.parse(r.stdout).error, 'updating')
+    assert.match(r.stderr, /was interrupted/)
+    assert.match(r.stderr, / status /)
+    assert.doesNotMatch(r.stderr, /rsc-brain\.sh install/)
+  })
+
+  it('--json has that shape for what is missing too: no Docker, no git, no installation', async () => {
+    const c = await installed()
+    const noDocker = check(c, fakeGit(c, { tags: ['v0.2.0'] }), '--json')
+    assert.equal(noDocker.code, 0, noDocker.stderr)
+    const down = launch(c, ['update', '--check', '--json', '--dir', c.dir], {
+      env: { ...fakeGit(c, { tags: ['v0.2.0'] }), FAKE_INFO_EXIT: '1' },
+    })
+    assert.equal(down.code, 3)
+    assert.equal(JSON.parse(down.stdout).error, 'missing')
+    const nogit = launch(c, ['update', '--check', '--json', '--dir', c.dir])
+    assert.equal(nogit.code, 3)
+    assert.equal(JSON.parse(nogit.stdout).error, 'missing')
+    const none = launch(c, ['update', '--check', '--json', '--dir', join(c.state, 'nothing')])
+    assert.equal(none.code, 3)
+    assert.equal(JSON.parse(none.stdout).error, 'missing')
+    assert.equal(JSON.parse(none.stdout).installed, null)
+  })
+
+  it('a scheme in capitals: the credentials still stay out of .env and of everything said', async () => {
+    const c = fresh()
+    const port = String(await freePort())
+    const base = ['install', '--local', '--yes', '--dir', c.dir, '--port', port, '--image', 'rsc-brain:test']
+    const r = launch(c, [...base, '--repo', shouting])
+    assert.equal(r.code, 0, r.stderr)
+    assert.equal(readFileSync(join(c.dir, '.env'), 'utf8').includes(SECRET), false)
+    assert.equal(readEnv(c.dir).RSC_BRAIN_REPO_URL, 'HTTPS://github.com/acme/private.git')
+    const ssh = fresh()
+    const r2 = launch(ssh, [
+      'install',
+      '--local',
+      '--yes',
+      '--dir',
+      ssh.dir,
+      '--port',
+      String(await freePort()),
+      '--image',
+      'rsc-brain:test',
+      '--repo',
+      `SSH://git:${SECRET}@example.com/x.git`,
+    ])
+    assert.equal(r2.code, 0, r2.stderr)
+    assert.equal(readEnv(ssh.dir).RSC_BRAIN_REPO_URL, 'SSH://git@example.com/x.git')
+    const failed = check(c, fakeGit(c, { fail: 'fatal: not found' }), '--repo', shouting)
+    assert.match(failed.stderr, /HTTPS:\/\/github\.com\/acme\/private\.git/)
+    assert.equal(failed.stderr.includes(SECRET), false)
+  })
+
+  it('what install and update say about the repository never carries its credentials', async () => {
+    // install: no tags yet, and the source cannot be fetched.
+    const a = fresh()
+    const envA = fakeGit(a, { tags: [], cloneFail: true })
+    const noTags = launch(
+      a,
+      ['install', '--local', '--yes', '--dir', a.dir, '--port', String(await freePort()), '--repo', shouting],
+      { env: envA },
+    )
+    assert.match(noTags.stderr, /No published version of rsc-brain at HTTPS:\/\/github\.com/)
+    const b = fresh()
+    const fetchVersion = launch(
+      b,
+      [
+        'install',
+        '--local',
+        '--yes',
+        '--dir',
+        b.dir,
+        '--port',
+        String(await freePort()),
+        '--version',
+        'v0.2.0',
+        '--repo',
+        shouting,
+      ],
+      { env: fakeGit(b, { tags: ['v0.2.0'], cloneFail: true }) },
+    )
+    assert.match(fetchVersion.stderr, /Could not fetch v0\.2\.0 from HTTPS:\/\/github\.com/)
+    // update: no tags, and the source cannot be fetched.
+    const c = await installed()
+    const none = launch(c, update(c, '--repo', shouting), { env: fakeGit(c, { tags: [] }) })
+    assert.equal(none.code, 3)
+    assert.match(none.stderr, /No published version of rsc-brain at HTTPS:\/\/github\.com/)
+    const fetch = launch(c, update(c, '--version', 'v0.2.0', '--repo', shouting), {
+      env: { ...fakeGit(c, { tags: ['v0.2.0'], cloneFail: true }), FAKE_IMAGES: 'rsc-brain:test' },
+    })
+    assert.equal(fetch.code, 3, fetch.stderr)
+    assert.match(fetch.stderr, /Could not fetch v0\.2\.0 from HTTPS:\/\/github\.com/)
+    for (const r of [noTags, fetchVersion, none, fetch])
+      assert.equal(`${r.stdout}${r.stderr}`.includes(SECRET), false, r.stderr)
+  })
+
+  it('the clone of the notes has the limits of the question; if it fails the version still stands', async () => {
+    const c = await installed()
+    const ok = check(c, fakeGit(c, { tags: ['v0.2.0'], changelog: '## v0.2.0\n\n- Two.\n' }))
+    for (const verb of ['ls-remote', 'clone'])
+      assert.ok(
+        ok.calls.some(
+          (l) =>
+            l.startsWith('git ') &&
+            l.includes(' http.lowSpeedLimit=1 ') &&
+            l.includes(' http.lowSpeedTime=30 ') &&
+            l.includes(` ${verb} `),
+        ),
+        `${verb}: ${ok.calls.join('\n')}`,
+      )
+    const r = check(c, fakeGit(c, { tags: ['v0.2.0'], cloneFail: true }), '--json')
+    assert.equal(r.code, 0, r.stderr)
+    assert.deepEqual(JSON.parse(r.stdout), { installed: 'v0.1.0', latest: 'v0.2.0', newer: true, notes: '' })
+  })
+
+  it('--version with leading zeros is not a published version', async () => {
+    const c = await installed()
+    const r = launch(c, update(c, '--version', 'v01.0.0'))
+    assert.equal(r.code, 2, r.stderr)
+  })
+
+  it('over ssh both give up on a dead connection', async () => {
+    const c = await installed()
+    const env = fakeGit(c, { tags: ['v0.2.0'] })
+    writeFileSync(
+      join(c.state, 'gitbin', 'git'),
+      `#!/bin/sh\ncase " $* " in *" ls-remote "*|*" clone "*) echo "$GIT_SSH_COMMAND" >>"${join(c.state, 'seen')}" ;; esac\ncase " $* " in *" ls-remote "*) echo "${'a'.repeat(40)} refs/tags/v0.2.0" ;; esac\nexit 0\n`,
+    )
+    assert.equal(check(c, env).code, 0)
+    const seen = readFileSync(join(c.state, 'seen'), 'utf8').trim().split('\n')
+    assert.equal(seen.length, 2)
+    for (const line of seen) {
+      assert.match(line, /BatchMode=yes/)
+      assert.match(line, /ConnectTimeout=\d+/)
+      assert.match(line, /ServerAliveInterval=\d+/)
+    }
+  })
+})
+
 describe('the launcher: where the versions are asked', () => {
   it('install writes RSC_BRAIN_REPO_URL, without credentials; reinstalling keeps it, off included; compose hands it over', async () => {
     const plain = await installed()
@@ -1514,7 +1699,7 @@ describe('the launcher: the stand-in door', () => {
       / up -d --remove-orphans$/,
     ])
     assert.equal(existsSync(join(c.state, 'door')), false, 'nothing left on the port')
-    assert.match(steps(c), /migrate: Migrating the data for rsc-brain 0\.2\.0/)
+    assert.match(steps(c), /migrate: Migrating the data\./)
     assert.equal(statSync(join(c.dir, '.rsc-brain', 'door')).mode & 0o777, 0o755)
   })
 
@@ -1535,6 +1720,36 @@ describe('the launcher: the stand-in door', () => {
     assert.equal(at(r.calls, DOOR_RM) > at(r.calls, / rsc-brain restore /), true)
     assert.equal(existsSync(join(c.state, 'door')), false)
     assert.match(steps(c), /restore: Restoring the copy made before the update/)
+  })
+
+  it('no step of the door names a version: an update, a failed migration, a start that fails, a way back', async () => {
+    const VERSION_LIKE = /\d+\.\d+\.\d+/
+    const good = await installed()
+    assert.equal(launch(good, update(good, '--image', 'rsc-brain:next')).code, 0)
+    const failed = await installed()
+    const f = launch(failed, update(failed, '--image', 'rsc-brain:broken'), {
+      env: { FAKE_MIGRATE_FAIL: 'rsc-brain:broken' },
+    })
+    assert.equal(f.code, 4, f.stderr)
+    const late = await installed()
+    const h = launch(late, update(late, '--image', 'rsc-brain:broken'), {
+      env: { FAKE_HEALTH_FAIL: 'rsc-brain:broken' },
+    })
+    assert.equal(h.code, 4, h.stderr)
+    for (const c of [good, failed, late]) {
+      assert.ok(steps(c).length > 0)
+      assert.doesNotMatch(steps(c), VERSION_LIKE)
+    }
+    assert.match(steps(good), /Migrating the data\.\n/)
+    assert.match(steps(failed), /Going back to the version before\.\n/)
+    assert.doesNotMatch(readFileSync(join(ROOT, 'deploy', 'door.Caddyfile'), 'utf8'), VERSION_LIKE)
+  })
+
+  it('any method that accepts HTML gets the page: the Caddyfile does not look at the method', () => {
+    const f = readFileSync(join(ROOT, 'deploy', 'door.Caddyfile'), 'utf8')
+    assert.match(f, /@page header Accept \*text\/html\*\n/)
+    assert.doesNotMatch(f, /\bmethod [A-Z]/)
+    assert.doesNotMatch(f, /reverse_proxy/, 'nothing reaches the service from here')
   })
 
   it('a new version that does not answer: the door comes back for the way back', async () => {

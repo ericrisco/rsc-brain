@@ -316,8 +316,9 @@ function Factory({ account }: { account: string }) {
 // The version running against what is published (rsc-updates §0, §3.9). A newer one it knows is always said; apart
 // from that, a check that failed is said as failed, and never as up to date (CA29b).
 function Release({ r }: { r: NonNullable<System['release']> }) {
-  const when = r.checkedAt ?? r.lastAttemptAt
   const failed = !r.newer && r.error !== null && r.error !== 'none'
+  // After a failure, when it was tried; otherwise when it last had an answer.
+  const when = failed ? (r.lastAttemptAt ?? r.checkedAt) : (r.checkedAt ?? r.lastAttemptAt)
   const state = r.newer
     ? 'newer'
     : r.error === 'none'

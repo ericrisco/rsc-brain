@@ -1,6 +1,6 @@
 {
   "about": "The definition of a published version, one file for every place that decides it: the launcher, update.sh and the web, in both products. rsc-brain keeps a copy with the same SHA-256. Add sections; do not change what a vector says without changing the definition.",
-  "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$",
+  "pattern": "^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
   "notesMaxChars": 4000,
   "newest": [
     { "name": "numeric order, not text order", "tags": ["v0.9.0", "v0.10.0", "v0.2.0"], "newest": "v0.10.0" },
@@ -12,6 +12,13 @@
       "tags": ["v9.9.9-rc1", "9.9.9", "V9.9.9", "v9.9", "v9.9.9.9", "v9.9.x", "release-9.9.9", "v9.9.9^{}", "xv9.9.9", "v٩.9.9", "v0.2.0"],
       "newest": "v0.2.0"
     },
+    {
+      "name": "leading zeros are not published",
+      "tags": ["v01.0.0", "v0.01.0", "v0.0.01", "v00.0.0", "v0.2.0"],
+      "newest": "v0.2.0"
+    },
+    { "name": "only leading zeros: nothing published", "tags": ["v09.0.0", "v0.09.0"], "newest": null },
+    { "name": "a zero alone is a number", "tags": ["v0.0.0"], "newest": "v0.0.0" },
     { "name": "tags that are not versions, and nothing else", "tags": ["nightly", "v1", "latest"], "newest": null },
     {
       "name": "numbers too big for a float keep their order",
@@ -73,6 +80,36 @@
       "tag": "v0.2.0",
       "changelog": "# Changelog\n\nNothing yet.\n",
       "notes": ""
+    },
+    {
+      "name": "a no-break space after the heading is not this section",
+      "tag": "v0.2.0",
+      "changelog": "## v0.2.0\u00a0- 2026-11-04\n\n- Two.\n",
+      "notes": ""
+    },
+    {
+      "name": "a tab after the heading is this section",
+      "tag": "v0.2.0",
+      "changelog": "## v0.2.0\t2026-11-04\n\n- Two.\n",
+      "notes": "- Two."
+    },
+    {
+      "name": "no-break spaces at the edges of the notes stay",
+      "tag": "v0.2.0",
+      "changelog": "## v0.2.0\n\n\u00a0- Two.\u00a0\n",
+      "notes": "\u00a0- Two.\u00a0"
+    },
+    {
+      "name": "spaces, tabs and blank lines at the edges of the notes go",
+      "tag": "v0.2.0",
+      "changelog": "## v0.2.0\n\n \t- Two.\t \n\n",
+      "notes": "- Two."
+    },
+    {
+      "name": "a carriage return that ends the file goes",
+      "tag": "v0.2.0",
+      "changelog": "## v0.2.0\n\n- Two.\r",
+      "notes": "- Two."
     },
     {
       "name": "HTML stays text",

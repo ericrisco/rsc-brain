@@ -456,12 +456,17 @@ test.describe('Admin › Backups & system: the version', () => {
     await expect(service).toContainText('Could not check for a new version')
     await expect(service).toContainText('Version v0.1.0 is running.')
     await expect(service.locator('code', { hasText: 'rsc-brain.sh update --check' })).toBeVisible()
+    // The last answer was days ago, the last try minutes ago: «Tried» says the try.
+    const days = new Date(Date.now() - 3 * 86_400_000).toISOString()
+    const minutes = new Date(Date.now() - 5 * 60_000).toISOString()
     await behind(baseURL as string, s.id, {
-      release: { latest: 'v0.1.0', notes: '', checkedAt: at, error: 'network', lastAttemptAt: at },
+      release: { latest: 'v0.1.0', notes: '', checkedAt: days, error: 'network', lastAttemptAt: minutes },
     })
     await page.reload()
     await expect(service).toContainText('Could not check for a new version')
     await expect(service).not.toContainText('This is the newest')
+    await expect(service).toContainText('Tried 5 min ago.')
+    await expect(service).not.toContainText('3 days ago')
   })
 
   test('a newer version it knew stays said when the last check failed', async ({

@@ -30,8 +30,11 @@ export type CheckOptions = {
   userAgent?: string
 }
 
+// No leading zeros: v01.0.0 is not a published version.
+export const PUBLISHED = /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/
+
 export function isPublished(tag: string): boolean {
-  return /^v[0-9]+\.[0-9]+\.[0-9]+$/.test(tag)
+  return PUBLISHED.test(tag)
 }
 
 const parts = (tag: string) => tag.slice(1).split('.').map(BigInt)
@@ -56,16 +59,26 @@ export function compareVersions(installed: string, newest: string): Comparison {
   return c < 0 ? 'newer' : c === 0 ? 'up_to_date' : 'older'
 }
 
+// The whitespace of the definition: spaces, tabs and line ends, in the launcher too. A no-break space is text.
+const blank = (c: string | undefined) => c === ' ' || c === '\t' || c === '\n'
+function trimmed(text: string): string {
+  let from = 0
+  let to = text.length
+  while (from < to && blank(text[from])) from++
+  while (to > from && blank(text[to - 1])) to--
+  return text.slice(from, to)
+}
+
 export function notesFor(changelog: string, tag: string): string {
-  const lines = changelog.replace(/\r\n/g, '\n').split('\n')
+  const lines = changelog.replace(/\r(\n|$)/g, '$1').split('\n')
   const heading = `## ${tag}`
   const start = lines.findIndex(
-    (l) => l === heading || (l.startsWith(heading) && /\s/.test(l[heading.length] ?? '')),
+    (l) => l === heading || (l.startsWith(heading) && /[ \t]/.test(l[heading.length] ?? '')),
   )
   if (start < 0) return ''
   const rest = lines.slice(start + 1)
   const end = rest.findIndex((l) => l.startsWith('## '))
-  const text = (end < 0 ? rest : rest.slice(0, end)).join('\n').trim()
+  const text = trimmed((end < 0 ? rest : rest.slice(0, end)).join('\n'))
   return text.length > NOTES_MAX ? Array.from(text).slice(0, NOTES_MAX).join('') : text
 }
 

@@ -12,10 +12,8 @@
 	header Retry-After 30
 	header Cache-Control no-store
 
-	@page {
-		method GET HEAD
-		header Accept *text/html*
-	}
+	# Whatever the method: a form posted from a page gets the page too. Nothing here reaches the service.
+	@page header Accept *text/html*
 	handle @page {
 		root * /door
 		header Content-Type "text/html; charset=utf-8"

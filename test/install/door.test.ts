@@ -212,13 +212,16 @@ describe('the stand-in door with real containers', { skip: why ?? false }, () =>
     let stderr = ''
     let running = true
     const seen: Seen[] = []
+    const posted: Seen[] = []
     const poll = (async () => {
       while (running) {
         const phase = phaseOf(stderr)
-        const [page, api] = await Promise.all([
+        const [page, api, form] = await Promise.all([
           ask(`${url}/`, 'text/html', extra, phase),
           ask(`${url}/v1/health`, 'application/json', extra, phase),
+          ask(`${url}/login`, 'text/html', [...extra, '-X', 'POST', '-d', 'a=b'], phase),
         ])
+        posted.push(form)
         // Only what was asked and answered within one step says something about that step.
         const same = phaseOf(stderr) === phase ? phase : 'between'
         seen.push({ ...page, phase: same }, { ...api, phase: same })
@@ -237,11 +240,22 @@ describe('the stand-in door with real containers', { skip: why ?? false }, () =>
     const refusals = door.filter(
       (s) => s.body.includes('"under_maintenance"') && s.body.includes('"retryAfter":30'),
     )
-    assert.ok(
-      pages.some(
-        (s) => s.phase === 'migrating' && s.body.includes('Migrating the data for rsc-brain 99.0.0'),
-      ),
-    )
+    assert.ok(pages.some((s) => s.phase === 'migrating' && s.body.includes('Migrating the data.')))
+    // Nothing anonymous learns a version from the door, in any step. And a form that posts gets the page, with the
+    // same status: nothing reaches the service.
+    for (const s of [...door, ...posted.filter((p) => p.status === 503)])
+      assert.doesNotMatch(s.body, /\d+\.\d+\.\d+/, s.body.slice(0, 200))
+    for (const phase of ['migrating', 'restoring'])
+      assert.ok(
+        posted.some(
+          (p) =>
+            p.phase === phase &&
+            p.status === 503 &&
+            p.retryAfter === '30' &&
+            p.body.includes('<!doctype html>'),
+        ),
+        `a form that posts while ${phase}`,
+      )
     assert.ok(pages.some((s) => s.phase === 'restoring' && s.body.includes('Restoring the copy')))
     assert.ok(refusals.some((s) => s.phase === 'migrating'))
     assert.ok(refusals.some((s) => s.phase === 'restoring'))

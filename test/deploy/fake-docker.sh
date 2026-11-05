@@ -48,6 +48,11 @@ if [ "$1" = compose ]; then
   esac
 fi
 
+# What the page of the stand-in door says at each compose call.
+if [ "$1" = compose ] && [ -f "$project_dir/.rsc-brain/door/step.txt" ]; then
+  echo "any: $(cat "$project_dir/.rsc-brain/door/step.txt")" >>"$state/door-steps.log"
+fi
+
 # Whatever the call is given on its standard input (the launcher closes it, or pipes a secret in).
 take_stdin() {
   if [ ! -t 0 ]; then

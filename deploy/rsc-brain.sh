@@ -27,6 +27,8 @@ NL='
 '
 CR=$(printf '\r')
 TAB=$(printf '\t')
+# The whitespace of the definition of a published version; a no-break space is text.
+BLANK=" $TAB$NL"
 MIN_FREE_KB=2097152
 WAIT_SECONDS=${RSC_BRAIN_TEST_WAIT:-120}
 
@@ -223,7 +225,7 @@ if [ "$CMD" = install ] || [ "$CMD" = update ]; then
   [ -n "$VERSION" ] && [ -n "$IMAGE" ] && usage 'Pass --version or --image, not both.'
   [ "$CHECK" = 1 ] && [ -n "$VERSION$IMAGE" ] && usage '--check only looks: it does not go with --version or --image.'
   case $REPO in *"'"* | *"$NL"*) usage '--repo cannot hold a quote or a line break.' ;; esac
-  [ -z "$VERSION" ] || matches "$VERSION" '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' ||
+  [ -z "$VERSION" ] || matches "$VERSION" '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' ||
     usage '--version takes a published version such as v1.2.0.'
   [ -z "$IMAGE" ] || matches "$IMAGE" '^[A-Za-z0-9][A-Za-z0-9._/:@-]*$' || usage '--image takes an image name such as rsc-brain:v1.2.0.'
 fi
@@ -347,6 +349,7 @@ find_dir() {
 need_installation() {
   find_dir
   if ! is_installation "$DIR"; then
+    [ "$CHECK" = 1 ] && [ "$JSON" = 1 ] && check_answer '' false '' missing
     say "No rsc-brain installation in \"$DIR\". Pass --dir with the folder it was installed in. Nothing was changed."
     exit 3
   fi
@@ -473,6 +476,7 @@ wait_healthy() {
 
 # ---------------------------------------------------------------------------------------------- requirements (CA4)
 missing() {
+  [ "$CHECK" = 1 ] && [ "$JSON" = 1 ] && check_answer '' false '' missing
   say "$1"
   say 'Nothing was changed.'
   exit 3
@@ -817,14 +821,14 @@ random_hex() { od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'; }
 # newest_of: from the lines of `git ls-remote`, the newest, or nothing.
 newest_of() {
   v=$(LC_ALL=C sed -n 's|^[0-9a-f]\{1,\}[[:space:]]\{1,\}refs/tags/\(v[0-9]\{1,\}\.[0-9]\{1,\}\.[0-9]\{1,\}\)$|\1|p' |
-    sed 's/^v//' | LC_ALL=C sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
+    LC_ALL=C grep -Ev '(^v|\.)0[0-9]' | sed 's/^v//' | LC_ALL=C sort -t. -k1,1n -k2,2n -k3,3n | tail -n 1)
   [ -n "$v" ] && echo "v$v"
   return 0
 }
 latest_version() { git ls-remote --tags --refs "$REPO" 'v*' 2>/dev/null </dev/null | newest_of; }
 # An address as it may be kept and said: nothing that opens it. Over http(s), no user; elsewhere (ssh's git@), no password.
 repo_public() {
-  printf '%s' "$1" | sed -e 's|^\(https\{0,1\}://\)[^/@]*@|\1|' -e 's|^\([a-z+]*://[^/:@]*\):[^/@]*@|\1@|'
+  printf '%s' "$1" | sed -e 's|^\([hH][tT][tT][pP][sS]\{0,1\}://\)[^/@]*@|\1|' -e 's|^\([a-zA-Z+]*://[^/:@]*\):[^/@]*@|\1@|'
 }
 # RSC_BRAIN_REPO_URL, where the service asks for new versions: what this run was told or, on an installation that has
 # one, what it has (empty: the service never asks).
@@ -1039,7 +1043,7 @@ install() {
     if [ -z "$VERSION" ]; then
       VERSION=$(latest_version)
       if [ -z "$VERSION" ]; then
-        say "No published version of rsc-brain at $REPO yet: building its main branch."
+        say "No published version of rsc-brain at $(repo_public "$REPO") yet: building its main branch."
         VERSION=main
       fi
     fi
@@ -1152,7 +1156,7 @@ install() {
     rm -rf "${DIR:?}/${STATE:?}/src"
     # The image is built from these files: they must be readable by all, whatever this shell's umask.
     (umask 022 && git clone --depth 1 --branch "$VERSION" "$REPO" "$DIR/$STATE/src") >&2 </dev/null ||
-      failed 3 "Could not fetch $VERSION from $REPO. Check the version (git tags) and the network."
+      failed 3 "Could not fetch $VERSION from $(repo_public "$REPO"). Check the version (git tags) and the network."
     step "Building the image $IMAGE (a few minutes the first time)"
     docker build -t "$IMAGE" "$DIR/$STATE/src" >&2 </dev/null || failed 4 "The image did not build: the lines above say why."
   fi
@@ -1526,6 +1530,7 @@ door_companion() {
   write_companion_compose || say "Could not write \"$DIR/compose.companion.yaml\"."
   return 0
 }
+# The page is anonymous, so what is written here never names a version: only a valid key learns it.
 door_step() {
   [ -d "$DIR/$STATE/door" ] || return 0
   printf '%s\n' "$1" >"$DIR/$STATE/door/step.txt.new" && chmod 644 "$DIR/$STATE/door/step.txt.new" &&
@@ -1562,7 +1567,7 @@ rollback() {
   update_failure_log
   step "Going back to rsc-brain $UPDATE_FROM"
   dc stop app >&2 </dev/null
-  door_up "Going back to rsc-brain $UPDATE_FROM."
+  door_up 'Going back to the version before.'
   for f in compose.yaml Caddyfile door.Caddyfile; do
     [ -f "$DIR/$STATE/$f.previous" ] && mv -f "$DIR/$STATE/$f.previous" "$DIR/$f"
   done
@@ -1685,9 +1690,11 @@ lock_held() {
 # ---------------------------------------------------------------------------------------------------- update --check
 # Only looks (CA29b): no lock, no journal taken back, nothing stopped, nothing written in the installation. What it
 # fetches goes to a temporary folder that goes with it, also when it is stopped.
-CHECK_TMP='' CHECK_PID=''
+CHECK_TMP='' CHECK_PID='' CHECK_INSTALLED=''
+# Neither asks anyone, and neither waits on a dead connection: at less than a byte a second for 30 seconds git gives up.
 check_git() {
-  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=${GIT_SSH_COMMAND:-ssh -oBatchMode=yes} git "$@" &
+  GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=${GIT_SSH_COMMAND:-ssh -oBatchMode=yes -oConnectTimeout=15 -oServerAliveInterval=15 -oServerAliveCountMax=2} \
+    git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 "$@" &
   CHECK_PID=$!
   wait "$CHECK_PID"
 }
@@ -1703,8 +1710,8 @@ notes_of() {
       no_text=$no_text$no_line$NL
     fi
   done
-  no_text=${no_text#"${no_text%%[![:space:]]*}"}
-  no_text=${no_text%"${no_text##*[![:space:]]}"}
+  no_text=${no_text#"${no_text%%[!"$BLANK"]*}"}
+  no_text=${no_text%"${no_text##*[!"$BLANK"]}"}
   no_size=$(printf '%s' "$no_text" | wc -c | tr -d ' ')
   if [ "$no_size" -gt 4000 ]; then
     # Up to 4 bytes a character; a character starts at any byte but 10xxxxxx.
@@ -1727,7 +1734,8 @@ json_text() {
     LC_ALL=C sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/$TAB/\\\\t/g" -e ':a' -e '$!{' -e 'N' -e 'ba' -e '}' -e 's/\n/\\n/g')"
 }
 check_answer() { # latest newer notes [error]
-  printf '{"installed":%s,"latest":%s,"newer":%s,"notes":%s' "$(json_str "$CHECK_INSTALLED")" \
+  printf '{"installed":%s,"latest":%s,"newer":%s,"notes":%s' \
+    "$(if [ -n "$CHECK_INSTALLED" ]; then json_str "$CHECK_INSTALLED"; else printf null; fi)" \
     "$(if [ -n "$1" ]; then json_str "$1"; else printf null; fi)" "$2" "$(json_text "$3")"
   [ -z "${4:-}" ] || printf ',"error":%s' "$(json_str "$4")"
   printf '}\n'
@@ -1745,20 +1753,21 @@ update_check() {
   command -v git >/dev/null 2>&1 ||
     missing 'git is not installed (it asks the repository for its versions). Install it: https://git-scm.com/downloads'
   if ! running; then
-    say "rsc-brain is not running, so its version cannot be read. Start it with: sh $PROG install --dir \"$DIR\""
-    exit 3
+    if [ -f "$DIR/$STATE/update.pending" ]; then
+      lock_held && check_failed updating "An update is running in \"$DIR\": rsc-brain is stopped for now. Run this again when it ends."
+      check_failed updating "An update in \"$DIR\" was interrupted. This takes it back: sh $PROG status --dir \"$DIR\". Then run this again."
+    fi
+    check_failed not_running "rsc-brain is not running, so its version cannot be read. Start it with: sh $PROG install --dir \"$DIR\""
   fi
-  CHECK_INSTALLED=$(dc exec -T app rsc-brain version </dev/null 2>/dev/null)
-  if ! version_ok "$CHECK_INSTALLED"; then
-    say "rsc-brain in \"$DIR\" does not say its version. Check it with: sh $PROG status --dir \"$DIR\""
-    exit 3
-  fi
-  CHECK_INSTALLED=v${CHECK_INSTALLED#v}
+  ci_said=$(dc exec -T app rsc-brain version </dev/null 2>/dev/null)
+  version_ok "$ci_said" ||
+    check_failed no_version "rsc-brain in \"$DIR\" does not say its version. Check it with: sh $PROG status --dir \"$DIR\""
+  CHECK_INSTALLED=v${ci_said#v}
   CHECK_TMP=$(mktemp -d "${TMPDIR:-/tmp}/rsc-brain-check.XXXXXX") || missing 'Could not make a temporary folder.'
   trap '[ -z "$CHECK_PID" ] || kill "$CHECK_PID" 2>/dev/null; rm -rf "${CHECK_TMP:?}"' EXIT
   trap 'exit 130' HUP INT TERM
   shown=$(repo_public "$REPO")
-  if ! check_git -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 ls-remote --tags --refs -- "$REPO" 'v*' \
+  if ! check_git ls-remote --tags --refs -- "$REPO" 'v*' \
     >"$CHECK_TMP/refs" 2>"$CHECK_TMP/err" </dev/null; then
     # What git said stays here: it may carry the address with its credentials.
     if grep -Eiq 'could not read (username|password)|terminal prompts disabled|authentication|permission denied|publickey|not found|access denied|host key verification|\b40[13]\b' "$CHECK_TMP/err"; then
@@ -1820,7 +1829,7 @@ update() {
     asked=$VERSION
     if [ -z "$VERSION" ]; then
       VERSION=$(latest_version)
-      [ -n "$VERSION" ] || missing "No published version of rsc-brain at $REPO. Pass --version or --image."
+      [ -n "$VERSION" ] || missing "No published version of rsc-brain at $(repo_public "$REPO"). Pass --version or --image."
     fi
     if same_version "$VERSION" "$UPDATE_FROM" || { [ -z "$asked" ] && ! newer "$VERSION" "$UPDATE_FROM"; }; then
       out "rsc-brain $UPDATE_FROM is installed and $VERSION is the newest asked for. Nothing to update."
@@ -1850,7 +1859,7 @@ update() {
     step "Fetching the source of rsc-brain $VERSION (rsc-brain $UPDATE_FROM keeps running)"
     (umask 022 && git clone --depth 1 --branch "$VERSION" "$REPO" "$NEXT_SRC") >&2 </dev/null || {
       drop_next
-      missing "Could not fetch $VERSION from $REPO. Check the version (git tags) and the network."
+      missing "Could not fetch $VERSION from $(repo_public "$REPO"). Check the version (git tags) and the network."
     }
     step "Building the image $IMAGE"
     docker build -t "$IMAGE" "$NEXT_SRC" >&2 </dev/null || update_abort 'The image did not build: the lines above say why.'
@@ -1918,7 +1927,7 @@ update() {
   fi
   step "Stopping rsc-brain $UPDATE_FROM"
   dc stop app >&2 </dev/null || rollback "rsc-brain $UPDATE_FROM could not be stopped."
-  door_up "Migrating the data for rsc-brain $UPDATE_TO."
+  door_up 'Migrating the data.'
   step "Migrating the data for rsc-brain $UPDATE_TO"
   dc run --rm -T --no-deps app rsc-brain migrate </dev/null >"$UPDATE_LOG" 2>&1
   code=$?

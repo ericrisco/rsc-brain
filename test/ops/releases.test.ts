@@ -16,6 +16,7 @@ import {
   NOTES_MAX,
   newestOf,
   notesFor,
+  PUBLISHED,
   releaseChecker,
   releaseView,
   repoUrl,
@@ -29,7 +30,7 @@ type Vectors = {
   notes: Array<{ name: string; tag: string; changelog: string; notes: string }>
 }
 // The copy of rsc-factory's test/fixtures/published-vectors.json. When rsc-factory adds sections, both change together.
-const VECTORS_SHA256 = '064321f9ac1662cbde12c5600c0ff336a21cb48dd5c0dbe1ced83a8dfc943097'
+const VECTORS_SHA256 = '95b691dd221a9f99e0269f9a417594e0f630e523f73fe2ab0d18d0e061ccd4a7'
 const vectorsText = readFileSync(new URL('../fixtures/published-vectors.json', import.meta.url), 'utf8')
 const vectors = JSON.parse(vectorsText) as Vectors
 
@@ -72,7 +73,9 @@ const advert = (body: string, status = 200) =>
 
 describe('published: the definition, from the shared vectors', () => {
   test('the pattern is the one the vectors state', () => {
-    for (const ok of ['v0.2.0', 'v10.20.30']) assert.ok(isPublished(ok), ok)
+    for (const ok of ['v0.2.0', 'v10.20.30', 'v0.0.0']) assert.ok(isPublished(ok), ok)
+    for (const no of ['v01.0.0', 'v0.01.0', 'v0.0.01']) assert.equal(isPublished(no), false, no)
+    assert.equal(PUBLISHED.source, vectors.pattern)
     assert.equal(isPublished('v0.2.0\n'), false, 'a line end is not part of a tag')
     assert.equal(NOTES_MAX, vectors.notesMaxChars)
   })
