@@ -404,6 +404,52 @@ for (const shell of SHELLS) {
       assert.equal(updates(readFileSync(c.log, 'utf8').trim().split('\n')).length, 1)
     })
 
+    it('a failed attempt is dated when it ended, so the 15 minutes run from the end', () => {
+      const c = fresh()
+      // A clock that moves 1000 s every time it is read: the end of the attempt is later than its start.
+      const bin = join(BASE, `date-bin-${n}`)
+      mkdirSync(bin)
+      const counter = join(BASE, `date-count-${n}`)
+      writeFileSync(counter, String(NOW))
+      writeFileSync(
+        join(bin, 'date'),
+        `#!/bin/sh\nif [ "$1" = "+%s" ]; then v=$(cat "${counter}"); echo $((v + 1000)) >"${counter}"; echo "$v"; exit 0; fi\nexec /bin/date "$@"\n`,
+      )
+      chmodSync(join(bin, 'date'), 0o755)
+      writeFileSync(mark(c), '')
+      const t = tick(
+        c,
+        {
+          PATH: `${bin}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+          RSC_BRAIN_UPDATER_NOW: '',
+          FAKE_UPDATE_EXIT: '4',
+          FAKE_UPDATE_SAYS: 'It failed.',
+        },
+        sh,
+      )
+      assert.equal(t.code, 0, t.stderr)
+      const u = report(c, 'updater.json')
+      const failed = Date.parse(u.attempts['v0.9.0'].failedAt)
+      const accepted = Date.parse(u.requestAcceptedAt)
+      assert.ok(failed > accepted, `${u.attempts['v0.9.0'].failedAt} is not after ${u.requestAcceptedAt}`)
+      assert.equal(Date.parse(u.attempts['v0.9.0'].retryFrom) - failed, 900_000)
+    })
+
+    it('a check that failed is asked again after 15 minutes, not before', () => {
+      const c = fresh()
+      const failed = JSON.stringify({
+        installed: 'v0.2.0',
+        latest: null,
+        newer: false,
+        notes: '',
+        error: 'network',
+      })
+      const env = { FAKE_CHECK: failed, FAKE_CHECK_EXIT: '3' }
+      assert.equal(checks(tick(c, env, sh).calls).length, 1)
+      assert.equal(checks(tick(c, env, { ...sh, at: NOW + 899 }).calls).length, 1, 'too early')
+      assert.equal(checks(tick(c, env, { ...sh, at: NOW + 900 }).calls).length, 2, 'at 15 minutes')
+    })
+
     it('Try again: at most 3 retries, 15 minutes apart, then only the terminal', () => {
       const c = fresh()
       const fail = { FAKE_UPDATE_EXIT: '4', FAKE_UPDATE_SAYS: 'It failed.' }
@@ -480,6 +526,7 @@ for (const shell of SHELLS) {
       assert.ok(line.includes(`-i '${join(c.dir, 'updater', 'credentials', 'key')}'`), line)
       assert.match(line, /IdentitiesOnly=yes/)
       assert.match(line, /BatchMode=yes/)
+      assert.match(line, /StrictHostKeyChecking=accept-new/)
       assert.ok(
         line.includes(`UserKnownHostsFile='${join(c.dir, 'updater', 'credentials', 'known_hosts')}'`),
         line,
@@ -637,6 +684,7 @@ describe('what the updater may reach (CA15, CA25, CA25b)', () => {
     assert.match(body, /restart: unless-stopped/)
     assert.match(body, /stop_grace_period: 10m/)
     assert.match(body, /init: true/)
+    assert.match(body, /HOME: \$\{RSC_BRAIN_UPDATER_DIR\}\/updater\/home/)
     assert.match(body, /hostname: \$\{RSC_BRAIN_UPDATER_HOSTNAME\}/)
     assert.match(body, /working_dir: \$\{RSC_BRAIN_UPDATER_DIR\}/)
     assert.equal(

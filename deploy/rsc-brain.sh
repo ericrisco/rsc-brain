@@ -2018,6 +2018,8 @@ update() {
 #   updater/         the updater's files and, in credentials/, the access to a private repository   0700
 # The updater mounts the Docker socket and <dir> at its own path, nothing else (deploy/compose.updater.yaml).
 UPD_FILES='loop.sh credentials.sh Dockerfile'
+# Where a working updater is kept aside while `enable` runs again over it; empty when there was none.
+UPD_PREV=''
 updater_names() {
   UPD_PROJECT=$NAME-updater
   UPD_IMAGE=rsc-brain-updater:$NAME
@@ -2079,6 +2081,15 @@ updater_refresh() {
 }
 # What a failed or refused enable leaves behind is taken back: the container, the image it built, the folder.
 updater_take_back() {
+  if [ -n "$UPD_PREV" ] && [ -d "$UPD_PREV" ]; then
+    # It was working before this run: only what this run changed is undone, its files and its credential come back,
+    # and it keeps running (started again only if this run's start had stopped it).
+    rm -rf "${DIR:?}/updater"
+    mv "$UPD_PREV" "$DIR/updater"
+    UPD_PREV=''
+    [ -n "$(uc ps -q 2>/dev/null </dev/null)" ] || uc up -d >/dev/null 2>&1 </dev/null
+    return 0
+  fi
   if [ -f "$DIR/updater/compose.updater.yaml" ] && [ -f "$DIR/updater/updater.env" ]; then
     uc down --remove-orphans >&2 </dev/null
   fi
@@ -2165,6 +2176,11 @@ web_updates_enable() {
   take_lock
   src=$(updater_source) ||
     missing 'The updater files (updater/, compose.updater.yaml) are not next to the launcher. Run it from a copy of the repository (deploy/), or update rsc-brain to a version that has them.'
+  if [ -f "$DIR/updater/updater.env" ]; then
+    rm -rf "${DIR:?}/${STATE:?}/updater.previous"
+    cp -Rp "$DIR/updater" "$DIR/$STATE/updater.previous" 2>/dev/null || failed 4 "Could not keep the updater that runs aside."
+    UPD_PREV=$DIR/$STATE/updater.previous
+  fi
   trap 'to_terminal; updater_take_back; exit 4' HUP INT TERM
   if ! { mkdir -p "$DIR/updater/credentials" "$DIR/updater/home" 2>/dev/null &&
     chmod 700 "$DIR/updater" "$DIR/updater/credentials" "$DIR/updater/home"; }; then
@@ -2251,6 +2267,8 @@ web_updates_enable() {
     failed 4 'The updater did not start (the lines above say why). Everything it made was removed.'
   }
   trap - HUP INT TERM
+  [ -z "$UPD_PREV" ] || rm -rf "${UPD_PREV:?}"
+  UPD_PREV=''
   out 'Updates from the web are on.'
   out 'An administrator signed in on the web can now update rsc-brain; the updater takes the request and runs the update.'
   out "It controls Docker on this machine. Turn it off with: sh $PROG web-updates disable --dir \"$DIR\""
@@ -2259,6 +2277,8 @@ web_updates_enable() {
 web_updates_disable() {
   need_installation
   updater_names
+  # The credential goes first, whatever else is going on: a launcher at work must not keep it on disk.
+  rm -rf "${DIR:?}/updater/credentials"
   take_lock
   updater_remove || {
     say 'The credential is removed, but the updater could not be fully removed (the lines above say why).'

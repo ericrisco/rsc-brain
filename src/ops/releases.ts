@@ -437,3 +437,20 @@ export function releaseView(s: ReleaseState | null, version: string): ReleaseVie
   const preview = core[2] !== undefined
   return { ...base, newer: c === 'newer' || (c === 'up_to_date' && preview), ahead: c === 'older' }
 }
+
+// The checker the service runs: where to ask from RSC_BRAIN_REPO_URL, and, when RSC_BRAIN_UPDATE_REPORT names a folder,
+// the updater's report to read while it is alive.
+export function checkerFromEnv(
+  env: Record<string, string | undefined>,
+  version: string,
+  clock: Clock,
+  send?: typeof fetch,
+): ReleaseChecker {
+  return releaseChecker({
+    repo: repoUrl(env),
+    version,
+    clock,
+    ...(send ? { fetch: send } : {}),
+    ...(env.RSC_BRAIN_UPDATE_REPORT ? { report: env.RSC_BRAIN_UPDATE_REPORT } : {}),
+  })
+}

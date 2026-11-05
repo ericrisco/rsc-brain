@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { after, describe, test } from 'node:test'
 import {
   check,
+  checkerFromEnv,
   compareVersions,
   DEFAULT_REPO_URL,
   isPublished,
@@ -676,6 +677,67 @@ describe("the updater's report (B2: with the updater on, the web does not ask th
     assert.equal(none.c.state().latest, null)
     assert.equal(none.c.state().error, 'network')
     assert.equal(none.c.state().checkedAt, null, 'a failed check is not an answer')
+  })
+
+  test('the reason none: no version, and the check is an answer (checkedAt set)', () => {
+    const check = {
+      checkedAt: iso(T0 - 5000),
+      ok: false,
+      reason: 'none',
+      products: { brain: { latest: 'v0.9.0', notes: 'x' } },
+    }
+    const s = checker(report({ updater: alive(), check })).c.state()
+    assert.equal(s.latest, null)
+    assert.equal(s.notes, null)
+    assert.equal(s.error, 'none')
+    assert.equal(s.checkedAt, new Date(T0 - 5000).toISOString())
+  })
+
+  test('ok with a version that is not a published one: a network error, never an answer', () => {
+    const check = {
+      checkedAt: iso(T0),
+      ok: true,
+      reason: null,
+      products: { brain: { latest: 'main', notes: '' } },
+    }
+    const s = checker(report({ updater: alive(), check })).c.state()
+    assert.equal(s.error, 'network')
+    assert.equal(s.latest, null)
+    assert.equal(s.checkedAt, null)
+  })
+
+  test('a beat up to a minute ahead of this clock still counts, more does not', () => {
+    const check = good()
+    assert.equal(checker(report({ updater: alive(T0 + 60_000), check })).c.state().latest, 'v0.9.0')
+    assert.equal(checker(report({ updater: alive(T0 + 61_000), check })).c.state().latest, null)
+  })
+
+  test('RSC_BRAIN_UPDATE_REPORT is what makes the service read the report', async () => {
+    const d = report({ updater: alive(), check: good() })
+    const { fetch, calls } = stub({ [INFO]: () => advert(refs('refs/tags/v0.3.0')) })
+    const withReport = checkerFromEnv(
+      { RSC_BRAIN_REPO_URL: REPO, RSC_BRAIN_UPDATE_REPORT: d },
+      '0.2.0',
+      at(T0),
+      fetch,
+    )
+    await withReport.check()
+    assert.equal(withReport.state().latest, 'v0.9.0')
+    assert.equal(calls.length, 0)
+    const without = checkerFromEnv({ RSC_BRAIN_REPO_URL: REPO }, '0.2.0', at(T0), fetch)
+    await without.check()
+    assert.equal(without.state().latest, 'v0.3.0')
+    const empty = checkerFromEnv(
+      { RSC_BRAIN_REPO_URL: REPO, RSC_BRAIN_UPDATE_REPORT: '' },
+      '0.2.0',
+      at(T0),
+      fetch,
+    )
+    await empty.check()
+    assert.equal(empty.state().latest, 'v0.3.0', 'an empty variable is no folder')
+    // The service starts its checker through it.
+    const main = readFileSync(new URL('../../src/cli/main.ts', import.meta.url), 'utf8')
+    assert.match(main, /checkerFromEnv\(process\.env, VERSION, systemClock\)/)
   })
 
   test('an unknown reason is a network error', () => {

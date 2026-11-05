@@ -267,6 +267,12 @@ rm)
   exit 0
   ;;
 ps)
+  # Containers of the updater's project that compose no longer knows (FAKE_UPDATER_LEFT), asked for by its label.
+  case "$args" in *"label=com.docker.compose.project="*-updater*)
+    [ -n "${FAKE_UPDATER_LEFT:-}" ] && echo l3ft
+    exit 0
+    ;;
+  esac
   # The stand-in door, asked for by its labels.
   case "$args" in *service=door*)
     [ -e "$state/door" ] && echo d00r
@@ -326,7 +332,18 @@ compose)
   *" -p "*-updater" "*)
     case "$args" in
     *" up "*)
+      # FAKE_UPDATER_UP_FAIL_ONCE: the first start fails after stopping what ran (a recreate that does not come up).
+      if [ -n "${FAKE_UPDATER_UP_FAIL_ONCE:-}" ] && [ ! -e "$state/updater-failed-once" ]; then
+        : >"$state/updater-failed-once"
+        rm -f "$state/updater-up"
+        echo 'Error response from daemon: failed to start' >&2
+        exit 1
+      fi
       [ "${FAKE_UPDATER_UP_EXIT:-0}" = 0 ] || { echo 'Error response from daemon: failed to start' >&2; exit "$FAKE_UPDATER_UP_EXIT"; }
+      if [ -n "${FAKE_UPDATER_UP_SLEEP:-}" ]; then
+        : >"$state/updater-up-started"
+        sleep "$FAKE_UPDATER_UP_SLEEP"
+      fi
       : >"$state/updater-up"
       ;;
     *" down "*)

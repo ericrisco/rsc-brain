@@ -44,7 +44,7 @@ import { createScheduler } from '../ops/backup/schedule.ts'
 import { type ImportReport, importTree } from '../ops/import/import.ts'
 import { type FileTree, treeFromFolder, treeFromZip } from '../ops/import/tree.ts'
 import { resealAll } from '../ops/key.ts'
-import { releaseChecker, repoUrl } from '../ops/releases.ts'
+import { checkerFromEnv } from '../ops/releases.ts'
 import { runBridge } from './bridge.ts'
 import { dbCommand } from './db.ts'
 import { sessionStart, stop } from './hooks.ts'
@@ -194,13 +194,7 @@ async function main(argv: string[]): Promise<number> {
         })
       : undefined
     // Whether a newer version is published: once a day, only the User-Agent (rsc-updates §3.9); off with an empty URL.
-    const releases = releaseChecker({
-      repo: repoUrl(process.env),
-      version: VERSION,
-      clock: systemClock,
-      // With the updater on (web-updates enable) the newest version is read from what it leaves here, read only.
-      ...(process.env.RSC_BRAIN_UPDATE_REPORT ? { report: process.env.RSC_BRAIN_UPDATE_REPORT } : {}),
-    })
+    const releases = checkerFromEnv(process.env, VERSION, systemClock)
     releases.start()
     // «This machine only» (spec B7 C19): the container's gateway, from the default route (src/http/conn.ts).
     const localGateways: string[] = []

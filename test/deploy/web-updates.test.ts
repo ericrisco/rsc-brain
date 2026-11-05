@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import {
+  appendFileSync,
   chmodSync,
   copyFileSync,
   existsSync,
@@ -22,7 +23,7 @@ import {
 } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 
 const ROOT = new URL('../..', import.meta.url).pathname
@@ -196,8 +197,10 @@ const installed = async (extra: string[] = []) => {
   return c
 }
 const mode = (p: string) => (statSync(p).mode & 0o777).toString(8)
+let fileNo = 0
+// A file of its own each time: two cases never share one.
 const tokenFile = (c: Case, text = `${TOKEN}\n`) => {
-  const f = join(c.files, 'token')
+  const f = join(c.files, `token-${++fileNo}`)
   writeFileSync(f, text, { mode: 0o600 })
   return f
 }
@@ -397,20 +400,21 @@ describe('web-updates enable', () => {
     assert.equal(r.calls.join('\n').includes('QUJDREVGR0hJSktMTU5PUA'), false)
   })
 
-  it('credentials it does not accept: exit 2 and nothing made', async () => {
+  it('a token it does not accept: exit 2, nothing made, and the reason says it is the token', async () => {
     const c = await installed()
-    const cases: Array<[string, string[]]> = [
-      ['both kinds', ['--repo-token-file', tokenFile(c), '--repo-key', keyFile(c)]],
-      ['a file that is not there', ['--repo-token-file', join(c.files, 'nope')]],
-      ['a token with a second line', ['--repo-token-file', tokenFile(c, `${TOKEN}\nmore\n`)]],
-      ['a token with a space', ['--repo-token-file', tokenFile(c, 'ghp abc def ghi jkl\n')]],
-      ['an empty token', ['--repo-token-file', tokenFile(c, '\n')]],
-      ['a key that is not a key', ['--repo-key', tokenFile(c, 'hello\n')]],
-      ['no value', ['--repo-key']],
+    const bad: Array<[string, string]> = [
+      ['a second line', `${TOKEN}\nmore\n`],
+      ['three lines', `${TOKEN}\nmore\nmore\n`],
+      ['a space', 'ghp abc def ghi jkl\n'],
+      ['nothing', '\n'],
+      ['too short', 'abc\n'],
+      ['a quote', `${TOKEN}'\n`],
+      ['a dollar sign', `${TOKEN}$HOME\n`],
     ]
-    for (const [why, args] of cases) {
-      const r = launch(c, enable(c, ...args))
+    for (const [why, text] of bad) {
+      const r = launch(c, enable(c, '--repo-token-file', tokenFile(c, text)))
       assert.equal(r.code, 2, `${why}: ${r.stderr}`)
+      assert.match(r.stderr, /--repo-token-file takes one line/, why)
       assert.equal(existsSync(join(c.dir, 'updater')), false, why)
       assert.equal(
         r.calls.some((l) => /^build /.test(l)),
@@ -419,6 +423,157 @@ describe('web-updates enable', () => {
       )
       assert.equal((r.stdout + r.stderr).includes(TOKEN), false, why)
     }
+    const gone = launch(c, enable(c, '--repo-token-file', join(c.files, 'nope')))
+    assert.equal(gone.code, 2, gone.stderr)
+    assert.match(gone.stderr, /--repo-token-file takes a file/)
+    const both = launch(c, enable(c, '--repo-token-file', tokenFile(c), '--repo-key', keyFile(c)))
+    assert.equal(both.code, 2, both.stderr)
+    assert.match(both.stderr, /not both/)
+    const none = launch(c, enable(c, '--repo-key'))
+    assert.equal(none.code, 2, none.stderr)
+    // One that is fine goes through, at the largest size a token may have.
+    const ok = launch(c, enable(c, '--repo-token-file', tokenFile(c, `${'a'.repeat(255)}\n`)))
+    assert.equal(ok.code, 0, ok.stderr)
+    const over = launch(c, enable(c, '--repo-token-file', tokenFile(c, `${'a'.repeat(256)}\n`)))
+    assert.equal(over.code, 2, over.stderr)
+  })
+
+  it('a key it does not accept: exit 2, nothing made; the PEM kinds it does', async () => {
+    const c = await installed(['--repo', 'git@github.com:acme/brain.git'])
+    const pem = (kind: string, body = 'QUJD\n') => `-----BEGIN ${kind}-----\n${body}-----END ${kind}-----\n`
+    const bad: Array<[string, string]> = [
+      ['plain text', 'hello\n'],
+      ['a certificate', pem('CERTIFICATE')],
+      ['a public key', pem('PUBLIC KEY')],
+      ['text after the header', `-----BEGIN OPENSSH PRIVATE KEY----- x\n${'QUJD\n'}`],
+      ['text before the header', `x\n${pem('OPENSSH PRIVATE KEY')}`],
+      ['too large', pem('OPENSSH PRIVATE KEY', `${'A'.repeat(100)}\n`.repeat(200))],
+    ]
+    for (const [why, text] of bad) {
+      const f = join(c.files, `key-${++fileNo}`)
+      writeFileSync(f, text, { mode: 0o600 })
+      const r = launch(c, enable(c, '--repo-key', f))
+      assert.equal(r.code, 2, `${why}: ${r.stderr}`)
+      assert.match(r.stderr, /--repo-key takes an SSH private key/, why)
+      assert.equal(existsSync(join(c.dir, 'updater')), false, why)
+    }
+    const gone = launch(c, enable(c, '--repo-key', join(c.files, 'nope')))
+    assert.equal(gone.code, 2, gone.stderr)
+    for (const kind of ['OPENSSH PRIVATE KEY', 'RSA PRIVATE KEY', 'EC PRIVATE KEY', 'PRIVATE KEY']) {
+      const f = join(c.files, `key-${++fileNo}`)
+      writeFileSync(f, pem(kind), { mode: 0o600 })
+      const r = launch(c, enable(c, '--repo-key', f))
+      assert.equal(r.code, 0, `${kind}: ${r.stderr}`)
+    }
+    // Just under the size limit goes through.
+    const f = join(c.files, `key-${++fileNo}`)
+    const head = '-----BEGIN OPENSSH PRIVATE KEY-----\n'
+    writeFileSync(f, head + 'A'.repeat(16384 - head.length - 1) + '\n', { mode: 0o600 })
+    assert.equal(statSync(f).size, 16384)
+    assert.equal(launch(c, enable(c, '--repo-key', f)).code, 0)
+  })
+
+  it('an installation folder with a colon or a dollar sign in its path is refused, one test each', async () => {
+    for (const ch of [':', '$']) {
+      const c = fresh()
+      const odd = join(dirname(c.dir), `in${ch}stall`)
+      const port = String(await freePort())
+      const made = launch(c, [
+        'install',
+        '--local',
+        '--yes',
+        '--dir',
+        odd,
+        '--port',
+        port,
+        '--image',
+        'rsc-brain:test',
+      ])
+      assert.equal(made.code, 0, made.stderr)
+      const r = launch(c, ['web-updates', 'enable', '--yes', '--dir', odd])
+      assert.equal(r.code, 2, `${ch}: ${r.stderr}`)
+      assert.match(r.stderr, /without ':' or '\$' in its path/, ch)
+      assert.equal(existsSync(join(odd, 'updater')), false, ch)
+      assert.equal(
+        r.calls.some((l) => /^build /.test(l)),
+        false,
+        ch,
+      )
+    }
+  })
+
+  it('a failure on a working updater leaves it working: its files, its credential and its container', async () => {
+    const c = await installed()
+    const first = tokenFile(c)
+    assert.equal(launch(c, enable(c, '--repo-token-file', first)).code, 0)
+    const loop = join(c.dir, 'updater', 'loop.sh')
+    appendFileSync(loop, '# the one that was running\n')
+    const kept = readFileSync(loop, 'utf8')
+    const other = tokenFile(c, 'ghp_AnotherTokenValue99887766\n')
+    const cases: Array<[string, Record<string, string>, number]> = [
+      ['the repository does not answer', { FAKE_ACCESS_EXIT: '1' }, 3],
+      ['the image does not build', { FAKE_BUILD_EXIT: '1' }, 4],
+      ['the container does not start', { FAKE_UPDATER_UP_EXIT: '1' }, 4],
+      ['the container is stopped by a start that fails', { FAKE_UPDATER_UP_FAIL_ONCE: '1' }, 4],
+    ]
+    for (const [why, env, code] of cases) {
+      const r = launch(c, enable(c, '--repo-token-file', other), { env })
+      assert.equal(r.code, code, `${why}: ${r.stderr}`)
+      assert.equal(readFileSync(join(c.dir, 'updater', 'credentials', 'token'), 'utf8'), `${TOKEN}\n`, why)
+      assert.equal(readFileSync(loop, 'utf8'), kept, `${why}: its files are the ones that were running`)
+      assert.equal(existsSync(join(c.state, 'updater-up')), true, why)
+      assert.equal(
+        upd(r.calls).some((l) => / down /.test(l)),
+        false,
+        `${why}: not stopped`,
+      )
+      assert.equal(
+        r.calls.some((l) => l.startsWith('image rm')),
+        false,
+        `${why}: its image stays`,
+      )
+      assert.equal(
+        existsSync(join(c.dir, '.rsc-brain', 'updater.previous')),
+        false,
+        `${why}: nothing left over`,
+      )
+      assert.equal((r.stdout + r.stderr).includes('AnotherToken'), false, why)
+    }
+    // And a run that goes well replaces the credential and leaves nothing over.
+    const ok = launch(c, enable(c, '--repo-token-file', other))
+    assert.equal(ok.code, 0, ok.stderr)
+    assert.match(readFileSync(join(c.dir, 'updater', 'credentials', 'token'), 'utf8'), /AnotherToken/)
+    assert.equal(existsSync(join(c.dir, '.rsc-brain', 'updater.previous')), false)
+  })
+
+  it('a stop (Ctrl-C) while turning it on again leaves the working updater as it was', async () => {
+    const c = await installed()
+    assert.equal(launch(c, enable(c, '--repo-token-file', tokenFile(c))).code, 0)
+    const child = spawn(
+      shell(),
+      [LAUNCHER, ...enable(c, '--repo-token-file', tokenFile(c, 'ghp_AnotherTokenValue99887766\n'))],
+      {
+        stdio: 'ignore',
+        detached: true,
+        env: {
+          PATH: `${FAKEBIN}:${SYSBIN}`,
+          HOME: c.home,
+          FAKE_LOG: c.log,
+          FAKE_STDIN: c.stdin,
+          FAKE_STATE: c.state,
+          FAKE_UPDATER_UP_SLEEP: '30',
+        },
+      },
+    )
+    for (let i = 0; i < 200 && !existsSync(join(c.state, 'updater-up-started')); i++)
+      await new Promise((r) => setTimeout(r, 50))
+    assert.equal(existsSync(join(c.state, 'updater-up-started')), true, 'it was starting the container')
+    const closed = new Promise((resolve) => child.on('exit', resolve))
+    // The terminal's Ctrl-C reaches the whole group: the launcher and the docker it waits for.
+    process.kill(-(child.pid as number), 'SIGINT')
+    await closed
+    assert.equal(readFileSync(join(c.dir, 'updater', 'credentials', 'token'), 'utf8'), `${TOKEN}\n`)
+    assert.equal(existsSync(join(c.state, 'updater-up')), true)
   })
 
   it('a token goes with an https address and a key with an ssh one', async () => {
@@ -534,9 +689,19 @@ describe('web-updates status and disable (CA26)', () => {
     writeFileSync(join(c.dir, 'update', 'report', 'updater.json'), '{}')
     writeFileSync(join(c.dir, 'update', 'report', 'check.json'), '{}')
     writeFileSync(join(c.dir, 'update', 'request', 'request'), '')
+    writeFileSync(join(c.dir, 'update', 'request', 'retry'), '')
+    mkdirSync(join(c.dir, 'update', 'state', 'attempts'), { recursive: true })
+    writeFileSync(join(c.dir, 'update', 'state', 'attempts', 'v9.9.9'), 'FAILED_AT=1\n')
     const before = readdirSync(join(c.dir, 'backups')).sort()
-    const r = launch(c, ['web-updates', 'disable', '--dir', c.dir])
+    const r = launch(c, ['web-updates', 'disable', '--dir', c.dir], { env: { FAKE_UPDATER_LEFT: '1' } })
     assert.equal(r.code, 0, r.stderr)
+    assert.ok(
+      r.calls.includes('rm -f l3ft'),
+      `a container compose no longer knows is removed by id\n${r.calls.join('\n')}`,
+    )
+    assert.deepEqual(readdirSync(join(c.dir, 'update', 'state')), [], 'what it remembered goes too')
+    assert.equal(mode(join(c.dir, 'update', 'state')), '700')
+    assert.equal(existsSync(join(c.dir, 'update', 'request', 'retry')), false)
     assert.ok(upd(r.calls).some((l) => / down /.test(l)))
     assert.ok(r.calls.some((l) => l.startsWith('image rm') && l.includes(IMG)))
     assert.equal(existsSync(join(c.dir, 'updater')), false, 'credentials included')
@@ -588,6 +753,26 @@ describe('web-updates status and disable (CA26)', () => {
     assert.equal(existsSync(join(c.state, 'updater-down-started')), true, 'it was stopping the container')
     child.kill('SIGKILL')
     assert.equal(existsSync(join(c.dir, 'updater', 'credentials')), false)
+  })
+
+  it('disable with another launcher at work: exit 3, and the credential is already gone', async () => {
+    const c = await installed()
+    launch(c, enable(c, '--repo-token-file', tokenFile(c)))
+    mkdirSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true })
+    writeFileSync(
+      join(c.dir, '.rsc-brain', 'lock', 'owner'),
+      `${process.pid} ${spawnSync('uname', ['-n'], { encoding: 'utf8' }).stdout.trim()}\n`,
+    )
+    const r = launch(c, ['web-updates', 'disable', '--dir', c.dir])
+    assert.equal(r.code, 3, r.stderr)
+    assert.equal(existsSync(join(c.dir, 'updater', 'credentials')), false)
+  })
+
+  it('uninstall --delete-data removes the folders of the marks and the report too', async () => {
+    const c = await installed()
+    const r = launch(c, ['uninstall', '--delete-data', '--confirm', 'rsc-brain', '--dir', c.dir])
+    assert.equal(r.code, 0, r.stderr)
+    assert.equal(existsSync(join(c.dir, 'update')), false)
   })
 
   it('uninstall takes the updater with it, credential included', async () => {
@@ -649,10 +834,33 @@ describe('an update keeps the updater current (§3.7)', () => {
     assert.equal(readFileSync(join(c.dir, 'updater', 'loop.sh'), 'utf8'), before)
   })
 
+  it('an update by --image does not refresh the updater from a source left by an earlier build', async () => {
+    const c = await installed()
+    launch(c, enable(c))
+    const old = join(c.dir, '.rsc-brain', 'src', 'deploy')
+    mkdirSync(join(old, 'updater'), { recursive: true })
+    for (const f of ['loop.sh', 'credentials.sh', 'Dockerfile'])
+      writeFileSync(join(old, 'updater', f), '# stale\n')
+    writeFileSync(join(old, 'compose.updater.yaml'), '# stale\n')
+    writeFileSync(join(old, 'rsc-brain.sh'), '# stale\n')
+    const before = readFileSync(join(c.dir, 'updater', 'loop.sh'), 'utf8')
+    const r = launch(c, ['update', '--yes', '--dir', c.dir, '--image', 'rsc-brain:next'])
+    assert.equal(r.code, 0, r.stderr)
+    assert.equal(readFileSync(join(c.dir, 'updater', 'loop.sh'), 'utf8'), before)
+    for (const f of ['compose.updater.yaml', 'rsc-brain.sh']) {
+      assert.equal(readFileSync(join(c.dir, 'updater', f), 'utf8').includes('# stale'), false, f)
+    }
+  })
+
   it('an installation without the updater is not given one by an update', async () => {
     const c = await installed()
     const r = bump(c, gitWith(c, 'v0.2.0'))
     assert.equal(r.code, 0, r.stderr)
     assert.equal(existsSync(join(c.dir, 'updater')), false)
+    assert.equal(
+      r.stderr.includes('could not be given the files'),
+      false,
+      'and it does not complain about it',
+    )
   })
 })

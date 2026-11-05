@@ -102,9 +102,9 @@ mkdir -p "$STATE/attempts" 2>/dev/null && chmod 700 "$STATE" 2>/dev/null
 ACCEPTED=''
 # updater.json: alive, when the last request was taken, what is running, and what failed with when it may be tried again.
 write_updater() { # [running-version running-since]
-  t=$(now)
+  wu_now=$(now)
   {
-    printf '{"enabled":true,"beatAt":"%s"' "$(iso "$t")"
+    printf '{"enabled":true,"beatAt":"%s"' "$(iso "$wu_now")"
     if [ -n "$ACCEPTED" ]; then printf ',"requestAcceptedAt":"%s"' "$(iso "$ACCEPTED")"; fi
     if [ -n "${1:-}" ]; then printf ',"running":{"to":%s,"startedAt":"%s"}' "$(jstr "$1")" "$(iso "$2")"; fi
     printf ',"attempts":{'
@@ -132,7 +132,7 @@ CHECKED=0 CHECK_OK=0 CHECK_LATEST='' CHECK_NEWER=false
 # when it could not say, what was known before stays in it and the reason is said.
 run_check() {
   CHECKED=1 CHECK_OK=0 CHECK_LATEST='' CHECK_NEWER=false
-  t=$(now)
+  rc_now=$(now)
   code=0
   out=$(run_launcher update --check --json --dir "$DIR" </dev/null 2>/dev/null) || code=$?
   latest=$(printf '%s\n' "$out" | sed -nE 's/^\{"installed":("([^"\\]|\\.)*"|null),"latest":"(v[0-9]+\.[0-9]+\.[0-9]+)","newer":(true|false),"notes":("([^"\\]|\\.)*").*$/\3/p')
@@ -140,9 +140,9 @@ run_check() {
   notes=$(printf '%s\n' "$out" | sed -nE 's/^\{"installed":("([^"\\]|\\.)*"|null),"latest":"(v[0-9]+\.[0-9]+\.[0-9]+)","newer":(true|false),"notes":("([^"\\]|\\.)*").*$/\5/p')
   if [ "$code" = 0 ] && [ -n "$latest" ] && [ -n "$newer" ] && [ -n "$notes" ]; then
     CHECK_OK=1 CHECK_LATEST=$latest CHECK_NEWER=$newer
-    printf '{"checkedAt":"%s","ok":true,"reason":null,"products":{"brain":{"latest":"%s","notes":%s}}}\n' "$(iso "$t")" "$latest" "$notes" |
+    printf '{"checkedAt":"%s","ok":true,"reason":null,"products":{"brain":{"latest":"%s","notes":%s}}}\n' "$(iso "$rc_now")" "$latest" "$notes" |
       put "$REPORT/check.json"
-    printf '%s ok\n' "$t" >"$STATE/last-check"
+    printf '%s ok\n' "$rc_now" >"$STATE/last-check"
     return 0
   fi
   reason=$(printf '%s\n' "$out" | sed -nE 's/.*,"error":"([a-z_]+)"\}$/\1/p' | head -n 1)
@@ -151,8 +151,8 @@ run_check() {
   case $reason in no_access | none) ;; *) reason=network ;; esac
   known=$(sed -nE 's/^\{"checkedAt":"[^"]*","ok":(true|false),"reason":("[a-z_]*"|null),"products":(.*)\}$/\3/p' "$REPORT/check.json" 2>/dev/null)
   [ -n "$known" ] || known='{}'
-  printf '{"checkedAt":"%s","ok":false,"reason":"%s","products":%s}\n' "$(iso "$t")" "$reason" "$known" | put "$REPORT/check.json"
-  printf '%s failed\n' "$t" >"$STATE/last-check"
+  printf '{"checkedAt":"%s","ok":false,"reason":"%s","products":%s}\n' "$(iso "$rc_now")" "$reason" "$known" | put "$REPORT/check.json"
+  printf '%s failed\n' "$rc_now" >"$STATE/last-check"
   return 0
 }
 check_due() {
@@ -271,6 +271,8 @@ requests() {
   [ -f "$CRED/token" ] && [ ! -L "$CRED/token" ] && IFS= read -r token <"$CRED/token"
   reason=$(tail -n 20 "$log" | redact "$token" | tr '\n' ' ' | sed -e 's/^ *//' -e 's/ *$//' | cut -c1-4000)
   rm -f -- "$log"
+  # A failure is dated when it ended: the 15 minutes before a retry run from there.
+  ended=$(now)
   if [ "$STOPPING" = 1 ]; then
     write_updater
     return 0
@@ -287,9 +289,9 @@ requests() {
     ;;
   *)
     [ -n "$reason" ] || reason="The update to $target failed (exit $code)."
-    first=$t
+    first=$ended
     [ "$retrying" = 0 ] || first=$(file_value "$att" FAILED_AT)
-    printf 'FAILED_AT=%s\nRETRIES=%s\nLAST_RETRY_AT=%s\n' "$first" "$retries" "$t" >"$att.new" && mv -f "$att.new" "$att"
+    printf 'FAILED_AT=%s\nRETRIES=%s\nLAST_RETRY_AT=%s\n' "$first" "$retries" "$ended" >"$att.new" && mv -f "$att.new" "$att"
     printf '%s\n' "$reason" >"$att.reason"
     write_updater
     ;;
