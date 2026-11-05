@@ -2116,6 +2116,7 @@ updater_take_back() {
 # Every copy of the credential: the one in use, the one kept aside by an enable, and what an enable that was cut short left.
 updater_drop_credentials() {
   rm -rf "${DIR:?}/updater/credentials" "${DIR:?}/updater/credentials.old" "${DIR:?}/updater/previous" \
+    "${DIR:?}/updater/previous.tmp" \
     "${DIR:?}/${STATE:?}/updater.previous"
 }
 # updater_remove: no container, no image, no credential, none of what it said. 0 when all is gone.
@@ -2198,23 +2199,30 @@ web_updates_enable() {
   src=$(updater_source) ||
     missing 'The updater files (updater/, compose.updater.yaml) are not next to the launcher. Run it from a copy of the repository (deploy/), or update rsc-brain to a version that has them.'
   # An enable that was cut short (killed, a power cut) left things aside: back to how it was before anything else.
+  # A copy that was being made is not whole, and the live files are: it is thrown away. `previous` exists only whole.
+  rm -rf "${DIR:?}/updater/previous.tmp"
   if [ -d "$DIR/updater/previous" ] || [ -d "$DIR/updater/credentials.old" ]; then
     say 'An earlier turning on was cut short: the updater goes back to how it was before it.'
     updater_put_back
   fi
   if [ -f "$DIR/updater/updater.env" ]; then
     UPD_WAS_ON=1
-    if ! { mkdir "$DIR/updater/previous" && chmod 700 "$DIR/updater/previous"; }; then
-      rm -rf "${DIR:?}/updater/previous"
+    # Built apart and moved into place when whole: `previous` existing means it is complete.
+    if ! { mkdir "$DIR/updater/previous.tmp" && chmod 700 "$DIR/updater/previous.tmp"; }; then
+      rm -rf "${DIR:?}/updater/previous.tmp"
       failed 4 'Could not keep the updater that runs aside.'
     fi
     for we_f in $UPD_KEPT; do
       [ -f "$DIR/updater/$we_f" ] || continue
-      if ! cp -p "$DIR/updater/$we_f" "$DIR/updater/previous/$we_f" 2>/dev/null; then
-        rm -rf "${DIR:?}/updater/previous"
+      if ! cp -p "$DIR/updater/$we_f" "$DIR/updater/previous.tmp/$we_f" 2>/dev/null; then
+        rm -rf "${DIR:?}/updater/previous.tmp"
         failed 4 'Could not keep the updater that runs aside.'
       fi
     done
+    if ! mv "$DIR/updater/previous.tmp" "$DIR/updater/previous"; then
+      rm -rf "${DIR:?}/updater/previous.tmp"
+      failed 4 'Could not keep the updater that runs aside.'
+    fi
   fi
   trap 'to_terminal; updater_take_back; exit 4' HUP INT TERM
   if ! { mkdir -p "$DIR/updater/credentials" "$DIR/updater/home" 2>/dev/null &&

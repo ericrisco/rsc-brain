@@ -636,6 +636,7 @@ describe('web-updates enable', () => {
     } finally {
       chmodSync(join(c.dir, 'updater', 'passwd'), 0o644)
     }
+    assert.equal(existsSync(join(c.dir, 'updater', 'previous.tmp')), false, 'the partial copy is removed')
     assert.equal(existsSync(join(c.dir, 'updater', 'previous')), false)
     assert.equal(existsSync(join(c.dir, 'updater', 'credentials.old')), false)
     assert.equal(readFileSync(join(c.dir, 'updater', 'credentials', 'token'), 'utf8'), `${TOKEN}\n`)
@@ -643,7 +644,7 @@ describe('web-updates enable', () => {
     assert.equal(existsSync(join(c.state, 'updater-up')), true)
   })
 
-  it('the largest token and key it takes, and one more', async () => {
+  it('a token one character short and a key one byte over are refused, the shortest token goes', async () => {
     const c = await installed()
     assert.equal(
       launch(c, enable(c, '--repo-token-file', tokenFile(c, `${'a'.repeat(7)}\n`))).code,
@@ -664,7 +665,57 @@ describe('web-updates enable', () => {
       return f
     }
     assert.equal(launch(k, enable(k, '--repo-key', key(16385))).code, 2, '16385 bytes')
-    assert.equal(launch(k, enable(k, '--repo-key', key(16384))).code, 0, '16384 bytes')
+  })
+
+  it('a copy cut short is never trusted: it is built apart, and the next enable throws it away', async () => {
+    const c = await installed()
+    assert.equal(launch(c, enable(c, '--repo-token-file', tokenFile(c))).code, 0)
+    // What an enable cut during the copy leaves: a temporary folder with a truncated file in it.
+    mkdirSync(join(c.dir, 'updater', 'previous.tmp'), { recursive: true })
+    for (const f of ['updater.env', 'loop.sh', 'passwd'])
+      writeFileSync(join(c.dir, 'updater', 'previous.tmp', f), 'RSC_BRA')
+    const live = readFileSync(join(c.dir, 'updater', 'updater.env'), 'utf8')
+    const r = launch(c, enable(c, '--repo-token-file', tokenFile(c, `${OTHER}\n`)), {
+      env: { FAKE_ACCESS_EXIT: '1' },
+    })
+    assert.equal(r.code, 3, r.stderr)
+    assert.equal(existsSync(join(c.dir, 'updater', 'previous.tmp')), false, 'thrown away')
+    assert.equal(existsSync(join(c.dir, 'updater', 'previous')), false)
+    assert.equal(readFileSync(join(c.dir, 'updater', 'updater.env'), 'utf8'), live, 'the live file is whole')
+    assert.notEqual(readFileSync(join(c.dir, 'updater', 'passwd'), 'utf8'), 'RSC_BRA')
+  })
+
+  it('disable and uninstall remove the temporary folder too', async () => {
+    for (const cmd of [['web-updates', 'disable'], ['uninstall']]) {
+      const c = await installed()
+      launch(c, enable(c))
+      mkdirSync(join(c.dir, 'updater', 'previous.tmp'), { recursive: true })
+      writeFileSync(join(c.dir, 'updater', 'previous.tmp', 'updater.env'), 'RSC_BRA')
+      assert.equal(launch(c, [...cmd, '--dir', c.dir]).code, 0)
+      assert.equal(existsSync(join(c.dir, 'updater')), false, cmd.join(' '))
+    }
+    // And the one that is turned off while another launcher holds the lock.
+    const c = await installed()
+    launch(c, enable(c))
+    mkdirSync(join(c.dir, 'updater', 'previous.tmp'), { recursive: true })
+    mkdirSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true })
+    writeFileSync(
+      join(c.dir, '.rsc-brain', 'lock', 'owner'),
+      `${process.pid} ${spawnSync('uname', ['-n'], { encoding: 'utf8' }).stdout.trim()}\n`,
+    )
+    assert.equal(launch(c, ['web-updates', 'disable', '--dir', c.dir]).code, 3)
+    assert.equal(existsSync(join(c.dir, 'updater', 'previous.tmp')), false)
+  })
+
+  it('a failed enable puts back updater.env, the one that was running', async () => {
+    const c = await installed()
+    assert.equal(launch(c, enable(c)).code, 0)
+    const env = join(c.dir, 'updater', 'updater.env')
+    appendFileSync(env, '# the one that was running\n')
+    const kept = readFileSync(env, 'utf8')
+    const r = launch(c, enable(c), { env: { FAKE_ACCESS_EXIT: '1' } })
+    assert.equal(r.code, 3, r.stderr)
+    assert.equal(readFileSync(env, 'utf8'), kept)
   })
 
   it('a stop (Ctrl-C) while turning it on again leaves the working updater as it was', async () => {
