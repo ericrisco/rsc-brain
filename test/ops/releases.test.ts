@@ -5,8 +5,10 @@
 // and off with an empty RSC_BRAIN_REPO_URL or RSC_BRAIN_RELEASES_URL.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { describe, test } from 'node:test'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { after, describe, test } from 'node:test'
 import {
   check,
   compareVersions,
@@ -91,6 +93,24 @@ describe('published: the definition, from the shared vectors', () => {
     test(`notes: ${v.name}`, () => {
       assert.equal(notesFor(v.changelog, v.tag), v.notes)
     })
+  // The launcher drops these from the notes it prints (its `printable`), so the web and the terminal show the same text:
+  // C0 controls but tab and line end (a carriage return anywhere included), DEL, and the C1 controls U+0080-U+009F.
+  // The vectors are rsc-factory's and say nothing about them, so they are pinned here.
+  test('notes: control characters are dropped, as the launcher does', () => {
+    const body = (text: string) => notesFor(`## v1.0.0\n\n${text}\n`, 'v1.0.0')
+    assert.equal(body('a\u001b[31mred\u001b[0m'), 'a[31mred[0m')
+    assert.equal(body('a\rb\u0000c\u0007d\u007fe'), 'abcde')
+    assert.equal(body('x\u0080y\u009bz\u009fw'), 'xyzw')
+    assert.equal(body('keep\ttabs\nand lines'), 'keep\ttabs\nand lines')
+    assert.equal(
+      body('a\u00a0b\u00e9\u2028c'),
+      'a\u00a0b\u00e9\u2028c',
+      'a no-break space and letters are text',
+    )
+    assert.equal(body('\u0001\u0002'), '', 'only controls: nothing left')
+    // They go before the length is counted.
+    assert.equal(body(`${'\u001b'.repeat(10)}${'é'.repeat(NOTES_MAX)}`), 'é'.repeat(NOTES_MAX))
+  })
   test('notes: at most the limit, whole characters', () => {
     const long = `## v1.0.0\n\n${'é'.repeat(NOTES_MAX + 50)}\n`
     assert.equal(notesFor(long, 'v1.0.0'), 'é'.repeat(NOTES_MAX))
@@ -588,5 +608,201 @@ describe('what the administration is told', () => {
     assert.equal(v.newer, true)
     assert.equal(v.error, 'network')
     assert.equal(v.lastAttemptAt, '2026-11-02T10:00:00.000Z')
+  })
+})
+
+describe("the updater's report (B2: with the updater on, the web does not ask the repository)", () => {
+  const T0 = Date.parse('2026-11-05T10:00:00.000Z')
+  const at = (t: number) => () => new Date(t)
+  const iso = (t: number) => new Date(t).toISOString().replace('.000Z', 'Z')
+  const dirs: string[] = []
+  const report = (files: { updater?: unknown; check?: unknown } = {}) => {
+    const d = mkdtempSync(join(tmpdir(), 'rscb-report-'))
+    dirs.push(d)
+    const put = (name: string, v: unknown) =>
+      writeFileSync(join(d, name), typeof v === 'string' ? v : JSON.stringify(v))
+    if (files.updater !== undefined) put('updater.json', files.updater)
+    if (files.check !== undefined) put('check.json', files.check)
+    return d
+  }
+  const alive = (t = T0) => ({ enabled: true, beatAt: iso(t), attempts: {} })
+  const good = (t = T0) => ({
+    checkedAt: iso(t - 60_000),
+    ok: true,
+    reason: null,
+    products: { brain: { latest: 'v0.9.0', notes: '- Faster.' } },
+  })
+  const checker = (dir: string | null, t = T0, extra: { repo?: string | null } = {}) => {
+    const { fetch, calls } = stub({ [INFO]: () => advert(refs('refs/tags/v0.3.0')) })
+    const c = releaseChecker({
+      repo: extra.repo === undefined ? REPO : extra.repo,
+      version: '0.2.0',
+      clock: at(t),
+      fetch,
+      ...(dir === null ? {} : { report: dir }),
+    })
+    return { c, calls }
+  }
+  after(() => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true })
+  })
+
+  test("alive and checked: the version and the notes are the updater's, and the repository is not asked", async () => {
+    const { c, calls } = checker(report({ updater: alive(), check: good() }))
+    await c.check()
+    c.start()
+    c.stop()
+    assert.equal(calls.length, 0)
+    assert.deepEqual(c.state(), {
+      installed: 'v0.2.0',
+      latest: 'v0.9.0',
+      notes: '- Faster.',
+      checkedAt: new Date(T0 - 60_000).toISOString(),
+      error: null,
+      lastAttemptAt: new Date(T0 - 60_000).toISOString(),
+    })
+    assert.equal(releaseView(c.state(), '0.2.0').newer, true)
+  })
+
+  test('alive and the last check failed: what was known stays and the reason is said, never "up to date"', async () => {
+    const check = { ...good(), ok: false, reason: 'no_access' }
+    const { c } = checker(report({ updater: alive(), check }))
+    const s = c.state()
+    assert.equal(s.latest, 'v0.9.0')
+    assert.equal(s.error, 'no_access')
+    const none = checker(
+      report({ updater: alive(), check: { checkedAt: iso(T0), ok: false, reason: 'network', products: {} } }),
+    )
+    assert.equal(none.c.state().latest, null)
+    assert.equal(none.c.state().error, 'network')
+    assert.equal(none.c.state().checkedAt, null, 'a failed check is not an answer')
+  })
+
+  test('an unknown reason is a network error', () => {
+    const check = { checkedAt: iso(T0), ok: false, reason: 'whatever', products: {} }
+    assert.equal(checker(report({ updater: alive(), check })).c.state().error, 'network')
+  })
+
+  test('alive but nothing checked yet: nothing known, no error, and still not asked', async () => {
+    const { c, calls } = checker(report({ updater: alive() }))
+    await c.check()
+    assert.equal(calls.length, 0)
+    assert.equal(c.state().latest, null)
+    assert.equal(c.state().error, null)
+    assert.equal(c.state().checkedAt, null)
+  })
+
+  test('the beat of the updater is old (more than 2 minutes), or it says it is off, or it is not there: the repository is asked as before', async () => {
+    const stale = alive(T0 - 121_000)
+    const cases: Array<[string, { updater?: unknown; check?: unknown }]> = [
+      ['stale', { updater: stale, check: good() }],
+      ['off', { updater: { ...alive(), enabled: false }, check: good() }],
+      ['none', { check: good() }],
+      ['garbage', { updater: 'not json', check: good() }],
+      ['no time', { updater: { enabled: true }, check: good() }],
+      ['a time from the future', { updater: alive(T0 + 3_600_000), check: good() }],
+    ]
+    for (const [name, files] of cases) {
+      const { c, calls } = checker(report(files))
+      await c.check()
+      assert.equal(calls.length > 0, true, name)
+      assert.equal(c.state().latest, 'v0.3.0', name)
+    }
+    const { c, calls } = checker(report({ updater: alive(T0 - 120_000), check: good() }))
+    await c.check()
+    assert.equal(calls.length, 0, '2 minutes exactly still counts')
+  })
+
+  test('a report that cannot be trusted is not used: a version that is not a published one, notes that are not text', () => {
+    for (const products of [
+      { brain: { latest: 'main', notes: '' } },
+      { brain: { latest: 'v01.0.0', notes: '' } },
+      { brain: { latest: 'v1.0.0\n', notes: '' } },
+      { brain: { latest: 7, notes: '' } },
+      { factory: { latest: 'v1.0.0', notes: '' } },
+      'x',
+      null,
+    ]) {
+      const s = checker(
+        report({ updater: alive(), check: { checkedAt: iso(T0), ok: true, reason: null, products } }),
+      ).c.state()
+      assert.equal(s.latest, null, JSON.stringify(products))
+    }
+    const s = checker(
+      report({
+        updater: alive(),
+        check: {
+          checkedAt: iso(T0),
+          ok: true,
+          reason: null,
+          products: { brain: { latest: 'v1.0.0', notes: 5 } },
+        },
+      }),
+    ).c.state()
+    assert.equal(s.latest, 'v1.0.0')
+    assert.equal(s.notes, '')
+    const long = 'x'.repeat(NOTES_MAX + 10)
+    const cut = checker(
+      report({
+        updater: alive(),
+        check: {
+          checkedAt: iso(T0),
+          ok: true,
+          reason: null,
+          products: { brain: { latest: 'v1.0.0', notes: `${long}\u001b` } },
+        },
+      }),
+    ).c.state()
+    assert.equal(cut.notes?.length, NOTES_MAX)
+  })
+
+  test('a report larger than the limit, or a link in its place, is not read even when it is valid', () => {
+    const ok = JSON.stringify(good())
+    const padded = report({ updater: alive(), check: `${ok}${' '.repeat(256 * 1024)}` })
+    assert.equal(checker(padded).c.state().latest, null, 'over 256 KiB')
+    const within = report({ updater: alive(), check: `${ok}${' '.repeat(1024)}` })
+    assert.equal(checker(within).c.state().latest, 'v0.9.0', 'a small padding is fine')
+    const linked = report({ updater: alive() })
+    const target = join(report({ check: good() }), 'check.json')
+    symlinkSync(target, join(linked, 'check.json'))
+    assert.equal(checker(linked).c.state().latest, null, 'a link is not followed')
+  })
+
+  test('big or broken files are not read: the repository is asked as before', async () => {
+    const big = report({ updater: alive(), check: ' '.repeat(2 * 1024 * 1024 + 1) })
+    const a = checker(big)
+    assert.equal(a.c.state().latest, null)
+    const d = report({ updater: alive() })
+    mkdirSync(join(d, 'check.json'))
+    assert.equal(checker(d).c.state().latest, null)
+  })
+
+  test('with no address (the web never asks) the report does not turn the check on', async () => {
+    const { c, calls } = checker(report({ updater: alive(), check: good() }), T0, { repo: null })
+    await c.check()
+    assert.equal(calls.length, 0)
+    assert.equal(c.state().latest, null)
+  })
+
+  test('without a report folder, nothing changes', async () => {
+    const { c, calls } = checker(null)
+    await c.check()
+    assert.equal(calls.length > 0, true)
+  })
+
+  test('it follows the updater as it goes on: the next look sees the next check', () => {
+    const d = report({ updater: alive(), check: good() })
+    const { c } = checker(d)
+    assert.equal(c.state().latest, 'v0.9.0')
+    writeFileSync(
+      join(d, 'check.json'),
+      JSON.stringify({ ...good(), products: { brain: { latest: 'v1.0.0', notes: '' } } }),
+    )
+    assert.equal(c.state().latest, 'v1.0.0')
+  })
+
+  test("the repository address is the installation's own: the report names none and the state shows none", () => {
+    const s = checker(report({ updater: alive(), check: good() })).c.state()
+    assert.equal(JSON.stringify(s).includes('github'), false)
   })
 })

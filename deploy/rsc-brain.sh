@@ -52,6 +52,16 @@ Commands:
                     replace everything with the copy F (a copy of what is there is made first). NAME is the
                     installation's name as the web shows it; K holds the key the copy was made with (default: this
                     installation's). Everyone signs in again afterwards
+  web-updates enable [--repo-key F | --repo-token-file F]
+                    let an administrator update rsc-brain from its web: a container of its own runs update when
+                    asked. It has full control of Docker on this machine, so whoever controls it controls this
+                    server; it is off until you turn it on. F holds the read access to a private repository
+                    (an SSH private key, or a token); it is copied for the updater alone. Not for an
+                    installation made by rsc-factory (exit 2): update it from there
+  web-updates disable
+                    stop it and remove its container and the credential; the web shows the command again
+  web-updates status
+                    whether updates from the web are on
   key show          print the installation key (it opens the copies; keep it safe)
   key rotate        make a new installation key and seal everything with it (rsc-brain stops for a moment).
                     Copies made before need the previous key: it is kept in installation-key-<id>.txt.
@@ -146,6 +156,15 @@ help | -h | --help)
   exit 0
   ;;
 install | update | status | backup | backups | restore | uninstall) ;;
+web-updates)
+  case ${1:-} in
+  enable) CMD='web-updates enable' ;;
+  disable) CMD='web-updates disable' ;;
+  status) CMD='web-updates status' ;;
+  *) usage 'Say web-updates enable, web-updates disable or web-updates status.' ;;
+  esac
+  shift
+  ;;
 key)
   case ${1:-} in
   show) CMD='key show' ;;
@@ -159,7 +178,7 @@ esac
 
 MODE='' DOMAIN='' DB='' DB_URL_FILE='' ADMIN_URL_FILE='' FACTORY_DB='' PORT='' HTTP_PORT='' HTTPS_PORT=''
 DIR='' DIR_GIVEN=0 NAME='' VERSION='' IMAGE='' COPY_FILE='' KEY_FILE='' CONFIRM='' CONFIRM_SET=0 DELETE_DATA=0
-COMPANION=0 SHARED_NET='' FACTORY_URL='' TRUSTED_PROXY='' CHECK=0
+COMPANION=0 SHARED_NET='' FACTORY_URL='' TRUSTED_PROXY='' CHECK=0 REPO_KEY='' REPO_TOKEN=''
 OPT=''
 # The option goes with these commands only.
 only() {
@@ -193,6 +212,8 @@ while [ $# -gt 0 ]; do
   --image) only install update && value "$@" && IMAGE=$2 && shift ;;
   --repo) only install update && value "$@" && REPO=$2 && REPO_GIVEN=1 && shift ;;
   --check) only update && CHECK=1 ;;
+  --repo-key) only web-updates-enable && value "$@" && REPO_KEY=$2 && shift ;;
+  --repo-token-file) only web-updates-enable && value "$@" && REPO_TOKEN=$2 && shift ;;
   --file) only restore && value "$@" && COPY_FILE=$2 && shift ;;
   --key-file) only restore && value "$@" && KEY_FILE=$2 && shift ;;
   --confirm) only restore uninstall && value "$@" && CONFIRM=$2 && CONFIRM_SET=1 && shift ;;
@@ -282,6 +303,9 @@ if [ "$CMD" = install ]; then
     [ -n "$HTTP_PORT$HTTPS_PORT" ] &&
       usage "--http-port and --https-port do not go with --companion: rsc-factory's Caddy serves rsc-brain."
   fi
+fi
+if [ "$CMD" = 'web-updates enable' ]; then
+  [ -n "$REPO_KEY" ] && [ -n "$REPO_TOKEN" ] && usage 'Pass --repo-key or --repo-token-file, not both.'
 fi
 if [ "$CMD" = restore ]; then
   [ -n "$COPY_FILE" ] || usage 'Pass --file with the copy to restore.'
@@ -1190,6 +1214,12 @@ install() {
   # The service writes the copies as the owner of the folder; as root, as the image's unprivileged user.
   [ "$(id -u)" = 0 ] && chown 1000:1000 "$DIR/backups"
   chmod 700 "$DIR/backups"
+  # The folders for the web's marks and the updater's report (the service mounts the report, read only).
+  if [ ! -d "$DIR/update" ]; then
+    MADE_FILES="$MADE_FILES update"
+    save_state
+  fi
+  ensure_update_dirs || failed 4 "Cannot create \"$DIR/update\"."
   # The compose file and the Caddyfiles of the version installed (a version from before has no door).
   src=$HERE
   [ "$BUILD" = 1 ] && src=$DIR/$STATE/src/deploy
@@ -1936,6 +1966,7 @@ update() {
         rollback "Could not write \"$DIR/$f\"."
     done
   fi
+  ensure_update_dirs || rollback "Could not create \"$DIR/update\"."
   step "Stopping rsc-brain $UPDATE_FROM"
   dc stop app >&2 </dev/null || rollback "rsc-brain $UPDATE_FROM could not be stopped."
   door_up 'Migrating the data.'
@@ -1966,6 +1997,7 @@ update() {
     rm -rf "${DIR:?}/${STATE:?}/src"
     mv "$NEXT_SRC" "$DIR/$STATE/src"
   fi
+  updater_refresh
   if [ "$JSON" = 1 ]; then
     printf '{"from":%s,"to":%s,"image":%s,"copy":%s,"dir":%s}\n' "$(json_str "$UPDATE_FROM")" \
       "$(json_str "$UPDATE_TO")" "$(json_str "$IMAGE")" "$(json_str "$PRE_COPY")" "$(json_str "$DIR")"
@@ -1973,6 +2005,282 @@ update() {
   fi
   out "rsc-brain was updated from $UPDATE_FROM to $UPDATE_TO and answers at $(env_get RSC_BRAIN_SITE)."
   out "A copy of everything from just before is kept in \"$DIR/backups\": $PRE_COPY"
+  return 0
+}
+
+# ------------------------------------------------------------------------------------------------------ web-updates
+# Updates from the web (rsc-updates §3.7, §3.9): off until `web-updates enable`. The service never has Docker or the
+# credential: it only leaves a mark in <dir>/update/request, which a container of its own (the updater, its own compose
+# project, <name>-updater, apart from the service's) takes and answers by running `update` here. Layout, all in <dir>:
+#   update/request   the service's marks (the updater only looks at them, never opens them)    0700
+#   update/report    what the updater says, read by the service                                0755
+#   update/state     the updater's memory (when it checked, which versions failed)             0700
+#   updater/         the updater's files and, in credentials/, the access to a private repository   0700
+# The updater mounts the Docker socket and <dir> at its own path, nothing else (deploy/compose.updater.yaml).
+UPD_FILES='loop.sh credentials.sh Dockerfile'
+updater_names() {
+  UPD_PROJECT=$NAME-updater
+  UPD_IMAGE=rsc-brain-updater:$NAME
+}
+# The service's folders for the marks and the report, made before the service starts (a bind mount of a folder that is
+# not there would be made by Docker, for root).
+ensure_update_dirs() {
+  for d in update update/request update/report update/state; do
+    [ -d "$DIR/$d" ] || mkdir "$DIR/$d" || return 1
+  done
+  chmod 755 "$DIR/update" "$DIR/update/report" && chmod 700 "$DIR/update/request" "$DIR/update/state" || return 1
+  # As for the copies: the service runs as the owner of the folder, or as the image's unprivileged user when root made it.
+  [ "$(id -u)" = 0 ] && chown 1000:1000 "$DIR/update/request"
+  return 0
+}
+# docker compose for the updater's own project and file, and nothing of the service's.
+uc() {
+  (
+    for v in COMPOSE_PROJECT_NAME COMPOSE_PROFILES COMPOSE_FILE COMPOSE_ENV_FILES COMPOSE_PATH_SEPARATOR \
+      RSC_BRAIN_UPDATER_DIR RSC_BRAIN_UPDATER_UID RSC_BRAIN_UPDATER_GID RSC_BRAIN_UPDATER_SOCKET_GID \
+      RSC_BRAIN_UPDATER_HOSTNAME RSC_BRAIN_UPDATER_IMAGE; do unset "$v"; done
+    exec docker compose --project-directory "$DIR" -p "$UPD_PROJECT" -f "$DIR/updater/compose.updater.yaml" \
+      --env-file "$DIR/updater/updater.env" "$@"
+  )
+}
+# updater_install_file FROM TO MODE: a file of the updater, whole or not at all.
+updater_install_file() {
+  { cp "$1" "$2.new" && chmod "$3" "$2.new" && mv -f "$2.new" "$2"; } 2>/dev/null
+}
+# The files of the updater from a folder with the launcher's files (deploy/): 0 when all were put.
+updater_files() {
+  updater_install_file "$1/compose.updater.yaml" "$DIR/updater/compose.updater.yaml" 644 || return 1
+  updater_install_file "$1/rsc-brain.sh" "$DIR/updater/rsc-brain.sh" 755 || return 1
+  for f in $UPD_FILES; do
+    updater_install_file "$1/updater/$f" "$DIR/updater/$f" 755 || return 1
+  done
+  return 0
+}
+updater_source() {
+  for d in "$HERE" "$DIR/$STATE/src/deploy"; do
+    if [ -f "$d/compose.updater.yaml" ] && [ -f "$d/rsc-brain.sh" ] && [ -f "$d/updater/loop.sh" ] &&
+      [ -f "$d/updater/credentials.sh" ] && [ -f "$d/updater/Dockerfile" ]; then
+      echo "$d"
+      return 0
+    fi
+  done
+  return 1
+}
+# After an update that went well, the updater runs the files of the new version (its container ends and starts again
+# from them). Never fatal: the update itself went well.
+updater_refresh() {
+  [ -f "$DIR/updater/updater.env" ] || return 0
+  [ "$BUILD" = 1 ] || return 0
+  ur_src=$DIR/$STATE/src/deploy
+  [ -f "$ur_src/updater/loop.sh" ] && [ -f "$ur_src/compose.updater.yaml" ] || return 0
+  updater_files "$ur_src" ||
+    say "The updater could not be given the files of $UPDATE_TO (it keeps running those it has). Run: sh $PROG web-updates enable --dir \"$DIR\""
+  return 0
+}
+# What a failed or refused enable leaves behind is taken back: the container, the image it built, the folder.
+updater_take_back() {
+  if [ -f "$DIR/updater/compose.updater.yaml" ] && [ -f "$DIR/updater/updater.env" ]; then
+    uc down --remove-orphans >&2 </dev/null
+  fi
+  docker image rm "$UPD_IMAGE" >/dev/null 2>&1 </dev/null
+  rm -rf "${DIR:?}/updater"
+  return 0
+}
+# updater_remove: no container, no image, no credential, none of what it said. 0 when all is gone.
+updater_remove() {
+  ur_ok=0
+  # The credential first: it goes whatever Docker says.
+  rm -rf "${DIR:?}/updater/credentials"
+  if [ -d "$DIR/updater" ] || [ -f "$DIR/update/report/updater.json" ]; then
+    if docker info >/dev/null 2>&1 </dev/null; then
+      if [ -f "$DIR/updater/compose.updater.yaml" ] && [ -f "$DIR/updater/updater.env" ]; then
+        uc down --remove-orphans >&2 </dev/null || ur_ok=1
+      fi
+      ur_left=$(docker ps -aq --filter "label=com.docker.compose.project=$UPD_PROJECT" 2>/dev/null </dev/null)
+      # shellcheck disable=SC2086
+      [ -z "$ur_left" ] || docker rm -f $ur_left >/dev/null 2>&1 </dev/null || ur_ok=1
+      docker image rm "$UPD_IMAGE" >/dev/null 2>&1 </dev/null
+    else
+      say 'Docker did not answer, so the updater container may still be running: stop it when Docker is back.'
+      say "The credential is removed. Run: sh $PROG web-updates disable --dir \"$DIR\" again then."
+      ur_ok=1
+    fi
+  fi
+  rm -rf "${DIR:?}/updater"
+  rm -f "$DIR/update/report/updater.json" "$DIR/update/report/check.json" "$DIR/update/request/request" \
+    "$DIR/update/request/retry"
+  if [ -d "$DIR/update/state" ]; then
+    rm -rf "${DIR:?}/update/state"
+    mkdir "$DIR/update/state" 2>/dev/null && chmod 700 "$DIR/update/state"
+  fi
+  return "$ur_ok"
+}
+# A token file: one line of the characters tokens are made of. A key file: a PEM private key. Neither is ever printed.
+check_token_file() {
+  [ -f "$1" ] && [ -r "$1" ] || usage '--repo-token-file takes a file with the token in it.'
+  ct_lines=$(wc -l <"$1" | tr -d ' ')
+  ct_token=''
+  IFS= read -r ct_token <"$1" || :
+  { [ "$ct_lines" -le 1 ] && matches "$ct_token" '^[A-Za-z0-9_.~+/=-]{8,255}$'; } ||
+    usage '--repo-token-file takes one line: the token, with no spaces. (It is not shown here.)'
+}
+check_key_file() {
+  [ -f "$1" ] && [ -r "$1" ] || usage '--repo-key takes a file with an SSH private key in it.'
+  { [ "$(wc -c <"$1" | tr -d ' ')" -le 16384 ] && head -n 1 "$1" | grep -Eq '^-----BEGIN [A-Z ]*PRIVATE KEY-----$'; } ||
+    usage '--repo-key takes an SSH private key file (the one that starts with -----BEGIN ... PRIVATE KEY-----).'
+}
+web_updates_enable() {
+  need_installation
+  if [ "$(env_get RSC_BRAIN_COMPANION)" = 1 ]; then
+    say 'rsc-brain was installed by rsc-factory: update it from there.'
+    say 'Nothing was changed.'
+    exit 2
+  fi
+  installation_repo
+  updater_names
+  case $DIR in *[:\$]*) usage "Updates from the web need an installation folder without ':' or '\$' in its path (\"$DIR\")." ;; esac
+  case $REPO in https://*) https=1 ;; *) https=0 ;; esac
+  if [ -n "$REPO_TOKEN" ]; then
+    [ "$https" = 1 ] || usage "A token goes with an https address; this installation's repository is not one. Use --repo-key."
+    check_token_file "$REPO_TOKEN"
+  fi
+  if [ -n "$REPO_KEY" ]; then
+    [ "$https" = 0 ] || usage "A key goes with an SSH address; this installation's repository is an https one. Use --repo-token-file."
+    check_key_file "$REPO_KEY"
+  fi
+  say 'Read this before turning updates from the web on.'
+  say 'A container of its own will run the updates, and it will have full control of Docker on this machine:'
+  say 'whoever controls it controls this server. The web can only ask it for an update, and only an administrator who'
+  say 'signed in on the web and proved who they are again can ask; but anyone who breaks into that container, or into'
+  say "the Docker socket it uses, has the server. Turn it off any time with: sh $PROG web-updates disable --dir \"$DIR\""
+  if can_ask; then
+    yes_no 'Turn on updates from the web?' n || {
+      say 'Nothing was changed.'
+      exit 1
+    }
+  elif [ "$YES" = 0 ]; then
+    usage 'There is no terminal to ask on. Pass --yes to turn updates from the web on.'
+  fi
+  need_docker
+  take_lock
+  src=$(updater_source) ||
+    missing 'The updater files (updater/, compose.updater.yaml) are not next to the launcher. Run it from a copy of the repository (deploy/), or update rsc-brain to a version that has them.'
+  trap 'to_terminal; updater_take_back; exit 4' HUP INT TERM
+  if ! { mkdir -p "$DIR/updater/credentials" "$DIR/updater/home" 2>/dev/null &&
+    chmod 700 "$DIR/updater" "$DIR/updater/credentials" "$DIR/updater/home"; }; then
+    updater_take_back
+    failed 4 "Cannot create \"$DIR/updater\"."
+  fi
+  ensure_update_dirs || {
+    updater_take_back
+    failed 4 "Cannot create \"$DIR/update\"."
+  }
+  updater_files "$src" || {
+    updater_take_back
+    failed 4 "Could not write the updater's files in \"$DIR/updater\"."
+  }
+  # The access, copied for the updater alone; a secret goes by file, never by argument.
+  if [ -n "$REPO_TOKEN" ]; then
+    rm -f "$DIR/updater/credentials/key" "$DIR/updater/credentials/known_hosts"
+    { cat "$REPO_TOKEN" >"$DIR/updater/credentials/token.new" && chmod 600 "$DIR/updater/credentials/token.new" &&
+      mv -f "$DIR/updater/credentials/token.new" "$DIR/updater/credentials/token"; } 2>/dev/null || {
+      updater_take_back
+      failed 4 'Could not keep the token for the updater.'
+    }
+  elif [ -n "$REPO_KEY" ]; then
+    rm -f "$DIR/updater/credentials/token"
+    { cat "$REPO_KEY" >"$DIR/updater/credentials/key.new" && chmod 600 "$DIR/updater/credentials/key.new" &&
+      mv -f "$DIR/updater/credentials/key.new" "$DIR/updater/credentials/key"; } 2>/dev/null || {
+      updater_take_back
+      failed 4 'Could not keep the key for the updater.'
+    }
+  fi
+  # The updater runs as the owner of the installation's settings, so what it writes stays theirs.
+  # shellcheck disable=SC2012
+  we_ids=$(ls -ldn "$DIR/.env" 2>/dev/null | tr -s ' ' | cut -d' ' -f3,4)
+  we_uid=${we_ids% *} we_gid=${we_ids#* }
+  matches "$we_uid:$we_gid" '^[0-9]+:[0-9]+$' || {
+    updater_take_back
+    failed 4 "Cannot tell who owns \"$DIR/.env\"."
+  }
+  step 'Building the updater image'
+  docker build -t "$UPD_IMAGE" - <"$DIR/updater/Dockerfile" >&2 || {
+    updater_take_back
+    failed 4 'The updater image did not build (the lines above say why). Nothing is running.'
+  }
+  # The group of the socket as a container sees it, which is not always the host's.
+  we_sock=$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$UPD_IMAGE" stat -c %g /var/run/docker.sock 2>/dev/null </dev/null)
+  matches "$we_sock" '^[0-9]+$' || {
+    updater_take_back
+    missing 'Could not read the group of the Docker socket from a container.'
+  }
+  if ! {
+    {
+      say_env RSC_BRAIN_UPDATER_DIR "$DIR"
+      say_env RSC_BRAIN_UPDATER_UID "$we_uid"
+      say_env RSC_BRAIN_UPDATER_GID "$we_gid"
+      say_env RSC_BRAIN_UPDATER_SOCKET_GID "$we_sock"
+      say_env RSC_BRAIN_UPDATER_HOSTNAME "$UPD_PROJECT"
+      say_env RSC_BRAIN_UPDATER_IMAGE "$UPD_IMAGE"
+    } >"$DIR/updater/updater.env.new" && mv -f "$DIR/updater/updater.env.new" "$DIR/updater/updater.env"
+  }; then
+    updater_take_back
+    failed 4 "Could not write \"$DIR/updater/updater.env\"."
+  fi
+  if ! {
+    {
+      printf 'root:x:0:0:root:/root:/bin/sh\n'
+      [ "$we_uid" = 0 ] || printf 'updater:x:%s:%s:rsc-brain updater:%s/updater/home:/bin/sh\n' "$we_uid" "$we_gid" "$DIR"
+    } >"$DIR/updater/passwd.new" && chmod 644 "$DIR/updater/passwd.new" && mv -f "$DIR/updater/passwd.new" "$DIR/updater/passwd"
+  }; then
+    updater_take_back
+    failed 4 "Could not write \"$DIR/updater/passwd\"."
+  fi
+  # The repository must answer with this access, from a container like the updater's, before anything runs.
+  step "Checking that $(repo_public "$REPO") answers with this access"
+  docker run --rm -u "$we_uid:$we_gid" -v "$DIR:$DIR" -v "$DIR/updater/passwd:/etc/passwd:ro" \
+    -e "RSC_BRAIN_UPDATER_DIR=$DIR" -e "HOME=$DIR/updater/home" "$UPD_IMAGE" sh "$DIR/updater/loop.sh" --access </dev/null >&2 || {
+    updater_take_back
+    say "Could not turn updates from the web on: $(repo_public "$REPO") does not answer with that access."
+    say 'Give it read access (--repo-token-file for an https address, --repo-key for SSH) that works from this machine.'
+    missing 'The updater was not started.'
+  }
+  step 'Starting the updater'
+  uc up -d >&2 </dev/null || {
+    updater_take_back
+    failed 4 'The updater did not start (the lines above say why). Everything it made was removed.'
+  }
+  trap - HUP INT TERM
+  out 'Updates from the web are on.'
+  out 'An administrator signed in on the web can now update rsc-brain; the updater takes the request and runs the update.'
+  out "It controls Docker on this machine. Turn it off with: sh $PROG web-updates disable --dir \"$DIR\""
+  return 0
+}
+web_updates_disable() {
+  need_installation
+  updater_names
+  take_lock
+  updater_remove || {
+    say 'The credential is removed, but the updater could not be fully removed (the lines above say why).'
+    exit 1
+  }
+  out 'Updates from the web are off. To update, run: sh '"$PROG"' update --dir "'"$DIR"'"'
+  return 0
+}
+web_updates_status() {
+  need_installation
+  updater_names
+  if [ "$(env_get RSC_BRAIN_COMPANION)" = 1 ]; then
+    out 'Updates from the web are off. rsc-brain was installed by rsc-factory: update it from there.'
+    return 0
+  fi
+  if [ -f "$DIR/updater/updater.env" ] && docker info >/dev/null 2>&1 </dev/null &&
+    [ -n "$(uc ps -q 2>/dev/null </dev/null)" ]; then
+    out 'Updates from the web are on.'
+    return 0
+  fi
+  out 'Updates from the web are off.'
+  out "Turn them on with: sh $PROG web-updates enable --dir \"$DIR\""
   return 0
 }
 
@@ -2115,6 +2423,8 @@ uninstall() {
   need_docker
   interrupted_work
   db=$(env_get RSC_BRAIN_DB)
+  updater_names
+  updater_remove || say 'The updater could not be fully removed (the lines above say why).'
   if [ "$DELETE_DATA" = 0 ]; then
     step 'Stopping rsc-brain and removing its containers'
     dc down --remove-orphans >&2 </dev/null || exit 1
@@ -2137,7 +2447,7 @@ uninstall() {
   printf '%s\n' "$(env_get RSC_BRAIN_SECRET)" >"$DIR/installation-key.txt"
   chmod 600 "$DIR/installation-key.txt"
   rm -rf "${DIR:?}/backups" "${DIR:?}/${STATE:?}" "${DIR:?}/compose.yaml" "${DIR:?}/Caddyfile" "${DIR:?}/door.Caddyfile" "${DIR:?}/.env" \
-    "${DIR:?}/compose.companion.yaml" "${DIR:?}/last-failure.log"
+    "${DIR:?}/compose.companion.yaml" "${DIR:?}/last-failure.log" "${DIR:?}/update"
   out "rsc-brain and its copies were deleted from \"$DIR\"."
   if [ "$db" != bundled ] && [ -z "$ADMIN_URL_FILE" ]; then
     out "Its database is on your PostgreSQL and was not touched: remove the database rsc-brain used (and its role) there,"
@@ -2163,5 +2473,8 @@ backups) backups ;;
 restore) restore ;;
 'key show') key_show ;;
 'key rotate') key_rotate ;;
+'web-updates enable') web_updates_enable ;;
+'web-updates disable') web_updates_disable ;;
+'web-updates status') web_updates_status ;;
 uninstall) uninstall ;;
 esac

@@ -301,6 +301,15 @@ network)
   ;;
 run)
   take_stdin run
+  # The updater's own checks (web-updates enable): the group of the socket, seen from a container, and whether the
+  # repository answers with the credentials it was given.
+  case "$args" in
+  *" stat -c %g "*)
+    echo "${FAKE_SOCKET_GID:-999}"
+    exit 0
+    ;;
+  *" --access"*) exit "${FAKE_ACCESS_EXIT:-0}" ;;
+  esac
   exit 0
   ;;
 compose)
@@ -312,6 +321,27 @@ compose)
     echo "Docker Compose version ${FAKE_COMPOSE_VERSION:-v2.38.2}"
     exit 0
   fi
+  # The updater is a project of its own (web-updates): it has its own marker and never the service's.
+  case "$args" in
+  *" -p "*-updater" "*)
+    case "$args" in
+    *" up "*)
+      [ "${FAKE_UPDATER_UP_EXIT:-0}" = 0 ] || { echo 'Error response from daemon: failed to start' >&2; exit "$FAKE_UPDATER_UP_EXIT"; }
+      : >"$state/updater-up"
+      ;;
+    *" down "*)
+      # FAKE_UPDATER_DOWN_SLEEP: a slow stop of the updater (it says when it started).
+      if [ -n "${FAKE_UPDATER_DOWN_SLEEP:-}" ]; then
+        : >"$state/updater-down-started"
+        sleep "$FAKE_UPDATER_DOWN_SLEEP"
+      fi
+      rm -f "$state/updater-up"
+      ;;
+    *" ps "*) [ -e "$state/updater-up" ] && echo upd4te ;;
+    esac
+    exit 0
+    ;;
+  esac
   case "$args" in
   *" up "*" door "*)
     # The stand-in door takes the port of the service; it has a marker of its own, and is not the service.

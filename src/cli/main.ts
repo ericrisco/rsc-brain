@@ -194,7 +194,13 @@ async function main(argv: string[]): Promise<number> {
         })
       : undefined
     // Whether a newer version is published: once a day, only the User-Agent (rsc-updates §3.9); off with an empty URL.
-    const releases = releaseChecker({ repo: repoUrl(process.env), version: VERSION, clock: systemClock })
+    const releases = releaseChecker({
+      repo: repoUrl(process.env),
+      version: VERSION,
+      clock: systemClock,
+      // With the updater on (web-updates enable) the newest version is read from what it leaves here, read only.
+      ...(process.env.RSC_BRAIN_UPDATE_REPORT ? { report: process.env.RSC_BRAIN_UPDATE_REPORT } : {}),
+    })
     releases.start()
     // «This machine only» (spec B7 C19): the container's gateway, from the default route (src/http/conn.ts).
     const localGateways: string[] = []
