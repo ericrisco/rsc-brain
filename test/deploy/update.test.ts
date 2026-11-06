@@ -652,6 +652,64 @@ describe('the launcher: a signal in the tail of a good update', () => {
     ended(c, { ...r, piped: '', images: [] })
   })
 
+  // A call that does not end must not hold the launcher for ever (signals are ignored here, so nothing else could
+  // stop it): it is ended at the bound, said, and the update is counted as good.
+  for (const [what, hang, pidFile, said] of [
+    ['maintenance off', 'FAKE_MAINT_OFF_HANG', 'maintenance-off.pid', /Maintenance could not be turned off/],
+    ['the record', 'FAKE_RECORD_HANG', 'record.pid', /The web could not be told about this update/],
+  ] as const) {
+    it(`${what} that hangs is ended at the bound, said, and the update goes on as good`, async () => {
+      const c = await installed()
+      const r = launch(c, update(c, '--image', 'rsc-brain:next'), {
+        env: { [hang]: '1', RSC_BRAIN_TEST_TAIL_WAIT: '1' },
+      })
+      assert.equal(r.code, 0, r.stderr)
+      assert.match(r.stderr, said)
+      assert.match(r.stdout, /updated from 0\.1\.0 to 0\.2\.0/)
+      assert.equal(exists(c, 'update.pending'), false)
+      assert.equal(at(r.calls, / rsc-brain restore /), -1, 'nothing taken back')
+      assert.ok(at(r.calls, / update record --ok /) >= 0, 'recorded (or tried)')
+      const pid = Number(readFileSync(join(c.state, pidFile), 'utf8').trim())
+      assert.ok(pid > 1)
+      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }, 'the call was ended, not left behind')
+    })
+  }
+
+  // The state the update still changes (the previous files, the new source) is done with signals still ignored.
+  it('a Ctrl-C between the previous files and the new source leaves the new source in place', async () => {
+    const c = await installed()
+    const gitBin = join(c.state, 'gitbin')
+    mkdirSync(gitBin)
+    writeFileSync(
+      join(gitBin, 'git'),
+      `#!/bin/sh\nfor last; do :; done\nmkdir -p "$last/deploy"\ncp "${join(ROOT, 'deploy')}/compose.yaml" "${join(ROOT, 'deploy')}/Caddyfile" "$last/deploy/"\n`,
+    )
+    chmodSync(join(gitBin, 'git'), 0o755)
+    const r = launch(c, update(c, '--version', 'v0.2.0', '--repo', 'ssh://git@example.com/brain.git'), {
+      env: {
+        PATH: `${gitBin}:${FAKEBIN}:${SYSBIN}`,
+        FAKE_IMAGES: 'rsc-brain:test',
+        FAKE_IMAGE_VERSIONS: `${VERSIONS} rsc-brain:v0.2.0=0.2.0`,
+        RSC_BRAIN_TEST_STOP_AT: 'update-previous-gone',
+        RSC_BRAIN_TEST_STOP_SIGNAL: 'INT',
+      },
+    })
+    assert.equal(r.code, 0, r.stderr)
+    assert.ok(existsSync(join(c.dir, '.rsc-brain', 'src', 'deploy', 'compose.yaml')), 'the new source is the installed one')
+    assert.equal(exists(c, 'src.next'), false)
+  })
+
+  // Signals come back before what is only a wait: a Ctrl-C there ends the launcher.
+  it('a Ctrl-C once the tail is done ends the launcher by the signal', async () => {
+    const c = await installed()
+    const r = launch(c, update(c, '--image', 'rsc-brain:next'), {
+      env: { RSC_BRAIN_TEST_STOP_AT: 'update-signals-back', RSC_BRAIN_TEST_STOP_SIGNAL: 'INT' },
+    })
+    assert.equal(r.code, null, `ended by the signal, not by itself\n${r.stderr}`)
+    assert.ok(at(r.calls, / update record --ok /) >= 0, 'the tail was done')
+    assert.equal(exists(c, 'update.pending'), false)
+  })
+
   // A journal that survives a failed rm would make a later launcher take back an accepted update: not confirmed
   // while it is there, so it goes back now.
   it('a journal that cannot be removed: the update is not confirmed and goes back', async () => {

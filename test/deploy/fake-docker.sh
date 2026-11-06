@@ -172,6 +172,11 @@ case "$args" in
   exit "${FAKE_MAINTENANCE_EXIT:-0}"
   ;;
 *" rsc-brain maintenance off"*)
+  # FAKE_MAINT_OFF_HANG: a call that does not end by itself (20 s at most). It says its process id; it is this process.
+  if [ -n "${FAKE_MAINT_OFF_HANG:-}" ]; then
+    echo $$ >"$state/maintenance-off.pid"
+    exec sleep 20
+  fi
   # FAKE_MAINT_OFF_SLEEP: a slow maintenance off (it says when it started, and when it finished).
   if [ -n "${FAKE_MAINT_OFF_SLEEP:-}" ]; then
     compose_wait maintenance-off-started "$FAKE_MAINT_OFF_SLEEP"
@@ -180,6 +185,10 @@ case "$args" in
   exit 0
   ;;
 *" rsc-brain update record "*)
+  if [ -n "${FAKE_RECORD_HANG:-}" ]; then
+    echo $$ >"$state/record.pid"
+    exec sleep 20
+  fi
   take_stdin update record
   exit 0
   ;;
