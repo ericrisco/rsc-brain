@@ -93,6 +93,8 @@ export const V1 = [
   'POST /v1/admin/mail/test',
   'POST /v1/admin/services',
   'POST /v1/admin/services/{id}/keys',
+  'POST /v1/admin/update',
+  'POST /v1/admin/update/retry',
   'POST /v1/auth/login',
   'POST /v1/auth/logout',
   'POST /v1/auth/logout-everywhere',
@@ -223,6 +225,18 @@ export const ERROR_STATUS: Record<string, number> = {
   backup_running: 409,
   backups_not_set_up: 409,
   wrong_key: 409,
+  // Updating from the web (rsc-updates B3): an update already asked for or running; no updater (off); installed by
+  // rsc-factory; nothing newer; the newest failed (use Try again); nothing failed to try again; too soon; the limit
+  // of tries from the web; the request could not be left for the updater.
+  update_running: 409,
+  updates_off: 409,
+  companion: 409,
+  nothing_to_update: 409,
+  update_failed: 409,
+  nothing_to_retry: 409,
+  retry_later: 409,
+  retry_limit: 409,
+  update_not_started: 503,
   // Exporting a brain (B7 PR31 review): two exports are being prepared already; the disk is short of room.
   export_busy: 409,
   export_no_space: 507,

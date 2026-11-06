@@ -207,6 +207,15 @@ apart, and after that only the terminal can try that version (the launcher put e
 machine stops halfway, the updater finishes taking the update back when it starts. After an update it restarts
 from the new version's files; if its compose file or image changed, run `web-updates enable` again.
 
+With the updater on, Administration › Backups & system shows **Update to vX.Y.Z** when a newer version is
+published. An administrator signed in to the web confirms with their password (and the code of their
+authenticator app, with a second factor); a wrong one counts as a failed attempt and asks for nothing. The
+request is an empty file, whatever else the browser sends is ignored: the updater picks the version itself.
+Two administrators at once start one update; the other is told one is already running. The page follows it,
+says «Updated from X to Y.» at the end, or when and why it failed with **Try again** (within the limits above;
+past them it gives the command). While the service restarts the stand-in page answers. A key, an app, a token
+or a service account can never ask for it.
+
 `web-updates disable` removes the container, the image and the credential, and the web shows the command again.
 In an installation made by rsc-factory there is no button: `web-updates enable` exits 2 and tells you to update
 it from rsc-factory.

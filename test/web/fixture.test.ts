@@ -1483,6 +1483,45 @@ describe('the fixture API', () => {
     seen.add('POST /v1/brains/{slug}/import')
   })
 
+  it('updating from the web answers like the server, within the description (rsc-updates B3)', async () => {
+    const s = fx.scenario('signed-in')
+    const o = { scenario: s.id, cookie: 'rscb_session=fx.acc_eric' }
+    const code = (a: Ans) => (a.body as { error?: { code: string } }).error?.code
+    const behind = (change: Record<string, unknown>) =>
+      fetch(`${fx.url}/__fixture/scenarios/${s.id}/admin-edit`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(change),
+      })
+    const ask = (path: string, body: unknown) => call('POST', path, { ...o, body })
+    const pw = { password: fx.password }
+    assert.equal(code(await ask('/v1/admin/update', {})), 'reauth_failed')
+    assert.equal(code(await ask('/v1/admin/update', pw)), 'updates_off')
+    await behind({ update: { mode: 'companion', factoryUrl: 'https://factory.example.test' } })
+    assert.equal(code(await ask('/v1/admin/update', pw)), 'companion')
+    await behind({ update: { mode: 'on' } })
+    assert.equal(code(await ask('/v1/admin/update', pw)), 'nothing_to_update')
+    await behind({ release: { latest: 'v0.2.0', notes: '', checkedAt: '2026-10-29T08:00:00.000Z' } })
+    assert.equal(code(await ask('/v1/admin/update/retry', pw)), 'nothing_to_retry')
+    const ok = await ask('/v1/admin/update', pw)
+    assert.deepEqual([ok.status, ok.body], [202, { requested: true, to: 'v0.2.0' }])
+    assert.equal(code(await ask('/v1/admin/update', pw)), 'update_running')
+    const failure = {
+      version: 'v0.2.0',
+      failedAt: '2026-10-29T09:30:00.000Z',
+      reason: 'x',
+      retries: 0,
+      retryFrom: null,
+    }
+    await behind({ update: { requested: false, attempts: [failure] } })
+    assert.equal(code(await ask('/v1/admin/update', pw)), 'update_failed')
+    assert.equal((await ask('/v1/admin/update/retry', pw)).status, 202)
+    const sys = (await call('GET', '/v1/admin/system', o)).body as {
+      update: { requested: boolean; mode: string }
+    }
+    assert.deepEqual([sys.update.mode, sys.update.requested], ['on', true])
+  })
+
   it('every operation the fixture answers was checked against the description', () => {
     assert.deepEqual(
       [...fx.operations].filter((op) => !seen.has(op)),

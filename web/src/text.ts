@@ -1216,6 +1216,25 @@ export const T = {
     releaseNotes: (v: string) => `What changes in ${v}`,
     releaseHow:
       'Update on the machine: rsc-brain.sh update (it makes a copy first and rolls back if anything fails).',
+    // Updating from the web (rsc-updates B3).
+    updateTo: (y: string) => `Update to ${y}`,
+    updateLead:
+      'rsc-brain makes a copy of everything first, stops for a few minutes and starts the new version. If anything fails, it goes back to the version you have now with your data as it was.',
+    updateAskPassword: 'Type your password to confirm.',
+    updateTryAgain: 'Try again',
+    updateSending: 'Asking…',
+    updateRequested:
+      'Update requested. rsc-brain stops for a few minutes while it updates; this page keeps checking and shows how it ends.',
+    updateWaiting: 'The update is requested and waits for the updater to start it.',
+    updateRunning: (y: string) =>
+      `Updating to ${y}. rsc-brain is unavailable while it restarts; this page keeps checking.`,
+    updateFailedAt: (y: string, when: string) => `The update to ${y} failed at ${when}.`,
+    updateReason: 'What the updater said',
+    updateRetryFrom: (when: string) => `You can try again ${when}.`,
+    updateServerOnly:
+      'It failed too many times from the web, so only the server can try again. On the server:',
+    updateCompanion: 'rsc-brain was installed by rsc-factory: update it from there.',
+    updateOpenFactory: 'Open rsc-factory',
     lastUpdate: 'Last update',
     noUpdateYet: 'None yet: rsc-brain.sh update records each one here.',
     updateFailedTitle: 'Update failed',

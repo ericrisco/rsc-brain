@@ -130,6 +130,9 @@ export const ROUTE_TABLE = {
   backupImpact: { route: 'GET /v1/admin/backups/{id}/impact' },
   restoreBackup: { route: 'POST /v1/admin/backups/{id}/restore' },
   installationKey: { route: 'POST /v1/admin/installation-key' },
+  // Updating from the web (rsc-updates B3): leaves a request for the updater, with the password again.
+  requestUpdate: { route: 'POST /v1/admin/update' },
+  retryUpdate: { route: 'POST /v1/admin/update/retry' },
   setupKey: { route: 'POST /v1/setup/key' },
   uploadLogo: { route: 'PUT /v1/admin/branding/logo' },
   removeLogo: { route: 'DELETE /v1/admin/branding/logo' },

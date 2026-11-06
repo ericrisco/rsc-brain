@@ -700,15 +700,20 @@ describe('what the updater may reach (CA15, CA25, CA25b)', () => {
     assert.equal(/^\s*name:/m.test(body), false, 'the project name comes from -p')
   })
 
-  it('the web gets the report to read and nothing of the updater: no socket, no credentials, no request folder yet', () => {
+  it('the web gets the report to read and the folder of its marks, and nothing of the updater: no socket, no credentials', () => {
     const main = readFileSync(COMPOSE, 'utf8').replace(/^\s*#.*$/gm, '')
     assert.equal(main.includes('docker.sock'), false)
     assert.equal(main.includes('updater'), false)
     assert.equal(/credentials|passphrase|token-file/i.test(main), false)
     const app = main.slice(main.indexOf('  app:'), main.indexOf('  postgres:'))
     const mounts = [...app.matchAll(/^\s{6}- (\.\/[^\n]+)$/gm)].map((m) => m[1])
-    assert.deepEqual(mounts.sort(), ['./backups:/backups', './update/report:/update/report:ro'])
+    assert.deepEqual(mounts.sort(), [
+      './backups:/backups',
+      './update/report:/update/report:ro',
+      './update/request:/update/request',
+    ])
     assert.match(app, /RSC_BRAIN_UPDATE_REPORT: \/update\/report/)
+    assert.match(app, /RSC_BRAIN_UPDATE_REQUEST: \/update\/request/)
   })
 
   it('the image is the pinned docker cli with only the tools the launcher needs', () => {

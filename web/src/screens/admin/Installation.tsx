@@ -11,8 +11,9 @@ import { useFresh } from '../../api/fresh.ts'
 import { api } from '../../api/index.ts'
 import { resource } from '../../api/resource.ts'
 import { factoryProblem, localWhen, logoProblem, progressLabel, rateProblem } from '../../lib/admin.ts'
-import { sizeLabel } from '../../lib/backups.ts'
+import { lastUpdateText, sizeLabel } from '../../lib/backups.ts'
 import { ago } from '../../lib/brains.ts'
+import { lastUpdateFor, type UpdateInfo, updateView } from '../../lib/updates.ts'
 import { branding, me } from '../../session.ts'
 import { T } from '../../text.ts'
 import { Button } from '../../ui/Button.tsx'
@@ -32,6 +33,7 @@ import {
   useInstallPart,
   useSaid,
 } from './parts.tsx'
+import { UpdatePart } from './Update.tsx'
 
 const A = T.admin
 const PROVIDER_LABELS: Record<string, string> = { openai: 'OpenAI', ollama: 'Ollama' }
@@ -169,6 +171,7 @@ type System = {
     newer: boolean
     ahead: boolean
   }
+  update?: UpdateInfo
 }
 const systemResource = () => resource<System>('admin:system', () => api.call<System>('system'))
 
@@ -220,7 +223,7 @@ function Service() {
               </>
             ) : null}
           </dl>
-          {s.release ? <Release r={s.release} /> : null}
+          {s.release ? <Release r={s.release} update={s.update} reload={() => void r.reload()} /> : null}
           <div class="actions">
             <Button
               kind="quiet"
@@ -315,7 +318,17 @@ function Factory({ account }: { account: string }) {
 
 // The version running against what is published (rsc-updates §0, §3.9). A newer one it knows is always said; apart
 // from that, a check that failed is said as failed, and never as up to date (CA29b).
-function Release({ r }: { r: NonNullable<System['release']> }) {
+function Release({
+  r,
+  update,
+  reload,
+}: {
+  r: NonNullable<System['release']>
+  update: UpdateInfo | undefined
+  reload: () => void
+}) {
+  const view = updateView(r, update, new Date())
+  const last = lastUpdateFor(r.installed, update?.last)
   const failed = !r.newer && r.error !== null && r.error !== 'none'
   // After a failure, when it was tried; otherwise when it last had an answer.
   const when = failed ? (r.lastAttemptAt ?? r.checkedAt) : (r.checkedAt ?? r.lastAttemptAt)
@@ -383,9 +396,11 @@ function Release({ r }: { r: NonNullable<System['release']> }) {
               <pre class="notes">{r.notes}</pre>
             </details>
           ) : null}
-          <p class="meta">{A.releaseHow}</p>
+          {view.kind === 'terminal' ? <p class="meta">{A.releaseHow}</p> : null}
         </>
       ) : null}
+      <UpdatePart view={view} reload={reload} />
+      {last ? <p class="meta">{lastUpdateText({ ...last, log: null })}</p> : null}
     </div>
   )
 }
