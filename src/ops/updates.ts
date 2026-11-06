@@ -170,14 +170,17 @@ export function updates(
       }
       const failed = s.attempts.find((a) => a.version === view.latest)
       if (!retry) {
-        return failed
-          ? new AppError(
-              409,
-              'update_failed',
-              `The update to ${view.latest} failed.`,
-              'Use «Try again» on this page, or update on the server: rsc-brain.sh update',
-            )
-          : null
+        if (!failed) return null
+        // The page offers «Try again» only while the updater allows one; past its limit only the server can.
+        const spent = failed.retries >= MAX_RETRIES || failed.retryFrom === null
+        return new AppError(
+          409,
+          'update_failed',
+          `The update to ${view.latest} failed.`,
+          spent
+            ? `${terminal}. It failed too many times from the web.`
+            : `Use «Try again» on this page, or update on the server: ${COMMAND}`,
+        )
       }
       if (!failed) {
         return new AppError(

@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { hashPassword } from '../../src/auth/password.ts'
+import { stepOf, totpAt } from '../../src/auth/totp.ts'
 import { VERSION } from '../../src/core/version.ts'
 import { recordUpdate } from '../../src/ops/backup/backup.ts'
 import type { ReleaseChecker } from '../../src/ops/releases.ts'
@@ -413,5 +414,86 @@ describe('updating from the web: the request and the screen (rsc-updates B3)', {
       await v.close()
       await rm(copies, { recursive: true, force: true })
     }
+  })
+
+  it('with a second factor the code is asked too: a missing or wrong one is 401 and leaves no mark; the right one is 202', async () => {
+    await clean()
+    await updaterSays()
+    const mo = await withPassword('Mo', { isAdmin: true })
+    const moWeb = await w.web(mo.id)
+    const secret = String((await w.callWeb(moWeb, 'POST', '/v1/me/totp')).body.secret)
+    await w.callWeb(moWeb, 'POST', '/v1/me/totp/confirm', { code: totpAt(secret, stepOf(w.now)) })
+    for (const path of ['/v1/admin/update', '/v1/admin/update/retry']) {
+      const none = await asked(moWeb, path, { password: PW })
+      assert.deepEqual([none.status, none.body.error?.code], [401, 'reauth_failed'], `${path}: ${none.text}`)
+      const bad = await asked(moWeb, path, { password: PW, code: '000000' })
+      assert.deepEqual([bad.status, bad.body.error?.code], [401, 'reauth_failed'], `${path}: ${bad.text}`)
+    }
+    assert.deepEqual(await marks(), [])
+    w.advance(30_000)
+    await updaterSays()
+    const ok = await asked(moWeb, '/v1/admin/update', { password: PW, code: totpAt(secret, stepOf(w.now)) })
+    assert.equal(ok.status, 202, ok.text)
+    assert.deepEqual(await marks(), ['request'])
+  })
+
+  it('what the updater gave as a reason is cut at 4000 characters and loses control characters, but not tabs or line ends', async () => {
+    await clean()
+    await updaterSays(failure(NEWER, 0, null))
+    const set = async (reason: string) =>
+      updaterSays({
+        attempts: {
+          [NEWER]: { failedAt: '2026-10-29T09:30:00.000Z', reason, retries: 0, retryFrom: null },
+        },
+      })
+    const reasonOf = async () => {
+      const sys = await w.callWeb(adaWeb, 'GET', '/v1/admin/system')
+      return (sys.body.update as { attempts: Array<{ reason: string }> }).attempts[0]?.reason
+    }
+    await set('a'.repeat(4000))
+    assert.equal((await reasonOf())?.length, 4000)
+    await set('a'.repeat(5000))
+    assert.equal((await reasonOf())?.length, 4000)
+    await set('\u001b[31mred\u001b[0m\u0007\u0000\u007f\u0085 ok\tone\ntwo')
+    assert.equal(await reasonOf(), '[31mred[0m ok\tone\ntwo')
+  })
+
+  it('the limits are exact: 3 tries spent is the limit even when the time has passed; the time itself allows, a moment before does not', async () => {
+    await clean()
+    await updaterSays(failure(NEWER, 3, new Date(w.now.getTime() - 60_000).toISOString()))
+    const spent = await asked(adaWeb, '/v1/admin/update/retry')
+    assert.deepEqual([spent.status, spent.body.error?.code], [409, 'retry_limit'], spent.text)
+    await updaterSays(failure(NEWER, 2, new Date(w.now.getTime() + 1).toISOString()))
+    const early = await asked(adaWeb, '/v1/admin/update/retry')
+    assert.deepEqual([early.status, early.body.error?.code], [409, 'retry_later'], early.text)
+    await updaterSays(failure(NEWER, 2, w.now.toISOString()))
+    const exact = await asked(adaWeb, '/v1/admin/update/retry')
+    assert.equal(exact.status, 202, exact.text)
+  })
+
+  it('a mark that is only the retry mark still counts as a request waiting', async () => {
+    await clean()
+    await updaterSays()
+    await writeFile(join(request, 'retry'), '')
+    const sys = await w.callWeb(adaWeb, 'GET', '/v1/admin/system')
+    assert.equal((sys.body.update as { requested: boolean }).requested, true)
+    const r = await asked(adaWeb)
+    assert.deepEqual([r.status, r.body.error?.code], [409, 'update_running'], r.text)
+  })
+
+  it('a plain request for a version out of retries says only the server can update, not «Try again»', async () => {
+    await clean()
+    await updaterSays(failure(NEWER, 3, null))
+    const r = await asked(adaWeb)
+    assert.deepEqual([r.status, r.body.error?.code], [409, 'update_failed'], r.text)
+    assert.doesNotMatch(r.body.error?.howToProceed ?? '', /Try again/)
+    assert.match(r.body.error?.howToProceed ?? '', /rsc-brain\.sh update/)
+    await updaterSays(failure(NEWER, 3, new Date(w.now.getTime() - 60_000).toISOString()))
+    const past = await asked(adaWeb)
+    assert.doesNotMatch(past.body.error?.howToProceed ?? '', /Try again/)
+    // While it can still be tried again, the page says so.
+    await updaterSays(failure(NEWER, 1, new Date(w.now.getTime() - 60_000).toISOString()))
+    const can = await asked(adaWeb)
+    assert.match(can.body.error?.howToProceed ?? '', /Try again/)
   })
 })

@@ -111,3 +111,22 @@ describe('the last update, when it is about the version running', () => {
     assert.equal(lastUpdateFor('v0.2.0', undefined), null)
   })
 })
+
+describe('the edges', () => {
+  it('running and a waiting request together: running', () => {
+    assert.deepEqual(
+      updateView(newer, on({ requested: true, running: { to: 'v0.3.0', startedAt: null } }), NOW),
+      {
+        kind: 'running',
+        to: 'v0.3.0',
+      },
+    )
+  })
+  it('the moment it may be tried again is already now; a millisecond before is still later', () => {
+    const at = (ms: number) => new Date(NOW.getTime() + ms).toISOString()
+    const retryOf = (ms: number) =>
+      (updateView(newer, on({ attempts: [failed(1, at(ms))] }), NOW) as { retry: unknown }).retry
+    assert.equal(retryOf(0), 'now')
+    assert.deepEqual(retryOf(1), { from: at(1) })
+  })
+})
