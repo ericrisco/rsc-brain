@@ -597,6 +597,10 @@ for (const shell of SHELLS) {
       // The exit code of the launcher (4) was kept: the version is recorded as failed, with what it said.
       const after = report(c, 'updater.json')
       assert.equal(after.running, undefined)
+      assert.ok(
+        after.attempts?.['v0.9.0'],
+        'the exit code 4 of the launcher was kept: the version is recorded as failed',
+      )
       assert.match(after.attempts['v0.9.0'].reason, /did not build/)
       // Nothing beats on after it: the file does not change.
       await new Promise((r) => setTimeout(r, 2500))
@@ -628,10 +632,58 @@ for (const shell of SHELLS) {
       assert.equal(u.disabling, undefined)
     })
 
-    it('stopping it while an update runs hands the stop to the launcher, which puts things back, and waits for it', async () => {
+    it('only one writer: a slow write in flight when the update ends cannot land after the final one (no stale running, no garbled file)', {
+      timeout: 60_000,
+    }, async () => {
+      const c = fresh()
+      writeFileSync(mark(c), '')
+      // `cat` is what every write of updater.json goes through: made slow, a write is still in flight when the update ends.
+      const slow = join(BASE, `slow-bin-${n}`)
+      mkdirSync(slow)
+      writeFileSync(join(slow, 'cat'), '#!/bin/sh\nsleep 0.8\nexec /bin/cat "$@"\n')
+      chmodSync(join(slow, 'cat'), 0o755)
+      const child = spawn(shell, [LOOP], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          PATH: `${slow}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+          HOME: join(c.dir, 'updater', 'home'),
+          RSC_BRAIN_UPDATER_DIR: c.dir,
+          RSC_BRAIN_UPDATER_LAUNCHER: FAKE,
+          RSC_BRAIN_UPDATER_ONCE: '1',
+          RSC_BRAIN_UPDATER_BEAT: '1',
+          FAKE_LOG: c.log,
+          FAKE_CHECK: NEWER(),
+          FAKE_UPDATE_SLEEP: '3',
+        },
+      })
+      try {
+        const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)))
+        assert.equal(await exited, 0)
+        const file = join(c.dir, 'update', 'report', 'updater.json')
+        // Whatever was still in flight has long finished.
+        await new Promise((r) => setTimeout(r, 3000))
+        const text = readFileSync(file, 'utf8')
+        assert.doesNotThrow(() => JSON.parse(text), `updater.json is whole: ${text}`)
+        const u = JSON.parse(text)
+        assert.equal(u.running, undefined, 'the file says the update has ended')
+        assert.deepEqual(readdirSync(join(c.dir, 'update', 'report')).sort(), ['check.json', 'updater.json'])
+      } finally {
+        try {
+          if (child.pid) process.kill(-child.pid, 'SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }
+    })
+
+    it('stopping it while an update runs hands the stop to the launcher, which puts things back, and waits for it', {
+      timeout: 30_000,
+    }, async () => {
       const c = fresh()
       writeFileSync(mark(c), '')
       const child = spawn(SHELLS[0] ?? '/bin/sh', [LOOP], {
+        detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
         env: {
           PATH: process.env.PATH ?? '/usr/bin:/bin',
@@ -649,9 +701,18 @@ for (const shell of SHELLS) {
       for (let i = 0; i < 200 && !existsSync(`${c.log}.started`); i++)
         await new Promise((r) => setTimeout(r, 50))
       assert.equal(existsSync(`${c.log}.started`), true, 'the update started')
-      child.kill('SIGTERM')
-      await exited
-      assert.equal(existsSync(`${c.log}.signals`), true, 'the launcher heard it')
+      try {
+        child.kill('SIGTERM')
+        await exited
+        assert.equal(existsSync(`${c.log}.signals`), true, 'the launcher heard it')
+      } finally {
+        // Nothing of the rig may outlive the test, whatever happened: the whole group goes.
+        try {
+          if (child.pid) process.kill(-child.pid, 'SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }
     })
   })
 }

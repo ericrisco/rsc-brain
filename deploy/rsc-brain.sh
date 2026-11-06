@@ -2207,8 +2207,6 @@ web_updates_enable() {
   fi
   need_docker
   take_lock
-  # A disable that was cut short left its mark: this enable has the lock, so the updater it makes is a new one.
-  rm -f "$DIR/updater/disabling"
   src=$(updater_source) ||
     missing 'The updater files (updater/, compose.updater.yaml) are not next to the launcher. Run it from a copy of the repository (deploy/), or update rsc-brain to a version that has them.'
   # An enable that was cut short (killed, a power cut) left things aside: back to how it was before anything else.
@@ -2330,6 +2328,9 @@ web_updates_enable() {
     updater_take_back
     failed 4 'The updater did not start (the lines above say why). Everything it made was removed.'
   }
+  # A disable that was cut short left its mark. This enable has the lock and the new updater is up: only now is the mark
+  # cleared. Had it failed before, the old updater would still be there, and the mark keeps it from starting anything.
+  rm -f "$DIR/updater/disabling"
   # What was kept aside goes first: a signal after this finds nothing to put back over the new updater.
   rm -rf "${DIR:?}/updater/previous" "${DIR:?}/updater/credentials.old"
   trap - HUP INT TERM

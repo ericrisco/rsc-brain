@@ -205,7 +205,7 @@ is_mark() {
   return 1
 }
 
-CHILD='' BEATER='' STOPPING=0
+CHILD='' STOPPING=0
 # shellcheck disable=SC2329
 on_stop() {
   to_terminal
@@ -267,29 +267,25 @@ requests() {
   # The subshell becomes the launcher (exec): the pid kept is the launcher's, and a stop reaches it.
   (credentials_env && exec sh "$LAUNCHER" update --yes --json --dir "$DIR" --version "$target") </dev/null >"$log" 2>&1 &
   CHILD=$!
-  # While the launcher runs (an image pull can take many minutes) a helper keeps the beat: the service reads a beat
-  # that stopped as «the updater is off». It is the only writer of updater.json until it is stopped, and it is waited for
-  # before anything else writes.
-  (
-    while :; do
-      sleep "$BEAT"
+  # While the launcher runs (an image pull can take many minutes) the loop keeps saying it is alive: every second it looks
+  # at the child, and every BEAT seconds it writes updater.json again with the update still running. Only this shell writes
+  # that file, one write at a time, so no write can land after the last one; the beat stops when this shell does, which is
+  # what the service must see if the updater dies. A stop (a trapped signal) ends the sleep, reaches the child through
+  # on_stop, and the loop goes on until the child has ended: its own exit code is read by the last wait.
+  beat_n=0
+  while kill -0 "$CHILD" 2>/dev/null; do
+    sleep 1 >/dev/null 2>&1 4>&- 5>&- &
+    nap=$!
+    wait "$nap"
+    beat_n=$((beat_n + 1))
+    if [ "$beat_n" -ge "$BEAT" ]; then
+      beat_n=0
       write_updater "$target" "$t"
-    done
-  ) </dev/null >/dev/null 2>&1 4>&- 5>&- &
-  BEATER=$!
-  code=''
-  while :; do
-    wait "$CHILD"
-    c=$?
-    if ! kill -0 "$CHILD" 2>/dev/null; then
-      code=$c
-      break
     fi
   done
+  wait "$CHILD"
+  code=$?
   CHILD=''
-  kill "$BEATER" 2>/dev/null
-  wait "$BEATER" 2>/dev/null
-  BEATER=''
   trap on_stop HUP INT TERM
   token=''
   [ -f "$CRED/token" ] && [ ! -L "$CRED/token" ] && IFS= read -r token <"$CRED/token"

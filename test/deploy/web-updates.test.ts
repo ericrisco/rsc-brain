@@ -989,6 +989,19 @@ describe('web-updates status and disable (CA26)', () => {
     assert.equal(existsSync(join(c.dir, 'updater', 'disabling')), false)
   })
 
+  it('an enable that fails does not undo an unfinished disable: the mark stays and status still says so', async () => {
+    const c = await installed()
+    launch(c, enable(c, '--repo-token-file', tokenFile(c)))
+    busyLock(c)
+    launch(c, ['web-updates', 'disable', '--dir', c.dir])
+    rmSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true, force: true })
+    // The credential is gone, and the repository does not answer without it.
+    const r = launch(c, enable(c), { env: { FAKE_ACCESS_EXIT: '1' } })
+    assert.equal(r.code, 3, r.stderr)
+    assert.equal(existsSync(join(c.dir, 'updater', 'disabling')), true)
+    assert.match(launch(c, ['web-updates', 'status', '--dir', c.dir]).stdout, /disable has not finished/i)
+  })
+
   it('uninstall --delete-data removes the folders of the marks and the report too', async () => {
     const c = await installed()
     const r = launch(c, ['uninstall', '--delete-data', '--confirm', 'rsc-brain', '--dir', c.dir])
