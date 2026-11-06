@@ -458,6 +458,27 @@ describe('updating from the web: the request and the screen (rsc-updates B3)', {
     assert.equal(await reasonOf(), '[31mred[0m ok\tone\ntwo')
   })
 
+  it('the edges of the control characters: 0x08, 0x0B, 0x1F, 0x9F go; 0x09, 0x0A, 0x20, 0xA0 stay; a carriage return goes like the launcher drops it', async () => {
+    await clean()
+    await updaterSays(failure(NEWER, 0, null))
+    const reasonOf = async (reason: string) => {
+      await updaterSays({
+        attempts: { [NEWER]: { failedAt: '2026-10-29T09:30:00.000Z', reason, retries: 0, retryFrom: null } },
+      })
+      const sys = await w.callWeb(adaWeb, 'GET', '/v1/admin/system')
+      return (sys.body.update as { attempts: Array<{ reason: string }> }).attempts[0]?.reason
+    }
+    const gone = ['\u0008', '\u000b', '\u001f', '\u009f']
+    const stays = ['\u0009', '\u000a', '\u0020', '\u00a0']
+    for (const c of gone)
+      assert.equal(await reasonOf(`a${c}b`), 'ab', `U+${c.charCodeAt(0).toString(16)} goes`)
+    for (const c of stays)
+      assert.equal(await reasonOf(`a${c}b`), `a${c}b`, `U+${c.charCodeAt(0).toString(16)} stays`)
+    // A carriage return is a control character like the others: removed, so «a\r\nb» reads «a\nb» (the launcher's
+    // `printable` removes it too, so the web and the terminal show the same).
+    assert.equal(await reasonOf('a\r\nb'), 'a\nb')
+  })
+
   it('the limits are exact: 3 tries spent is the limit even when the time has passed; the time itself allows, a moment before does not', async () => {
     await clean()
     await updaterSays(failure(NEWER, 3, new Date(w.now.getTime() - 60_000).toISOString()))
@@ -469,6 +490,17 @@ describe('updating from the web: the request and the screen (rsc-updates B3)', {
     await updaterSays(failure(NEWER, 2, w.now.toISOString()))
     const exact = await asked(adaWeb, '/v1/admin/update/retry')
     assert.equal(exact.status, 202, exact.text)
+  })
+
+  it('retries left but no time given (retryFrom null) is not an open door: the retry is refused as past the limit, and a plain request says only the server can', async () => {
+    await clean()
+    await updaterSays(failure(NEWER, 1, null))
+    const retry = await asked(adaWeb, '/v1/admin/update/retry')
+    assert.deepEqual([retry.status, retry.body.error?.code], [409, 'retry_limit'], retry.text)
+    const plain = await asked(adaWeb)
+    assert.deepEqual([plain.status, plain.body.error?.code], [409, 'update_failed'], plain.text)
+    assert.doesNotMatch(plain.body.error?.howToProceed ?? '', /Try again/)
+    assert.deepEqual(await marks(), [])
   })
 
   it('a mark that is only the retry mark still counts as a request waiting', async () => {
