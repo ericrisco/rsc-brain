@@ -469,7 +469,7 @@ warn_shell_vars() {
 # it either; job control (set -m) was no way: dash has none in a subshell, and tostop stops a background job that
 # writes. With neither, it runs as any other call (the known limit, said in the README).
 SHIELD=0
-DC_BOUND=0
+DC_BOUND=0 DC_GROUP=0
 dc() {
   [ -f "$DIR/compose.override.yaml" ] && set -- -f "$DIR/compose.override.yaml" "$@"
   # Companion mode: the app also joins the network shared with rsc-factory (written by install).
@@ -486,8 +486,10 @@ dc() {
     dcb_end=$(($(date +%s) + DC_BOUND))
     while kill -0 "$dcb_pid" 2>/dev/null; do
       if [ "$(date +%s)" -ge "$dcb_end" ]; then
-        # KILL: what is ignored here (the tail ignores TERM) is ignored by docker too, and a hung call has no use for a goodbye.
-        kill -KILL "$dcb_pid" 2>/dev/null
+        # KILL: what is ignored here (the tail ignores TERM) is ignored by docker too, and a hung call has no use for a
+        # goodbye. The whole group: docker compose runs its plugin as a child, and a KILL on docker is not passed on.
+        # The group is the call's own only when it leads one (dc_bounded makes sure it does); the launcher's never.
+        if [ "$DC_GROUP" = 1 ]; then kill -s KILL -- "-$dcb_pid" 2>/dev/null; else kill -s KILL "$dcb_pid" 2>/dev/null; fi
         wait "$dcb_pid" 2>/dev/null
         return 124
       fi
@@ -509,12 +511,21 @@ dc_child() {
     exec perl -MPOSIX -e 'POSIX::setsid() or die "setsid: $!\n"; exec @ARGV or die "$ARGV[0]: $!\n"' docker "$@"
   exec docker "$@"
 }
-# A call of dc that is ended after TAIL_WAIT seconds (exit 124).
+# A call of dc that is ended after TAIL_WAIT seconds (exit 124), with everything it started: it always runs shielded,
+# so it leads a session (and group) of its own that can be ended whole. With neither setsid nor perl there is no such
+# group: then only the call's own process is ended, never the launcher's group. (What the call already asked of the
+# container, an exec in it, cannot be reached from here and may still land late.)
 dc_bounded() {
+  dcb_shield=$SHIELD
+  SHIELD=1
   DC_BOUND=$TAIL_WAIT
+  DC_GROUP=0
+  if command -v setsid >/dev/null 2>&1 || command -v perl >/dev/null 2>&1; then DC_GROUP=1; fi
   dc "$@"
   dcb_code=$?
   DC_BOUND=0
+  DC_GROUP=0
+  SHIELD=$dcb_shield
   return "$dcb_code"
 }
 

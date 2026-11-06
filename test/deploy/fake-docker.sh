@@ -173,6 +173,13 @@ case "$args" in
   ;;
 *" rsc-brain maintenance off"*)
   # FAKE_MAINT_OFF_HANG: a call that does not end by itself (20 s at most). It says its process id; it is this process.
+  # FAKE_MAINT_OFF_FORK: as docker compose with its plugin: a child that holds the standard streams, and the hang.
+  if [ -n "${FAKE_MAINT_OFF_FORK:-}" ]; then
+    sleep 20 &
+    echo $! >"$state/maintenance-off.child.pid"
+    echo $$ >"$state/maintenance-off.pid"
+    exec sleep 20
+  fi
   if [ -n "${FAKE_MAINT_OFF_HANG:-}" ]; then
     echo $$ >"$state/maintenance-off.pid"
     exec sleep 20

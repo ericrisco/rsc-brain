@@ -675,6 +675,51 @@ describe('the launcher: a signal in the tail of a good update', () => {
     })
   }
 
+  // docker compose runs its plugin as a child that holds the launcher's standard streams: ending only the pid the
+  // launcher started leaves the plugin behind, and a reader of the launcher's error stream (`2>&1 | tee`) never sees
+  // the end. Nothing of the call survives the bound.
+  it('a hung call with a child of its own: both are gone at the bound, and the error stream ends', async () => {
+    const c = await installed()
+    const gone = async (pid: number) => {
+      for (let i = 0; i < 100; i++) {
+        try {
+          process.kill(pid, 0)
+        } catch {
+          return true
+        }
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      return false
+    }
+    const p = spawn(shell(), [LAUNCHER, ...update(c, '--image', 'rsc-brain:next')], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: environment(c, c.tty, { FAKE_MAINT_OFF_FORK: '1', RSC_BRAIN_TEST_TAIL_WAIT: '1' }),
+    })
+    let stderr = ''
+    p.stderr.on('data', (d) => {
+      stderr += d
+    })
+    p.stdout.resume()
+    const ended = new Promise<void>((r) => p.stderr.on('end', () => r()))
+    const exited = new Promise<number | null>((r) => p.on('exit', (code) => r(code)))
+    const code = await exited
+    assert.equal(code, 0, stderr)
+    assert.match(stderr, /Maintenance could not be turned off/)
+    const pid = Number(readFileSync(join(c.state, 'maintenance-off.pid'), 'utf8').trim())
+    const child = Number(readFileSync(join(c.state, 'maintenance-off.child.pid'), 'utf8').trim())
+    try {
+      assert.ok(await gone(pid), 'the call was ended')
+      assert.ok(await gone(child), 'its child was ended too')
+      await ended
+    } finally {
+      for (const x of [pid, child]) {
+        try {
+          process.kill(x, 'SIGKILL')
+        } catch {}
+      }
+    }
+  })
+
   // The state the update still changes (the previous files, the new source) is done with signals still ignored.
   it('a Ctrl-C between the previous files and the new source leaves the new source in place', async () => {
     const c = await installed()
