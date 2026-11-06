@@ -603,6 +603,31 @@ for (const shell of SHELLS) {
       assert.deepEqual(report(c, 'updater.json'), after)
     })
 
+    it('while a disable has not finished (updater/disabling) it takes the marks, starts nothing and says enabled:false, disabling:true', () => {
+      const c = fresh()
+      writeFileSync(join(c.dir, 'updater', 'disabling'), '')
+      writeFileSync(mark(c), '')
+      writeFileSync(mark(c, 'retry'), '')
+      const t = tick(c, {}, sh)
+      assert.equal(t.code, 0, t.stderr)
+      assert.equal(updates(t.calls).length, 0, 'no update was started')
+      assert.equal(existsSync(mark(c)), false, 'the mark was taken')
+      assert.equal(existsSync(mark(c, 'retry')), false)
+      const u = report(c, 'updater.json')
+      assert.equal(u.enabled, false)
+      assert.equal(u.disabling, true)
+      assert.equal(u.running, undefined)
+    })
+
+    it('without the mark it is enabled as before', () => {
+      const c = fresh()
+      const t = tick(c, {}, sh)
+      assert.equal(t.code, 0, t.stderr)
+      const u = report(c, 'updater.json')
+      assert.equal(u.enabled, true)
+      assert.equal(u.disabling, undefined)
+    })
+
     it('stopping it while an update runs hands the stop to the launcher, which puts things back, and waits for it', async () => {
       const c = fresh()
       writeFileSync(mark(c), '')

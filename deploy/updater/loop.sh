@@ -104,7 +104,11 @@ ACCEPTED=''
 write_updater() { # [running-version running-since]
   wu_now=$(now)
   {
-    printf '{"enabled":true,"beatAt":"%s"' "$(iso "$wu_now")"
+    if [ -f "$DIR/updater/disabling" ]; then
+      printf '{"enabled":false,"disabling":true,"beatAt":"%s"' "$(iso "$wu_now")"
+    else
+      printf '{"enabled":true,"beatAt":"%s"' "$(iso "$wu_now")"
+    fi
     if [ -n "$ACCEPTED" ]; then printf ',"requestAcceptedAt":"%s"' "$(iso "$ACCEPTED")"; fi
     if [ -n "${1:-}" ]; then printf ',"running":{"to":%s,"startedAt":"%s"}' "$(jstr "$1")" "$(iso "$2")"; fi
     printf ',"attempts":{'
@@ -216,6 +220,13 @@ requests() {
   is_mark "$REQ/request" && req=1
   is_mark "$REQ/retry" && retry=1
   [ "$req$retry" != 00 ] || return 0
+  if [ -f "$DIR/updater/disabling" ]; then
+    # `web-updates disable` has removed the credential and is waiting for the lock to take the updater away: the marks
+    # are taken, and nothing starts.
+    say 'The updater is being turned off: the request was not started.'
+    rm -f -- "$REQ/request" "$REQ/retry"
+    return 0
+  fi
   [ "$CHECKED" = 1 ] || run_check
   target=$CHECK_LATEST
   if [ "$CHECK_OK" = 0 ] || [ "$CHECK_NEWER" != true ] || [ -z "$target" ]; then

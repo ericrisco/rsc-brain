@@ -387,6 +387,17 @@ need_installation() {
 # whose process is gone (on this machine) is taken over; the journal of an interrupted install is then taken back.
 LOCKED=0 LOCK_MADE_DIR=0 LOCK_MADE_STATE=0
 host_name() { uname -n 2>/dev/null; }
+# The lock is not free. Usually nothing was changed; a `web-updates disable` has already removed the credential, and says so.
+LOCK_AFTER_DISABLE_STEP=0
+lock_refused() {
+  if [ "$LOCK_AFTER_DISABLE_STEP" = 1 ]; then
+    say "$1"
+    say 'The credential is removed, but the updater was not stopped: it is still running, without its credential, and it'
+    say "starts nothing. Run: sh $PROG web-updates disable --dir \"$DIR\" again when the other launcher has finished."
+    exit 3
+  fi
+  missing "$1"
+}
 take_lock() {
   lock=$DIR/$STATE/lock
   if [ ! -d "$DIR" ]; then
@@ -403,15 +414,15 @@ take_lock() {
     if [ -z "$owner" ]; then
       # Just made by another launcher, which has not written its name yet.
       tries=$((tries + 1))
-      [ "$tries" -gt 5 ] && missing "Another rsc-brain launcher is working on \"$DIR\". Wait for it to finish."
+      [ "$tries" -gt 5 ] && lock_refused "Another rsc-brain launcher is working on \"$DIR\". Wait for it to finish."
       sleep 1
       continue
     fi
     pid=${owner%% *} who=${owner#* }
     [ "$who" = "$(host_name)" ] ||
-      missing "Another rsc-brain launcher, on $who, is working on \"$DIR\" (process $pid). Wait for it to finish; if it is not running any more, remove \"$lock\"."
+      lock_refused "Another rsc-brain launcher, on $who, is working on \"$DIR\" (process $pid). Wait for it to finish; if it is not running any more, remove \"$lock\"."
     kill -0 "$pid" 2>/dev/null &&
-      missing "Another rsc-brain launcher is working on \"$DIR\" (process $pid). Wait for it to finish."
+      lock_refused "Another rsc-brain launcher is working on \"$DIR\" (process $pid). Wait for it to finish."
     say "Taking over from a launcher that stopped (process $pid)."
     rm -rf "${lock:?}"
   done
@@ -2196,6 +2207,8 @@ web_updates_enable() {
   fi
   need_docker
   take_lock
+  # A disable that was cut short left its mark: this enable has the lock, so the updater it makes is a new one.
+  rm -f "$DIR/updater/disabling"
   src=$(updater_source) ||
     missing 'The updater files (updater/, compose.updater.yaml) are not next to the launcher. Run it from a copy of the repository (deploy/), or update rsc-brain to a version that has them.'
   # An enable that was cut short (killed, a power cut) left things aside: back to how it was before anything else.
@@ -2331,8 +2344,12 @@ web_updates_disable() {
   # The credential goes first, whatever else is going on: a launcher at work must not keep it on disk. Another launcher
   # that holds the lock keeps it until we have it, so nothing of an enable still running can bring a copy back after
   # this has said it is gone: this only says so once it has the lock and has removed the whole folder.
+  # The updater is told before the lock is asked for: until a disable has finished it takes the marks and starts nothing.
+  [ ! -d "$DIR/updater" ] || : >"$DIR/updater/disabling" 2>/dev/null
   updater_drop_credentials
+  LOCK_AFTER_DISABLE_STEP=1
   take_lock
+  LOCK_AFTER_DISABLE_STEP=0
   updater_remove || {
     say 'The credential is removed, but the updater could not be fully removed (the lines above say why).'
     exit 1
@@ -2345,6 +2362,11 @@ web_updates_status() {
   updater_names
   if [ "$(env_get RSC_BRAIN_COMPANION)" = 1 ]; then
     out 'Updates from the web are off. rsc-brain was installed by rsc-factory: update it from there.'
+    return 0
+  fi
+  if [ -f "$DIR/updater/disabling" ]; then
+    out 'Updates from the web are being turned off: a disable has not finished. The credential is removed, and the updater may still be running (it starts nothing).'
+    out "Run: sh $PROG web-updates disable --dir \"$DIR\" again."
     return 0
   fi
   if [ -f "$DIR/updater/updater.env" ] && docker info >/dev/null 2>&1 </dev/null &&

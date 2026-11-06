@@ -556,4 +556,14 @@ describe('updating from the web: the request and the screen (rsc-updates B3)', {
     const r = await asked(adaWeb)
     assert.deepEqual([r.status, r.body.error?.code], [409, 'updates_off'], r.text)
   })
+
+  it('an updater that is being turned off (enabled:false, disabling:true) reads as off, however fresh its beat', async () => {
+    await clean()
+    await updaterSays({ enabled: false, disabling: true })
+    const sys = await w.callWeb(adaWeb, 'GET', '/v1/admin/system')
+    assert.equal((sys.body.update as { mode: string }).mode, 'off')
+    const r = await asked(adaWeb)
+    assert.deepEqual([r.status, r.body.error?.code], [409, 'updates_off'], r.text)
+    assert.deepEqual(await marks(), [])
+  })
 })
