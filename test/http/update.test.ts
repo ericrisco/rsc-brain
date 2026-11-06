@@ -528,4 +528,32 @@ describe('updating from the web: the request and the screen (rsc-updates B3)', {
     const can = await asked(adaWeb)
     assert.match(can.body.error?.howToProceed ?? '', /Try again/)
   })
+
+  it('an update that has been running far longer than the beat limit, with the updater still beating, reads running and a second request is update_running', async () => {
+    await clean()
+    const long = new Date(w.now.getTime() - 45 * 60_000).toISOString()
+    await updaterSays({ running: { to: NEWER, startedAt: long } })
+    const sys = await w.callWeb(adaWeb, 'GET', '/v1/admin/system')
+    const u = sys.body.update as { mode: string; running: { to: string; startedAt: string } | null }
+    assert.equal(u.mode, 'on')
+    assert.deepEqual(u.running, { to: NEWER, startedAt: long })
+    const again = await asked(adaWeb)
+    assert.deepEqual([again.status, again.body.error?.code], [409, 'update_running'], again.text)
+    assert.deepEqual(await marks(), [])
+  })
+
+  it('an updater that died mid-update stops beating: after the limit the mode is off and nothing is running, and a request is updates_off', async () => {
+    await clean()
+    const limit = 120_000
+    await updaterSays({ running: { to: NEWER, startedAt: new Date(w.now.getTime() - 60_000).toISOString() } })
+    w.advance(limit)
+    const edge = await w.callWeb(adaWeb, 'GET', '/v1/admin/system')
+    assert.equal((edge.body.update as { mode: string }).mode, 'on', 'at the limit it still counts as alive')
+    w.advance(1000)
+    const sys = await w.callWeb(adaWeb, 'GET', '/v1/admin/system')
+    const u = sys.body.update as { mode: string; running: unknown }
+    assert.deepEqual([u.mode, u.running], ['off', null])
+    const r = await asked(adaWeb)
+    assert.deepEqual([r.status, r.body.error?.code], [409, 'updates_off'], r.text)
+  })
 })

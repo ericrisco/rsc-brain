@@ -129,4 +129,10 @@ describe('the edges', () => {
     assert.equal(retryOf(0), 'now')
     assert.deepEqual(retryOf(1), { from: at(1) })
   })
+  it('an update running for an hour is still running, whatever the time it started', () => {
+    assert.deepEqual(
+      updateView(newer, on({ running: { to: 'v0.3.0', startedAt: '2026-11-05T08:00:00.000Z' } }), NOW),
+      { kind: 'running', to: 'v0.3.0' },
+    )
+  })
 })

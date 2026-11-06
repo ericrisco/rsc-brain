@@ -18,7 +18,7 @@
 # (GIT_ASKPASS) or of an ssh key file, never a value. What a failure says passes through redact before it is kept.
 #
 # For tests: RSC_BRAIN_UPDATER_ONCE=1 does one round and ends; RSC_BRAIN_UPDATER_NOW is the time (epoch seconds);
-# RSC_BRAIN_UPDATER_LAUNCHER is the launcher to call. `loop.sh --access` only proves the repository answers with the
+# RSC_BRAIN_UPDATER_LAUNCHER is the launcher to call; RSC_BRAIN_UPDATER_BEAT is the seconds between beats (default 5). `loop.sh --access` only proves the repository answers with the
 # credentials given (what `web-updates enable` asks before it starts anything).
 
 set -u
@@ -35,7 +35,7 @@ esac
 REQ=$DIR/update/request REPORT=$DIR/update/report STATE=$DIR/update/state CRED=$DIR/updater/credentials
 LAUNCHER=${RSC_BRAIN_UPDATER_LAUNCHER:-$DIR/updater/rsc-brain.sh}
 ONCE=${RSC_BRAIN_UPDATER_ONCE:-0}
-BEAT=5 CHECK_EVERY=21600 RETRY_AFTER=900 MAX_RETRIES=3
+BEAT=${RSC_BRAIN_UPDATER_BEAT:-5} CHECK_EVERY=21600 RETRY_AFTER=900 MAX_RETRIES=3
 DEFAULT_REPO=https://github.com/ericrisco/rsc-brain
 
 # A stop may come while the output goes to a file: what is said then goes where it was going when this started.
@@ -201,7 +201,7 @@ is_mark() {
   return 1
 }
 
-CHILD='' STOPPING=0
+CHILD='' BEATER='' STOPPING=0
 # shellcheck disable=SC2329
 on_stop() {
   to_terminal
@@ -256,6 +256,16 @@ requests() {
   # The subshell becomes the launcher (exec): the pid kept is the launcher's, and a stop reaches it.
   (credentials_env && exec sh "$LAUNCHER" update --yes --json --dir "$DIR" --version "$target") </dev/null >"$log" 2>&1 &
   CHILD=$!
+  # While the launcher runs (an image pull can take many minutes) a helper keeps the beat: the service reads a beat
+  # that stopped as «the updater is off». It is the only writer of updater.json until it is stopped, and it is waited for
+  # before anything else writes.
+  (
+    while :; do
+      sleep "$BEAT"
+      write_updater "$target" "$t"
+    done
+  ) </dev/null >/dev/null 2>&1 4>&- 5>&- &
+  BEATER=$!
   code=''
   while :; do
     wait "$CHILD"
@@ -266,6 +276,9 @@ requests() {
     fi
   done
   CHILD=''
+  kill "$BEATER" 2>/dev/null
+  wait "$BEATER" 2>/dev/null
+  BEATER=''
   trap on_stop HUP INT TERM
   token=''
   [ -f "$CRED/token" ] && [ ! -L "$CRED/token" ] && IFS= read -r token <"$CRED/token"

@@ -550,6 +550,59 @@ for (const shell of SHELLS) {
       assert.equal(JSON.stringify(report(c, 'updater.json')).includes(c.dir), false)
     })
 
+    it('keeps beating while an update runs (the service reads a stopped beat as «off»), gets the real exit code, and stops beating when it ends', async () => {
+      const c = fresh()
+      writeFileSync(mark(c), '')
+      // The real clock: the beat is what moves. A short beat and an update of 4 seconds stand for a long pull.
+      const child = spawn(shell, [LOOP], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          PATH: process.env.PATH ?? '/usr/bin:/bin',
+          HOME: join(c.dir, 'updater', 'home'),
+          RSC_BRAIN_UPDATER_DIR: c.dir,
+          RSC_BRAIN_UPDATER_LAUNCHER: FAKE,
+          RSC_BRAIN_UPDATER_ONCE: '1',
+          RSC_BRAIN_UPDATER_BEAT: '1',
+          FAKE_LOG: c.log,
+          FAKE_CHECK: NEWER(),
+          FAKE_UPDATE_SLEEP: '4',
+          FAKE_UPDATE_EXIT: '4',
+          FAKE_UPDATE_SAYS: 'the image did not build',
+        },
+      })
+      let stderr = ''
+      child.stderr.on('data', (d) => {
+        stderr += d
+      })
+      const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)))
+      const beats = new Set<string>()
+      const file = join(c.dir, 'update', 'report', 'updater.json')
+      let done = false
+      void exited.then(() => {
+        done = true
+      })
+      while (!done) {
+        try {
+          const u = JSON.parse(readFileSync(file, 'utf8'))
+          if (u.running) beats.add(u.beatAt)
+        } catch {
+          // Being written: the next look.
+        }
+        await new Promise((r) => setTimeout(r, 200))
+      }
+      assert.equal(await exited, 0, stderr)
+      // A beat every second over 4 seconds is at least 2 distinct beats even on a slow machine; without the helper (or with
+      // the default 5 seconds) there is only the one written when the update started.
+      assert.ok(beats.size >= 2, `the beat moved ${beats.size} time(s) while it ran: ${[...beats].join(' ')}`)
+      // The exit code of the launcher (4) was kept: the version is recorded as failed, with what it said.
+      const after = report(c, 'updater.json')
+      assert.equal(after.running, undefined)
+      assert.match(after.attempts['v0.9.0'].reason, /did not build/)
+      // Nothing beats on after it: the file does not change.
+      await new Promise((r) => setTimeout(r, 2500))
+      assert.deepEqual(report(c, 'updater.json'), after)
+    })
+
     it('stopping it while an update runs hands the stop to the launcher, which puts things back, and waits for it', async () => {
       const c = fresh()
       writeFileSync(mark(c), '')
