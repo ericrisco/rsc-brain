@@ -617,6 +617,62 @@ describe('the launcher: Ctrl-C during an update (review of PR #36)', () => {
   })
 })
 
+describe('the launcher: a signal in the tail of a good update', () => {
+  // Once the new version answers as asked, nothing is taken back: a signal neither rolls back nor leaves maintenance
+  // on. The update ends: journal gone, maintenance off, recorded, exit 0. (rsc-factory's uf_commit does the same.)
+  const ended = (c: Case, r: Run) => {
+    assert.equal(r.code, 0, r.stderr)
+    assert.equal(at(r.calls, / rsc-brain restore /), -1, `nothing taken back\n${r.calls.join('\n')}`)
+    assert.equal(exists(c, 'update.pending'), false, 'no journal left behind')
+    inOrder(r.calls, [
+      / exec -T app rsc-brain maintenance off$/,
+      / exec -T app rsc-brain update record --ok --from 0\.1\.0 --to 0\.2\.0$/,
+    ])
+    assert.equal(readEnv(c.dir).RSC_BRAIN_IMAGE, 'rsc-brain:next', 'the new version stays')
+  }
+  for (const at_ of ['update-confirmed', 'update-journal-gone', 'update-maintenance-off']) {
+    it(`a Ctrl-C at ${at_} ends the update: no rollback, maintenance off, recorded`, async () => {
+      const c = await installed()
+      const r = launch(c, update(c, '--image', 'rsc-brain:next'), {
+        env: { RSC_BRAIN_TEST_STOP_AT: at_, RSC_BRAIN_TEST_STOP_SIGNAL: 'INT' },
+      })
+      ended(c, r)
+    })
+  }
+
+  // Ctrl-C reaches the whole foreground group, docker compose included, and compose takes it back even when the
+  // shell ignores it: the call that turns maintenance off runs in a session of its own.
+  it('a Ctrl-C for the whole group while maintenance goes off does not cut that call', async () => {
+    const c = await installed()
+    const r = await launchStopped(c, update(c, '--image', 'rsc-brain:next'), { FAKE_MAINT_OFF_SLEEP: '2' }, [
+      { marker: 'maintenance-off-started', signal: 'SIGINT' },
+    ])
+    assert.equal(r.signal, null, `killed by ${r.signal}: ${r.stderr}`)
+    assert.ok(existsSync(join(c.state, 'maintenance-off-done')), 'maintenance off ran to its end')
+    ended(c, { ...r, piped: '', images: [] })
+  })
+
+  // A journal that survives a failed rm would make a later launcher take back an accepted update: not confirmed
+  // while it is there, so it goes back now.
+  it('a journal that cannot be removed: the update is not confirmed and goes back', async () => {
+    const c = await installed()
+    const bin = join(c.state, 'rmbin')
+    mkdirSync(bin)
+    writeFileSync(
+      join(bin, 'rm'),
+      '#!/bin/sh\nfor a; do case $a in */update.pending) exit 1 ;; esac; done\nexec /bin/rm "$@"\n',
+    )
+    chmodSync(join(bin, 'rm'), 0o755)
+    const r = launch(c, update(c, '--image', 'rsc-brain:next'), {
+      env: { PATH: `${bin}:${FAKEBIN}:${SYSBIN}` },
+    })
+    assert.equal(r.code, 4, r.stderr)
+    assert.match(r.stderr, /journal could not be removed/)
+    assert.ok(at(r.calls, / rsc-brain restore /) >= 0, 'taken back')
+    assert.equal(at(r.calls, / update record --ok /), -1, 'not recorded as good')
+  })
+})
+
 describe('the launcher: an update killed after the switch is taken back by the next command (review of PR #36)', () => {
   // Killed outright (a power cut) while the new version migrates, or while it is asked whether it answers.
   const killedAfterSwitch = async (during: 'migrate' | 'health') => {

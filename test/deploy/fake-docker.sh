@@ -172,6 +172,11 @@ case "$args" in
   exit "${FAKE_MAINTENANCE_EXIT:-0}"
   ;;
 *" rsc-brain maintenance off"*)
+  # FAKE_MAINT_OFF_SLEEP: a slow maintenance off (it says when it started, and when it finished).
+  if [ -n "${FAKE_MAINT_OFF_SLEEP:-}" ]; then
+    compose_wait maintenance-off-started "$FAKE_MAINT_OFF_SLEEP"
+    : >"$state/maintenance-off-done"
+  fi
   exit 0
   ;;
 *" rsc-brain update record "*)

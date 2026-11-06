@@ -1982,14 +1982,25 @@ update() {
   now=$(dc exec -T app rsc-brain version </dev/null 2>/dev/null)
   [ "$now" = "$UPDATE_TO" ] || rollback "The service answers as rsc-brain ${now:-(no version)}, not $UPDATE_TO."
 
-  # The new version runs: nothing to take back any more.
+  # The new version runs. The tail is not cut: a signal here (a Ctrl-C reaches the whole foreground group) must neither
+  # take back an update that has finished nor leave maintenance on (writes refused for up to 30 minutes, the journal
+  # gone, the web never told). Signals ignored, and the calls out of the terminal's group, as the way back does.
+  trap '' HUP INT TERM
+  SHIELD=1
+  checkpoint update-confirmed
   rm -f "${journal:?}"
-  trap - HUP INT TERM
+  # A journal that survives would make a later launcher take back an update that went well: not confirmed, back now.
+  [ ! -e "$journal" ] || rollback 'The journal could not be removed, so the update was not confirmed.'
+  checkpoint update-journal-gone
   step 'Turning maintenance off: writes are taken again'
   dc exec -T app rsc-brain maintenance off </dev/null >&2 ||
     say "Maintenance could not be turned off; it ends by itself within 30 minutes."
+  checkpoint update-maintenance-off
   dc exec -T app rsc-brain update record --ok --from "$UPDATE_FROM" --to "$UPDATE_TO" </dev/null >&2 ||
     say 'The web could not be told about this update (Admin > Backups & system); the update itself went well.'
+  # The tail that must not be cut is done; what follows is a wait that a signal may end.
+  SHIELD=0
+  trap - HUP INT TERM
   rm -f "${DIR:?}/${STATE:?}/env.previous" "${DIR:?}/${STATE:?}/compose.yaml.previous" \
     "${DIR:?}/${STATE:?}/Caddyfile.previous" "${DIR:?}/${STATE:?}/door.Caddyfile.previous" "${UPDATE_LOG:?}" \
     "${DIR:?}/last-failure.log"
