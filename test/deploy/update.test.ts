@@ -695,7 +695,10 @@ describe('the launcher: a signal in the tail of a good update', () => {
       },
     })
     assert.equal(r.code, 0, r.stderr)
-    assert.ok(existsSync(join(c.dir, '.rsc-brain', 'src', 'deploy', 'compose.yaml')), 'the new source is the installed one')
+    assert.ok(
+      existsSync(join(c.dir, '.rsc-brain', 'src', 'deploy', 'compose.yaml')),
+      'the new source is the installed one',
+    )
     assert.equal(exists(c, 'src.next'), false)
   })
 
