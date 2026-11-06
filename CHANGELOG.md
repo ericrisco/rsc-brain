@@ -19,6 +19,15 @@ forward.
   back, a stand-in holds its port and name: a page with the step for a browser, 503 with `Retry-After` and
   `under_maintenance` for the rest.
 
+- **Updating from the web, off by default.** `rsc-brain.sh web-updates enable|disable|status` runs an updater
+  in a container of its own (no port, none of the service's networks, the Docker socket, the installation and a
+  user list mounted, nothing else). Whoever controls it controls the server, and `enable` says so. A private
+  repository needs a read-only token or SSH key given as a file. At most 3 retries per version, 15 minutes
+  apart. Not for an installation made by rsc-factory: it exits 2 and refers to rsc-factory.
+- **The web's version check follows the updater.** With the updater on, the web does not ask the repository:
+  it reads what the updater found, with the server's own access. Notes drop control characters, as the
+  launcher does.
+
 ## v0.2.0
 
 rsc-brain as rsc-factory's memory: rsc-factory can install it, set it up and work with it.

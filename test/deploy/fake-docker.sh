@@ -267,6 +267,12 @@ rm)
   exit 0
   ;;
 ps)
+  # Containers of the updater's project that compose no longer knows (FAKE_UPDATER_LEFT), asked for by its label.
+  case "$args" in *"label=com.docker.compose.project="*-updater*)
+    [ -n "${FAKE_UPDATER_LEFT:-}" ] && echo l3ft
+    exit 0
+    ;;
+  esac
   # The stand-in door, asked for by its labels.
   case "$args" in *service=door*)
     [ -e "$state/door" ] && echo d00r
@@ -301,6 +307,15 @@ network)
   ;;
 run)
   take_stdin run
+  # The updater's own checks (web-updates enable): the group of the socket, seen from a container, and whether the
+  # repository answers with the credentials it was given.
+  case "$args" in
+  *" stat -c %g "*)
+    echo "${FAKE_SOCKET_GID:-999}"
+    exit 0
+    ;;
+  *" --access"*) exit "${FAKE_ACCESS_EXIT:-0}" ;;
+  esac
   exit 0
   ;;
 compose)
@@ -312,6 +327,38 @@ compose)
     echo "Docker Compose version ${FAKE_COMPOSE_VERSION:-v2.38.2}"
     exit 0
   fi
+  # The updater is a project of its own (web-updates): it has its own marker and never the service's.
+  case "$args" in
+  *" -p "*-updater" "*)
+    case "$args" in
+    *" up "*)
+      # FAKE_UPDATER_UP_FAIL_ONCE: the first start fails after stopping what ran (a recreate that does not come up).
+      if [ -n "${FAKE_UPDATER_UP_FAIL_ONCE:-}" ] && [ ! -e "$state/updater-failed-once" ]; then
+        : >"$state/updater-failed-once"
+        rm -f "$state/updater-up"
+        echo 'Error response from daemon: failed to start' >&2
+        exit 1
+      fi
+      [ "${FAKE_UPDATER_UP_EXIT:-0}" = 0 ] || { echo 'Error response from daemon: failed to start' >&2; exit "$FAKE_UPDATER_UP_EXIT"; }
+      if [ -n "${FAKE_UPDATER_UP_SLEEP:-}" ]; then
+        : >"$state/updater-up-started"
+        sleep "$FAKE_UPDATER_UP_SLEEP"
+      fi
+      : >"$state/updater-up"
+      ;;
+    *" down "*)
+      # FAKE_UPDATER_DOWN_SLEEP: a slow stop of the updater (it says when it started).
+      if [ -n "${FAKE_UPDATER_DOWN_SLEEP:-}" ]; then
+        : >"$state/updater-down-started"
+        sleep "$FAKE_UPDATER_DOWN_SLEEP"
+      fi
+      rm -f "$state/updater-up"
+      ;;
+    *" ps "*) [ -e "$state/updater-up" ] && echo upd4te ;;
+    esac
+    exit 0
+    ;;
+  esac
   case "$args" in
   *" up "*" door "*)
     # The stand-in door takes the port of the service; it has a marker of its own, and is not the service.

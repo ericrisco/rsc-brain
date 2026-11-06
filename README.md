@@ -181,6 +181,36 @@ The way back runs in a session of its own, so a Ctrl-C at the terminal cannot cu
 `setsid`, or with `perl` where there is no `setsid` (macOS). A machine with neither runs it like any
 other step: there, do not press Ctrl-C while it goes back.
 
+### Updating from the web (off until you turn it on)
+
+By default only the terminal updates. To let an administrator do it from the web:
+
+```sh
+sh rsc-brain.sh web-updates enable [--repo-token-file F | --repo-key F]   # then: status, disable
+```
+
+This starts a container of its own, the updater, as a compose project apart from the service's
+(`<name>-updater`). **It has full control of Docker on this machine: whoever controls it controls the
+server**, and `enable` says so and asks (or wants `--yes`). It publishes no port and is on no network of the
+service or of rsc-factory. It mounts exactly three things: the Docker socket, the installation folder at its own
+path, and a list of users with its own in it, read only. The service never gets Docker, a credential or the
+installation key from it: it only leaves an empty mark in `update/request`, which the updater looks at without
+opening it, and reads `update/report` (read only) to learn the newest version. A private repository needs read
+access that works from this machine: `--repo-token-file` (a file with one line, for an https address) or
+`--repo-key` (an SSH private key, for an SSH one). The file is copied to `updater/credentials` (readable by its
+owner only); nothing goes on a command line. `enable` proves the repository answers with it, from a container
+like the updater's, before it starts anything.
+
+The updater runs the same `update` as the terminal, always for the newest published version it found itself,
+whatever the mark holds. A version that failed is tried once; **Try again** allows at most 3 retries, 15 minutes
+apart, and after that only the terminal can try that version (the launcher put everything back each time). If the
+machine stops halfway, the updater finishes taking the update back when it starts. After an update it restarts
+from the new version's files; if its compose file or image changed, run `web-updates enable` again.
+
+`web-updates disable` removes the container, the image and the credential, and the web shows the command again.
+In an installation made by rsc-factory there is no button: `web-updates enable` exits 2 and tells you to update
+it from rsc-factory.
+
 ### The installation key
 
 The installer makes the installation key and keeps it in `.env`, which only its owner can read. It

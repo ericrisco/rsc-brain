@@ -1,0 +1,30 @@
+# rsc-brain's updater, as `rsc-brain.sh web-updates enable` runs it: a project of its own (-p <name>-updater), apart from
+# the service's, so that starting or updating the service never recreates it. It has no ports and no network but the
+# one every project gets (outbound only), never the one shared with rsc-factory. It mounts exactly three things:
+#   - the Docker socket: it runs `rsc-brain.sh update`, which stops, builds and starts containers;
+#   - the installation, at its own path: compose files mount ./backups relative to it, so the same path on the host and
+#     here is what keeps `up` from recreating what the host made;
+#   - a list of users with its own user in it, read only: ssh refuses to run as a user it does not know.
+# Whoever controls this container controls the machine. Every value comes from <install>/updater/updater.env.
+services:
+  updater:
+    image: ${RSC_BRAIN_UPDATER_IMAGE:?run rsc-brain.sh web-updates enable}
+    restart: unless-stopped
+    init: true
+    # Fixed, so that a lock this container left behind is recognised as its own by the next one.
+    hostname: ${RSC_BRAIN_UPDATER_HOSTNAME}
+    # The owner of the installation, so what the launcher writes stays the operator's; and the group of the socket.
+    user: "${RSC_BRAIN_UPDATER_UID}:${RSC_BRAIN_UPDATER_GID}"
+    group_add:
+      - "${RSC_BRAIN_UPDATER_SOCKET_GID}"
+    working_dir: ${RSC_BRAIN_UPDATER_DIR}
+    # A stop is handed to the launcher, which puts the version before back; it gets the time a restore may take.
+    stop_grace_period: 10m
+    environment:
+      RSC_BRAIN_UPDATER_DIR: ${RSC_BRAIN_UPDATER_DIR}
+      HOME: ${RSC_BRAIN_UPDATER_DIR}/updater/home
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${RSC_BRAIN_UPDATER_DIR}:${RSC_BRAIN_UPDATER_DIR}
+      - ${RSC_BRAIN_UPDATER_DIR}/updater/passwd:/etc/passwd:ro
+    command: ["sh", "${RSC_BRAIN_UPDATER_DIR}/updater/loop.sh"]

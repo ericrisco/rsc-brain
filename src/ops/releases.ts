@@ -6,6 +6,15 @@
 // web sends the operator to `rsc-brain.sh update --check`, which has the server's own access. An error never carries a
 // version: nothing here can turn a failed check into «up to date». RSC_BRAIN_REPO_URL says where to ask; empty, as an
 // empty RSC_BRAIN_RELEASES_URL, nothing is ever asked. What it learns stays in this process's memory.
+//
+// With the updater on (rsc-brain.sh web-updates enable) the web asks nobody: the updater has the server's access, asks
+// the repository through the launcher and leaves update/report/check.json, which is read here, read only, for as long as
+// the updater says it is alive (update/report/updater.json, a beat every 5 seconds). When it is not, as before.
+//
+// Notes are text for a screen: the control characters the launcher drops from them (`printable`) are dropped here too,
+// so the web and `update --check` show the same.
+import { lstatSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { Clock } from '../core/clock.ts'
 
 export const DEFAULT_REPO_URL = 'https://github.com/ericrisco/rsc-brain'
@@ -19,6 +28,10 @@ const DAY_MS = 24 * 3600_000
 // After a check that got no answer: again in 15 minutes, doubling up to 6 hours (review of PR #31).
 const RETRY_FIRST_MS = 15 * 60_000
 const RETRY_MAX_MS = 6 * 3600_000
+// The updater is alive while its last beat is at most 2 minutes old (it beats every 5 seconds).
+const UPDATER_ALIVE_MS = 120_000
+const UPDATER_SKEW_MS = 60_000
+const REPORT_MAX_BYTES = 256 * 1024
 
 export type PublishedError = 'no_access' | 'network' | 'none'
 export type Checked = { latest: string; notes: string; at: string } | { error: PublishedError; at: string }
@@ -69,6 +82,10 @@ function trimmed(text: string): string {
   return text.slice(from, to)
 }
 
+// C0 but tab and line end, DEL and the C1 controls (U+0080 to U+009F): what the launcher's `printable` removes.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
+const CONTROLS = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g
+
 export function notesFor(changelog: string, tag: string): string {
   const lines = changelog.replace(/\r(\n|$)/g, '$1').split('\n')
   const heading = `## ${tag}`
@@ -78,7 +95,12 @@ export function notesFor(changelog: string, tag: string): string {
   if (start < 0) return ''
   const rest = lines.slice(start + 1)
   const end = rest.findIndex((l) => l.startsWith('## '))
-  const text = trimmed((end < 0 ? rest : rest.slice(0, end)).join('\n'))
+  return cleanNotes((end < 0 ? rest : rest.slice(0, end)).join('\n'))
+}
+
+// Notes as text for a screen: without control characters, trimmed, at most NOTES_MAX whole characters.
+function cleanNotes(raw: string): string {
+  const text = trimmed(raw.replace(CONTROLS, ''))
   return text.length > NOTES_MAX ? Array.from(text).slice(0, NOTES_MAX).join('') : text
 }
 
@@ -245,11 +267,83 @@ export function repoUrl(env: Record<string, string | undefined>): string | null 
 
 const tagOf = (version: string) => (version.startsWith('v') ? version : `v${version}`)
 
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+// A small JSON file of the report: a regular file (never a link), not large, or nothing.
+function readReport(dir: string, name: string): unknown {
+  try {
+    const file = join(dir, name)
+    const st = lstatSync(file)
+    if (!st.isFile() || st.size > REPORT_MAX_BYTES) return null
+    return JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return null
+  }
+}
+const instant = (v: unknown): string | null => {
+  if (typeof v !== 'string') return null
+  const t = Date.parse(v)
+  return Number.isNaN(t) ? null : new Date(t).toISOString()
+}
+
+function updaterAlive(dir: string, now: number): boolean {
+  const u = readReport(dir, 'updater.json')
+  if (!isRecord(u) || u.enabled !== true) return false
+  const beat = instant(u.beatAt)
+  if (beat === null) return false
+  const age = now - Date.parse(beat)
+  return age <= UPDATER_ALIVE_MS && age >= -UPDATER_SKEW_MS
+}
+
+// What the updater last found, as the state the web shows. Nothing in it is trusted more than the repository would be:
+// a version has to be a published one, and notes are text of at most NOTES_MAX characters.
+function fromReport(dir: string, installed: string): ReleaseState {
+  const s: ReleaseState = {
+    installed,
+    latest: null,
+    notes: null,
+    checkedAt: null,
+    error: null,
+    lastAttemptAt: null,
+  }
+  const c = readReport(dir, 'check.json')
+  if (!isRecord(c) || typeof c.ok !== 'boolean') return s
+  s.lastAttemptAt = instant(c.checkedAt)
+  const brain = isRecord(c.products) && isRecord(c.products.brain) ? c.products.brain : null
+  const latest = typeof brain?.latest === 'string' && isPublished(brain.latest) ? brain.latest : null
+  const notes = typeof brain?.notes === 'string' ? cleanNotes(brain.notes) : ''
+  if (c.ok) {
+    if (latest === null) {
+      s.error = 'network'
+      return s
+    }
+    s.latest = latest
+    s.notes = notes
+    s.checkedAt = s.lastAttemptAt
+    return s
+  }
+  const reason = c.reason === 'no_access' || c.reason === 'none' ? c.reason : 'network'
+  s.error = reason
+  if (reason === 'none') {
+    s.checkedAt = s.lastAttemptAt
+    return s
+  }
+  // What it knew stays, and the web says the last check failed.
+  if (latest !== null) {
+    s.latest = latest
+    s.notes = notes
+  }
+  return s
+}
+
 export function releaseChecker(o: {
   repo: string | null
   version: string
   clock: Clock
   fetch?: typeof fetch
+  // The updater's report folder (update/report): with an address to ask and the updater alive, it is read instead.
+  report?: string
 }): ReleaseChecker {
   const s: ReleaseState = {
     installed: tagOf(o.version),
@@ -264,8 +358,11 @@ export function releaseChecker(o: {
   let failures = 0
   let timer: ReturnType<typeof setInterval> | null = null
   let busy: Promise<void> | null = null
+  const reported = () =>
+    o.repo !== null && o.report !== undefined && updaterAlive(o.report, o.clock().getTime())
   const run = async () => {
     if (!o.repo) return
+    if (reported()) return
     const now = o.clock().getTime()
     if (now < nextAt) return
     if (busy !== null) return busy
@@ -305,7 +402,7 @@ export function releaseChecker(o: {
     return busy
   }
   return {
-    state: () => ({ ...s }),
+    state: () => (reported() && o.report !== undefined ? fromReport(o.report, s.installed) : { ...s }),
     check: run,
     start() {
       if (!o.repo || timer) return
@@ -339,4 +436,21 @@ export function releaseView(s: ReleaseState | null, version: string): ReleaseVie
   const c = compareVersions(core[1], base.latest)
   const preview = core[2] !== undefined
   return { ...base, newer: c === 'newer' || (c === 'up_to_date' && preview), ahead: c === 'older' }
+}
+
+// The checker the service runs: where to ask from RSC_BRAIN_REPO_URL, and, when RSC_BRAIN_UPDATE_REPORT names a folder,
+// the updater's report to read while it is alive.
+export function checkerFromEnv(
+  env: Record<string, string | undefined>,
+  version: string,
+  clock: Clock,
+  send?: typeof fetch,
+): ReleaseChecker {
+  return releaseChecker({
+    repo: repoUrl(env),
+    version,
+    clock,
+    ...(send ? { fetch: send } : {}),
+    ...(env.RSC_BRAIN_UPDATE_REPORT ? { report: env.RSC_BRAIN_UPDATE_REPORT } : {}),
+  })
 }
