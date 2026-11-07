@@ -23,6 +23,7 @@ import type { FetchPolicy } from '../oauth/fetch.ts'
 import type { Copies } from '../ops/backup/copies.ts'
 import { EXPORT_LIMITS, sweepExports } from '../ops/export/export.ts'
 import type { ReleaseChecker } from '../ops/releases.ts'
+import { type UpdateConfig, updates as updatesOf } from '../ops/updates.ts'
 import { boundJson } from './bounds.ts'
 import { connOf } from './conn.ts'
 import { EVENT_TIMINGS, type EventTimings, eventHub } from './hub.ts'
@@ -47,6 +48,7 @@ import { oauthRoutes } from './routes/oauth.ts'
 import { peopleRoutes } from './routes/people.ts'
 import { recallRoutes } from './routes/recall.ts'
 import { systemRoutes } from './routes/system.ts'
+import { updateRoutes } from './routes/update.ts'
 import { wikiRoutes } from './routes/wiki.ts'
 import { answerWeb, openWeb } from './web.ts'
 
@@ -81,6 +83,8 @@ export type AppDeps = {
   copies?: Copies
   // Whether a newer release exists (plan §3.10).
   releases?: ReleaseChecker
+  // Where the marks of an update request go and where the updater's report is (rsc-updates B3); neither, no button.
+  update?: UpdateConfig
   // Where exports are prepared before they are sent (a private folder of the system's temporary space).
   exportDir?: string
   // The invitation mails one service account may have sent in an hour (RSC_BRAIN_SERVICE_INVITES_PER_HOUR).
@@ -153,6 +157,7 @@ export const ROUTES: Route[] = [
   ...connectRoutes,
   ...brandingRoutes,
   ...systemRoutes,
+  ...updateRoutes,
   ...backupRoutes,
   ...exportRoutes,
   ...importRoutes,
@@ -534,6 +539,12 @@ export function createHandler(deps: AppDeps) {
   // What a crash left of an export goes now (by the files' own times: the wall clock, not the service's).
   if (exportDir) void sweepExports(exportDir, new Date())
   const companion = deps.companion ? { ...deps.companion, proxies: connOptions.trusted } : null
+  const updates = updatesOf({
+    ...(deps.update ?? {}),
+    clock: deps.clock,
+    companion: companion !== null,
+    factoryUrl: companion?.factoryUrl ?? null,
+  })
   // Once the first-time setup is done it stays done: no need to ask the database again.
   let ready = false
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -636,6 +647,7 @@ export function createHandler(deps: AppDeps) {
         backups: deps.backups ?? null,
         copies: deps.copies ?? null,
         releases: deps.releases ?? null,
+        updates,
         exportDir,
         serviceInvitesPerHour: deps.serviceInvitesPerHour ?? SERVICE_INVITES_PER_HOUR,
         signal: left.signal,

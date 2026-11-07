@@ -24,6 +24,12 @@ forward.
   user list mounted, nothing else). Whoever controls it controls the server, and `enable` says so. A private
   repository needs a read-only token or SSH key given as a file. At most 3 retries per version, 15 minutes
   apart. Not for an installation made by rsc-factory: it exits 2 and refers to rsc-factory.
+- **The button.** With the updater on, Administration › Backups & system offers «Update to vX.Y.Z» to an
+  administrator, who confirms with their password again (and the code). `POST /v1/admin/update` and
+  `/update/retry` only leave an empty mark for the updater; nothing in the request reaches it. One update at
+  a time, **Try again** after a failure within the updater's limits, and the page follows the update to its
+  result. In an installation made by rsc-factory there is no button: the page says to update it from there
+  and links to rsc-factory. `GET /v1/admin/system` gains `update`.
 - **The web's version check follows the updater.** With the updater on, the web does not ask the repository:
   it reads what the updater found, with the server's own access. Notes drop control characters, as the
   launcher does.

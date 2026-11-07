@@ -940,6 +940,68 @@ describe('web-updates status and disable (CA26)', () => {
     assert.equal(existsSync(join(c.dir, 'updater', 'credentials')), false)
   })
 
+  const busyLock = (c: Case) => {
+    mkdirSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true })
+    writeFileSync(
+      join(c.dir, '.rsc-brain', 'lock', 'owner'),
+      `${process.pid} ${spawnSync('uname', ['-n'], { encoding: 'utf8' }).stdout.trim()}\n`,
+    )
+  }
+
+  it('a disable that cannot get the lock leaves a «disabling» mark, does not say nothing changed, and status says it is not finished', async () => {
+    const c = await installed()
+    launch(c, enable(c, '--repo-token-file', tokenFile(c)))
+    busyLock(c)
+    const r = launch(c, ['web-updates', 'disable', '--dir', c.dir])
+    assert.equal(r.code, 3, r.stderr)
+    assert.equal(
+      existsSync(join(c.dir, 'updater', 'disabling')),
+      true,
+      'the loop is told before the lock is asked for',
+    )
+    assert.doesNotMatch(r.stderr + r.stdout, /Nothing was changed/)
+    assert.match(r.stderr, /credential is removed/i)
+    assert.match(r.stderr, /web-updates disable/)
+    const st = launch(c, ['web-updates', 'status', '--dir', c.dir])
+    assert.match(st.stdout, /disable has not finished/i)
+    assert.doesNotMatch(st.stdout, /are on\./)
+  })
+
+  it('a finished disable clears the mark with the rest of the updater, and a later status says off', async () => {
+    const c = await installed()
+    launch(c, enable(c, '--repo-token-file', tokenFile(c)))
+    assert.equal(launch(c, ['web-updates', 'disable', '--dir', c.dir]).code, 0)
+    assert.equal(existsSync(join(c.dir, 'updater', 'disabling')), false)
+    assert.match(launch(c, ['web-updates', 'status', '--dir', c.dir]).stdout, /are off\./)
+  })
+
+  it('an enable that does not get the lock leaves the mark; one that has the lock clears it', async () => {
+    const c = await installed()
+    launch(c, enable(c, '--repo-token-file', tokenFile(c)))
+    busyLock(c)
+    launch(c, ['web-updates', 'disable', '--dir', c.dir])
+    const blocked = launch(c, enable(c))
+    assert.equal(blocked.code, 3, blocked.stderr)
+    assert.equal(existsSync(join(c.dir, 'updater', 'disabling')), true)
+    rmSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true, force: true })
+    const again = launch(c, enable(c))
+    assert.equal(again.code, 0, again.stderr)
+    assert.equal(existsSync(join(c.dir, 'updater', 'disabling')), false)
+  })
+
+  it('an enable that fails does not undo an unfinished disable: the mark stays and status still says so', async () => {
+    const c = await installed()
+    launch(c, enable(c, '--repo-token-file', tokenFile(c)))
+    busyLock(c)
+    launch(c, ['web-updates', 'disable', '--dir', c.dir])
+    rmSync(join(c.dir, '.rsc-brain', 'lock'), { recursive: true, force: true })
+    // The credential is gone, and the repository does not answer without it.
+    const r = launch(c, enable(c), { env: { FAKE_ACCESS_EXIT: '1' } })
+    assert.equal(r.code, 3, r.stderr)
+    assert.equal(existsSync(join(c.dir, 'updater', 'disabling')), true)
+    assert.match(launch(c, ['web-updates', 'status', '--dir', c.dir]).stdout, /disable has not finished/i)
+  })
+
   it('uninstall --delete-data removes the folders of the marks and the report too', async () => {
     const c = await installed()
     const r = launch(c, ['uninstall', '--delete-data', '--confirm', 'rsc-brain', '--dir', c.dir])

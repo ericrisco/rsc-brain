@@ -87,6 +87,20 @@ type Fx = {
     error?: 'no_access' | 'network' | 'none' | null
     lastAttemptAt?: string | null
   }
+  // Updating from the web (rsc-updates B3): the mode, whether a request waits, what runs, what failed.
+  update: {
+    mode: 'off' | 'on' | 'companion'
+    factoryUrl: string | null
+    requested: boolean
+    running: { to: string; startedAt: string | null } | null
+    attempts: Array<{
+      version: string
+      failedAt: string
+      reason: string
+      retries: number
+      retryFrom: string | null
+    }>
+  }
   // What the launcher recorded about the last update (B7 PR35), and whether an update runs now (writes refused).
   lastUpdate: unknown
   maintenance: boolean
@@ -261,6 +275,7 @@ export function fxOf(s: AdminScen): Fx {
       lastWarning: null,
       nextCopy: 'ok',
       release: { latest: null, notes: null, checkedAt: null },
+      update: { mode: 'off', factoryUrl: null, requested: false, running: null, attempts: [] },
       lastUpdate: null,
       maintenance: false,
     }
@@ -284,6 +299,8 @@ export function adminBehind(s: AdminScen, change: Record<string, unknown>): void
     f.lastWarning = { at: '2026-10-29T03:00:05.000Z', code: change.backupWarning }
   if (change.nextCopy === 'disk_full') f.nextCopy = 'disk_full'
   if (change.release && typeof change.release === 'object') f.release = change.release as Fx['release']
+  // Updating from the web (B3): any of the parts of its state, as the updater's report would change them.
+  if (change.update && typeof change.update === 'object') Object.assign(f.update, change.update)
   // An update (B7 PR35): what it recorded at its end, and maintenance while it runs.
   if (change.lastUpdate !== undefined) f.lastUpdate = change.lastUpdate
   if (typeof change.maintenance === 'boolean') f.maintenance = change.maintenance
@@ -337,6 +354,54 @@ function copiesView(s: AdminScen) {
     lastUpdate: f.lastUpdate,
     running: f.running !== null,
   }
+}
+
+// The last update as the system answer gives it: its outcome, the two versions and when; never its log.
+function updateLast(x: unknown) {
+  if (typeof x !== 'object' || x === null) return null
+  const { ok, from, to, at } = x as Record<string, unknown>
+  return typeof ok === 'boolean' &&
+    typeof from === 'string' &&
+    typeof to === 'string' &&
+    typeof at === 'string'
+    ? { ok, from, to, at }
+    : null
+}
+
+// Asking for an update, as the server answers it (src/ops/updates.ts): the refusals in the order the server gives them.
+function updateAsk(c: AdminCtx, retry: boolean): Answer {
+  const again = reauthOf(c)
+  if (again) return again
+  const f = fxOf(c.s)
+  const u = f.update
+  if (u.mode === 'companion')
+    return err(
+      409,
+      'companion',
+      'rsc-brain was installed by rsc-factory: update it from there.',
+      `Open rsc-factory at ${u.factoryUrl} and update from Admin › Updates.`,
+    )
+  if (u.mode === 'off')
+    return err(
+      409,
+      'updates_off',
+      'Updating from the web is off on this installation.',
+      'On the server, run: rsc-brain.sh update.',
+    )
+  if (u.requested || u.running)
+    return err(409, 'update_running', 'An update is already running.', 'Wait for it to finish.')
+  const latest = f.release.latest
+  const newer = latest !== null && latest !== 'v0.1.0' && latest !== 'v0.0.9'
+  if (!newer)
+    return err(409, 'nothing_to_update', 'There is no newer version to update to.', 'Nothing to do.')
+  const failed = u.attempts.find((a) => a.version === latest)
+  if (!retry && failed)
+    return err(409, 'update_failed', `The update to ${latest} failed.`, 'Use «Try again» on this page.')
+  if (retry && !failed)
+    return err(409, 'nothing_to_retry', `The update to ${latest} has not failed.`, 'Use «Update» instead.')
+  u.requested = true
+  audited(c, retry ? 'update.retry' : 'update.request', `to ${latest}`)
+  return { status: 202, body: { requested: true, to: latest } }
 }
 
 // The password again (and the code with a second factor), as the server asks it: 401 reauth_failed otherwise.
@@ -945,6 +1010,7 @@ export const ADMIN_OPS: Record<string, Op> = {
               f.release.latest !== null && f.release.latest !== 'v0.1.0' && f.release.latest !== 'v0.0.9',
             ahead: f.release.latest === 'v0.0.9',
           },
+          update: { ...f.update, last: updateLast(f.lastUpdate) },
         },
       }
     }),
@@ -1075,6 +1141,8 @@ export const ADMIN_OPS: Record<string, Op> = {
       { write: true },
     ),
   },
+  'POST /v1/admin/update': { run: admin((c) => updateAsk(c, false), { write: true }) },
+  'POST /v1/admin/update/retry': { run: admin((c) => updateAsk(c, true), { write: true }) },
   'PUT /v1/admin/branding/logo': {
     run: admin(
       (c) => {

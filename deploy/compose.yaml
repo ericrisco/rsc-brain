@@ -33,11 +33,14 @@ services:
       RSC_BRAIN_BACKUPS: /backups
       # What the updater says (read only, from it): the service reads the newest version there while it runs.
       RSC_BRAIN_UPDATE_REPORT: /update/report
+      # Where it leaves the mark that asks the updater to update (empty files, nothing else: it has no Docker).
+      RSC_BRAIN_UPDATE_REQUEST: /update/request
     ports:
       - "${RSC_BRAIN_PUBLISH:?run rsc-brain.sh install}:8090"
     volumes:
       - ./backups:/backups
       - ./update/report:/update/report:ro
+      - ./update/request:/update/request
     # An existing PostgreSQL on this machine is reached as host.docker.internal (also on Linux).
     extra_hosts:
       - host.docker.internal:host-gateway

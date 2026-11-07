@@ -217,6 +217,10 @@ async function main(argv: string[]): Promise<number> {
         backups: cfg.backups,
         ...(copies ? { copies } : {}),
         releases,
+        update: {
+          request: process.env.RSC_BRAIN_UPDATE_REQUEST || null,
+          report: process.env.RSC_BRAIN_UPDATE_REPORT || null,
+        },
         serviceInvitesPerHour: cfg.serviceInvitesPerHour,
         log,
       }),

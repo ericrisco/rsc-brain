@@ -18,7 +18,7 @@
 # (GIT_ASKPASS) or of an ssh key file, never a value. What a failure says passes through redact before it is kept.
 #
 # For tests: RSC_BRAIN_UPDATER_ONCE=1 does one round and ends; RSC_BRAIN_UPDATER_NOW is the time (epoch seconds);
-# RSC_BRAIN_UPDATER_LAUNCHER is the launcher to call. `loop.sh --access` only proves the repository answers with the
+# RSC_BRAIN_UPDATER_LAUNCHER is the launcher to call; RSC_BRAIN_UPDATER_BEAT is the seconds between beats (default 5). `loop.sh --access` only proves the repository answers with the
 # credentials given (what `web-updates enable` asks before it starts anything).
 
 set -u
@@ -35,7 +35,7 @@ esac
 REQ=$DIR/update/request REPORT=$DIR/update/report STATE=$DIR/update/state CRED=$DIR/updater/credentials
 LAUNCHER=${RSC_BRAIN_UPDATER_LAUNCHER:-$DIR/updater/rsc-brain.sh}
 ONCE=${RSC_BRAIN_UPDATER_ONCE:-0}
-BEAT=5 CHECK_EVERY=21600 RETRY_AFTER=900 MAX_RETRIES=3
+BEAT=${RSC_BRAIN_UPDATER_BEAT:-5} CHECK_EVERY=21600 RETRY_AFTER=900 MAX_RETRIES=3
 DEFAULT_REPO=https://github.com/ericrisco/rsc-brain
 
 # A stop may come while the output goes to a file: what is said then goes where it was going when this started.
@@ -104,7 +104,11 @@ ACCEPTED=''
 write_updater() { # [running-version running-since]
   wu_now=$(now)
   {
-    printf '{"enabled":true,"beatAt":"%s"' "$(iso "$wu_now")"
+    if [ -f "$DIR/updater/disabling" ]; then
+      printf '{"enabled":false,"disabling":true,"beatAt":"%s"' "$(iso "$wu_now")"
+    else
+      printf '{"enabled":true,"beatAt":"%s"' "$(iso "$wu_now")"
+    fi
     if [ -n "$ACCEPTED" ]; then printf ',"requestAcceptedAt":"%s"' "$(iso "$ACCEPTED")"; fi
     if [ -n "${1:-}" ]; then printf ',"running":{"to":%s,"startedAt":"%s"}' "$(jstr "$1")" "$(iso "$2")"; fi
     printf ',"attempts":{'
@@ -216,6 +220,13 @@ requests() {
   is_mark "$REQ/request" && req=1
   is_mark "$REQ/retry" && retry=1
   [ "$req$retry" != 00 ] || return 0
+  if [ -f "$DIR/updater/disabling" ]; then
+    # `web-updates disable` has removed the credential and is waiting for the lock to take the updater away: the marks
+    # are taken, and nothing starts.
+    say 'The updater is being turned off: the request was not started.'
+    rm -f -- "$REQ/request" "$REQ/retry"
+    return 0
+  fi
   [ "$CHECKED" = 1 ] || run_check
   target=$CHECK_LATEST
   if [ "$CHECK_OK" = 0 ] || [ "$CHECK_NEWER" != true ] || [ -z "$target" ]; then
@@ -256,15 +267,24 @@ requests() {
   # The subshell becomes the launcher (exec): the pid kept is the launcher's, and a stop reaches it.
   (credentials_env && exec sh "$LAUNCHER" update --yes --json --dir "$DIR" --version "$target") </dev/null >"$log" 2>&1 &
   CHILD=$!
-  code=''
-  while :; do
-    wait "$CHILD"
-    c=$?
-    if ! kill -0 "$CHILD" 2>/dev/null; then
-      code=$c
-      break
+  # While the launcher runs (an image pull can take many minutes) the loop keeps saying it is alive: every second it looks
+  # at the child, and every BEAT seconds it writes updater.json again with the update still running. Only this shell writes
+  # that file, one write at a time, so no write can land after the last one; the beat stops when this shell does, which is
+  # what the service must see if the updater dies. A stop (a trapped signal) ends the sleep, reaches the child through
+  # on_stop, and the loop goes on until the child has ended: its own exit code is read by the last wait.
+  beat_n=0
+  while kill -0 "$CHILD" 2>/dev/null; do
+    sleep 1 >/dev/null 2>&1 4>&- 5>&- &
+    nap=$!
+    wait "$nap"
+    beat_n=$((beat_n + 1))
+    if [ "$beat_n" -ge "$BEAT" ]; then
+      beat_n=0
+      write_updater "$target" "$t"
     fi
   done
+  wait "$CHILD"
+  code=$?
   CHILD=''
   trap on_stop HUP INT TERM
   token=''

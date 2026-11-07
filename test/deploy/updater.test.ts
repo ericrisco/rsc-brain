@@ -550,10 +550,140 @@ for (const shell of SHELLS) {
       assert.equal(JSON.stringify(report(c, 'updater.json')).includes(c.dir), false)
     })
 
-    it('stopping it while an update runs hands the stop to the launcher, which puts things back, and waits for it', async () => {
+    it('keeps beating while an update runs (the service reads a stopped beat as «off»), gets the real exit code, and stops beating when it ends', async () => {
+      const c = fresh()
+      writeFileSync(mark(c), '')
+      // The real clock: the beat is what moves. A short beat and an update of 4 seconds stand for a long pull.
+      const child = spawn(shell, [LOOP], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          PATH: process.env.PATH ?? '/usr/bin:/bin',
+          HOME: join(c.dir, 'updater', 'home'),
+          RSC_BRAIN_UPDATER_DIR: c.dir,
+          RSC_BRAIN_UPDATER_LAUNCHER: FAKE,
+          RSC_BRAIN_UPDATER_ONCE: '1',
+          RSC_BRAIN_UPDATER_BEAT: '1',
+          FAKE_LOG: c.log,
+          FAKE_CHECK: NEWER(),
+          FAKE_UPDATE_SLEEP: '4',
+          FAKE_UPDATE_EXIT: '4',
+          FAKE_UPDATE_SAYS: 'the image did not build',
+        },
+      })
+      let stderr = ''
+      child.stderr.on('data', (d) => {
+        stderr += d
+      })
+      const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)))
+      const beats = new Set<string>()
+      const file = join(c.dir, 'update', 'report', 'updater.json')
+      let done = false
+      void exited.then(() => {
+        done = true
+      })
+      while (!done) {
+        try {
+          const u = JSON.parse(readFileSync(file, 'utf8'))
+          if (u.running) beats.add(u.beatAt)
+        } catch {
+          // Being written: the next look.
+        }
+        await new Promise((r) => setTimeout(r, 200))
+      }
+      assert.equal(await exited, 0, stderr)
+      // A beat every second over 4 seconds is at least 2 distinct beats even on a slow machine; without the helper (or with
+      // the default 5 seconds) there is only the one written when the update started.
+      assert.ok(beats.size >= 2, `the beat moved ${beats.size} time(s) while it ran: ${[...beats].join(' ')}`)
+      // The exit code of the launcher (4) was kept: the version is recorded as failed, with what it said.
+      const after = report(c, 'updater.json')
+      assert.equal(after.running, undefined)
+      assert.ok(
+        after.attempts?.['v0.9.0'],
+        'the exit code 4 of the launcher was kept: the version is recorded as failed',
+      )
+      assert.match(after.attempts['v0.9.0'].reason, /did not build/)
+      // Nothing beats on after it: the file does not change.
+      await new Promise((r) => setTimeout(r, 2500))
+      assert.deepEqual(report(c, 'updater.json'), after)
+    })
+
+    it('while a disable has not finished (updater/disabling) it takes the marks, starts nothing and says enabled:false, disabling:true', () => {
+      const c = fresh()
+      writeFileSync(join(c.dir, 'updater', 'disabling'), '')
+      writeFileSync(mark(c), '')
+      writeFileSync(mark(c, 'retry'), '')
+      const t = tick(c, {}, sh)
+      assert.equal(t.code, 0, t.stderr)
+      assert.equal(updates(t.calls).length, 0, 'no update was started')
+      assert.equal(existsSync(mark(c)), false, 'the mark was taken')
+      assert.equal(existsSync(mark(c, 'retry')), false)
+      const u = report(c, 'updater.json')
+      assert.equal(u.enabled, false)
+      assert.equal(u.disabling, true)
+      assert.equal(u.running, undefined)
+    })
+
+    it('without the mark it is enabled as before', () => {
+      const c = fresh()
+      const t = tick(c, {}, sh)
+      assert.equal(t.code, 0, t.stderr)
+      const u = report(c, 'updater.json')
+      assert.equal(u.enabled, true)
+      assert.equal(u.disabling, undefined)
+    })
+
+    it('only one writer: a slow write in flight when the update ends cannot land after the final one (no stale running, no garbled file)', {
+      timeout: 60_000,
+    }, async () => {
+      const c = fresh()
+      writeFileSync(mark(c), '')
+      // `cat` is what every write of updater.json goes through: made slow, a write is still in flight when the update ends.
+      const slow = join(BASE, `slow-bin-${n}`)
+      mkdirSync(slow)
+      writeFileSync(join(slow, 'cat'), '#!/bin/sh\nsleep 0.8\nexec /bin/cat "$@"\n')
+      chmodSync(join(slow, 'cat'), 0o755)
+      const child = spawn(shell, [LOOP], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          PATH: `${slow}:${process.env.PATH ?? '/usr/bin:/bin'}`,
+          HOME: join(c.dir, 'updater', 'home'),
+          RSC_BRAIN_UPDATER_DIR: c.dir,
+          RSC_BRAIN_UPDATER_LAUNCHER: FAKE,
+          RSC_BRAIN_UPDATER_ONCE: '1',
+          RSC_BRAIN_UPDATER_BEAT: '1',
+          FAKE_LOG: c.log,
+          FAKE_CHECK: NEWER(),
+          FAKE_UPDATE_SLEEP: '3',
+        },
+      })
+      try {
+        const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)))
+        assert.equal(await exited, 0)
+        const file = join(c.dir, 'update', 'report', 'updater.json')
+        // Whatever was still in flight has long finished.
+        await new Promise((r) => setTimeout(r, 3000))
+        const text = readFileSync(file, 'utf8')
+        assert.doesNotThrow(() => JSON.parse(text), `updater.json is whole: ${text}`)
+        const u = JSON.parse(text)
+        assert.equal(u.running, undefined, 'the file says the update has ended')
+        assert.deepEqual(readdirSync(join(c.dir, 'update', 'report')).sort(), ['check.json', 'updater.json'])
+      } finally {
+        try {
+          if (child.pid) process.kill(-child.pid, 'SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }
+    })
+
+    it('stopping it while an update runs hands the stop to the launcher, which puts things back, and waits for it', {
+      timeout: 30_000,
+    }, async () => {
       const c = fresh()
       writeFileSync(mark(c), '')
       const child = spawn(SHELLS[0] ?? '/bin/sh', [LOOP], {
+        detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
         env: {
           PATH: process.env.PATH ?? '/usr/bin:/bin',
@@ -571,9 +701,18 @@ for (const shell of SHELLS) {
       for (let i = 0; i < 200 && !existsSync(`${c.log}.started`); i++)
         await new Promise((r) => setTimeout(r, 50))
       assert.equal(existsSync(`${c.log}.started`), true, 'the update started')
-      child.kill('SIGTERM')
-      await exited
-      assert.equal(existsSync(`${c.log}.signals`), true, 'the launcher heard it')
+      try {
+        child.kill('SIGTERM')
+        await exited
+        assert.equal(existsSync(`${c.log}.signals`), true, 'the launcher heard it')
+      } finally {
+        // Nothing of the rig may outlive the test, whatever happened: the whole group goes.
+        try {
+          if (child.pid) process.kill(-child.pid, 'SIGKILL')
+        } catch {
+          // Already gone.
+        }
+      }
     })
   })
 }
@@ -700,15 +839,20 @@ describe('what the updater may reach (CA15, CA25, CA25b)', () => {
     assert.equal(/^\s*name:/m.test(body), false, 'the project name comes from -p')
   })
 
-  it('the web gets the report to read and nothing of the updater: no socket, no credentials, no request folder yet', () => {
+  it('the web gets the report to read and the folder of its marks, and nothing of the updater: no socket, no credentials', () => {
     const main = readFileSync(COMPOSE, 'utf8').replace(/^\s*#.*$/gm, '')
     assert.equal(main.includes('docker.sock'), false)
     assert.equal(main.includes('updater'), false)
     assert.equal(/credentials|passphrase|token-file/i.test(main), false)
     const app = main.slice(main.indexOf('  app:'), main.indexOf('  postgres:'))
     const mounts = [...app.matchAll(/^\s{6}- (\.\/[^\n]+)$/gm)].map((m) => m[1])
-    assert.deepEqual(mounts.sort(), ['./backups:/backups', './update/report:/update/report:ro'])
+    assert.deepEqual(mounts.sort(), [
+      './backups:/backups',
+      './update/report:/update/report:ro',
+      './update/request:/update/request',
+    ])
     assert.match(app, /RSC_BRAIN_UPDATE_REPORT: \/update\/report/)
+    assert.match(app, /RSC_BRAIN_UPDATE_REQUEST: \/update\/request/)
   })
 
   it('the image is the pinned docker cli with only the tools the launcher needs', () => {

@@ -13,6 +13,7 @@ import type { Providers } from '../meaning/providers.ts'
 import type { FetchPolicy } from '../oauth/fetch.ts'
 import type { Copies } from '../ops/backup/copies.ts'
 import type { ReleaseChecker } from '../ops/releases.ts'
+import type { Updates } from '../ops/updates.ts'
 import type { EventHub, EventTimings } from './hub.ts'
 import type { RateLimiter } from './ratelimit.ts'
 
@@ -54,6 +55,8 @@ export type PublicReq = {
   copies: Copies | null
   // Whether a newer release exists (plan §3.10); null when nothing checks.
   releases: ReleaseChecker | null
+  // Updating from the web: the marks and the updater's report (rsc-updates B3).
+  updates: Updates
   // Where exports are prepared before they are sent (null: a private folder of this process).
   exportDir: string | null
   // The invitation mails one service account may have sent in an hour.

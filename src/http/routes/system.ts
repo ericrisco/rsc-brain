@@ -9,6 +9,7 @@ import { adminOnly } from '../../domain/guards.ts'
 import { maintenance } from '../../domain/maintenance.ts'
 import { meaningProgress, meaningSettings } from '../../domain/meaning.ts'
 import { mailConfigured } from '../../mail/mail.ts'
+import { readStatus } from '../../ops/backup/backup.ts'
 import { keyId } from '../../ops/backup/format.ts'
 import { releaseView } from '../../ops/releases.ts'
 import { type Route, route } from '../router.ts'
@@ -24,6 +25,18 @@ async function freeBytes(dir: string | null): Promise<number | null> {
   } catch {
     return null
   }
+}
+
+// The last update the launcher recorded (what a copy of «Last update» holds): only its outcome, the two versions and
+// when; never its log.
+async function lastUpdate(dir: string | null) {
+  if (!dir) return null
+  const u = (await readStatus(dir)).lastUpdate
+  if (typeof u !== 'object' || u === null) return null
+  const { ok, from, to, at } = u as Record<string, unknown>
+  if (typeof ok !== 'boolean' || typeof from !== 'string' || typeof to !== 'string' || typeof at !== 'string')
+    return null
+  return { ok, from, to, at }
 }
 
 export const systemRoutes: Route[] = [
@@ -62,6 +75,7 @@ export const systemRoutes: Route[] = [
         backups: await backupsOfSystem(r),
         keyId: r.secret ? keyId(r.secret) : null,
         release: releaseView(r.releases?.state() ?? null, VERSION),
+        update: { ...r.updates.state(), last: await lastUpdate(r.backups) },
       },
     }
   }),

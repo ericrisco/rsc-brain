@@ -1999,6 +1999,41 @@ const HAND: Record<string, Op> = {
       keyId: nul(
         s('The id of the installation key (never the key): each copy says the id of the key it needs.'),
       ),
+      update: obj({
+        mode: s(
+          'off (no updater runs: update on the server with `rsc-brain.sh update`), on (the updater runs: the button works) or companion (installed by rsc-factory: update it there).',
+          { enum: ['off', 'on', 'companion'] },
+        ),
+        factoryUrl: nul(s('companion: the address of rsc-factory.')),
+        requested: b('A request is waiting for the updater to take it.'),
+        running: nul(
+          obj({
+            to: s('The version being installed.'),
+            startedAt: nul(s('When it started.', { format: 'date-time' })),
+          }),
+        ),
+        attempts: list(
+          obj({
+            version: s('The version that failed.'),
+            failedAt: s('When it failed.', { format: 'date-time' }),
+            reason: s('What the updater said, at most 4000 characters, secrets removed.'),
+            retries: n('How many times it was tried again from the web.'),
+            retryFrom: nul(
+              s('When it may be tried again from the web; null once only the server can.', {
+                format: 'date-time',
+              }),
+            ),
+          }),
+        ),
+        last: nul(
+          obj({
+            ok: b('The last update went well.'),
+            from: s('The version before it.'),
+            to: s('The version it went to.'),
+            at: s('When it ended.', { format: 'date-time' }),
+          }),
+        ),
+      }),
       release: obj({
         installed: s('The version running, as vX.Y.Z.'),
         latest: nul(
@@ -2100,6 +2135,29 @@ const HAND: Record<string, Op> = {
       ['code'],
     ),
     reply: obj({ key: s('The installation key.'), keyId: s('Its id.') }),
+  },
+  'POST /v1/admin/update': {
+    summary:
+      'Update to the newest published version (administration, in the rsc-brain web, with the password again and the code). It only leaves a request for the updater, which finds the version itself: nothing else in the request is read. 202 requested. 409 updates_off (no updater runs), companion (installed by rsc-factory), nothing_to_update, update_failed (use /update/retry), update_running; 503 update_not_started.',
+    status: 202,
+    body: obj(
+      { password: s('Your password.'), code: s('The code of your authenticator app, with a second factor.') },
+      ['code'],
+    ),
+    reply: obj({
+      requested: b('Always true.'),
+      to: s('The version the updater was asked for: the newest published.'),
+    }),
+  },
+  'POST /v1/admin/update/retry': {
+    summary:
+      'Try the update that failed again (administration, in the rsc-brain web, with the password again). Only for the newest version when it failed; at most 3 times, 15 minutes apart. 409 nothing_to_retry, retry_later, retry_limit; the rest as /update.',
+    status: 202,
+    body: obj(
+      { password: s('Your password.'), code: s('The code of your authenticator app, with a second factor.') },
+      ['code'],
+    ),
+    reply: obj({ requested: b('Always true.'), to: s('The version the updater was asked for.') }),
   },
   'POST /v1/setup/key': {
     summary:

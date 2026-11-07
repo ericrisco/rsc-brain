@@ -271,7 +271,7 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
 // A small JSON file of the report: a regular file (never a link), not large, or nothing.
-function readReport(dir: string, name: string): unknown {
+export function readReport(dir: string, name: string): unknown {
   try {
     const file = join(dir, name)
     const st = lstatSync(file)
@@ -281,13 +281,13 @@ function readReport(dir: string, name: string): unknown {
     return null
   }
 }
-const instant = (v: unknown): string | null => {
+export const instant = (v: unknown): string | null => {
   if (typeof v !== 'string') return null
   const t = Date.parse(v)
   return Number.isNaN(t) ? null : new Date(t).toISOString()
 }
 
-function updaterAlive(dir: string, now: number): boolean {
+export function updaterAlive(dir: string, now: number): boolean {
   const u = readReport(dir, 'updater.json')
   if (!isRecord(u) || u.enabled !== true) return false
   const beat = instant(u.beatAt)

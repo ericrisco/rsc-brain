@@ -3,13 +3,14 @@
 // to become /v2 and leave /v1 working. The description at /v1/openapi.json is generated from the same
 // route table, so it cannot leave a route out, and it documents the pinned fields.
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
 import { hashPassword } from '../../src/auth/password.ts'
 import { stepOf, totpAt } from '../../src/auth/totp.ts'
+import { VERSION } from '../../src/core/version.ts'
 import { ROUTES } from '../../src/http/app.ts'
 import { backup } from '../../src/ops/backup/backup.ts'
 import { EXPORT_LIMITS, EXPORT_STATE } from '../../src/ops/export/export.ts'
@@ -176,6 +177,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     disk: ['backupsFree', 'databaseBytes'],
     backups: ['lastOk', 'lastFailure', 'lastWarning'],
     release: ['installed', 'latest', 'notes', 'checkedAt', 'newer'],
+    update: ['mode', 'factoryUrl', 'requested', 'running', 'attempts', 'last'],
   },
   // B7 PR30 (plan §3.4): the copies, the installation key and restoring, from the web.
   'GET /v1/admin/backups': {
@@ -200,6 +202,8 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     ended: ['invitations', 'resets'],
   },
   'POST /v1/admin/installation-key': { '': ['key', 'keyId'] },
+  'POST /v1/admin/update': { '': ['requested', 'to'] },
+  'POST /v1/admin/update/retry': { '': ['requested', 'to'] },
   'POST /v1/setup/key': { '': ['key', 'keyId'] },
   // B7 (C20): what an outside watcher reads; never the version (a valid key adds it: test/http/health.test.ts).
   'GET /v1/health': {
@@ -777,6 +781,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
       ...(await inbox(entryId)),
       ...(await profile()),
       ...(await copies()),
+      ...(await updateAnswers()),
     }
     const paths = doc.paths as Record<string, Record<string, Json>>
     for (const [op, shape] of Object.entries(SHAPES)) {
@@ -875,6 +880,157 @@ describe('the v1 contract', { skip: skipPg }, () => {
       await o.close()
       await rm(dir, { recursive: true, force: true })
     }
+  }
+
+  // The answers of updating from the web (rsc-updates B3): a request, and a retry after a failure.
+  async function updateAnswers(): Promise<Record<string, Json>> {
+    const dir = await mkdtemp(join(tmpdir(), 'brain-contract-update-ok-'))
+    const request = join(dir, 'request')
+    const report = join(dir, 'report')
+    await mkdir(request)
+    await mkdir(report)
+    const o = await world({
+      releases: {
+        state: () => ({
+          installed: `v${VERSION}`,
+          latest: 'v9.9.9',
+          notes: '',
+          checkedAt: '2026-10-29T09:00:00.000Z',
+          error: null,
+          lastAttemptAt: '2026-10-29T09:00:00.000Z',
+        }),
+        check: async () => {},
+        start: () => {},
+        stop: () => {},
+      },
+      update: { request, report },
+    })
+    try {
+      const a = await o.person('Ada', { isAdmin: true })
+      await o.db.query('UPDATE accounts SET password_hash = $2 WHERE id = $1', [a.id, await hashPassword(PW)])
+      const web = await o.web(a.id)
+      const says = (extra: Record<string, unknown>) =>
+        writeFile(
+          join(report, 'updater.json'),
+          JSON.stringify({ enabled: true, beatAt: o.now.toISOString(), attempts: {}, ...extra }),
+        )
+      const out: Record<string, Json> = {}
+      await says({})
+      const ask = await o.callWeb(web, 'POST', '/v1/admin/update', { password: PW })
+      assert.equal(ask.status, 202, ask.text)
+      out['POST /v1/admin/update'] = ask.body
+      await rm(join(request, 'request'))
+      await says({
+        attempts: {
+          'v9.9.9': {
+            failedAt: '2026-10-29T09:30:00.000Z',
+            reason: 'x',
+            retries: 1,
+            retryFrom: '2026-10-29T09:45:00.000Z',
+          },
+        },
+      })
+      const again = await o.callWeb(web, 'POST', '/v1/admin/update/retry', { password: PW })
+      assert.equal(again.status, 202, again.text)
+      out['POST /v1/admin/update/retry'] = again.body
+      return out
+    } finally {
+      await o.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  }
+
+  // The refusals of updating from the web (rsc-updates B3): each needs the updater's report or the folder of its marks.
+  async function updateRefusals(): Promise<Array<[string, Call]>> {
+    const dir = await mkdtemp(join(tmpdir(), 'brain-contract-update-'))
+    const request = join(dir, 'request')
+    const report = join(dir, 'report')
+    await mkdir(request)
+    await mkdir(report)
+    const latest = {
+      installed: `v${VERSION}`,
+      latest: 'v9.9.9',
+      notes: '',
+      checkedAt: '2026-10-29T09:00:00.000Z',
+      error: null,
+      lastAttemptAt: '2026-10-29T09:00:00.000Z',
+    }
+    const releases = (l: string) => ({
+      state: () => ({ ...latest, latest: l }),
+      check: async () => {},
+      start: () => {},
+      stop: () => {},
+    })
+    const got: Array<[string, Call]> = []
+    const asked = async (o: World, path: string, web: string) =>
+      o.callWeb(web, 'POST', path, { password: PW })
+    const admin = async (o: World) => {
+      const a = await o.person('Ada', { isAdmin: true })
+      await o.db.query('UPDATE accounts SET password_hash = $2 WHERE id = $1', [a.id, await hashPassword(PW)])
+      return o.web(a.id)
+    }
+    const says = async (o: World, extra: Record<string, unknown> = {}) =>
+      writeFile(
+        join(report, 'updater.json'),
+        JSON.stringify({ enabled: true, beatAt: o.now.toISOString(), attempts: {}, ...extra }),
+      )
+    const failed = (retries: number, retryFrom: string | null) => ({
+      attempts: { 'v9.9.9': { failedAt: '2026-10-29T09:30:00.000Z', reason: 'x', retries, retryFrom } },
+    })
+    const o = await world({ releases: releases('v9.9.9'), update: { request, report } })
+    try {
+      const web = await admin(o)
+      got.push(['updates_off', await asked(o, '/v1/admin/update', web)])
+      await says(o)
+      const ok = await asked(o, '/v1/admin/update', web)
+      assert.equal(ok.status, 202, ok.text)
+      got.push(['update_running', await asked(o, '/v1/admin/update', web)])
+      await rm(join(request, 'request'))
+      await says(o, failed(0, '2026-10-29T11:00:00.000Z'))
+      got.push(['update_failed', await asked(o, '/v1/admin/update', web)])
+      got.push(['retry_later', await asked(o, '/v1/admin/update/retry', web)])
+      await says(o, failed(3, null))
+      got.push(['retry_limit', await asked(o, '/v1/admin/update/retry', web)])
+      await says(o)
+      got.push(['nothing_to_retry', await asked(o, '/v1/admin/update/retry', web)])
+    } finally {
+      await o.close()
+    }
+    const same = await world({ releases: releases(`v${VERSION}`), update: { request, report } })
+    try {
+      await says(same)
+      got.push(['nothing_to_update', await asked(same, '/v1/admin/update', await admin(same))])
+    } finally {
+      await same.close()
+    }
+    const gone = await world({
+      releases: releases('v9.9.9'),
+      update: { request: join(dir, 'nowhere'), report },
+    })
+    try {
+      await says(gone)
+      got.push(['update_not_started', await asked(gone, '/v1/admin/update', await admin(gone))])
+    } finally {
+      await gone.close()
+    }
+    const comp = await world({
+      releases: releases('v9.9.9'),
+      update: { request, report },
+      companion: {
+        token: 'c'.repeat(40),
+        network: '172.30.0.0/24',
+        gateway: null,
+        factoryUrl: 'https://factory.example.test',
+        publicUrl: null,
+      },
+    })
+    try {
+      got.push(['companion', await asked(comp, '/v1/admin/update', await admin(comp))])
+    } finally {
+      await comp.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+    return got
   }
 
   // The real answers of the screens before a session, in the order a person meets them.
@@ -1477,6 +1633,7 @@ describe('the v1 contract', { skip: skipPg }, () => {
     await add('reauth_failed', w.callWeb(bossWeb, 'POST', '/v1/admin/installation-key', {}))
     await add('backups_not_set_up', w.callWeb(bossWeb, 'POST', '/v1/admin/backups', {}))
     got.push(...(await copyRefusals()))
+    got.push(...(await updateRefusals()))
     // The logo (G3) and the key of the meaning provider in use (PR25b).
     const logo = (contentType: string, data: Buffer) =>
       w.callWeb(bossWeb, 'PUT', '/v1/admin/branding/logo', { contentType, data: data.toString('base64') })

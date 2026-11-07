@@ -90,6 +90,8 @@ export async function world(
     // Another installation key (restoring into another installation, B7).
     secret?: string
     releases?: ReleaseChecker
+    // Updating from the web (rsc-updates B3): where the marks go and where the updater's report is read.
+    update?: { request?: string | null; report?: string | null }
     // Where exports are prepared before they are sent (B7 PR31 review).
     exportDir?: string
     // The invitation mails a service may have sent in an hour (F1-PR2 review).
@@ -140,6 +142,7 @@ export async function world(
           }
         : {}),
       ...(o.releases ? { releases: o.releases } : {}),
+      ...(o.update ? { update: o.update } : {}),
       ...(o.backups ? { backups: o.backups } : {}),
       ...(o.exportDir ? { exportDir: o.exportDir } : {}),
       ...(o.serviceInvitesPerHour ? { serviceInvitesPerHour: o.serviceInvitesPerHour } : {}),
