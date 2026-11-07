@@ -4,35 +4,25 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
-## Unreleased
+## v0.3.0
 
-- **What is published has one definition.** A `vX.Y.Z` tag of the repository, and what it changes from the
-  `## vX.Y.Z` section of the `CHANGELOG.md` in that tag, for the launcher, the web and rsc-factory. The web
-  asks the repository without credentials instead of the list of releases; `RSC_BRAIN_REPO_URL` says where,
-  and empty (or an empty `RSC_BRAIN_RELEASES_URL`) turns it off.
-- **`rsc-brain.sh update --check [--json]`.** Only looks: the version running, the newest published and what
-  it changes, with the machine's own access. Nothing stops and nothing is written.
-- **A private repository says so.** Administration › Backups & system says «Could not check for a new
-  version» and gives that command, never that it is up to date.
+Update rsc-brain from its own web, and know what version is out.
+
+- **Updating from the web, off by default.** `rsc-brain.sh web-updates enable` starts a small updater in a
+  container of its own. Whoever controls it controls the server, and `enable` says so. A private repository
+  needs a read-only token or SSH key given as a file.
+- **The button.** Administration › Backups & system offers «Update to vX.Y.Z» to an administrator, who confirms
+  with their password. One update at a time, **Try again** after a failure (at most 3 times, 15 minutes apart),
+  and the page follows the update to its result. If the update cannot start, the page says what is missing and
+  how to fix it. If a way back could not restore your data, the page says so and gives the steps for the
+  server instead of offering to try again. An installation made by rsc-factory has no button: update it there.
+- **See what is new.** `rsc-brain.sh update --check` shows the version running, the newest published and what
+  it changes, without stopping anything. A private repository says so instead of claiming it is up to date.
+- **Something answers during an update.** While the service restarts, a page says so (503 with `Retry-After`
+  for programs) instead of a dead port.
+- **Safer updates on Linux.** If Docker made the `update` folders for root, `update` and `web-updates enable`
+  say the exact `sudo chown` line instead of failing and rolling back.
 - **`GET /v1/health` says the version to a valid key.** Without one it still does not.
-- **Something answers during an update.** While the service is stopped, also through the restore of a way
-  back, a stand-in holds its port and name: a page with the step for a browser, 503 with `Retry-After` and
-  `under_maintenance` for the rest.
-
-- **Updating from the web, off by default.** `rsc-brain.sh web-updates enable|disable|status` runs an updater
-  in a container of its own (no port, none of the service's networks, the Docker socket, the installation and a
-  user list mounted, nothing else). Whoever controls it controls the server, and `enable` says so. A private
-  repository needs a read-only token or SSH key given as a file. At most 3 retries per version, 15 minutes
-  apart. Not for an installation made by rsc-factory: it exits 2 and refers to rsc-factory.
-- **The button.** With the updater on, Administration › Backups & system offers «Update to vX.Y.Z» to an
-  administrator, who confirms with their password again (and the code). `POST /v1/admin/update` and
-  `/update/retry` only leave an empty mark for the updater; nothing in the request reaches it. One update at
-  a time, **Try again** after a failure within the updater's limits, and the page follows the update to its
-  result. In an installation made by rsc-factory there is no button: the page says to update it from there
-  and links to rsc-factory. `GET /v1/admin/system` gains `update`.
-- **The web's version check follows the updater.** With the updater on, the web does not ask the repository:
-  it reads what the updater found, with the server's own access. Notes drop control characters, as the
-  launcher does.
 
 ## v0.2.0
 
