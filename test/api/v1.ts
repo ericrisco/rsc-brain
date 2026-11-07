@@ -233,6 +233,7 @@ export const ERROR_STATUS: Record<string, number> = {
   companion: 409,
   nothing_to_update: 409,
   update_failed: 409,
+  rollback_failed: 409,
   nothing_to_retry: 409,
   retry_later: 409,
   retry_limit: 409,

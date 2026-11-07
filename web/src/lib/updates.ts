@@ -14,6 +14,10 @@ export type UpdateInfo = {
   requested: boolean
   running: { to: string; startedAt: string | null } | null
   attempts: UpdateAttempt[]
+  // The launcher refused the last request (nothing was stopped): what was missing.
+  refused: { version: string; at: string; reason: string } | null
+  // A way back that could not restore: the data may not be as it was. Null when none.
+  rollbackFailed: { from: string; to: string; copy: string; restore: string } | null
   last: { ok: boolean; from: string; to: string; at: string } | null
 }
 
@@ -22,7 +26,9 @@ export type UpdateView =
   | { kind: 'terminal' }
   // Installed by rsc-factory: it updates rsc-brain.
   | { kind: 'companion'; factoryUrl: string | null }
-  | { kind: 'available'; to: string }
+  | { kind: 'available'; to: string; refused?: { at: string; reason: string } }
+  // A way back that could not restore the copy: no button, no retry; what happened and the steps on the server.
+  | { kind: 'unsafe'; from: string; to: string; restore: string }
   | { kind: 'waiting' }
   | { kind: 'running'; to: string }
   | {
@@ -30,6 +36,8 @@ export type UpdateView =
       to: string
       failedAt: string
       reason: string
+      // The launcher refused a request after this failure (nothing was stopped): what was missing.
+      refused?: { at: string; reason: string }
       // now: the button works; {from}: after that time; server: the web cannot try again, only the server.
       retry: 'now' | 'server' | { from: string }
     }
@@ -43,16 +51,33 @@ export function updateView(
   if (u.mode === 'companion') return { kind: 'companion', factoryUrl: u.factoryUrl }
   if (u.running) return { kind: 'running', to: u.running.to }
   if (u.requested) return { kind: 'waiting' }
+  if (u.rollbackFailed) {
+    const { from, to, restore } = u.rollbackFailed
+    return { kind: 'unsafe', from, to, restore }
+  }
   if (!release.newer || !release.latest) return { kind: 'terminal' }
   const failed = u.attempts.find((a) => a.version === release.latest)
-  if (!failed) return { kind: 'available', to: release.latest }
+  if (!failed) {
+    const r = u.refused?.version === release.latest ? u.refused : null
+    return r
+      ? { kind: 'available', to: release.latest, refused: { at: r.at, reason: r.reason } }
+      : { kind: 'available', to: release.latest }
+  }
   const retry =
     failed.retryFrom === null
       ? ('server' as const)
       : Date.parse(failed.retryFrom) > now.getTime()
         ? { from: failed.retryFrom }
         : ('now' as const)
-  return { kind: 'failed', to: release.latest, failedAt: failed.failedAt, reason: failed.reason, retry }
+  const r = u.refused?.version === release.latest ? u.refused : null
+  const out = {
+    kind: 'failed' as const,
+    to: release.latest,
+    failedAt: failed.failedAt,
+    reason: failed.reason,
+    retry,
+  }
+  return r ? { ...out, refused: { at: r.at, reason: r.reason } } : out
 }
 
 const bare = (v: string) => v.replace(/^v/, '')

@@ -100,6 +100,9 @@ mkdir -p "$STATE/attempts" 2>/dev/null && chmod 700 "$STATE" 2>/dev/null
 
 # --------------------------------------------------------------------------------------------------------- reports
 ACCEPTED=''
+# The mark of a way back that failed is the launcher's (<install>/.rsc-brain/rollback.failed); this only looks at it.
+rollback_failed() { [ -f "$DIR/.rsc-brain/rollback.failed" ] && [ ! -L "$DIR/.rsc-brain/rollback.failed" ]; }
+rb_value() { sed -n "s/^$1='\\(.*\\)'\$/\\1/p" "$DIR/.rsc-brain/rollback.failed" 2>/dev/null | head -n 1; }
 # updater.json: alive, when the last request was taken, what is running, and what failed with when it may be tried again.
 write_updater() { # [running-version running-since]
   wu_now=$(now)
@@ -111,6 +114,25 @@ write_updater() { # [running-version running-since]
     fi
     if [ -n "$ACCEPTED" ]; then printf ',"requestAcceptedAt":"%s"' "$(iso "$ACCEPTED")"; fi
     if [ -n "${1:-}" ]; then printf ',"running":{"to":%s,"startedAt":"%s"}' "$(jstr "$1")" "$(iso "$2")"; fi
+    # A request the launcher refused (nothing was stopped): the web shows why, until the next request or a good update.
+    if [ -f "$STATE/refused" ]; then
+      rf_to=$(file_value "$STATE/refused" TO) rf_at=$(file_value "$STATE/refused" AT)
+      case $rf_to$rf_at in
+      *[!0-9a-zA-Z.]*) ;;
+      *)
+        if [ -n "$rf_to" ] && [ -n "$rf_at" ]; then
+          printf ',"refused":{"to":%s,"at":"%s","reason":%s}' "$(jstr "$rf_to")" "$(iso "$rf_at")" \
+            "$(jstr "$(cat "$STATE/refused.reason" 2>/dev/null)")"
+        fi
+        ;;
+      esac
+    fi
+    # A way back that could not restore: the data may be damaged, and only the terminal goes on from here.
+    if rollback_failed; then
+      printf ',"rollbackFailed":{"from":%s,"to":%s,"copy":%s,"restore":%s}' "$(jstr "$(rb_value RSC_BRAIN_ROLLBACK_FROM)")" \
+        "$(jstr "$(rb_value RSC_BRAIN_ROLLBACK_TO)")" "$(jstr "$(rb_value RSC_BRAIN_ROLLBACK_COPY)")" \
+        "$(jstr "$(rb_value RSC_BRAIN_ROLLBACK_RESTORE)")"
+    fi
     printf ',"attempts":{'
     sep=''
     for f in "$STATE"/attempts/v*; do
@@ -227,6 +249,12 @@ requests() {
     rm -f -- "$REQ/request" "$REQ/retry"
     return 0
   fi
+  if rollback_failed; then
+    # Another update would make a new copy of data that may be damaged: nothing starts until a restore goes well.
+    say 'A way back failed earlier: the request was not started.'
+    rm -f -- "$REQ/request" "$REQ/retry"
+    return 0
+  fi
   [ "$CHECKED" = 1 ] || run_check
   target=$CHECK_LATEST
   if [ "$CHECK_OK" = 0 ] || [ "$CHECK_NEWER" != true ] || [ -z "$target" ]; then
@@ -253,6 +281,7 @@ requests() {
   fi
   # The status says running first, and only then is the mark taken: a request is never lost between the two.
   ACCEPTED=$t
+  rm -f -- "$STATE/refused" "$STATE/refused.reason"
   write_updater "$target" "$t"
   rm -f -- "$REQ/request" "$REQ/retry"
   if [ -e "$REQ/request" ] || [ -L "$REQ/request" ] || [ -e "$REQ/retry" ] || [ -L "$REQ/retry" ]; then
@@ -304,7 +333,10 @@ requests() {
     EXIT_AFTER=1
     ;;
   2 | 3)
-    # Refused, or something missing or running: nothing was stopped, and no attempt is spent.
+    # Refused, or something missing or running: nothing was stopped, and no attempt is spent. The web is told why.
+    [ -n "$reason" ] || reason="The launcher refused the update to $target (exit $code)."
+    printf '%s\n' "$reason" >"$STATE/refused.reason"
+    printf 'TO=%s\nAT=%s\n' "$target" "$ended" >"$STATE/refused"
     write_updater
     ;;
   *)

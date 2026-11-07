@@ -1233,6 +1233,14 @@ export const T = {
     updateRetryFrom: (when: string) => `You can try again ${when}.`,
     updateServerOnly:
       'It failed too many times from the web, so only the server can try again. On the server:',
+    updateCannot: (why: string) => `Cannot update: ${why}`,
+    updateCannotHow: 'Fix that and ask again, or update on the server:',
+    updateUnsafe: (to: string) =>
+      `The last update${to ? ` to ${to}` : ''} failed, and rsc-brain could not go back by itself: the data may not be as it was.`,
+    updateUnsafeHow:
+      'Do not update again until it is restored. On the server, restore the copy made before that update (everyone signs in again afterwards):',
+    updateUnsafeUnreadable:
+      'The details of that update could not be read. On the server, run this: it says what to restore.',
     updateCompanion: 'rsc-brain was installed by rsc-factory: update it from there.',
     updateOpenFactory: 'Open rsc-factory',
     lastUpdate: 'Last update',

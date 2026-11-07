@@ -90,3 +90,121 @@ describe('the request mark', () => {
     assert.equal(await code(make({ request: null }).mark(false)), 'update_not_started')
   })
 })
+
+describe('what the updater reports besides the attempts (closing review, findings 2 and 3)', () => {
+  let tmp: string
+  const NOW = new Date('2026-11-05T10:00:00.000Z')
+  const view = { installed: 'v0.2.0', latest: 'v0.3.0', newer: true } as never
+  const make = () =>
+    updates({
+      request: join(tmp, 'request'),
+      report: join(tmp, 'report'),
+      clock: () => NOW,
+      companion: false,
+      factoryUrl: null,
+    })
+  const says = (extra: Record<string, unknown>) =>
+    writeFileSync(
+      join(tmp, 'report', 'updater.json'),
+      JSON.stringify({ enabled: true, beatAt: NOW.toISOString(), attempts: {}, ...extra }),
+    )
+  before(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'brain-updates-report-'))
+    mkdirSync(join(tmp, 'request'))
+    mkdirSync(join(tmp, 'report'))
+  })
+  after(() => rmSync(tmp, { recursive: true, force: true }))
+
+  it('a refused request: the version, when and why come through, trimmed and cleaned', () => {
+    says({
+      refused: {
+        to: 'v0.3.0',
+        at: '2026-11-05T09:58:00.000Z',
+        reason: 'Cannot update: not enough disk.\u0007',
+      },
+    })
+    assert.deepEqual(make().state().refused, {
+      version: 'v0.3.0',
+      at: '2026-11-05T09:58:00.000Z',
+      reason: 'Cannot update: not enough disk.',
+    })
+    assert.equal(
+      make().refusal(view, false),
+      null,
+      'a refusal is not a failed attempt: it can be asked again',
+    )
+  })
+
+  it('a refusal that is not shaped right is ignored', () => {
+    for (const refused of [
+      null,
+      'x',
+      { to: 'latest', at: '2026-11-05T09:58:00.000Z', reason: 'x' },
+      { to: 'v0.3.0', at: 'yesterday', reason: 'x' },
+      { to: 'v0.3.0', at: '2026-11-05T09:58:00.000Z', reason: 5 },
+    ]) {
+      says({ refused })
+      assert.equal(make().state().refused, null, JSON.stringify(refused))
+    }
+  })
+
+  const wrecked = {
+    from: '0.2.0',
+    to: '0.3.0',
+    copy: 'rsc-brain-1-pre-update.rscb',
+    restore: 'sh rsc-brain.sh restore --file x.rscb --confirm <name> --dir "/srv/b"',
+  }
+  it('a way back that could not restore: the state says so, and neither Update nor Try again is allowed', () => {
+    says({ rollbackFailed: wrecked })
+    const u = make()
+    assert.deepEqual(u.state().rollbackFailed, wrecked)
+    for (const retry of [false, true]) {
+      const no = u.refusal(view, retry)
+      assert.equal(no?.code, 'rollback_failed', String(retry))
+      assert.equal(no?.status, 409)
+      assert.match(no?.howToProceed ?? '', /restore --file x\.rscb/)
+    }
+    // Even with a failed attempt that would otherwise allow a retry.
+    says({
+      rollbackFailed: wrecked,
+      attempts: {
+        'v0.3.0': {
+          failedAt: '2026-11-05T09:00:00.000Z',
+          reason: 'x',
+          retries: 0,
+          retryFrom: '2026-11-05T09:15:00.000Z',
+        },
+      },
+    })
+    assert.equal(make().refusal(view, true)?.code, 'rollback_failed')
+  })
+
+  it('without it, or with a bad one, nothing changes', () => {
+    says({})
+    assert.equal(make().state().rollbackFailed, null)
+    for (const bad of ['x', 5, [], null]) {
+      says({ rollbackFailed: bad })
+      assert.equal(make().state().rollbackFailed, null, JSON.stringify(bad))
+    }
+    assert.equal(make().refusal(view, false), null)
+  })
+
+  it('the mark exists but its details are empty or wrong: it still blocks, and no empty command is offered (review round 1)', () => {
+    for (const r of [{ from: '', to: '', copy: '', restore: '' }, { from: 1 }, {}]) {
+      says({ rollbackFailed: r })
+      const u = make()
+      assert.deepEqual(u.state().rollbackFailed, {
+        from: typeof (r as { from?: unknown }).from === 'string' ? (r as { from: string }).from : '',
+        to: '',
+        copy: '',
+        restore: '',
+      })
+      for (const retry of [false, true]) {
+        const no = u.refusal(view, retry)
+        assert.equal(no?.code, 'rollback_failed')
+        assert.doesNotMatch(no?.howToProceed ?? '', /: $/)
+        assert.match(no?.howToProceed ?? '', /rsc-brain\.sh status/)
+      }
+    }
+  })
+})

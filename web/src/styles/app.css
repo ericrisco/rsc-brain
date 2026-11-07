@@ -4098,6 +4098,12 @@ input[type="file"]::file-selector-button {
   overflow-wrap: anywhere;
 }
 
+.update code,
+.update pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .release pre.notes {
   max-height: 320px;
   overflow: auto;

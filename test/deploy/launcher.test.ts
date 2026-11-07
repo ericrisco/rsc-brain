@@ -23,7 +23,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
-import { createServer, type Server } from 'node:net'
+import { connect, createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -174,9 +174,16 @@ const freePort = () =>
       s.close(() => resolve(p))
     })
   })
+// A server that holds a port. The launcher probes it with `nc -z`, which closes the connection abruptly: the reset
+// reaches the server's socket, and with no handler for it the error is raised by the process, after the test, and
+// fails the whole file.
+const holding = (s: Server): Server => {
+  s.on('connection', (socket) => socket.on('error', () => {}))
+  return s
+}
 const busyPort = () =>
   new Promise<number>((resolve) => {
-    const s = createServer().listen(0, '127.0.0.1', () => {
+    const s = holding(createServer()).listen(0, '127.0.0.1', () => {
       servers.push(s)
       resolve((s.address() as { port: number }).port)
     })
@@ -519,6 +526,16 @@ describe('the launcher: a local installation', () => {
 })
 
 describe('the launcher: the port', () => {
+  it('a probe that resets the connection to a held port does not fail the run', async () => {
+    const port = await busyPort()
+    await new Promise<void>((done) => {
+      const probe = connect(port, '127.0.0.1', () => {
+        probe.resetAndDestroy()
+        setTimeout(done, 200)
+      })
+    })
+  })
+
   it('in use, with --yes: exit 3 naming --port and a free one, nothing changed', async () => {
     const c = fresh()
     const port = await busyPort()
@@ -578,7 +595,7 @@ describe('the launcher: reinstalling (spec «Volver a ejecutar el instalador»)'
     const args = await local(c)
     assert.equal(launch(c, args).code, 0)
     const port = Number(args[args.indexOf('--port') + 1])
-    const holder = createServer().listen(port, '127.0.0.1')
+    const holder = holding(createServer()).listen(port, '127.0.0.1')
     servers.push(holder)
     await new Promise((r) => holder.once('listening', r))
     const again = launch(c, ['install', '--local', '--yes', '--dir', c.dir, '--port', String(port)])
@@ -591,7 +608,7 @@ describe('the launcher: reinstalling (spec «Volver a ejecutar el instalador»)'
     assert.equal(launch(c, args).code, 0)
     assert.equal(launch(c, ['uninstall', '--dir', c.dir]).code, 0)
     const port = Number(args[args.indexOf('--port') + 1])
-    const holder = createServer().listen(port, '127.0.0.1')
+    const holder = holding(createServer()).listen(port, '127.0.0.1')
     servers.push(holder)
     await new Promise((r) => holder.once('listening', r))
     const before = readFileSync(join(c.dir, '.env'), 'utf8')

@@ -177,7 +177,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     disk: ['backupsFree', 'databaseBytes'],
     backups: ['lastOk', 'lastFailure', 'lastWarning'],
     release: ['installed', 'latest', 'notes', 'checkedAt', 'newer'],
-    update: ['mode', 'factoryUrl', 'requested', 'running', 'attempts', 'last'],
+    update: ['mode', 'factoryUrl', 'requested', 'running', 'attempts', 'refused', 'rollbackFailed', 'last'],
   },
   // B7 PR30 (plan §3.4): the copies, the installation key and restoring, from the web.
   'GET /v1/admin/backups': {
@@ -993,6 +993,10 @@ describe('the v1 contract', { skip: skipPg }, () => {
       got.push(['retry_limit', await asked(o, '/v1/admin/update/retry', web)])
       await says(o)
       got.push(['nothing_to_retry', await asked(o, '/v1/admin/update/retry', web)])
+      await says(o, {
+        rollbackFailed: { from: '0.1.0', to: '9.9.9', copy: 'c.rscb', restore: 'sh rsc-brain.sh restore' },
+      })
+      got.push(['rollback_failed', await asked(o, '/v1/admin/update', web)])
     } finally {
       await o.close()
     }

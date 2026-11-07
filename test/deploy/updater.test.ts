@@ -862,3 +862,110 @@ describe('what the updater may reach (CA15, CA25, CA25b)', () => {
     assert.equal(/\b(curl|wget|sudo)\b/.test(d), false)
   })
 })
+
+describe('the updater: what a refusal and a way back that failed say (closing review, findings 2 and 3)', () => {
+  const SAYS =
+    'Cannot update: there is not enough free disk (needs 2 GB, 1 GB free). Free some space and ask again.'
+  it('a refused request (2) or one that cannot run now (3) leaves its reason for the web, and spends no attempt', () => {
+    for (const code of ['2', '3']) {
+      const c = fresh()
+      writeFileSync(mark(c), '')
+      tick(c, { FAKE_UPDATE_EXIT: code, FAKE_UPDATE_SAYS: SAYS })
+      const u = report(c, 'updater.json')
+      assert.equal(u.refused.to, 'v0.9.0', code)
+      assert.match(u.refused.reason, /not enough free disk/, code)
+      assert.match(u.refused.at, /^20\d\d-\d\d-\d\dT/, code)
+      assert.deepEqual(u.attempts, {}, code)
+      assert.equal(u.running, undefined, code)
+      // The next beat still says it.
+      const again = tick(c, {}, { at: NOW + 5 })
+      assert.equal(again.code, 0)
+      assert.equal(report(c, 'updater.json').refused.to, 'v0.9.0', code)
+    }
+  })
+
+  it('a refusal never carries the credential', () => {
+    const c = fresh()
+    writeFileSync(join(c.dir, 'updater', 'credentials', 'token'), `${TOKEN}\n`)
+    writeFileSync(mark(c), '')
+    tick(c, { FAKE_UPDATE_EXIT: '3', FAKE_UPDATE_SAYS: `Cannot update: cannot fetch with ${TOKEN}` })
+    assert.doesNotMatch(readFileSync(join(c.dir, 'update', 'report', 'updater.json'), 'utf8'), /ghp_/)
+  })
+
+  it('the next request clears the refusal, and so does a good update', () => {
+    const c = fresh()
+    writeFileSync(mark(c), '')
+    tick(c, { FAKE_UPDATE_EXIT: '3', FAKE_UPDATE_SAYS: SAYS })
+    writeFileSync(mark(c), '')
+    tick(c, {}, { at: NOW + 1 })
+    assert.equal(report(c, 'updater.json').refused, undefined)
+  })
+
+  const wreck = (c: Case) =>
+    writeFileSync(
+      join(c.dir, '.rsc-brain', 'rollback.failed'),
+      [
+        "RSC_BRAIN_ROLLBACK_FROM='0.2.0'",
+        "RSC_BRAIN_ROLLBACK_TO='0.3.0'",
+        "RSC_BRAIN_ROLLBACK_COPY='rsc-brain-1-pre-update.rscb'",
+        `RSC_BRAIN_ROLLBACK_RESTORE='sh rsc-brain.sh restore --file rsc-brain-1-pre-update.rscb --confirm <the installation's name> --dir "${c.dir}"'`,
+        '',
+      ].join('\n'),
+    )
+
+  it('while rollback.failed exists the updater says so and starts nothing, request or retry', () => {
+    const c = fresh()
+    wreck(c)
+    writeFileSync(mark(c), '')
+    writeFileSync(mark(c, 'retry'), '')
+    const t = tick(c, {})
+    assert.equal(updates(t.calls).length, 0)
+    assert.equal(existsSync(mark(c)), false)
+    assert.equal(existsSync(mark(c, 'retry')), false)
+    const u = report(c, 'updater.json')
+    assert.equal(u.rollbackFailed.from, '0.2.0')
+    assert.equal(u.rollbackFailed.to, '0.3.0')
+    assert.match(u.rollbackFailed.restore, /restore --file rsc-brain-1-pre-update\.rscb/)
+    assert.deepEqual(u.attempts, {})
+  })
+
+  it('once the mark is gone, requests work again and the report stops saying it', () => {
+    const c = fresh()
+    wreck(c)
+    tick(c, {})
+    rmSync(join(c.dir, '.rsc-brain', 'rollback.failed'))
+    writeFileSync(mark(c), '')
+    const t = tick(c, {}, { at: NOW + 1 })
+    assert.equal(updates(t.calls).length, 1)
+    assert.equal(report(c, 'updater.json').rollbackFailed, undefined)
+  })
+  it('a launcher that says nothing when it refuses: the reason is the fallback sentence (review round 1)', () => {
+    for (const code of ['2', '3']) {
+      const c = fresh()
+      writeFileSync(mark(c), '')
+      tick(c, { FAKE_UPDATE_EXIT: code })
+      assert.equal(
+        report(c, 'updater.json').refused.reason,
+        `The launcher refused the update to v0.9.0 (exit ${code}).`,
+      )
+    }
+  })
+
+  it('a rollback.failed that is empty or unreadable still blocks, and is reported with empty details', () => {
+    const c = fresh()
+    writeFileSync(join(c.dir, '.rsc-brain', 'rollback.failed'), '')
+    writeFileSync(mark(c), '')
+    const t = tick(c, {})
+    assert.equal(updates(t.calls).length, 0)
+    assert.deepEqual(report(c, 'updater.json').rollbackFailed, { from: '', to: '', copy: '', restore: '' })
+  })
+
+  it('a rollback.failed that is a link is not read and blocks nothing (the launcher never makes one)', () => {
+    const c = fresh()
+    symlinkSync('/etc/hostname', join(c.dir, '.rsc-brain', 'rollback.failed'))
+    writeFileSync(mark(c), '')
+    const t = tick(c, {})
+    assert.equal(updates(t.calls).length, 1)
+    assert.equal(report(c, 'updater.json').rollbackFailed, undefined)
+  })
+})

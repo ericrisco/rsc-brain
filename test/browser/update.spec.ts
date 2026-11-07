@@ -188,6 +188,90 @@ test.describe('Admin › Backups & system: updating from the web', () => {
     await expect(service(page).getByRole('button', { name: 'Try again' })).toHaveCount(0)
   })
 
+  test('a refused request says «Cannot update: …» with the reason, and the button stays (closing review)', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await behind(baseURL as string, s.id, {
+      release: NEWER,
+      update: {
+        mode: 'on',
+        refused: {
+          version: 'v0.2.0',
+          at: '2026-10-29T09:58:00.000Z',
+          reason: 'Cannot update: there is not enough free disk (needs 2 GB, 1 GB free).',
+        },
+      },
+    })
+    await page.goto('/admin/system')
+    await expect(service(page)).toContainText(
+      'Cannot update: there is not enough free disk (needs 2 GB, 1 GB free).',
+    )
+    await expect(service(page)).toContainText('rsc-brain.sh update')
+    await expect(service(page).getByRole('button', { name: 'Update to v0.2.0' })).toBeVisible()
+    await audit(page, 'update refused')
+  })
+
+  test('a way back that could not restore: no Update, no Try again, what happened and the steps on the server (closing review)', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await behind(baseURL as string, s.id, {
+      release: NEWER,
+      update: {
+        mode: 'on',
+        attempts: [failure(0, PAST)],
+        rollbackFailed: {
+          from: '0.1.0',
+          to: '0.2.0',
+          copy: 'rsc-brain-1-pre-update.rscb',
+          restore: 'sh rsc-brain.sh restore --file rsc-brain-1-pre-update.rscb --dir /srv/b',
+        },
+      },
+    })
+    await page.goto('/admin/system')
+    await expect(service(page)).toContainText('could not go back by itself')
+    await expect(service(page)).toContainText('restore --file rsc-brain-1-pre-update.rscb')
+    await expect(service(page).getByRole('button', { name: /^Update to|Try again/ })).toHaveCount(0)
+    await audit(page, 'rollback failed')
+  })
+
+  test('a refused Try again says why next to the old failure; a failed way back with no details says so (review round 1)', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await behind(baseURL as string, s.id, {
+      release: NEWER,
+      update: {
+        mode: 'on',
+        attempts: [failure(0, PAST)],
+        refused: { version: 'v0.2.0', at: PAST, reason: 'Cannot update: another run holds the lock.' },
+      },
+    })
+    await page.goto('/admin/system')
+    await expect(service(page)).toContainText('The update to v0.2.0 failed at')
+    await expect(service(page)).toContainText('Cannot update: another run holds the lock.')
+    await expect(service(page).getByRole('button', { name: 'Try again' })).toBeVisible()
+    await audit(page, 'failure and refusal')
+    await behind(baseURL as string, s.id, {
+      update: {
+        refused: null,
+        rollbackFailed: { from: '', to: '', copy: '', restore: '' },
+      },
+    })
+    await page.reload()
+    await expect(service(page)).toContainText('could not go back by itself')
+    await expect(service(page)).toContainText('could not be read')
+    await expect(service(page).getByRole('button', { name: /^Update to|Try again/ })).toHaveCount(0)
+    await audit(page, 'unreadable way back')
+  })
+
   test('installed by rsc-factory: no button of its own, and the way to rsc-factory (CA28)', async ({
     page,
     context,
@@ -220,12 +304,33 @@ test.describe('Admin › Backups & system: updating from the web', () => {
       { mode: 'on', attempts: [failure(0, PAST)] },
       { mode: 'on', attempts: [failure(1, FUTURE)] },
       { mode: 'on', attempts: [failure(3, null)] },
+      {
+        mode: 'on',
+        refused: { version: 'v0.2.0', at: PAST, reason: `Cannot update: ${'a long reason '.repeat(30)}` },
+      },
+      {
+        mode: 'on',
+        rollbackFailed: {
+          from: '0.1.0',
+          to: '0.2.0',
+          copy: 'c',
+          restore: `sh rsc-brain.sh restore --file ${'x'.repeat(120)}`,
+        },
+      },
       { mode: 'companion', factoryUrl: 'https://factory.example.test/with/a/long/path/to/admin/updates' },
     ]
     for (const update of states) {
       await behind(baseURL as string, s.id, {
         release: NEWER,
-        update: { mode: 'off', requested: false, running: null, attempts: [], ...update },
+        update: {
+          mode: 'off',
+          requested: false,
+          running: null,
+          attempts: [],
+          refused: null,
+          rollbackFailed: null,
+          ...update,
+        },
       })
       await page.goto('/admin/system')
       await expect(service(page)).toContainText('Version v0.1.0 is running.')

@@ -100,6 +100,8 @@ type Fx = {
       retries: number
       retryFrom: string | null
     }>
+    refused: { version: string; at: string; reason: string } | null
+    rollbackFailed: { from: string; to: string; copy: string; restore: string } | null
   }
   // What the launcher recorded about the last update (B7 PR35), and whether an update runs now (writes refused).
   lastUpdate: unknown
@@ -275,7 +277,15 @@ export function fxOf(s: AdminScen): Fx {
       lastWarning: null,
       nextCopy: 'ok',
       release: { latest: null, notes: null, checkedAt: null },
-      update: { mode: 'off', factoryUrl: null, requested: false, running: null, attempts: [] },
+      update: {
+        mode: 'off',
+        factoryUrl: null,
+        requested: false,
+        running: null,
+        attempts: [],
+        refused: null,
+        rollbackFailed: null,
+      },
       lastUpdate: null,
       maintenance: false,
     }
@@ -387,6 +397,13 @@ function updateAsk(c: AdminCtx, retry: boolean): Answer {
       'updates_off',
       'Updating from the web is off on this installation.',
       'On the server, run: rsc-brain.sh update.',
+    )
+  if (u.rollbackFailed)
+    return err(
+      409,
+      'rollback_failed',
+      'The last update failed and could not go back.',
+      u.rollbackFailed.restore,
     )
   if (u.requested || u.running)
     return err(409, 'update_running', 'An update is already running.', 'Wait for it to finish.')
