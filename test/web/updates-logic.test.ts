@@ -16,6 +16,7 @@ const on = (o: Partial<UpdateInfo> = {}): UpdateInfo => ({
   running: null,
   attempts: [],
   refused: null,
+  rollbackFailed: null,
   last: null,
   ...o,
 })
@@ -138,10 +139,49 @@ describe('the edges', () => {
   })
 })
 
-describe('a refusal (closing review, finding 2)', () => {
+describe('a refusal and a way back that failed (closing review, findings 2 and 3)', () => {
   const refused = {
     version: 'v0.3.0',
     at: '2026-11-05T09:58:00.000Z',
     reason: 'Cannot update: not enough disk.',
   }
+  const wrecked = {
+    from: '0.2.0',
+    to: '0.3.0',
+    copy: 'rsc-brain-1-pre-update.rscb',
+    restore: 'sh rsc-brain.sh restore --file x.rscb --confirm <name> --dir "/srv/b"',
+  }
+  it('a refusal of the newest version: the button stays, and the reason is shown with it', () => {
+    assert.deepEqual(updateView(newer, on({ refused }), NOW), {
+      kind: 'available',
+      to: 'v0.3.0',
+      refused: { at: refused.at, reason: refused.reason },
+    })
+  })
+  it('the refusal of another version is not shown', () => {
+    assert.deepEqual(updateView(newer, on({ refused: { ...refused, version: 'v0.2.9' } }), NOW), {
+      kind: 'available',
+      to: 'v0.3.0',
+    })
+  })
+  it('a request waiting or an update running hides an old refusal', () => {
+    assert.deepEqual(updateView(newer, on({ refused, requested: true }), NOW), { kind: 'waiting' })
+  })
+  it('a way back that failed: no button and no Try again, only what happened and the terminal steps', () => {
+    for (const u of [
+      on({ rollbackFailed: wrecked }),
+      on({ rollbackFailed: wrecked, attempts: [failed(0, '2026-11-05T09:45:00.000Z')] }),
+    ])
+      assert.deepEqual(updateView(newer, u, NOW), {
+        kind: 'unsafe',
+        from: '0.2.0',
+        to: '0.3.0',
+        restore: wrecked.restore,
+      })
+    // Also when nothing newer is out: the damage is still there.
+    assert.equal(updateView(newest, on({ rollbackFailed: wrecked }), NOW).kind, 'unsafe')
+  })
+  it('off and companion do not show it', () => {
+    assert.equal(updateView(newer, on({ mode: 'off', rollbackFailed: wrecked }), NOW).kind, 'terminal')
+  })
 })

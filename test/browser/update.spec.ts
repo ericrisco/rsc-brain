@@ -214,6 +214,32 @@ test.describe('Admin › Backups & system: updating from the web', () => {
     await audit(page, 'update refused')
   })
 
+  test('a way back that could not restore: no Update, no Try again, what happened and the steps on the server (closing review)', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await behind(baseURL as string, s.id, {
+      release: NEWER,
+      update: {
+        mode: 'on',
+        attempts: [failure(0, PAST)],
+        rollbackFailed: {
+          from: '0.1.0',
+          to: '0.2.0',
+          copy: 'rsc-brain-1-pre-update.rscb',
+          restore: 'sh rsc-brain.sh restore --file rsc-brain-1-pre-update.rscb --dir /srv/b',
+        },
+      },
+    })
+    await page.goto('/admin/system')
+    await expect(service(page)).toContainText('could not go back by itself')
+    await expect(service(page)).toContainText('restore --file rsc-brain-1-pre-update.rscb')
+    await expect(service(page).getByRole('button', { name: /^Update to|Try again/ })).toHaveCount(0)
+    await audit(page, 'rollback failed')
+  })
+
   test('installed by rsc-factory: no button of its own, and the way to rsc-factory (CA28)', async ({
     page,
     context,
@@ -250,6 +276,15 @@ test.describe('Admin › Backups & system: updating from the web', () => {
         mode: 'on',
         refused: { version: 'v0.2.0', at: PAST, reason: `Cannot update: ${'a long reason '.repeat(30)}` },
       },
+      {
+        mode: 'on',
+        rollbackFailed: {
+          from: '0.1.0',
+          to: '0.2.0',
+          copy: 'c',
+          restore: `sh rsc-brain.sh restore --file ${'x'.repeat(120)}`,
+        },
+      },
       { mode: 'companion', factoryUrl: 'https://factory.example.test/with/a/long/path/to/admin/updates' },
     ]
     for (const update of states) {
@@ -261,6 +296,7 @@ test.describe('Admin › Backups & system: updating from the web', () => {
           running: null,
           attempts: [],
           refused: null,
+          rollbackFailed: null,
           ...update,
         },
       })

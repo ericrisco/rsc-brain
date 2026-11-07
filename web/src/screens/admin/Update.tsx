@@ -191,6 +191,17 @@ export function UpdatePart({ view, reload }: { view: UpdateView; reload: () => v
       ) : null}
       {view.kind === 'waiting' ? <p>{A.updateWaiting}</p> : null}
       {view.kind === 'running' ? <p>{A.updateRunning(view.to)}</p> : null}
+      {view.kind === 'unsafe' ? (
+        <>
+          <p role="alert">
+            <strong>{A.updateUnsafe(view.to)}</strong>
+          </p>
+          <p class="meta">{A.updateUnsafeHow}</p>
+          <p class="meta">
+            <code>{view.restore}</code>
+          </p>
+        </>
+      ) : null}
       {view.kind === 'available' && view.refused ? (
         <>
           <p role="alert">

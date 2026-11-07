@@ -16,6 +16,8 @@ export type UpdateInfo = {
   attempts: UpdateAttempt[]
   // The launcher refused the last request (nothing was stopped): what was missing.
   refused: { version: string; at: string; reason: string } | null
+  // A way back that could not restore: the data may not be as it was. Null when none.
+  rollbackFailed: { from: string; to: string; copy: string; restore: string } | null
   last: { ok: boolean; from: string; to: string; at: string } | null
 }
 
@@ -25,6 +27,8 @@ export type UpdateView =
   // Installed by rsc-factory: it updates rsc-brain.
   | { kind: 'companion'; factoryUrl: string | null }
   | { kind: 'available'; to: string; refused?: { at: string; reason: string } }
+  // A way back that could not restore the copy: no button, no retry; what happened and the steps on the server.
+  | { kind: 'unsafe'; from: string; to: string; restore: string }
   | { kind: 'waiting' }
   | { kind: 'running'; to: string }
   | {
@@ -45,6 +49,10 @@ export function updateView(
   if (u.mode === 'companion') return { kind: 'companion', factoryUrl: u.factoryUrl }
   if (u.running) return { kind: 'running', to: u.running.to }
   if (u.requested) return { kind: 'waiting' }
+  if (u.rollbackFailed) {
+    const { from, to, restore } = u.rollbackFailed
+    return { kind: 'unsafe', from, to, restore }
+  }
   if (!release.newer || !release.latest) return { kind: 'terminal' }
   const failed = u.attempts.find((a) => a.version === release.latest)
   if (!failed) {

@@ -2034,6 +2034,16 @@ const HAND: Record<string, Op> = {
             ),
           }),
         ),
+        rollbackFailed: nul(
+          obj({
+            from: s('The version that was running.'),
+            to: s('The version the update was going to.'),
+            copy: s('The copy made just before the update.'),
+            restore: s(
+              'The command to run on the server to restore it. While this is set, the web offers neither Update nor Try again and the updater starts nothing (409 rollback_failed).',
+            ),
+          }),
+        ),
         last: nul(
           obj({
             ok: b('The last update went well.'),
@@ -2147,7 +2157,7 @@ const HAND: Record<string, Op> = {
   },
   'POST /v1/admin/update': {
     summary:
-      'Update to the newest published version (administration, in the rsc-brain web, with the password again and the code). It only leaves a request for the updater, which finds the version itself: nothing else in the request is read. 202 requested. 409 updates_off (no updater runs), companion (installed by rsc-factory), nothing_to_update, update_failed (use /update/retry), update_running; 503 update_not_started.',
+      'Update to the newest published version (administration, in the rsc-brain web, with the password again and the code). It only leaves a request for the updater, which finds the version itself: nothing else in the request is read. 202 requested. 409 updates_off (no updater runs), companion (installed by rsc-factory), rollback_failed (a way back could not restore: restore on the server first), nothing_to_update, update_failed (use /update/retry), update_running; 503 update_not_started.',
     status: 202,
     body: obj(
       { password: s('Your password.'), code: s('The code of your authenticator app, with a second factor.') },

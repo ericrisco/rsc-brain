@@ -334,6 +334,7 @@ describe('updating from the web: the request and the screen (rsc-updates B3)', {
       running: null,
       attempts: [],
       refused: null,
+      rollbackFailed: null,
       last: null,
     })
 
@@ -358,6 +359,7 @@ describe('updating from the web: the request and the screen (rsc-updates B3)', {
         },
       ],
       refused: null,
+      rollbackFailed: null,
       last: null,
     })
     assert.doesNotMatch(on.text, new RegExp(tmp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
@@ -378,6 +380,22 @@ describe('updating from the web: the request and the screen (rsc-updates B3)', {
     })
     const again = await asked(adaWeb)
     assert.equal(again.status, 202, again.text)
+    await clean()
+    await updaterSays({
+      rollbackFailed: {
+        from: '0.1.0',
+        to: '9.9.9',
+        copy: 'c.rscb',
+        restore: 'sh rsc-brain.sh restore --file c.rscb',
+      },
+      ...failure(NEWER, 0, '2026-10-29T09:45:00.000Z'),
+    })
+    for (const path of ['/v1/admin/update', '/v1/admin/update/retry']) {
+      const r = await asked(adaWeb, path)
+      assert.deepEqual([r.status, r.body.error?.code], [409, 'rollback_failed'], r.text)
+      assert.match(r.body.error?.howToProceed ?? '', /restore --file c\.rscb/)
+    }
+    assert.deepEqual(await marks(), [])
   })
 
   it('what the report says is not trusted: a version that is not a published one, a huge or broken file is nothing', async () => {

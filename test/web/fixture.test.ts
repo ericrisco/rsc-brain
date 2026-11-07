@@ -1515,6 +1515,11 @@ describe('the fixture API', () => {
     }
     await behind({ update: { requested: false, attempts: [failure] } })
     assert.equal(code(await ask('/v1/admin/update', pw)), 'update_failed')
+    const wrecked = { from: '0.1.0', to: '0.2.0', copy: 'c', restore: 'sh rsc-brain.sh restore' }
+    await behind({ update: { requested: false, attempts: [failure], rollbackFailed: wrecked } })
+    assert.equal(code(await ask('/v1/admin/update/retry', pw)), 'rollback_failed')
+    assert.equal(code(await ask('/v1/admin/update', pw)), 'rollback_failed')
+    await behind({ update: { rollbackFailed: null } })
     assert.equal((await ask('/v1/admin/update/retry', pw)).status, 202)
     const sys = (await call('GET', '/v1/admin/system', o)).body as {
       update: { requested: boolean; mode: string }

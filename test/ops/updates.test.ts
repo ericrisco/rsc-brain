@@ -91,7 +91,7 @@ describe('the request mark', () => {
   })
 })
 
-describe('what the updater reports about a refused request (closing review, finding 2)', () => {
+describe('what the updater reports besides the attempts (closing review, findings 2 and 3)', () => {
   let tmp: string
   const NOW = new Date('2026-11-05T10:00:00.000Z')
   const view = { installed: 'v0.2.0', latest: 'v0.3.0', newer: true } as never
@@ -146,5 +146,44 @@ describe('what the updater reports about a refused request (closing review, find
       says({ refused })
       assert.equal(make().state().refused, null, JSON.stringify(refused))
     }
+  })
+
+  const wrecked = {
+    from: '0.2.0',
+    to: '0.3.0',
+    copy: 'rsc-brain-1-pre-update.rscb',
+    restore: 'sh rsc-brain.sh restore --file x.rscb --confirm <name> --dir "/srv/b"',
+  }
+  it('a way back that could not restore: the state says so, and neither Update nor Try again is allowed', () => {
+    says({ rollbackFailed: wrecked })
+    const u = make()
+    assert.deepEqual(u.state().rollbackFailed, wrecked)
+    for (const retry of [false, true]) {
+      const no = u.refusal(view, retry)
+      assert.equal(no?.code, 'rollback_failed', String(retry))
+      assert.equal(no?.status, 409)
+      assert.match(no?.howToProceed ?? '', /restore --file x\.rscb/)
+    }
+    // Even with a failed attempt that would otherwise allow a retry.
+    says({
+      rollbackFailed: wrecked,
+      attempts: {
+        'v0.3.0': {
+          failedAt: '2026-11-05T09:00:00.000Z',
+          reason: 'x',
+          retries: 0,
+          retryFrom: '2026-11-05T09:15:00.000Z',
+        },
+      },
+    })
+    assert.equal(make().refusal(view, true)?.code, 'rollback_failed')
+  })
+
+  it('without it, or with a bad one, nothing changes', () => {
+    says({})
+    assert.equal(make().state().rollbackFailed, null)
+    says({ rollbackFailed: { from: 1 } })
+    assert.equal(make().state().rollbackFailed, null)
+    assert.equal(make().refusal(view, false), null)
   })
 })

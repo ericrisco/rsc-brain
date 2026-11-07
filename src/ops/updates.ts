@@ -30,6 +30,8 @@ export type UpdateAttempt = {
 }
 // A request the launcher refused (nothing was stopped, no attempt spent): what was missing, as the launcher said it.
 export type UpdateRefusal = { version: string; at: string; reason: string }
+// A way back that could not restore the copy: the data may not be as it was, and only the terminal goes on from here.
+export type RollbackFailed = { from: string; to: string; copy: string; restore: string }
 export type UpdateState = {
   mode: UpdateMode
   factoryUrl: string | null
@@ -38,6 +40,7 @@ export type UpdateState = {
   running: { to: string; startedAt: string | null } | null
   attempts: UpdateAttempt[]
   refused: UpdateRefusal | null
+  rollbackFailed: RollbackFailed | null
 }
 export type UpdateConfig = {
   // The folder of the marks (update/request) and of the report (update/report); null where there is none.
@@ -83,6 +86,7 @@ export function updates(
       running: null,
       attempts: [],
       refused: null,
+      rollbackFailed: null,
     }
     if (o.companion) return { ...base, mode: 'companion' }
     if (!o.report || !o.request || !updaterAlive(o.report, o.clock().getTime())) return base
@@ -109,10 +113,23 @@ export function updates(
       if (typeof to === 'string' && isPublished(to) && at !== null && reason !== null)
         refused = { version: to, at, reason }
     }
+    let rollbackFailed: RollbackFailed | null = null
+    if (isRecord(u) && isRecord(u.rollbackFailed)) {
+      const r = u.rollbackFailed
+      const parts = [r.from, r.to, r.copy, r.restore].map((v) => text(v, 1000))
+      if (parts.every((v): v is string => v !== null && v !== ''))
+        rollbackFailed = {
+          from: parts[0] as string,
+          to: parts[1] as string,
+          copy: parts[2] as string,
+          restore: parts[3] as string,
+        }
+    }
     return {
       ...base,
       mode: 'on',
       refused,
+      rollbackFailed,
       requested: exists(join(o.request, 'request')) || exists(join(o.request, 'retry')),
       running: to ? { to, startedAt: instant(run?.startedAt) } : null,
       attempts,
@@ -176,6 +193,14 @@ export function updates(
         )
       }
       if (s.requested || s.running) return running()
+      if (s.rollbackFailed) {
+        return new AppError(
+          409,
+          'rollback_failed',
+          `The last update to ${s.rollbackFailed.to} failed, and rsc-brain could not go back by itself: the data may not be as it was.`,
+          `Do not update again. On the server, restore the copy made before it (everyone signs in again afterwards): ${s.rollbackFailed.restore}`,
+        )
+      }
       if (!view.newer || !view.latest) {
         return new AppError(
           409,

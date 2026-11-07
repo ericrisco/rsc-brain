@@ -100,6 +100,9 @@ mkdir -p "$STATE/attempts" 2>/dev/null && chmod 700 "$STATE" 2>/dev/null
 
 # --------------------------------------------------------------------------------------------------------- reports
 ACCEPTED=''
+# The mark of a way back that failed is the launcher's (<install>/.rsc-brain/rollback.failed); this only looks at it.
+rollback_failed() { [ -f "$DIR/.rsc-brain/rollback.failed" ] && [ ! -L "$DIR/.rsc-brain/rollback.failed" ]; }
+rb_value() { sed -n "s/^$1='\\(.*\\)'\$/\\1/p" "$DIR/.rsc-brain/rollback.failed" 2>/dev/null | head -n 1; }
 # updater.json: alive, when the last request was taken, what is running, and what failed with when it may be tried again.
 write_updater() { # [running-version running-since]
   wu_now=$(now)
@@ -123,6 +126,12 @@ write_updater() { # [running-version running-since]
         fi
         ;;
       esac
+    fi
+    # A way back that could not restore: the data may be damaged, and only the terminal goes on from here.
+    if rollback_failed; then
+      printf ',"rollbackFailed":{"from":%s,"to":%s,"copy":%s,"restore":%s}' "$(jstr "$(rb_value RSC_BRAIN_ROLLBACK_FROM)")" \
+        "$(jstr "$(rb_value RSC_BRAIN_ROLLBACK_TO)")" "$(jstr "$(rb_value RSC_BRAIN_ROLLBACK_COPY)")" \
+        "$(jstr "$(rb_value RSC_BRAIN_ROLLBACK_RESTORE)")"
     fi
     printf ',"attempts":{'
     sep=''
@@ -237,6 +246,12 @@ requests() {
     # `web-updates disable` has removed the credential and is waiting for the lock to take the updater away: the marks
     # are taken, and nothing starts.
     say 'The updater is being turned off: the request was not started.'
+    rm -f -- "$REQ/request" "$REQ/retry"
+    return 0
+  fi
+  if rollback_failed; then
+    # Another update would make a new copy of data that may be damaged: nothing starts until a restore goes well.
+    say 'A way back failed earlier: the request was not started.'
     rm -f -- "$REQ/request" "$REQ/retry"
     return 0
   fi
