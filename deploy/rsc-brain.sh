@@ -11,7 +11,7 @@
 #
 # For tests: RSC_BRAIN_TTY is the terminal questions are asked on (default /dev/tty); RSC_BRAIN_REPO is where the
 # source is cloned from; RSC_BRAIN_TEST_STOP_AT=<step> makes a first install (or an update, at update-journal) stop
-# itself right after that step, with RSC_BRAIN_TEST_STOP_SIGNAL (default KILL); RSC_BRAIN_TEST_WAIT is how many seconds the service gets to answer (default 120).
+# itself right after that step, with RSC_BRAIN_TEST_STOP_SIGNAL (default KILL); RSC_BRAIN_TEST_WAIT is how many seconds the service gets to answer (default 120); RSC_BRAIN_TEST_TAIL_WAIT how many seconds each call at the end of an update gets (default 60).
 
 set -u
 umask 077
@@ -32,6 +32,8 @@ BLANK=" $TAB$NL"
 C1_CONTROLS=$(printf '\302[\200-\237]')
 MIN_FREE_KB=2097152
 WAIT_SECONDS=${RSC_BRAIN_TEST_WAIT:-120}
+# How long each call of the end of an update (maintenance off, the record) may take before it is ended (60 seconds).
+TAIL_WAIT=${RSC_BRAIN_TEST_TAIL_WAIT:-60}
 
 USAGE="Usage: sh $PROG <command> [options]
 
@@ -467,6 +469,7 @@ warn_shell_vars() {
 # it either; job control (set -m) was no way: dash has none in a subshell, and tostop stops a background job that
 # writes. With neither, it runs as any other call (the known limit, said in the README).
 SHIELD=0
+DC_BOUND=0 DC_GROUP=0
 dc() {
   [ -f "$DIR/compose.override.yaml" ] && set -- -f "$DIR/compose.override.yaml" "$@"
   # Companion mode: the app also joins the network shared with rsc-factory (written by install).
@@ -475,16 +478,55 @@ dc() {
   for p in $(printf '%s' "$PROFILES" | tr ',' ' '); do
     set -- --profile "$p" "$@"
   done
-  (
-    for v in $(compose_vars "$DIR/compose.yaml" "$DIR/compose.companion.yaml" "$DIR/compose.override.yaml"); do unset "$v"; done
-    set -- compose --project-directory "$DIR" -p "$NAME" --env-file "$ENV_FILE" "$@"
-    [ "$SHIELD" = 1 ] || exec docker "$@"
-    command -v setsid >/dev/null 2>&1 && exec setsid docker "$@"
-    # This subshell is not a process group leader (no job control here), so setsid() does not fail.
-    command -v perl >/dev/null 2>&1 &&
-      exec perl -MPOSIX -e 'POSIX::setsid() or die "setsid: $!\n"; exec @ARGV or die "$ARGV[0]: $!\n"' docker "$@"
-    exec docker "$@"
-  )
+  if [ "${DC_BOUND:-0}" -gt 0 ]; then
+    # Bounded: the call is this shell's own job (it is docker itself: nothing in between to leave behind), ended at
+    # the bound. No timeout(1) on a Mac, so it is looked at until it ends or the time is up.
+    dc_child "$@" &
+    dcb_pid=$!
+    dcb_end=$(($(date +%s) + DC_BOUND))
+    while kill -0 "$dcb_pid" 2>/dev/null; do
+      if [ "$(date +%s)" -ge "$dcb_end" ]; then
+        # KILL: what is ignored here (the tail ignores TERM) is ignored by docker too, and a hung call has no use for a
+        # goodbye. The whole group: docker compose runs its plugin as a child, and a KILL on docker is not passed on.
+        # The group is the call's own only when it leads one (dc_bounded makes sure it does); the launcher's never.
+        if [ "$DC_GROUP" = 1 ]; then kill -s KILL -- "-$dcb_pid" 2>/dev/null; else kill -s KILL "$dcb_pid" 2>/dev/null; fi
+        wait "$dcb_pid" 2>/dev/null
+        return 124
+      fi
+      sleep 0.1 2>/dev/null || sleep 1
+    done
+    wait "$dcb_pid"
+    return $?
+  fi
+  ( dc_child "$@" )
+}
+# The docker call of dc. Run as a subshell of its own it becomes docker (exec), so the process id is docker's.
+dc_child() {
+  for v in $(compose_vars "$DIR/compose.yaml" "$DIR/compose.companion.yaml" "$DIR/compose.override.yaml"); do unset "$v"; done
+  set -- compose --project-directory "$DIR" -p "$NAME" --env-file "$ENV_FILE" "$@"
+  [ "$SHIELD" = 1 ] || exec docker "$@"
+  command -v setsid >/dev/null 2>&1 && exec setsid docker "$@"
+  # This subshell is not a process group leader (no job control here), so setsid() does not fail.
+  command -v perl >/dev/null 2>&1 &&
+    exec perl -MPOSIX -e 'POSIX::setsid() or die "setsid: $!\n"; exec @ARGV or die "$ARGV[0]: $!\n"' docker "$@"
+  exec docker "$@"
+}
+# A call of dc that is ended after TAIL_WAIT seconds (exit 124), with everything it started: it always runs shielded,
+# so it leads a session (and group) of its own that can be ended whole. With neither setsid nor perl there is no such
+# group: then only the call's own process is ended, never the launcher's group. (What the call already asked of the
+# container, an exec in it, cannot be reached from here and may still land late.)
+dc_bounded() {
+  dcb_shield=$SHIELD
+  SHIELD=1
+  DC_BOUND=$TAIL_WAIT
+  DC_GROUP=0
+  if command -v setsid >/dev/null 2>&1 || command -v perl >/dev/null 2>&1; then DC_GROUP=1; fi
+  dc "$@"
+  dcb_code=$?
+  DC_BOUND=0
+  DC_GROUP=0
+  SHIELD=$dcb_shield
+  return "$dcb_code"
 }
 
 running() { [ -n "$(dc ps -q app 2>/dev/null </dev/null)" ]; }
@@ -1982,21 +2024,36 @@ update() {
   now=$(dc exec -T app rsc-brain version </dev/null 2>/dev/null)
   [ "$now" = "$UPDATE_TO" ] || rollback "The service answers as rsc-brain ${now:-(no version)}, not $UPDATE_TO."
 
-  # The new version runs: nothing to take back any more.
+  # The new version runs. The tail is not cut: a signal here (a Ctrl-C reaches the whole foreground group) must neither
+  # take back an update that has finished nor leave maintenance on (writes refused for up to 30 minutes, the journal
+  # gone, the web never told). Signals ignored, and the calls out of the terminal's group, as the way back does.
+  trap '' HUP INT TERM
+  SHIELD=1
+  checkpoint update-confirmed
   rm -f "${journal:?}"
-  trap - HUP INT TERM
+  # A journal that survives would make a later launcher take back an update that went well: not confirmed, back now.
+  [ ! -e "$journal" ] || rollback 'The journal could not be removed, so the update was not confirmed.'
+  checkpoint update-journal-gone
   step 'Turning maintenance off: writes are taken again'
-  dc exec -T app rsc-brain maintenance off </dev/null >&2 ||
+  dc_bounded exec -T app rsc-brain maintenance off </dev/null >&2 ||
     say "Maintenance could not be turned off; it ends by itself within 30 minutes."
-  dc exec -T app rsc-brain update record --ok --from "$UPDATE_FROM" --to "$UPDATE_TO" </dev/null >&2 ||
+  checkpoint update-maintenance-off
+  dc_bounded exec -T app rsc-brain update record --ok --from "$UPDATE_FROM" --to "$UPDATE_TO" </dev/null >&2 ||
     say 'The web could not be told about this update (Admin > Backups & system); the update itself went well.'
+  # What is left changes state still (the previous files, the new source: a stop between the two leaves no source), so
+  # it is done with signals ignored too.
   rm -f "${DIR:?}/${STATE:?}/env.previous" "${DIR:?}/${STATE:?}/compose.yaml.previous" \
     "${DIR:?}/${STATE:?}/Caddyfile.previous" "${DIR:?}/${STATE:?}/door.Caddyfile.previous" "${UPDATE_LOG:?}" \
     "${DIR:?}/last-failure.log"
+  checkpoint update-previous-gone
   if [ "$BUILD" = 1 ]; then
     rm -rf "${DIR:?}/${STATE:?}/src"
     mv "$NEXT_SRC" "$DIR/$STATE/src"
   fi
+  # The tail that must not be cut is done; what follows (the updater's files) is a wait that a signal may end.
+  SHIELD=0
+  trap - HUP INT TERM
+  checkpoint update-signals-back
   updater_refresh
   if [ "$JSON" = 1 ]; then
     printf '{"from":%s,"to":%s,"image":%s,"copy":%s,"dir":%s}\n' "$(json_str "$UPDATE_FROM")" \

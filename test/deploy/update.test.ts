@@ -617,6 +617,168 @@ describe('the launcher: Ctrl-C during an update (review of PR #36)', () => {
   })
 })
 
+describe('the launcher: a signal in the tail of a good update', () => {
+  // Once the new version answers as asked, nothing is taken back: a signal neither rolls back nor leaves maintenance
+  // on. The update ends: journal gone, maintenance off, recorded, exit 0. (rsc-factory's uf_commit does the same.)
+  const ended = (c: Case, r: Run) => {
+    assert.equal(r.code, 0, r.stderr)
+    assert.equal(at(r.calls, / rsc-brain restore /), -1, `nothing taken back\n${r.calls.join('\n')}`)
+    assert.equal(exists(c, 'update.pending'), false, 'no journal left behind')
+    inOrder(r.calls, [
+      / exec -T app rsc-brain maintenance off$/,
+      / exec -T app rsc-brain update record --ok --from 0\.1\.0 --to 0\.2\.0$/,
+    ])
+    assert.equal(readEnv(c.dir).RSC_BRAIN_IMAGE, 'rsc-brain:next', 'the new version stays')
+  }
+  for (const at_ of ['update-confirmed', 'update-journal-gone', 'update-maintenance-off']) {
+    it(`a Ctrl-C at ${at_} ends the update: no rollback, maintenance off, recorded`, async () => {
+      const c = await installed()
+      const r = launch(c, update(c, '--image', 'rsc-brain:next'), {
+        env: { RSC_BRAIN_TEST_STOP_AT: at_, RSC_BRAIN_TEST_STOP_SIGNAL: 'INT' },
+      })
+      ended(c, r)
+    })
+  }
+
+  // Ctrl-C reaches the whole foreground group, docker compose included, and compose takes it back even when the
+  // shell ignores it: the call that turns maintenance off runs in a session of its own.
+  it('a Ctrl-C for the whole group while maintenance goes off does not cut that call', async () => {
+    const c = await installed()
+    const r = await launchStopped(c, update(c, '--image', 'rsc-brain:next'), { FAKE_MAINT_OFF_SLEEP: '2' }, [
+      { marker: 'maintenance-off-started', signal: 'SIGINT' },
+    ])
+    assert.equal(r.signal, null, `killed by ${r.signal}: ${r.stderr}`)
+    assert.ok(existsSync(join(c.state, 'maintenance-off-done')), 'maintenance off ran to its end')
+    ended(c, { ...r, piped: '', images: [] })
+  })
+
+  // A call that does not end must not hold the launcher for ever (signals are ignored here, so nothing else could
+  // stop it): it is ended at the bound, said, and the update is counted as good.
+  for (const [what, hang, pidFile, said] of [
+    ['maintenance off', 'FAKE_MAINT_OFF_HANG', 'maintenance-off.pid', /Maintenance could not be turned off/],
+    ['the record', 'FAKE_RECORD_HANG', 'record.pid', /The web could not be told about this update/],
+  ] as const) {
+    it(`${what} that hangs is ended at the bound, said, and the update goes on as good`, async () => {
+      const c = await installed()
+      const r = launch(c, update(c, '--image', 'rsc-brain:next'), {
+        env: { [hang]: '1', RSC_BRAIN_TEST_TAIL_WAIT: '1' },
+      })
+      assert.equal(r.code, 0, r.stderr)
+      assert.match(r.stderr, said)
+      assert.match(r.stdout, /updated from 0\.1\.0 to 0\.2\.0/)
+      assert.equal(exists(c, 'update.pending'), false)
+      assert.equal(at(r.calls, / rsc-brain restore /), -1, 'nothing taken back')
+      assert.ok(at(r.calls, / update record --ok /) >= 0, 'recorded (or tried)')
+      const pid = Number(readFileSync(join(c.state, pidFile), 'utf8').trim())
+      assert.ok(pid > 1)
+      assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' }, 'the call was ended, not left behind')
+    })
+  }
+
+  // docker compose runs its plugin as a child that holds the launcher's standard streams: ending only the pid the
+  // launcher started leaves the plugin behind, and a reader of the launcher's error stream (`2>&1 | tee`) never sees
+  // the end. Nothing of the call survives the bound.
+  it('a hung call with a child of its own: both are gone at the bound, and the error stream ends', async () => {
+    const c = await installed()
+    const gone = async (pid: number) => {
+      for (let i = 0; i < 100; i++) {
+        try {
+          process.kill(pid, 0)
+        } catch {
+          return true
+        }
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      return false
+    }
+    const p = spawn(shell(), [LAUNCHER, ...update(c, '--image', 'rsc-brain:next')], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: environment(c, c.tty, { FAKE_MAINT_OFF_FORK: '1', RSC_BRAIN_TEST_TAIL_WAIT: '1' }),
+    })
+    let stderr = ''
+    p.stderr.on('data', (d) => {
+      stderr += d
+    })
+    p.stdout.resume()
+    const ended = new Promise<void>((r) => p.stderr.on('end', () => r()))
+    const exited = new Promise<number | null>((r) => p.on('exit', (code) => r(code)))
+    const code = await exited
+    assert.equal(code, 0, stderr)
+    assert.match(stderr, /Maintenance could not be turned off/)
+    const pid = Number(readFileSync(join(c.state, 'maintenance-off.pid'), 'utf8').trim())
+    const child = Number(readFileSync(join(c.state, 'maintenance-off.child.pid'), 'utf8').trim())
+    try {
+      assert.ok(await gone(pid), 'the call was ended')
+      assert.ok(await gone(child), 'its child was ended too')
+      await ended
+    } finally {
+      for (const x of [pid, child]) {
+        try {
+          process.kill(x, 'SIGKILL')
+        } catch {}
+      }
+    }
+  })
+
+  // The state the update still changes (the previous files, the new source) is done with signals still ignored.
+  it('a Ctrl-C between the previous files and the new source leaves the new source in place', async () => {
+    const c = await installed()
+    const gitBin = join(c.state, 'gitbin')
+    mkdirSync(gitBin)
+    writeFileSync(
+      join(gitBin, 'git'),
+      `#!/bin/sh\nfor last; do :; done\nmkdir -p "$last/deploy"\ncp "${join(ROOT, 'deploy')}/compose.yaml" "${join(ROOT, 'deploy')}/Caddyfile" "$last/deploy/"\n`,
+    )
+    chmodSync(join(gitBin, 'git'), 0o755)
+    const r = launch(c, update(c, '--version', 'v0.2.0', '--repo', 'ssh://git@example.com/brain.git'), {
+      env: {
+        PATH: `${gitBin}:${FAKEBIN}:${SYSBIN}`,
+        FAKE_IMAGES: 'rsc-brain:test',
+        FAKE_IMAGE_VERSIONS: `${VERSIONS} rsc-brain:v0.2.0=0.2.0`,
+        RSC_BRAIN_TEST_STOP_AT: 'update-previous-gone',
+        RSC_BRAIN_TEST_STOP_SIGNAL: 'INT',
+      },
+    })
+    assert.equal(r.code, 0, r.stderr)
+    assert.ok(
+      existsSync(join(c.dir, '.rsc-brain', 'src', 'deploy', 'compose.yaml')),
+      'the new source is the installed one',
+    )
+    assert.equal(exists(c, 'src.next'), false)
+  })
+
+  // Signals come back before what is only a wait: a Ctrl-C there ends the launcher.
+  it('a Ctrl-C once the tail is done ends the launcher by the signal', async () => {
+    const c = await installed()
+    const r = launch(c, update(c, '--image', 'rsc-brain:next'), {
+      env: { RSC_BRAIN_TEST_STOP_AT: 'update-signals-back', RSC_BRAIN_TEST_STOP_SIGNAL: 'INT' },
+    })
+    assert.equal(r.code, null, `ended by the signal, not by itself\n${r.stderr}`)
+    assert.ok(at(r.calls, / update record --ok /) >= 0, 'the tail was done')
+    assert.equal(exists(c, 'update.pending'), false)
+  })
+
+  // A journal that survives a failed rm would make a later launcher take back an accepted update: not confirmed
+  // while it is there, so it goes back now.
+  it('a journal that cannot be removed: the update is not confirmed and goes back', async () => {
+    const c = await installed()
+    const bin = join(c.state, 'rmbin')
+    mkdirSync(bin)
+    writeFileSync(
+      join(bin, 'rm'),
+      '#!/bin/sh\nfor a; do case $a in */update.pending) exit 1 ;; esac; done\nexec /bin/rm "$@"\n',
+    )
+    chmodSync(join(bin, 'rm'), 0o755)
+    const r = launch(c, update(c, '--image', 'rsc-brain:next'), {
+      env: { PATH: `${bin}:${FAKEBIN}:${SYSBIN}` },
+    })
+    assert.equal(r.code, 4, r.stderr)
+    assert.match(r.stderr, /journal could not be removed/)
+    assert.ok(at(r.calls, / rsc-brain restore /) >= 0, 'taken back')
+    assert.equal(at(r.calls, / update record --ok /), -1, 'not recorded as good')
+  })
+})
+
 describe('the launcher: an update killed after the switch is taken back by the next command (review of PR #36)', () => {
   // Killed outright (a power cut) while the new version migrates, or while it is asked whether it answers.
   const killedAfterSwitch = async (during: 'migrate' | 'health') => {
