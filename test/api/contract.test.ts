@@ -177,7 +177,7 @@ const SHAPES: Record<string, Record<string, string[]>> = {
     disk: ['backupsFree', 'databaseBytes'],
     backups: ['lastOk', 'lastFailure', 'lastWarning'],
     release: ['installed', 'latest', 'notes', 'checkedAt', 'newer'],
-    update: ['mode', 'factoryUrl', 'requested', 'running', 'attempts', 'last'],
+    update: ['mode', 'factoryUrl', 'requested', 'running', 'attempts', 'refused', 'last'],
   },
   // B7 PR30 (plan §3.4): the copies, the installation key and restoring, from the web.
   'GET /v1/admin/backups': {

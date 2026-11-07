@@ -111,6 +111,19 @@ write_updater() { # [running-version running-since]
     fi
     if [ -n "$ACCEPTED" ]; then printf ',"requestAcceptedAt":"%s"' "$(iso "$ACCEPTED")"; fi
     if [ -n "${1:-}" ]; then printf ',"running":{"to":%s,"startedAt":"%s"}' "$(jstr "$1")" "$(iso "$2")"; fi
+    # A request the launcher refused (nothing was stopped): the web shows why, until the next request or a good update.
+    if [ -f "$STATE/refused" ]; then
+      rf_to=$(file_value "$STATE/refused" TO) rf_at=$(file_value "$STATE/refused" AT)
+      case $rf_to$rf_at in
+      *[!0-9a-zA-Z.]*) ;;
+      *)
+        if [ -n "$rf_to" ] && [ -n "$rf_at" ]; then
+          printf ',"refused":{"to":%s,"at":"%s","reason":%s}' "$(jstr "$rf_to")" "$(iso "$rf_at")" \
+            "$(jstr "$(cat "$STATE/refused.reason" 2>/dev/null)")"
+        fi
+        ;;
+      esac
+    fi
     printf ',"attempts":{'
     sep=''
     for f in "$STATE"/attempts/v*; do
@@ -253,6 +266,7 @@ requests() {
   fi
   # The status says running first, and only then is the mark taken: a request is never lost between the two.
   ACCEPTED=$t
+  rm -f -- "$STATE/refused" "$STATE/refused.reason"
   write_updater "$target" "$t"
   rm -f -- "$REQ/request" "$REQ/retry"
   if [ -e "$REQ/request" ] || [ -L "$REQ/request" ] || [ -e "$REQ/retry" ] || [ -L "$REQ/retry" ]; then
@@ -304,7 +318,10 @@ requests() {
     EXIT_AFTER=1
     ;;
   2 | 3)
-    # Refused, or something missing or running: nothing was stopped, and no attempt is spent.
+    # Refused, or something missing or running: nothing was stopped, and no attempt is spent. The web is told why.
+    [ -n "$reason" ] || reason="The launcher refused the update to $target (exit $code)."
+    printf '%s\n' "$reason" >"$STATE/refused.reason"
+    printf 'TO=%s\nAT=%s\n' "$target" "$ended" >"$STATE/refused"
     write_updater
     ;;
   *)

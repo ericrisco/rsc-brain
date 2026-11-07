@@ -333,6 +333,7 @@ describe('updating from the web: the request and the screen (rsc-updates B3)', {
       requested: false,
       running: null,
       attempts: [],
+      refused: null,
       last: null,
     })
 
@@ -356,11 +357,27 @@ describe('updating from the web: the request and the screen (rsc-updates B3)', {
           retryFrom: '2026-10-29T10:15:00.000Z',
         },
       ],
+      refused: null,
       last: null,
     })
     assert.doesNotMatch(on.text, new RegExp(tmp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
     const member = await w.callWeb(ritaWeb, 'GET', '/v1/admin/system')
     assert.equal(member.status, 403)
+  })
+
+  it('a refusal is shown and spends nothing; a way back that failed stops both Update and Try again (closing review)', async () => {
+    await clean()
+    await updaterSays({
+      refused: { to: NEWER, at: '2026-10-29T09:58:00.000Z', reason: 'Cannot update: not enough disk.' },
+    })
+    const sys = await w.callWeb(adaWeb, 'GET', '/v1/admin/system')
+    assert.deepEqual((sys.body as { update: { refused: unknown } }).update.refused, {
+      version: NEWER,
+      at: '2026-10-29T09:58:00.000Z',
+      reason: 'Cannot update: not enough disk.',
+    })
+    const again = await asked(adaWeb)
+    assert.equal(again.status, 202, again.text)
   })
 
   it('what the report says is not trusted: a version that is not a published one, a huge or broken file is nothing', async () => {

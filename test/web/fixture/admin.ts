@@ -100,6 +100,7 @@ type Fx = {
       retries: number
       retryFrom: string | null
     }>
+    refused: { version: string; at: string; reason: string } | null
   }
   // What the launcher recorded about the last update (B7 PR35), and whether an update runs now (writes refused).
   lastUpdate: unknown
@@ -275,7 +276,14 @@ export function fxOf(s: AdminScen): Fx {
       lastWarning: null,
       nextCopy: 'ok',
       release: { latest: null, notes: null, checkedAt: null },
-      update: { mode: 'off', factoryUrl: null, requested: false, running: null, attempts: [] },
+      update: {
+        mode: 'off',
+        factoryUrl: null,
+        requested: false,
+        running: null,
+        attempts: [],
+        refused: null,
+      },
       lastUpdate: null,
       maintenance: false,
     }

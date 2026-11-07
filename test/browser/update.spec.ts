@@ -188,6 +188,32 @@ test.describe('Admin › Backups & system: updating from the web', () => {
     await expect(service(page).getByRole('button', { name: 'Try again' })).toHaveCount(0)
   })
 
+  test('a refused request says «Cannot update: …» with the reason, and the button stays (closing review)', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await behind(baseURL as string, s.id, {
+      release: NEWER,
+      update: {
+        mode: 'on',
+        refused: {
+          version: 'v0.2.0',
+          at: '2026-10-29T09:58:00.000Z',
+          reason: 'Cannot update: there is not enough free disk (needs 2 GB, 1 GB free).',
+        },
+      },
+    })
+    await page.goto('/admin/system')
+    await expect(service(page)).toContainText(
+      'Cannot update: there is not enough free disk (needs 2 GB, 1 GB free).',
+    )
+    await expect(service(page)).toContainText('rsc-brain.sh update')
+    await expect(service(page).getByRole('button', { name: 'Update to v0.2.0' })).toBeVisible()
+    await audit(page, 'update refused')
+  })
+
   test('installed by rsc-factory: no button of its own, and the way to rsc-factory (CA28)', async ({
     page,
     context,
@@ -220,12 +246,23 @@ test.describe('Admin › Backups & system: updating from the web', () => {
       { mode: 'on', attempts: [failure(0, PAST)] },
       { mode: 'on', attempts: [failure(1, FUTURE)] },
       { mode: 'on', attempts: [failure(3, null)] },
+      {
+        mode: 'on',
+        refused: { version: 'v0.2.0', at: PAST, reason: `Cannot update: ${'a long reason '.repeat(30)}` },
+      },
       { mode: 'companion', factoryUrl: 'https://factory.example.test/with/a/long/path/to/admin/updates' },
     ]
     for (const update of states) {
       await behind(baseURL as string, s.id, {
         release: NEWER,
-        update: { mode: 'off', requested: false, running: null, attempts: [], ...update },
+        update: {
+          mode: 'off',
+          requested: false,
+          running: null,
+          attempts: [],
+          refused: null,
+          ...update,
+        },
       })
       await page.goto('/admin/system')
       await expect(service(page)).toContainText('Version v0.1.0 is running.')

@@ -28,6 +28,8 @@ export type UpdateAttempt = {
   // When the updater lets it be tried again; null once the limit is spent (only the terminal can then).
   retryFrom: string | null
 }
+// A request the launcher refused (nothing was stopped, no attempt spent): what was missing, as the launcher said it.
+export type UpdateRefusal = { version: string; at: string; reason: string }
 export type UpdateState = {
   mode: UpdateMode
   factoryUrl: string | null
@@ -35,6 +37,7 @@ export type UpdateState = {
   requested: boolean
   running: { to: string; startedAt: string | null } | null
   attempts: UpdateAttempt[]
+  refused: UpdateRefusal | null
 }
 export type UpdateConfig = {
   // The folder of the marks (update/request) and of the report (update/report); null where there is none.
@@ -54,6 +57,9 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
 const CONTROLS = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g
+
+const text = (v: unknown, max: number) =>
+  typeof v === 'string' ? v.replace(CONTROLS, '').slice(0, max) : null
 
 const COMMAND = 'rsc-brain.sh update'
 const terminal = `On the server, run: ${COMMAND}`
@@ -76,6 +82,7 @@ export function updates(
       requested: false,
       running: null,
       attempts: [],
+      refused: null,
     }
     if (o.companion) return { ...base, mode: 'companion' }
     if (!o.report || !o.request || !updaterAlive(o.report, o.clock().getTime())) return base
@@ -94,9 +101,18 @@ export function updates(
         attempts.push({ version, failedAt, reason, retries, retryFrom: instant(a.retryFrom) })
       }
     }
+    let refused: UpdateRefusal | null = null
+    if (isRecord(u) && isRecord(u.refused)) {
+      const at = instant(u.refused.at)
+      const reason = text(u.refused.reason, REASON_MAX)
+      const to = u.refused.to
+      if (typeof to === 'string' && isPublished(to) && at !== null && reason !== null)
+        refused = { version: to, at, reason }
+    }
     return {
       ...base,
       mode: 'on',
+      refused,
       requested: exists(join(o.request, 'request')) || exists(join(o.request, 'retry')),
       running: to ? { to, startedAt: instant(run?.startedAt) } : null,
       attempts,

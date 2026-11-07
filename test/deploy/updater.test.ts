@@ -862,3 +862,42 @@ describe('what the updater may reach (CA15, CA25, CA25b)', () => {
     assert.equal(/\b(curl|wget|sudo)\b/.test(d), false)
   })
 })
+
+describe('the updater: what a refusal says (closing review, finding 2)', () => {
+  const SAYS =
+    'Cannot update: there is not enough free disk (needs 2 GB, 1 GB free). Free some space and ask again.'
+  it('a refused request (2) or one that cannot run now (3) leaves its reason for the web, and spends no attempt', () => {
+    for (const code of ['2', '3']) {
+      const c = fresh()
+      writeFileSync(mark(c), '')
+      tick(c, { FAKE_UPDATE_EXIT: code, FAKE_UPDATE_SAYS: SAYS })
+      const u = report(c, 'updater.json')
+      assert.equal(u.refused.to, 'v0.9.0', code)
+      assert.match(u.refused.reason, /not enough free disk/, code)
+      assert.match(u.refused.at, /^20\d\d-\d\d-\d\dT/, code)
+      assert.deepEqual(u.attempts, {}, code)
+      assert.equal(u.running, undefined, code)
+      // The next beat still says it.
+      const again = tick(c, {}, { at: NOW + 5 })
+      assert.equal(again.code, 0)
+      assert.equal(report(c, 'updater.json').refused.to, 'v0.9.0', code)
+    }
+  })
+
+  it('a refusal never carries the credential', () => {
+    const c = fresh()
+    writeFileSync(join(c.dir, 'updater', 'credentials', 'token'), `${TOKEN}\n`)
+    writeFileSync(mark(c), '')
+    tick(c, { FAKE_UPDATE_EXIT: '3', FAKE_UPDATE_SAYS: `Cannot update: cannot fetch with ${TOKEN}` })
+    assert.doesNotMatch(readFileSync(join(c.dir, 'update', 'report', 'updater.json'), 'utf8'), /ghp_/)
+  })
+
+  it('the next request clears the refusal, and so does a good update', () => {
+    const c = fresh()
+    writeFileSync(mark(c), '')
+    tick(c, { FAKE_UPDATE_EXIT: '3', FAKE_UPDATE_SAYS: SAYS })
+    writeFileSync(mark(c), '')
+    tick(c, {}, { at: NOW + 1 })
+    assert.equal(report(c, 'updater.json').refused, undefined)
+  })
+})

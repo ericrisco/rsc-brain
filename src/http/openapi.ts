@@ -2025,6 +2025,15 @@ const HAND: Record<string, Op> = {
             ),
           }),
         ),
+        refused: nul(
+          obj({
+            version: s('The version the request was for.'),
+            at: s('When the launcher refused it.', { format: 'date-time' }),
+            reason: s(
+              'What was missing, as the launcher said it («Cannot update: …»), with how to fix it. Nothing was stopped and no attempt was spent: it can be asked again.',
+            ),
+          }),
+        ),
         last: nul(
           obj({
             ok: b('The last update went well.'),

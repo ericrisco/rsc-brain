@@ -1233,6 +1233,8 @@ export const T = {
     updateRetryFrom: (when: string) => `You can try again ${when}.`,
     updateServerOnly:
       'It failed too many times from the web, so only the server can try again. On the server:',
+    updateCannot: (why: string) => `Cannot update: ${why}`,
+    updateCannotHow: 'Fix that and ask again, or update on the server:',
     updateCompanion: 'rsc-brain was installed by rsc-factory: update it from there.',
     updateOpenFactory: 'Open rsc-factory',
     lastUpdate: 'Last update',

@@ -14,6 +14,8 @@ export type UpdateInfo = {
   requested: boolean
   running: { to: string; startedAt: string | null } | null
   attempts: UpdateAttempt[]
+  // The launcher refused the last request (nothing was stopped): what was missing.
+  refused: { version: string; at: string; reason: string } | null
   last: { ok: boolean; from: string; to: string; at: string } | null
 }
 
@@ -22,7 +24,7 @@ export type UpdateView =
   | { kind: 'terminal' }
   // Installed by rsc-factory: it updates rsc-brain.
   | { kind: 'companion'; factoryUrl: string | null }
-  | { kind: 'available'; to: string }
+  | { kind: 'available'; to: string; refused?: { at: string; reason: string } }
   | { kind: 'waiting' }
   | { kind: 'running'; to: string }
   | {
@@ -45,7 +47,12 @@ export function updateView(
   if (u.requested) return { kind: 'waiting' }
   if (!release.newer || !release.latest) return { kind: 'terminal' }
   const failed = u.attempts.find((a) => a.version === release.latest)
-  if (!failed) return { kind: 'available', to: release.latest }
+  if (!failed) {
+    const r = u.refused?.version === release.latest ? u.refused : null
+    return r
+      ? { kind: 'available', to: release.latest, refused: { at: r.at, reason: r.reason } }
+      : { kind: 'available', to: release.latest }
+  }
   const retry =
     failed.retryFrom === null
       ? ('server' as const)

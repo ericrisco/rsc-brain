@@ -191,6 +191,16 @@ export function UpdatePart({ view, reload }: { view: UpdateView; reload: () => v
       ) : null}
       {view.kind === 'waiting' ? <p>{A.updateWaiting}</p> : null}
       {view.kind === 'running' ? <p>{A.updateRunning(view.to)}</p> : null}
+      {view.kind === 'available' && view.refused ? (
+        <>
+          <p role="alert">
+            <strong>{A.updateCannot(view.refused.reason.replace(/^Cannot update:\s*/, ''))}</strong>
+          </p>
+          <p class="meta">
+            {A.updateCannotHow} <code>rsc-brain.sh update</code>
+          </p>
+        </>
+      ) : null}
       {view.kind === 'available' ? (
         <div class="actions">
           <Button kind="primary" blocked={blocked()} onClick={() => setAsking({ retry: false, to: view.to })}>

@@ -15,6 +15,7 @@ const on = (o: Partial<UpdateInfo> = {}): UpdateInfo => ({
   requested: false,
   running: null,
   attempts: [],
+  refused: null,
   last: null,
   ...o,
 })
@@ -135,4 +136,12 @@ describe('the edges', () => {
       { kind: 'running', to: 'v0.3.0' },
     )
   })
+})
+
+describe('a refusal (closing review, finding 2)', () => {
+  const refused = {
+    version: 'v0.3.0',
+    at: '2026-11-05T09:58:00.000Z',
+    reason: 'Cannot update: not enough disk.',
+  }
 })
