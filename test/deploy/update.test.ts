@@ -2131,3 +2131,39 @@ describe('the launcher: the stand-in door', () => {
     assert.match(readFileSync(file, 'utf8'), /- rsc-brain\n/)
   })
 })
+
+describe('the launcher: folders of the web that Docker made for root (closing review, finding 1)', () => {
+  // A folder that is not the operator's and that the operator cannot write: here, a link to "/" (owned by root).
+  const rootOwned = (c: Case, ...names: string[]) => {
+    for (const n of names) {
+      rmSync(join(c.dir, 'update', n), { recursive: true, force: true })
+      symlinkSync('/', join(c.dir, 'update', n))
+    }
+  }
+  const skip = process.getuid?.() === 0 ? 'root can write anywhere' : false
+
+  it('an update over folders root made does not roll back: it goes on, and says the exact sudo chown line', {
+    skip,
+  }, async () => {
+    const c = await installed()
+    rootOwned(c, 'report', 'request')
+    const r = launch(c, update(c, '--image', 'rsc-brain:next'))
+    assert.equal(r.code, 0, r.stderr)
+    assert.equal(readEnv(c.dir).RSC_BRAIN_IMAGE, 'rsc-brain:next')
+    assert.equal(at(r.calls, / restore /), -1)
+    assert.match(r.stderr, /sudo chown -R \d+:\d+ "[^"]*\/update"/)
+    assert.match(r.stderr, /web/i)
+  })
+
+  it('folders the operator does not own but can write do not stop anything and need no warning', {
+    skip,
+  }, async () => {
+    const c = await installed()
+    // /tmp is root's and writable by everyone: chmod fails on it, and nothing is needed from it.
+    rmSync(join(c.dir, 'update', 'report'), { recursive: true })
+    symlinkSync('/tmp', join(c.dir, 'update', 'report'))
+    const r = launch(c, update(c, '--image', 'rsc-brain:next'))
+    assert.equal(r.code, 0, r.stderr)
+    assert.doesNotMatch(r.stderr, /sudo chown/)
+  })
+})

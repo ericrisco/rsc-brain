@@ -1272,7 +1272,12 @@ install() {
     MADE_FILES="$MADE_FILES update"
     save_state
   fi
-  ensure_update_dirs || failed 4 "Cannot create \"$DIR/update\"."
+  ensure_update_dirs
+  case $? in
+  0) ;;
+  2) say 'rsc-brain itself goes on; only updates from the web are affected.' ;;
+  *) failed 4 "Cannot create \"$DIR/update\"." ;;
+  esac
   # The compose file and the Caddyfiles of the version installed (a version from before has no door).
   src=$HERE
   [ "$BUILD" = 1 ] && src=$DIR/$STATE/src/deploy
@@ -2019,7 +2024,12 @@ update() {
         rollback "Could not write \"$DIR/$f\"."
     done
   fi
-  ensure_update_dirs || rollback "Could not create \"$DIR/update\"."
+  ensure_update_dirs
+  case $? in
+  0) ;;
+  2) say 'The update itself goes on; only updates from the web are affected.' ;;
+  *) rollback "Could not create \"$DIR/update\"." ;;
+  esac
   step "Stopping rsc-brain $UPDATE_FROM"
   dc stop app >&2 </dev/null || rollback "rsc-brain $UPDATE_FROM could not be stopped."
   door_up 'Migrating the data.'
@@ -2096,12 +2106,31 @@ updater_names() {
   UPD_IMAGE=rsc-brain-updater:$NAME
 }
 # The service's folders for the marks and the report, made before the service starts (a bind mount of a folder that is
-# not there would be made by Docker, for root).
+# not there would be made by Docker, for root). 0 when they are ready; 1 when one cannot be made; 2 when a folder is
+# not the operator's and cannot be written by the operator, which no launcher run can fix (a version before this one
+# let Docker make them): the message says the line to run, and the callers decide whether that stops them. A folder that
+# is not the operator's but can be written is left as it is (chmod would fail, and nothing is needed from it).
 ensure_update_dirs() {
   for d in update update/request update/report update/state; do
     [ -d "$DIR/$d" ] || mkdir "$DIR/$d" || return 1
   done
-  chmod 755 "$DIR/update" "$DIR/update/report" && chmod 700 "$DIR/update/request" "$DIR/update/state" || return 1
+  unusable=''
+  for d in update update/request update/report update/state; do
+    case $d in
+    update | update/report) m=755 ;;
+    *) m=700 ;;
+    esac
+    # chmod is the owner's (or root's): a folder it cannot change is not the operator's, and is fine as long as the
+    # operator can write in it.
+    chmod "$m" "$DIR/$d" 2>/dev/null && continue
+    { [ -w "$DIR/$d" ] && [ -x "$DIR/$d" ]; } || unusable="$unusable \"$DIR/$d\""
+  done
+  if [ -n "$unusable" ]; then
+    say "These folders are not yours and you cannot write in them (Docker made them for root):$unusable"
+    say "Updates from the web cannot work until they are yours. Run: sudo chown -R $(id -u):$(id -g) \"$DIR/update\""
+    say 'and then run this command again.'
+    return 2
+  fi
   # As for the copies: the service runs as the owner of the folder, or as the image's unprivileged user when root made it.
   [ "$(id -u)" = 0 ] && chown 1000:1000 "$DIR/update/request"
   return 0
@@ -2298,10 +2327,18 @@ web_updates_enable() {
     updater_take_back
     failed 4 "Cannot create \"$DIR/updater\"."
   fi
-  ensure_update_dirs || {
+  ensure_update_dirs
+  case $? in
+  0) ;;
+  2)
+    updater_take_back
+    failed 4 'Updates from the web cannot be turned on until that is fixed.'
+    ;;
+  *)
     updater_take_back
     failed 4 "Cannot create \"$DIR/update\"."
-  }
+    ;;
+  esac
   updater_files "$src" || {
     updater_take_back
     failed 4 "Could not write the updater's files in \"$DIR/updater\"."

@@ -1098,3 +1098,17 @@ describe('an update keeps the updater current (§3.7)', () => {
     )
   })
 })
+
+describe('web-updates enable: folders that Docker made for root (closing review, finding 1)', () => {
+  it('says the exact sudo chown line and changes nothing', { skip: process.getuid?.() === 0 }, async () => {
+    const c = await installed()
+    for (const n of ['report', 'request']) {
+      rmSync(join(c.dir, 'update', n), { recursive: true, force: true })
+      symlinkSync('/', join(c.dir, 'update', n))
+    }
+    const r = launch(c, enable(c))
+    assert.notEqual(r.code, 0)
+    assert.match(r.stderr, /sudo chown -R \d+:\d+ "[^"]*\/update"/)
+    assert.equal(existsSync(join(c.dir, 'updater')), false)
+  })
+})
