@@ -2155,6 +2155,49 @@ describe('the launcher: folders of the web that Docker made for root (closing re
     assert.match(r.stderr, /web/i)
   })
 
+  it('update/ itself root-owned with children missing: the same line, no rollback (review round 1)', {
+    skip,
+  }, async () => {
+    const c = await installed()
+    rmSync(join(c.dir, 'update'), { recursive: true, force: true })
+    symlinkSync('/', join(c.dir, 'update'))
+    const r = launch(c, update(c, '--image', 'rsc-brain:next'))
+    assert.equal(r.code, 0, r.stderr)
+    assert.equal(at(r.calls, / restore /), -1)
+    assert.match(r.stderr, /sudo chown -R \d+:\d+ "[^"]*\/update"/)
+  })
+
+  it('update/state root-owned, or missing under a root-owned update/: the same line, no rollback', {
+    skip,
+  }, async () => {
+    const c = await installed()
+    rootOwned(c, 'state')
+    const r = launch(c, update(c, '--image', 'rsc-brain:next'))
+    assert.equal(r.code, 0, r.stderr)
+    assert.match(r.stderr, /sudo chown -R \d+:\d+ "[^"]*\/update"/)
+    const d = await installed()
+    rmSync(join(d.dir, 'update'), { recursive: true, force: true })
+    symlinkSync('/', join(d.dir, 'update'))
+    const q = launch(d, update(d, '--image', 'rsc-brain:next'))
+    assert.equal(q.code, 0, q.stderr)
+  })
+
+  it('install over folders root made: exit 0, the service is installed, and the line is said', {
+    skip,
+  }, async () => {
+    const c = await installed()
+    rootOwned(c, 'report', 'request')
+    const r = launch(c, ['install', '--yes', '--dir', c.dir])
+    assert.equal(r.code, 0, r.stderr)
+    assert.match(r.stderr, /sudo chown -R \d+:\d+ "[^"]*\/update"/)
+    const bare = await installed()
+    rmSync(join(bare.dir, 'update'), { recursive: true, force: true })
+    symlinkSync('/', join(bare.dir, 'update'))
+    const q = launch(bare, ['install', '--yes', '--dir', bare.dir])
+    assert.equal(q.code, 0, q.stderr)
+    assert.match(q.stderr, /sudo chown/)
+  })
+
   it('folders the operator does not own but can write do not stop anything and need no warning', {
     skip,
   }, async () => {

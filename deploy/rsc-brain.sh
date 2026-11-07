@@ -2111,15 +2111,24 @@ updater_names() {
 # let Docker make them): the message says the line to run, and the callers decide whether that stops them. A folder that
 # is not the operator's but can be written is left as it is (chmod would fail, and nothing is needed from it).
 ensure_update_dirs() {
-  for d in update update/request update/report update/state; do
-    [ -d "$DIR/$d" ] || mkdir "$DIR/$d" || return 1
-  done
   unusable=''
   for d in update update/request update/report update/state; do
     case $d in
     update | update/report) m=755 ;;
     *) m=700 ;;
     esac
+    if [ ! -d "$DIR/$d" ]; then
+      if ! mkdir "$DIR/$d" 2>/dev/null; then
+        # Under a folder that is not the operator's the folder cannot be made: the same line as for one that exists.
+        # Anything else (a file in the way, no space) is a real error.
+        p=$(dirname "$DIR/$d")
+        if [ -d "$p" ] && ! { [ -w "$p" ] && [ -x "$p" ]; }; then
+          unusable="$unusable \"$DIR/$d\""
+          continue
+        fi
+        return 1
+      fi
+    fi
     # chmod is the owner's (or root's): a folder it cannot change is not the operator's, and is fine as long as the
     # operator can write in it.
     chmod "$m" "$DIR/$d" 2>/dev/null && continue
