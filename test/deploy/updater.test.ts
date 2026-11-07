@@ -939,4 +939,33 @@ describe('the updater: what a refusal and a way back that failed say (closing re
     assert.equal(updates(t.calls).length, 1)
     assert.equal(report(c, 'updater.json').rollbackFailed, undefined)
   })
+  it('a launcher that says nothing when it refuses: the reason is the fallback sentence (review round 1)', () => {
+    for (const code of ['2', '3']) {
+      const c = fresh()
+      writeFileSync(mark(c), '')
+      tick(c, { FAKE_UPDATE_EXIT: code })
+      assert.equal(
+        report(c, 'updater.json').refused.reason,
+        `The launcher refused the update to v0.9.0 (exit ${code}).`,
+      )
+    }
+  })
+
+  it('a rollback.failed that is empty or unreadable still blocks, and is reported with empty details', () => {
+    const c = fresh()
+    writeFileSync(join(c.dir, '.rsc-brain', 'rollback.failed'), '')
+    writeFileSync(mark(c), '')
+    const t = tick(c, {})
+    assert.equal(updates(t.calls).length, 0)
+    assert.deepEqual(report(c, 'updater.json').rollbackFailed, { from: '', to: '', copy: '', restore: '' })
+  })
+
+  it('a rollback.failed that is a link is not read and blocks nothing (the launcher never makes one)', () => {
+    const c = fresh()
+    symlinkSync('/etc/hostname', join(c.dir, '.rsc-brain', 'rollback.failed'))
+    writeFileSync(mark(c), '')
+    const t = tick(c, {})
+    assert.equal(updates(t.calls).length, 1)
+    assert.equal(report(c, 'updater.json').rollbackFailed, undefined)
+  })
 })

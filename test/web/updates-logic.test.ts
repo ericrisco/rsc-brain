@@ -184,4 +184,45 @@ describe('a refusal and a way back that failed (closing review, findings 2 and 3
   it('off and companion do not show it', () => {
     assert.equal(updateView(newer, on({ mode: 'off', rollbackFailed: wrecked }), NOW).kind, 'terminal')
   })
+  it('a refusal reaches the page in every view that has a button: after a failure too (review round 1)', () => {
+    const r = { reason: refused.reason, at: refused.at }
+    const base = {
+      kind: 'failed',
+      to: 'v0.3.0',
+      failedAt: '2026-11-05T09:30:00.000Z',
+      reason: 'the image did not build',
+      refused: r,
+    }
+    assert.deepEqual(
+      updateView(newer, on({ refused, attempts: [failed(0, '2026-11-05T09:45:00.000Z')] }), NOW),
+      {
+        ...base,
+        retry: 'now',
+      },
+    )
+    assert.deepEqual(
+      updateView(newer, on({ refused, attempts: [failed(1, '2026-11-05T10:15:00.000Z')] }), NOW),
+      {
+        ...base,
+        retry: { from: '2026-11-05T10:15:00.000Z' },
+      },
+    )
+    assert.deepEqual(updateView(newer, on({ refused, attempts: [failed(3, null)] }), NOW), {
+      ...base,
+      retry: 'server',
+    })
+    // The refusal of another version is not shown with this failure.
+    const other = updateView(
+      newer,
+      on({ refused: { ...refused, version: 'v0.2.9' }, attempts: [failed(0, null)] }),
+      NOW,
+    )
+    assert.equal('refused' in other, false)
+  })
+  it('a way back that failed with no details: still unsafe, with an empty command', () => {
+    assert.deepEqual(
+      updateView(newer, on({ rollbackFailed: { from: '', to: '', copy: '', restore: '' } }), NOW),
+      { kind: 'unsafe', from: '', to: '', restore: '' },
+    )
+  })
 })

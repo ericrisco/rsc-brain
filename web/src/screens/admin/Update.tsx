@@ -141,6 +141,20 @@ function Ask({
   )
 }
 
+// The launcher refused the request (nothing was stopped): what is missing, and the way to do it on the server.
+function Refused({ why }: { why: string }) {
+  return (
+    <>
+      <p role="alert">
+        <strong>{A.updateCannot(why.replace(/^Cannot update:\s*/, ''))}</strong>
+      </p>
+      <p class="meta">
+        {A.updateCannotHow} <code>rsc-brain.sh update</code>
+      </p>
+    </>
+  )
+}
+
 // What goes under the line that says which version runs: the button, the progress, the failure, or the way to
 // rsc-factory. `reload` asks the system again; the part follows an update until it ends.
 export function UpdatePart({ view, reload }: { view: UpdateView; reload: () => void }) {
@@ -196,21 +210,14 @@ export function UpdatePart({ view, reload }: { view: UpdateView; reload: () => v
           <p role="alert">
             <strong>{A.updateUnsafe(view.to)}</strong>
           </p>
-          <p class="meta">{A.updateUnsafeHow}</p>
+          <p class="meta">{view.restore ? A.updateUnsafeHow : A.updateUnsafeUnreadable}</p>
           <p class="meta">
-            <code>{view.restore}</code>
+            <code>{view.restore || 'rsc-brain.sh status'}</code>
           </p>
         </>
       ) : null}
-      {view.kind === 'available' && view.refused ? (
-        <>
-          <p role="alert">
-            <strong>{A.updateCannot(view.refused.reason.replace(/^Cannot update:\s*/, ''))}</strong>
-          </p>
-          <p class="meta">
-            {A.updateCannotHow} <code>rsc-brain.sh update</code>
-          </p>
-        </>
+      {(view.kind === 'available' || view.kind === 'failed') && view.refused ? (
+        <Refused why={view.refused.reason} />
       ) : null}
       {view.kind === 'available' ? (
         <div class="actions">

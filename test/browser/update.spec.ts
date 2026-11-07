@@ -240,6 +240,38 @@ test.describe('Admin › Backups & system: updating from the web', () => {
     await audit(page, 'rollback failed')
   })
 
+  test('a refused Try again says why next to the old failure; a failed way back with no details says so (review round 1)', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const s = await scenario(context, baseURL as string, 'signed-in')
+    await behind(baseURL as string, s.id, {
+      release: NEWER,
+      update: {
+        mode: 'on',
+        attempts: [failure(0, PAST)],
+        refused: { version: 'v0.2.0', at: PAST, reason: 'Cannot update: another run holds the lock.' },
+      },
+    })
+    await page.goto('/admin/system')
+    await expect(service(page)).toContainText('The update to v0.2.0 failed at')
+    await expect(service(page)).toContainText('Cannot update: another run holds the lock.')
+    await expect(service(page).getByRole('button', { name: 'Try again' })).toBeVisible()
+    await audit(page, 'failure and refusal')
+    await behind(baseURL as string, s.id, {
+      update: {
+        refused: null,
+        rollbackFailed: { from: '', to: '', copy: '', restore: '' },
+      },
+    })
+    await page.reload()
+    await expect(service(page)).toContainText('could not go back by itself')
+    await expect(service(page)).toContainText('could not be read')
+    await expect(service(page).getByRole('button', { name: /^Update to|Try again/ })).toHaveCount(0)
+    await audit(page, 'unreadable way back')
+  })
+
   test('installed by rsc-factory: no button of its own, and the way to rsc-factory (CA28)', async ({
     page,
     context,

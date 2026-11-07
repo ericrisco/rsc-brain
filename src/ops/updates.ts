@@ -113,17 +113,13 @@ export function updates(
       if (typeof to === 'string' && isPublished(to) && at !== null && reason !== null)
         refused = { version: to, at, reason }
     }
+    // The mark exists whenever the updater says so (it blocks on the file itself): fields that are missing or not
+    // text are empty, and the page says the details could not be read.
     let rollbackFailed: RollbackFailed | null = null
     if (isRecord(u) && isRecord(u.rollbackFailed)) {
       const r = u.rollbackFailed
-      const parts = [r.from, r.to, r.copy, r.restore].map((v) => text(v, 1000))
-      if (parts.every((v): v is string => v !== null && v !== ''))
-        rollbackFailed = {
-          from: parts[0] as string,
-          to: parts[1] as string,
-          copy: parts[2] as string,
-          restore: parts[3] as string,
-        }
+      const f = (v: unknown) => text(v, 1000) ?? ''
+      rollbackFailed = { from: f(r.from), to: f(r.to), copy: f(r.copy), restore: f(r.restore) }
     }
     return {
       ...base,
@@ -194,11 +190,14 @@ export function updates(
       }
       if (s.requested || s.running) return running()
       if (s.rollbackFailed) {
+        const { to, restore } = s.rollbackFailed
         return new AppError(
           409,
           'rollback_failed',
-          `The last update to ${s.rollbackFailed.to} failed, and rsc-brain could not go back by itself: the data may not be as it was.`,
-          `Do not update again. On the server, restore the copy made before it (everyone signs in again afterwards): ${s.rollbackFailed.restore}`,
+          `The last update${to ? ` to ${to}` : ''} failed, and rsc-brain could not go back by itself: the data may not be as it was.`,
+          restore
+            ? `Do not update again. On the server, restore the copy made before it (everyone signs in again afterwards): ${restore}`
+            : 'Do not update again. On the server, run rsc-brain.sh status: it says what to restore (everyone signs in again afterwards).',
         )
       }
       if (!view.newer || !view.latest) {

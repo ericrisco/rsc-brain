@@ -36,6 +36,8 @@ export type UpdateView =
       to: string
       failedAt: string
       reason: string
+      // The launcher refused a request after this failure (nothing was stopped): what was missing.
+      refused?: { at: string; reason: string }
       // now: the button works; {from}: after that time; server: the web cannot try again, only the server.
       retry: 'now' | 'server' | { from: string }
     }
@@ -67,7 +69,15 @@ export function updateView(
       : Date.parse(failed.retryFrom) > now.getTime()
         ? { from: failed.retryFrom }
         : ('now' as const)
-  return { kind: 'failed', to: release.latest, failedAt: failed.failedAt, reason: failed.reason, retry }
+  const r = u.refused?.version === release.latest ? u.refused : null
+  const out = {
+    kind: 'failed' as const,
+    to: release.latest,
+    failedAt: failed.failedAt,
+    reason: failed.reason,
+    retry,
+  }
+  return r ? { ...out, refused: { at: r.at, reason: r.reason } } : out
 }
 
 const bare = (v: string) => v.replace(/^v/, '')

@@ -182,8 +182,29 @@ describe('what the updater reports besides the attempts (closing review, finding
   it('without it, or with a bad one, nothing changes', () => {
     says({})
     assert.equal(make().state().rollbackFailed, null)
-    says({ rollbackFailed: { from: 1 } })
-    assert.equal(make().state().rollbackFailed, null)
+    for (const bad of ['x', 5, [], null]) {
+      says({ rollbackFailed: bad })
+      assert.equal(make().state().rollbackFailed, null, JSON.stringify(bad))
+    }
     assert.equal(make().refusal(view, false), null)
+  })
+
+  it('the mark exists but its details are empty or wrong: it still blocks, and no empty command is offered (review round 1)', () => {
+    for (const r of [{ from: '', to: '', copy: '', restore: '' }, { from: 1 }, {}]) {
+      says({ rollbackFailed: r })
+      const u = make()
+      assert.deepEqual(u.state().rollbackFailed, {
+        from: typeof (r as { from?: unknown }).from === 'string' ? (r as { from: string }).from : '',
+        to: '',
+        copy: '',
+        restore: '',
+      })
+      for (const retry of [false, true]) {
+        const no = u.refusal(view, retry)
+        assert.equal(no?.code, 'rollback_failed')
+        assert.doesNotMatch(no?.howToProceed ?? '', /: $/)
+        assert.match(no?.howToProceed ?? '', /rsc-brain\.sh status/)
+      }
+    }
   })
 })
