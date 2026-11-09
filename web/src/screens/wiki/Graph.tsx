@@ -1180,19 +1180,8 @@ function GraphCanvas({
     const toggled = panelOnce.current !== panel
     panelOnce.current = panel
     if (toggled && settled.current) auto.current = false
-    // A page picked under the panel is brought into the part it leaves.
-    let moved = false
-    const x = shownXY()
-    const i = latest.current.selected
-    const free = size.current.w - panelWidth(panel)
-    if (panel && !auto.current && x && i >= 0) {
-      const v = view.current
-      const sx = (x[2 * i] as number) * v.scale + v.tx
-      if (sx > free - 24) {
-        view.current = { ...v, tx: v.tx + (free / 2 - sx) }
-        moved = true
-      }
-    }
+    // A page picked is brought into the part the panel leaves, whether or not Fit was on (review A4).
+    const moved = panel && bringIntoView(latest.current.selected, true)
     if (toggled || moved) sendState()
   }, [panel, selected])
   useEffect(sendState, [nodes, edges, focus, selected, active, refit, rings, hubList, bridgePairs, orphans])

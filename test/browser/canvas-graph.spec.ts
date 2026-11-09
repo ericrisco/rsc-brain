@@ -420,3 +420,33 @@ test('with the inspector open, walking right keeps the keyboard’s card clear o
     await expect.poll(end, { message: `step ${n}: the card ends left of the panel` }).toBeLessThan(panel.left)
   }
 })
+
+// Review A4: a page picked at the right edge is brought clear of the panel that opens for it, whether or
+// not the view was the person's own.
+for (const zoomed of [false, true])
+  test(`a page picked at the right edge is drawn clear of the panel${zoomed ? ', zoomed in' : ''}`, async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.setViewportSize({ width: 1366, height: 768 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const canvas = page.locator('canvas.graph-canvas')
+    await canvas.focus()
+    if (zoomed) await page.keyboard.press('+')
+    for (let n = 0; n < 8; n++) await page.keyboard.press('ArrowRight')
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('complementary', { name: /^Inspector \S/ })).toBeVisible()
+    const c = await box(page, 'canvas.graph-canvas')
+    const panel = await box(page, '#graph-inspector')
+    await expect
+      .poll(async () => {
+        const [x, , w] = ((await canvas.getAttribute('data-selected-card')) ?? '9999,0,0,0')
+          .split(',')
+          .map(Number) as [number, number, number]
+        return c.left + x + w
+      })
+      .toBeLessThan(panel.left)
+  })
