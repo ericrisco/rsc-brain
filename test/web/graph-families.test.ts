@@ -4,7 +4,15 @@
 // type), and a family's pill sits at the middle of its drawn points.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { centroids, FAMILIES, familyCounts, familyIndex, familyOfType } from '../../web/src/graph/families.ts'
+import {
+  centroids,
+  cores,
+  FAMILIES,
+  familyCounts,
+  familyIndex,
+  familyOfType,
+  spreadPills,
+} from '../../web/src/graph/families.ts'
 import { type Answer, modelOf } from '../../web/src/graph/model.ts'
 import { PAGE_TYPES } from '../../web/src/lib/wiki.ts'
 
@@ -110,5 +118,58 @@ describe('graph families', () => {
     assert.deepEqual(c[0], { x: 5, y: 10, n: 2 })
     assert.deepEqual(c[2], { x: 105, y: 100, n: 2 })
     assert.equal(c[1], null)
+  })
+
+  // Visual review: a pill sits on its family's dense core, not on the plain middle of its points (a few far
+  // points drag the middle toward the hub).
+  it('a family’s pill sits on its dense core, in three dimensions', () => {
+    // Family 0: 24 points packed near (0, 100, 0) and 8 spread near the hub; family 1 elsewhere.
+    const pts: number[] = []
+    const fam: number[] = []
+    for (let k = 0; k < 24; k++) {
+      pts.push(Math.cos(k) * 4, 100 + Math.sin(k) * 4, Math.sin(2 * k) * 4)
+      fam.push(0)
+    }
+    for (let k = 0; k < 8; k++) {
+      pts.push(Math.cos(k) * 40, Math.sin(k) * 40, 0)
+      fam.push(0)
+    }
+    pts.push(300, 0, 0, 310, 0, 0)
+    fam.push(1, 1)
+    const n = fam.length
+    const c = cores(new Float32Array(pts), new Uint8Array(fam), new Uint8Array(n).fill(1), FAMILIES.length)
+    const a = c[0] as { x: number; y: number; z: number }
+    assert.ok(Math.hypot(a.x, a.y - 100, a.z) < 8, `on the packed core: ${JSON.stringify(a)}`)
+    const b = c[1] as { x: number; y: number; z: number }
+    assert.ok(Math.abs(b.x - 305) < 6)
+    assert.equal(c[2], null)
+  })
+
+  it('pills that overlap on screen are pushed apart, each as little as it can', () => {
+    const rects = [
+      { x: 100, y: 100, w: 80, h: 20 },
+      { x: 120, y: 105, w: 90, h: 20 },
+      { x: 110, y: 95, w: 70, h: 20 },
+      { x: 400, y: 400, w: 60, h: 20 },
+    ]
+    const out = spreadPills(
+      rects.map((r) => ({ ...r })),
+      4,
+    )
+    for (let a = 0; a < out.length; a++)
+      for (let b = a + 1; b < out.length; b++) {
+        const p = out[a] as { x: number; y: number; w: number; h: number }
+        const q = out[b] as { x: number; y: number; w: number; h: number }
+        const apart =
+          p.x + p.w + 4 <= q.x + 0.5 ||
+          q.x + q.w + 4 <= p.x + 0.5 ||
+          p.y + p.h + 4 <= q.y + 0.5 ||
+          q.y + q.h + 4 <= p.y + 0.5
+        assert.ok(apart, `${a} and ${b} overlap: ${JSON.stringify([p, q])}`)
+      }
+    // The one alone does not move; the others stay near where they were.
+    assert.deepEqual(out[3], rects[3])
+    for (let k = 0; k < 3; k++)
+      assert.ok(Math.hypot((out[k]?.x ?? 0) - (rects[k]?.x ?? 0), (out[k]?.y ?? 0) - (rects[k]?.y ?? 0)) < 60)
   })
 })

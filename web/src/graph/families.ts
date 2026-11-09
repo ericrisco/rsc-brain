@@ -90,3 +90,93 @@ export function centroids(
     return k ? { x: (sx[f] as number) / k, y: (sy[f] as number) / k, n: k } : null
   })
 }
+
+// Where a family's pill goes in three dimensions: its dense core (visual review, 2026-11-09). The point with the
+// most of its family within a reach (six tenths of the family's spread), and the middle of those: a few far
+// points never drag the pill toward the hub, as they drag the plain middle. Worked out once a layout.
+export type Core = { x: number; y: number; z: number; n: number }
+const CANDIDATES = 300
+export function cores(
+  xyz: Float32Array,
+  fam: Uint8Array,
+  visible: Uint8Array,
+  families: number,
+): (Core | null)[] {
+  const members: number[][] = Array.from({ length: families }, () => [])
+  for (let i = 0; i < fam.length; i++) if (visible[i]) members[fam[i] as number]?.push(i)
+  const at = (i: number, a: number) => xyz[3 * i + a] as number
+  return members.map((list) => {
+    const m = list.length
+    if (!m) return null
+    let mx = 0
+    let my = 0
+    let mz = 0
+    for (const i of list) {
+      mx += at(i, 0)
+      my += at(i, 1)
+      mz += at(i, 2)
+    }
+    mx /= m
+    my /= m
+    mz /= m
+    let s = 0
+    for (const i of list) s += (at(i, 0) - mx) ** 2 + (at(i, 1) - my) ** 2 + (at(i, 2) - mz) ** 2
+    const reach2 = (0.6 * Math.sqrt(s / m)) ** 2
+    const d2 = (i: number, j: number) =>
+      (at(i, 0) - at(j, 0)) ** 2 + (at(i, 1) - at(j, 1)) ** 2 + (at(i, 2) - at(j, 2)) ** 2
+    const step = Math.max(1, Math.floor(m / CANDIDATES))
+    let best = list[0] as number
+    let most = -1
+    for (let c = 0; c < m; c += step) {
+      const i = list[c] as number
+      let k = 0
+      for (const j of list) if (d2(i, j) <= reach2) k += 1
+      if (k > most) {
+        most = k
+        best = i
+      }
+    }
+    let cx = 0
+    let cy = 0
+    let cz = 0
+    let k = 0
+    for (const j of list)
+      if (d2(best, j) <= reach2) {
+        cx += at(j, 0)
+        cy += at(j, 1)
+        cz += at(j, 2)
+        k += 1
+      }
+    return { x: cx / k, y: cy / k, z: cz / k, n: m }
+  })
+}
+
+// Pills on screen pushed apart until none overlaps another (with `gap` between), each move along the shorter
+// way out and shared by the two; a few passes. The array's boxes are moved in place and returned.
+export type Pill = { x: number; y: number; w: number; h: number }
+export function spreadPills<T extends Pill>(pills: T[], gap = 4): T[] {
+  for (let pass = 0; pass < 24; pass++) {
+    let moved = false
+    for (let a = 0; a < pills.length; a++)
+      for (let b = a + 1; b < pills.length; b++) {
+        const p = pills[a] as T
+        const q = pills[b] as T
+        const ox = Math.min(p.x + p.w + gap - q.x, q.x + q.w + gap - p.x)
+        const oy = Math.min(p.y + p.h + gap - q.y, q.y + q.h + gap - p.y)
+        if (ox <= 0 || oy <= 0) continue
+        moved = true
+        // Along y when that is shorter (pills are wide and low), else along x; half each.
+        if (oy <= ox) {
+          const sgn = p.y + p.h / 2 <= q.y + q.h / 2 ? 1 : -1
+          p.y -= (sgn * oy) / 2
+          q.y += (sgn * oy) / 2
+        } else {
+          const sgn = p.x + p.w / 2 <= q.x + q.w / 2 ? 1 : -1
+          p.x -= (sgn * ox) / 2
+          q.x += (sgn * ox) / 2
+        }
+      }
+    if (!moved) break
+  }
+  return pills
+}

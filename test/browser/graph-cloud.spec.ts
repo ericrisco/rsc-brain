@@ -378,6 +378,34 @@ test.describe('the cloud, moving (motion allowed)', () => {
       )
     })
 
+  // Visual review: the families' pills never overlap one another while the cloud turns.
+  test('the family pills never overlap while it turns', async ({ page, context, baseURL }) => {
+    await page.setViewportSize({ width: 1366, height: 768 })
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const canvas = page.locator('canvas.graph-canvas')
+    await expect(canvas).toHaveAttribute('data-spinning', 'true')
+    for (let k = 0; k < 8; k++) {
+      await page.waitForTimeout(300)
+      const pills = JSON.parse((await canvas.getAttribute('data-pills')) ?? '[]') as [
+        string,
+        number,
+        number,
+        number,
+        number,
+      ][]
+      expect(pills.length).toBeGreaterThanOrEqual(5)
+      for (let a = 0; a < pills.length; a++)
+        for (let b = a + 1; b < pills.length; b++) {
+          const [n1, x1, y1, w1, h1] = pills[a] as [string, number, number, number, number]
+          const [n2, x2, y2, w2, h2] = pills[b] as [string, number, number, number, number]
+          const overlap = x1 < x2 + w2 && x2 < x1 + w1 && y1 < y2 + h2 && y2 < y1 + h1
+          expect(overlap, `${n1} over ${n2}`).toBe(false)
+        }
+    }
+  })
+
   // Review R7: out of sight (scrolled away, covered), nothing is painted.
   test('R7: a canvas out of sight stops turning and painting', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })

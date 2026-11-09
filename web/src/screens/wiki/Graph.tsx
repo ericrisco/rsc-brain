@@ -1047,6 +1047,12 @@ function GraphCanvas({
     c.dataset.drawnSeq = String(d.seq)
     c.dataset.scale = d.view.scale.toFixed(4)
     if (d.extent) c.dataset.extent = d.extent.map(Math.round).join(',')
+    if (d.pills)
+      c.dataset.pills = JSON.stringify(
+        d.pills.map((q) =>
+          [q.name, q.x, q.y, q.w, q.h].map((v) => (typeof v === 'number' ? Math.round(v) : v)),
+        ),
+      )
     if (d.font) c.dataset.font = d.font
     c.dataset.cards = String(d.cards.length)
     c.dataset.labels = String(d.labels.length)

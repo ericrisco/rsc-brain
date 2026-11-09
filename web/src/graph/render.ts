@@ -42,7 +42,7 @@ import {
   TILE_SCALE,
   TILE_TEXT,
 } from './cards.ts'
-import { centroids } from './families.ts'
+import { type Core, centroids, cores, spreadPills } from './families.ts'
 import type { View } from './model.ts'
 import { fit, fitPad, GROUP_SHAPE, groupRadius } from './model.ts'
 
@@ -251,6 +251,8 @@ export type Drawn = {
   orphans: [number, number] | null
   // For a test: where the cloud's points are drawn (98 in 100 of them on each side), [x0, y0, x1, y1].
   extent?: [number, number, number, number]
+  // For a test: the families' pills as drawn.
+  pills?: { name: string; x: number; y: number; w: number; h: number }[]
   pulses: number
   fact: number
   // The picture asks for the next frame (it turns, or light travels).
@@ -425,6 +427,9 @@ export class Renderer {
   private exact: { key: string; layout: Float32Array; view: View } | null = null
   private rows: { of: Float32Array; frame: unknown; pitch: number; b: Float32Array } | null = null
   private turning = false
+  private cores: { of: Float32Array; nodes: Uint8Array; c: (Core | null)[] } | null = null
+  // The pills as last drawn (a test reads them).
+  pillBoxes: { name: string; x: number; y: number; w: number; h: number }[] = []
   private last = 0
   private facts: Fact[] = []
   private factAt = 0
@@ -657,7 +662,7 @@ export class Renderer {
         families: out.families,
         hub: out.hub,
         orphans: out.orphans,
-        ...(st.probe ? { extent: extentOf(sc, st, SX, SY) } : {}),
+        ...(st.probe ? { extent: extentOf(sc, st, SX, SY), pills: this.pillBoxes } : {}),
         pulses: out.pulses,
         fact: out.fact,
         animating: out.animating,
@@ -1242,17 +1247,49 @@ export class Renderer {
     ring(st.selected, 2.5, 3, p.accent)
     ring(st.active, 2, 7, p.accent)
 
-    // Each family's pill, at the middle of its points.
+    // Each family's pill, on its family's dense core (worked out once a layout, in three dimensions, and turned
+    // with the cloud), then pushed apart from the others on screen.
     const families: string[] = []
-    const mids = centroids(o.xy, sc.fam, st.nodes, sc.famNames.length)
+    const fl = this.frame?.f
+    const layout = this.layout
+    const F = sc.famNames.length
+    let mids: ({ x: number; y: number } | null)[]
+    if (fl && layout) {
+      if (!this.cores || this.cores.of !== layout || this.cores.nodes !== st.nodes) {
+        const cloud = cloudOnly(st.nodes, sc.role)
+        this.cores = { of: layout, nodes: st.nodes, c: cores(layout, sc.fam, cloud, F) }
+      }
+      mids = this.cores.c.map((c) => {
+        if (!c) return null
+        const [x, y] = projectPoint(c.x, c.y, c.z, fl, this.camera)
+        return { x, y }
+      })
+    } else mids = centroids(o.xy, sc.fam, st.nodes, F)
     ctx.font = PILL
     ctx.textBaseline = 'middle'
+    const pills: { k: number; name: string; x: number; y: number; w: number; h: number }[] = []
+    const clampPill = (q: { x: number; y: number; w: number }) => {
+      q.x = Math.min(st.width - st.right - q.w - 6, Math.max(6, q.x))
+      q.y = Math.min(st.height - 26, Math.max(st.top + 4, q.y))
+    }
     for (const [k, c] of mids.entries()) {
       if (!c) continue
       const name = sc.famNames[k] ?? ''
       const w = ctx.measureText(name).width + 18
-      const x = Math.min(st.width - st.right - w - 6, Math.max(6, c.x * view.scale + view.tx - w / 2))
-      const y = Math.min(st.height - 26, Math.max(st.top + 4, c.y * view.scale + view.ty - 10))
+      const q = {
+        k,
+        name,
+        x: c.x * view.scale + view.tx - w / 2,
+        y: c.y * view.scale + view.ty - 10,
+        w,
+        h: 20,
+      }
+      clampPill(q)
+      pills.push(q)
+    }
+    spreadPills(pills, 6)
+    for (const q of pills) clampPill(q)
+    for (const { k, name, x, y, w } of pills) {
       ctx.globalAlpha = 0.92
       ctx.beginPath()
       ctx.roundRect(x, y, w, 20, 10)
@@ -1266,6 +1303,7 @@ export class Renderer {
       ctx.fillText(name, x + 9, y + 10.5)
       families.push(name)
     }
+    this.pillBoxes = pills.map(({ name, x, y, w, h }) => ({ name, x, y, w, h }))
 
     // The cards and names, still.
     this.draw(ctx, st, sc, cards, lit, false)
