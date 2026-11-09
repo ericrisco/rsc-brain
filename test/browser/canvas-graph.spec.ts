@@ -237,10 +237,15 @@ test('CA9: the canvas by keyboard: Tab to it, arrows walk the pages, Enter opens
   await expect(canvas).toBeFocused()
   const said = page.locator('[aria-live="polite"]').filter({ hasText: /Enter to inspect/ })
   await expect(said).toHaveCount(1)
+  // Each arrow moves the keyboard to another page (in the cloud drawn in depth, Right then Down may come
+  // back to where it started: each step is checked on its own). The start is read once it is drawn.
+  await expect(canvas).toHaveAttribute('data-active', /\d+,\d+/)
   const first = await canvas.getAttribute('data-active')
   await page.keyboard.press('ArrowRight')
-  await page.keyboard.press('ArrowDown')
   await expect.poll(() => canvas.getAttribute('data-active')).not.toBe(first)
+  const second = await canvas.getAttribute('data-active')
+  await page.keyboard.press('ArrowDown')
+  await expect.poll(() => canvas.getAttribute('data-active')).not.toBe(second)
   await page.keyboard.press('Enter')
   const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
   await expect(inspector).toBeVisible()
