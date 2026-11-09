@@ -3379,6 +3379,28 @@ dialog.search-dialog {
   margin-bottom: 0;
 }
 
+/* Wide: the steps at a reading width, the live check beside them, in view while following the steps. */
+@media (min-width: 1280px) {
+  .connect {
+    max-width: none;
+    grid-template-columns: minmax(0, 860px) clamp(320px, 26vw, 460px);
+    justify-content: space-between;
+    column-gap: 48px;
+    align-items: start;
+  }
+
+  .connect > * {
+    grid-column: 1;
+  }
+
+  .connect > .live-check {
+    position: sticky;
+    top: 24px;
+    grid-column: 2;
+    grid-row: 1 / span 5;
+  }
+}
+
 /* The live check: one line that says where things stand, in words and with a mark (never colour alone). */
 .live-check {
   padding: 14px 16px;
@@ -3775,7 +3797,7 @@ dialog.search-dialog {
 
 .admin-filters {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 180px);
+  grid-template-columns: minmax(0, 440px) minmax(0, 180px);
   gap: 12px;
   align-items: end;
 }
@@ -3801,6 +3823,50 @@ dialog.search-dialog {
   display: grid;
   gap: 8px;
   max-width: 760px;
+}
+
+/* Wide: the parts of a settings tab side by side, two by two; a tab of one part keeps the whole width. */
+@media (min-width: 1280px) {
+  .settings-tab,
+  .settings-parts {
+    max-width: none;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 560px), 1fr));
+    gap: 40px 56px;
+    align-items: start;
+  }
+
+  .settings-parts {
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 720px), 1fr));
+  }
+
+  .settings-tab > :only-child,
+  .settings-parts > :only-child {
+    grid-column: 1 / -1;
+  }
+
+  /* A list with its add form (the members): the list wide, the form beside it. */
+  .settings-part:has(> .add-form) {
+    grid-template-columns: minmax(0, 1fr) clamp(340px, 26vw, 460px);
+    column-gap: 56px;
+    align-items: start;
+  }
+
+  .settings-part:has(> .add-form) > * {
+    grid-column: 1;
+  }
+
+  .settings-part:has(> .add-form) > .add-form {
+    grid-column: 2;
+    grid-row: 1 / span 4;
+    padding: 18px 20px 20px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-card);
+  }
+
+  .settings-part > .add-form .add-member {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .choices {

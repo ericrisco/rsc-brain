@@ -10,29 +10,6 @@ const WIDE = { width: 1920, height: 1080 }
 const SMALL = { width: 1366, height: 768 }
 const SIGNED_IN = ROWS.filter((r) => !r.preset)
 
-// The screens whose layout still holds a fixed reading column, and the task of plan B.4 that widens them.
-const PENDING: Record<string, string> = {
-  page: 'B11',
-  health: 'B11',
-  'settings · members': 'B11',
-  'settings · agents': 'B11',
-  'settings · health thresholds': 'B11',
-  'settings · import': 'B11',
-  'settings · archive': 'B11',
-  people: 'B11',
-  'admin · people': 'B11',
-  'admin · invitations': 'B11',
-  'admin · service accounts': 'B11',
-  'admin · email': 'B11',
-  'admin · meaning search': 'B11',
-  'admin · limits': 'B11',
-  'admin · audit': 'B11',
-  'admin · backups & system': 'B11',
-  'admin · branding': 'B11',
-  profile: 'B11',
-  'connect your agent': 'B11',
-}
-
 // How wide the content of the screen is drawn: from the leftmost to the rightmost thing that is painted in
 // main (words, controls, pictures, and boxes with a ground or a line of their own). A block that is only as
 // wide as the page but paints nothing does not count.
@@ -79,9 +56,7 @@ async function railWidth(page: Page): Promise<number> {
 }
 
 for (const row of SIGNED_IN) {
-  const pending = PENDING[row.name]
-  const it = pending ? test.fixme : test
-  it(`CA1 at 1920×1080, ${row.name}: rail 56px and content over 90% of the rest${pending ? ` (${pending})` : ''}`, async ({
+  test(`CA1 at 1920×1080, ${row.name}: rail 56px and content over 90% of the rest`, async ({
     page,
     context,
     baseURL,
