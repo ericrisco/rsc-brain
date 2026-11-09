@@ -1246,9 +1246,18 @@ dialog::backdrop {
   color: var(--accent);
 }
 
+/* A state never rests on colour alone (canvas-ui CA9): its tag has a mark of its own before the word, its
+   colour and its ground. The mark is decoration; screen readers hear the word. */
 .tag.warn {
-  border-color: var(--warning);
-  color: var(--warning);
+  border-color: var(--warn-line);
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+}
+
+.tag.warn::before {
+  content: "!" / "";
+  margin-right: 4px;
+  font-weight: 700;
 }
 
 .small {
@@ -3433,6 +3442,7 @@ label.op-head:hover {
   margin-top: 12px;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: scoped to the activity feed; it never competes with the graph's filters */
 .act-feed .filters {
   margin: 16px 0;
 }
@@ -3946,8 +3956,14 @@ dialog.search-dialog {
 }
 
 .tag.ok {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--ok-line);
+  background: var(--ok-bg);
+  color: var(--ok-fg);
+}
+
+.tag.ok::before {
+  content: "✓" / "";
+  margin-right: 4px;
 }
 
 .totp-key {
