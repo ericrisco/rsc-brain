@@ -212,16 +212,14 @@ function PagePeek({
                   ) : null}
                 </span>
                 {shownHere(l.address) && l.state !== 'broken' ? (
-                  <>
-                    <button
-                      type="button"
-                      class="button quiet small"
-                      aria-label={g.inspectName(l.title ?? l.address)}
-                      onClick={() => onShow(`p:${l.address}`)}
-                    >
-                      {g.inspect}
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    class="button quiet small"
+                    aria-label={g.inspectName(l.title ?? l.address)}
+                    onClick={() => onShow(`p:${l.address}`)}
+                  >
+                    {g.inspect}
+                  </button>
                 ) : null}
               </li>
             )

@@ -2857,18 +2857,12 @@ label.op-head:hover {
   padding: 4px 0;
 }
 
-.inspector-links li > .button.small {
-  min-height: 26px;
-  margin-top: -2px;
-  padding: 0 8px;
-  font-size: 12.5px;
-}
-
 /* The page's address, type and status in the inspector read as words: plain chips, not code. */
 .inspector-address {
   overflow-wrap: anywhere;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: scoped to the inspector; it never competes with the earlier rule */
 .graph-inspector .tags .tag {
   font-family: var(--sans);
   font-size: 12.5px;
@@ -2882,6 +2876,14 @@ label.op-head:hover {
   min-height: 28px;
   padding: 0 10px;
   font-size: 13px;
+}
+
+/* Inspect beside a link of the inspector: compact, on the link's first line. */
+.inspector-links li > .button.small {
+  min-height: 26px;
+  margin-top: -2px;
+  padding: 0 8px;
+  font-size: 12.5px;
 }
 
 .table-wrap {

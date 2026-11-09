@@ -653,7 +653,10 @@ export class Renderer {
     tile: boolean,
   ): void {
     const p = st.palette
-    if (tile) return this.drawTiles(ctx, st, sc, cards, lit)
+    if (tile) {
+      this.drawTiles(ctx, st, sc, cards, lit)
+      return
+    }
     for (let k = cards.length - 1; k >= 0; k--) {
       const c = cards[k] as Card
       const i = c.i
