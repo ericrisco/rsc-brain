@@ -274,6 +274,8 @@ const ONES4 = new Uint8Array([1, 1, 1, 1])
 // Room around the turning cloud when it is fitted, and the share of its points the fit keeps in the frame.
 const SPIN_PAD = 16
 const SPIN_KEEP = 0.9
+// From this many items drawn, the still cloud names only what the person is on and its neighbours.
+const QUIET_FROM = 60
 const LABEL_SCALE = 12 / 13
 // Where a card's words start: after the disc with the type's shape.
 const TEXT_X = 32
@@ -796,7 +798,13 @@ export class Renderer {
     const rad = (i: number) => (isGroup(i) ? o.boxR(i) : o.radius(i) * (hubs.has(i) ? 0.85 : 0.6)) * size(i)
 
     // Still, the cards and names of a flat picture; turning, none (they would swim).
-    const placed = spinning ? { cards: [], labels: [] } : this.place(ctx, st, sc, SX, SY, isGroup, false)
+    // Still, a big cloud names only the pages the person is on and their neighbours (the reference is quiet);
+    // the pointer names the rest one by one. A small one names all its pages.
+    let drawn = 0
+    for (let i = 0; i < n; i++) if (st.nodes[i]) drawn += 1
+    const placed = spinning
+      ? { cards: [], labels: [] }
+      : this.place(ctx, st, sc, SX, SY, isGroup, false, drawn > QUIET_FROM)
     const { cards, labels } = placed
     const cardOf = new Int32Array(n).fill(-1)
     for (const [k, c] of cards.entries()) cardOf[c.i] = k
@@ -1314,6 +1322,8 @@ export class Renderer {
     SY: (i: number) => number,
     isGroup: (i: number) => boolean,
     tile: boolean,
+    // Only the person's own items and their neighbours (the still cloud).
+    few = false,
   ): { cards: Card[]; labels: Card[] } {
     const sx = new Float32Array(2 * sc.n).fill(Number.NaN)
     for (let i = 0; i < sc.n; i++)
@@ -1335,6 +1345,7 @@ export class Renderer {
     function* order() {
       yield* must
       yield* near
+      if (few) return
       yield* st.hubs
       for (let i = 0; i < sc.n; i++) if (isGroup(i)) yield i
       for (let i = 0; i < sc.n; i++) yield i

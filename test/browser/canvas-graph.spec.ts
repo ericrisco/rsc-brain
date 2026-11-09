@@ -678,16 +678,48 @@ for (const zoom of [0, 2])
     }
   })
 
-// Closing review, visual gap 3: a big wiki at Fit names many of its pages. Where a card does not fit, the
-// page's name is written beside its point, never over another name, card, point or control.
-test('a 282-page wiki at Fit names at least 40 of its pages', async ({ page, context, baseURL }) => {
+// Closing review, visual gap 3, revised by the style polish (2026-11-09): the still cloud is quiet like the
+// reference. At Fit nothing is named but the hub and the families' pills; a page picked is named with its
+// neighbours and nothing else; the pointer on a point names it.
+test('the still cloud names only the picked page and its neighbours; the pointer names the rest', async ({
+  page,
+  context,
+  baseURL,
+}) => {
   await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
   await page.setViewportSize({ width: 1920, height: 1080 })
   await page.goto(GRAPH)
   await settled(page)
   await upToDate(page)
   const canvas = page.locator('canvas.graph-canvas')
-  const named =
+  const named = async () =>
     Number(await canvas.getAttribute('data-cards')) + Number(await canvas.getAttribute('data-labels'))
-  expect(named).toBeGreaterThanOrEqual(40)
+  expect(await named()).toBe(0)
+  await expect(canvas).toHaveAttribute('data-families', /,/)
+  // Picked: its card, and at most its neighbours'.
+  await canvas.focus()
+  await page.keyboard.press('Enter')
+  const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
+  await expect(inspector.getByRole('link', { name: 'Open page' })).toBeVisible()
+  await upToDate(page)
+  const links = await inspector.locator('.inspector-links li').count()
+  const picked = await named()
+  expect(picked).toBeGreaterThan(0)
+  expect(picked).toBeLessThanOrEqual(1 + links)
+  await expect(canvas).toHaveAttribute('data-selected-card', /\d+,\d+,\d+,\d+/)
+  // Nothing picked, the pointer on a point names it.
+  await page.keyboard.press('Escape')
+  await expect(inspector).toHaveCount(0)
+  await canvas.blur()
+  await upToDate(page)
+  const b = (await canvas.boundingBox()) as { x: number; y: number; width: number; height: number }
+  let found = false
+  for (let y = 0.3; y < 0.8 && !found; y += 0.02)
+    for (let x = 0.3; x < 0.75 && !found; x += 0.01) {
+      await page.mouse.move(b.x + b.width * x, b.y + b.height * y)
+      found = (await canvas.getAttribute('data-hover')) !== null
+    }
+  expect(found, 'a point under the pointer').toBe(true)
+  await upToDate(page)
+  expect(await named()).toBeGreaterThan(0)
 })

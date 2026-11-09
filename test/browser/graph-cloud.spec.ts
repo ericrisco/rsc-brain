@@ -133,8 +133,7 @@ test.describe('the cloud, moving (motion allowed)', () => {
     const stopped = await yawOf(page)
     await page.waitForTimeout(1000)
     expect(await yawOf(page)).toBe(stopped)
-    // Still, its pages have names again, and the light keeps travelling.
-    await expect.poll(async () => Number(await canvas.getAttribute('data-cards'))).toBeGreaterThan(0)
+    // Still, the light keeps travelling (names come only for what the pointer is on: canvas-graph.spec).
     expect(Number(await canvas.getAttribute('data-pulses'))).toBeGreaterThan(0)
     // The pointer leaves; after the rest (5 s) it turns again.
     await page.mouse.move(box.x + 2, box.y + box.height + 40)
