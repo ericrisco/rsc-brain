@@ -15,6 +15,7 @@ import { online } from '../session.ts'
 import { connectHref } from '../shell/dialogs.ts'
 import { T } from '../text.ts'
 import { CopyButton } from '../ui/CopyButton.tsx'
+import { colourAt, PanelHead } from '../ui/Panel.tsx'
 import { viewState } from '../ui/state.ts'
 import { ErrorState, Skeleton } from '../ui/states.tsx'
 import type { BrainRow, Stats } from './Home.tsx'
@@ -143,13 +144,11 @@ function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
     [...o.pending(stats.pendingProposals), inboxHref(slug)],
   ]
   return (
-    <section aria-labelledby="numbers-title">
-      <h2 id="numbers-title" class="section-title">
-        {o.numbers}
-      </h2>
+    <section class="panel pad" data-c="orange" aria-labelledby="numbers-title">
+      <PanelHead n={1} id="numbers-title" title={o.numbers} about={o.numbersAbout} />
       <ul class="tiles">
-        {items.map(([n, label, href]) => (
-          <li key={label}>
+        {items.map(([n, label, href], k) => (
+          <li key={label} data-c={colourAt(k)}>
             {href ? (
               <a class="tile" href={href}>
                 <strong class="tile-n">{n}</strong> <span class="tile-label">{label}</span>
@@ -169,10 +168,14 @@ function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
 function Today({ slug, sessions }: { slug: string; sessions: Session[] }) {
   const o = T.overview
   return (
-    <section aria-labelledby="today-title">
-      <h2 id="today-title" class="section-title">
-        {o.today}
-      </h2>
+    <section class="panel pad" data-c="cyan" aria-labelledby="today-title">
+      <PanelHead
+        n={2}
+        id="today-title"
+        title={o.today}
+        about={o.todayAbout}
+        meta={o.sessionsMeta(sessions.length)}
+      />
       {sessions.length === 0 ? (
         <div class="quiet-empty">
           <p>{o.noToday}</p>
@@ -218,13 +221,14 @@ function Today({ slug, sessions }: { slug: string; sessions: Session[] }) {
 function Waiting({ slug, pending, total }: { slug: string; pending: Pending[]; total: number }) {
   const o = T.overview
   return (
-    <section aria-labelledby="waiting-title">
-      <div class="section-head">
-        <h2 id="waiting-title" class="section-title">
-          {o.waitingTitle}
-        </h2>
-        {total ? <span class="count">{total}</span> : null}
-      </div>
+    <section class="panel pad" data-c="violet" aria-labelledby="waiting-title">
+      <PanelHead
+        n={3}
+        id="waiting-title"
+        title={o.waitingTitle}
+        about={o.waitingAbout}
+        meta={o.waitingMeta(total)}
+      />
       {pending.length === 0 ? (
         <p class="quiet-empty">{o.noneWaiting}</p>
       ) : (
@@ -265,10 +269,14 @@ function Health({ health }: { health: Record<string, number> }) {
   const o = T.overview
   const found = HEALTH_ORDER.filter((k) => (health[k] ?? 0) > 0)
   return (
-    <section aria-labelledby="health-title">
-      <h2 id="health-title" class="section-title">
-        {o.healthTitle}
-      </h2>
+    <section class="panel pad" data-c="green" aria-labelledby="health-title">
+      <PanelHead
+        n={4}
+        id="health-title"
+        title={o.healthTitle}
+        about={o.healthAbout}
+        meta={o.healthMeta(found.length)}
+      />
       {found.length === 0 ? (
         <p class="quiet-empty">{o.healthy}</p>
       ) : (

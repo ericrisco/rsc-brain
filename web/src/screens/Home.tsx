@@ -17,6 +17,7 @@ import { useSignOut } from '../shell/signOut.ts'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
 import { CopyButton } from '../ui/CopyButton.tsx'
+import { colourAt, PanelHead, panelNumber } from '../ui/Panel.tsx'
 import { viewState } from '../ui/state.ts'
 import { ErrorState, Skeleton } from '../ui/states.tsx'
 
@@ -174,12 +175,16 @@ function InvitePanel() {
   )
 }
 
-function Card({ b }: { b: BrainRow }) {
+// A brain's card is a panel: numbered after the totals (01), each in the next family colour.
+function Card({ b, n }: { b: BrainRow; n: number }) {
   const waiting = b.stats.pendingProposals
   const when = ago(b.stats.lastActivityAt)
   return (
-    <li class={b.status === 'archived' ? 'archived' : undefined}>
+    <li class={b.status === 'archived' ? 'panel archived' : 'panel'} data-c={colourAt(n - 1)}>
       <div class="card-head">
+        <span class="panel-num" aria-hidden="true">
+          {panelNumber(n)}
+        </span>
         <a class="name" href={`/b/${encodeURIComponent(b.slug)}`}>
           {b.name}
         </a>
@@ -216,10 +221,11 @@ function Totals({ brains }: { brains: BrainRow[] }) {
     [h.totalToReview, t.review.count, t.review.count ? t.review.href : undefined],
   ]
   return (
-    <section aria-label={h.totals} class="home-tiles">
+    <section aria-label={h.totals} class="home-tiles panel pad" data-c="orange">
+      <PanelHead n={1} title={h.totalsTitle} about={h.totalsAbout} />
       <ul class="tiles">
-        {items.map(([label, n, href]) => (
-          <li key={label}>
+        {items.map(([label, n, href], k) => (
+          <li key={label} data-c={colourAt(k)}>
             {href ? (
               <a href={href}>
                 <span class="tile-label">{label}</span>
@@ -310,8 +316,8 @@ export function Home() {
           <Totals brains={data.brains} />
           <section aria-label={T.home.title}>
             <ul class="cards">
-              {data.brains.map((b) => (
-                <Card key={b.slug} b={b} />
+              {data.brains.map((b, k) => (
+                <Card key={b.slug} b={b} n={k + 2} />
               ))}
             </ul>
           </section>

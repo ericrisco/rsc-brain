@@ -686,25 +686,24 @@ pre.command .word {
   padding: clamp(24px, 8vh, 88px) 16px 48px;
 }
 
-.panel {
+/* A door's one panel: the shared panel (corners in its colour) laid out as a form. */
+.door .panel {
   width: 100%;
   max-width: 420px;
   display: grid;
   gap: 20px;
   padding: 28px;
-  background: var(--surface);
-  border-radius: 12px;
 }
 
-.panel.wide {
+.door .panel.wide {
   max-width: 600px;
 }
 
-.panel .title {
+.door .panel .title {
   font-size: 23px;
 }
 
-.panel hr {
+.door .panel hr {
   width: 100%;
   height: 1px;
   margin: 4px 0;
@@ -870,7 +869,7 @@ dialog::backdrop {
     font-size: 16px;
   }
 
-  .panel {
+  .door .panel {
     padding: 22px 18px;
   }
 
@@ -2169,6 +2168,7 @@ pre.version {
 
 .entry-actions {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
   margin-top: 28px;
   padding-top: 20px;
@@ -3064,6 +3064,7 @@ label.op-head:hover {
   margin: 0;
 }
 
+/* biome-ignore lint/style/noDescendingSpecificity: the canvas head and a door never meet */
 .graph-over .title {
   font-size: 20px;
   line-height: 1.3;
@@ -4424,4 +4425,93 @@ input[type="file"]::file-selector-button {
     background: var(--surface);
     border-radius: var(--r-card);
   }
+}
+
+/* The dark terminal style (plan canvas-ui S.1, SB2): content sits in panels (shared.css v2) with square
+   corners, a head edge to edge, and figures in the colour of their family. */
+.panel.pad {
+  padding: 0 var(--space-4) var(--space-4);
+  border-radius: 0;
+}
+
+.panel.pad > .panel-head {
+  margin: 0 calc(-1 * var(--space-4)) var(--space-4);
+}
+
+.panel-head .panel-title {
+  color: var(--panel-ink);
+}
+
+.panel-about {
+  flex: 1 1 12ch;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel > .tiles {
+  background: transparent;
+  border-color: var(--panel-line);
+  border-radius: 0;
+}
+
+.panel .tiles > li {
+  border-color: var(--panel-line);
+}
+
+.tiles > li[data-c] .tile-n {
+  color: var(--panel-c);
+  font-weight: 700;
+}
+
+.cards > li.panel {
+  background: var(--panel-bg);
+  border-color: var(--panel-line);
+  border-radius: 0;
+}
+
+.cards > li.panel:hover,
+.cards > li.panel:focus-within {
+  border-color: var(--panel-c);
+}
+
+.cards > li.panel.archived {
+  background: transparent;
+}
+
+.card-head .panel-num {
+  align-self: center;
+}
+
+.card-head .name::after {
+  border-radius: 0;
+}
+
+.map-type.panel {
+  margin-bottom: 40px;
+  padding: 0 var(--space-4) var(--space-4);
+  background: var(--panel-bg);
+  border-radius: 0;
+}
+
+.page-main.panel > .panel-head + * {
+  margin-top: 0;
+}
+
+.page-aside .panel.pad > .panel-head {
+  margin-bottom: var(--space-3);
+}
+
+.overview-side,
+.page-aside {
+  gap: 28px;
+}
+
+/* A monospaced word is wider: a button in a row of actions wraps its words before it would push the page
+   wider than a phone. */
+.actions.wrap > .button {
+  max-width: 100%;
+  white-space: normal;
 }

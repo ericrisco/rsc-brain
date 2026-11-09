@@ -183,11 +183,9 @@ describe('shared tokens (shared.css)', () => {
     assert.match(text, /\.panel\s*\{[^}]*--panel-c:\s*var\(--fam-orange\)/)
     assert.match(text, /\.panel::before\s*\{[^}]*var\(--panel-c\)/)
     assert.match(text, /\.panel-num\s*\{[^}]*background:\s*var\(--panel-c\)/)
+    // Any element takes a family by data-c: a panel, a figure in it, a pill.
     for (const f of FAMILIES)
-      assert.match(
-        text,
-        new RegExp(`\\.panel\\[data-c="${f}"\\]\\s*\\{\\s*--panel-c:\\s*var\\(--fam-${f}\\)`),
-      )
+      assert.match(text, new RegExp(`(^|\\s)\\[data-c="${f}"\\]\\s*\\{\\s*--panel-c:\\s*var\\(--fam-${f}\\)`))
   })
 
   it('reduced motion turns the durations to zero', () => {

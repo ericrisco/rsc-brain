@@ -9,6 +9,7 @@ import { useFresh } from '../../api/fresh.ts'
 import { api } from '../../api/index.ts'
 import { useLive } from '../../live/follow.ts'
 import { T } from '../../text.ts'
+import { PanelHead } from '../../ui/Panel.tsx'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
 import { curatorNames, membersResource } from '../journal/data.ts'
 import { More, usePages } from '../journal/Lists.tsx'
@@ -142,15 +143,15 @@ export function ProposalsInbox({ slug }: { slug: string }) {
           </Empty>
         )
       ) : (
-        <>
-          <p class="meta">{w.count(p.first.total)}</p>
+        <section class="panel pad" data-c="violet" aria-labelledby="inbox-title">
+          <PanelHead n={1} id="inbox-title" title={label} meta={w.count(p.first.total)} />
           <ul class="list" aria-label={w.list(label)}>
             {p.items.map((x) => (
               <Line key={x.id} slug={slug} p={x} />
             ))}
           </ul>
           <More p={p} />
-        </>
+        </section>
       )}
     </>
   )

@@ -242,25 +242,25 @@
     linear-gradient(var(--panel-c), var(--panel-c)) right bottom / 2px 14px no-repeat;
 }
 
-.panel[data-c="orange"] {
+[data-c="orange"] {
   --panel-c: var(--fam-orange);
 }
-.panel[data-c="amber"] {
+[data-c="amber"] {
   --panel-c: var(--fam-amber);
 }
-.panel[data-c="blue"] {
+[data-c="blue"] {
   --panel-c: var(--fam-blue);
 }
-.panel[data-c="cyan"] {
+[data-c="cyan"] {
   --panel-c: var(--fam-cyan);
 }
-.panel[data-c="pink"] {
+[data-c="pink"] {
   --panel-c: var(--fam-pink);
 }
-.panel[data-c="violet"] {
+[data-c="violet"] {
   --panel-c: var(--fam-violet);
 }
-.panel[data-c="green"] {
+[data-c="green"] {
   --panel-c: var(--fam-green);
 }
 
@@ -268,8 +268,9 @@
    or word at the right, in its colour. */
 .panel-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-1) var(--space-3);
   min-height: 40px;
   padding: var(--space-2) var(--space-4);
   background: var(--panel-head-bg);

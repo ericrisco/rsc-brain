@@ -550,6 +550,15 @@
     white-space: nowrap;
   }
 
+  /* Its words are hidden the same way: a long name never reaches past the screen's edge. */
+  .rail .rail-label > * {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
   .rail .to-review {
     gap: 6px;
   }

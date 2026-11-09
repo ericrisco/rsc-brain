@@ -398,11 +398,14 @@ test('the inspector: link rows keep Inspect at the right of their first line; no
     expect(s.right, 'at the right').toBeLessThanOrEqual(1)
     expect(Math.min(s.h, s.w)).toBeGreaterThanOrEqual(24)
   }
+  // No code type: tags and the address are set in the interface's own face, never a face of their own (the
+  // spec amendment of 2026-11-09 makes that face monospaced for the whole interface).
+  const body = await page.evaluate(() => getComputedStyle(document.body).fontFamily)
   const fonts = await inspector
     .locator('.tags .tag, .inspector-address')
     .evaluateAll((els) => els.map((e) => getComputedStyle(e).fontFamily))
   expect(fonts.length).toBeGreaterThanOrEqual(2)
-  for (const f of fonts) expect(f).not.toMatch(/mono|Menlo|Consolas/i)
+  for (const f of fonts) expect(f).toBe(body)
 })
 
 // Review A1: with the panel open, the keyboard's page is kept in the part of the canvas the panel and the
