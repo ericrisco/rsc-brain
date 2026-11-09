@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import { toReview } from '../lib/brains.ts'
-import { rail, toggleRail } from '../lib/rail.ts'
+import { foldRail, isTablet, rail, startRail, TABLET, toggleRail } from '../lib/rail.ts'
 import { applyTheme, theme } from '../lib/theme.ts'
 import { brainsResource } from '../screens/Home.tsx'
 import type { Me } from '../session.ts'
@@ -331,6 +331,36 @@ function useTips() {
   return { off, moved }
 }
 
+// On a tablet the open rail lies over the screen: it closes on a move to another screen, on Esc and on a
+// click outside it (review R2). Crossing into or out of a tablet's width starts the rail again.
+function useTabletRail(path: string, open: boolean) {
+  useEffect(() => {
+    if (isTablet()) foldRail()
+  }, [path])
+  useEffect(() => {
+    if (typeof matchMedia !== 'function') return
+    const mq = matchMedia(TABLET)
+    const changed = () => startRail()
+    mq.addEventListener('change', changed)
+    return () => mq.removeEventListener('change', changed)
+  }, [])
+  useEffect(() => {
+    if (!open || !isTablet()) return
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) foldRail()
+    }
+    const outside = (e: PointerEvent) => {
+      if (!(e.target as Element | null)?.closest?.('#rail')) foldRail()
+    }
+    document.addEventListener('keydown', esc)
+    document.addEventListener('pointerdown', outside)
+    return () => {
+      document.removeEventListener('keydown', esc)
+      document.removeEventListener('pointerdown', outside)
+    }
+  }, [open])
+}
+
 export function Rail({
   me,
   brain,
@@ -345,6 +375,7 @@ export function Rail({
   const { path } = useLocation()
   const open = rail.value === 'open'
   const tips = useTips()
+  useTabletRail(path, open)
   return (
     <header
       class="rail"

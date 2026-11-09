@@ -244,3 +244,39 @@ test('at 1920×1080 the overview shows its figures in one row and its three part
   const widths = await tiles.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width))
   expect(Math.min(...widths), 'the tiles share the width').toBeGreaterThan(250)
 })
+
+// Review R2: on a tablet the open rail covers the screen, so it is open for the moment only: never brought
+// back by a reload, and closed by a move to another screen, Esc and a click outside it.
+test('on a tablet the open rail is for the moment: not remembered, closed by a move, Esc or a click outside', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await context.addInitScript(() => localStorage.setItem('rscb.rail', 'open'))
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.setViewportSize({ width: 900, height: 800 })
+  await page.goto('/b/growth')
+  const nav = page.getByRole('navigation', { name: 'Sections of this brain' })
+  await expect(nav.getByRole('link', { name: 'Overview' })).toBeVisible()
+  expect(await railWidth(page), 'a remembered open rail is not brought back on a tablet').toBeCloseTo(56, 0)
+  const expand = page.getByRole('button', { name: 'Expand the side bar' })
+  await expand.click()
+  await expect.poll(() => railWidth(page)).toBeCloseTo(220, 0)
+  await page.keyboard.press('Escape')
+  await expect.poll(() => railWidth(page)).toBeCloseTo(56, 0)
+  await expand.click()
+  await expect.poll(() => railWidth(page)).toBeCloseTo(220, 0)
+  await page.mouse.click(800, 400)
+  await expect.poll(() => railWidth(page)).toBeCloseTo(56, 0)
+  await expand.click()
+  await expect.poll(() => railWidth(page)).toBeCloseTo(220, 0)
+  await nav.getByRole('link', { name: 'Wiki' }).click()
+  await expect(page).toHaveURL(/\/b\/growth\/wiki$/)
+  await expect.poll(() => railWidth(page)).toBeCloseTo(56, 0)
+  await expand.click()
+  await page.reload()
+  await expect(nav.getByRole('link', { name: 'Overview' })).toBeVisible()
+  expect(await railWidth(page)).toBeCloseTo(56, 0)
+  // The wide screen's choice is left as it was.
+  expect(await page.evaluate(() => localStorage.getItem('rscb.rail'))).toBe('open')
+})

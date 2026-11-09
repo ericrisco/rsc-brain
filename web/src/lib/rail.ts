@@ -26,14 +26,26 @@ export function readRail(store: Store | null): Rail {
 
 export const rail = signal<Rail>('folded')
 
-// At start: the remembered choice, folded when there is none.
-export function startRail(store: Store | null = browserStore()): void {
-  rail.value = readRail(store)
+// A tablet (768–1099px): the open rail covers the screen there, so it opens for the moment only, and is
+// never read from nor saved to the remembered choice (review R2).
+export const TABLET = '(min-width: 768px) and (max-width: 1099px)'
+export const isTablet = (): boolean => typeof matchMedia === 'function' && matchMedia(TABLET).matches
+
+type Where = { tablet?: boolean }
+
+// At start: the remembered choice, folded when there is none (always folded on a tablet).
+export function startRail(store: Store | null = browserStore(), where: Where = { tablet: isTablet() }): void {
+  rail.value = where.tablet ? 'folded' : readRail(store)
 }
 
-// The person's choice: shown and remembered.
-export function setRail(r: Rail, store: Store | null = browserStore()): void {
+// The person's choice: shown, and remembered unless on a tablet.
+export function setRail(
+  r: Rail,
+  store: Store | null = browserStore(),
+  where: Where = { tablet: isTablet() },
+): void {
   rail.value = r
+  if (where.tablet) return
   try {
     store?.setItem(RAIL_KEY, r)
   } catch {
@@ -41,6 +53,14 @@ export function setRail(r: Rail, store: Store | null = browserStore()): void {
   }
 }
 
-export function toggleRail(store: Store | null = browserStore()): void {
-  setRail(rail.value === 'open' ? 'folded' : 'open', store)
+export function toggleRail(
+  store: Store | null = browserStore(),
+  where: Where = { tablet: isTablet() },
+): void {
+  setRail(rail.value === 'open' ? 'folded' : 'open', store, where)
+}
+
+// Folded for the moment, the remembered choice untouched (a tablet's rail closing).
+export function foldRail(): void {
+  rail.value = 'folded'
 }
