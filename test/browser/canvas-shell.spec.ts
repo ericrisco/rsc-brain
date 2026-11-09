@@ -11,8 +11,8 @@ const SMALL = { width: 1366, height: 768 }
 const SIGNED_IN = ROWS.filter((r) => !r.preset)
 
 // How wide the content of the screen is drawn: from the leftmost to the rightmost thing that is painted in
-// main (words, controls, pictures, and boxes with a ground or a line of their own). A block that is only as
-// wide as the page but paints nothing does not count.
+// main (words, controls, pictures, and boxes with a ground or a frame of their own). A block that is only as
+// wide as the page but paints nothing, or only a separating line, does not count.
 async function contentSpan(page: Page): Promise<{ span: number; left: number; right: number }> {
   return page.evaluate(() => {
     const main = document.querySelector('main') as HTMLElement
@@ -23,16 +23,19 @@ async function contentSpan(page: Page): Promise<{ span: number; left: number; ri
       left = Math.min(left, r.left)
       right = Math.max(right, r.right)
     }
+    // A box with a ground, or a line on two sides or more. A line on one side only (a separator, the line
+    // under tabs) or anything under 4px tall (a rule) separates content; it is not content.
     const painted = (el: Element) => {
       const cs = getComputedStyle(el)
       if (cs.visibility === 'hidden' || cs.display === 'none') return false
+      if (el.getBoundingClientRect().height < 4) return false
       const ground = cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent'
-      const line = ['Top', 'Right', 'Bottom', 'Left'].some(
+      const sides = ['top', 'right', 'bottom', 'left'].filter(
         (s) =>
-          Number.parseFloat(cs.getPropertyValue(`border-${s.toLowerCase()}-width`)) > 0 &&
-          cs.getPropertyValue(`border-${s.toLowerCase()}-style`) !== 'none',
-      )
-      return ground || line || /^(IMG|SVG|CANVAS|INPUT|SELECT|TEXTAREA|BUTTON|svg)$/.test(el.tagName)
+          Number.parseFloat(cs.getPropertyValue(`border-${s}-width`)) > 0 &&
+          cs.getPropertyValue(`border-${s}-style`) !== 'none',
+      ).length
+      return ground || sides > 1 || /^(IMG|SVG|CANVAS|INPUT|SELECT|TEXTAREA|BUTTON|svg)$/.test(el.tagName)
     }
     for (const el of main.querySelectorAll('*')) {
       if (el.closest('dialog:not([open])')) continue
@@ -330,4 +333,31 @@ test('folded, a section the screen is inside is marked by the bar, not by colour
   })
   expect(bar.content).not.toBe('none')
   expect(bar.width).toBe('3px')
+})
+
+// Review R3: the measure can fail. A screen whose content is held to 720px (a mutant) must read under 90%,
+// even when a line that only separates (a rule, the line under tabs) still spans the width: such a line
+// does not count as content.
+test('the width measure fails a screen held to 720px', async ({ page, context, baseURL }) => {
+  test.slow()
+  const s = await scenario(context, baseURL as string, 'signed-in')
+  await page.setViewportSize(WIDE)
+  for (const row of SIGNED_IN) {
+    await page.goto(row.path)
+    if (row.seed) await row.seed(s)
+    await expect(row.ready(page)).toBeVisible()
+    // The page held to 720px, with a separating line (one side, 1px) still across the whole width.
+    await page.locator('main').evaluate((main) => {
+      const pg = main.querySelector(':scope > .page') as HTMLElement
+      pg.style.setProperty('max-width', '720px', 'important')
+      const line = document.createElement('div')
+      line.style.setProperty('border-bottom', '1px solid currentColor')
+      line.style.setProperty('height', '12px')
+      main.append(line)
+    })
+    const { span } = await contentSpan(page)
+    expect(span, `${row.name} held to 720px spans ${Math.round(span)}px`).toBeLessThan(
+      0.9 * (WIDE.width - 56),
+    )
+  }
 })
