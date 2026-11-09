@@ -309,3 +309,25 @@ test('at 1366×650 the folded rail scrolls its sections without cutting off a to
   expect(seen.tip, 'the tooltip is drawn whole').toBe(true)
   expect(seen.bar, 'the current bar is drawn').toBe(true)
 })
+
+// Review R5: inside a section (a page of the wiki under Wiki) the section is marked by the bar too, not by
+// the colour of its icon alone.
+test('folded, a section the screen is inside is marked by the bar, not by colour alone', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.setViewportSize(WIDE)
+  await page.goto('/b/growth/pages/audience/retention')
+  const wiki = page
+    .getByRole('navigation', { name: 'Sections of this brain' })
+    .getByRole('link', { name: 'Wiki' })
+  await expect(wiki).toHaveAttribute('aria-current', 'true')
+  const bar = await wiki.evaluate((el) => {
+    const cs = getComputedStyle(el, '::before')
+    return { content: cs.content, width: cs.width }
+  })
+  expect(bar.content).not.toBe('none')
+  expect(bar.width).toBe('3px')
+})

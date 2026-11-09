@@ -146,8 +146,9 @@
   color: var(--accent);
 }
 
-/* The current section is also marked by a bar at the left edge: never colour alone. */
-.rail-item[aria-current="page"]::before {
+/* The current section, or the one the screen is inside, is also marked by a bar at the left edge: never
+   colour alone. */
+.rail-item[aria-current]::before {
   content: "";
   position: absolute;
   left: -8px;
@@ -560,7 +561,7 @@
     top: calc(100% + 8px);
   }
 
-  .rail-item[aria-current="page"]::before {
+  .rail-item[aria-current]::before {
     display: none;
   }
 }
@@ -585,7 +586,7 @@
   min-height: 40px;
 }
 
-.sheet .rail-item[aria-current="page"]::before {
+.sheet .rail-item[aria-current]::before {
   left: -12px;
 }
 
