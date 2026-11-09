@@ -232,9 +232,9 @@ export class Renderer {
     const xy = st?.xy ?? this.layout
     if (!sc || !st || !xy || xy.length !== 2 * sc.n || st.width === 0 || st.height === 0) return null
     const started = performance.now()
-    const fitWith = (pad: number) =>
+    const fitWith = (pad: number, max = FIT_MAX) =>
       fit(xy, st.fit, st.width, Math.max(120, st.height - Math.max(st.inset, st.bottom)), pad, st.top, {
-        max: FIT_MAX,
+        max,
         right: st.right,
       })
     const view = st.autoFit ? fitCards(fitWith, fitPad(sc, st.fit)) : st.view

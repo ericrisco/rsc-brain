@@ -170,7 +170,10 @@ describe('the dotted ground', () => {
 describe('Fit and the tiles', () => {
   const xy = Float32Array.from([0, 0, 100, 0])
   const on = new Uint8Array([1, 1])
-  const fitWith = (w: number) => (pad: number) => fit(xy, on, w, 600, pad, 0, { max: 8 })
+  const fitWith =
+    (w: number) =>
+    (pad: number, max = 8) =>
+      fit(xy, on, w, 600, pad, 0, { max })
   it('a view that draws tiles keeps every page a half tile from the edges', () => {
     for (const w of [416, 500, 700, 1200, 1920]) {
       const v = fitCards(fitWith(w), 48)
@@ -213,4 +216,35 @@ describe('keeping an item in view', () => {
     const again = keepInView({ sx: 900 + (first?.dx ?? 0), sy: 400 + (first?.dy ?? 0), ...wide })
     assert.equal(again, null)
   })
+})
+
+// Review R3-1: Fit never returns a picture that flips or collapses. On a small canvas the roomy pad leaves no
+// room; then the tight fit is kept, just under the tile scale, so pills are drawn.
+describe('Fit on a small canvas', () => {
+  const cases = {
+    'one page': Float32Array.from([0, 0]),
+    'two close pages': Float32Array.from([0, 0, 2, 1]),
+  }
+  for (const [name, xy] of Object.entries(cases))
+    for (const [w, h] of [
+      [1000, 250],
+      [250, 800],
+    ] as const)
+      it(`${name} in ${w}×${h}: a positive, finite scale and every page inside`, () => {
+        const on = new Uint8Array(xy.length / 2).fill(1)
+        const v = fitCards((pad, max = 8) => fit(xy, on, w, h, pad, 0, { max }), 48)
+        assert.ok(Number.isFinite(v.scale) && v.scale > 0, `scale ${v.scale}`)
+        assert.ok(Number.isFinite(v.tx) && Number.isFinite(v.ty))
+        for (let i = 0; i < xy.length / 2; i++) {
+          const sx = (xy[2 * i] as number) * v.scale + v.tx
+          const sy = (xy[2 * i + 1] as number) * v.scale + v.ty
+          assert.ok(sx >= 0 && sx <= w && sy >= 0 && sy <= h, `page ${i} at ${sx},${sy}`)
+        }
+        // Tiles only with the room they need.
+        if (v.scale >= TILE_SCALE)
+          for (let i = 0; i < xy.length / 2; i++) {
+            const sx = (xy[2 * i] as number) * v.scale + v.tx
+            assert.ok(sx >= TILE_PAD - 1e-6 && sx <= w - TILE_PAD + 1e-6)
+          }
+      })
 })

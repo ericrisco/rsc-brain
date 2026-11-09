@@ -148,13 +148,23 @@ export function dotGrid(view: View, base = DOT_STEP): { step: number; ox: number
   return { step, ox: mod(view.tx), oy: mod(view.ty) }
 }
 
-// Fit with cards in mind (review R2-1): a fit close enough for tiles is done again with room for whole tiles
-// at the edges, and that roomy view is kept even when it then falls short of tiles (pills with room to
-// spare). Tiles are never drawn with the narrow pad of the pills.
-export function fitCards(fitWith: (pad: number) => View, pad: number): View {
+// Fit with cards in mind (review R2-1, R3-1): a fit close enough for tiles is done again with room for whole
+// tiles at the edges, and that roomy view is kept even when it then falls short of tiles (pills with room to
+// spare). Tiles are never drawn with the narrow pad of the pills. When the canvas is too small for the roomy
+// pad (its scale would be zero, negative or not a number), the tight fit is kept just under the tile scale,
+// so pills are drawn. Never a view that flips or collapses. `fitWith(pad, max)`: the fit with that pad and at
+// most that scale.
+const usable = (v: View) =>
+  Number.isFinite(v.scale) && v.scale > 0 && Number.isFinite(v.tx) && Number.isFinite(v.ty)
+export function fitCards(fitWith: (pad: number, max?: number) => View, pad: number): View {
   const tight = fitWith(pad)
+  if (!usable(tight)) {
+    const bare = fitWith(0, TILE_SCALE * 0.99)
+    return usable(bare) ? bare : { scale: 1, tx: 0, ty: 0 }
+  }
   if (tight.scale < TILE_SCALE) return tight
-  return fitWith(Math.max(pad, TILE_PAD))
+  const roomy = fitWith(Math.max(pad, TILE_PAD))
+  return usable(roomy) ? roomy : fitWith(pad, TILE_SCALE * 0.99)
 }
 
 // How far to move the picture so an item at (sx, sy), its card hw × hh from its middle to each side, sits
