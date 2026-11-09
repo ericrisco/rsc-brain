@@ -308,6 +308,27 @@ test.describe('the cloud, moving (motion allowed)', () => {
     })
     await expect(canvas).toHaveAttribute('data-spinning', 'true')
   })
+
+  // Review R11: the system asking for less motion, or the theme changed, take effect at once.
+  test('R11: reduced motion asked while it turns stops it; a theme change repaints', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const canvas = page.locator('canvas.graph-canvas')
+    await expect(canvas).toHaveAttribute('data-spinning', 'true')
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await expect(canvas).toHaveAttribute('data-spinning', 'false')
+    await expect(canvas).toHaveAttribute('data-pulses', '0')
+    const draws = Number(await canvas.getAttribute('data-draws'))
+    await page.evaluate(() => {
+      document.documentElement.dataset.theme = 'light'
+    })
+    await expect.poll(async () => Number(await canvas.getAttribute('data-draws'))).toBeGreaterThan(draws)
+  })
 })
 
 test.describe('the legend and the fact card', () => {

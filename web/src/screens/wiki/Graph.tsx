@@ -1271,6 +1271,11 @@ function GraphCanvas({
             sendState()
           })
     if (sight && canvas.current) sight.observe(canvas.current)
+    // Less motion asked by the system, or another theme: the next picture follows at once (review R11).
+    const less = typeof matchMedia === 'undefined' ? null : matchMedia('(prefers-reduced-motion: reduce)')
+    less?.addEventListener('change', seen)
+    const themed = typeof MutationObserver === 'undefined' ? null : new MutationObserver(seen)
+    themed?.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] })
     // Any hand on the graph's screen (the canvas, its tools, its strip, the legend, the panel) stops the turn
     // for a rest: what it does is then seen on a still picture (review R4).
     const screen = canvas.current?.closest('.graph-screen') ?? canvas.current?.closest('.graph-section')
@@ -1279,6 +1284,8 @@ function GraphCanvas({
     return () => {
       document.removeEventListener('visibilitychange', seen)
       sight?.disconnect()
+      less?.removeEventListener('change', seen)
+      themed?.disconnect()
       for (const t of hand) screen?.removeEventListener(t, touch)
       clearTimeout(restTimer.current)
     }
