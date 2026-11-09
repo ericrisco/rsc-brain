@@ -5,10 +5,11 @@
 // and words live in the address. With many pages each group shows a few and opens whole.
 import { useState } from 'preact/hooks'
 import { useFresh } from '../../api/fresh.ts'
+import { familyOfType } from '../../graph/families.ts'
 import { filterMap, type MapGroup, mapTags, mapTypes, PAGE_STATUSES, PAGE_TYPES } from '../../lib/wiki.ts'
 import { online } from '../../session.ts'
 import { T } from '../../text.ts'
-import { colourAt, PanelHead } from '../../ui/Panel.tsx'
+import { PanelHead } from '../../ui/Panel.tsx'
 import { viewState } from '../../ui/state.ts'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
 import { pageHref, StatusTag, useBrain, useFilters, WikiHead } from './common.tsx'
@@ -168,7 +169,7 @@ export function WikiMap({ slug }: { slug: string }) {
             <section
               key={x.type}
               class="map-type panel pad"
-              data-c={colourAt(k)}
+              data-c={familyOfType(x.type).colour}
               aria-labelledby={`type-${x.type}`}
             >
               <PanelHead

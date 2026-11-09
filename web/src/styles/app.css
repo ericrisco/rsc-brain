@@ -4589,3 +4589,22 @@ input[type="file"]::file-selector-button {
     display: none;
   }
 }
+
+/* The map's columns: a type's panel never reaches into the column before it (its corners sit on its border,
+   not outside it), and a page's address goes under its title, the monospaced address being too wide to sit
+   beside it. */
+.map-type.panel::before {
+  inset: -1px;
+}
+
+@media (min-width: 1100px) {
+  .map .map-pages > li:not(.with-actions):has(> .meta:last-child) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .map .map-pages > li:not(.with-actions):has(> .meta:last-child) > .meta:last-child {
+    grid-column: 1;
+    grid-row: auto;
+    text-align: left;
+  }
+}

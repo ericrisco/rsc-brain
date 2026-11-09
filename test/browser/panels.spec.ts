@@ -5,7 +5,7 @@ import type { Page } from '@playwright/test'
 import { expect, scenario, test } from './fixture.ts'
 
 const SCREENS = [
-  { name: 'home', path: '/', ready: (p: Page) => p.getByRole('heading', { name: 'Your brains' }) },
+  { name: 'home', path: '/', ready: (p: Page) => p.locator('.home-tiles') },
   {
     name: 'overview',
     path: '/b/growth',
