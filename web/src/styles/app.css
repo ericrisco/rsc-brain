@@ -2964,6 +2964,10 @@ label.op-head:hover {
     bottom: 0;
     z-index: 30;
     max-height: 30vh;
+    /* Tighter than the column: with the monospaced face the words take more room, and the page's actions
+       stay in the sheet's first view. */
+    gap: 8px;
+    padding: 14px 20px 16px;
     border-radius: 12px 12px 0 0;
     box-shadow: 0 -8px 24px oklch(0 0 0 / 0.35);
   }
