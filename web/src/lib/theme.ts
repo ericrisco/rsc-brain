@@ -1,6 +1,5 @@
-// The theme follows the system (prefers-color-scheme) until the person chooses one in the account menu;
-// then the choice is remembered in this browser only and the system no longer changes it. Dark when the
-// system says nothing (DESIGN.md).
+// The theme: dark until the person chooses one in the account menu (spec amendment 2026-11-09, CA11: dark is
+// the style, whatever the system prefers); then the choice is remembered in this browser only.
 import { signal } from '@preact/signals'
 
 export type Theme = 'dark' | 'light'
@@ -15,24 +14,16 @@ function chosen(): Theme | null {
   }
 }
 
-const systemQuery = () =>
-  typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: light)') : null
-
-const system = (): Theme => (systemQuery()?.matches ? 'light' : 'dark')
-
-export const theme = signal<Theme>(typeof document === 'undefined' ? 'dark' : (chosen() ?? system()))
+export const theme = signal<Theme>(typeof document === 'undefined' ? 'dark' : (chosen() ?? 'dark'))
 
 function show(t: Theme): void {
   theme.value = t
   document.documentElement.dataset.theme = t
 }
 
-// At start: the remembered choice, or the system's, which is then followed while nothing is chosen.
+// At start: the remembered choice, or dark.
 export function startTheme(): void {
-  show(chosen() ?? system())
-  systemQuery()?.addEventListener('change', () => {
-    if (!chosen()) show(system())
-  })
+  show(chosen() ?? 'dark')
 }
 
 // The person's choice: shown and remembered.

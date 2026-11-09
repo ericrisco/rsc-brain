@@ -1,21 +1,22 @@
-/* Brain's own tokens, over the shared ones (shared.css, loaded first). The visual system of DESIGN.md (direction true-black-flat, seed 48291, palette and type kept from the
-   RSC identity). Elevation is lightness alone; the accent marks selection, data and confirmation, never a
-   button, a tab or the navigation. Dark is the default; light is a choice of the person. */
+/* Brain's own tokens, over the shared ones (shared.css v2, loaded first): the dark terminal with neon (plan
+   canvas-ui S.0). A near-black blue ground, panels one step lighter, one monospaced face. Elevation is
+   lightness and a thin border; the accent marks selection, data and confirmation, never a button, a tab or
+   the navigation. Dark is the default; light is a choice of the person. */
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --ground: oklch(0.165 0.012 260);
-  --surface: oklch(0.205 0.013 260);
-  --raised: oklch(0.25 0.012 260);
-  --text: oklch(0.96 0.004 95);
-  --muted: oklch(0.76 0.008 260);
-  --accent: oklch(0.8 0.17 156);
-  --rule: oklch(0.27 0.012 260);
-  --field-line: oklch(0.56 0.01 260);
-  --nav: oklch(0.74 0.008 260);
-  --primary-bg: oklch(0.96 0.004 95);
-  --primary-fg: oklch(0.165 0.012 260);
-  --scrim: oklch(0.1 0.01 260 / 0.72);
+  --ground: oklch(0.145 0.015 262);
+  --surface: oklch(0.175 0.016 262);
+  --raised: oklch(0.225 0.018 262);
+  --text: oklch(0.94 0.006 260);
+  --muted: oklch(0.76 0.012 260);
+  --accent: oklch(0.82 0.16 156);
+  --rule: oklch(0.27 0.018 262);
+  --field-line: oklch(0.56 0.02 262);
+  --nav: oklch(0.78 0.01 260);
+  --primary-bg: oklch(0.94 0.006 260);
+  --primary-fg: oklch(0.145 0.015 262);
+  --scrim: oklch(0.08 0.012 262 / 0.75);
 }
 
 :root[data-theme="light"] {
@@ -35,8 +36,9 @@
 }
 
 :root {
-  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  /* The whole interface is monospaced: the two old names both point at the shared stack. */
+  --sans: var(--font-mono);
+  --mono: var(--font-mono);
   --topbar: 64px;
   --gutter: 28px;
   --gap: 16px;

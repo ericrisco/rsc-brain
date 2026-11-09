@@ -75,10 +75,13 @@ function licences(): Plugin {
           return `${pkg.name}@${pkg.version} (${pkg.license})\n\n${text}`
         })
         .sort()
+      // The interface's face, self-hosted beside shared.css: its licence travels with it.
+      const font = readFileSync(fileURLToPath(new URL('src/styles/fonts/OFL.txt', import.meta.url)), 'utf8')
+      notices.push(`JetBrains Mono (OFL-1.1)\n\n${font.trim()}`)
       this.emitFile({
         type: 'asset',
         fileName: 'licences.txt',
-        source: `Libraries bundled into the rsc-brain web, with their licence notices.\n\n${notices.join('\n\n---\n\n')}\n`,
+        source: `Libraries and fonts bundled into the rsc-brain web, with their licence notices.\n\n${notices.join('\n\n---\n\n')}\n`,
       })
     },
   }
