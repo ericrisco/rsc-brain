@@ -2850,7 +2850,32 @@ label.op-head:hover {
 
 /* biome-ignore lint/style/noDescendingSpecificity: scoped to the graph; it never competes with the earlier rule */
 .inspector-links li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 4px 12px;
   padding: 4px 0;
+}
+
+.inspector-links li > .button.small {
+  min-height: 26px;
+  margin-top: -2px;
+  padding: 0 8px;
+  font-size: 12.5px;
+}
+
+/* The page's address, type and status in the inspector read as words: plain chips, not code. */
+.inspector-address {
+  overflow-wrap: anywhere;
+}
+
+.graph-inspector .tags .tag {
+  font-family: var(--sans);
+  font-size: 12.5px;
+  border-radius: var(--r-chip);
+  background: var(--raised);
+  border-color: transparent;
+  color: var(--text);
 }
 
 .button.small {

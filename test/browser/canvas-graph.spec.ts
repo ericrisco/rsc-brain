@@ -350,3 +350,42 @@ test('CA8: a two-page brain fits as big tiles with whole titles', async ({ page,
     'Payroll clerk CV screenings',
   ])
 })
+
+// The inspector reads as words, not code: each link a row with its words at the left (wrapping if long) and
+// a compact Inspect on its first line at the right; the page's type, status and address as plain text.
+test('the inspector: link rows keep Inspect at the right of their first line; no code type', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto(GRAPH)
+  await settled(page)
+  await page.locator('canvas.graph-canvas').focus()
+  await page.keyboard.press('Enter')
+  const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
+  await expect(inspector.getByRole('link', { name: 'Open page' })).toBeVisible()
+  const rows = inspector.locator('.inspector-links li')
+  await expect(rows.first()).toBeVisible()
+  const seen = await rows.evaluateAll((lis) =>
+    lis
+      .filter((li) => li.querySelector('button'))
+      .map((li) => {
+        const r = li.getBoundingClientRect()
+        const b = (li.querySelector('button') as HTMLElement).getBoundingClientRect()
+        return { top: b.top - r.top, right: r.right - b.right, h: b.height, w: b.width }
+      }),
+  )
+  expect(seen.length).toBeGreaterThan(1)
+  for (const s of seen) {
+    expect(s.top, 'on the first line').toBeLessThanOrEqual(4)
+    expect(s.right, 'at the right').toBeLessThanOrEqual(1)
+    expect(Math.min(s.h, s.w)).toBeGreaterThanOrEqual(24)
+  }
+  const fonts = await inspector
+    .locator('.tags .tag, .inspector-address')
+    .evaluateAll((els) => els.map((e) => getComputedStyle(e).fontFamily))
+  expect(fonts.length).toBeGreaterThanOrEqual(2)
+  for (const f of fonts) expect(f).not.toMatch(/mono|Menlo|Consolas/i)
+})

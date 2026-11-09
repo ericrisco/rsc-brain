@@ -187,30 +187,32 @@ function PagePeek({
                 {g.arrow} {g.linkKinds[l.kind] ?? l.kind} {g.arrow}{' '}
               </span>
             )
+            // Two parts: the words at the left (they may wrap), Inspect at the right of the first line.
             return (
               <li key={`${l.kind}:${l.address}`}>
-                {out ? (
-                  <>
-                    <span>{title}</span>
-                    {kind}
-                    {other}
-                  </>
-                ) : (
-                  <>
-                    {other}
-                    {kind}
-                    <span>{title}</span>
-                  </>
-                )}
-                {l.state !== 'ok' && l.state !== 'broken' ? (
-                  <>
-                    {' '}
-                    <StatusTag status={l.state} />
-                  </>
-                ) : null}
+                <span class="link-words">
+                  {out ? (
+                    <>
+                      <span>{title}</span>
+                      {kind}
+                      {other}
+                    </>
+                  ) : (
+                    <>
+                      {other}
+                      {kind}
+                      <span>{title}</span>
+                    </>
+                  )}
+                  {l.state !== 'ok' && l.state !== 'broken' ? (
+                    <>
+                      {' '}
+                      <StatusTag status={l.state} />
+                    </>
+                  ) : null}
+                </span>
                 {shownHere(l.address) && l.state !== 'broken' ? (
                   <>
-                    {' '}
                     <button
                       type="button"
                       class="button quiet small"
@@ -235,7 +237,7 @@ function PagePeek({
       <h2 id="inspector-title" class="inspector-title" tabIndex={-1} ref={headingRef}>
         {title}
       </h2>
-      <p class="meta mono">{address}</p>
+      <p class="meta inspector-address">{address}</p>
       <p class="tags">
         {type ? <TypeTag type={type} /> : null} {status ? <StatusTag status={status} /> : null}
       </p>
