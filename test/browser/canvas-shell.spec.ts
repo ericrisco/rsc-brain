@@ -276,6 +276,17 @@ test('on a tablet the open rail is for the moment: not remembered, closed by a m
   await nav.getByRole('link', { name: 'Wiki' }).click()
   await expect(page).toHaveURL(/\/b\/growth\/wiki$/)
   await expect.poll(() => railWidth(page)).toBeCloseTo(56, 0)
+  // Review A6: Esc in a menu of the open rail closes the menu only; the rail stays open.
+  await expand.click()
+  await expect.poll(() => railWidth(page)).toBeCloseTo(220, 0)
+  const switcher = page.getByRole('button', { name: /Growth.*switch brain/ })
+  await switcher.click()
+  await expect(switcher).toHaveAttribute('aria-expanded', 'true')
+  await page.keyboard.press('Escape')
+  await expect(switcher).toHaveAttribute('aria-expanded', 'false')
+  expect(await railWidth(page), 'the rail stays open').toBeCloseTo(220, 0)
+  await page.keyboard.press('Escape')
+  await expect.poll(() => railWidth(page)).toBeCloseTo(56, 0)
   // Review A2: Tab out of the open rail (its last stop is the button that folds it) folds it.
   await expand.click()
   await expect.poll(() => railWidth(page)).toBeCloseTo(220, 0)
@@ -318,6 +329,15 @@ test('at 1366×650 the folded rail scrolls its sections without cutting off a to
   })
   expect(seen.tip, 'the tooltip is drawn whole').toBe(true)
   expect(seen.bar, 'the current bar is drawn').toBe(true)
+  // Review A6: the room the scroll box takes beside the rail lets the pointer through to the screen.
+  await page.locator('main').click({ position: { x: 600, y: 10 } })
+  const through = await wiki.evaluate((link) => {
+    const rail = (document.querySelector('header.rail') as HTMLElement).getBoundingClientRect()
+    const l = link.getBoundingClientRect()
+    const at = document.elementFromPoint(rail.right + 150, l.top + l.height / 2)
+    return Boolean(at?.closest('main'))
+  })
+  expect(through, '150 px right of the rail is the screen').toBe(true)
 })
 
 // Review R5: inside a section (a page of the wiki under Wiki) the section is marked by the bar too, not by

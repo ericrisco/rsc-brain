@@ -13,15 +13,17 @@ export function usePopover<B extends HTMLElement = HTMLDivElement>() {
     }
     const esc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // Heard first (capture) and spent: what holds the menu (an open rail) does not close as well.
+        e.preventDefault()
         setOpen(false)
         button.current?.focus()
       }
     }
     document.addEventListener('pointerdown', away)
-    document.addEventListener('keydown', esc)
+    document.addEventListener('keydown', esc, true)
     return () => {
       document.removeEventListener('pointerdown', away)
-      document.removeEventListener('keydown', esc)
+      document.removeEventListener('keydown', esc, true)
     }
   }, [open])
   return { open, setOpen, box, button }
