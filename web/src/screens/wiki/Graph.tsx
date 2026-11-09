@@ -1536,8 +1536,15 @@ function GraphCanvas({
     else if (e.key === '0') fitAll()
   }
 
-  // A drag turns the cloud (yaw, and pitch within limits); with Shift, or on a flat picture (the tiles, the
-  // rings of a focus), it moves the picture.
+  // A drag turns the cloud (yaw, and pitch within limits) at Fit only; with Shift, zoomed or moved past Fit, or
+  // on a flat picture (the tiles, the rings of a focus), it moves the picture. Two fingers move and pinch it at
+  // any zoom (review R5).
+  const fingers = useRef(new Map<number, { x: number; y: number }>())
+  const pinch = useRef<{ d: number; x: number; y: number; view: View } | null>(null)
+  const twoFingers = () => {
+    const [a, b] = [...fingers.current.values()] as [{ x: number; y: number }, { x: number; y: number }]
+    return { d: Math.max(1, Math.hypot(b.x - a.x, b.y - a.y)), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+  }
   const drag = useRef<{
     x: number
     y: number
@@ -1551,13 +1558,22 @@ function GraphCanvas({
   const onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return
     touch()
+    if (canvas.current) {
+      const [fx, fy] = onCanvas(e)
+      fingers.current.set(e.pointerId, { x: fx, y: fy })
+    }
+    if (fingers.current.size === 2) {
+      pinch.current = { ...twoFingers(), view: view.current }
+      if (drag.current) drag.current.moved = true
+      return
+    }
     drag.current = {
       x: e.clientX,
       y: e.clientY,
       tx: view.current.tx,
       ty: view.current.ty,
       ...camera.current,
-      pan: e.shiftKey || zoomedIn.current || latest.current.rings !== null,
+      pan: e.shiftKey || zoomedIn.current || !auto.current || latest.current.rings !== null,
       moved: false,
     }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
@@ -1577,6 +1593,22 @@ function GraphCanvas({
   }
   const onPointerMove = (e: PointerEvent) => {
     touch()
+    if (fingers.current.has(e.pointerId) && canvas.current) {
+      const [fx, fy] = onCanvas(e)
+      fingers.current.set(e.pointerId, { x: fx, y: fy })
+    }
+    const p = pinch.current
+    if (p && fingers.current.size >= 2) {
+      const now = twoFingers()
+      const scale = Math.min(12, Math.max(0.02, (p.view.scale * now.d) / p.d))
+      // The spot under the fingers' middle when they came down stays under their middle now.
+      const wx = (p.x - p.view.tx) / p.view.scale
+      const wy = (p.y - p.view.ty) / p.view.scale
+      view.current = { scale, tx: now.x - wx * scale, ty: now.y - wy * scale }
+      auto.current = false
+      sendState()
+      return
+    }
     const d = drag.current
     if (d) {
       const dx = e.clientX - d.x
@@ -1607,6 +1639,12 @@ function GraphCanvas({
     }
   }
   const onPointerUp = (e: PointerEvent) => {
+    fingers.current.delete(e.pointerId)
+    if (pinch.current) {
+      if (fingers.current.size < 2) pinch.current = null
+      drag.current = null
+      return
+    }
     const d = drag.current
     drag.current = null
     if (!d || d.moved || !canvas.current) return
@@ -1685,6 +1723,11 @@ function GraphCanvas({
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
+            onPointerCancel={(e) => {
+              fingers.current.delete(e.pointerId)
+              pinch.current = null
+              drag.current = null
+            }}
             onPointerLeave={() => {
               touch()
               if (hover.current >= 0) {

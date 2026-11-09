@@ -380,3 +380,107 @@ test('the canvas is a panel with its strip; one legend that folds from its heade
   await legend.locator('summary.legend-head').click()
   await expect(legend.getByRole('region', { name: 'Families' })).toBeVisible()
 })
+
+// Review R5: on a touch screen one finger turns the cloud at Fit only; zoomed past Fit it moves the picture,
+// and two fingers move and pinch it at any zoom.
+test.describe('the cloud by touch', () => {
+  test.use({ hasTouch: true, viewport: { width: 1366, height: 900 } })
+  type Finger = { x: number; y: number; id: number }
+  const hubOf = async (page: Page) =>
+    ((await page.locator('canvas.graph-canvas').getAttribute('data-hub')) ?? '').split(',').map(Number) as [
+      number,
+      number,
+    ]
+  const fingers = async (page: Page, from: Finger[], to: Finger[]) => {
+    const cdp = await page.context().newCDPSession(page)
+    const send = (type: 'touchStart' | 'touchMove' | 'touchEnd', points: Finger[]) =>
+      cdp.send('Input.dispatchTouchEvent', {
+        type,
+        touchPoints: points.map((p) => ({ x: p.x, y: p.y, id: p.id })),
+      })
+    await send('touchStart', from)
+    for (let k = 1; k <= 8; k++)
+      await send(
+        'touchMove',
+        from.map((p, n) => {
+          const q = to[n] as Finger
+          return { id: p.id, x: p.x + ((q.x - p.x) * k) / 8, y: p.y + ((q.y - p.y) * k) / 8 }
+        }),
+      )
+    await send('touchEnd', [])
+    await cdp.detach()
+  }
+  const upToDate = (page: Page) =>
+    expect
+      .poll(() =>
+        page
+          .locator('canvas.graph-canvas')
+          .evaluate((c) => (c as HTMLElement).dataset.drawnSeq === (c as HTMLElement).dataset.sentSeq),
+      )
+      .toBe(true)
+
+  test('R5: one finger turns at Fit, moves the picture past Fit; two fingers move and pinch it', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const canvas = page.locator('canvas.graph-canvas')
+    const b = (await canvas.boundingBox()) as { x: number; y: number; width: number; height: number }
+    const mx = b.x + b.width * 0.45
+    const my = b.y + b.height * 0.55
+    // At Fit: one finger turns.
+    const yaw0 = await canvas.getAttribute('data-yaw')
+    await fingers(page, [{ x: mx, y: my, id: 1 }], [{ x: mx + 120, y: my, id: 1 }])
+    await upToDate(page)
+    expect(await canvas.getAttribute('data-yaw')).not.toBe(yaw0)
+    // Zoomed a little past Fit (cards not yet tiles): one finger moves the picture, the cloud does not turn.
+    await page.getByRole('button', { name: 'Zoom in' }).click()
+    await upToDate(page)
+    const yaw1 = await canvas.getAttribute('data-yaw')
+    const hub1 = await hubOf(page)
+    await fingers(page, [{ x: mx, y: my, id: 1 }], [{ x: mx + 100, y: my + 40, id: 1 }])
+    await upToDate(page)
+    expect(await canvas.getAttribute('data-yaw')).toBe(yaw1)
+    const hub2 = await hubOf(page)
+    expect(Math.abs(hub2[0] - hub1[0] - 100)).toBeLessThanOrEqual(6)
+    expect(Math.abs(hub2[1] - hub1[1] - 40)).toBeLessThanOrEqual(6)
+    // Two fingers spread apart around a spot: the picture grows around it, by as much (a fifth).
+    const cx = mx - b.x
+    const cy = my - b.y
+    await fingers(
+      page,
+      [
+        { x: mx - 100, y: my, id: 1 },
+        { x: mx + 100, y: my, id: 2 },
+      ],
+      [
+        { x: mx - 120, y: my, id: 1 },
+        { x: mx + 120, y: my, id: 2 },
+      ],
+    )
+    await upToDate(page)
+    expect(await canvas.getAttribute('data-yaw')).toBe(yaw1)
+    const hub3 = await hubOf(page)
+    expect(Math.abs(hub3[0] - (cx + 1.2 * (hub2[0] - cx)))).toBeLessThanOrEqual(8)
+    expect(Math.abs(hub3[1] - (cy + 1.2 * (hub2[1] - cy)))).toBeLessThanOrEqual(8)
+    // Two fingers moved together move the picture by as much.
+    await fingers(
+      page,
+      [
+        { x: mx - 60, y: my, id: 1 },
+        { x: mx + 60, y: my, id: 2 },
+      ],
+      [
+        { x: mx - 10, y: my - 30, id: 1 },
+        { x: mx + 110, y: my - 30, id: 2 },
+      ],
+    )
+    await upToDate(page)
+    const hub4 = await hubOf(page)
+    expect(Math.abs(hub4[0] - hub3[0] - 50)).toBeLessThanOrEqual(6)
+    expect(Math.abs(hub4[1] - hub3[1] + 30)).toBeLessThanOrEqual(6)
+  })
+})
