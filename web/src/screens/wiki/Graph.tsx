@@ -897,7 +897,8 @@ function GraphCanvas({
   // The cards of the last picture of this layout: what the pointer is on is found in them first.
   const cards = useRef<Card[]>([])
   const hits = useRef<Card[]>([])
-  const pendingClick = useRef<{ sx: number; sy: number } | null>(null)
+  // What the pointer or the keys asked while the cloud turned: done on the first still picture (review R3, R4).
+  const later = useRef<(() => void)[]>([])
   const [ready, setReady] = useState(false)
   const [active, setActiveState] = useState(-1)
   // Where the keyboard is, also kept at once: a key pressed before the screen draws again (a fast typist,
@@ -1022,10 +1023,10 @@ function GraphCanvas({
     // Turning, the points move under the pointer every frame: nothing is picked until a still picture says
     // where they are (review R3). A click made meanwhile waits for it.
     else if (d.spinning) positions.current = null
-    const waiting = pendingClick.current
-    if (waiting && positions.current && !d.spinning) {
-      pendingClick.current = null
-      pickAt(waiting.sx, waiting.sy)
+    if (later.current.length && positions.current && !d.spinning) {
+      const jobs = later.current
+      later.current = []
+      for (const job of jobs) job()
     }
     cards.current = d.cards
     // What the pointer can pick: the cards first, then the names written beside points.
@@ -1213,7 +1214,7 @@ function GraphCanvas({
   useEffect(() => {
     layoutId.current += 1
     positions.current = null
-    pendingClick.current = null
+    later.current = []
     cards.current = []
     hits.current = []
     settled.current = false
@@ -1253,8 +1254,14 @@ function GraphCanvas({
   useEffect(() => {
     const seen = () => sendState()
     document.addEventListener('visibilitychange', seen)
+    // Any hand on the graph's screen (the canvas, its tools, its strip, the legend, the panel) stops the turn
+    // for a rest: what it does is then seen on a still picture (review R4).
+    const screen = canvas.current?.closest('.graph-screen') ?? canvas.current?.closest('.graph-section')
+    const hand = ['pointerdown', 'keydown', 'wheel', 'focusin'] as const
+    for (const t of hand) screen?.addEventListener(t, touch, { passive: true })
     return () => {
       document.removeEventListener('visibilitychange', seen)
+      for (const t of hand) screen?.removeEventListener(t, touch)
       clearTimeout(restTimer.current)
     }
   }, [])
@@ -1492,7 +1499,13 @@ function GraphCanvas({
   const onKey = (e: KeyboardEvent) => {
     touch()
     const x = shownXY()
-    if (!x) return
+    if (!x) {
+      if (ARROWS[e.key] || e.key === 'Enter' || e.key === ' ' || e.key === 'Home') {
+        e.preventDefault()
+        later.current.push(() => onKey(e))
+      }
+      return
+    }
     const now = activeNow.current
     const here = now >= 0 && nodes[now] ? now : -1
     const dir = ARROWS[e.key]
@@ -1598,7 +1611,7 @@ function GraphCanvas({
     drag.current = null
     if (!d || d.moved || !canvas.current) return
     const [sx, sy] = onCanvas(e)
-    if (!shownXY()) pendingClick.current = { sx, sy }
+    if (!shownXY()) later.current.push(() => pickAt(sx, sy))
     else pickAt(sx, sy)
   }
   const pickAt = (sx: number, sy: number) => {
@@ -1658,13 +1671,16 @@ function GraphCanvas({
             onKeyDown={onKey}
             onFocus={() => {
               touch()
-              if (activeNow.current < 0) {
+              const begin = () => {
+                if (activeNow.current >= 0) return
                 const i = start()
                 if (i >= 0) {
                   setActive(i)
                   setSaid(describe(i))
                 }
               }
+              if (shownXY() || latest.current.hubList.length) begin()
+              else later.current.push(begin)
             }}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
