@@ -1,4 +1,4 @@
-/* The visual system of DESIGN.md (direction true-black-flat, seed 48291, palette and type kept from the
+/* Brain's own tokens, over the shared ones (shared.css, loaded first). The visual system of DESIGN.md (direction true-black-flat, seed 48291, palette and type kept from the
    RSC identity). Elevation is lightness alone; the accent marks selection, data and confirmation, never a
    button, a tab or the navigation. Dark is the default; light is a choice of the person. */
 :root,
@@ -15,9 +15,6 @@
   --nav: oklch(0.74 0.008 260);
   --primary-bg: oklch(0.96 0.004 95);
   --primary-fg: oklch(0.165 0.012 260);
-  --danger: oklch(0.76 0.15 25);
-  --warning: oklch(0.85 0.13 85);
-  --positive: var(--accent);
   --scrim: oklch(0.1 0.01 260 / 0.72);
 }
 
@@ -34,9 +31,6 @@
   --nav: oklch(0.42 0.01 260);
   --primary-bg: oklch(0.2 0.012 260);
   --primary-fg: oklch(0.985 0.003 95);
-  --danger: oklch(0.5 0.19 25);
-  --warning: oklch(0.5 0.12 70);
-  --positive: var(--accent);
   --scrim: oklch(0.2 0.01 260 / 0.4);
 }
 
@@ -47,7 +41,14 @@
   --topbar: 64px;
   --gutter: 28px;
   --gap: 16px;
-  --radius: 8px;
+  /* The old names, kept as aliases of the shared ones (plan canvas-ui D10). */
+  --radius: var(--r-card);
+  --ok: var(--ok-fg);
+  --bad: var(--bad-fg);
+  --warn: var(--warn-fg);
+  --danger: var(--bad);
+  --warning: var(--warn);
+  --positive: var(--ok);
   --control: 36px;
   --field: 40px;
 }

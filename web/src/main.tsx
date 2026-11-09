@@ -1,4 +1,5 @@
 import { render } from 'preact'
+import './styles/shared.css'
 import './styles/tokens.css'
 import './styles/app.css'
 import { App } from './app.tsx'

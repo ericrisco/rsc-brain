@@ -1,0 +1,132 @@
+/* shared.css v1 — the tokens rsc-brain and rsc-factory share (plan canvas-ui §0). The same file lives in
+   both repositories: change it in one, copy it to the other, and raise the version above. Each product
+   keeps its own accent and ink in its own sheet.
+
+   Light on :root. Dark when the system asks for it and the person did not choose light, or when the person
+   chose dark (data-theme on <html>); the two dark blocks hold the same values. */
+
+:root {
+  /* Space on a 4px base. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Radii: a chip, a control, a card, a sheet. */
+  --r-chip: 4px;
+  --r-control: 6px;
+  --r-card: 8px;
+  --r-sheet: 14px;
+
+  /* The rail: narrow with icons, open with their names. */
+  --rail-w-folded: 56px;
+  --rail-w-open: 220px;
+
+  /* Content has no maximum width below this one. */
+  --page-cap: 2400px;
+
+  /* Movement. */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --t-fast: 120ms;
+  --t: 200ms;
+
+  --rail-bg: oklch(0.985 0.003 95);
+  --rail-line: oklch(0.9 0.006 260);
+  --rail-ink: oklch(0.36 0.012 260);
+  --rail-hover: oklch(0.935 0.005 260);
+
+  /* States: words (fg) on their own ground (bg), and a line for borders and marks. Never colour alone. */
+  --ok-fg: oklch(0.42 0.11 156);
+  --ok-bg: oklch(0.955 0.04 156);
+  --ok-line: oklch(0.62 0.14 156);
+  --bad-fg: oklch(0.47 0.17 25);
+  --bad-bg: oklch(0.96 0.025 25);
+  --bad-line: oklch(0.62 0.18 25);
+  --warn-fg: oklch(0.45 0.1 65);
+  --warn-bg: oklch(0.965 0.045 88);
+  --warn-line: oklch(0.75 0.14 75);
+  --run-fg: oklch(0.46 0.14 250);
+  --run-bg: oklch(0.96 0.025 250);
+  --run-line: oklch(0.62 0.15 250);
+  --neutral-fg: oklch(0.42 0.012 260);
+  --neutral-bg: oklch(0.945 0.005 260);
+  --neutral-line: oklch(0.82 0.008 260);
+
+  /* The canvas: a dotted ground, edges, and the nodes on it. */
+  --grid-dot: oklch(0.82 0.006 260);
+  --edge: oklch(0.72 0.01 260);
+  --node-bg: oklch(1 0 0);
+  --node-line: oklch(0.88 0.006 260);
+  --node-ink: oklch(0.22 0.012 260);
+  --node-sub: oklch(0.48 0.012 260);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --rail-bg: oklch(0.185 0.012 260);
+    --rail-line: oklch(0.27 0.012 260);
+    --rail-ink: oklch(0.8 0.008 260);
+    --rail-hover: oklch(0.25 0.012 260);
+    --ok-fg: oklch(0.82 0.14 156);
+    --ok-bg: oklch(0.26 0.05 156);
+    --ok-line: oklch(0.62 0.13 156);
+    --bad-fg: oklch(0.8 0.12 25);
+    --bad-bg: oklch(0.27 0.06 25);
+    --bad-line: oklch(0.64 0.17 25);
+    --warn-fg: oklch(0.86 0.12 85);
+    --warn-bg: oklch(0.28 0.05 80);
+    --warn-line: oklch(0.72 0.13 80);
+    --run-fg: oklch(0.82 0.1 250);
+    --run-bg: oklch(0.27 0.05 250);
+    --run-line: oklch(0.64 0.14 250);
+    --neutral-fg: oklch(0.8 0.008 260);
+    --neutral-bg: oklch(0.26 0.01 260);
+    --neutral-line: oklch(0.42 0.01 260);
+    --grid-dot: oklch(0.33 0.01 260);
+    --edge: oklch(0.52 0.01 260);
+    --node-bg: oklch(0.23 0.012 260);
+    --node-line: oklch(0.34 0.012 260);
+    --node-ink: oklch(0.95 0.004 95);
+    --node-sub: oklch(0.76 0.008 260);
+  }
+}
+
+:root[data-theme="dark"] {
+  --rail-bg: oklch(0.185 0.012 260);
+  --rail-line: oklch(0.27 0.012 260);
+  --rail-ink: oklch(0.8 0.008 260);
+  --rail-hover: oklch(0.25 0.012 260);
+  --ok-fg: oklch(0.82 0.14 156);
+  --ok-bg: oklch(0.26 0.05 156);
+  --ok-line: oklch(0.62 0.13 156);
+  --bad-fg: oklch(0.8 0.12 25);
+  --bad-bg: oklch(0.27 0.06 25);
+  --bad-line: oklch(0.64 0.17 25);
+  --warn-fg: oklch(0.86 0.12 85);
+  --warn-bg: oklch(0.28 0.05 80);
+  --warn-line: oklch(0.72 0.13 80);
+  --run-fg: oklch(0.82 0.1 250);
+  --run-bg: oklch(0.27 0.05 250);
+  --run-line: oklch(0.64 0.14 250);
+  --neutral-fg: oklch(0.8 0.008 260);
+  --neutral-bg: oklch(0.26 0.01 260);
+  --neutral-line: oklch(0.42 0.01 260);
+  --grid-dot: oklch(0.33 0.01 260);
+  --edge: oklch(0.52 0.01 260);
+  --node-bg: oklch(0.23 0.012 260);
+  --node-line: oklch(0.34 0.012 260);
+  --node-ink: oklch(0.95 0.004 95);
+  --node-sub: oklch(0.76 0.008 260);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 0ms;
+    --t: 0ms;
+  }
+}
