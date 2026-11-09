@@ -4,6 +4,12 @@
     "lib": ["es2024", "dom", "dom.iterable"],
     "types": ["node"]
   },
-  "include": ["test/browser", "test/e2e", "playwright.config.ts", "playwright.e2e.config.ts"],
+  "include": [
+    "test/browser",
+    "test/e2e",
+    "test/web/graph-render.test.ts",
+    "playwright.config.ts",
+    "playwright.e2e.config.ts"
+  ],
   "exclude": []
 }

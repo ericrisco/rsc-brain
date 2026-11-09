@@ -19,5 +19,5 @@
     "noEmit": true
   },
   "include": ["src", "test", "scripts"],
-  "exclude": ["test/browser", "test/e2e"]
+  "exclude": ["test/browser", "test/e2e", "test/web/graph-render.test.ts"]
 }
