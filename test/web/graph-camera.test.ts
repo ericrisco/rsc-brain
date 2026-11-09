@@ -10,6 +10,7 @@ import {
   parkRows,
   project,
   projectPoint,
+  ROW_GAP,
   spinBox,
   yawText,
 } from '../../web/src/graph/camera.ts'
@@ -145,19 +146,22 @@ describe('the pages without links', () => {
     const f = frameOf(xyz, mask, role)
     assert.ok(near(f.cx, 10) && near(f.cy, 20) && near(f.cz, 30), `middle of the cloud: ${JSON.stringify(f)}`)
     assert.ok(near(f.r, 100))
+    // Under what the cloud covers at any yaw (its turning box), close to it.
+    const box = spinBox(xyz, new Uint8Array([1, 1, 1, 1, 1, 1, 0, 0, 0]), f, -0.2)
     const rows = (yaw: number) => {
       const xy = new Float32Array(18)
       project(xyz, f, { yaw, pitch: -0.2 }, xy, new Float32Array(9))
-      parkRows(xy, role, mask, f)
+      parkRows(xy, role, mask, box)
       return [...xy.slice(12)]
     }
     const a = rows(0)
     assert.deepEqual(rows(1.3), a, 'the same at any yaw')
+    const bottom = box[5] as number
     for (let k = 0; k < 3; k++) {
       const x = a[2 * k] as number
       const y = a[2 * k + 1] as number
-      assert.ok(y > f.cy + f.r, `under the cloud: ${y}`)
-      assert.ok(x >= f.cx - f.r && x <= f.cx + f.r, `as wide as the cloud: ${x}`)
+      assert.ok(y > bottom && y < bottom + 3 * ROW_GAP, `just under the cloud: ${y} (bottom ${bottom})`)
+      assert.ok(x >= (box[0] as number) && x <= (box[2] as number), `as wide as the cloud: ${x}`)
     }
     assert.equal(a[1], a[3], 'in a row')
     assert.notEqual(a[0], a[2])

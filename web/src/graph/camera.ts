@@ -76,16 +76,19 @@ export function frameOf(xyz: Float32Array, given: Uint8Array, role?: Uint8Array)
   return { cx, cy, cz, r: Math.max(r, 1) }
 }
 
-// The pages without links (role 1) that the mask keeps, in rows under the cloud as wide as it, flat on the
-// picture: the same at any yaw, so they never sweep across the cloud as it turns (review R6).
+// The pages without links (role 1) that the mask keeps, in rows just under what the cloud covers at any yaw
+// (`box`, from spinBox) and as wide as it, flat on the picture: the same at any yaw, so they never sweep
+// across the cloud as it turns (review R6).
 export const ROW_GAP = 24
-export function parkRows(xy: Float32Array, role: Uint8Array, mask: Uint8Array, f: Frame): void {
-  const perRow = Math.max(1, Math.floor((2 * f.r) / ROW_GAP) + 1)
-  const top = f.cy + f.r * 1.2 + ROW_GAP
+export function parkRows(xy: Float32Array, role: Uint8Array, mask: Uint8Array, box: Float32Array): void {
+  const x0 = box[0] as number
+  const width = Math.max(0, (box[2] as number) - x0)
+  const perRow = Math.max(1, Math.floor(width / ROW_GAP) + 1)
+  const top = (box[5] as number) + 1.5 * ROW_GAP
   let k = 0
   for (let i = 0; i < role.length; i++) {
     if (role[i] !== 1 || !mask[i]) continue
-    xy[2 * i] = f.cx - f.r + (k % perRow) * ROW_GAP
+    xy[2 * i] = x0 + (k % perRow) * ROW_GAP
     xy[2 * i + 1] = top + Math.floor(k / perRow) * ROW_GAP
     k += 1
   }

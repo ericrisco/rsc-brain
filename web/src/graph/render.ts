@@ -392,6 +392,7 @@ export class Renderer {
   private still: { key: string; layout: Float32Array | null; out: CloudOut } | null = null
   private stillLayer: OffscreenCanvas | null = null
   private exact: { key: string; layout: Float32Array; view: View } | null = null
+  private rows: { of: Float32Array; frame: unknown; pitch: number; b: Float32Array } | null = null
   private turning = false
   private last = 0
   private facts: Fact[] = []
@@ -479,8 +480,22 @@ export class Renderer {
         this.proj = new Float32Array(2 * sc.n)
         this.depth = new Float32Array(sc.n)
       }
+      // Where the pages without links lie: under what the cloud covers at any yaw, at this pitch.
+      if (
+        !this.rows ||
+        this.rows.of !== l ||
+        this.rows.frame !== this.frame ||
+        this.rows.pitch !== this.camera.pitch
+      )
+        this.rows = {
+          of: l,
+          frame: this.frame,
+          pitch: this.camera.pitch,
+          b: spinBox(l, cloudOnly(st.fit, sc.role), f, this.camera.pitch, SPIN_KEEP),
+        }
+      const rowsBox = this.rows.b
       project(l, f, this.camera, this.proj, this.depth)
-      parkRows(this.proj, sc.role, st.nodes, f)
+      parkRows(this.proj, sc.role, st.nodes, rowsBox)
       // A wiki small enough that Fit shows its pages as tiles is a flat picture to read: it does not turn.
       // Worked out once a state and still camera; while it turns, the one it started with (it only decides
       // whether the picture is tiles, which turning never changes: review R7).
@@ -509,12 +524,7 @@ export class Renderer {
             of: l,
             mask: st.fit,
             pitch: this.camera.pitch,
-            b: withRows(
-              spinBox(l, cloudOnly(st.fit, sc.role), f, this.camera.pitch, SPIN_KEEP),
-              this.proj,
-              sc.role,
-              st.fit,
-            ),
+            b: withRows(rowsBox, this.proj, sc.role, st.fit),
           }
         fitted = st.autoFit ? fitOn(this.box.b, ONES4, SPIN_PAD, TILE_SCALE * 0.99) : st.view
         spinning = st.spin
@@ -522,7 +532,7 @@ export class Renderer {
         if (spinning) {
           this.camera.yaw += (dt * 2 * Math.PI) / CAMERA.turnMs
           project(l, f, this.camera, this.proj, this.depth)
-          parkRows(this.proj, sc.role, st.nodes, f)
+          parkRows(this.proj, sc.role, st.nodes, rowsBox)
         }
       } else {
         fitted = exact
