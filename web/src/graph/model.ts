@@ -504,7 +504,7 @@ export function fit(
   h: number,
   pad: number,
   top = 0,
-  o: { max?: number; right?: number } = {},
+  o: { max?: number; right?: number; left?: number } = {},
 ): View {
   let x0 = Number.POSITIVE_INFINITY
   let y0 = Number.POSITIVE_INFINITY
@@ -522,14 +522,17 @@ export function fit(
   // What is left under the band; never less than a sliver, so a tiny canvas still draws.
   const band = Math.min(top, Math.max(0, h - 2 * pad - 40))
   const mid = band + (h - band) / 2
-  const wide = w - Math.min(o.right ?? 0, Math.max(0, w - 2 * pad - 40))
-  if (x0 === Number.POSITIVE_INFINITY) return { scale: 1, tx: wide / 2, ty: mid }
+  const wide0 = w - Math.min(o.right ?? 0, Math.max(0, w - 2 * pad - 40))
+  // A column at the left (the legend) is left out too, when room remains.
+  const left = Math.min(o.left ?? 0, Math.max(0, wide0 - 2 * pad - 40))
+  const wide = wide0 - left
+  if (x0 === Number.POSITIVE_INFINITY) return { scale: 1, tx: left + wide / 2, ty: mid }
   const scale = Math.min(
     o.max ?? 2,
     (wide - 2 * pad) / Math.max(x1 - x0, 1e-9),
     (h - band - 2 * pad) / Math.max(y1 - y0, 1e-9),
   )
-  return { scale, tx: wide / 2 - ((x0 + x1) / 2) * scale, ty: mid - ((y0 + y1) / 2) * scale }
+  return { scale, tx: left + wide / 2 - ((x0 + x1) / 2) * scale, ty: mid - ((y0 + y1) / 2) * scale }
 }
 
 // The shape code of a group box, and its radius in pixels by how many pages it holds (render.ts draws them).

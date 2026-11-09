@@ -316,6 +316,68 @@ test.describe('the cloud, moving (motion allowed)', () => {
     expect(await canvas.getAttribute('data-draws')).toBe(draws)
   })
 
+  // Visual review: the turning cloud fills the free canvas (right of the legend, left of the panel, between the
+  // strip and the zoom tools) up to a small margin, and its size holds while it turns (no pumping).
+  for (const size of [
+    { width: 1366, height: 768 },
+    { width: 1920, height: 1080 },
+  ])
+    test(`the turning cloud fills the free canvas at ${size.width}, at a steady size`, async ({
+      page,
+      context,
+      baseURL,
+    }) => {
+      await page.setViewportSize(size)
+      await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+      await page.goto(GRAPH)
+      await settled(page)
+      const canvas = page.locator('canvas.graph-canvas')
+      await expect(canvas).toHaveAttribute('data-spinning', 'true')
+      const rel = (q: string) =>
+        page.locator(q).evaluate((el) => {
+          const c = (document.querySelector('canvas.graph-canvas') as HTMLElement).getBoundingClientRect()
+          const r = el.getBoundingClientRect()
+          return {
+            left: r.left - c.left,
+            right: r.right - c.left,
+            top: r.top - c.top,
+            bottom: r.bottom - c.top,
+          }
+        })
+      const c = (await canvas.boundingBox()) as { width: number; height: number }
+      const free = {
+        left: (await rel('.graph-left')).right,
+        right: c.width,
+        top: (await rel('.graph-strip')).bottom,
+        bottom: (await rel('.graph-tools')).top,
+      }
+      const scales = new Set<string>()
+      let x0 = Number.POSITIVE_INFINITY
+      let x1 = Number.NEGATIVE_INFINITY
+      let y0 = Number.POSITIVE_INFINITY
+      let y1 = Number.NEGATIVE_INFINITY
+      for (let k = 0; k < 10; k++) {
+        await page.waitForTimeout(300)
+        scales.add((await canvas.getAttribute('data-scale')) ?? '')
+        const [a, b, cc, d] = ((await canvas.getAttribute('data-extent')) ?? '')
+          .split(',')
+          .map(Number) as number[]
+        x0 = Math.min(x0, a as number)
+        y0 = Math.min(y0, b as number)
+        x1 = Math.max(x1, cc as number)
+        y1 = Math.max(y1, d as number)
+      }
+      expect(scales.size, 'one size while it turns').toBe(1)
+      // Inside the free canvas, and filling it in at least one direction up to a small margin.
+      expect(x0).toBeGreaterThanOrEqual(free.left - 2)
+      expect(y0).toBeGreaterThanOrEqual(free.top - 2)
+      const fillsWidth = (x1 - x0) / (free.right - free.left)
+      const fillsHeight = (y1 - y0) / (free.bottom - free.top)
+      expect(Math.max(fillsWidth, fillsHeight), `width ${fillsWidth}, height ${fillsHeight}`).toBeGreaterThan(
+        0.85,
+      )
+    })
+
   // Review R7: out of sight (scrolled away, covered), nothing is painted.
   test('R7: a canvas out of sight stops turning and painting', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })

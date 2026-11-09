@@ -206,6 +206,8 @@ export type State = {
   right: number
   // The band at the bottom the zoom buttons cover: fit draws above it.
   bottom: number
+  // The column at the left the legend covers: a cloud is fitted right of it.
+  left: number
   // The boxes of the controls over the canvas (x, y, w, h, …): no card is drawn under them.
   blocked: number[]
   // Which state this is: the picture drawn from it says so (tests wait for the picture of the last one).
@@ -247,6 +249,8 @@ export type Drawn = {
   hub: [number, number] | null
   // Where the caption over the pages without links is written (null: none).
   orphans: [number, number] | null
+  // For a test: where the cloud's points are drawn (98 in 100 of them on each side), [x0, y0, x1, y1].
+  extent?: [number, number, number, number]
   pulses: number
   fact: number
   // The picture asks for the next frame (it turns, or light travels).
@@ -310,6 +314,32 @@ function withRows(box: Float32Array, xy: Float32Array, role: Uint8Array, mask: U
   return new Float32Array([x0, y0, x1, y0, x1, y1, x0, y1] as number[])
 }
 
+// Where the cloud's points are drawn on screen, 98 in 100 on each side (the pages without links left out).
+function extentOf(
+  sc: Scene,
+  st: State,
+  SX: (i: number) => number,
+  SY: (i: number) => number,
+): [number, number, number, number] {
+  const xs: number[] = []
+  const ys: number[] = []
+  for (let i = 0; i < sc.n; i++)
+    if (st.nodes[i] && sc.role[i] !== 1) {
+      xs.push(SX(i))
+      ys.push(SY(i))
+    }
+  if (!xs.length) return [0, 0, 0, 0]
+  xs.sort((a, b) => a - b)
+  ys.sort((a, b) => a - b)
+  const cut = Math.floor(xs.length * 0.02)
+  return [
+    xs[cut] as number,
+    ys[cut] as number,
+    xs[xs.length - 1 - cut] as number,
+    ys[ys.length - 1 - cut] as number,
+  ]
+}
+
 // The caption over the rows of pages without links; where it is written, or null.
 function orphanCaption(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -361,9 +391,10 @@ const PULSE_GLOW = 9
 const PULSES_MAX = 40
 const PULSE_EVERY = 6
 const ONES4 = new Uint8Array([1, 1, 1, 1])
-// Room around the turning cloud when it is fitted, and the share of its points the fit keeps in the frame.
-const SPIN_PAD = 16
-const SPIN_KEEP = 0.9
+// Room around the turning cloud when it is fitted, and the share of its points the fit keeps in the frame on
+// each side at every yaw (the box is tight: a few far ones may leave it).
+const SPIN_PAD = 6
+const SPIN_KEEP = 0.98
 // From this many items drawn, the still cloud names only what the person is on and its neighbours.
 const QUIET_FROM = 60
 const LABEL_SCALE = 12 / 13
@@ -465,8 +496,8 @@ export class Renderer {
     let depth: Float32Array | null = null
     let spinning = false
     const height = Math.max(120, st.height - Math.max(st.inset, st.bottom))
-    const fitOn = (points: Float32Array, mask: Uint8Array, pad: number, max = FIT_MAX) =>
-      fit(points, mask, st.width, height, pad, st.top, { max, right: st.right })
+    const fitOn = (points: Float32Array, mask: Uint8Array, pad: number, max = FIT_MAX, left = 0) =>
+      fit(points, mask, st.width, height, pad, st.top, { max, right: st.right, left })
     let fitted: View | null = null
     if (flat) xy = st.xy as Float32Array
     else {
@@ -526,7 +557,7 @@ export class Renderer {
             pitch: this.camera.pitch,
             b: withRows(rowsBox, this.proj, sc.role, st.fit),
           }
-        fitted = st.autoFit ? fitOn(this.box.b, ONES4, SPIN_PAD, TILE_SCALE * 0.99) : st.view
+        fitted = st.autoFit ? fitOn(this.box.b, ONES4, SPIN_PAD, TILE_SCALE * 0.99, st.left) : st.view
         spinning = st.spin
         this.turning = spinning
         if (spinning) {
@@ -626,6 +657,7 @@ export class Renderer {
         families: out.families,
         hub: out.hub,
         orphans: out.orphans,
+        ...(st.probe ? { extent: extentOf(sc, st, SX, SY) } : {}),
         pulses: out.pulses,
         fact: out.fact,
         animating: out.animating,

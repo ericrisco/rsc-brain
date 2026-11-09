@@ -158,6 +158,7 @@ export function spinBox(
   pitch: number,
   keep = 1,
 ): Float32Array {
+  if (keep < 1) return sampledBox(xyz, mask, f, pitch, keep)
   // About the vertical axis a point keeps its height and its distance to the axis (ρ); the yaw only moves it
   // around that circle. Bound its screen x and y over the whole circle.
   const cp = Math.cos(pitch)
@@ -192,6 +193,52 @@ export function spinBox(
   const x1 = Math.max(f.cx, high(right))
   const y0 = Math.min(f.cy, low(top))
   const y1 = Math.max(f.cy, high(bottom))
+  return new Float32Array([x0, y0, x1, y0, x1, y1, x0, y1])
+}
+
+// With a share kept: the cloud projected at many yaws, at each the share `keep` on each side, and the box
+// that holds them all. Tight: each edge is reached at some yaw (the bound above puts each point at its nearest
+// and widest at once, which no yaw does). Steps of 7.5°: between two the extents move by under a percent.
+const SAMPLED_YAWS = 48
+function sampledBox(
+  xyz: Float32Array,
+  mask: Uint8Array,
+  f: Frame,
+  pitch: number,
+  keep: number,
+): Float32Array {
+  const kept: number[] = []
+  for (let i = 0; i < mask.length; i++) if (mask[i]) kept.push(i)
+  const m = kept.length
+  if (!m) return new Float32Array([f.cx, f.cy, f.cx, f.cy, f.cx, f.cy, f.cx, f.cy])
+  const sub = new Float32Array(3 * m)
+  kept.forEach((i, k) => {
+    sub[3 * k] = xyz[3 * i] as number
+    sub[3 * k + 1] = xyz[3 * i + 1] as number
+    sub[3 * k + 2] = xyz[3 * i + 2] as number
+  })
+  const xy = new Float32Array(2 * m)
+  const depth = new Float32Array(m)
+  const xs = new Float32Array(m)
+  const ys = new Float32Array(m)
+  const cut = Math.min(m - 1, Math.floor((1 - Math.min(1, keep)) * m))
+  let x0 = f.cx
+  let x1 = f.cx
+  let y0 = f.cy
+  let y1 = f.cy
+  for (let k = 0; k < SAMPLED_YAWS; k++) {
+    project(sub, f, { yaw: (k * 2 * Math.PI) / SAMPLED_YAWS, pitch }, xy, depth)
+    for (let q = 0; q < m; q++) {
+      xs[q] = xy[2 * q] as number
+      ys[q] = xy[2 * q + 1] as number
+    }
+    xs.sort()
+    ys.sort()
+    x0 = Math.min(x0, xs[cut] as number)
+    x1 = Math.max(x1, xs[m - 1 - cut] as number)
+    y0 = Math.min(y0, ys[cut] as number)
+    y1 = Math.max(y1, ys[m - 1 - cut] as number)
+  }
   return new Float32Array([x0, y0, x1, y0, x1, y1, x0, y1])
 }
 

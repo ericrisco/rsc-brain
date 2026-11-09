@@ -133,6 +133,47 @@ describe('the box the spin is fitted to, keeping most points', () => {
     assert.ok(width(most) < 0.5 * width(all), `${width(most)} against ${width(all)}`)
     assert.ok(height(most) <= height(all) + 1e-6)
   })
+
+  // Visual review (2026-11-09): the turning box is as tight as the turn allows. What it holds at each yaw (the
+  // share `keep` on each side) stays inside it, and on each side some yaw comes close to its edge: the cloud is
+  // fitted to what it really covers, not to a bound no yaw reaches.
+  it('the turning box with a share kept is tight: some yaw comes near each of its edges', () => {
+    let seed = 7
+    const rnd = () => {
+      seed = (seed * 16807) % 2147483647
+      return seed / 2147483647 - 0.5
+    }
+    const n = 400
+    const xyz = new Float32Array(3 * n)
+    for (let k = 0; k < 3 * n; k++) xyz[k] = rnd() * 200
+    const mask = new Uint8Array(n).fill(1)
+    const f = frameOf(xyz, mask)
+    const keep = 0.95
+    const box = spinBox(xyz, mask, f, CAMERA.pitch0, keep)
+    const [bx0, by0, bx1, , , by1] = box as unknown as number[]
+    const w = (bx1 as number) - (bx0 as number)
+    const h = (by1 as number) - (by0 as number)
+    const xy = new Float32Array(2 * n)
+    const depth = new Float32Array(n)
+    const reach = { x0: Number.POSITIVE_INFINITY, y0: Number.POSITIVE_INFINITY, x1: -1e9, y1: -1e9 }
+    const cut = Math.floor((1 - keep) * n)
+    for (let k = 0; k < 90; k++) {
+      project(xyz, f, { yaw: (k * Math.PI) / 45 + 0.013, pitch: CAMERA.pitch0 }, xy, depth)
+      const xs = Array.from({ length: n }, (_, i) => xy[2 * i] as number).sort((a, b) => a - b)
+      const ys = Array.from({ length: n }, (_, i) => xy[2 * i + 1] as number).sort((a, b) => a - b)
+      const [x0, x1, y0, y1] = [xs[cut], xs[n - 1 - cut], ys[cut], ys[n - 1 - cut]] as number[]
+      assert.ok((x0 as number) >= (bx0 as number) - 0.02 * w && (x1 as number) <= (bx1 as number) + 0.02 * w)
+      assert.ok((y0 as number) >= (by0 as number) - 0.02 * h && (y1 as number) <= (by1 as number) + 0.02 * h)
+      reach.x0 = Math.min(reach.x0, x0 as number)
+      reach.x1 = Math.max(reach.x1, x1 as number)
+      reach.y0 = Math.min(reach.y0, y0 as number)
+      reach.y1 = Math.max(reach.y1, y1 as number)
+    }
+    assert.ok(reach.x0 <= (bx0 as number) + 0.04 * w, `left: ${reach.x0} vs ${bx0}`)
+    assert.ok(reach.x1 >= (bx1 as number) - 0.04 * w, `right: ${reach.x1} vs ${bx1}`)
+    assert.ok(reach.y0 <= (by0 as number) + 0.04 * h, `top: ${reach.y0} vs ${by0}`)
+    assert.ok(reach.y1 >= (by1 as number) - 0.04 * h, `bottom: ${reach.y1} vs ${by1}`)
+  })
 })
 
 // Review R6: the pages without links do not belong to the cloud. They stay out of its frame (they would pull

@@ -927,7 +927,12 @@ function GraphCanvas({
   // The zoom buttons over the top of the picture: what they cover, from the canvas top (they wrap when narrow).
   // Read from an observer (never asked for in the middle of a task, CA6): 8 px from the top, then its height.
   const tools = useRef<HTMLDivElement>(null)
-  const band = useRef<{ top: number; bottom: number; blocked: number[] }>({ top: 0, bottom: 0, blocked: [] })
+  const band = useRef<{ top: number; bottom: number; left: number; blocked: number[] }>({
+    top: 0,
+    bottom: 0,
+    left: 0,
+    blocked: [],
+  })
   // Measures the controls over the canvas again (they move when the panel opens).
   const measureBands = useRef<() => void>(() => {})
   // The cloud's camera as the last picture drew it, and the one the person set by dragging (sent once per seq).
@@ -1040,6 +1045,8 @@ function GraphCanvas({
     c.dataset.draws = String(draws.current)
     // The last state sent and the one this picture shows: equal once the picture is up to date.
     c.dataset.drawnSeq = String(d.seq)
+    c.dataset.scale = d.view.scale.toFixed(4)
+    if (d.extent) c.dataset.extent = d.extent.map(Math.round).join(',')
     if (d.font) c.dataset.font = d.font
     c.dataset.cards = String(d.cards.length)
     c.dataset.labels = String(d.labels.length)
@@ -1174,6 +1181,7 @@ function GraphCanvas({
       probe,
       top: band.current.top,
       bottom: band.current.bottom,
+      left: band.current.left,
       blocked: band.current.blocked,
       ...motion(),
       camera: turned.current,
@@ -1340,12 +1348,18 @@ function GraphCanvas({
             b.height + BAND_GAP,
           )
       }
+      // The legend's column, when it stands at the left beside the picture.
+      let left = 0
+      const lb = screen?.querySelector<HTMLElement>('.graph-left')?.getBoundingClientRect()
+      if (lb?.width && lb.left - r.left < r.width * 0.3 && lb.right - r.left < r.width * 0.45)
+        left = Math.ceil(lb.right - r.left) + BAND_GAP
       const same =
         top === band.current.top &&
         bottom === band.current.bottom &&
+        left === band.current.left &&
         blocked.join() === band.current.blocked.join()
       if (same) return
-      band.current = { top, bottom, blocked }
+      band.current = { top, bottom, left, blocked }
       sendState()
     }
     measureBands.current = bands
