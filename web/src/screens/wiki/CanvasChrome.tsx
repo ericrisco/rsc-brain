@@ -1,6 +1,7 @@
 // The controls over the graph's canvas (plan canvas-ui B.2): the legend at the bottom right, saying what the
 // picture holds and only that, and the canvas while it loads: its dotted ground and grey cards.
 import { useMemo } from 'preact/hooks'
+import type { FamilyCount } from '../../graph/families.ts'
 import type { Model } from '../../graph/model.ts'
 import { LINE, SHAPES, shape } from '../../graph/render.ts'
 import { T } from '../../text.ts'
@@ -115,6 +116,31 @@ export function Legend({
         </div>
       </div>
     </details>
+  )
+}
+
+// The families drawn (spec amendment 2026-11-09, CA12): each with its shape in its colour, its name and how
+// many of its pages are drawn, the biggest first. Colour is never the only sign: the shape and the name say
+// the same.
+export function FamilyLegend({ counts }: { counts: FamilyCount[] }) {
+  const g = T.graph
+  if (!counts.length) return null
+  return (
+    <section class="graph-families" aria-labelledby="graph-families-title">
+      <h2 id="graph-families-title" class="sr-only">
+        {g.families}
+      </h2>
+      <ul class="plain">
+        {counts.map((c) => (
+          <li key={c.type} data-c={c.colour}>
+            <ShapeIcon type={c.type} />
+            <span class="fam-name">{T.wiki.typesPlural[c.type] ?? c.type}</span>
+            <span class="fam-count">{c.count.toLocaleString('en')}</span>
+          </li>
+        ))}
+      </ul>
+      <p class="fam-note">{g.familiesNote}</p>
+    </section>
   )
 }
 

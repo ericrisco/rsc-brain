@@ -1642,6 +1642,8 @@ export const T = {
     zoomOut: 'Zoom out',
     fitAll: 'Fit',
     legend: 'Legend',
+    families: 'Families',
+    familiesNote: 'Shape and colour say the type. Drag to turn.',
     shapes: 'Page types',
     lines: 'Link kinds',
     marks: 'Marks',

@@ -164,3 +164,78 @@ test.describe('the cloud, moving (motion allowed)', () => {
     expect(await canvas.getAttribute('data-draws')).toBe(draws)
   })
 })
+
+test.describe('the legend and the fact card', () => {
+  test('SB6: the legend gives each family drawn its shape, its colour, its name and how many', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.setViewportSize({ width: 1920, height: 1080 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const legend = page.getByRole('region', { name: 'Families' })
+    await expect(legend).toBeVisible()
+    const rows = await legend.getByRole('listitem').evaluateAll((lis) =>
+      lis.map((li) => {
+        const probe = document.createElement('span')
+        probe.style.cssText = 'color: var(--panel-c)'
+        li.append(probe)
+        const colour = getComputedStyle(probe).color
+        probe.remove()
+        const shape = li.querySelector('svg path') as SVGPathElement
+        return {
+          name: li.querySelector('.fam-name')?.textContent ?? '',
+          count: Number(li.querySelector('.fam-count')?.textContent),
+          colour,
+          shape: shape ? getComputedStyle(shape).fill : '',
+          countInk: getComputedStyle(li.querySelector('.fam-count') as Element).color,
+          d: shape?.getAttribute('d') ?? '',
+        }
+      }),
+    )
+    expect(rows.length).toBeGreaterThanOrEqual(3)
+    // Every page drawn is counted once.
+    const items = Number(await page.locator('canvas.graph-canvas').getAttribute('data-items'))
+    expect(rows.reduce((t, r) => t + r.count, 0)).toBe(items)
+    // Biggest first; each family its own colour and its own shape (colour is never the only sign).
+    expect(rows.map((r) => r.count)).toEqual([...rows.map((r) => r.count)].sort((a, b) => b - a))
+    expect(new Set(rows.map((r) => r.colour)).size).toBe(rows.length)
+    expect(new Set(rows.map((r) => r.d)).size).toBe(rows.length)
+    for (const r of rows) {
+      expect(r.shape).toBe(r.colour)
+      expect(r.countInk).toBe(r.colour)
+    }
+    // The pills on the canvas name the same families.
+    const pills = ((await page.locator('canvas.graph-canvas').getAttribute('data-families')) ?? '').split(',')
+    expect([...pills].sort()).toEqual(rows.map((r) => r.name.toLowerCase()).sort())
+    // A filter by type leaves one family, with the pages it draws.
+    await page.locator('.graph-filters summary').click()
+    await page.getByLabel('Type', { exact: true }).selectOption('decision')
+    await expect(legend.getByRole('listitem')).toHaveCount(1)
+    await expect(legend.getByRole('listitem')).toContainText('Decisions')
+  })
+
+  test.describe('moving', () => {
+    test.use({ reducedMotion: 'no-preference' })
+    test('SB6: while it turns a fact card shows one page after another, with where it lives and when', async ({
+      page,
+      context,
+      baseURL,
+    }) => {
+      await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+      await page.setViewportSize({ width: 1920, height: 1080 })
+      await page.goto(GRAPH)
+      await settled(page)
+      const canvas = page.locator('canvas.graph-canvas')
+      await expect
+        .poll(async () => Number(await canvas.getAttribute('data-fact')), { timeout: 8000 })
+        .toBeGreaterThanOrEqual(0)
+      const first = await canvas.getAttribute('data-fact-card')
+      // Its title, then the page's address and the day it last changed.
+      expect(first).toMatch(/^.+ — [\w/-]+ · \d{1,2} \w{3} \d{4}$/)
+      await expect.poll(() => canvas.getAttribute('data-fact-card'), { timeout: 8000 }).not.toBe(first)
+    })
+  })
+})

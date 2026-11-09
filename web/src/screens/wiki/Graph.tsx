@@ -9,7 +9,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import { useFresh } from '../../api/fresh.ts'
 import { CAMERA, clampPitch } from '../../graph/camera.ts'
 import { type Card, hitCard, keepInView, TILE_PAD, TILE_SCALE } from '../../graph/cards.ts'
-import { FAMILIES, familyIndex } from '../../graph/families.ts'
+import { FAMILIES, familyCounts, familyIndex } from '../../graph/families.ts'
 import {
   areas,
   countKey,
@@ -49,7 +49,7 @@ import { T } from '../../text.ts'
 import { Icon } from '../../ui/icons.tsx'
 import { viewState } from '../../ui/state.ts'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
-import { CanvasSkeleton, KINDS, Legend } from './CanvasChrome.tsx'
+import { CanvasSkeleton, FamilyLegend, KINDS, Legend } from './CanvasChrome.tsx'
 import { useBrain, useFilters, WikiHead } from './common.tsx'
 import { graphResource, pagesResource } from './data.ts'
 import { GraphList } from './GraphList.tsx'
@@ -222,6 +222,11 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
       ? pagesResource(slug, { status: DRAWN, sort: '-updatedAt', cursor: '', limit: '50' })
       : null
   const recentRows = recent?.data.value?.items
+  // The families drawn, for the legend over the canvas.
+  const families = useMemo(
+    () => (model && vis && !list && model.mode !== 'too-big' ? familyCounts(model, vis.nodes) : []),
+    [model, vis, list],
+  )
   const facts = useMemo<Fact[]>(() => {
     if (!model) return []
     const out: Fact[] = []
@@ -586,15 +591,18 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
       {notes}
     </>
   ) : (
-    // Over the canvas: its name and where you are at the top left; Graph | List and the filters at the top
-    // in the middle (plan canvas-ui B.2).
+    // Over the canvas: its name and where you are at the top left, the families under it; Graph | List and
+    // the filters at the top in the middle (plan canvas-ui B.2).
     <>
-      <div class="graph-over">
-        <WikiHead title={g.title} />
-        {placeRow}
-        {trailNav}
-        {notes}
-        {focusBar}
+      <div class="graph-left">
+        <div class="graph-over">
+          <WikiHead title={g.title} />
+          {placeRow}
+          {trailNav}
+          {notes}
+          {focusBar}
+        </div>
+        {families.length ? <FamilyLegend counts={families} /> : null}
       </div>
       <div class="graph-center">
         {viewsToggle}
@@ -863,7 +871,14 @@ function GraphCanvas({
   const cards = useRef<Card[]>([])
   const hits = useRef<Card[]>([])
   const [ready, setReady] = useState(false)
-  const [active, setActive] = useState(-1)
+  const [active, setActiveState] = useState(-1)
+  // Where the keyboard is, also kept at once: a key pressed before the screen draws again (a fast typist,
+  // a busy machine) walks on from there, not from where the last drawing left it.
+  const activeNow = useRef(-1)
+  const setActive = (i: number) => {
+    activeNow.current = i
+    setActiveState(i)
+  }
   const [said, setSaid] = useState('')
   const view = useRef<View>({ scale: 1, tx: 0, ty: 0 })
   // Once the person pans or zooms, the view stays theirs until what is drawn changes.
@@ -934,6 +949,7 @@ function GraphCanvas({
     bridgePairs,
     orphans,
     panel,
+    facts,
   })
   latest.current = {
     nodes,
@@ -948,6 +964,7 @@ function GraphCanvas({
     bridgePairs,
     orphans,
     panel,
+    facts,
   }
   const shownXY = () => latest.current.rings ?? positions.current
 
@@ -996,6 +1013,12 @@ function GraphCanvas({
     else delete c.dataset.hub
     c.dataset.pulses = String(d.pulses)
     c.dataset.fact = String(d.fact)
+    // The fact card's words, for a test driving the browser only.
+    if (probe) {
+      const fact = latest.current.facts.find((x) => x.i === d.fact)
+      if (fact) c.dataset.factCard = `${fact.title} — ${fact.sub}`
+      else delete c.dataset.factCard
+    }
     // Each picture's painting time while it turns (the timing test reads it).
     const pictures = d.pictures
     if (d.spinning && pictures > 0) c.dataset.frameMs = (d.ms / pictures).toFixed(2)
@@ -1213,7 +1236,7 @@ function GraphCanvas({
     ]
     // No card is drawn under any control over the canvas, the legend and the panel's switch included
     // (closing review): their boxes, from the canvas's corner.
-    const others = ['.graph-legend', '.inspector-toggle'].map(
+    const others = ['.graph-legend', '.inspector-toggle', '.graph-families'].map(
       (q) => screen?.querySelector<HTMLElement>(q) ?? null,
     )
     const bands = () => {
@@ -1422,7 +1445,8 @@ function GraphCanvas({
     touch()
     const x = shownXY()
     if (!x) return
-    const here = active >= 0 && nodes[active] ? active : -1
+    const now = activeNow.current
+    const here = now >= 0 && nodes[now] ? now : -1
     const dir = ARROWS[e.key]
     if (dir) {
       e.preventDefault()
@@ -1580,7 +1604,7 @@ function GraphCanvas({
             onKeyDown={onKey}
             onFocus={() => {
               touch()
-              if (active < 0) {
+              if (activeNow.current < 0) {
                 const i = start()
                 if (i >= 0) {
                   setActive(i)

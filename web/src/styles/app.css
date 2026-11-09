@@ -4519,3 +4519,73 @@ input[type="file"]::file-selector-button {
   max-width: 100%;
   white-space: normal;
 }
+
+/* Over the canvas, at the top left: its name and where you are, and under them the families drawn (plan
+   canvas-ui SB6). Only the boxes take the pointer; the room between them is the canvas's. */
+.graph-left {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  z-index: 4;
+  display: grid;
+  justify-items: start;
+  gap: 12px;
+  max-width: min(440px, calc(50% - 200px));
+  pointer-events: none;
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: only the boxes of the column take the pointer */
+.graph-left > * {
+  pointer-events: auto;
+}
+
+.graph-left > .graph-over {
+  position: static;
+  max-width: none;
+}
+
+.graph-families {
+  min-width: 220px;
+  padding: 10px 14px 12px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-line);
+  font-size: 12px;
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: a family's row in the legend over the canvas */
+.graph-families li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+  color: var(--panel-ink);
+}
+
+.graph-families .legend-shape {
+  fill: var(--panel-c);
+}
+
+.graph-families .fam-count {
+  color: var(--panel-c);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.fam-note {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Narrow: the column takes the width; the families stay in the legend at the bottom (the picture is small). */
+@media (max-width: 1099px) {
+  .graph-left {
+    max-width: calc(100% - 32px);
+  }
+
+  .graph-families {
+    display: none;
+  }
+}
