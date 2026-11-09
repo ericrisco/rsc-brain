@@ -1,13 +1,31 @@
 // Painting the graph (plan §3.4). The painter runs in the graph's worker on an OffscreenCanvas, so the page
 // never waits for a picture (CA6: on a slow machine the copy of a painted canvas alone used to block the page
 // for longer than 200 ms); without OffscreenCanvas it runs on the page. It paints when the positions, the
-// size or what the person does changes, never in a loop (DESIGN.md «Motion»).
+// size or what the person does changes; it paints frame after frame only while the cloud turns or pulses
+// travel, and never with reduced motion.
+//
+// The cloud (spec amendment 2026-11-09, CA12): the layout is in three dimensions and the camera (camera.ts)
+// draws it in perspective, near points bigger and brighter, on top of far ones. Each family has its colour and
+// a pill at the middle of its points; the brain's hub sits in the middle; the most linked pages are bigger and
+// haloed. At rest, with motion allowed, it turns slowly and light pulses travel along the lines; a fact card
+// shows one page after another. Touched, it stops and draws names and cards as a flat picture would.
 //
 // What says what, never by colour alone: a page's shape says its type and its size how linked it is; a
 // superseded page is dimmed and struck through; a line's dash and width say its link kind, with an arrowhead
 // for the kinds that have a direction; links with a group are wide and pale. In focus, the page sits in the
 // middle, one hop on a filled ring and two hops on a hollow, smaller one. Names go where they fit: the item
 // the person is on, its neighbours, the hubs, the groups, and everything once zoomed in.
+
+import {
+  CAMERA,
+  type Camera,
+  type Frame,
+  frameOf,
+  project,
+  projectPoint,
+  spinBox,
+  yawText,
+} from './camera.ts'
 import {
   CARD_MAX,
   CARD_PAD,
@@ -23,6 +41,7 @@ import {
   TILE_SCALE,
   TILE_TEXT,
 } from './cards.ts'
+import { centroids } from './families.ts'
 import type { View } from './model.ts'
 import { fit, fitPad, GROUP_SHAPE, groupRadius } from './model.ts'
 
@@ -42,6 +61,12 @@ export type Palette = {
   cardLine: string
   cardInk: string
   cardSub: string
+  // The families' colours and their dim grounds (shared.css v2 --fam-*), in the order of families.ts, the
+  // pulses' light, and the words on a panel.
+  fam: string[]
+  famDim: string[]
+  pulse: string
+  panelInk: string
 }
 
 export const SHAPES = ['topic', 'entity', 'decision', 'guide', 'agent', 'source', 'overview'] as const
@@ -136,7 +161,15 @@ export type Scene = {
   labels: string[]
   // Per item: free, parked without links, or on the rim (layout.ts ROLE).
   role: Uint8Array
+  // Per item: its family (families.ts), and each family's name on its pill.
+  fam: Uint8Array
+  famNames: string[]
+  // The brain in the middle of the cloud: its initial and its name.
+  hub: { initial: string; name: string } | null
 }
+
+// A page the fact card can show: its title, and where it comes from and when.
+export type Fact = { i: number; title: string; sub: string }
 
 // What changes as the person looks.
 export type State = {
@@ -178,6 +211,12 @@ export type State = {
   seq: number
   // A test drives the browser (navigator.webdriver): the picture also says the words of its cards.
   probe: boolean
+  // The cloud turns (nobody touches it, motion is allowed, the tab is seen), and light travels its lines
+  // (motion is allowed and the tab is seen).
+  spin: boolean
+  pulses: boolean
+  // The person turned the cloud: the camera to draw with, applied once per seq.
+  camera: (Camera & { seq: number }) | null
 }
 
 export type Drawn = {
@@ -195,18 +234,46 @@ export type Drawn = {
   ms: number
   // The state this picture was drawn from (State.seq).
   seq: number
+  // Where each item is on the flat picture, in the layout's units (the camera's projection), when it changed
+  // and the cloud is still; null otherwise (the page keeps the last one for the pointer and the keys).
+  xy: Float32Array | null
+  // The camera, and whether the cloud is turning; the families' pills drawn; the hub's place; the pulses on
+  // the lines; the page on the fact card (−1: none).
+  yaw: number
+  pitch: number
+  spinning: boolean
+  families: string[]
+  hub: [number, number] | null
+  pulses: number
+  fact: number
+  // The picture asks for the next frame (it turns, or light travels).
+  animating: boolean
 }
 
-const TITLE = '13px ui-sans-serif, system-ui, sans-serif'
-const GROUP_TITLE = '600 13px ui-sans-serif, system-ui, sans-serif'
-const SUB = '12px ui-sans-serif, system-ui, sans-serif'
+// The interface's monospaced face (shared.css v2), with its fallbacks.
+const MONO = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'
+const TITLE = `13px ${MONO}`
+const GROUP_TITLE = `700 13px ${MONO}`
+const SUB = `12px ${MONO}`
 // How far Fit zooms in at most: far enough that a small wiki's pages are drawn as cards side by side.
 const FIT_MAX = 8
 // How many cards a picture describes to a test.
 export const PROBE_CARDS = 40
-const TILE_TITLE = '600 14px ui-sans-serif, system-ui, sans-serif'
+const TILE_TITLE = `700 14px ${MONO}`
 // A name beside a point: 12 px (its width is the card title's, at 13 px, scaled).
-const LABEL = '12px ui-sans-serif, system-ui, sans-serif'
+const LABEL = `12px ${MONO}`
+const PILL = `700 11px ${MONO}`
+const HUB = `700 18px ${MONO}`
+// How long the fact card shows one page, and how long it fades in and out.
+export const FACT_MS = 4200
+const FACT_FADE = 600
+// The pulses: how many at most, and one for this many lines.
+const PULSES_MAX = 40
+const PULSE_EVERY = 6
+const ONES4 = new Uint8Array([1, 1, 1, 1])
+// Room around the turning cloud when it is fitted, and the share of its points the fit keeps in the frame.
+const SPIN_PAD = 16
+const SPIN_KEEP = 0.9
 const LABEL_SCALE = 12 / 13
 // Where a card's words start: after the disc with the type's shape.
 const TEXT_X = 32
@@ -214,13 +281,36 @@ const TEXT_X = 32
 export class Renderer {
   scene: Scene | null = null
   state: State | null = null
+  // The layout: [x0, y0, z0, …] (z 0 for a flat one).
   layout: Float32Array | null = null
   // Each item's words as a card shows them (cut to fit), and their width: measured once.
   private words = new Map<number, { t: string; s: string; w: number }>()
+  // The camera, the frame it turns about, and the projection drawn last.
+  camera: Camera = { yaw: CAMERA.yaw0, pitch: CAMERA.pitch0 }
+  private cameraSeq = -1
+  private frame: { of: Float32Array; mask: Uint8Array; f: Frame } | null = null
+  private box: { of: Float32Array; mask: Uint8Array; pitch: number; b: Float32Array } | null = null
+  private proj = new Float32Array(0)
+  private depth = new Float32Array(0)
+  private sent = ''
+  private sentOf: Float32Array | null = null
+  private last = 0
+  private facts: Fact[] = []
+  private factAt = 0
+  private factIndex = -1
+  // Pulses: per pulse its line, how far along it is (0–1, past 1 it fades out) and its speed per ms.
+  private pulseEdge = new Int32Array(0)
+  private pulseT = new Float32Array(0)
+  private pulseV = new Float32Array(0)
+  private seed = 48291
 
   setScene(s: Scene): void {
     this.scene = s
     this.layout = null
+    this.frame = null
+    this.box = null
+    this.factIndex = -1
+    this.pulseEdge = new Int32Array(0)
     this.words.clear()
     this.tiles.clear()
   }
@@ -232,19 +322,88 @@ export class Renderer {
     this.tiles.clear()
   }
 
-  // Paints a frame; null when there is nothing to paint yet.
-  paint(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D): Drawn | null {
+  setFacts(facts: Fact[]): void {
+    this.facts = facts
+    this.factIndex = -1
+  }
+
+  private random(): number {
+    this.seed = (this.seed + 0x6d2b79f5) >>> 0
+    let t = this.seed
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+
+  // Paints a frame; null when there is nothing to paint yet. `now` moves the turn, the pulses and the fact
+  // card on.
+  paint(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    now = performance.now(),
+  ): Drawn | null {
     const sc = this.scene
     const st = this.state
-    const xy = st?.xy ?? this.layout
-    if (!sc || !st || !xy || xy.length !== 2 * sc.n || st.width === 0 || st.height === 0) return null
+    const layout = this.layout
+    if (!sc || !st || st.width === 0 || st.height === 0) return null
+    const flat = st.xy !== null && st.xy.length === 2 * sc.n
+    if (!flat && (!layout || layout.length !== 3 * sc.n)) return null
     const started = performance.now()
-    const fitWith = (pad: number, max = FIT_MAX) =>
-      fit(xy, st.fit, st.width, Math.max(120, st.height - Math.max(st.inset, st.bottom)), pad, st.top, {
-        max,
-        right: st.right,
-      })
-    const view = st.autoFit ? fitCards(fitWith, fitPad(sc, st.fit)) : st.view
+    const dt = this.last ? Math.min(100, Math.max(0, now - this.last)) : 0
+    this.last = now
+    if (st.camera && st.camera.seq !== this.cameraSeq) {
+      this.cameraSeq = st.camera.seq
+      this.camera = { yaw: st.camera.yaw, pitch: st.camera.pitch }
+    }
+    let xy: Float32Array
+    let depth: Float32Array | null = null
+    let spinning = false
+    const height = Math.max(120, st.height - Math.max(st.inset, st.bottom))
+    const fitOn = (points: Float32Array, mask: Uint8Array, pad: number, max = FIT_MAX) =>
+      fit(points, mask, st.width, height, pad, st.top, { max, right: st.right })
+    let fitted: View | null = null
+    if (flat) xy = st.xy as Float32Array
+    else {
+      const l = layout as Float32Array
+      if (!this.frame || this.frame.of !== l || this.frame.mask !== st.fit)
+        this.frame = { of: l, mask: st.fit, f: frameOf(l, st.fit) }
+      const f = this.frame.f
+      if (this.proj.length !== 2 * sc.n) {
+        this.proj = new Float32Array(2 * sc.n)
+        this.depth = new Float32Array(sc.n)
+      }
+      project(l, f, this.camera, this.proj, this.depth)
+      // A wiki small enough that Fit shows its pages as tiles is a flat picture to read: it does not turn.
+      const exact = st.autoFit
+        ? fitCards((pad, max) => fitOn(this.proj, st.fit, pad, max), fitPad(sc, st.fit))
+        : st.view
+      // With motion allowed the picture is fitted to what the cloud covers at any yaw (most of it): it never
+      // breathes as it turns, and stopping it never rescales it.
+      if (st.pulses && exact.scale < TILE_SCALE) {
+        if (
+          !this.box ||
+          this.box.of !== l ||
+          this.box.mask !== st.fit ||
+          this.box.pitch !== this.camera.pitch
+        )
+          this.box = {
+            of: l,
+            mask: st.fit,
+            pitch: this.camera.pitch,
+            b: spinBox(l, st.fit, f, this.camera.pitch, SPIN_KEEP),
+          }
+        fitted = st.autoFit ? fitOn(this.box.b, ONES4, SPIN_PAD, TILE_SCALE * 0.99) : st.view
+        spinning = st.spin
+        if (spinning) {
+          this.camera.yaw += (dt * 2 * Math.PI) / CAMERA.turnMs
+          project(l, f, this.camera, this.proj, this.depth)
+        }
+      } else fitted = exact
+      xy = this.proj
+      depth = this.depth
+    }
+    const view: View =
+      fitted ??
+      (st.autoFit ? fitCards((pad, max) => fitOn(xy, st.fit, pad, max), fitPad(sc, st.fit)) : st.view)
     const tile = view.scale >= TILE_SCALE
     const { palette, dpr } = st
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -274,6 +433,63 @@ export class Renderer {
     }
     const dim = (i: number) => sc.superseded[i] === 1 || (lit !== null && !lit[i])
     // Everything is drawn in screen pixels: line widths and dashes stay the same at any zoom.
+
+    // What the page needs back to find what is under the pointer: the projection, when it changed and the
+    // cloud is still.
+    const xyOut = (): Float32Array | null => {
+      if (spinning || flat) {
+        if (flat) this.sent = ''
+        return null
+      }
+      const key = `${this.camera.yaw}|${this.camera.pitch}`
+      if (this.sentOf === layout && this.sent === key) return null
+      this.sentOf = layout
+      this.sent = key
+      return xy.slice()
+    }
+    const common = {
+      yaw: this.camera.yaw,
+      pitch: this.camera.pitch,
+      spinning,
+    }
+
+    if (depth && !tile) {
+      const out = this.cloud(ctx, st, sc, {
+        xy,
+        depth,
+        view,
+        spinning,
+        now,
+        dt,
+        lit,
+        dim,
+        isGroup,
+        boxR,
+        radius,
+        SX,
+        SY,
+      })
+      const a = st.active
+      return {
+        view,
+        active: a >= 0 && st.nodes[a] ? [Math.round(SX(a)), Math.round(SY(a))] : null,
+        cards: out.cards,
+        labels: out.labels,
+        dots: 0,
+        titles: st.probe
+          ? out.cards.slice(0, PROBE_CARDS).map((c) => this.wordsOf(ctx, sc, c.i, isGroup(c.i)).t)
+          : [],
+        ms: performance.now() - started,
+        seq: st.seq,
+        xy: xyOut(),
+        ...common,
+        families: out.families,
+        hub: out.hub,
+        pulses: out.pulses,
+        fact: out.fact,
+        animating: out.animating,
+      }
+    }
 
     // The dotted ground, moving with the view; each dot snapped to the device's pixels.
     const dots = dotGrid(view)
@@ -416,7 +632,7 @@ export class Renderer {
           y = Math.min(y, SY(i))
         }
       if (Number.isFinite(x)) {
-        ctx.font = '12px ui-sans-serif, system-ui, sans-serif'
+        ctx.font = `12px ${MONO}`
         ctx.textBaseline = 'bottom'
         ctx.fillStyle = palette.muted
         ctx.fillText(st.orphanLabel, Math.max(4, x - base), y - base - 6)
@@ -454,12 +670,14 @@ export class Renderer {
           }
           if (!any) continue
           ctx.globalAlpha = faint ? (lit ? 0.25 : 0.45) : 1
+          // The family's colour (its type's: the shape says the same).
+          const colour = palette.fam[t] ?? palette.text
           if (hollow) {
             ctx.lineWidth = 1.5
-            ctx.strokeStyle = palette.text
+            ctx.strokeStyle = colour
             ctx.stroke()
           } else {
-            ctx.fillStyle = palette.text
+            ctx.fillStyle = colour
             ctx.fill('evenodd')
           }
         }
@@ -516,7 +734,483 @@ export class Renderer {
         : [],
       ms: performance.now() - started,
       seq: st.seq,
+      xy: xyOut(),
+      ...common,
+      families: [],
+      hub: null,
+      pulses: 0,
+      fact: -1,
+      animating: false,
     }
+  }
+
+  // The cloud: far to near, so the near points are drawn on top. Lines take their family's colour and fade
+  // with depth; the most linked pages are haloed; each family has its pill; the hub sits in the middle; light
+  // travels the lines; a fact card shows one page after another while it turns.
+  private cloud(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    st: State,
+    sc: Scene,
+    o: {
+      xy: Float32Array
+      depth: Float32Array
+      view: View
+      spinning: boolean
+      now: number
+      dt: number
+      lit: Uint8Array | null
+      dim: (i: number) => boolean
+      isGroup: (i: number) => boolean
+      boxR: (i: number) => number
+      radius: (i: number) => number
+      SX: (i: number) => number
+      SY: (i: number) => number
+    },
+  ): {
+    cards: Card[]
+    labels: Card[]
+    families: string[]
+    hub: [number, number] | null
+    pulses: number
+    fact: number
+    animating: boolean
+  } {
+    const { depth, view, spinning, lit, dim, isGroup, SX, SY } = o
+    const p = st.palette
+    const n = sc.n
+    // How near each point is, from 0 (the farthest drawn) to 1 (the nearest), in four steps of light.
+    let dmin = Number.POSITIVE_INFINITY
+    let dmax = Number.NEGATIVE_INFINITY
+    for (let i = 0; i < n; i++) {
+      if (!st.nodes[i]) continue
+      const d = depth[i] as number
+      if (d < dmin) dmin = d
+      if (d > dmax) dmax = d
+    }
+    const span = Math.max(1e-6, dmax - dmin)
+    const FADE = [0.3, 0.48, 0.72, 1]
+    const bucket = (i: number) => Math.min(3, Math.floor((((depth[i] as number) - dmin) / span) * 4))
+    const size = (i: number) => Math.min(1.7, Math.max(0.55, depth[i] as number))
+    // Points of a cloud are small; the most linked ones stand out bigger.
+    const hubs = new Set(st.hubs)
+    const rad = (i: number) => (isGroup(i) ? o.boxR(i) : o.radius(i) * (hubs.has(i) ? 0.85 : 0.6)) * size(i)
+
+    // Still, the cards and names of a flat picture; turning, none (they would swim).
+    const placed = spinning ? { cards: [], labels: [] } : this.place(ctx, st, sc, SX, SY, isGroup, false)
+    const { cards, labels } = placed
+    const cardOf = new Int32Array(n).fill(-1)
+    for (const [k, c] of cards.entries()) cardOf[c.i] = k
+
+    // Lines: gathered in one pass by kind, strength, family and depth, then one stroke each.
+    const on = st.hover >= 0 && st.nodes[st.hover] ? st.hover : st.selected
+    const paths = new Map<string, number[]>()
+    const visibleEdges: number[] = []
+    for (let e = 0; e < sc.kind.length; e++) {
+      if (!st.edges[e]) continue
+      visibleEdges.push(e)
+      const i = sc.edges[2 * e] as number
+      const j = sc.edges[2 * e + 1] as number
+      const touches = on >= 0 && (i === on || j === on)
+      const tier = touches ? 2 : (lit ? i !== st.hover && j !== st.hover : dim(i) || dim(j)) ? 0 : 1
+      const k = sc.kind[e] as number
+      const key = tier === 1 ? `${k}|1|${sc.fam[i]}|${Math.min(bucket(i), bucket(j))}` : `${k}|${tier}|0|3`
+      let x0 = SX(i)
+      let y0 = SY(i)
+      let x1 = SX(j)
+      let y1 = SY(j)
+      const ci = cardOf[i] as number
+      const cj = cardOf[j] as number
+      if (cj >= 0) [x1, y1] = clipToRect(x0, y0, x1, y1, cards[cj] as Card)
+      if (ci >= 0) [x0, y0] = clipToRect(x1, y1, x0, y0, cards[ci] as Card)
+      let list = paths.get(key)
+      if (!list) {
+        list = []
+        paths.set(key, list)
+      }
+      list.push(x0, y0, x1, y1, cj >= 0 ? -1 : rad(j))
+    }
+    ctx.lineCap = 'round'
+    for (const [key, list] of paths) {
+      const [ks, ts, fs, bs] = key.split('|')
+      const k = Number(ks)
+      const tier = Number(ts)
+      const name = k < 0 ? 'group' : (sc.kinds[k] as string)
+      const style = LINE[name] ?? (LINE.related as (typeof LINE)[string])
+      const contradicts = name === 'contradicts'
+      ctx.beginPath()
+      for (let q = 0; q < list.length; q += 5) {
+        ctx.moveTo(list[q] as number, list[q + 1] as number)
+        ctx.lineTo(list[q + 2] as number, list[q + 3] as number)
+      }
+      ctx.setLineDash(style.dash)
+      const width = k < 0 ? (sc.byGroups ? 2.5 : 0.8) : style.width
+      ctx.lineWidth = tier === 2 ? width + 0.6 : width * 0.85
+      ctx.strokeStyle = contradicts ? p.danger : tier === 2 ? p.text : (p.fam[Number(fs)] ?? p.edge)
+      ctx.globalAlpha =
+        tier === 0
+          ? EDGE.faint * 0.7
+          : tier === 2
+            ? EDGE.lit
+            : (contradicts ? EDGE.contradicts : 0.46) * (FADE[Number(bs)] as number)
+      ctx.stroke()
+      // Arrowheads on the lines of the page under the pointer or picked: the rest would only be noise.
+      if (tier === 2 && style.arrow && k >= 0) {
+        ctx.setLineDash([])
+        ctx.beginPath()
+        for (let q = 0; q < list.length; q += 5) {
+          const x0 = list[q] as number
+          const y0 = list[q + 1] as number
+          const x1 = list[q + 2] as number
+          const y1 = list[q + 3] as number
+          const r = list[q + 4] as number
+          const len = Math.hypot(x1 - x0, y1 - y0)
+          if (len <= 28) continue
+          const ux = (x1 - x0) / len
+          const uy = (y1 - y0) / len
+          const tx = x1 - ux * (r + 2)
+          const ty = y1 - uy * (r + 2)
+          ctx.moveTo(tx, ty)
+          ctx.lineTo(tx - ux * 6 - uy * 3, ty - uy * 6 + ux * 3)
+          ctx.lineTo(tx - ux * 6 + uy * 3, ty - uy * 6 - ux * 3)
+          ctx.closePath()
+        }
+        ctx.fillStyle = contradicts ? p.danger : p.text
+        ctx.fill()
+      }
+    }
+    ctx.setLineDash([])
+    ctx.globalAlpha = 1
+
+    // Light travelling the lines: a short bright stroke on each of a few lines, moving from one end to the
+    // other, then on to another line. Worked out in three dimensions, so it follows the turn.
+    let pulses = 0
+    const f = this.frame?.f
+    const layout = this.layout
+    if (st.pulses && f && layout && visibleEdges.length) {
+      const want = Math.min(PULSES_MAX, Math.max(4, Math.round(visibleEdges.length / PULSE_EVERY)))
+      if (this.pulseEdge.length !== want) {
+        this.pulseEdge = new Int32Array(want).fill(-1)
+        this.pulseT = new Float32Array(want)
+        this.pulseV = new Float32Array(want)
+      }
+      const len = 0.18
+      const glow: number[] = []
+      for (let q = 0; q < want; q++) {
+        let e = this.pulseEdge[q] as number
+        let t = (this.pulseT[q] as number) + (this.pulseV[q] as number) * o.dt
+        if (e < 0 || !st.edges[e] || t > 1 + len) {
+          e = visibleEdges[Math.floor(this.random() * visibleEdges.length)] as number
+          // Started at different points, so they never move in step.
+          t = this.pulseEdge[q] === -1 ? this.random() : 0
+          this.pulseV[q] = 1 / (1100 + this.random() * 1400)
+        }
+        this.pulseEdge[q] = e
+        this.pulseT[q] = t
+        const i = sc.edges[2 * e] as number
+        const j = sc.edges[2 * e + 1] as number
+        const at = (u: number) => {
+          const w = Math.min(1, Math.max(0, u))
+          const [px, py] = projectPoint(
+            (layout[3 * i] as number) + ((layout[3 * j] as number) - (layout[3 * i] as number)) * w,
+            (layout[3 * i + 1] as number) +
+              ((layout[3 * j + 1] as number) - (layout[3 * i + 1] as number)) * w,
+            (layout[3 * i + 2] as number) +
+              ((layout[3 * j + 2] as number) - (layout[3 * i + 2] as number)) * w,
+            f,
+            this.camera,
+          )
+          return [px * view.scale + view.tx, py * view.scale + view.ty] as const
+        }
+        const [hx, hy] = at(t)
+        const [tx, ty] = at(t - len)
+        if (Math.hypot(hx - tx, hy - ty) < 0.5) continue
+        glow.push(tx, ty, hx, hy)
+        pulses += 1
+      }
+      if (glow.length) {
+        const stroke = (width: number, alpha: number) => {
+          ctx.beginPath()
+          for (let q = 0; q < glow.length; q += 4) {
+            ctx.moveTo(glow[q] as number, glow[q + 1] as number)
+            ctx.lineTo(glow[q + 2] as number, glow[q + 3] as number)
+          }
+          ctx.lineWidth = width
+          ctx.strokeStyle = p.pulse
+          ctx.globalAlpha = alpha
+          ctx.stroke()
+        }
+        stroke(5, 0.16)
+        stroke(1.8, 0.95)
+        ctx.beginPath()
+        for (let q = 0; q < glow.length; q += 4) {
+          ctx.moveTo((glow[q + 2] as number) + 2.2, glow[q + 3] as number)
+          ctx.arc(glow[q + 2] as number, glow[q + 3] as number, 2.2, 0, Math.PI * 2)
+        }
+        ctx.fillStyle = p.pulse
+        ctx.globalAlpha = 1
+        ctx.fill()
+      }
+    }
+
+    // The points, far to near: per depth step, one path per family and shape.
+    const groups: number[][] = [[], [], [], []]
+    const byStep: Map<string, number[]>[] = [new Map(), new Map(), new Map(), new Map()]
+    for (let i = 0; i < n; i++) {
+      if (!st.nodes[i] || (cardOf[i] as number) >= 0) continue
+      const b = bucket(i)
+      if (isGroup(i)) {
+        ;(groups[b] as number[]).push(i)
+        continue
+      }
+      const key = `${sc.fam[i]}|${sc.shape[i]}|${dim(i) ? 1 : 0}`
+      const m = byStep[b] as Map<string, number[]>
+      let list = m.get(key)
+      if (!list) {
+        list = []
+        m.set(key, list)
+      }
+      list.push(i)
+    }
+    for (let b = 0; b < 4; b++) {
+      const fade = FADE[b] as number
+      // The most linked pages first get their halo, under their point.
+      for (const list of (byStep[b] as Map<string, number[]>).values())
+        for (const i of list) {
+          if (!hubs.has(i)) continue
+          const r = rad(i)
+          const c = p.fam[sc.fam[i] as number] ?? p.text
+          ctx.beginPath()
+          ctx.arc(SX(i), SY(i), r * 2.8, 0, Math.PI * 2)
+          ctx.fillStyle = c
+          ctx.globalAlpha = 0.13 * fade
+          ctx.fill()
+          ctx.beginPath()
+          ctx.arc(SX(i), SY(i), r * 1.9, 0, Math.PI * 2)
+          ctx.strokeStyle = c
+          ctx.lineWidth = 1
+          ctx.globalAlpha = 0.5 * fade
+          ctx.stroke()
+        }
+      for (const i of groups[b] as number[]) {
+        const r = rad(i)
+        ctx.globalAlpha = (lit && !lit[i] ? 0.35 : 1) * fade
+        ctx.beginPath()
+        ctx.roundRect(SX(i) - r, SY(i) - r, 2 * r, 2 * r, r * 0.3)
+        ctx.fillStyle = p.ground
+        ctx.fill()
+        ctx.lineWidth = 1.5
+        ctx.strokeStyle =
+          i === st.selected || i === st.active ? p.accent : (p.fam[sc.fam[i] as number] ?? p.text)
+        ctx.stroke()
+      }
+      for (const [key, list] of byStep[b] as Map<string, number[]>) {
+        const [fs, shs, faint] = key.split('|')
+        const type = SHAPES[Number(shs)] ?? 'topic'
+        ctx.beginPath()
+        for (const i of list) shape(ctx, type, SX(i), SY(i), rad(i))
+        ctx.fillStyle = p.fam[Number(fs)] ?? p.text
+        ctx.globalAlpha = fade * (faint === '1' ? (lit ? 0.25 : 0.45) : 1)
+        ctx.fill('evenodd')
+      }
+    }
+    ctx.globalAlpha = 1
+    // The strike of superseded pages.
+    ctx.beginPath()
+    let struck = false
+    for (let i = 0; i < sc.pages; i++) {
+      if (!st.nodes[i] || sc.superseded[i] !== 1 || (cardOf[i] as number) >= 0) continue
+      const r = rad(i) * 1.5
+      ctx.moveTo(SX(i) - r, SY(i) + r)
+      ctx.lineTo(SX(i) + r, SY(i) - r)
+      struck = true
+    }
+    if (struck) {
+      ctx.lineWidth = 1.5
+      ctx.strokeStyle = p.text
+      ctx.stroke()
+    }
+
+    // The hub: the brain itself, in the middle of the cloud.
+    let hub: [number, number] | null = null
+    if (sc.hub && f) {
+      const hx = f.cx * view.scale + view.tx
+      const hy = f.cy * view.scale + view.ty
+      hub = [Math.round(hx), Math.round(hy)]
+      const orange = p.fam[0] ?? p.accent
+      for (const [r, a] of [
+        [44, 0.12],
+        [31, 0.3],
+      ] as const) {
+        ctx.beginPath()
+        ctx.arc(hx, hy, r, 0, Math.PI * 2)
+        ctx.strokeStyle = orange
+        ctx.lineWidth = 1
+        ctx.globalAlpha = a
+        ctx.stroke()
+      }
+      ctx.beginPath()
+      ctx.arc(hx, hy, 21, 0, Math.PI * 2)
+      ctx.fillStyle = orange
+      ctx.globalAlpha = 0.22
+      ctx.fill()
+      ctx.beginPath()
+      ctx.arc(hx, hy, 17, 0, Math.PI * 2)
+      ctx.globalAlpha = 1
+      ctx.fill()
+      ctx.font = HUB
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillStyle = p.ground
+      ctx.fillText(sc.hub.initial, hx, hy + 1)
+      ctx.font = SUB
+      ctx.lineJoin = 'round'
+      ctx.lineWidth = 3
+      ctx.strokeStyle = p.ground
+      ctx.strokeText(sc.hub.name, hx, hy + 36)
+      ctx.fillStyle = p.panelInk
+      ctx.fillText(sc.hub.name, hx, hy + 36)
+      ctx.textAlign = 'start'
+    }
+
+    // Rings: the page in focus, the one selected, where the keyboard is.
+    const ring = (i: number, width: number, gap: number, color: string) => {
+      if (i < 0 || !st.nodes[i] || (cardOf[i] as number) >= 0) return
+      ctx.beginPath()
+      ctx.arc(SX(i), SY(i), (isGroup(i) ? rad(i) * 1.45 : rad(i) * 1.3) + gap, 0, Math.PI * 2)
+      ctx.lineWidth = width
+      ctx.strokeStyle = color
+      ctx.stroke()
+    }
+    ring(st.focus, 1.5, 4, p.muted)
+    ring(st.selected, 2.5, 3, p.accent)
+    ring(st.active, 2, 7, p.accent)
+
+    // Each family's pill, at the middle of its points.
+    const families: string[] = []
+    const mids = centroids(o.xy, sc.fam, st.nodes, sc.famNames.length)
+    ctx.font = PILL
+    ctx.textBaseline = 'middle'
+    for (const [k, c] of mids.entries()) {
+      if (!c) continue
+      const name = sc.famNames[k] ?? ''
+      const w = ctx.measureText(name).width + 18
+      const x = Math.min(st.width - st.right - w - 6, Math.max(6, c.x * view.scale + view.tx - w / 2))
+      const y = Math.min(st.height - 26, Math.max(st.top + 4, c.y * view.scale + view.ty - 10))
+      ctx.globalAlpha = 0.92
+      ctx.beginPath()
+      ctx.roundRect(x, y, w, 20, 10)
+      ctx.fillStyle = p.famDim[k] ?? p.card
+      ctx.fill()
+      ctx.globalAlpha = 1
+      ctx.lineWidth = 1.2
+      ctx.strokeStyle = p.fam[k] ?? p.text
+      ctx.stroke()
+      ctx.fillStyle = p.panelInk
+      ctx.fillText(name, x + 9, y + 10.5)
+      families.push(name)
+    }
+
+    // The cards and names, still.
+    this.draw(ctx, st, sc, cards, lit, false)
+    this.drawLabels(ctx, st, sc, labels, lit, isGroup)
+
+    // The fact card: while it turns, one page after another, with a ring around its point.
+    let fact = -1
+    if (spinning && st.pulses && this.facts.length) {
+      if (this.factIndex < 0 || o.now - this.factAt > FACT_MS) {
+        for (let tries = 0; tries < this.facts.length; tries++) {
+          this.factIndex = (this.factIndex + 1) % this.facts.length
+          const c = this.facts[this.factIndex] as Fact
+          if (c.i < n && st.nodes[c.i]) break
+        }
+        this.factAt = o.now
+      }
+      const c = this.facts[this.factIndex] as Fact
+      if (c.i < n && st.nodes[c.i]) {
+        fact = c.i
+        const age = o.now - this.factAt
+        const alpha = Math.min(1, age / FACT_FADE, (FACT_MS - age) / FACT_FADE)
+        this.factCard(ctx, st, sc, c, SX(c.i), SY(c.i), rad(c.i), Math.max(0, alpha))
+      }
+    }
+
+    // How far it has turned, at the bottom right.
+    ctx.font = `11px ${MONO}`
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'alphabetic'
+    ctx.fillStyle = p.muted
+    ctx.globalAlpha = 0.85
+    ctx.fillText(
+      yawText(this.camera.yaw),
+      st.width - st.right - 14,
+      st.height - Math.max(st.bottom, st.inset) - 8,
+    )
+    ctx.textAlign = 'start'
+    ctx.globalAlpha = 1
+    return {
+      cards,
+      labels,
+      families,
+      hub,
+      pulses,
+      fact,
+      animating: spinning || (st.pulses && visibleEdges.length > 0),
+    }
+  }
+
+  // A page's fact: a thin ring around its point, a line to a card with its title, and where it comes from
+  // and when in its family's colour.
+  private factCard(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    st: State,
+    sc: Scene,
+    c: Fact,
+    x: number,
+    y: number,
+    r: number,
+    alpha: number,
+  ): void {
+    const p = st.palette
+    const colour = p.fam[sc.fam[c.i] as number] ?? p.accent
+    ctx.globalAlpha = alpha
+    ctx.beginPath()
+    ctx.arc(x, y, r + 7, 0, Math.PI * 2)
+    ctx.lineWidth = 1.3
+    ctx.strokeStyle = p.panelInk
+    ctx.stroke()
+    ctx.font = TITLE
+    const title = c.title.length > 44 ? `${c.title.slice(0, 43).trimEnd()}…` : c.title
+    const tw = ctx.measureText(title).width
+    ctx.font = SUB
+    const sw = ctx.measureText(c.sub).width
+    const w = Math.ceil(Math.max(tw, sw)) + 28
+    const h = 50
+    const right = st.width - st.right - 8
+    let cx = x + r + 24
+    let cy = y - h - 18
+    if (cx + w > right) cx = x - r - 24 - w
+    if (cy < st.top + 8) cy = y + r + 18
+    ctx.beginPath()
+    ctx.moveTo(x + (cx > x ? r + 7 : -r - 7), y)
+    ctx.lineTo(cx > x ? cx : cx + w, cy + h / 2)
+    ctx.lineWidth = 1
+    ctx.strokeStyle = colour
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.rect(cx + 0.5, cy + 0.5, w, h)
+    ctx.fillStyle = p.card
+    ctx.fill()
+    ctx.lineWidth = 1.2
+    ctx.strokeStyle = colour
+    ctx.stroke()
+    ctx.textBaseline = 'middle'
+    ctx.font = TITLE
+    ctx.fillStyle = p.cardInk
+    ctx.fillText(title, cx + 14, cy + 17)
+    ctx.font = SUB
+    ctx.fillStyle = colour
+    ctx.fillText(c.sub, cx + 14, cy + 35)
+    ctx.globalAlpha = 1
   }
 
   // An item's words on its card: a page's title, or a group's name and its pages on a second line; cut

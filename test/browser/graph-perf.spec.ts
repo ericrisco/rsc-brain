@@ -39,6 +39,9 @@ async function slowCpu(page: Page) {
 
 test.describe('the graph under load (CPU ×4)', () => {
   test.describe.configure({ timeout: 180_000 })
+  // With motion allowed: the cloud turns and light travels its lines while it is measured (spec amendment
+  // 2026-11-09: the budget holds with the turn and the pulses on).
+  test.use({ reducedMotion: 'no-preference' })
 
   test('CA5: 300 pages are drawn within 3 seconds; the list has all 300', async ({
     page,

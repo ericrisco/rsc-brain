@@ -1,10 +1,12 @@
-// The graph's Web Worker (plan §3.4): it works out the layout and, holding the canvas (OffscreenCanvas), paints
-// it, so the page never waits for either. Positions go back to the page (it finds what is under the pointer
-// and where an arrow key leads). With reduced motion one picture, the settled one; otherwise a picture every
-// ~32 ms while it settles. Work goes in slices of 8 ms, so a new layout (a group opened) replaces the old one
-// at once, and a frame is painted at most once per animation frame, whatever asked for it.
+// The graph's Web Worker (plan §3.4): it works out the layout, in three dimensions, and, holding the canvas
+// (OffscreenCanvas), paints it, so the page never waits for either. The camera's flat projection goes back to
+// the page with each still picture (it finds what is under the pointer and where an arrow key leads). With
+// reduced motion one picture, the settled one; otherwise a picture every ~32 ms while it settles, and then one
+// per animation frame while the cloud turns or light travels its lines. Work goes in slices of 8 ms, so a new
+// layout (a group opened) replaces the old one at once, and a frame is painted at most once per animation
+// frame, whatever asked for it. A turning picture is told to the page at most four times a second.
 import { arrange, createLayout } from './layout.ts'
-import type { FromWorker, LayoutRequest, ToWorker } from './protocol.ts'
+import type { DrawnMessage, FromWorker, LayoutRequest, ToWorker } from './protocol.ts'
 import { Renderer } from './render.ts'
 
 const scope = self as unknown as {
@@ -18,6 +20,10 @@ let settled = false
 let canvas: OffscreenCanvas | null = null
 const renderer = new Renderer()
 let frame = false
+// What was told to the page last, and the painting time of the pictures not told since (CA5 adds it up).
+let told = { at: 0, seq: -1, spinning: false, settled: false }
+let untold = 0
+const TELL_EVERY = 250
 
 function paint() {
   frame = false
@@ -31,8 +37,23 @@ function paint() {
   }
   const ctx = canvas.getContext('2d')
   if (!ctx) return
-  const drawn = renderer.paint(ctx)
-  if (drawn) scope.postMessage({ type: 'drawn', id: current, ...drawn, settled })
+  const now = performance.now()
+  const drawn = renderer.paint(ctx, now)
+  if (!drawn) return
+  untold += drawn.ms
+  const fresh =
+    drawn.xy !== null ||
+    drawn.seq !== told.seq ||
+    drawn.spinning !== told.spinning ||
+    settled !== told.settled ||
+    now - told.at >= TELL_EVERY
+  if (fresh) {
+    told = { at: now, seq: drawn.seq, spinning: drawn.spinning, settled }
+    const message: DrawnMessage = { type: 'drawn', id: current, ...drawn, ms: untold, settled }
+    untold = 0
+    scope.postMessage(message, drawn.xy ? [drawn.xy.buffer] : [])
+  }
+  if (drawn.animating) request()
 }
 function request() {
   if (frame || !canvas) return
@@ -69,22 +90,33 @@ function layout(m: LayoutRequest) {
       seed: m.seed,
       weights: Float32Array.from(free, (g) => m.weights[g] as number),
       area: Int32Array.from(free, (g) => m.area[g] as number),
+      dims: 3,
+      family: Int32Array.from(free, (g) => m.family[g] as number),
     }),
   )
 
   const post = (done: boolean) => {
-    const part = l.positions()
+    const part = l.positions3()
+    // The pages without links and the rim are placed on the flat picture, at depth 0.
     const xy = new Float32Array(2 * m.n)
     free.forEach((g, k) => {
-      xy[2 * g] = part[2 * k] as number
-      xy[2 * g + 1] = part[2 * k + 1] as number
+      xy[2 * g] = part[3 * k] as number
+      xy[2 * g + 1] = part[3 * k + 1] as number
     })
     timed(() => arrange(xy, m.role, m.edges))
+    const xyz = new Float32Array(3 * m.n)
+    for (let i = 0; i < m.n; i++) {
+      xyz[3 * i] = xy[2 * i] as number
+      xyz[3 * i + 1] = xy[2 * i + 1] as number
+    }
+    free.forEach((g, k) => {
+      xyz[3 * g + 2] = part[3 * k + 2] as number
+    })
     if (done) settled = true
-    renderer.layout = xy
+    renderer.layout = xyz
     request()
-    const copy = xy.slice()
-    scope.postMessage({ type: 'positions', id: m.id, xy: copy, done, ...(done ? { ms: busy } : {}) }, [
+    const copy = xyz.slice()
+    scope.postMessage({ type: 'positions', id: m.id, xyz: copy, done, ...(done ? { ms: busy } : {}) }, [
       copy.buffer,
     ])
   }
@@ -110,6 +142,7 @@ scope.onmessage = (e) => {
   else if (m.type === 'canvas') canvas = m.canvas
   else if (m.type === 'scene') renderer.setScene(m.scene)
   else if (m.type === 'labels') renderer.setLabels(m.labels)
+  else if (m.type === 'facts') renderer.setFacts(m.facts)
   else if (m.type === 'state') renderer.state = m.state
   request()
 }

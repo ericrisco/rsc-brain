@@ -196,3 +196,127 @@ describe('the layout of the graph', () => {
     })
   }
 })
+
+// Spec amendment 2026-11-09, CA12 (plan canvas-ui SB4): the same forces in three dimensions. Each page gets x,
+// y and z; the families gather in clusters around the middle, where the brain's hub sits; the picture is the
+// same for the same data and seed, and the 2D layout above is unchanged.
+describe('the layout of the graph in three dimensions', () => {
+  const dist3 = (p: Float32Array, a: number, b: number) =>
+    Math.hypot(
+      (p[3 * a] as number) - (p[3 * b] as number),
+      (p[3 * a + 1] as number) - (p[3 * b + 1] as number),
+      (p[3 * a + 2] as number) - (p[3 * b + 2] as number),
+    )
+
+  it('gives every page x, y and z, the same for the same data and seed', () => {
+    const run = () => {
+      const l = createLayout({ n: 120, edges: sample(120), seed: 7, dims: 3 })
+      l.run(10_000)
+      return l.positions3()
+    }
+    const a = run()
+    assert.equal(a.length, 360)
+    assert.deepEqual(a, run())
+    // Depth is used: the pages spread along z about as much as along x.
+    let zs = 0
+    let xs = 0
+    for (let i = 0; i < 120; i++) {
+      zs += Math.abs(a[3 * i + 2] as number)
+      xs += Math.abs(a[3 * i] as number)
+    }
+    assert.ok(zs > 0.3 * xs, `z spread ${zs.toFixed(0)} against x spread ${xs.toFixed(0)}`)
+  })
+
+  it('linked pages end up nearer than unlinked ones, and none sit on each other', () => {
+    const edges = sample(200)
+    const l = createLayout({ n: 200, edges, seed: 3, dims: 3 })
+    l.run(10_000)
+    const p = l.positions3()
+    let linked = 0
+    for (let e = 0; e < edges.length; e += 2) linked += dist3(p, edges[e] as number, edges[e + 1] as number)
+    linked /= edges.length / 2
+    let all = 0
+    let pairs = 0
+    let closest = Number.POSITIVE_INFINITY
+    for (let i = 0; i < 200; i++)
+      for (let j = i + 1; j < 200; j++) {
+        const d = dist3(p, i, j)
+        all += d
+        pairs += 1
+        closest = Math.min(closest, d)
+      }
+    assert.ok(linked < 0.6 * (all / pairs), `linked ${linked.toFixed(1)} against ${(all / pairs).toFixed(1)}`)
+    assert.ok(closest > 0.5, `closest pair ${closest}`)
+  })
+
+  it('pages of a family gather in a cluster of their own around the middle', () => {
+    // Seven families of 30 pages, linked at random across families: the pull of a family still wins.
+    const n = 210
+    const family = Int32Array.from({ length: n }, (_, i) => i % 7)
+    const pairs: number[] = []
+    for (let i = 0; i < n; i++) pairs.push(i, (i * 37 + 11) % n)
+    const l = createLayout({ n, edges: new Uint32Array(pairs), seed: 5, dims: 3, family })
+    l.run(10_000)
+    const p = l.positions3()
+    let inside = 0
+    let across = 0
+    let ni = 0
+    let na = 0
+    for (let i = 0; i < n; i++)
+      for (let j = i + 1; j < n; j++) {
+        const d = dist3(p, i, j)
+        if (family[i] === family[j]) {
+          inside += d
+          ni += 1
+        } else {
+          across += d
+          na += 1
+        }
+      }
+    assert.ok(inside / ni < 0.75 * (across / na), `inside ${inside / ni} against across ${across / na}`)
+    // The middle of the whole cloud is near the origin, where the hub is drawn.
+    let cx = 0
+    let cy = 0
+    let cz = 0
+    let r = 0
+    for (let i = 0; i < n; i++) {
+      cx += p[3 * i] as number
+      cy += p[3 * i + 1] as number
+      cz += p[3 * i + 2] as number
+      r = Math.max(r, Math.hypot(p[3 * i] as number, p[3 * i + 1] as number, p[3 * i + 2] as number))
+    }
+    assert.ok(Math.hypot(cx / n, cy / n, cz / n) < 0.15 * r)
+  })
+
+  it('positions() still gives x and y, the projection-free view of the same layout', () => {
+    const l = createLayout({ n: 40, edges: sample(40), seed: 9, dims: 3 })
+    l.run(10_000)
+    const p3 = l.positions3()
+    const p2 = l.positions()
+    for (let i = 0; i < 40; i++) {
+      assert.equal(p2[2 * i], p3[3 * i])
+      assert.equal(p2[2 * i + 1], p3[3 * i + 1])
+    }
+  })
+
+  it('in two dimensions every z is 0', () => {
+    const l = createLayout({ n: 40, edges: sample(40), seed: 9 })
+    l.run(10_000)
+    const p3 = l.positions3()
+    for (let i = 0; i < 40; i++) assert.equal(p3[3 * i + 2], 0)
+  })
+
+  for (const n of [300, 2000])
+    it(`${n} pages settle in three dimensions in bounded CPU time`, () => {
+      const l = createLayout({
+        n,
+        edges: sample(n),
+        seed: 1,
+        dims: 3,
+        family: Int32Array.from({ length: n }, (_, i) => i % 7),
+      })
+      const ms = cpuMs(() => l.run(60_000))
+      assert.ok(l.done())
+      assert.ok(ms < (n === 300 ? 1500 : 12_000), `${ms.toFixed(0)} ms`)
+    })
+})

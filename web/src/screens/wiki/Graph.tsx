@@ -7,7 +7,9 @@
 // a group is that big); the list stays whole, by pages.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { useFresh } from '../../api/fresh.ts'
-import { type Card, hitCard, keepInView, TILE_PAD } from '../../graph/cards.ts'
+import { CAMERA, clampPitch } from '../../graph/camera.ts'
+import { type Card, hitCard, keepInView, TILE_PAD, TILE_SCALE } from '../../graph/cards.ts'
+import { FAMILIES, familyIndex } from '../../graph/families.ts'
 import {
   areas,
   countKey,
@@ -27,8 +29,10 @@ import {
   type View,
   visibility,
 } from '../../graph/model.ts'
-import type { FromWorker, ToWorker } from '../../graph/protocol.ts'
+import type { DrawnMessage, FromWorker, ToWorker } from '../../graph/protocol.ts'
 import {
+  type Drawn,
+  type Fact,
   GROUP_SHAPE,
   NODE_R,
   type Palette,
@@ -71,7 +75,7 @@ const areaOf = (address: string) => address.split('/', 1)[0] as string
 export function WikiGraph({ slug }: { slug: string }) {
   const { brain, gate } = useBrain(slug)
   if (!brain) return gate
-  return <GraphScreen slug={slug} />
+  return <GraphScreen slug={slug} brainName={brain.name} />
 }
 
 const KEYS = [
@@ -109,7 +113,7 @@ const BAND_GAP = 8
 
 const coarse = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 
-function GraphScreen({ slug }: { slug: string }) {
+function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
   const g = T.graph
   const w = T.wiki
   const f = useFilters(KEYS)
@@ -213,6 +217,22 @@ function GraphScreen({ slug }: { slug: string }) {
   }
   const listed =
     list && !v.focus && model ? pagesResource(slug, { ...listQuery, cursor: '', limit: '50' }) : null
+  // The pages changed last, for the canvas's fact card: their title, address and date.
+  const recent =
+    !list && model?.mode === 'pages'
+      ? pagesResource(slug, { status: DRAWN, sort: '-updatedAt', cursor: '', limit: '50' })
+      : null
+  const recentRows = recent?.data.value?.items
+  const facts = useMemo<Fact[]>(() => {
+    if (!model) return []
+    const out: Fact[] = []
+    for (const row of recentRows ?? []) {
+      const i = model.index.get(`p:${row.address}`)
+      if (i !== undefined)
+        out.push({ i, title: row.title, sub: g.factSub(row.address, T.date(row.updatedAt)) })
+    }
+    return out
+  }, [model, recentRows])
   const listTotal = listed?.data.value?.total
   // A page to focus on that is still inside a group (by groups) is on its way: the group opens next.
   const seeking = Boolean(v.focus) && model?.mode === 'groups' && !model.index.has(`p:${v.focus}`)
@@ -686,6 +706,8 @@ function GraphScreen({ slug }: { slug: string }) {
         }}
         panel={Boolean(target) || pinned}
         refit={`${group}|${loose}|${v.focus}|${hops}|${filters.q}|${filters.type}|${filters.status}|${filters.tag}|${filters.linkKind}|${counts ? 'c' : ''}`}
+        brainName={brainName}
+        facts={facts}
       />
     )
 
@@ -726,6 +748,10 @@ function palette(): Palette {
     cardLine: v('--node-line'),
     cardInk: v('--node-ink'),
     cardSub: v('--node-sub'),
+    fam: FAMILIES.map((f) => v(`--fam-${f.colour}`)),
+    famDim: FAMILIES.map((f) => v(`--fam-${f.colour}-dim`)),
+    pulse: v('--pulse'),
+    panelInk: v('--panel-ink'),
   }
 }
 
@@ -760,8 +786,11 @@ function labelsOf(model: Model, counts: Map<string, number> | undefined): string
   })
 }
 
-function sceneOf(model: Model, labels: string[]): Scene {
+function sceneOf(model: Model, labels: string[], brainName: string): Scene {
   return {
+    fam: familyIndex(model),
+    famNames: FAMILIES.map((f) => (T.wiki.typesPlural[f.type] ?? f.type).toLowerCase()),
+    hub: brainName.trim() ? { initial: brainName.trim().slice(0, 1).toUpperCase(), name: brainName } : null,
     n: model.items.length,
     pages: model.pages,
     byGroups: model.mode === 'groups',
@@ -799,6 +828,8 @@ function GraphCanvas({
   onSelect,
   panel,
   refit,
+  brainName,
+  facts,
 }: {
   model: Model
   nodes: Uint8Array
@@ -817,6 +848,9 @@ function GraphCanvas({
   panel: boolean
   // Changes when what is drawn changes: the view fits it again.
   refit: string
+  // The brain, in the middle of the cloud; the pages the fact card shows while it turns.
+  brainName: string
+  facts: Fact[]
 }) {
   const g = T.graph
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -853,6 +887,14 @@ function GraphCanvas({
   const band = useRef<{ top: number; bottom: number; blocked: number[] }>({ top: 0, bottom: 0, blocked: [] })
   // Measures the controls over the canvas again (they move when the panel opens).
   const measureBands = useRef<() => void>(() => {})
+  // The cloud's camera as the last picture drew it, and the one the person set by dragging (sent once per seq).
+  const camera = useRef({ yaw: CAMERA.yaw0, pitch: CAMERA.pitch0 })
+  const turned = useRef<{ yaw: number; pitch: number; seq: number } | null>(null)
+  // The cloud turns at rest: a touch (pointer, wheel, keys, the keyboard on the canvas) stops it, and it turns
+  // again after CAMERA.restMs without one. Never with reduced motion, never while the tab is hidden.
+  const touched = useRef(false)
+  const restTimer = useRef(0)
+  const zoomedIn = useRef(false)
   const labels = useMemo(() => labelsOf(model, counts), [model, counts])
   const hubList = useMemo(() => hubs(model, nodes, HUBS), [model, nodes])
   const role = useMemo(() => roles(model), [model])
@@ -915,6 +957,7 @@ function GraphCanvas({
     if (l) {
       if (m.type === 'scene') l.renderer.setScene(m.scene)
       else if (m.type === 'labels') l.renderer.setLabels(m.labels)
+      else if (m.type === 'facts') l.renderer.setFacts(m.facts)
       else if (m.type === 'state') {
         l.renderer.state = m.state
         paintHere()
@@ -923,22 +966,15 @@ function GraphCanvas({
     }
     worker.current?.postMessage(m, transfer)
   }
-  const drawn = (d: {
-    id: number
-    view: View
-    active: [number, number] | null
-    cards: Card[]
-    labels: Card[]
-    dots: number
-    titles: string[]
-    ms: number
-    seq: number
-    settled: boolean
-  }) => {
+  const drawn = (d: DrawnMessage | (Drawn & { id: number; settled: boolean })) => {
     const c = canvas.current
     // A picture of an older layout (a group left a moment ago) says nothing about this one.
     if (d.id !== layoutId.current) return
     view.current = d.view
+    camera.current = { yaw: d.yaw, pitch: d.pitch }
+    zoomedIn.current = d.view.scale >= TILE_SCALE
+    // The flat projection the picture was drawn with: what the pointer and the arrow keys work on.
+    if (d.xy) positions.current = d.xy
     cards.current = d.cards
     // What the pointer can pick: the cards first, then the names written beside points.
     hits.current = d.labels.length ? [...d.cards, ...d.labels] : d.cards
@@ -952,6 +988,15 @@ function GraphCanvas({
     c.dataset.cards = String(d.cards.length)
     c.dataset.labels = String(d.labels.length)
     c.dataset.dots = String(d.dots)
+    // The cloud as drawn (tests read it): its turn, whether it turns, its families' pills, its hub, the light
+    // on its lines and the page on its fact card.
+    c.dataset.yaw = ((d.yaw * 180) / Math.PI).toFixed(1)
+    c.dataset.spinning = String(d.spinning)
+    c.dataset.families = d.families.join(',')
+    if (d.hub) c.dataset.hub = `${d.hub[0]},${d.hub[1]}`
+    else delete c.dataset.hub
+    c.dataset.pulses = String(d.pulses)
+    c.dataset.fact = String(d.fact)
     // The first cards with their size and words, for a test driving the browser only (closing review C5).
     if (probe)
       c.dataset.cardList = JSON.stringify(
@@ -990,8 +1035,36 @@ function GraphCanvas({
       c.width = Math.round(st.width * st.dpr)
       c.height = Math.round(st.height * st.dpr)
       const d = l.renderer.paint(l.ctx)
-      if (d) drawn({ ...d, id: layoutId.current, settled: settled.current })
+      if (d) {
+        drawn({ ...d, id: layoutId.current, settled: settled.current })
+        if (d.animating) paintHere()
+      }
     })
+  }
+  // Whether the cloud turns and light travels: motion allowed, the tab seen; and, to turn, nobody touching it,
+  // nothing picked, no focus, the keyboard elsewhere.
+  const motion = () => {
+    const moving = !reducedMotion() && document.visibilityState !== 'hidden'
+    const s = latest.current
+    const still =
+      touched.current ||
+      s.selected >= 0 ||
+      s.focus >= 0 ||
+      hover.current >= 0 ||
+      drag.current !== null ||
+      document.activeElement === canvas.current
+    return { spin: moving && !still, pulses: moving }
+  }
+  // A touch: the cloud stops now and turns again after a rest.
+  const touch = () => {
+    clearTimeout(restTimer.current)
+    const was = touched.current
+    touched.current = true
+    restTimer.current = window.setTimeout(() => {
+      touched.current = false
+      sendState()
+    }, CAMERA.restMs)
+    if (!was) sendState()
   }
   const sendState = () => {
     const s = latest.current
@@ -1024,6 +1097,8 @@ function GraphCanvas({
       top: band.current.top,
       bottom: band.current.bottom,
       blocked: band.current.blocked,
+      ...motion(),
+      camera: turned.current,
     }
     post({ type: 'state', state })
   }
@@ -1037,7 +1112,6 @@ function GraphCanvas({
       const m = e.data
       if (m.type === 'drawn') return drawn(m)
       if (m.id !== layoutId.current) return
-      positions.current = m.xy
       frames.current += 1
       c.dataset.frames = String(frames.current)
       if (m.done) {
@@ -1047,7 +1121,7 @@ function GraphCanvas({
       setReady(true)
       const l = local.current
       if (l) {
-        l.renderer.layout = m.xy
+        l.renderer.layout = m.xyz
         paintHere()
       }
     }
@@ -1083,9 +1157,10 @@ function GraphCanvas({
       delete c.dataset.settled
       c.dataset.frames = '0'
     }
-    post({ type: 'scene', scene: sceneOf(model, labels) })
+    post({ type: 'scene', scene: sceneOf(model, labels, brainName) })
     const role = roles(model)
     const area = areas(model)
+    const family = Int32Array.from(familyIndex(model))
     const message: ToWorker = {
       type: 'layout',
       id: layoutId.current,
@@ -1094,6 +1169,7 @@ function GraphCanvas({
       weights: model.weights.slice(),
       area,
       role,
+      family,
       seed: SEED,
       reducedMotion: reducedMotion(),
     }
@@ -1101,6 +1177,16 @@ function GraphCanvas({
     sendState()
   }, [model])
   useEffect(() => post({ type: 'labels', labels }), [labels])
+  useEffect(() => post({ type: 'facts', facts }), [facts, model])
+  // The tab hidden: nothing moves; seen again: it moves as before. The rest timer goes with the screen.
+  useEffect(() => {
+    const seen = () => sendState()
+    document.addEventListener('visibilitychange', seen)
+    return () => {
+      document.removeEventListener('visibilitychange', seen)
+      clearTimeout(restTimer.current)
+    }
+  }, [])
 
   // The size of the box, and a new picture when it changes. Read from the observer only: it reports after the
   // browser's own layout, so asking for the size never forces a layout in the middle of a task (CA6).
@@ -1247,6 +1333,7 @@ function GraphCanvas({
     if (!c) return
     const wheel = (e: WheelEvent) => {
       e.preventDefault()
+      touch()
       const rect = c.getBoundingClientRect()
       zoom(Math.exp(-e.deltaY * 0.002), e.clientX - rect.left, e.clientY - rect.top)
     }
@@ -1330,6 +1417,7 @@ function GraphCanvas({
   }
 
   const onKey = (e: KeyboardEvent) => {
+    touch()
     const x = shownXY()
     if (!x) return
     const here = active >= 0 && nodes[active] ? active : -1
@@ -1361,10 +1449,30 @@ function GraphCanvas({
     else if (e.key === '0') fitAll()
   }
 
-  const drag = useRef<{ x: number; y: number; tx: number; ty: number; moved: boolean } | null>(null)
+  // A drag turns the cloud (yaw, and pitch within limits); with Shift, or on a flat picture (the tiles, the
+  // rings of a focus), it moves the picture.
+  const drag = useRef<{
+    x: number
+    y: number
+    tx: number
+    ty: number
+    yaw: number
+    pitch: number
+    pan: boolean
+    moved: boolean
+  } | null>(null)
   const onPointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return
-    drag.current = { x: e.clientX, y: e.clientY, tx: view.current.tx, ty: view.current.ty, moved: false }
+    touch()
+    drag.current = {
+      x: e.clientX,
+      y: e.clientY,
+      tx: view.current.tx,
+      ty: view.current.ty,
+      ...camera.current,
+      pan: e.shiftKey || zoomedIn.current || latest.current.rings !== null,
+      moved: false,
+    }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
   const at = (e: PointerEvent) => {
@@ -1380,14 +1488,22 @@ function GraphCanvas({
     return hit(x, latest.current.nodes, wx, wy, reach())
   }
   const onPointerMove = (e: PointerEvent) => {
+    touch()
     const d = drag.current
     if (d) {
       const dx = e.clientX - d.x
       const dy = e.clientY - d.y
       if (!d.moved && Math.hypot(dx, dy) < 4) return
       d.moved = true
-      view.current = { ...view.current, tx: d.tx + dx, ty: d.ty + dy }
-      auto.current = false
+      if (d.pan) {
+        view.current = { ...view.current, tx: d.tx + dx, ty: d.ty + dy }
+        auto.current = false
+      } else
+        turned.current = {
+          yaw: d.yaw - dx * 0.008,
+          pitch: clampPitch(d.pitch + dy * 0.006),
+          seq: (turned.current?.seq ?? 0) + 1,
+        }
       sendState()
       return
     }
@@ -1461,6 +1577,7 @@ function GraphCanvas({
             data-items={shown}
             onKeyDown={onKey}
             onFocus={() => {
+              touch()
               if (active < 0) {
                 const i = start()
                 if (i >= 0) {
@@ -1473,11 +1590,13 @@ function GraphCanvas({
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerLeave={() => {
+              touch()
               if (hover.current >= 0) {
                 hover.current = -1
                 sendState()
               }
             }}
+            onBlur={touch}
           />
           {ready ? null : <CanvasSkeleton wait />}
         </div>

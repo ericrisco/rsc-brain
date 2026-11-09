@@ -1,7 +1,11 @@
 // The layout of the graph (plan §3.4): a force layout over typed arrays, run in the graph's Web Worker. Pages
-// push each other apart (Barnes–Hut on a quadtree, so 2 000 pages cost a few milliseconds a step), links pull
+// push each other apart (Barnes–Hut on an octree, so 2 000 pages cost a few milliseconds a step), links pull
 // their two ends together, and a weak pull to the middle keeps pages without links in sight. It cools down
 // step by step and stops; the same pages, links and seed always give the same picture. No DOM here.
+//
+// In two dimensions every z stays 0 and the octree is the quadtree it used to be. In three (spec amendment
+// 2026-11-09, CA12) the same forces act along z too, and each family is pulled toward a place of its own on a
+// sphere around the middle, so families gather in clusters around the brain's hub.
 
 export const LAYOUT = {
   maxTicks: 300,
@@ -13,6 +17,10 @@ export const LAYOUT = {
   centre: 0.04,
   // How strongly a page is pulled to the middle of its area.
   areaPull: 0.12,
+  // In three dimensions: how strongly a page is pulled to its family's place, and how far out the places are
+  // (times the square root of the pages).
+  familyPull: 0.2,
+  familyReach: 18,
   // Barnes–Hut: a cell this small seen from this far counts as one body.
   theta2: 0.81,
   distanceMin2: 1,
@@ -27,6 +35,10 @@ export type LayoutInput = {
   weights?: Float32Array
   // The area each node is in (−1: none): a weak pull keeps an area's pages together.
   area?: Int32Array
+  // 2 (the default) or 3: in three, every node also has a z.
+  dims?: 2 | 3
+  // In three dimensions, each node's family (−1: none): a family is pulled to a place of its own.
+  family?: Int32Array
 }
 
 export type Layout = {
@@ -36,6 +48,23 @@ export type Layout = {
   done(): boolean
   // [x0, y0, x1, y1, ...], a new array each time (it is handed over to the page).
   positions(): Float32Array
+  // [x0, y0, z0, x1, y1, z1, ...], a new array each time; z is 0 in two dimensions.
+  positions3(): Float32Array
+}
+
+// Where each of `count` families is pulled to: spread evenly on a sphere of radius `r` (a Fibonacci sphere),
+// flattened a little, so the clusters lie around the vertical axis the picture turns on.
+export function familyPlaces(count: number, r: number): Float64Array {
+  const out = new Float64Array(3 * count)
+  for (let k = 0; k < count; k++) {
+    const yk = count === 1 ? 0 : 1 - (2 * (k + 0.5)) / count
+    const ring = Math.sqrt(1 - yk * yk)
+    const a = k * Math.PI * (3 - Math.sqrt(5))
+    out[3 * k] = r * ring * Math.cos(a)
+    out[3 * k + 1] = r * yk * 0.5
+    out[3 * k + 2] = r * ring * Math.sin(a)
+  }
+  return out
 }
 
 // mulberry32: small and the same everywhere.
@@ -52,20 +81,40 @@ function rng(seed: number) {
 
 export function createLayout(input: LayoutInput): Layout {
   const { n, edges } = input
+  const three = input.dims === 3
   const random = rng(input.seed)
   const jiggle = () => (random() - 0.5) * 1e-6
   const x = new Float64Array(n)
   const y = new Float64Array(n)
+  const z = new Float64Array(n)
   const vx = new Float64Array(n)
   const vy = new Float64Array(n)
+  const vz = new Float64Array(n)
   const strength = new Float64Array(n)
   for (let i = 0; i < n; i++) {
-    // A sunflower spiral to start from: even, and the same every time.
-    const r = 10 * Math.sqrt(0.5 + i)
     const a = i * Math.PI * (3 - Math.sqrt(5))
-    x[i] = r * Math.cos(a)
-    y[i] = r * Math.sin(a)
+    if (three) {
+      // A spiral on nested spheres to start from: even, and the same every time.
+      const r = 10 * Math.cbrt(0.5 + i) * 2
+      const h = n === 1 ? 0 : 1 - (2 * (i + 0.5)) / n
+      const ring = Math.sqrt(1 - h * h)
+      x[i] = r * ring * Math.cos(a)
+      y[i] = r * h
+      z[i] = r * ring * Math.sin(a)
+    } else {
+      // A sunflower spiral to start from: even, and the same every time.
+      const r = 10 * Math.sqrt(0.5 + i)
+      x[i] = r * Math.cos(a)
+      y[i] = r * Math.sin(a)
+    }
     strength[i] = LAYOUT.charge * Math.sqrt(input.weights?.[i] ?? 1)
+  }
+  // The families' places, in three dimensions.
+  let places: Float64Array | null = null
+  if (three && input.family) {
+    let count = 0
+    for (let i = 0; i < n; i++) count = Math.max(count, (input.family[i] as number) + 1)
+    if (count > 0) places = familyPlaces(count, LAYOUT.familyReach * Math.sqrt(n))
   }
   // Links: each pulls with a strength shared by the busier end, as springs of the same rest length.
   const m = edges.length >> 1
@@ -90,13 +139,15 @@ export function createLayout(input: LayoutInput): Layout {
   const alphaDecay = 1 - LAYOUT.alphaMin ** (1 / LAYOUT.maxTicks)
   let ticks = 0
 
-  // The quadtree, rebuilt each step in flat arrays: per cell its 4 children (-1: none), its first page (a
-  // leaf), its weight and centre. Pages in the same leaf are chained by `next`.
+  // The octree, rebuilt each step in flat arrays: per cell its 8 children (-1: none), its first page (a leaf),
+  // its weight and centre. Pages in the same leaf are chained by `next`. With every z at 0 only the first four
+  // children are ever used: it is the quadtree of the plane.
   let child = new Int32Array(0)
   let point = new Int32Array(0)
   let cw = new Float64Array(0)
   let cx = new Float64Array(0)
   let cy = new Float64Array(0)
+  let cz = new Float64Array(0)
   let csize = new Float64Array(0)
   const next = new Int32Array(n)
   let cells = 0
@@ -104,26 +155,31 @@ export function createLayout(input: LayoutInput): Layout {
   function grow(cap: number) {
     if (cap <= point.length) return
     const size = Math.max(cap, point.length * 2, 64)
-    const c2 = new Int32Array(size * 4).fill(-1)
+    const c2 = new Int32Array(size * 8).fill(-1)
     c2.set(child)
     child = c2
     const p2 = new Int32Array(size).fill(-1)
     p2.set(point)
     point = p2
-    for (const name of ['w', 'x', 'y', 's'] as const) {
-      const old = name === 'w' ? cw : name === 'x' ? cx : name === 'y' ? cy : csize
+    const more = (old: Float64Array) => {
       const fresh = new Float64Array(size)
       fresh.set(old)
-      if (name === 'w') cw = fresh
-      else if (name === 'x') cx = fresh
-      else if (name === 'y') cy = fresh
-      else csize = fresh
+      return fresh
     }
+    cw = more(cw)
+    cx = more(cx)
+    cy = more(cy)
+    cz = more(cz)
+    csize = more(csize)
+  }
+  const internal = (k: number) => {
+    for (let q = 0; q < 8; q++) if (child[8 * k + q] !== -1) return true
+    return false
   }
   function cell(size: number): number {
     grow(cells + 1)
     const k = cells++
-    child.fill(-1, 4 * k, 4 * k + 4)
+    child.fill(-1, 8 * k, 8 * k + 8)
     point[k] = -1
     csize[k] = size
     return k
@@ -133,44 +189,45 @@ export function createLayout(input: LayoutInput): Layout {
     cells = 0
     let x0 = Number.POSITIVE_INFINITY
     let y0 = Number.POSITIVE_INFINITY
+    let z0 = Number.POSITIVE_INFINITY
     let x1 = Number.NEGATIVE_INFINITY
     let y1 = Number.NEGATIVE_INFINITY
+    let z1 = Number.NEGATIVE_INFINITY
     for (let i = 0; i < n; i++) {
       const xi = x[i] as number
       const yi = y[i] as number
+      const zi = z[i] as number
       if (xi < x0) x0 = xi
       if (xi > x1) x1 = xi
       if (yi < y0) y0 = yi
       if (yi > y1) y1 = yi
+      if (zi < z0) z0 = zi
+      if (zi > z1) z1 = zi
     }
-    const size = Math.max(x1 - x0, y1 - y0, 1) * 1.0001
+    const size = Math.max(x1 - x0, y1 - y0, z1 - z0, 1) * 1.0001
     const root = cell(size)
     for (let i = 0; i < n; i++) {
       next[i] = -1
       let k = root
       let kx = x0
       let ky = y0
+      let kz = z0
       let ks = size
       let depth = 0
       const xi = x[i] as number
       const yi = y[i] as number
+      const zi = z[i] as number
       for (;;) {
         const p = point[k] as number
         const leaf = p !== -1
-        const internal =
-          !leaf &&
-          (child[4 * k] !== -1 ||
-            child[4 * k + 1] !== -1 ||
-            child[4 * k + 2] !== -1 ||
-            child[4 * k + 3] !== -1)
-        if (!leaf && !internal) {
+        if (!leaf && !internal(k)) {
           // An empty cell (only the root can be one): it takes the page.
           point[k] = i
           break
         }
         if (leaf) {
           // The same place, or as deep as it goes: share the leaf.
-          if (depth > 40 || ((x[p] as number) === xi && (y[p] as number) === yi)) {
+          if (depth > 40 || ((x[p] as number) === xi && (y[p] as number) === yi && (z[p] as number) === zi)) {
             next[i] = next[p] as number
             next[p] = i
             break
@@ -178,21 +235,25 @@ export function createLayout(input: LayoutInput): Layout {
           // Split: the page there moves one level down.
           point[k] = -1
           const half = ks / 2
-          const q = ((x[p] as number) >= kx + half ? 1 : 0) | ((y[p] as number) >= ky + half ? 2 : 0)
+          const q =
+            ((x[p] as number) >= kx + half ? 1 : 0) |
+            ((y[p] as number) >= ky + half ? 2 : 0) |
+            ((z[p] as number) >= kz + half ? 4 : 0)
           const c = cell(half)
-          child[4 * k + q] = c
+          child[8 * k + q] = c
           point[c] = p
         }
         const half = ks / 2
-        const q = (xi >= kx + half ? 1 : 0) | (yi >= ky + half ? 2 : 0)
+        const q = (xi >= kx + half ? 1 : 0) | (yi >= ky + half ? 2 : 0) | (zi >= kz + half ? 4 : 0)
         if (q & 1) kx += half
         if (q & 2) ky += half
+        if (q & 4) kz += half
         ks = half
         depth += 1
-        const c = child[4 * k + q] as number
+        const c = child[8 * k + q] as number
         if (c === -1) {
           const fresh = cell(half)
-          child[4 * k + q] = fresh
+          child[8 * k + q] = fresh
           point[fresh] = i
           break
         }
@@ -204,36 +265,41 @@ export function createLayout(input: LayoutInput): Layout {
       let w = 0
       let sx = 0
       let sy = 0
+      let sz = 0
       if ((point[k] as number) !== -1) {
         for (let p = point[k] as number; p !== -1; p = next[p] as number) {
           const s = strength[p] as number
           w += s
           sx += s * (x[p] as number)
           sy += s * (y[p] as number)
+          sz += s * (z[p] as number)
         }
       } else {
-        for (let q = 0; q < 4; q++) {
-          const c = child[4 * k + q] as number
+        for (let q = 0; q < 8; q++) {
+          const c = child[8 * k + q] as number
           if (c === -1) continue
           const s = cw[c] as number
           w += s
           sx += s * (cx[c] as number)
           sy += s * (cy[c] as number)
+          sz += s * (cz[c] as number)
         }
       }
       cw[k] = w
       cx[k] = w === 0 ? 0 : sx / w
       cy[k] = w === 0 ? 0 : sy / w
+      cz[k] = w === 0 ? 0 : sz / w
     }
   }
 
-  const stack = new Int32Array(4 * 64 + 8)
+  const stack = new Int32Array(8 * 64 + 16)
   function charge() {
     if (n < 2) return
     build()
     for (let i = 0; i < n; i++) {
       const xi = x[i] as number
       const yi = y[i] as number
+      const zi = z[i] as number
       let top = 0
       stack[top++] = 0
       while (top > 0) {
@@ -242,18 +308,20 @@ export function createLayout(input: LayoutInput): Layout {
         if (w === 0) continue
         let dx = (cx[k] as number) - xi
         let dy = (cy[k] as number) - yi
-        let l = dx * dx + dy * dy
+        let dz = (cz[k] as number) - zi
+        let l = dx * dx + dy * dy + dz * dz
         const s = csize[k] as number
         const leaf = (point[k] as number) !== -1
         if (!leaf && (s * s) / l < LAYOUT.theta2) {
           if (l < LAYOUT.distanceMin2) l = Math.sqrt(LAYOUT.distanceMin2 * l)
           vx[i] = (vx[i] as number) + (dx * w * alpha) / l
           vy[i] = (vy[i] as number) + (dy * w * alpha) / l
+          if (three) vz[i] = (vz[i] as number) + (dz * w * alpha) / l
           continue
         }
         if (!leaf) {
-          for (let q = 0; q < 4; q++) {
-            const c = child[4 * k + q] as number
+          for (let q = 0; q < 8; q++) {
+            const c = child[8 * k + q] as number
             if (c !== -1) stack[top++] = c
           }
           continue
@@ -262,13 +330,16 @@ export function createLayout(input: LayoutInput): Layout {
           if (p === i) continue
           dx = (x[p] as number) - xi
           dy = (y[p] as number) - yi
+          dz = (z[p] as number) - zi
           if (dx === 0) dx = jiggle()
           if (dy === 0) dy = jiggle()
-          l = dx * dx + dy * dy
+          if (three && dz === 0) dz = jiggle()
+          l = dx * dx + dy * dy + dz * dz
           if (l < LAYOUT.distanceMin2) l = Math.sqrt(LAYOUT.distanceMin2 * l)
           const ws = strength[p] as number
           vx[i] = (vx[i] as number) + (dx * ws * alpha) / l
           vy[i] = (vy[i] as number) + (dy * ws * alpha) / l
+          if (three) vz[i] = (vz[i] as number) + (dz * ws * alpha) / l
         }
       }
     }
@@ -280,42 +351,66 @@ export function createLayout(input: LayoutInput): Layout {
       const t = edges[2 * e + 1] as number
       let dx = (x[t] as number) + (vx[t] as number) - (x[s] as number) - (vx[s] as number)
       let dy = (y[t] as number) + (vy[t] as number) - (y[s] as number) - (vy[s] as number)
+      let dz = three ? (z[t] as number) + (vz[t] as number) - (z[s] as number) - (vz[s] as number) : 0
       if (dx === 0) dx = jiggle()
       if (dy === 0) dy = jiggle()
-      let l = Math.sqrt(dx * dx + dy * dy)
+      if (three && dz === 0) dz = jiggle()
+      let l = Math.sqrt(dx * dx + dy * dy + dz * dz)
       l = ((l - (distance[e] as number)) / l) * alpha * (linkStrength[e] as number)
       dx *= l
       dy *= l
+      dz *= l
       const b = bias[e] as number
       vx[t] = (vx[t] as number) - dx * b
       vy[t] = (vy[t] as number) - dy * b
       vx[s] = (vx[s] as number) + dx * (1 - b)
       vy[s] = (vy[s] as number) + dy * (1 - b)
+      if (three) {
+        vz[t] = (vz[t] as number) - dz * b
+        vz[s] = (vz[s] as number) + dz * (1 - b)
+      }
     }
   }
 
   // Each page drifts toward the middle of its area (where the area's pages are now).
   const sumX = new Map<number, number>()
   const sumY = new Map<number, number>()
+  const sumZ = new Map<number, number>()
   const count = new Map<number, number>()
   function areas(area: Int32Array) {
     sumX.clear()
     sumY.clear()
+    sumZ.clear()
     count.clear()
     for (let i = 0; i < n; i++) {
       const a = area[i] as number
       if (a < 0) continue
       sumX.set(a, (sumX.get(a) ?? 0) + (x[i] as number))
       sumY.set(a, (sumY.get(a) ?? 0) + (y[i] as number))
+      sumZ.set(a, (sumZ.get(a) ?? 0) + (z[i] as number))
       count.set(a, (count.get(a) ?? 0) + 1)
     }
     for (let i = 0; i < n; i++) {
       const a = area[i] as number
       const c = count.get(a)
       if (a < 0 || !c || c < 2) continue
-      const k = LAYOUT.areaPull * alpha
+      // In three dimensions the families make the clusters; the areas only keep a page near its folder.
+      const k = LAYOUT.areaPull * (three ? 0.3 : 1) * alpha
       vx[i] = (vx[i] as number) + ((sumX.get(a) as number) / c - (x[i] as number)) * k
       vy[i] = (vy[i] as number) + ((sumY.get(a) as number) / c - (y[i] as number)) * k
+      if (three) vz[i] = (vz[i] as number) + ((sumZ.get(a) as number) / c - (z[i] as number)) * k
+    }
+  }
+
+  // Each page drifts toward its family's place.
+  function families(family: Int32Array, at: Float64Array) {
+    const k = LAYOUT.familyPull * alpha
+    for (let i = 0; i < n; i++) {
+      const f = family[i] as number
+      if (f < 0) continue
+      vx[i] = (vx[i] as number) + ((at[3 * f] as number) - (x[i] as number)) * k
+      vy[i] = (vy[i] as number) + ((at[3 * f + 1] as number) - (y[i] as number)) * k
+      vz[i] = (vz[i] as number) + ((at[3 * f + 2] as number) - (z[i] as number)) * k
     }
   }
 
@@ -327,11 +422,16 @@ export function createLayout(input: LayoutInput): Layout {
       links()
       charge()
       if (input.area) areas(input.area)
+      if (places && input.family) families(input.family, places)
       for (let i = 0; i < n; i++) {
         vx[i] = ((vx[i] as number) - (x[i] as number) * LAYOUT.centre * alpha) * LAYOUT.velocityKeep
         vy[i] = ((vy[i] as number) - (y[i] as number) * LAYOUT.centre * alpha) * LAYOUT.velocityKeep
         x[i] = (x[i] as number) + (vx[i] as number)
         y[i] = (y[i] as number) + (vy[i] as number)
+        if (three) {
+          vz[i] = ((vz[i] as number) - (z[i] as number) * LAYOUT.centre * alpha) * LAYOUT.velocityKeep
+          z[i] = (z[i] as number) + (vz[i] as number)
+        }
       }
     },
     run(budgetMs) {
@@ -348,6 +448,15 @@ export function createLayout(input: LayoutInput): Layout {
       for (let i = 0; i < n; i++) {
         out[2 * i] = x[i] as number
         out[2 * i + 1] = y[i] as number
+      }
+      return out
+    },
+    positions3() {
+      const out = new Float32Array(3 * n)
+      for (let i = 0; i < n; i++) {
+        out[3 * i] = x[i] as number
+        out[3 * i + 1] = y[i] as number
+        out[3 * i + 2] = z[i] as number
       }
       return out
     },

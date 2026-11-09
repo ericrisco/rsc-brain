@@ -1633,9 +1633,11 @@ export const T = {
     canvasLabel: (n: number) => `Graph of ${plural(n, 'item')}`,
     canvasRole: 'graph',
     canvasHelp:
-      'Arrow keys move to the linked page that lies that way. Enter opens it in the inspector, Escape closes the inspector. Plus and minus zoom, 0 fits everything. The list shows the same as text.',
+      'Arrow keys move to the linked page that lies that way. Enter opens it in the inspector, Escape closes the inspector. Plus and minus zoom, 0 fits everything. Drag to turn the cloud, Shift and drag to move it. The list shows the same as text.',
     touchHelp:
-      'Tap a page to open it in the inspector. Drag to move the picture; Zoom in, Zoom out and Fit change its size. The list shows the same as text.',
+      'Tap a page to open it in the inspector. Drag to turn the cloud; Zoom in, Zoom out and Fit change its size. The list shows the same as text.',
+    // The fact card's second line: where the page lives and when it last changed.
+    factSub: (address: string, date: string) => `${address} · ${date}`,
     zoomIn: 'Zoom in',
     zoomOut: 'Zoom out',
     fitAll: 'Fit',
