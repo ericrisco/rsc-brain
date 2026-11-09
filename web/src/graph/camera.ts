@@ -26,7 +26,19 @@ export type Frame = { cx: number; cy: number; cz: number; r: number }
 export const clampPitch = (p: number) => Math.min(CAMERA.pitchMax, Math.max(CAMERA.pitchMin, p))
 
 // The middle of the points the mask keeps (the middle of their extent), and the farthest of them from it.
-export function frameOf(xyz: Float32Array, mask: Uint8Array): Frame {
+// With `role`, the pages without links (role 1) are left out: they are parked under the cloud, not in it, and
+// would pull its middle off the hub (review R6). When nothing else is kept, they are the frame.
+export function frameOf(xyz: Float32Array, given: Uint8Array, role?: Uint8Array): Frame {
+  let mask = given
+  if (role) {
+    const cloud = given.slice()
+    let left = 0
+    for (let i = 0; i < cloud.length; i++) {
+      if (role[i] === 1) cloud[i] = 0
+      left += cloud[i] as number
+    }
+    if (left > 0) mask = cloud
+  }
   let x0 = Number.POSITIVE_INFINITY
   let y0 = Number.POSITIVE_INFINITY
   let z0 = Number.POSITIVE_INFINITY
@@ -62,6 +74,21 @@ export function frameOf(xyz: Float32Array, mask: Uint8Array): Frame {
         ),
       )
   return { cx, cy, cz, r: Math.max(r, 1) }
+}
+
+// The pages without links (role 1) that the mask keeps, in rows under the cloud as wide as it, flat on the
+// picture: the same at any yaw, so they never sweep across the cloud as it turns (review R6).
+export const ROW_GAP = 24
+export function parkRows(xy: Float32Array, role: Uint8Array, mask: Uint8Array, f: Frame): void {
+  const perRow = Math.max(1, Math.floor((2 * f.r) / ROW_GAP) + 1)
+  const top = f.cy + f.r * 1.2 + ROW_GAP
+  let k = 0
+  for (let i = 0; i < role.length; i++) {
+    if (role[i] !== 1 || !mask[i]) continue
+    xy[2 * i] = f.cx - f.r + (k % perRow) * ROW_GAP
+    xy[2 * i + 1] = top + Math.floor(k / perRow) * ROW_GAP
+    k += 1
+  }
 }
 
 // One point: its place on the flat picture and its perspective scale (1 in the plane of the middle, more when

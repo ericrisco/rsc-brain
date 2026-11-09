@@ -1048,6 +1048,8 @@ function GraphCanvas({
     c.dataset.families = d.families.join(',')
     if (d.hub) c.dataset.hub = `${d.hub[0]},${d.hub[1]}`
     else delete c.dataset.hub
+    if (d.orphans) c.dataset.orphans = `${d.orphans[0]},${d.orphans[1]}`
+    else delete c.dataset.orphans
     c.dataset.pulses = String(d.pulses)
     c.dataset.fact = String(d.fact)
     // The fact card's words, for a test driving the browser only.

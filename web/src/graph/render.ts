@@ -21,6 +21,7 @@ import {
   type Camera,
   type Frame,
   frameOf,
+  parkRows,
   project,
   projectPoint,
   spinBox,
@@ -244,10 +245,64 @@ export type Drawn = {
   spinning: boolean
   families: string[]
   hub: [number, number] | null
+  // Where the caption over the pages without links is written (null: none).
+  orphans: [number, number] | null
   pulses: number
   fact: number
   // The picture asks for the next frame (it turns, or light travels).
   animating: boolean
+}
+
+// The fit mask without the pages without links: the cloud the camera turns (review R6).
+function cloudOnly(mask: Uint8Array, role: Uint8Array): Uint8Array {
+  const m = mask.slice()
+  let left = 0
+  for (let i = 0; i < m.length; i++) {
+    if (role[i] === 1) m[i] = 0
+    left += m[i] as number
+  }
+  return left ? m : mask
+}
+
+// A box ([x, y] corners) grown to hold the rows of pages without links the mask keeps, as parked.
+function withRows(box: Float32Array, xy: Float32Array, role: Uint8Array, mask: Uint8Array): Float32Array {
+  let [x0, y0, x1, , , y1] = box as unknown as number[]
+  for (let i = 0; i < role.length; i++) {
+    if (role[i] !== 1 || !mask[i]) continue
+    x0 = Math.min(x0 as number, xy[2 * i] as number)
+    x1 = Math.max(x1 as number, xy[2 * i] as number)
+    y0 = Math.min(y0 as number, xy[2 * i + 1] as number)
+    y1 = Math.max(y1 as number, xy[2 * i + 1] as number)
+  }
+  return new Float32Array([x0, y0, x1, y0, x1, y1, x0, y1] as number[])
+}
+
+// The caption over the rows of pages without links; where it is written, or null.
+function orphanCaption(
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+  st: State,
+  sc: Scene,
+  SX: (i: number) => number,
+  SY: (i: number) => number,
+  base: number,
+  ink: string,
+): [number, number] | null {
+  if (!st.orphanLabel || st.xy) return null
+  let x = Number.POSITIVE_INFINITY
+  let y = Number.POSITIVE_INFINITY
+  for (let i = 0; i < sc.n; i++)
+    if (st.nodes[i] && sc.role[i] === 1) {
+      x = Math.min(x, SX(i))
+      y = Math.min(y, SY(i))
+    }
+  if (!Number.isFinite(x)) return null
+  const at: [number, number] = [Math.max(4, x - base), y - base - 6]
+  ctx.font = `12px ${MONO}`
+  ctx.textBaseline = 'bottom'
+  ctx.fillStyle = ink
+  ctx.globalAlpha = 1
+  ctx.fillText(st.orphanLabel, at[0], at[1])
+  return [Math.round(at[0]), Math.round(at[1])]
 }
 
 // The interface's monospaced face (shared.css v2), with its fallbacks.
@@ -369,7 +424,7 @@ export class Renderer {
     else {
       const l = layout as Float32Array
       if (!this.frame || this.frame.of !== l || this.frame.mask !== st.fit) {
-        this.frame = { of: l, mask: st.fit, f: frameOf(l, st.fit) }
+        this.frame = { of: l, mask: st.fit, f: frameOf(l, st.fit, sc.role) }
         this.frames += 1
       }
       const f = this.frame.f
@@ -378,6 +433,7 @@ export class Renderer {
         this.depth = new Float32Array(sc.n)
       }
       project(l, f, this.camera, this.proj, this.depth)
+      parkRows(this.proj, sc.role, st.nodes, f)
       // A wiki small enough that Fit shows its pages as tiles is a flat picture to read: it does not turn.
       const exact = st.autoFit
         ? fitCards((pad, max) => fitOn(this.proj, st.fit, pad, max), fitPad(sc, st.fit))
@@ -395,13 +451,19 @@ export class Renderer {
             of: l,
             mask: st.fit,
             pitch: this.camera.pitch,
-            b: spinBox(l, st.fit, f, this.camera.pitch, SPIN_KEEP),
+            b: withRows(
+              spinBox(l, cloudOnly(st.fit, sc.role), f, this.camera.pitch, SPIN_KEEP),
+              this.proj,
+              sc.role,
+              st.fit,
+            ),
           }
         fitted = st.autoFit ? fitOn(this.box.b, ONES4, SPIN_PAD, TILE_SCALE * 0.99) : st.view
         spinning = st.spin
         if (spinning) {
           this.camera.yaw += (dt * 2 * Math.PI) / CAMERA.turnMs
           project(l, f, this.camera, this.proj, this.depth)
+          parkRows(this.proj, sc.role, st.nodes, f)
         }
       } else fitted = exact
       xy = this.proj
@@ -491,6 +553,7 @@ export class Renderer {
         ...common,
         families: out.families,
         hub: out.hub,
+        orphans: out.orphans,
         pulses: out.pulses,
         fact: out.fact,
         animating: out.animating,
@@ -628,22 +691,7 @@ export class Renderer {
       ctx.globalAlpha = 1
     }
 
-    // The caption over the row of pages without links.
-    if (st.orphanLabel && !st.xy) {
-      let x = Number.POSITIVE_INFINITY
-      let y = Number.POSITIVE_INFINITY
-      for (let i = 0; i < sc.n; i++)
-        if (st.nodes[i] && sc.role[i] === 1) {
-          x = Math.min(x, SX(i))
-          y = Math.min(y, SY(i))
-        }
-      if (Number.isFinite(x)) {
-        ctx.font = `12px ${MONO}`
-        ctx.textBaseline = 'bottom'
-        ctx.fillStyle = palette.muted
-        ctx.fillText(st.orphanLabel, Math.max(4, x - base), y - base - 6)
-      }
-    }
+    const orphans = orphanCaption(ctx, st, sc, SX, SY, base, palette.muted)
 
     // Group boxes, sized by their pages.
     for (let i = 0; i < sc.n; i++) {
@@ -744,6 +792,7 @@ export class Renderer {
       ...common,
       families: [],
       hub: null,
+      orphans,
       pulses: 0,
       fact: -1,
       animating: false,
@@ -1168,11 +1217,14 @@ export class Renderer {
     )
     ctx.textAlign = 'start'
     ctx.globalAlpha = 1
+    // The caption over the rows of pages without links, under the cloud.
+    const orphans = orphanCaption(ctx, st, sc, SX, SY, nodeRadius(view.scale), p.muted)
     return {
       cards,
       labels,
       families,
       hub,
+      orphans,
       pulses,
       fact,
       animating: spinning || (st.pulses && visibleEdges.length > 0),

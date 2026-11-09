@@ -4,7 +4,7 @@
 // most one view draws) to settle without the page noticing. The CPU times are bounds with a wide margin.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { arrange, createLayout, LAYOUT, ROLE } from '../../web/src/graph/layout.ts'
+import { arrange, createLayout, LAYOUT, ROLE, rim3 } from '../../web/src/graph/layout.ts'
 import { PAGE_TYPES } from '../../web/src/lib/wiki.ts'
 import { generate } from '../../web/test/data/generate.ts'
 
@@ -141,6 +141,22 @@ describe('the layout of the graph', () => {
     const [gx, gy] = at(7)
     assert.ok(Math.hypot(gx, gy) > Math.hypot(10, 10) + 20, 'outside the cloud')
     assert.ok(gx > 0, 'on the side of the page it links with')
+  })
+
+  // Review R6: in the cloud the rim is a ring about the vertical axis the cloud turns on, so it turns with it
+  // and never sweeps edge-on across the middle; each group on the side of the pages it links with.
+  it('in three dimensions puts the rim on a level ring around the cloud, toward the pages linked', () => {
+    // 0–3 linked, spread in x and z; 4 a group linked to 3, which lies far toward +z.
+    const xyz = new Float32Array([-10, -5, 0, 10, 5, 0, 0, 0, -10, 0, 0, 40, 0, 0, 0])
+    const role = new Uint8Array([0, 0, 0, 0, ROLE.rim])
+    const edges = new Uint32Array([0, 1, 1, 2, 2, 3, 3, 4])
+    rim3(xyz, role, edges)
+    const [x, y, z] = [xyz[12] as number, xyz[13] as number, xyz[14] as number]
+    assert.ok(z > 40, `toward +z and outside the cloud: ${z}`)
+    assert.ok(Math.abs(x) < 1, `on the side of page 3: ${x}`)
+    assert.ok(Math.abs(y) < 1e-6, `at the cloud's middle height: ${y}`)
+    // The free pages do not move.
+    assert.deepEqual([...xyz.slice(0, 12)], [-10, -5, 0, 10, 5, 0, 0, 0, -10, 0, 0, 40])
   })
 
   it('many groups on the rim, all pointing the same way, are spread evenly and never overlap', () => {

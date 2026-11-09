@@ -514,7 +514,66 @@ export function arrange(xy: Float32Array, role: Uint8Array, edges: Uint32Array):
     xy[2 * i + 1] = (free ? y1 : 0) + 3 * gap + Math.floor(k / perRow) * gap
     k += 1
   }
-  // The rim: each group where its pages point, then spread evenly in that order.
+  ring(xy, role, edges, cx, cy, reach)
+}
+
+// In three dimensions (review R6): the rim is a level ring about the vertical axis the cloud turns on, at the
+// cloud's middle height, each group toward the pages it links with as seen from above (x, z). The free pages
+// do not move.
+export function rim3(xyz: Float32Array, role: Uint8Array, edges: Uint32Array): void {
+  const n = role.length
+  let x0 = Number.POSITIVE_INFINITY
+  let x1 = Number.NEGATIVE_INFINITY
+  let y0 = Number.POSITIVE_INFINITY
+  let y1 = Number.NEGATIVE_INFINITY
+  let z0 = Number.POSITIVE_INFINITY
+  let z1 = Number.NEGATIVE_INFINITY
+  let rims = 0
+  for (let i = 0; i < n; i++) {
+    if (role[i] === ROLE.rim) rims += 1
+    if (role[i] !== ROLE.free) continue
+    const x = xyz[3 * i] as number
+    const y = xyz[3 * i + 1] as number
+    const z = xyz[3 * i + 2] as number
+    x0 = Math.min(x0, x)
+    x1 = Math.max(x1, x)
+    y0 = Math.min(y0, y)
+    y1 = Math.max(y1, y)
+    z0 = Math.min(z0, z)
+    z1 = Math.max(z1, z)
+  }
+  if (!rims) return
+  if (!Number.isFinite(x0)) [x0, x1, y0, y1, z0, z1] = [0, 0, 0, 0, 0, 0]
+  const cx = (x0 + x1) / 2
+  const cz = (z0 + z1) / 2
+  // The ground plan: x and z as a flat picture, laid out like the flat rim, then put back.
+  const plan = new Float32Array(2 * n)
+  let reach = 0
+  for (let i = 0; i < n; i++) {
+    plan[2 * i] = xyz[3 * i] as number
+    plan[2 * i + 1] = xyz[3 * i + 2] as number
+    if (role[i] === ROLE.free)
+      reach = Math.max(reach, Math.hypot((plan[2 * i] as number) - cx, (plan[2 * i + 1] as number) - cz))
+  }
+  ring(plan, role, edges, cx, cz, reach)
+  for (let i = 0; i < n; i++) {
+    if (role[i] !== ROLE.rim) continue
+    xyz[3 * i] = plan[2 * i] as number
+    xyz[3 * i + 1] = (y0 + y1) / 2
+    xyz[3 * i + 2] = plan[2 * i + 1] as number
+  }
+}
+
+// The rim on a flat picture: each group where its pages point, then spread evenly in that order.
+function ring(
+  xy: Float32Array,
+  role: Uint8Array,
+  edges: Uint32Array,
+  cx: number,
+  cy: number,
+  reach: number,
+): void {
+  const n = role.length
   const rim: { i: number; angle: number }[] = []
   for (let i = 0; i < n; i++) {
     if (role[i] !== ROLE.rim) continue

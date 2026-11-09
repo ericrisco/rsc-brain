@@ -91,6 +91,23 @@ export function smallData(): GraphData {
   }
 }
 
+// Pages without any link (review R6: they lie in rows under the cloud, with their caption).
+export function looseData(n: number): GraphData {
+  const at = new Date(Date.UTC(2026, 9, 2)).toISOString()
+  return {
+    pages: Array.from({ length: n }, (_, k) => ({
+      address: `loose/note-${k + 1}`,
+      title: `Loose note ${k + 1}`,
+      type: 'source',
+      status: 'current',
+      tags: [],
+      summary: 'A note nothing links to yet.',
+      updatedAt: at,
+    })),
+    links: [],
+  }
+}
+
 export const merge = (a: GraphData, b: GraphData): GraphData => ({
   pages: [...a.pages, ...b.pages],
   links: [...a.links, ...b.links],

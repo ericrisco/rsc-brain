@@ -52,7 +52,7 @@ export async function scenario(
   // seeded: the brains' wiki is the seeded one of 300 or 5 000 pages (the graph, CA5 and CA6).
   o: {
     mail?: boolean
-    seeded?: 300 | 5000 | 'lumpy' | 'small'
+    seeded?: 300 | 5000 | 'lumpy' | 'small' | 'loose'
     factoryUrl?: string
     companion?: boolean
     // The installation's public address (its kit's commands use it).

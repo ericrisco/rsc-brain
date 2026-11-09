@@ -5,7 +5,7 @@
 // per animation frame while the cloud turns or light travels its lines. Work goes in slices of 8 ms, so a new
 // layout (a group opened) replaces the old one at once, and a frame is painted at most once per animation
 // frame, whatever asked for it. A turning picture is told to the page at most four times a second.
-import { arrange, createLayout } from './layout.ts'
+import { arrange, createLayout, rim3 } from './layout.ts'
 import type { DrawnMessage, FromWorker, LayoutRequest, ToWorker } from './protocol.ts'
 import { Renderer } from './render.ts'
 
@@ -107,7 +107,7 @@ function layout(m: LayoutRequest) {
 
   const post = (done: boolean) => {
     const part = l.positions3()
-    // The pages without links and the rim are placed on the flat picture, at depth 0.
+    // The pages without links are placed on the flat picture, at depth 0 (the painter parks them again).
     const xy = new Float32Array(2 * m.n)
     free.forEach((g, k) => {
       xy[2 * g] = part[3 * k] as number
@@ -122,6 +122,9 @@ function layout(m: LayoutRequest) {
     free.forEach((g, k) => {
       xyz[3 * g + 2] = part[3 * k + 2] as number
     })
+    // The rim in three dimensions: a level ring the cloud turns with (the pages without links are parked
+    // flat under the cloud by the painter).
+    rim3(xyz, m.role, m.edges)
     if (done) settled = true
     renderer.layout = xyz
     request()

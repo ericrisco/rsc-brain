@@ -127,6 +127,35 @@ test.describe('R2: a filter moves every point; the pointer follows', () => {
     })
 })
 
+// Review R6: the pages without links lie in rows under the cloud with their caption, and stay there as it turns.
+test('R6: the pages without links keep their caption under the cloud at any yaw', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 'loose' })
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto(GRAPH)
+  await settled(page)
+  const canvas = page.locator('canvas.graph-canvas')
+  await expect(canvas).toHaveAttribute('data-orphans', /^\d+,\d+$/)
+  const at = async () =>
+    ((await canvas.getAttribute('data-orphans')) ?? '').split(',').map(Number) as [number, number]
+  const hub = async () =>
+    ((await canvas.getAttribute('data-hub')) ?? '').split(',').map(Number) as [number, number]
+  const [, y0] = await at()
+  expect(y0).toBeGreaterThan((await hub())[1])
+  // A drag turns the cloud; the rows and their caption stay under it.
+  const box = (await canvas.boundingBox()) as { x: number; y: number; width: number; height: number }
+  const yaw = await canvas.getAttribute('data-yaw')
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 3)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width / 2 + 200, box.y + box.height / 3, { steps: 6 })
+  await page.mouse.up()
+  await expect(canvas).not.toHaveAttribute('data-yaw', yaw ?? '')
+  await expect.poll(async () => (await at())[1] > (await hub())[1]).toBe(true)
+})
+
 test.describe('the cloud, moving (motion allowed)', () => {
   test.use({ reducedMotion: 'no-preference', viewport: { width: 1920, height: 1080 } })
   const yawOf = async (page: Page) =>

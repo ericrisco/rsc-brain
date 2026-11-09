@@ -7,6 +7,7 @@ import {
   CAMERA,
   clampPitch,
   frameOf,
+  parkRows,
   project,
   projectPoint,
   spinBox,
@@ -130,5 +131,35 @@ describe('the box the spin is fitted to, keeping most points', () => {
     const height = (b: Float32Array) => (b[5] as number) - (b[1] as number)
     assert.ok(width(most) < 0.5 * width(all), `${width(most)} against ${width(all)}`)
     assert.ok(height(most) <= height(all) + 1e-6)
+  })
+})
+
+// Review R6: the pages without links do not belong to the cloud. They stay out of its frame (they would pull
+// its middle off the hub) and lie flat in rows under it, the same at any yaw: they never sweep across it.
+describe('the pages without links', () => {
+  it('are left out of the frame and parked in rows under the cloud, whatever the yaw', () => {
+    // 0–5 the cloud (AXES around C); 6–8 without links, far off at depth 0.
+    const xyz = new Float32Array([...AXES, 900, 900, 0, 950, 900, 0, 1000, 900, 0])
+    const role = new Uint8Array([0, 0, 0, 0, 0, 0, 1, 1, 1])
+    const mask = new Uint8Array(9).fill(1)
+    const f = frameOf(xyz, mask, role)
+    assert.ok(near(f.cx, 10) && near(f.cy, 20) && near(f.cz, 30), `middle of the cloud: ${JSON.stringify(f)}`)
+    assert.ok(near(f.r, 100))
+    const rows = (yaw: number) => {
+      const xy = new Float32Array(18)
+      project(xyz, f, { yaw, pitch: -0.2 }, xy, new Float32Array(9))
+      parkRows(xy, role, mask, f)
+      return [...xy.slice(12)]
+    }
+    const a = rows(0)
+    assert.deepEqual(rows(1.3), a, 'the same at any yaw')
+    for (let k = 0; k < 3; k++) {
+      const x = a[2 * k] as number
+      const y = a[2 * k + 1] as number
+      assert.ok(y > f.cy + f.r, `under the cloud: ${y}`)
+      assert.ok(x >= f.cx - f.r && x <= f.cx + f.r, `as wide as the cloud: ${x}`)
+    }
+    assert.equal(a[1], a[3], 'in a row')
+    assert.notEqual(a[0], a[2])
   })
 })

@@ -432,7 +432,7 @@ const WIKI = generate({ pages: 300, seed: 48291 })
 const BIG = generate({ pages: 2000, seed: 48291 })
 // The seeded wikis of the graph (plan §4: the same data the real server is seeded with), made when first used.
 // The seeded wikis: 300 or 5 000 pages, or a lumpy one (pages at every level beside the groups).
-type Seeded = 300 | 5000 | 'lumpy' | 'small'
+type Seeded = 300 | 5000 | 'lumpy' | 'small' | 'loose'
 const SEEDED = new Map<Seeded, G.GraphData>()
 function seededWiki(pages: Seeded): G.GraphData {
   let d = SEEDED.get(pages)
@@ -442,7 +442,9 @@ function seededWiki(pages: Seeded): G.GraphData {
         ? G.lumpyData()
         : pages === 'small'
           ? G.smallData()
-          : G.seededData(pages === 300 ? WIKI : generate({ pages, seed: 48291 }))
+          : pages === 'loose'
+            ? G.merge(G.seededData(WIKI), G.looseData(12))
+            : G.seededData(pages === 300 ? WIKI : generate({ pages, seed: 48291 }))
     SEEDED.set(pages, d)
   }
   return d
@@ -3303,7 +3305,13 @@ export async function startFixture(
         for (const [screen, state] of Object.entries((b.states ?? {}) as Record<string, State>))
           s.states.set(screen as Screen, state)
         if (b.mail === false) s.mail = false
-        if (b.seeded === 300 || b.seeded === 5000 || b.seeded === 'lumpy' || b.seeded === 'small')
+        if (
+          b.seeded === 300 ||
+          b.seeded === 5000 ||
+          b.seeded === 'lumpy' ||
+          b.seeded === 'small' ||
+          b.seeded === 'loose'
+        )
           s.seeded = b.seeded
         if (typeof b.factoryUrl === 'string') s.factoryUrl = b.factoryUrl
         if (b.companion === true) s.companion = true
@@ -3509,7 +3517,7 @@ export async function startFixture(
         if (url.searchParams.get('mail') === 'off') s.mail = false
         const seeded = url.searchParams.get('seeded')
         if (seeded === '300' || seeded === '5000') s.seeded = Number(seeded) as 300 | 5000
-        else if (seeded === 'lumpy' || seeded === 'small') s.seeded = seeded
+        else if (seeded === 'lumpy' || seeded === 'small' || seeded === 'loose') s.seeded = seeded
         const states = url.searchParams.getAll('state')
         for (const x of states) {
           const [screen, state] = x.split(':')
