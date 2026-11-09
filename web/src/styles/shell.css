@@ -395,8 +395,8 @@
 
   /* The name as a tooltip, on hover or keyboard focus; Esc hides it until the next item. It is the same
      element that names the control, so it stays while the pointer is over it (WCAG 1.4.13). */
-  .frame[data-rail="folded"] .rail:not([data-tips="off"]) .rail-item:hover > .rail-label,
-  .frame[data-rail="folded"] .rail:not([data-tips="off"]) .rail-item:focus-visible > .rail-label {
+  .frame[data-rail="folded"] .rail:not([data-tips="off"]) .rail-item:not([aria-expanded="true"]):hover > .rail-label,
+  .frame[data-rail="folded"] .rail:not([data-tips="off"]) .rail-item:not([aria-expanded="true"]):focus-visible > .rail-label {
     left: calc(100% + 10px);
     top: 50%;
     z-index: 45;
@@ -570,4 +570,29 @@
 
 .sheet .rail-item[aria-current="page"]::before {
   left: -12px;
+}
+
+/* A window under 820px tall (a 1366×768 laptop): the rail tightens so its foot stays in view. */
+@media (max-height: 819px) and (min-width: 768px) {
+  .rail-head {
+    height: 48px;
+  }
+
+  .rail .rail-item {
+    min-height: 32px;
+  }
+
+  .rail .switcher-button {
+    min-height: 36px;
+  }
+
+  .rail-tools,
+  .rail-group,
+  .rail-foot {
+    padding-top: 6px;
+  }
+
+  .rail-tools {
+    padding-bottom: 6px;
+  }
 }
