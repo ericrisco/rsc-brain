@@ -267,7 +267,7 @@ export const T = {
     readmeUrl: 'https://github.com/ericrisco/rsc-brain#connect-your-agent',
     count: (n: number) => (n === 1 ? '1 brain' : `${n} brains`),
     totals: 'Across your brains',
-    totalBrains: 'Brains',
+    totalBrains: 'Active brains',
     totalPages: 'Wiki pages',
     totalEntries: 'Journal entries',
     totalToReview: 'For you to review',
