@@ -3339,6 +3339,20 @@ label.op-head:hover {
   }
 }
 
+/* With the panel open the strip is shorter: what does not fit beside Graph | List | Filters goes (the pages
+   are counted again over the picture, the brain is named in the rail). */
+@media (min-width: 1100px) and (max-width: 1799px) {
+  .graph-screen:has(.graph-inspector[data-open]) .graph-strip .panel-meta {
+    display: none;
+  }
+}
+
+@media (min-width: 1100px) and (max-width: 1499px) {
+  .graph-screen:has(.graph-inspector[data-open]) .graph-strip .panel-about {
+    display: none;
+  }
+}
+
 /* ── Activity, Health and Search (PR23) ───────────────────────────────── */
 
 .lead.screen-lead {

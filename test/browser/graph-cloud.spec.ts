@@ -97,6 +97,34 @@ test('R9: the canvas writes its names in JetBrains Mono', async ({ page, context
   await expect(page.locator('canvas.graph-canvas')).toHaveAttribute('data-font', 'JetBrains Mono')
 })
 
+// The strip's words never run under Graph | List | Filters or the panel's switch, panel open or closed.
+for (const width of [1100, 1366, 1920])
+  test(`the strip's words stay clear of the controls in it at ${width}`, async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.setViewportSize({ width, height: 900 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const boxOf = (q: string) =>
+      page.locator(q).evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, shown: r.width > 0 }
+      })
+    for (const open of [false, true]) {
+      if (open) await page.getByRole('button', { name: 'Inspector', exact: true }).click()
+      const controls = [await boxOf('.graph-center'), await boxOf('.inspector-toggle')]
+      for (const q of ['.graph-strip .panel-about', '.graph-strip .panel-meta', '.graph-strip h1']) {
+        const w = await boxOf(q)
+        if (!w.shown) continue
+        for (const c of controls)
+          expect(w.right <= c.left || w.left >= c.right, `${q} under a control, panel ${open}`).toBe(true)
+      }
+    }
+  })
+
 // Review R2: after a filter the cloud is framed on what is left, so every point moves on screen. The pointer
 // finds points on the page's copy of the projection; that copy must be the one the painter drew with, or a click
 // on a bare point picks the page drawn there before. data-active is where the painter drew the keyboard's page;
