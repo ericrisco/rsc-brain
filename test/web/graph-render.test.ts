@@ -6,7 +6,7 @@ import { describe, it } from 'node:test'
 import { CAMERA } from '../../web/src/graph/camera.ts'
 import { type Palette, Renderer, type Scene, type State } from '../../web/src/graph/render.ts'
 
-type Op = { op: string; args: unknown[]; composite: string }
+type Op = { op: string; args: unknown[]; composite: string; alpha: number }
 // A 2D context that records what is written and every op with the blending in force.
 function recorder() {
   const ops: Op[] = []
@@ -18,7 +18,12 @@ function recorder() {
       if (k === 'measureText') return (s: string) => ({ width: s.length * 7 })
       if (k === 'createLinearGradient' || k === 'createRadialGradient') return () => gradient
       return (...args: unknown[]) => {
-        ops.push({ op: k, args, composite: String(t.globalCompositeOperation) })
+        ops.push({
+          op: k,
+          args,
+          composite: String(t.globalCompositeOperation),
+          alpha: Number(t.globalAlpha ?? 1),
+        })
       }
     },
     set(t, k: string, v) {
@@ -159,5 +164,36 @@ describe('the still layer of the cloud', () => {
     const copies = ops.map((o, k) => (o.op === 'drawImage' ? k : -1)).filter((k) => k >= 0)
     const afterLight = copies.some((k) => k > lastLight) || written(ops.slice(lastLight)).length > 0
     assert.ok(afterLight, 'the names are drawn over the light')
+  })
+
+  // Closing pass: lines between two families are a faint trace at Fit (about 0.06), lines inside one keep their
+  // colour, and the page under the pointer shows all its lines at full strength.
+  const lines = (ops: Op[]) =>
+    ops.filter((o) => o.op === 'stroke' && o.composite === 'lighter').map((o) => o.alpha)
+  const still = (s: Scene, hover = -1) => {
+    const r = new Renderer()
+    r.setScene(s)
+    r.layout = new Float32Array([-100, 0, 0, 0, 0, 40, 100, 20, -40])
+    r.state = { ...state(1), selected: -1, hover, pulses: false }
+    const main = recorder()
+    layers.length = 0
+    r.paint(main.ctx, 1000)
+    // What went on the canvas and on the still layers copied onto it.
+    return [...main.ops, ...layers.flatMap((l) => l.ops)]
+  }
+  it('draws lines across families faintly and lines inside one in strength', () => {
+    // Every line crosses families: 0–2 and 1–2 (2 is another family).
+    const across = { ...scene(['A', 'B', 'C']), edges: new Uint32Array([0, 2, 1, 2]) }
+    const a = lines(still(across))
+    assert.ok(a.length > 0, 'lines drawn')
+    for (const alpha of a) assert.ok(alpha <= 0.065, `across: ${alpha}`)
+    // Every line inside family 0.
+    const inside = { ...scene(['A', 'B', 'C']), fam: new Uint8Array([0, 0, 0]) }
+    for (const alpha of lines(still(inside))) assert.ok(alpha >= 0.25, `inside: ${alpha}`)
+    // The page under the pointer: its lines plain and strong, whatever families they join.
+    const lit = still(across, 2).filter(
+      (o) => o.op === 'stroke' && o.composite === 'source-over' && o.alpha >= 0.8,
+    )
+    assert.ok(lit.length > 0, 'the lines of the page under the pointer at full strength')
   })
 })

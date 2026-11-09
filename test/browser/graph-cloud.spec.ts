@@ -389,7 +389,8 @@ test.describe('the cloud, moving (motion allowed)', () => {
       let x1 = Number.NEGATIVE_INFINITY
       let y0 = Number.POSITIVE_INFINITY
       let y1 = Number.NEGATIVE_INFINITY
-      for (let k = 0; k < 10; k++) {
+      // Six seconds of turn (about 43°): what it covers depends on the yaw, the size never does.
+      for (let k = 0; k < 20; k++) {
         await page.waitForTimeout(300)
         scales.add((await canvas.getAttribute('data-scale')) ?? '')
         const [a, b, cc, d] = ((await canvas.getAttribute('data-extent')) ?? '')

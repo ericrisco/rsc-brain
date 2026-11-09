@@ -74,6 +74,7 @@ export const SHAPES = ['topic', 'entity', 'decision', 'guide', 'agent', 'source'
 
 // Each link kind: its dash (screen px), width, and whether it points somewhere (an arrowhead at its end).
 import { EDGE, LINE } from './lines.ts'
+import { thinEdges } from './thin.ts'
 
 export { EDGE, LINE }
 
@@ -390,7 +391,11 @@ const FACT_FADE = 600
 // How far a pulse's glow reaches from its point, in px.
 const PULSE_GLOW = 9
 // The pulses: how many at most, and one for this many lines.
-const PULSES_MAX = 40
+const PULSES_MAX = 24
+// A line between two families at Fit: a faint trace (the page under the pointer shows its lines in full).
+const ACROSS_ALPHA = 0.06
+// At Fit, how many lines each page of a big cloud shows.
+const THIN_K = 4
 const PULSE_EVERY = 6
 const ONES4 = new Uint8Array([1, 1, 1, 1])
 // Room around the turning cloud when it is fitted, and the share of its points the fit keeps in the frame on
@@ -465,6 +470,16 @@ export class Renderer {
     this.changed()
   }
 
+  // The lines shown at Fit, worked out once for these lines and these pages in full.
+  private thinCache: { edges: Uint8Array; keep: string; out: Uint8Array } | null = null
+  private thinned(sc: Scene, st: State): Uint8Array {
+    const keep = [st.selected, st.hover, st.focus, st.active].filter((i) => i >= 0)
+    const key = keep.join(',')
+    if (!this.thinCache || this.thinCache.edges !== st.edges || this.thinCache.keep !== key)
+      this.thinCache = { edges: st.edges, keep: key, out: thinEdges(sc, st.edges, THIN_K, keep) }
+    return this.thinCache.out
+  }
+
   // Something the state does not carry changed (the scene, the names, the face): every measure and picture
   // kept from before is dropped (review S1, S6).
   private changed(): void {
@@ -473,6 +488,7 @@ export class Renderer {
     this.tiles.clear()
     this.still = null
     this.exact = null
+    this.thinCache = null
   }
 
   setFacts(facts: Fact[]): void {
@@ -1014,7 +1030,13 @@ export class Renderer {
     const size = (i: number) => Math.min(1.7, Math.max(0.55, depth[i] as number))
     // Points of a cloud are small; the most linked ones stand out bigger.
     const hubs = new Set(st.hubs)
-    const rad = (i: number) => (isGroup(i) ? o.boxR(i) : o.radius(i) * (hubs.has(i) ? 0.9 : 0.68)) * size(i)
+    // Sized by links with a wide spread: the hubs stand out, a page with one link is a small dot.
+    const spread = (i: number) => Math.min(2.6, 0.42 + 0.3 * Math.sqrt(sc.degree[i] as number))
+    const rad = (i: number) =>
+      (isGroup(i)
+        ? o.boxR(i)
+        : (o.radius(i) / grow(sc.degree[i] as number)) * spread(i) * (hubs.has(i) ? 1.05 : 0.8)) * size(i)
+    const leaf = (i: number) => (sc.degree[i] as number) <= 1
 
     // Still, the cards and names of a flat picture; turning, none (they would swim).
     // Still, a big cloud names only the pages the person is on and their neighbours (the reference is quiet);
@@ -1034,8 +1056,11 @@ export class Renderer {
     // between two families) and depth step.
     const paths = new Map<number, number[]>()
     const visibleEdges: number[] = []
+    // At Fit a big cloud shows each page's few strongest lines (the picked page and the one under the pointer
+    // all of theirs): calm colour regions, not a hairball. Zoomed in, every line.
+    const shown = st.autoFit && drawn > QUIET_FROM ? this.thinned(sc, st) : st.edges
     for (let e = 0; e < sc.kind.length; e++) {
-      if (!st.edges[e]) continue
+      if (!shown[e]) continue
       visibleEdges.push(e)
       const i = sc.edges[2 * e] as number
       const j = sc.edges[2 * e + 1] as number
@@ -1085,7 +1110,7 @@ export class Renderer {
           ? EDGE.faint * 0.7
           : tier === 2
             ? EDGE.lit
-            : (contradicts ? EDGE.contradicts : across ? 0.22 : 0.7) * (FADE[bs] as number)
+            : (contradicts ? EDGE.contradicts : across ? ACROSS_ALPHA : 0.7) * (FADE[bs] as number)
       // The web glows: its lines add up where they cross (the picked page's lines are drawn plain on top).
       ctx.globalCompositeOperation = tier === 1 && !contradicts ? 'lighter' : 'source-over'
       ctx.stroke()
@@ -1129,7 +1154,9 @@ export class Renderer {
         ;(groups[b] as number[]).push(i)
         continue
       }
-      const key = ((sc.fam[i] as number) * 16 + (sc.shape[i] as number)) * 2 + (dim(i) ? 1 : 0)
+      const key =
+        (((sc.fam[i] as number) * 16 + (sc.shape[i] as number)) * 2 + (dim(i) ? 1 : 0)) * 2 +
+        (leaf(i) ? 1 : 0)
       const m = byStep[b] as Map<number, number[]>
       let list = m.get(key)
       if (!list) {
@@ -1176,14 +1203,15 @@ export class Renderer {
         ctx.stroke()
       }
       for (const [key, list] of byStep[b] as Map<number, number[]>) {
-        const faint = key % 2 === 1
-        const shs = Math.floor(key / 2) % 16
-        const fs = Math.floor(key / 32)
+        const small = key % 2 === 1
+        const faint = Math.floor(key / 2) % 2 === 1
+        const shs = Math.floor(key / 4) % 16
+        const fs = Math.floor(key / 64)
         const type = SHAPES[shs] ?? 'topic'
         ctx.beginPath()
         for (const i of list) shape(ctx, type, SX(i), SY(i), rad(i))
         ctx.fillStyle = p.fam[fs] ?? p.text
-        ctx.globalAlpha = fade * (faint ? (lit ? 0.25 : 0.45) : 1)
+        ctx.globalAlpha = fade * (faint ? (lit ? 0.25 : 0.45) : 1) * (small ? 0.6 : 1)
         ctx.fill('evenodd')
         // The most linked pages shine near white, their shape kept, inside their family's halo.
         if (faint) continue
@@ -1370,8 +1398,12 @@ export class Renderer {
     let pulses = 0
     const f = this.frame?.f
     const layout = this.layout
-    if (st.pulses && f && layout && visibleEdges.length) {
-      const want = Math.min(PULSES_MAX, Math.max(4, Math.round(visibleEdges.length / PULSE_EVERY)))
+    // Light runs only on lines inside a family, a few at a time: a signal, not noise.
+    const inside = visibleEdges.filter(
+      (e) => sc.fam[sc.edges[2 * e] as number] === sc.fam[sc.edges[2 * e + 1] as number],
+    )
+    if (st.pulses && f && layout && inside.length) {
+      const want = Math.min(PULSES_MAX, Math.max(4, Math.round(inside.length / PULSE_EVERY)))
       if (this.pulseEdge.length !== want) {
         this.pulseEdge = new Int32Array(want).fill(-1)
         this.pulseT = new Float32Array(want)
@@ -1384,7 +1416,7 @@ export class Renderer {
         let e = this.pulseEdge[q] as number
         let t = (this.pulseT[q] as number) + (this.pulseV[q] as number) * o.dt
         if (e < 0 || !st.edges[e] || t > 1 + len) {
-          e = visibleEdges[Math.floor(this.random() * visibleEdges.length)] as number
+          e = inside[Math.floor(this.random() * inside.length)] as number
           // Started at different points, so they never move in step.
           t = this.pulseEdge[q] === -1 ? this.random() : 0
           this.pulseV[q] = 1 / (1100 + this.random() * 1400)
