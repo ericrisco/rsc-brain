@@ -1,6 +1,6 @@
 // Constitution P3: the product never names the projects it studied — nor the product the visual
-// prototype cites as a reference (plan B6 §0). The names are stored encoded so this file does not contain
-// them either. The built web (dist/web) is checked too: a name could arrive through a bundled string.
+// prototype cites as a reference (plan B6 §0), nor the one the canvas interface was studied from (plan
+// canvas-ui D12). The names are stored encoded so this file does not contain them either. The built web (dist/web) is checked too: a name could arrive through a bundled string.
 import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -19,8 +19,8 @@ const SKIP = new Set([
   'package-lock.json',
   'test-results',
 ])
-const FORBIDDEN = ['ZW5ncmFt', 'Z2VudGxlbWFuIHByb2dyYW1taW5n', 'Z2JyYWlu', 'YWkgb3MgbWFwcw=='].map((b) =>
-  Buffer.from(b, 'base64').toString('utf8'),
+const FORBIDDEN = ['ZW5ncmFt', 'Z2VudGxlbWFuIHByb2dyYW1taW5n', 'Z2JyYWlu', 'YWkgb3MgbWFwcw==', 'bjhu'].map(
+  (b) => Buffer.from(b, 'base64').toString('utf8'),
 )
 
 async function* files(dir: string, skip: Set<string>): AsyncGenerator<string> {
@@ -53,6 +53,8 @@ describe('forbidden names', () => {
   it('detects them in any case', () => {
     assert.ok(findForbidden(`see ${FORBIDDEN[0]?.toUpperCase()} docs`))
     assert.ok(findForbidden(`inspired by ${FORBIDDEN[3]?.toUpperCase()}`))
+    // The product the canvas interface was studied from (plan canvas-ui D12).
+    assert.ok(findForbidden(`looks like ${Buffer.from('Tjhu', 'base64').toString('utf8')}`))
     assert.equal(findForbidden('a journal for agents'), undefined)
   })
 
