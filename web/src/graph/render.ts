@@ -423,7 +423,11 @@ export class Renderer {
   private frames = 0
   // The still cloud, painted once for its state and camera (review R7).
   private still: { key: string; layout: Float32Array | null; out: CloudOut } | null = null
-  private stillLayer: OffscreenCanvas | null = null
+  private underLayer: OffscreenCanvas | null = null
+  private overLayer: OffscreenCanvas | null = null
+  // Bumped whenever what the painter is given changes outside the state (scene, names, face): the still layers
+  // and the fit are worked out again (review S1, S6).
+  private inputs = 0
   private exact: { key: string; layout: Float32Array; view: View } | null = null
   private rows: { of: Float32Array; frame: unknown; pitch: number; b: Float32Array } | null = null
   private turning = false
@@ -447,22 +451,28 @@ export class Renderer {
     this.box = null
     this.factIndex = -1
     this.pulseEdge = new Int32Array(0)
-    this.words.clear()
-    this.tiles.clear()
+    this.changed()
   }
 
   setLabels(labels: string[]): void {
     if (!this.scene) return
     this.scene = { ...this.scene, labels }
-    this.words.clear()
-    this.tiles.clear()
+    this.changed()
   }
 
-  // A face came in: every width measured with the fallback is wrong, and so is the still layer.
+  // A face came in: every width measured with the fallback is wrong, and so is what was painted with them.
   fontsChanged(): void {
+    this.changed()
+  }
+
+  // Something the state does not carry changed (the scene, the names, the face): every measure and picture
+  // kept from before is dropped (review S1, S6).
+  private changed(): void {
+    this.inputs += 1
     this.words.clear()
     this.tiles.clear()
     this.still = null
+    this.exact = null
   }
 
   setFacts(facts: Fact[]): void {
@@ -536,8 +546,8 @@ export class Renderer {
       // Worked out once a state and still camera; while it turns, the one it started with (it only decides
       // whether the picture is tiles, which turning never changes: review R7).
       const exactKey = this.turning
-        ? `${st.seq}|${this.frames}|turn`
-        : `${st.seq}|${this.frames}|${this.camera.yaw}|${this.camera.pitch}`
+        ? `${st.seq}|${this.frames}|${this.inputs}|turn`
+        : `${st.seq}|${this.frames}|${this.inputs}|${this.camera.yaw}|${this.camera.pitch}`
       if (!this.exact || this.exact.key !== exactKey || this.exact.layout !== l)
         this.exact = {
           key: exactKey,
@@ -917,30 +927,42 @@ export class Renderer {
     sc: Scene,
     o: CloudInput,
   ): CloudOut & { pulses: number; fact: number; animating: boolean } {
-    // Still, the picture is the same from one frame of light to the next: it is painted once into a layer
-    // kept for this state and camera, and each frame only copies it and draws the light (review R7).
+    // Still, the picture is the same from one frame of light to the next: it is painted once into two layers
+    // kept for this state, camera and input (review R7, S1), the lines and points under the light and the
+    // names, pills and captions over it (S4); each frame copies the one, draws the light, copies the other.
     let base: CloudOut
+    let pulses = 0
     if (!o.spinning && typeof OffscreenCanvas !== 'undefined') {
-      const key = `${st.seq}|${this.frames}|${this.camera.yaw}|${this.camera.pitch}|${st.width}|${st.height}|${st.dpr}`
+      const key = `${st.seq}|${this.frames}|${this.inputs}|${this.camera.yaw}|${this.camera.pitch}|${st.width}|${st.height}|${st.dpr}`
       const w = Math.max(1, Math.round(st.width * st.dpr))
       const h = Math.max(1, Math.round(st.height * st.dpr))
+      const layer = (c: OffscreenCanvas | null) =>
+        c && c.width === w && c.height === h ? c : new OffscreenCanvas(w, h)
       if (!this.still || this.still.key !== key || this.still.layout !== this.layout) {
-        if (!this.stillLayer || this.stillLayer.width !== w || this.stillLayer.height !== h)
-          this.stillLayer = new OffscreenCanvas(w, h)
-        const lc = this.stillLayer.getContext('2d') as OffscreenCanvasRenderingContext2D
-        lc.setTransform(st.dpr, 0, 0, st.dpr, 0, 0)
-        lc.clearRect(0, 0, st.width, st.height)
-        this.still = { key, layout: this.layout, out: this.cloudStill(lc, st, sc, o) }
+        this.underLayer = layer(this.underLayer)
+        this.overLayer = layer(this.overLayer)
+        const under = this.underLayer.getContext('2d') as OffscreenCanvasRenderingContext2D
+        const over = this.overLayer.getContext('2d') as OffscreenCanvasRenderingContext2D
+        for (const lc of [under, over]) {
+          lc.setTransform(st.dpr, 0, 0, st.dpr, 0, 0)
+          lc.clearRect(0, 0, st.width, st.height)
+        }
+        this.still = { key, layout: this.layout, out: this.cloudStill(under, over, st, sc, o, () => {}) }
       }
-      ctx.setTransform(1, 0, 0, 1, 0, 0)
-      ctx.drawImage(this.stillLayer as OffscreenCanvas, 0, 0)
-      ctx.setTransform(st.dpr, 0, 0, st.dpr, 0, 0)
       base = this.still.out
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.drawImage(this.underLayer as OffscreenCanvas, 0, 0)
+      ctx.setTransform(st.dpr, 0, 0, st.dpr, 0, 0)
+      pulses = this.light(ctx, st, sc, o, base.edges)
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.drawImage(this.overLayer as OffscreenCanvas, 0, 0)
+      ctx.setTransform(st.dpr, 0, 0, st.dpr, 0, 0)
     } else {
       this.still = null
-      base = this.cloudStill(ctx, st, sc, o)
+      base = this.cloudStill(ctx, ctx, st, sc, o, (edges) => {
+        pulses = this.light(ctx, st, sc, o, edges)
+      })
     }
-    const pulses = this.light(ctx, st, sc, o, base.edges)
     // The fact card: while it turns, one page after another, with a ring around its point.
     let fact = -1
     const n = sc.n
@@ -966,11 +988,14 @@ export class Renderer {
 
   // Everything of the cloud but the light and the fact card.
   private cloudStill(
-    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    under: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    over: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
     st: State,
     sc: Scene,
     o: CloudInput,
+    light: (edges: number[]) => void,
   ): CloudOut {
+    let ctx = under
     const { depth, view, spinning, lit, dim, isGroup, SX, SY } = o
     const p = st.palette
     const n = sc.n
@@ -1246,6 +1271,10 @@ export class Renderer {
     ring(st.focus, 1.5, 4, p.muted)
     ring(st.selected, 2.5, 3, p.accent)
     ring(st.active, 2, 7, p.accent)
+
+    // The light runs over the lines and points, under everything written.
+    light(visibleEdges)
+    ctx = over
 
     // Each family's pill, on its family's dense core (worked out once a layout, in three dimensions, and turned
     // with the cloud), then pushed apart from the others on screen.
