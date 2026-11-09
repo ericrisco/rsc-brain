@@ -96,6 +96,24 @@ test.describe('the graph under load (CPU ×4)', () => {
     expect(4 * typical).toBeLessThan(1000 / 30)
     report('CA5 longest task ms while turning (page CPU ×4)', String(await longest(page)))
     expect(await longest(page)).toBeLessThan(200)
+    // Still under the pointer, light still travels (review R7): the still picture is not painted again for
+    // each frame of light, only the light is. Each such frame costs a small part of a turning one.
+    const b = (await canvas.boundingBox()) as { x: number; y: number; width: number; height: number }
+    await page.mouse.move(b.x + b.width * 0.2, b.y + b.height * 0.8)
+    await page.mouse.move(b.x + b.width * 0.21, b.y + b.height * 0.8)
+    await expect(canvas).toHaveAttribute('data-spinning', 'false')
+    const stillMs: number[] = []
+    for (let k = 0; k < 8; k++) {
+      await page.waitForTimeout(250)
+      stillMs.push(Number(await canvas.getAttribute('data-still-ms')))
+    }
+    const still = [...stillMs].sort((a, b) => a - b)[Math.floor(stillMs.length / 2)] as number
+    report(
+      'CA5 still with light: worker ms a picture (not slowed)',
+      stillMs.map((x) => x.toFixed(2)).join(', '),
+    )
+    expect(stillMs.every((x) => Number.isFinite(x) && x > 0)).toBe(true)
+    expect(still).toBeLessThan(typical * 0.4)
     // The list: the pages drawn, and the retired ones on asking: all 300. Read once the caption has its number.
     await page.getByRole('button', { name: 'List' }).click()
     const caption = page.getByRole('table', { name: /Pages of the wiki/ }).getByRole('caption')

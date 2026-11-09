@@ -936,6 +936,8 @@ function GraphCanvas({
   // The cloud turns at rest: a touch (pointer, wheel, keys, the keyboard on the canvas) stops it, and it turns
   // again after CAMERA.restMs without one. Never with reduced motion, never while the tab is hidden.
   const touched = useRef(false)
+  // Whether any of the canvas is in sight: out of it nothing moves (review R7).
+  const inSight = useRef(true)
   const restTimer = useRef(0)
   const zoomedIn = useRef(false)
   const labels = useMemo(() => labelsOf(model, counts), [model, counts])
@@ -1061,6 +1063,8 @@ function GraphCanvas({
     // Each picture's painting time while it turns (the timing test reads it).
     const pictures = d.pictures
     if (d.spinning && pictures > 0) c.dataset.frameMs = (d.ms / pictures).toFixed(2)
+    // And while it is still with light travelling (review R7).
+    if (!d.spinning && d.animating && pictures > 1) c.dataset.stillMs = (d.ms / pictures).toFixed(3)
     // The first cards with their size and words, for a test driving the browser only (closing review C5).
     if (probe)
       c.dataset.cardList = JSON.stringify(
@@ -1117,7 +1121,7 @@ function GraphCanvas({
   // Whether the cloud turns and light travels: motion allowed, the tab seen; and, to turn, nobody touching it,
   // nothing picked, no focus, the keyboard elsewhere.
   const motion = () => {
-    const moving = !reducedMotion() && document.visibilityState !== 'hidden'
+    const moving = !reducedMotion() && document.visibilityState !== 'hidden' && inSight.current
     const s = latest.current
     const still =
       touched.current ||
@@ -1256,6 +1260,16 @@ function GraphCanvas({
   useEffect(() => {
     const seen = () => sendState()
     document.addEventListener('visibilitychange', seen)
+    const sight =
+      typeof IntersectionObserver === 'undefined' || !canvas.current
+        ? null
+        : new IntersectionObserver((entries) => {
+            const now = entries.some((e) => e.isIntersecting)
+            if (now === inSight.current) return
+            inSight.current = now
+            sendState()
+          })
+    if (sight && canvas.current) sight.observe(canvas.current)
     // Any hand on the graph's screen (the canvas, its tools, its strip, the legend, the panel) stops the turn
     // for a rest: what it does is then seen on a still picture (review R4).
     const screen = canvas.current?.closest('.graph-screen') ?? canvas.current?.closest('.graph-section')
@@ -1263,6 +1277,7 @@ function GraphCanvas({
     for (const t of hand) screen?.addEventListener(t, touch, { passive: true })
     return () => {
       document.removeEventListener('visibilitychange', seen)
+      sight?.disconnect()
       for (const t of hand) screen?.removeEventListener(t, touch)
       clearTimeout(restTimer.current)
     }

@@ -278,6 +278,27 @@ test.describe('the cloud, moving (motion allowed)', () => {
     await page.waitForTimeout(1000)
     expect(await canvas.getAttribute('data-draws')).toBe(draws)
   })
+
+  // Review R7: out of sight (scrolled away, covered), nothing is painted.
+  test('R7: a canvas out of sight stops turning and painting', async ({ page, context, baseURL }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const canvas = page.locator('canvas.graph-canvas')
+    await expect(canvas).toHaveAttribute('data-spinning', 'true')
+    await canvas.evaluate((c) => {
+      ;(c as HTMLElement).style.transform = 'translateY(4000px)'
+    })
+    await expect(canvas).toHaveAttribute('data-spinning', 'false')
+    const draws = await canvas.getAttribute('data-draws')
+    await page.waitForTimeout(1000)
+    expect(await canvas.getAttribute('data-draws')).toBe(draws)
+    // Back in sight, it moves again.
+    await canvas.evaluate((c) => {
+      ;(c as HTMLElement).style.transform = ''
+    })
+    await expect(canvas).toHaveAttribute('data-spinning', 'true')
+  })
 })
 
 test.describe('the legend and the fact card', () => {

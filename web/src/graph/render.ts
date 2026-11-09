@@ -253,6 +253,38 @@ export type Drawn = {
   animating: boolean
 }
 
+// A line's path key: kind (−1 for a group's line), strength 0–2, family 0–6 or ACROSS, depth step 0–3.
+const ACROSS = 7
+const lineKey = (kind: number, tier: number, family: number, step: number) =>
+  (((kind + 1) * 3 + tier) * 8 + family) * 4 + step
+
+// What the cloud is drawn from, and what its still part gives back.
+type CloudInput = {
+  xy: Float32Array
+  depth: Float32Array
+  view: View
+  spinning: boolean
+  now: number
+  dt: number
+  lit: Uint8Array | null
+  dim: (i: number) => boolean
+  isGroup: (i: number) => boolean
+  boxR: (i: number) => number
+  radius: (i: number) => number
+  SX: (i: number) => number
+  SY: (i: number) => number
+}
+type CloudOut = {
+  cards: Card[]
+  labels: Card[]
+  families: string[]
+  hub: [number, number] | null
+  orphans: [number, number] | null
+  // The lines drawn (light travels them) and each point's radius as drawn.
+  edges: number[]
+  rad: (i: number) => number
+}
+
 // The fit mask without the pages without links: the cloud the camera turns (review R6).
 function cloudOnly(mask: Uint8Array, role: Uint8Array): Uint8Array {
   const m = mask.slice()
@@ -353,6 +385,11 @@ export class Renderer {
   // camera. Any of them changing moves the points on screen (review R2).
   private sent = ''
   private frames = 0
+  // The still cloud, painted once for its state and camera (review R7).
+  private still: { key: string; layout: Float32Array | null; out: CloudOut } | null = null
+  private stillLayer: OffscreenCanvas | null = null
+  private exact: { key: string; layout: Float32Array; view: View } | null = null
+  private turning = false
   private last = 0
   private facts: Fact[] = []
   private factAt = 0
@@ -435,9 +472,20 @@ export class Renderer {
       project(l, f, this.camera, this.proj, this.depth)
       parkRows(this.proj, sc.role, st.nodes, f)
       // A wiki small enough that Fit shows its pages as tiles is a flat picture to read: it does not turn.
-      const exact = st.autoFit
-        ? fitCards((pad, max) => fitOn(this.proj, st.fit, pad, max), fitPad(sc, st.fit))
-        : st.view
+      // Worked out once a state and still camera; while it turns, the one it started with (it only decides
+      // whether the picture is tiles, which turning never changes: review R7).
+      const exactKey = this.turning
+        ? `${st.seq}|${this.frames}|turn`
+        : `${st.seq}|${this.frames}|${this.camera.yaw}|${this.camera.pitch}`
+      if (!this.exact || this.exact.key !== exactKey || this.exact.layout !== l)
+        this.exact = {
+          key: exactKey,
+          layout: l,
+          view: st.autoFit
+            ? fitCards((pad, max) => fitOn(this.proj, st.fit, pad, max), fitPad(sc, st.fit))
+            : st.view,
+        }
+      const exact = this.exact.view
       // With motion allowed the picture is fitted to what the cloud covers at any yaw (most of it): it never
       // breathes as it turns, and stopping it never rescales it.
       if (st.pulses && exact.scale < TILE_SCALE) {
@@ -460,12 +508,16 @@ export class Renderer {
           }
         fitted = st.autoFit ? fitOn(this.box.b, ONES4, SPIN_PAD, TILE_SCALE * 0.99) : st.view
         spinning = st.spin
+        this.turning = spinning
         if (spinning) {
           this.camera.yaw += (dt * 2 * Math.PI) / CAMERA.turnMs
           project(l, f, this.camera, this.proj, this.depth)
           parkRows(this.proj, sc.role, st.nodes, f)
         }
-      } else fitted = exact
+      } else {
+        fitted = exact
+        this.turning = false
+      }
       xy = this.proj
       depth = this.depth
     }
@@ -806,30 +858,62 @@ export class Renderer {
     ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
     st: State,
     sc: Scene,
-    o: {
-      xy: Float32Array
-      depth: Float32Array
-      view: View
-      spinning: boolean
-      now: number
-      dt: number
-      lit: Uint8Array | null
-      dim: (i: number) => boolean
-      isGroup: (i: number) => boolean
-      boxR: (i: number) => number
-      radius: (i: number) => number
-      SX: (i: number) => number
-      SY: (i: number) => number
-    },
-  ): {
-    cards: Card[]
-    labels: Card[]
-    families: string[]
-    hub: [number, number] | null
-    pulses: number
-    fact: number
-    animating: boolean
-  } {
+    o: CloudInput,
+  ): CloudOut & { pulses: number; fact: number; animating: boolean } {
+    // Still, the picture is the same from one frame of light to the next: it is painted once into a layer
+    // kept for this state and camera, and each frame only copies it and draws the light (review R7).
+    let base: CloudOut
+    if (!o.spinning && typeof OffscreenCanvas !== 'undefined') {
+      const key = `${st.seq}|${this.frames}|${this.camera.yaw}|${this.camera.pitch}|${st.width}|${st.height}|${st.dpr}`
+      const w = Math.max(1, Math.round(st.width * st.dpr))
+      const h = Math.max(1, Math.round(st.height * st.dpr))
+      if (!this.still || this.still.key !== key || this.still.layout !== this.layout) {
+        if (!this.stillLayer || this.stillLayer.width !== w || this.stillLayer.height !== h)
+          this.stillLayer = new OffscreenCanvas(w, h)
+        const lc = this.stillLayer.getContext('2d') as OffscreenCanvasRenderingContext2D
+        lc.setTransform(st.dpr, 0, 0, st.dpr, 0, 0)
+        lc.clearRect(0, 0, st.width, st.height)
+        this.still = { key, layout: this.layout, out: this.cloudStill(lc, st, sc, o) }
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0)
+      ctx.drawImage(this.stillLayer as OffscreenCanvas, 0, 0)
+      ctx.setTransform(st.dpr, 0, 0, st.dpr, 0, 0)
+      base = this.still.out
+    } else {
+      this.still = null
+      base = this.cloudStill(ctx, st, sc, o)
+    }
+    const pulses = this.light(ctx, st, sc, o, base.edges)
+    // The fact card: while it turns, one page after another, with a ring around its point.
+    let fact = -1
+    const n = sc.n
+    if (o.spinning && st.pulses && this.facts.length) {
+      if (this.factIndex < 0 || o.now - this.factAt > FACT_MS) {
+        for (let tries = 0; tries < this.facts.length; tries++) {
+          this.factIndex = (this.factIndex + 1) % this.facts.length
+          const c = this.facts[this.factIndex] as Fact
+          if (c.i < n && st.nodes[c.i]) break
+        }
+        this.factAt = o.now
+      }
+      const c = this.facts[this.factIndex] as Fact
+      if (c.i < n && st.nodes[c.i]) {
+        fact = c.i
+        const age = o.now - this.factAt
+        const alpha = Math.min(1, age / FACT_FADE, (FACT_MS - age) / FACT_FADE)
+        this.factCard(ctx, st, sc, c, o.SX(c.i), o.SY(c.i), base.rad(c.i), Math.max(0, alpha))
+      }
+    }
+    return { ...base, pulses, fact, animating: o.spinning || (st.pulses && base.edges.length > 0) }
+  }
+
+  // Everything of the cloud but the light and the fact card.
+  private cloudStill(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    st: State,
+    sc: Scene,
+    o: CloudInput,
+  ): CloudOut {
     const { depth, view, spinning, lit, dim, isGroup, SX, SY } = o
     const p = st.palette
     const n = sc.n
@@ -864,7 +948,9 @@ export class Renderer {
 
     // Lines: gathered in one pass by kind, strength, family and depth, then one stroke each.
     const on = st.hover >= 0 && st.nodes[st.hover] ? st.hover : st.selected
-    const paths = new Map<string, number[]>()
+    // Each path's key is a number (no string per line, picture after picture): kind, strength, family (ACROSS:
+    // between two families) and depth step.
+    const paths = new Map<number, number[]>()
     const visibleEdges: number[] = []
     for (let e = 0; e < sc.kind.length; e++) {
       if (!st.edges[e]) continue
@@ -874,9 +960,9 @@ export class Renderer {
       const touches = on >= 0 && (i === on || j === on)
       const tier = touches ? 2 : (lit ? i !== st.hover && j !== st.hover : dim(i) || dim(j)) ? 0 : 1
       const k = sc.kind[e] as number
-      // A line inside a family takes its colour; a line between two families stays a faint grey.
-      const family = sc.fam[i] === sc.fam[j] ? String(sc.fam[i]) : 'x'
-      const key = tier === 1 ? `${k}|1|${family}|${Math.min(bucket(i), bucket(j))}` : `${k}|${tier}|0|3`
+      // A line inside a family takes its colour; a line between two families stays faint.
+      const family = sc.fam[i] === sc.fam[j] ? (sc.fam[i] as number) : ACROSS
+      const key = tier === 1 ? lineKey(k, 1, family, Math.min(bucket(i), bucket(j))) : lineKey(k, tier, 0, 3)
       let x0 = SX(i)
       let y0 = SY(i)
       let x1 = SX(j)
@@ -894,9 +980,10 @@ export class Renderer {
     }
     ctx.lineCap = 'round'
     for (const [key, list] of paths) {
-      const [ks, ts, fs, bs] = key.split('|')
-      const k = Number(ks)
-      const tier = Number(ts)
+      const bs = key % 4
+      const fs = Math.floor(key / 4) % 8
+      const tier = Math.floor(key / 32) % 3
+      const k = Math.floor(key / 96) - 1
       const name = k < 0 ? 'group' : (sc.kinds[k] as string)
       const style = LINE[name] ?? (LINE.related as (typeof LINE)[string])
       const contradicts = name === 'contradicts'
@@ -908,20 +995,14 @@ export class Renderer {
       ctx.setLineDash(style.dash)
       const width = k < 0 ? (sc.byGroups ? 2.5 : 0.8) : style.width
       ctx.lineWidth = tier === 2 ? width + 0.6 : width * 0.85
-      const across = fs === 'x'
-      ctx.strokeStyle = contradicts
-        ? p.danger
-        : tier === 2
-          ? p.text
-          : across
-            ? p.edge
-            : (p.fam[Number(fs)] ?? p.edge)
+      const across = fs === ACROSS
+      ctx.strokeStyle = contradicts ? p.danger : tier === 2 ? p.text : across ? p.edge : (p.fam[fs] ?? p.edge)
       ctx.globalAlpha =
         tier === 0
           ? EDGE.faint * 0.7
           : tier === 2
             ? EDGE.lit
-            : (contradicts ? EDGE.contradicts : across ? 0.13 : 0.5) * (FADE[Number(bs)] as number)
+            : (contradicts ? EDGE.contradicts : across ? 0.13 : 0.5) * (FADE[bs] as number)
       ctx.stroke()
       // Arrowheads on the lines of the page under the pointer or picked: the rest would only be noise.
       if (tier === 2 && style.arrow && k >= 0) {
@@ -951,80 +1032,10 @@ export class Renderer {
     ctx.setLineDash([])
     ctx.globalAlpha = 1
 
-    // Light travelling the lines: a short bright stroke on each of a few lines, moving from one end to the
-    // other, then on to another line. Worked out in three dimensions, so it follows the turn.
-    let pulses = 0
     const f = this.frame?.f
-    const layout = this.layout
-    if (st.pulses && f && layout && visibleEdges.length) {
-      const want = Math.min(PULSES_MAX, Math.max(4, Math.round(visibleEdges.length / PULSE_EVERY)))
-      if (this.pulseEdge.length !== want) {
-        this.pulseEdge = new Int32Array(want).fill(-1)
-        this.pulseT = new Float32Array(want)
-        this.pulseV = new Float32Array(want)
-      }
-      const len = 0.18
-      const glow: number[] = []
-      for (let q = 0; q < want; q++) {
-        let e = this.pulseEdge[q] as number
-        let t = (this.pulseT[q] as number) + (this.pulseV[q] as number) * o.dt
-        if (e < 0 || !st.edges[e] || t > 1 + len) {
-          e = visibleEdges[Math.floor(this.random() * visibleEdges.length)] as number
-          // Started at different points, so they never move in step.
-          t = this.pulseEdge[q] === -1 ? this.random() : 0
-          this.pulseV[q] = 1 / (1100 + this.random() * 1400)
-        }
-        this.pulseEdge[q] = e
-        this.pulseT[q] = t
-        const i = sc.edges[2 * e] as number
-        const j = sc.edges[2 * e + 1] as number
-        const at = (u: number) => {
-          const w = Math.min(1, Math.max(0, u))
-          const [px, py] = projectPoint(
-            (layout[3 * i] as number) + ((layout[3 * j] as number) - (layout[3 * i] as number)) * w,
-            (layout[3 * i + 1] as number) +
-              ((layout[3 * j + 1] as number) - (layout[3 * i + 1] as number)) * w,
-            (layout[3 * i + 2] as number) +
-              ((layout[3 * j + 2] as number) - (layout[3 * i + 2] as number)) * w,
-            f,
-            this.camera,
-          )
-          return [px * view.scale + view.tx, py * view.scale + view.ty] as const
-        }
-        const [hx, hy] = at(t)
-        const [tx, ty] = at(t - len)
-        if (Math.hypot(hx - tx, hy - ty) < 0.5) continue
-        glow.push(tx, ty, hx, hy)
-        pulses += 1
-      }
-      if (glow.length) {
-        const stroke = (width: number, alpha: number) => {
-          ctx.beginPath()
-          for (let q = 0; q < glow.length; q += 4) {
-            ctx.moveTo(glow[q] as number, glow[q + 1] as number)
-            ctx.lineTo(glow[q + 2] as number, glow[q + 3] as number)
-          }
-          ctx.lineWidth = width
-          ctx.strokeStyle = p.pulse
-          ctx.globalAlpha = alpha
-          ctx.stroke()
-        }
-        stroke(5, 0.16)
-        stroke(1.8, 0.95)
-        ctx.beginPath()
-        for (let q = 0; q < glow.length; q += 4) {
-          ctx.moveTo((glow[q + 2] as number) + 2.2, glow[q + 3] as number)
-          ctx.arc(glow[q + 2] as number, glow[q + 3] as number, 2.2, 0, Math.PI * 2)
-        }
-        ctx.fillStyle = p.pulse
-        ctx.globalAlpha = 1
-        ctx.fill()
-      }
-    }
-
     // The points, far to near: per depth step, one path per family and shape.
     const groups: number[][] = [[], [], [], []]
-    const byStep: Map<string, number[]>[] = [new Map(), new Map(), new Map(), new Map()]
+    const byStep: Map<number, number[]>[] = [new Map(), new Map(), new Map(), new Map()]
     for (let i = 0; i < n; i++) {
       if (!st.nodes[i] || (cardOf[i] as number) >= 0) continue
       const b = bucket(i)
@@ -1032,8 +1043,8 @@ export class Renderer {
         ;(groups[b] as number[]).push(i)
         continue
       }
-      const key = `${sc.fam[i]}|${sc.shape[i]}|${dim(i) ? 1 : 0}`
-      const m = byStep[b] as Map<string, number[]>
+      const key = ((sc.fam[i] as number) * 16 + (sc.shape[i] as number)) * 2 + (dim(i) ? 1 : 0)
+      const m = byStep[b] as Map<number, number[]>
       let list = m.get(key)
       if (!list) {
         list = []
@@ -1044,7 +1055,7 @@ export class Renderer {
     for (let b = 0; b < 4; b++) {
       const fade = FADE[b] as number
       // The most linked pages first get their halo, under their point.
-      for (const list of (byStep[b] as Map<string, number[]>).values())
+      for (const list of (byStep[b] as Map<number, number[]>).values())
         for (const i of list) {
           if (!hubs.has(i)) continue
           const r = rad(i)
@@ -1073,13 +1084,15 @@ export class Renderer {
           i === st.selected || i === st.active ? p.accent : (p.fam[sc.fam[i] as number] ?? p.text)
         ctx.stroke()
       }
-      for (const [key, list] of byStep[b] as Map<string, number[]>) {
-        const [fs, shs, faint] = key.split('|')
-        const type = SHAPES[Number(shs)] ?? 'topic'
+      for (const [key, list] of byStep[b] as Map<number, number[]>) {
+        const faint = key % 2 === 1
+        const shs = Math.floor(key / 2) % 16
+        const fs = Math.floor(key / 32)
+        const type = SHAPES[shs] ?? 'topic'
         ctx.beginPath()
         for (const i of list) shape(ctx, type, SX(i), SY(i), rad(i))
-        ctx.fillStyle = p.fam[Number(fs)] ?? p.text
-        ctx.globalAlpha = fade * (faint === '1' ? (lit ? 0.25 : 0.45) : 1)
+        ctx.fillStyle = p.fam[fs] ?? p.text
+        ctx.globalAlpha = fade * (faint ? (lit ? 0.25 : 0.45) : 1)
         ctx.fill('evenodd')
       }
     }
@@ -1184,26 +1197,6 @@ export class Renderer {
     this.draw(ctx, st, sc, cards, lit, false)
     this.drawLabels(ctx, st, sc, labels, lit, isGroup)
 
-    // The fact card: while it turns, one page after another, with a ring around its point.
-    let fact = -1
-    if (spinning && st.pulses && this.facts.length) {
-      if (this.factIndex < 0 || o.now - this.factAt > FACT_MS) {
-        for (let tries = 0; tries < this.facts.length; tries++) {
-          this.factIndex = (this.factIndex + 1) % this.facts.length
-          const c = this.facts[this.factIndex] as Fact
-          if (c.i < n && st.nodes[c.i]) break
-        }
-        this.factAt = o.now
-      }
-      const c = this.facts[this.factIndex] as Fact
-      if (c.i < n && st.nodes[c.i]) {
-        fact = c.i
-        const age = o.now - this.factAt
-        const alpha = Math.min(1, age / FACT_FADE, (FACT_MS - age) / FACT_FADE)
-        this.factCard(ctx, st, sc, c, SX(c.i), SY(c.i), rad(c.i), Math.max(0, alpha))
-      }
-    }
-
     // How far it has turned, at the bottom right.
     ctx.font = `11px ${MONO}`
     ctx.textAlign = 'right'
@@ -1219,16 +1212,90 @@ export class Renderer {
     ctx.globalAlpha = 1
     // The caption over the rows of pages without links, under the cloud.
     const orphans = orphanCaption(ctx, st, sc, SX, SY, nodeRadius(view.scale), p.muted)
-    return {
-      cards,
-      labels,
-      families,
-      hub,
-      orphans,
-      pulses,
-      fact,
-      animating: spinning || (st.pulses && visibleEdges.length > 0),
+    return { cards, labels, families, hub, orphans, edges: visibleEdges, rad }
+  }
+
+  // Light travelling the lines: a short bright stroke on each of a few lines, moving from one end to the other,
+  // then on to another line. Worked out in three dimensions, so it follows the turn. How many are drawn.
+  private light(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    st: State,
+    sc: Scene,
+    o: CloudInput,
+    visibleEdges: number[],
+  ): number {
+    const p = st.palette
+    const view = o.view
+    let pulses = 0
+    const f = this.frame?.f
+    const layout = this.layout
+    if (st.pulses && f && layout && visibleEdges.length) {
+      const want = Math.min(PULSES_MAX, Math.max(4, Math.round(visibleEdges.length / PULSE_EVERY)))
+      if (this.pulseEdge.length !== want) {
+        this.pulseEdge = new Int32Array(want).fill(-1)
+        this.pulseT = new Float32Array(want)
+        this.pulseV = new Float32Array(want)
+      }
+      const len = 0.18
+      const glow: number[] = []
+      for (let q = 0; q < want; q++) {
+        let e = this.pulseEdge[q] as number
+        let t = (this.pulseT[q] as number) + (this.pulseV[q] as number) * o.dt
+        if (e < 0 || !st.edges[e] || t > 1 + len) {
+          e = visibleEdges[Math.floor(this.random() * visibleEdges.length)] as number
+          // Started at different points, so they never move in step.
+          t = this.pulseEdge[q] === -1 ? this.random() : 0
+          this.pulseV[q] = 1 / (1100 + this.random() * 1400)
+        }
+        this.pulseEdge[q] = e
+        this.pulseT[q] = t
+        const i = sc.edges[2 * e] as number
+        const j = sc.edges[2 * e + 1] as number
+        const at = (u: number) => {
+          const w = Math.min(1, Math.max(0, u))
+          const [px, py] = projectPoint(
+            (layout[3 * i] as number) + ((layout[3 * j] as number) - (layout[3 * i] as number)) * w,
+            (layout[3 * i + 1] as number) +
+              ((layout[3 * j + 1] as number) - (layout[3 * i + 1] as number)) * w,
+            (layout[3 * i + 2] as number) +
+              ((layout[3 * j + 2] as number) - (layout[3 * i + 2] as number)) * w,
+            f,
+            this.camera,
+          )
+          return [px * view.scale + view.tx, py * view.scale + view.ty] as const
+        }
+        const [hx, hy] = at(t)
+        const [tx, ty] = at(t - len)
+        if (Math.hypot(hx - tx, hy - ty) < 0.5) continue
+        glow.push(tx, ty, hx, hy)
+        pulses += 1
+      }
+      if (glow.length) {
+        const stroke = (width: number, alpha: number) => {
+          ctx.beginPath()
+          for (let q = 0; q < glow.length; q += 4) {
+            ctx.moveTo(glow[q] as number, glow[q + 1] as number)
+            ctx.lineTo(glow[q + 2] as number, glow[q + 3] as number)
+          }
+          ctx.lineWidth = width
+          ctx.strokeStyle = p.pulse
+          ctx.globalAlpha = alpha
+          ctx.stroke()
+        }
+        stroke(5, 0.16)
+        stroke(1.8, 0.95)
+        ctx.beginPath()
+        for (let q = 0; q < glow.length; q += 4) {
+          ctx.moveTo((glow[q + 2] as number) + 2.2, glow[q + 3] as number)
+          ctx.arc(glow[q + 2] as number, glow[q + 3] as number, 2.2, 0, Math.PI * 2)
+        }
+        ctx.fillStyle = p.pulse
+        ctx.globalAlpha = 1
+        ctx.fill()
+      }
     }
+
+    return pulses
   }
 
   // A page's fact: a thin ring around its point, a line to a card with its title, and where it comes from
