@@ -253,10 +253,11 @@ export type Drawn = {
   animating: boolean
 }
 
-// A line's path key: kind (−1 for a group's line), strength 0–2, family 0–6 or ACROSS, depth step 0–3.
-const ACROSS = 7
+// A line's path key: kind (−1 for a group's line), strength 0–2, family 0–7 (ACROSS added: a line between
+// two families, in the colour of the one it leaves), depth step 0–3.
+const ACROSS = 8
 const lineKey = (kind: number, tier: number, family: number, step: number) =>
-  (((kind + 1) * 3 + tier) * 8 + family) * 4 + step
+  (((kind + 1) * 3 + tier) * 16 + family) * 4 + step
 
 // What the cloud is drawn from, and what its still part gives back.
 type CloudInput = {
@@ -354,6 +355,8 @@ const HUB = `700 18px ${MONO}`
 // How long the fact card shows one page, and how long it fades in and out.
 export const FACT_MS = 4200
 const FACT_FADE = 600
+// How far a pulse's glow reaches from its point, in px.
+const PULSE_GLOW = 9
 // The pulses: how many at most, and one for this many lines.
 const PULSES_MAX = 40
 const PULSE_EVERY = 6
@@ -934,12 +937,12 @@ export class Renderer {
       if (d > dmax) dmax = d
     }
     const span = Math.max(1e-6, dmax - dmin)
-    const FADE = [0.3, 0.48, 0.72, 1]
+    const FADE = [0.42, 0.6, 0.8, 1]
     const bucket = (i: number) => Math.min(3, Math.floor((((depth[i] as number) - dmin) / span) * 4))
     const size = (i: number) => Math.min(1.7, Math.max(0.55, depth[i] as number))
     // Points of a cloud are small; the most linked ones stand out bigger.
     const hubs = new Set(st.hubs)
-    const rad = (i: number) => (isGroup(i) ? o.boxR(i) : o.radius(i) * (hubs.has(i) ? 0.85 : 0.6)) * size(i)
+    const rad = (i: number) => (isGroup(i) ? o.boxR(i) : o.radius(i) * (hubs.has(i) ? 0.9 : 0.68)) * size(i)
 
     // Still, the cards and names of a flat picture; turning, none (they would swim).
     // Still, a big cloud names only the pages the person is on and their neighbours (the reference is quiet);
@@ -967,8 +970,8 @@ export class Renderer {
       const touches = on >= 0 && (i === on || j === on)
       const tier = touches ? 2 : (lit ? i !== st.hover && j !== st.hover : dim(i) || dim(j)) ? 0 : 1
       const k = sc.kind[e] as number
-      // A line inside a family takes its colour; a line between two families stays faint.
-      const family = sc.fam[i] === sc.fam[j] ? (sc.fam[i] as number) : ACROSS
+      // A line inside a family takes its colour; a line between two families, faintly, the colour it leaves.
+      const family = (sc.fam[i] as number) + (sc.fam[i] === sc.fam[j] ? 0 : ACROSS)
       const key = tier === 1 ? lineKey(k, 1, family, Math.min(bucket(i), bucket(j))) : lineKey(k, tier, 0, 3)
       let x0 = SX(i)
       let y0 = SY(i)
@@ -988,9 +991,10 @@ export class Renderer {
     ctx.lineCap = 'round'
     for (const [key, list] of paths) {
       const bs = key % 4
-      const fs = Math.floor(key / 4) % 8
-      const tier = Math.floor(key / 32) % 3
-      const k = Math.floor(key / 96) - 1
+      const code = Math.floor(key / 4) % 16
+      const fs = code % ACROSS
+      const tier = Math.floor(key / 64) % 3
+      const k = Math.floor(key / 192) - 1
       const name = k < 0 ? 'group' : (sc.kinds[k] as string)
       const style = LINE[name] ?? (LINE.related as (typeof LINE)[string])
       const contradicts = name === 'contradicts'
@@ -1002,15 +1006,18 @@ export class Renderer {
       ctx.setLineDash(style.dash)
       const width = k < 0 ? (sc.byGroups ? 2.5 : 0.8) : style.width
       ctx.lineWidth = tier === 2 ? width + 0.6 : width * 0.85
-      const across = fs === ACROSS
-      ctx.strokeStyle = contradicts ? p.danger : tier === 2 ? p.text : across ? p.edge : (p.fam[fs] ?? p.edge)
+      const across = code >= ACROSS
+      ctx.strokeStyle = contradicts ? p.danger : tier === 2 ? p.text : (p.fam[fs] ?? p.edge)
       ctx.globalAlpha =
         tier === 0
           ? EDGE.faint * 0.7
           : tier === 2
             ? EDGE.lit
-            : (contradicts ? EDGE.contradicts : across ? 0.13 : 0.5) * (FADE[bs] as number)
+            : (contradicts ? EDGE.contradicts : across ? 0.22 : 0.7) * (FADE[bs] as number)
+      // The web glows: its lines add up where they cross (the picked page's lines are drawn plain on top).
+      ctx.globalCompositeOperation = tier === 1 && !contradicts ? 'lighter' : 'source-over'
       ctx.stroke()
+      ctx.globalCompositeOperation = 'source-over'
       // Arrowheads on the lines of the page under the pointer or picked: the rest would only be noise.
       if (tier === 2 && style.arrow && k >= 0) {
         ctx.setLineDash([])
@@ -1067,11 +1074,16 @@ export class Renderer {
           if (!hubs.has(i)) continue
           const r = rad(i)
           const c = p.fam[sc.fam[i] as number] ?? p.text
+          const halo = ctx.createRadialGradient(SX(i), SY(i), r * 0.5, SX(i), SY(i), r * 3.4)
+          halo.addColorStop(0, c)
+          halo.addColorStop(1, 'transparent')
           ctx.beginPath()
-          ctx.arc(SX(i), SY(i), r * 2.8, 0, Math.PI * 2)
-          ctx.fillStyle = c
-          ctx.globalAlpha = 0.13 * fade
+          ctx.arc(SX(i), SY(i), r * 3.4, 0, Math.PI * 2)
+          ctx.fillStyle = halo
+          ctx.globalAlpha = 0.4 * fade
+          ctx.globalCompositeOperation = 'lighter'
           ctx.fill()
+          ctx.globalCompositeOperation = 'source-over'
           ctx.beginPath()
           ctx.arc(SX(i), SY(i), r * 1.9, 0, Math.PI * 2)
           ctx.strokeStyle = c
@@ -1100,6 +1112,19 @@ export class Renderer {
         for (const i of list) shape(ctx, type, SX(i), SY(i), rad(i))
         ctx.fillStyle = p.fam[fs] ?? p.text
         ctx.globalAlpha = fade * (faint ? (lit ? 0.25 : 0.45) : 1)
+        ctx.fill('evenodd')
+        // The most linked pages shine near white, their shape kept, inside their family's halo.
+        if (faint) continue
+        ctx.beginPath()
+        let shining = false
+        for (const i of list)
+          if (hubs.has(i)) {
+            shape(ctx, type, SX(i), SY(i), rad(i) * 0.8)
+            shining = true
+          }
+        if (!shining) continue
+        ctx.fillStyle = p.pulse
+        ctx.globalAlpha = 0.92 * fade
         ctx.fill('evenodd')
       }
     }
@@ -1243,7 +1268,8 @@ export class Renderer {
         this.pulseT = new Float32Array(want)
         this.pulseV = new Float32Array(want)
       }
-      const len = 0.18
+      // A short tail behind a bright head.
+      const len = 0.09
       const glow: number[] = []
       for (let q = 0; q < want; q++) {
         let e = this.pulseEdge[q] as number
@@ -1274,32 +1300,42 @@ export class Renderer {
         const [hx, hy] = at(t)
         const [tx, ty] = at(t - len)
         if (Math.hypot(hx - tx, hy - ty) < 0.5) continue
-        glow.push(tx, ty, hx, hy)
+        glow.push(tx, ty, hx, hy, sc.fam[i] as number)
         pulses += 1
       }
-      if (glow.length) {
-        const stroke = (width: number, alpha: number) => {
-          ctx.beginPath()
-          for (let q = 0; q < glow.length; q += 4) {
-            ctx.moveTo(glow[q] as number, glow[q + 1] as number)
-            ctx.lineTo(glow[q + 2] as number, glow[q + 3] as number)
-          }
-          ctx.lineWidth = width
-          ctx.strokeStyle = p.pulse
-          ctx.globalAlpha = alpha
-          ctx.stroke()
-        }
-        stroke(5, 0.16)
-        stroke(1.8, 0.95)
+      // Light adds up: a soft tail in the line's colour fading out behind, and a glowing point with a white
+      // core, all added onto what is under them.
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.lineCap = 'round'
+      for (let q = 0; q < glow.length; q += 5) {
+        const tx = glow[q] as number
+        const ty = glow[q + 1] as number
+        const hx = glow[q + 2] as number
+        const hy = glow[q + 3] as number
+        const colour = p.fam[glow[q + 4] as number] ?? p.pulse
+        const tail = ctx.createLinearGradient(tx, ty, hx, hy)
+        tail.addColorStop(0, 'transparent')
+        tail.addColorStop(1, colour)
         ctx.beginPath()
-        for (let q = 0; q < glow.length; q += 4) {
-          ctx.moveTo((glow[q + 2] as number) + 2.2, glow[q + 3] as number)
-          ctx.arc(glow[q + 2] as number, glow[q + 3] as number, 2.2, 0, Math.PI * 2)
-        }
-        ctx.fillStyle = p.pulse
-        ctx.globalAlpha = 1
+        ctx.moveTo(tx, ty)
+        ctx.lineTo(hx, hy)
+        ctx.strokeStyle = tail
+        ctx.lineWidth = 2.2
+        ctx.globalAlpha = 0.85
+        ctx.stroke()
+        const head = ctx.createRadialGradient(hx, hy, 0, hx, hy, PULSE_GLOW)
+        head.addColorStop(0, p.pulse)
+        head.addColorStop(0.22, p.pulse)
+        head.addColorStop(0.4, colour)
+        head.addColorStop(1, 'transparent')
+        ctx.beginPath()
+        ctx.arc(hx, hy, PULSE_GLOW, 0, Math.PI * 2)
+        ctx.fillStyle = head
+        ctx.globalAlpha = 0.95
         ctx.fill()
       }
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.globalAlpha = 1
     }
 
     return pulses
