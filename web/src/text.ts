@@ -1643,6 +1643,11 @@ export const T = {
     fitAll: 'Fit',
     legend: 'Legend',
     families: 'Families',
+    linesAndMarks: 'Lines and marks',
+    familiesCount: (n: number) => plural(n, 'family', 'families'),
+    // The strip over the canvas: what it is about, and how much it holds.
+    stripAbout: (brain: string) => `${brain} · every page, one memory`,
+    stripMeta: (pages: number, links: number) => `${fmt(pages)} pages · ${fmt(links)} links`,
     familiesNote: 'Shape and colour say the type. Drag to turn.',
     shapes: 'Page types',
     lines: 'Link kinds',

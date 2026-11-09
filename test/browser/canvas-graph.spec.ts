@@ -144,9 +144,11 @@ test('CA8: the canvas controls at its edges; the filters open over the picture w
   const t = await box(page, '.graph-tools')
   expect(t.left - canvas.left).toBeLessThan(32)
   expect(canvas.bottom - t.bottom).toBeLessThan(32)
+  // The one legend (polish 2026-11-09): at the top left, under the name, clear of the zoom tools.
   const legend = await box(page, '.graph-legend')
-  expect(canvas.right - legend.right).toBeLessThan(32)
-  expect(canvas.bottom - legend.bottom).toBeLessThan(32)
+  expect(legend.left - canvas.left).toBeLessThan(32)
+  expect(legend.top).toBeGreaterThan(title.bottom)
+  expect(legend.bottom).toBeLessThan(t.top)
   // The filters: a panel over the picture.
   await page.locator('.graph-filters summary').click()
   await expect(page.getByLabel('Words', { exact: true })).toBeVisible()

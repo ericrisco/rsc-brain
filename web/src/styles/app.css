@@ -3259,20 +3259,18 @@ label.op-head:hover {
   }
 }
 
-/* The legend, over the bottom right of the picture. */
+/* The one legend, at the top left under the name: a panel that folds from its own head (polish 2026-11-09). */
 .graph-screen .graph-legend {
-  position: absolute;
-  right: 16px;
-  bottom: 16px;
-  z-index: 3;
-  max-width: calc(100% - 32px);
-  max-height: calc(100% - 120px);
+  --panel-c: var(--fam-cyan);
+  min-width: 240px;
+  max-width: 100%;
+  max-height: calc(100vh - 220px);
   overflow: auto;
   margin: 0;
-  padding: 8px 12px;
-  background: var(--surface);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-card);
+  padding: 0 14px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-line);
+  font-size: 12px;
 }
 
 /* How the keyboard walks the picture: said to screen readers, shown while the keyboard is on it. */
@@ -3317,8 +3315,27 @@ label.op-head:hover {
   }
 
   /* The legend and the panel's switch move left of the open panel. */
-  .graph-screen:has(.graph-inspector[data-open]) :is(.graph-legend, .inspector-toggle) {
+  .graph-screen:has(.graph-inspector[data-open]) .inspector-toggle {
     right: calc(clamp(320px, 22vw, 420px) + 16px);
+  }
+
+  /* The strip ends where the open panel starts. */
+  .graph-screen:has(.graph-inspector[data-open]) .graph-strip {
+    right: clamp(320px, 22vw, 420px);
+  }
+
+  /* Graph | List, the filters and the panel's switch sit in the strip. */
+  .graph-screen .graph-center {
+    top: 4px;
+  }
+
+  /* biome-ignore lint/style/noDescendingSpecificity: the panel's switch in the strip, wide only */
+  .graph-screen .inspector-toggle {
+    top: 4px;
+  }
+
+  .graph-strip .panel-meta {
+    margin-right: 150px;
   }
 }
 
@@ -4544,14 +4561,6 @@ input[type="file"]::file-selector-button {
   max-width: none;
 }
 
-.graph-families {
-  min-width: 220px;
-  padding: 10px 14px 12px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-line);
-  font-size: 12px;
-}
-
 /* biome-ignore lint/style/noDescendingSpecificity: a family's row in the legend over the canvas */
 .graph-families li {
   display: grid;
@@ -4579,15 +4588,100 @@ input[type="file"]::file-selector-button {
   font-size: 11px;
 }
 
-/* Narrow: the column takes the width; the families stay in the legend at the bottom (the picture is small). */
+/* Narrow: the column takes the width (the legend starts folded). */
 @media (max-width: 1099px) {
   .graph-left {
     max-width: calc(100% - 32px);
   }
+}
 
-  .graph-families {
-    display: none;
-  }
+/* The canvas as a panel (polish 2026-11-09): its corners inside its edges (the screen clips what is outside),
+   over the picture; a strip along its top as the panel's head. */
+.graph-screen.panel {
+  border: 0;
+}
+
+.graph-screen.panel::before {
+  inset: 0;
+  z-index: 6;
+}
+
+.graph-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  min-height: 48px;
+  gap: 4px 8px;
+  padding: 0 16px 0 10px;
+}
+
+/* The name close to the left edge, right after the chip. */
+.graph-strip .panel-num {
+  min-width: 26px;
+  padding: 0 6px;
+}
+
+.graph-strip h1.title {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.graph-strip .panel-about {
+  flex: 0 1 auto;
+}
+
+.graph-left {
+  top: 60px;
+}
+
+.graph-legend > summary.legend-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  margin: 0 -14px 10px;
+  padding: 0 14px;
+  background: var(--panel-head-bg);
+  border-bottom: 1px solid var(--panel-line);
+  cursor: pointer;
+  list-style: none;
+}
+
+.legend-head::-webkit-details-marker {
+  display: none;
+}
+
+.graph-legend:not([open]) > .legend-head {
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+
+.graph-legend .legend-cols {
+  margin-top: 8px;
+  gap: 12px 32px;
+}
+
+.legend-head .panel-title {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.legend-more {
+  margin-top: 8px;
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: the nested fold of the legend */
+.legend-more > summary {
+  min-height: 24px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.graph-legend > .fam-note {
+  margin: 10px 0 12px;
 }
 
 /* The map's columns: a type's panel never reaches into the column before it (its corners sit on its border,

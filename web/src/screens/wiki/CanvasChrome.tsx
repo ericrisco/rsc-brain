@@ -1,6 +1,6 @@
 // The controls over the graph's canvas (plan canvas-ui B.2): the legend at the bottom right, saying what the
 // picture holds and only that, and the canvas while it loads: its dotted ground and grey cards.
-import { useMemo } from 'preact/hooks'
+import { useMemo, useState } from 'preact/hooks'
 import type { FamilyCount } from '../../graph/families.ts'
 import type { Model } from '../../graph/model.ts'
 import { LINE, SHAPES, shape } from '../../graph/render.ts'
@@ -28,17 +28,21 @@ export const KINDS = [
   'example-of',
 ]
 
-// What the picture holds, and only that: the shapes of the types drawn, the kinds of the lines drawn.
+// The one legend over the canvas, at the top left (polish 2026-11-09): what the picture holds and only that.
+// The families drawn (shape, colour, name and count), the kinds of the lines drawn and the marks. A panel that
+// folds from its own header; open on a wide screen, folded on a narrow one.
 export function Legend({
   model,
   nodes,
   edges,
   inFocus,
+  counts,
 }: {
   model: Model
   nodes: Uint8Array
   edges: Uint8Array
   inFocus: boolean
+  counts: FamilyCount[]
 }) {
   const g = T.graph
   const drawn = useMemo(() => {
@@ -58,89 +62,95 @@ export function Legend({
   }, [model, nodes, edges])
   const shapes = SHAPES.filter((t) => drawn.types.has(t))
   const lines = [...KINDS, 'group'].filter((k) => drawn.kinds.has(k))
+  const [openAtStart] = useState(
+    () => typeof matchMedia !== 'function' || !matchMedia('(max-width: 1099px)').matches,
+  )
   return (
-    <details class="graph-legend">
-      <summary>{g.legend}</summary>
-      <div class="legend-cols">
-        <div>
-          <p class="section-title">{g.shapes}</p>
+    <details class="graph-legend" open={openAtStart}>
+      <summary class="legend-head">
+        <span class="panel-num" aria-hidden="true">
+          02
+        </span>
+        <span class="panel-title">{g.legend}</span>
+        <span class="panel-meta">{g.familiesCount(counts.length)}</span>
+      </summary>
+      {counts.length ? (
+        <section class="graph-families" aria-labelledby="graph-families-title">
+          <h2 id="graph-families-title" class="sr-only">
+            {g.families}
+          </h2>
           <ul class="plain">
-            {shapes.map((t) => (
-              <li key={t}>
-                <ShapeIcon type={t} />
-                {T.wiki.types[t]}
+            {counts.map((c) => (
+              <li key={c.type} data-c={c.colour}>
+                <ShapeIcon type={c.type} />
+                <span class="fam-name">{T.wiki.typesPlural[c.type] ?? c.type}</span>
+                <span class="fam-count">{c.count.toLocaleString('en')}</span>
               </li>
             ))}
           </ul>
+        </section>
+      ) : null}
+      <details class="legend-more">
+        <summary>{g.linesAndMarks}</summary>
+        <div class="legend-cols">
+          {counts.length ? null : (
+            <div>
+              <p class="section-title">{g.shapes}</p>
+              <ul class="plain">
+                {shapes.map((t) => (
+                  <li key={t}>
+                    <ShapeIcon type={t} />
+                    {T.wiki.types[t]}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div>
+            <p class="section-title">{g.lines}</p>
+            <ul class="plain">
+              {lines.length ? null : <li class="meta">{g.noLinks}</li>}
+              {lines.map((k) => {
+                const line = LINE[k] ?? (LINE.related as (typeof LINE)[string])
+                return (
+                  <li key={k}>
+                    <svg
+                      width="40"
+                      height="12"
+                      aria-hidden="true"
+                      class={`legend-line${k === 'contradicts' ? ' danger' : k === 'group' ? ' group' : ''}`}
+                    >
+                      <line
+                        x1="2"
+                        y1="6"
+                        x2={line.arrow ? 30 : 38}
+                        y2="6"
+                        stroke-width={k === 'group' ? 3 : line.width}
+                        stroke-dasharray={line.dash.join(' ') || undefined}
+                        stroke-linecap="round"
+                      />
+                      {line.arrow ? <polygon points="38,6 31,2.5 31,9.5" /> : null}
+                    </svg>
+                    {g.linkKindNames[k]}
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+          <div>
+            <p class="section-title">{g.marks}</p>
+            <ul class="plain">
+              {drawn.superseded ? <li>{g.dimmed}</li> : null}
+              {lines.length ? <li>{g.bigger}</li> : null}
+              {inFocus ? <li>{g.ringOne}</li> : null}
+              {inFocus ? <li>{g.ringTwo}</li> : null}
+            </ul>
+            {lines.some((k) => LINE[k]?.arrow) ? <p class="meta">{g.arrows}</p> : null}
+          </div>
         </div>
-        <div>
-          <p class="section-title">{g.lines}</p>
-          <ul class="plain">
-            {lines.length ? null : <li class="meta">{g.noLinks}</li>}
-            {lines.map((k) => {
-              const line = LINE[k] ?? (LINE.related as (typeof LINE)[string])
-              return (
-                <li key={k}>
-                  <svg
-                    width="40"
-                    height="12"
-                    aria-hidden="true"
-                    class={`legend-line${k === 'contradicts' ? ' danger' : k === 'group' ? ' group' : ''}`}
-                  >
-                    <line
-                      x1="2"
-                      y1="6"
-                      x2={line.arrow ? 30 : 38}
-                      y2="6"
-                      stroke-width={k === 'group' ? 3 : line.width}
-                      stroke-dasharray={line.dash.join(' ') || undefined}
-                      stroke-linecap="round"
-                    />
-                    {line.arrow ? <polygon points="38,6 31,2.5 31,9.5" /> : null}
-                  </svg>
-                  {g.linkKindNames[k]}
-                </li>
-              )
-            })}
-          </ul>
-        </div>
-        <div>
-          <p class="section-title">{g.marks}</p>
-          <ul class="plain">
-            {drawn.superseded ? <li>{g.dimmed}</li> : null}
-            {lines.length ? <li>{g.bigger}</li> : null}
-            {inFocus ? <li>{g.ringOne}</li> : null}
-            {inFocus ? <li>{g.ringTwo}</li> : null}
-          </ul>
-          {lines.some((k) => LINE[k]?.arrow) ? <p class="meta">{g.arrows}</p> : null}
-        </div>
-      </div>
-    </details>
-  )
-}
-
-// The families drawn (spec amendment 2026-11-09, CA12): each with its shape in its colour, its name and how
-// many of its pages are drawn, the biggest first. Colour is never the only sign: the shape and the name say
-// the same.
-export function FamilyLegend({ counts }: { counts: FamilyCount[] }) {
-  const g = T.graph
-  if (!counts.length) return null
-  return (
-    <section class="graph-families" aria-labelledby="graph-families-title">
-      <h2 id="graph-families-title" class="sr-only">
-        {g.families}
-      </h2>
-      <ul class="plain">
-        {counts.map((c) => (
-          <li key={c.type} data-c={c.colour}>
-            <ShapeIcon type={c.type} />
-            <span class="fam-name">{T.wiki.typesPlural[c.type] ?? c.type}</span>
-            <span class="fam-count">{c.count.toLocaleString('en')}</span>
-          </li>
-        ))}
-      </ul>
+      </details>
       <p class="fam-note">{g.familiesNote}</p>
-    </section>
+    </details>
   )
 }
 

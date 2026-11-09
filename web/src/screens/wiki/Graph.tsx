@@ -49,7 +49,7 @@ import { T } from '../../text.ts'
 import { Icon } from '../../ui/icons.tsx'
 import { viewState } from '../../ui/state.ts'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
-import { CanvasSkeleton, FamilyLegend, KINDS, Legend } from './CanvasChrome.tsx'
+import { CanvasSkeleton, KINDS, Legend } from './CanvasChrome.tsx'
 import { useBrain, useFilters, WikiHead } from './common.tsx'
 import { graphResource, pagesResource } from './data.ts'
 import { GraphList } from './GraphList.tsx'
@@ -222,6 +222,13 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
       ? pagesResource(slug, { status: DRAWN, sort: '-updatedAt', cursor: '', limit: '50' })
       : null
   const recentRows = recent?.data.value?.items
+  // The links drawn (each line stands for one or more), for the strip over the canvas.
+  const linksDrawn = useMemo(() => {
+    if (!model || !vis) return 0
+    let n = 0
+    for (let e = 0; e < vis.edges.length; e++) if (vis.edges[e]) n += model.count[e] ?? 1
+    return n
+  }, [model, vis])
   // The families drawn, for the legend over the canvas.
   const families = useMemo(
     () => (model && vis && !list && model.mode !== 'too-big' ? familyCounts(model, vis.nodes) : []),
@@ -594,15 +601,35 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
     // Over the canvas: its name and where you are at the top left, the families under it; Graph | List and
     // the filters at the top in the middle (plan canvas-ui B.2).
     <>
+      {/* The strip along the top of the canvas, as a panel's head: its number, its name and what it is about,
+          and how much it holds; Graph | List, the filters and the inspector's switch sit in it. */}
+      <div class="graph-strip panel-head">
+        <span class="panel-num" aria-hidden="true">
+          01
+        </span>
+        <h1 class="title panel-title">{g.title}</h1>
+        <span class="panel-about">
+          <span aria-hidden="true">· </span>
+          {g.stripAbout(brainName)}
+        </span>
+        {vis && model ? <span class="panel-meta">{g.stripMeta(vis.pages, linksDrawn)}</span> : null}
+      </div>
       <div class="graph-left">
         <div class="graph-over">
-          <WikiHead title={g.title} />
           {placeRow}
           {trailNav}
           {notes}
           {focusBar}
         </div>
-        {families.length ? <FamilyLegend counts={families} /> : null}
+        {vis && model && model.mode !== 'too-big' && model.items.length ? (
+          <Legend
+            model={model}
+            nodes={vis.nodes}
+            edges={vis.edges}
+            inFocus={vis.focus >= 0}
+            counts={families}
+          />
+        ) : null}
       </div>
       <div class="graph-center">
         {viewsToggle}
@@ -733,7 +760,7 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
       </>
     )
   return (
-    <div class="graph-screen">
+    <div class="graph-screen panel" data-c="orange">
       {head}
       {layout}
     </div>
@@ -1232,7 +1259,9 @@ function GraphCanvas({
     const screen = el.closest('.graph-screen')
     const controls = [
       t,
-      ...['.graph-over', '.graph-center'].map((q) => screen?.querySelector<HTMLElement>(q) ?? null),
+      ...['.graph-strip', '.graph-over', '.graph-center'].map(
+        (q) => screen?.querySelector<HTMLElement>(q) ?? null,
+      ),
     ]
     // No card is drawn under any control over the canvas, the legend and the panel's switch included
     // (closing review): their boxes, from the canvas's corner.
@@ -1626,7 +1655,6 @@ function GraphCanvas({
           />
           {ready ? null : <CanvasSkeleton wait />}
         </div>
-        <Legend model={model} nodes={nodes} edges={edges} inFocus={focus >= 0} />
       </div>
       <p id="graph-help" class="hint">
         {coarse() ? g.touchHelp : g.canvasHelp}
