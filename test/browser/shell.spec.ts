@@ -1,5 +1,5 @@
-// Spec B6 «Mapa de la web», «Accesibilidad» and DESIGN.md (plan T003): the frame at 1440, 768, 390 and
-// 320 px without sideways scroll, the side bar that folds into a menu on a phone, the account menu with
+// Spec B6 «Mapa de la web», «Accesibilidad» and DESIGN.md (plan T003), with the rail of plan canvas-ui: the
+// frame at 1440, 768, 390 and 320 px without sideways scroll, the side bar that folds into a menu on a phone, the account menu with
 // the light theme, signing out, and a visible focus.
 import { expect, noSideScroll, scenario, test } from './fixture.ts'
 
@@ -35,10 +35,10 @@ test('inside a brain, the side bar holds its sections on a wide screen', async (
 }) => {
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto('/b/growth')
-  const side = page.locator('aside.sidebar')
+  const side = page.getByRole('navigation', { name: 'Sections of this brain' })
   await expect(side).toBeVisible()
   await expect(side.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
-  await side.getByRole('link', { name: '← All brains' }).click()
+  await side.getByRole('link', { name: 'All brains', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Your brains' })).toBeVisible()
 })
 
@@ -50,7 +50,7 @@ test('on a phone, the side bar folds into a menu that Esc closes, giving the foc
   await page.setViewportSize({ width: 390, height: 844 })
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto('/b/growth')
-  await expect(page.locator('aside.sidebar')).toBeHidden()
+  await expect(page.getByRole('navigation', { name: 'Sections of this brain' })).toBeHidden()
   const menu = page.getByRole('button', { name: 'Menu' })
   await menu.click()
   const sheet = page.getByRole('dialog', { name: 'Growth' })
@@ -60,7 +60,10 @@ test('on a phone, the side bar folds into a menu that Esc closes, giving the foc
   await expect(sheet).toBeHidden()
   await expect(menu).toBeFocused()
   await menu.click()
-  await page.getByRole('dialog', { name: 'Growth' }).getByRole('link', { name: '← All brains' }).click()
+  await page
+    .getByRole('dialog', { name: 'Growth' })
+    .getByRole('link', { name: 'All brains', exact: true })
+    .click()
   await expect(page.getByRole('heading', { name: 'Your brains' })).toBeVisible()
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })

@@ -131,7 +131,10 @@ test.describe('R5: moving between screens already loaded', () => {
     await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
     // Each move checks the session once; that check answers before the session is revoked.
     const checked = page.waitForResponse((r) => r.url().endsWith('/v1/me'))
-    await page.locator('aside').getByRole('link', { name: '← All brains' }).click()
+    await page
+      .getByRole('navigation', { name: 'Sections of this brain' })
+      .getByRole('link', { name: 'All brains', exact: true })
+      .click()
     await expect(page.getByRole('heading', { level: 1, name: 'Your brains' })).toBeVisible()
     expect((await checked).status()).toBe(200)
     await s.endSessions()

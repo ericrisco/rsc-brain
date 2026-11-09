@@ -54,10 +54,11 @@ test.describe('the list', () => {
     await expect(page).toHaveURL(new RegExp(`${INBOX}$`))
     await expect(page.getByRole('heading', { level: 1, name: 'Proposals' })).toBeFocused()
     await expect(page).toHaveTitle(/^Proposals · /)
-    await expect(page.locator('aside').getByRole('link', { name: /Proposals/ })).toHaveAttribute(
-      'aria-current',
-      'page',
-    )
+    await expect(
+      page
+        .getByRole('navigation', { name: 'Sections of this brain' })
+        .getByRole('link', { name: /Proposals/ }),
+    ).toHaveAttribute('aria-current', 'page')
     const items = page.getByRole('list', { name: 'Pending proposals' }).getByRole('listitem')
     await expect(items).toHaveCount(3)
     // Oldest first: what has waited longest is reviewed first.

@@ -190,7 +190,7 @@ test.describe('invite people from home', () => {
     await dialog.getByLabel('Name').fill('Onboarding')
     await dialog.getByRole('button', { name: 'Create brain' }).click()
     await expect(page.getByRole('heading', { level: 1, name: 'Onboarding' })).toBeVisible()
-    await page.getByRole('link', { name: '← All brains' }).click()
+    await page.getByRole('link', { name: 'All brains', exact: true }).click()
     await expect(page.getByRole('region', { name: 'Invite people' })).toBeVisible()
     await page.getByRole('link', { name: 'Onboarding' }).click()
     // Someone accepts an invitation elsewhere.
@@ -204,7 +204,7 @@ test.describe('invite people from home', () => {
       body: JSON.stringify({ token: INVITE, name: 'Marta', password: PASSWORD }),
     })
     expect(res.status).toBe(201)
-    await page.getByRole('link', { name: '← All brains' }).click()
+    await page.getByRole('link', { name: 'All brains', exact: true }).click()
     await expect(page.getByRole('link', { name: 'Onboarding' })).toBeVisible()
     await expect(page.getByRole('region', { name: 'Invite people' })).toHaveCount(0)
   })

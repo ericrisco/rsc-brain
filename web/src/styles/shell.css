@@ -1,0 +1,573 @@
+/* The frame of a signed-in screen (plan canvas-ui D1–D3): the rail at the left, 56px of icons or 220px with
+   their names, and the screen in the rest of the width. On a phone the rail is a bar across the top. */
+
+.frame {
+  --rail-w: var(--rail-w-folded);
+  --rail-col: var(--rail-w);
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: var(--rail-col) minmax(0, 1fr);
+  transition: grid-template-columns var(--t) var(--ease);
+}
+
+.frame[data-rail="open"] {
+  --rail-w: var(--rail-w-open);
+}
+
+/* The line between rail and screen belongs to the screen, as tall as the page (a full-page capture too). */
+.stage {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--rail-line);
+}
+
+.stage > .content {
+  flex: 1;
+}
+
+/* ── The rail ─────────────────────────────────────────────────────────── */
+
+.rail {
+  position: sticky;
+  top: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: var(--rail-w);
+  height: 100dvh;
+  padding: 0 var(--space-2) var(--space-2);
+  background: var(--rail-bg);
+  color: var(--rail-ink);
+  transition: width var(--t) var(--ease);
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  height: 56px;
+  flex: none;
+}
+
+.rail .brand {
+  flex: 1 1 auto;
+  height: 40px;
+  padding: 0 8px;
+  gap: 12px;
+  border-right: 0;
+  border-radius: var(--r-control);
+}
+
+.rail .brand:hover {
+  background: var(--rail-hover);
+}
+
+.rail .brand img,
+.rail .brand svg {
+  width: 24px;
+  height: 24px;
+}
+
+.rail-tools,
+.rail-foot {
+  display: grid;
+  gap: 2px;
+}
+
+.rail-tools {
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--rail-line);
+}
+
+.rail-nav {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+.rail-nav ul {
+  display: grid;
+  gap: 2px;
+}
+
+.rail-group {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--rail-line);
+}
+
+.rail-foot {
+  margin-top: auto;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--rail-line);
+}
+
+/* An item: its icon in a 40×36 box at the left, its name beside it. */
+.rail-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--rail-ink);
+  border: 0;
+  border-radius: var(--r-control);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease);
+}
+
+.rail-item > .icon {
+  flex: none;
+}
+
+.rail-item:hover {
+  background: var(--rail-hover);
+  color: var(--text);
+}
+
+.rail-item[aria-current] {
+  background: var(--rail-hover);
+  color: var(--text);
+  font-weight: 550;
+}
+
+.rail-item[aria-current] > .icon {
+  color: var(--accent);
+}
+
+/* The current section is also marked by a bar at the left edge: never colour alone. */
+.rail-item[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+.rail-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail-end {
+  flex: none;
+  margin-left: auto;
+}
+
+.rail kbd.rail-end {
+  min-width: 0;
+  padding: 0 5px;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+/* A count beside its section (what waits): the accent marks data. */
+.rail-badge {
+  flex: none;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--primary-fg);
+  font: 650 11px / 18px var(--mono);
+  text-align: center;
+}
+
+.rail .searchbox {
+  color: var(--rail-ink);
+}
+
+/* The brain this screen is in. */
+.switcher {
+  position: relative;
+}
+
+.switcher-button {
+  min-height: 40px;
+  padding-left: 6px;
+}
+
+.brain-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-control);
+  background: color-mix(in oklch, var(--accent) 22%, var(--rail-bg));
+  color: var(--text);
+  font: 650 13px / 1 var(--mono);
+}
+
+.brain-avatar.small {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+
+.switcher-button .rail-label {
+  display: grid;
+  line-height: 1.25;
+}
+
+.switcher-button .brain-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.switcher-button .brain-role {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.initial {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin: 0 -2px;
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--text);
+  font: 600 11px / 1 var(--mono);
+}
+
+.account {
+  position: relative;
+}
+
+/* ── Menus that open from the rail ────────────────────────────────────── */
+
+.popover {
+  position: absolute;
+  z-index: 40;
+  width: 260px;
+  padding: 6px;
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+  box-shadow: 0 12px 32px -12px oklch(0 0 0 / 0.45);
+  white-space: normal;
+}
+
+.switcher-menu {
+  left: calc(100% + 12px);
+  top: 0;
+}
+
+.account-menu {
+  left: calc(100% + 12px);
+  bottom: 0;
+}
+
+.popover-title {
+  padding: 6px 10px 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.switcher-menu ul {
+  display: grid;
+  gap: 2px;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+}
+
+.switcher-menu a,
+.switcher-menu button,
+.account-menu button,
+.account-menu a {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  border-radius: var(--r-control);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.account-menu button,
+.account-menu a {
+  justify-content: space-between;
+}
+
+.switcher-menu a:hover,
+.switcher-menu button:hover,
+.account-menu button:hover,
+.account-menu a:hover {
+  background: var(--surface);
+}
+
+.switcher-menu a[aria-current] {
+  font-weight: 600;
+}
+
+.switcher-menu .grow {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popover-foot {
+  display: grid;
+  gap: 2px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--rule);
+}
+
+.account-menu .who {
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 6px;
+}
+
+/* ── Folded: icons, and their names as tooltips ───────────────────────── */
+
+@media (min-width: 768px) {
+  .frame[data-rail="folded"] .rail .brand .name,
+  .frame[data-rail="folded"] .rail .rail-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .frame[data-rail="folded"] .rail .rail-item {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .frame[data-rail="folded"] .rail .brand {
+    justify-content: center;
+    padding: 0;
+  }
+
+  /* Shortcuts and the switcher's arrows are for the open rail only. */
+  .frame[data-rail="folded"] .rail .rail-end {
+    display: none;
+  }
+
+  /* The count sits on the icon's corner. */
+  .frame[data-rail="folded"] .rail .rail-badge {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
+    line-height: 16px;
+  }
+
+  /* The name as a tooltip, on hover or keyboard focus; Esc hides it until the next item. It is the same
+     element that names the control, so it stays while the pointer is over it (WCAG 1.4.13). */
+  .frame[data-rail="folded"] .rail:not([data-tips="off"]) .rail-item:hover > .rail-label,
+  .frame[data-rail="folded"] .rail:not([data-tips="off"]) .rail-item:focus-visible > .rail-label {
+    left: calc(100% + 10px);
+    top: 50%;
+    z-index: 45;
+    width: auto;
+    height: auto;
+    max-width: 260px;
+    padding: 5px 10px;
+    overflow: visible;
+    clip-path: none;
+    transform: translateY(-50%);
+    background: var(--primary-bg);
+    color: var(--primary-fg);
+    border-radius: var(--r-control);
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.4;
+    pointer-events: auto;
+    box-shadow: 0 6px 18px -6px oklch(0 0 0 / 0.4);
+  }
+
+  .frame[data-rail="folded"] .rail .switcher-button:is(:hover, :focus-visible) .brain-name,
+  .frame[data-rail="folded"] .rail .switcher-button:is(:hover, :focus-visible) .brain-role {
+    color: inherit;
+  }
+
+  /* The tooltip's bridge: the gap between the icon and its name keeps the hover. */
+  .frame[data-rail="folded"] .rail .rail-item:hover > .rail-label::before {
+    content: "";
+    position: absolute;
+    right: 100%;
+    top: 0;
+    bottom: 0;
+    width: 12px;
+  }
+}
+
+/* A short window: the sections scroll, the head and foot stay. */
+@media (max-height: 759px) and (min-width: 768px) {
+  .rail-nav {
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-width: thin;
+  }
+}
+
+/* Open, the search reads as a field. */
+.frame[data-rail="open"] .rail .searchbox {
+  background: var(--ground);
+  box-shadow: inset 0 0 0 1px var(--rail-line);
+}
+
+/* ── A tablet: the rail opens over the screen instead of pushing it ───── */
+
+@media (min-width: 768px) and (max-width: 1099px) {
+  .frame {
+    --rail-col: var(--rail-w-folded);
+  }
+
+  .frame[data-rail="open"] .rail {
+    box-shadow: 12px 0 32px -16px oklch(0 0 0 / 0.5);
+  }
+}
+
+/* ── A phone: a bar across the top; the sections in a menu ─────────────── */
+
+@media (max-width: 767px) {
+  .frame {
+    --rail-col: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+
+  .stage {
+    border-left: 0;
+  }
+
+  .rail {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    width: auto;
+    height: 56px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--rail-line);
+  }
+
+  .rail-head {
+    flex: 1 1 auto;
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .rail .brand {
+    min-width: 0;
+  }
+
+  .rail-tools,
+  .rail-foot {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .rail > .rail-nav,
+  .rail .switcher,
+  .rail .rail-toggle,
+  .rail .rail-help,
+  .rail .rail-foot > a.rail-item:not(.to-review) {
+    display: none;
+  }
+
+  .rail .rail-item {
+    width: auto;
+    min-width: 40px;
+    justify-content: center;
+    padding: 0 8px;
+  }
+
+  .rail .rail-end {
+    display: none;
+  }
+
+  .rail .rail-label,
+  .rail .brand .name {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .rail .to-review {
+    gap: 6px;
+  }
+
+  .account-menu {
+    left: auto;
+    right: 0;
+    bottom: auto;
+    top: calc(100% + 8px);
+  }
+
+  .rail-item[aria-current="page"]::before {
+    display: none;
+  }
+}
+
+@media (min-width: 400px) and (max-width: 767px) {
+  .rail .brand .name {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: hidden;
+    clip-path: none;
+    text-overflow: ellipsis;
+  }
+}
+
+/* The menu on a phone: the sections with their names. */
+.sheet .rail-nav {
+  padding: 12px 0;
+}
+
+.sheet .rail-item {
+  min-height: 40px;
+}
+
+.sheet .rail-item[aria-current="page"]::before {
+  left: -12px;
+}

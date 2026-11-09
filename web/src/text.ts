@@ -42,7 +42,14 @@ export const T = {
     connect: 'Connect your agent',
     toReview: (n: number) => (n === 1 ? '1 proposal to review' : `${n} proposals to review`),
     toReviewShort: (n: number) => `${n} to review`,
-    allBrains: '← All brains',
+    allBrains: 'All brains',
+    mainNav: 'Main',
+    help: 'Help',
+    expandRail: 'Expand the side bar',
+    foldRail: 'Collapse the side bar',
+    switchBrain: 'Switch brain',
+    brains: 'Your brains',
+    newBrain: 'New brain',
     offline:
       'You are offline. What you see may be out of date; changes are off until the connection is back.',
     maintenance:

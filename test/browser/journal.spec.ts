@@ -27,7 +27,10 @@ test.describe('Sessions', () => {
   }) => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/b/growth')
-    await page.locator('aside').getByRole('link', { name: 'Journal' }).click()
+    await page
+      .getByRole('navigation', { name: 'Sections of this brain' })
+      .getByRole('link', { name: 'Journal' })
+      .click()
     await expect(page).toHaveURL(new RegExp(`${J}$`))
     await expect(page.getByRole('heading', { level: 1, name: 'Sessions' })).toBeFocused()
     await expect(page).toHaveTitle(/^Sessions · /)
@@ -42,10 +45,9 @@ test.describe('Sessions', () => {
     await expect(intros).toContainText('Short intros keep viewers past 30 seconds')
     await expect(items.filter({ hasText: 'Narrate the intro' })).toContainText('Closed without summary')
     await expect(items.filter({ hasText: 'Narrate the intro' })).toContainText('run r_77, step 3')
-    await expect(page.locator('aside').getByRole('link', { name: 'Journal' })).toHaveAttribute(
-      'aria-current',
-      'page',
-    )
+    await expect(
+      page.getByRole('navigation', { name: 'Sections of this brain' }).getByRole('link', { name: 'Journal' }),
+    ).toHaveAttribute('aria-current', 'page')
     await audit(page, 'sessions')
   })
 

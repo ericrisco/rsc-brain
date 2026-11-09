@@ -1,5 +1,5 @@
-// Review of PR18: on a long page inside a brain, the line between the side bar and the content runs the
-// whole height of the page, not only the first screen.
+// Review of PR18: on a long page inside a brain, the line between the side bar (the rail, plan canvas-ui)
+// and the content runs the whole height of the page, not only the first screen.
 import { expect, scenario, test } from './fixture.ts'
 
 test('the side bar line runs to the bottom of a long page', async ({ page, context, baseURL }) => {
@@ -12,7 +12,7 @@ test('the side bar line runs to the bottom of a long page', async ({ page, conte
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
   // Just right of the side bar, at the bottom of the window: the line is drawn there.
   const drawn = await page.evaluate(() => {
-    const side = document.querySelector('.sidebar') as HTMLElement
+    const side = document.querySelector('.rail') as HTMLElement
     const x = side.getBoundingClientRect().right
     const y = window.innerHeight - 4
     // The element whose edge is the line: the side bar's right border or the content's left border.
@@ -47,9 +47,9 @@ test('the line between side bar and content is as tall as the page (a full-page 
   await page.goto('/b/growth')
   await expect(page.getByRole('region', { name: "Today's sessions" }).getByRole('listitem')).toHaveCount(20)
   const spans = await page.evaluate(() => {
-    const x = (document.querySelector('.sidebar') as HTMLElement).getBoundingClientRect().right
+    const x = (document.querySelector('.rail') as HTMLElement).getBoundingClientRect().right
     const bottom = document.documentElement.scrollHeight
-    return [...document.querySelectorAll<HTMLElement>('.body, .body > *')].some((el) => {
+    return [...document.querySelectorAll<HTMLElement>('.frame, .frame > *')].some((el) => {
       const r = el.getBoundingClientRect()
       const cs = getComputedStyle(el)
       const right = Number.parseFloat(cs.borderRightWidth) > 0 && Math.abs(r.right - x) < 2
