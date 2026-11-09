@@ -454,3 +454,43 @@ for (const zoomed of [false, true])
       })
       .toBeLessThan(panel.left)
   })
+
+// Review R2-1: whatever scale Fit lands on with the panel open, every card it draws is whole: inside the
+// canvas and left of the panel (tiles never keep the narrow pad of the pills).
+for (const size of [
+  { width: 1920, height: 1080 },
+  { width: 1366, height: 768 },
+  { width: 1280, height: 720 },
+  { width: 1100, height: 900 },
+])
+  test(`Fit with the panel open draws every card whole at ${size.width}×${size.height}`, async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.setViewportSize(size)
+    await page.goto(GRAPH)
+    await settled(page)
+    await page.getByRole('button', { name: 'Inspector', exact: true }).click()
+    const canvas = page.locator('canvas.graph-canvas')
+    const draws = Number(await canvas.getAttribute('data-draws'))
+    await page.getByRole('button', { name: 'Fit', exact: true }).click()
+    await expect.poll(async () => Number(await canvas.getAttribute('data-draws'))).toBeGreaterThan(draws)
+    const c = await box(page, 'canvas.graph-canvas')
+    const panel = await box(page, '#graph-inspector')
+    const cards = JSON.parse((await canvas.getAttribute('data-card-list')) ?? '[]') as {
+      x: number
+      y: number
+      w: number
+      h: number
+      title: string
+    }[]
+    expect(cards.length).toBeGreaterThan(0)
+    for (const k of cards) {
+      expect(k.x, `${k.title} inside the canvas`).toBeGreaterThanOrEqual(0)
+      expect(k.y, `${k.title} inside the canvas`).toBeGreaterThanOrEqual(0)
+      expect(k.y + k.h, `${k.title} inside the canvas`).toBeLessThanOrEqual(c.bottom - c.top)
+      expect(c.left + k.x + k.w, `${k.title} left of the panel`).toBeLessThanOrEqual(panel.left)
+    }
+  })

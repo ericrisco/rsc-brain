@@ -14,11 +14,11 @@ import {
   type Card,
   clipToRect,
   dotGrid,
+  fitCards,
   GROUP_MAX,
   placeCards,
   TILE_H,
   TILE_MIN,
-  TILE_PAD,
   TILE_SCALE,
   TILE_TEXT,
 } from './cards.ts'
@@ -233,15 +233,7 @@ export class Renderer {
         max: FIT_MAX,
         right: st.right,
       })
-    let view = st.view
-    if (st.autoFit) {
-      view = fitWith(fitPad(sc, st.fit))
-      // Fitted close enough for tiles: fitted again with room for whole tiles at the edges.
-      if (view.scale >= TILE_SCALE) {
-        const roomy = fitWith(Math.max(fitPad(sc, st.fit), TILE_PAD))
-        if (roomy.scale >= TILE_SCALE) view = roomy
-      }
-    }
+    const view = st.autoFit ? fitCards(fitWith, fitPad(sc, st.fit)) : st.view
     const tile = view.scale >= TILE_SCALE
     const { palette, dpr } = st
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)

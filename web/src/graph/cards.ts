@@ -147,3 +147,12 @@ export function dotGrid(view: View, base = DOT_STEP): { step: number; ox: number
   const mod = (a: number) => ((a % step) + step) % step
   return { step, ox: mod(view.tx), oy: mod(view.ty) }
 }
+
+// Fit with cards in mind (review R2-1): a fit close enough for tiles is done again with room for whole tiles
+// at the edges, and that roomy view is kept even when it then falls short of tiles (pills with room to
+// spare). Tiles are never drawn with the narrow pad of the pills.
+export function fitCards(fitWith: (pad: number) => View, pad: number): View {
+  const tight = fitWith(pad)
+  if (tight.scale < TILE_SCALE) return tight
+  return fitWith(Math.max(pad, TILE_PAD))
+}

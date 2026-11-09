@@ -10,11 +10,15 @@ import {
   cardSize,
   clipToRect,
   dotGrid,
+  fitCards,
   GROUP_H,
   hitCard,
   MAX_CARDS,
   placeCards,
+  TILE_PAD,
+  TILE_SCALE,
 } from '../../web/src/graph/cards.ts'
+import { fit } from '../../web/src/graph/model.ts'
 
 const xy = (...pts: [number, number][]) => Float32Array.from(pts.flat())
 const none = new Set<number>()
@@ -157,5 +161,32 @@ describe('the dotted ground', () => {
   })
   it('so far out that the dots would crowd under 6 px: none', () => {
     assert.equal(dotGrid({ scale: 0.001, tx: 0, ty: 0 }), null)
+  })
+})
+
+// Review R2-1: Fit never draws tiles with the narrow pad of the pills. Close enough for tiles, it fits again
+// with room for whole tiles at the edges, and keeps that view even when it then falls short of tiles.
+describe('Fit and the tiles', () => {
+  const xy = Float32Array.from([0, 0, 100, 0])
+  const on = new Uint8Array([1, 1])
+  const fitWith = (w: number) => (pad: number) => fit(xy, on, w, 600, pad, 0, { max: 8 })
+  it('a view that draws tiles keeps every page a half tile from the edges', () => {
+    for (const w of [416, 500, 700, 1200, 1920]) {
+      const v = fitCards(fitWith(w), 48)
+      if (v.scale < TILE_SCALE) continue
+      for (const x of [0, 100]) {
+        const sx = x * v.scale + v.tx
+        assert.ok(sx >= TILE_PAD - 1e-6 && sx <= w - TILE_PAD + 1e-6, `w ${w}: ${sx}`)
+      }
+    }
+  })
+  it('the tight fit that would draw tiles gives way to the roomy one, even below the tile scale', () => {
+    // 100 apart in 416 px: tight (pad 48) is 3.2, tiles; roomy (pad 150) is 1.16, pills.
+    const v = fitCards(fitWith(416), 48)
+    assert.ok(v.scale < TILE_SCALE, `scale ${v.scale}`)
+  })
+  it('far from tiles, the tight fit stays', () => {
+    const v = fitCards(fitWith(200), 48)
+    assert.equal(v.scale, fitWith(200)(48).scale)
   })
 })

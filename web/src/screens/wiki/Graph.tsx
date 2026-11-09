@@ -938,7 +938,7 @@ function GraphCanvas({
     c.dataset.dots = String(d.dots)
     // The first cards with their size and words (tests read them).
     c.dataset.cardList = JSON.stringify(
-      d.cards.slice(0, 12).map((k, n) => ({ w: k.w, h: k.h, title: d.titles[n] ?? '' })),
+      d.cards.slice(0, 40).map((k, n) => ({ x: k.x, y: k.y, w: k.w, h: k.h, title: d.titles[n] ?? '' })),
     )
     if (d.active) c.dataset.active = `${d.active[0]},${d.active[1]}`
     else delete c.dataset.active
