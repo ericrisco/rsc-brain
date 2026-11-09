@@ -276,6 +276,13 @@ test('on a tablet the open rail is for the moment: not remembered, closed by a m
   await nav.getByRole('link', { name: 'Wiki' }).click()
   await expect(page).toHaveURL(/\/b\/growth\/wiki$/)
   await expect.poll(() => railWidth(page)).toBeCloseTo(56, 0)
+  // Review A2: Tab out of the open rail (its last stop is the button that folds it) folds it.
+  await expand.click()
+  await expect.poll(() => railWidth(page)).toBeCloseTo(220, 0)
+  await page.getByRole('button', { name: 'Collapse the side bar' }).focus()
+  await page.keyboard.press('Tab')
+  await expect.poll(() => page.evaluate(() => Boolean(document.activeElement?.closest('#rail')))).toBe(false)
+  await expect.poll(() => railWidth(page)).toBeCloseTo(56, 0)
   await expand.click()
   await page.reload()
   await expect(nav.getByRole('link', { name: 'Overview' })).toBeVisible()

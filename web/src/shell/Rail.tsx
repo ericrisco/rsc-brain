@@ -331,8 +331,9 @@ function useTips() {
   return { off, moved }
 }
 
-// On a tablet the open rail lies over the screen: it closes on a move to another screen, on Esc and on a
-// click outside it (review R2). Crossing into or out of a tablet's width starts the rail again.
+// On a tablet the open rail lies over the screen: it closes on a move to another screen, on Esc, on a click
+// outside it and when the keyboard leaves it (review R2, A2). Crossing into or out of a tablet's width
+// starts the rail again.
 function useTabletRail(path: string, open: boolean) {
   useEffect(() => {
     if (isTablet()) foldRail()
@@ -349,14 +350,17 @@ function useTabletRail(path: string, open: boolean) {
     const esc = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !e.defaultPrevented) foldRail()
     }
-    const outside = (e: PointerEvent) => {
+    const outside = (e: Event) => {
       if (!(e.target as Element | null)?.closest?.('#rail')) foldRail()
     }
     document.addEventListener('keydown', esc)
     document.addEventListener('pointerdown', outside)
+    // The keyboard leaving the rail (Tab past its last stop) folds it too (review A2).
+    document.addEventListener('focusin', outside)
     return () => {
       document.removeEventListener('keydown', esc)
       document.removeEventListener('pointerdown', outside)
+      document.removeEventListener('focusin', outside)
     }
   }, [open])
 }
