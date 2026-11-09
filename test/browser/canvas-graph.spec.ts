@@ -505,3 +505,61 @@ for (const size of [
       expect(c.left + k.x + k.w, `${k.title} left of the panel`).toBeLessThanOrEqual(panel.left)
     }
   })
+
+// Review R2-2: with Fit on (auto), a page picked by pointer at the right edge, drawn as a point until then,
+// gets its card clear of the panel. Narrow, tall windows: the picture fills the width, up to the panel.
+for (const size of [
+  { width: 1100, height: 1000 },
+  { width: 1200, height: 1080 },
+])
+  test(`with Fit on, a point picked at the right edge gets its card clear of the panel at ${size.width}`, async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.setViewportSize(size)
+    await page.goto(GRAPH)
+    await settled(page)
+    await page.getByRole('button', { name: 'Inspector', exact: true }).click()
+    await page.getByRole('button', { name: 'Fit', exact: true }).click()
+    await upToDate(page)
+    const panel = await box(page, '#graph-inspector')
+    // The rightmost point under the pointer (not a card) in the part the panel leaves.
+    const spot = await page.locator('canvas.graph-canvas').evaluate((c, right) => {
+      const el = c as HTMLCanvasElement
+      const r = el.getBoundingClientRect()
+      const cards = JSON.parse(el.dataset.cardList ?? '[]') as {
+        x: number
+        y: number
+        w: number
+        h: number
+      }[]
+      for (let x = right - 30; x > right - 200; x -= 3)
+        for (let y = r.top + 120; y < r.bottom - 80; y += 3) {
+          if (
+            cards.some(
+              (k) =>
+                x - r.left >= k.x && x - r.left <= k.x + k.w && y - r.top >= k.y && y - r.top <= k.y + k.h,
+            )
+          )
+            continue
+          el.dispatchEvent(new PointerEvent('pointermove', { clientX: x, clientY: y, bubbles: true }))
+          if (el.dataset.hover !== undefined) return { x: x - r.left, y: y - r.top }
+        }
+      return null
+    }, panel.left)
+    expect(spot, 'a point near the panel').not.toBeNull()
+    const canvas = page.locator('canvas.graph-canvas')
+    await canvas.click({ position: spot as { x: number; y: number } })
+    await expect(page.getByRole('complementary', { name: /^Inspector \S/ })).toBeVisible()
+    const c = await box(page, 'canvas.graph-canvas')
+    await expect
+      .poll(async () => {
+        const [x, , w] = ((await canvas.getAttribute('data-selected-card')) ?? '9999,0,0,0')
+          .split(',')
+          .map(Number) as [number, number, number]
+        return c.left + x + w
+      })
+      .toBeLessThan(panel.left)
+  })
