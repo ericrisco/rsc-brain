@@ -17,6 +17,7 @@ import {
   fitCards,
   GROUP_MAX,
   placeCards,
+  placeLabels,
   TILE_H,
   TILE_MIN,
   TILE_SCALE,
@@ -184,6 +185,8 @@ export type Drawn = {
   active: [number, number] | null
   // The cards drawn, first the most wanted (the page finds what is under the pointer from them).
   cards: Card[]
+  // The names written beside points, where no card fits.
+  labels: Card[]
   // The step of the dotted ground in screen pixels (0: left out).
   dots: number
   // Each card's words as drawn (a cut title ends in "…"), in the order of `cards`.
@@ -202,6 +205,9 @@ const FIT_MAX = 8
 // How many cards a picture describes to a test.
 export const PROBE_CARDS = 40
 const TILE_TITLE = '600 14px ui-sans-serif, system-ui, sans-serif'
+// A name beside a point: 12 px (its width is the card title's, at 13 px, scaled).
+const LABEL = '12px ui-sans-serif, system-ui, sans-serif'
+const LABEL_SCALE = 12 / 13
 // Where a card's words start: after the disc with the type's shape.
 const TEXT_X = 32
 
@@ -282,7 +288,7 @@ export class Renderer {
     }
 
     // The cards first: the lines stop at their edges, and an item with a card is drawn only as its card.
-    const cards = this.place(ctx, st, sc, SX, SY, isGroup, tile)
+    const { cards, labels } = this.place(ctx, st, sc, SX, SY, isGroup, tile)
     const cardOf = new Int32Array(sc.n).fill(-1)
     for (const [k, c] of cards.entries()) cardOf[c.i] = k
 
@@ -490,12 +496,14 @@ export class Renderer {
     ring(st.active, 2, 7, palette.accent)
 
     this.draw(ctx, st, sc, cards, lit, tile)
+    this.drawLabels(ctx, st, sc, labels, lit, isGroup)
     ctx.textBaseline = 'alphabetic'
     const a = st.active
     return {
       view,
       active: a >= 0 && st.nodes[a] ? [Math.round(SX(a)), Math.round(SY(a))] : null,
       cards,
+      labels,
       dots: dots ? Math.round(dots.step * 10) / 10 : 0,
       // Only for a browser a test drives (State.probe): never built for a person, picture after picture.
       titles: st.probe
@@ -603,7 +611,7 @@ export class Renderer {
     SY: (i: number) => number,
     isGroup: (i: number) => boolean,
     tile: boolean,
-  ): Card[] {
+  ): { cards: Card[]; labels: Card[] } {
     const sx = new Float32Array(2 * sc.n).fill(Number.NaN)
     for (let i = 0; i < sc.n; i++)
       if (st.nodes[i]) {
@@ -628,17 +636,51 @@ export class Renderer {
       for (let i = 0; i < sc.n; i++) if (isGroup(i)) yield i
       for (let i = 0; i < sc.n; i++) yield i
     }
-    return placeCards({
-      order: order(),
+    const placing = {
       sx,
-      textW: (i) => this.wordsOf(ctx, sc, i, isGroup(i)).w,
+      textW: (i: number) => this.wordsOf(ctx, sc, i, isGroup(i)).w,
       ...(tile ? { size: (i: number) => this.tileWords(ctx, sc, i, isGroup(i)) } : {}),
       group: isGroup,
       width: st.width,
       height: st.height,
       forced: new Set([st.active, st.selected, st.focus].filter((i) => i >= 0 && st.nodes[i])),
       blocked: st.blocked,
+    }
+    const cards = placeCards({ ...placing, order: order() })
+    // Where a card does not fit, the page's name beside its point (closing review).
+    const labels = placeLabels({
+      ...placing,
+      order: order(),
+      cards,
+      labelW: (i) => this.wordsOf(ctx, sc, i, isGroup(i)).w * LABEL_SCALE,
     })
+    return { cards, labels }
+  }
+
+  // Names beside points, with a halo of the ground so lines under them do not cut them.
+  private drawLabels(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    st: State,
+    sc: Scene,
+    labels: Card[],
+    lit: Uint8Array | null,
+    isGroup: (i: number) => boolean,
+  ): void {
+    const p = st.palette
+    ctx.font = LABEL
+    ctx.textBaseline = 'middle'
+    ctx.lineJoin = 'round'
+    ctx.lineWidth = 3
+    for (const l of labels) {
+      const text = this.wordsOf(ctx, sc, l.i, isGroup(l.i)).t
+      ctx.font = LABEL
+      ctx.globalAlpha = lit && !lit[l.i] ? 0.35 : sc.superseded[l.i] === 1 ? 0.6 : 0.9
+      ctx.strokeStyle = p.ground
+      ctx.strokeText(text, l.x + 3, l.y + l.h / 2)
+      ctx.fillStyle = p.cardInk
+      ctx.fillText(text, l.x + 3, l.y + l.h / 2)
+    }
+    ctx.globalAlpha = 1
   }
 
   // The cards, the most wanted on top. A page: a pill with its type's shape in a disc and its title. A

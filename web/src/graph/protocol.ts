@@ -40,6 +40,7 @@ export type DrawnMessage = {
   active: [number, number] | null
   // The cards drawn, first the most wanted, and the step of the dotted ground (0: none).
   cards: Card[]
+  labels: Card[]
   dots: number
   titles: string[]
   // How long the picture took to paint, in ms, and the state it was drawn from.

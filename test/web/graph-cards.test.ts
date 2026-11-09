@@ -16,6 +16,7 @@ import {
   keepInView,
   MAX_CARDS,
   placeCards,
+  placeLabels,
   TILE_PAD,
   TILE_SCALE,
 } from '../../web/src/graph/cards.ts'
@@ -247,4 +248,53 @@ describe('Fit on a small canvas', () => {
             assert.ok(sx >= TILE_PAD - 1e-6 && sx <= w - TILE_PAD + 1e-6)
           }
       })
+})
+
+// Closing review, visual gap 3: where no card fits, a name beside the point; never over a card, another name
+// or another point, and never more than the cards leave of the 160.
+describe('names beside points', () => {
+  const base = {
+    textW: () => 60,
+    group: () => false,
+    width: 1000,
+    height: 800,
+    forced: new Set<number>(),
+    labelW: () => 50,
+  }
+  it('goes right of its point, else left, and never over another point or name', () => {
+    const sx = Float32Array.from([500, 400, 530, 400, 470, 400])
+    const labels = placeLabels({ ...base, sx, order: [0, 1, 2], cards: [] })
+    for (const l of labels)
+      for (let j = 0; j < 3; j++) {
+        if (j === l.i) continue
+        const x = sx[2 * j] as number
+        const y = sx[2 * j + 1] as number
+        assert.ok(
+          !(x >= l.x - 3 && x <= l.x + l.w + 3 && y >= l.y - 3 && y <= l.y + l.h + 3),
+          `${l.i} over ${j}`,
+        )
+      }
+    for (const a of labels)
+      for (const b of labels)
+        if (a !== b) assert.ok(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y)
+  })
+  it('none for a page that has a card, and none past the 160', () => {
+    const sx = Float32Array.from([100, 100, 600, 600])
+    const labels = placeLabels({
+      ...base,
+      sx,
+      order: [0, 1],
+      cards: [{ i: 0, x: 48, y: 86, w: 104, h: 28 }],
+      max: 2,
+    })
+    assert.deepEqual(
+      labels.map((l) => l.i),
+      [1],
+    )
+    assert.equal(
+      placeLabels({ ...base, sx, order: [0, 1], cards: [{ i: 0, x: 48, y: 86, w: 104, h: 28 }], max: 1 })
+        .length,
+      0,
+    )
+  })
 })

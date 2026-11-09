@@ -828,6 +828,7 @@ function GraphCanvas({
   const positions = useRef<Float32Array | null>(null)
   // The cards of the last picture of this layout: what the pointer is on is found in them first.
   const cards = useRef<Card[]>([])
+  const hits = useRef<Card[]>([])
   const [ready, setReady] = useState(false)
   const [active, setActive] = useState(-1)
   const [said, setSaid] = useState('')
@@ -927,6 +928,7 @@ function GraphCanvas({
     view: View
     active: [number, number] | null
     cards: Card[]
+    labels: Card[]
     dots: number
     titles: string[]
     ms: number
@@ -938,6 +940,8 @@ function GraphCanvas({
     if (d.id !== layoutId.current) return
     view.current = d.view
     cards.current = d.cards
+    // What the pointer can pick: the cards first, then the names written beside points.
+    hits.current = d.labels.length ? [...d.cards, ...d.labels] : d.cards
     draws.current += 1
     // The painter's time for this layout, up to its settled picture (CA5 reads it: CDP cannot slow a worker).
     if (!marked.current.settled) painted.current += d.ms
@@ -946,6 +950,7 @@ function GraphCanvas({
     // The last state sent and the one this picture shows: equal once the picture is up to date.
     c.dataset.drawnSeq = String(d.seq)
     c.dataset.cards = String(d.cards.length)
+    c.dataset.labels = String(d.labels.length)
     c.dataset.dots = String(d.dots)
     // The first cards with their size and words, for a test driving the browser only (closing review C5).
     if (probe)
@@ -1065,6 +1070,7 @@ function GraphCanvas({
     layoutId.current += 1
     positions.current = null
     cards.current = []
+    hits.current = []
     settled.current = false
     frames.current = 0
     marked.current.settled = false
@@ -1368,7 +1374,7 @@ function GraphCanvas({
     const rect = c.getBoundingClientRect()
     const sx = e.clientX - rect.left
     const sy = e.clientY - rect.top
-    const onCard = hitCard(cards.current, sx, sy)
+    const onCard = hitCard(hits.current, sx, sy)
     if (onCard >= 0 && latest.current.nodes[onCard]) return onCard
     const [wx, wy] = toWorld(sx, sy)
     return hit(x, latest.current.nodes, wx, wy, reach())

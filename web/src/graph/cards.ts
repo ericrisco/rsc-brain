@@ -56,7 +56,8 @@ export type Placing = {
 
 const CELL = 32
 
-export function placeCards(p: Placing): Card[] {
+// What a card or a name must not cover: the drawn pages (by cells of the screen) and the controls.
+function space(p: Placing) {
   const n = p.sx.length / 2
   // The drawn pages by cells of the screen, to find quickly which ones a card would cover.
   const cells = new Map<number, number[]>()
@@ -85,13 +86,6 @@ export function placeCards(p: Placing): Card[] {
         }
     return false
   }
-  const max = p.max ?? MAX_CARDS
-  const placed: Card[] = []
-  const seen = new Set<number>()
-  const meets = (r: Rect) =>
-    placed.some(
-      (c) => r.x < c.x + c.w + GAP && r.x + r.w + GAP > c.x && r.y < c.y + c.h + GAP && r.y + r.h + GAP > c.y,
-    )
   const blocked = p.blocked ?? []
   const under = (r: Rect) => {
     for (let b = 0; b + 3 < blocked.length; b += 4) {
@@ -107,6 +101,18 @@ export function placeCards(p: Placing): Card[] {
     }
     return false
   }
+  return { n, covers, under }
+}
+
+export function placeCards(p: Placing): Card[] {
+  const { n, covers, under } = space(p)
+  const max = p.max ?? MAX_CARDS
+  const placed: Card[] = []
+  const seen = new Set<number>()
+  const meets = (r: Rect) =>
+    placed.some(
+      (c) => r.x < c.x + c.w + GAP && r.x + r.w + GAP > c.x && r.y < c.y + c.h + GAP && r.y + r.h + GAP > c.y,
+    )
   for (const i of p.order) {
     if (placed.length >= max) break
     if (seen.has(i) || i < 0 || i >= n) continue
@@ -123,6 +129,46 @@ export function placeCards(p: Placing): Card[] {
     placed.push({ i, ...r })
   }
   return placed
+}
+
+// The height of a name written beside a page's point, and where it goes: right of the point, else left,
+// above, below; never over a card, another name, another point or a control (closing review). At most as
+// many as MAX_CARDS less the cards.
+export const LABEL_H = 16
+export function placeLabels(p: Placing & { cards: readonly Card[]; labelW: (i: number) => number }): Card[] {
+  const { n, covers, under } = space(p)
+  const taken: Rect[] = p.cards.map((c) => ({ x: c.x, y: c.y, w: c.w, h: c.h }))
+  const has = new Set(p.cards.map((c) => c.i))
+  const max = (p.max ?? MAX_CARDS) - p.cards.length
+  const out: Card[] = []
+  const meets = (r: Rect) =>
+    taken.some(
+      (c) => r.x < c.x + c.w + 2 && r.x + r.w + 2 > c.x && r.y < c.y + c.h + 2 && r.y + r.h + 2 > c.y,
+    )
+  for (const i of p.order) {
+    if (out.length >= max) break
+    if (has.has(i) || i < 0 || i >= n) continue
+    has.add(i)
+    const x = p.sx[2 * i] as number
+    const y = p.sx[2 * i + 1] as number
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > p.width || y > p.height) continue
+    const w = Math.ceil(p.labelW(i)) + 6
+    const h = LABEL_H
+    for (const [sx, sy] of [
+      [x + 7, y - h / 2],
+      [x - 7 - w, y - h / 2],
+      [x - w / 2, y - 7 - h],
+      [x - w / 2, y + 7],
+    ] as const) {
+      const r = { x: Math.round(sx), y: Math.round(sy), w, h }
+      if (r.x < 0 || r.y < 0 || r.x + r.w > p.width || r.y + r.h > p.height) continue
+      if (meets(r) || covers(r, i) || under(r)) continue
+      out.push({ i, ...r })
+      taken.push(r)
+      break
+    }
+  }
+  return out
 }
 
 // The item whose card is under (x, y), edges included: the first in the order where two meet; −1 for none.

@@ -664,3 +664,17 @@ for (const zoom of [0, 2])
         ).toBe(false)
     }
   })
+
+// Closing review, visual gap 3: a big wiki at Fit names many of its pages. Where a card does not fit, the
+// page's name is written beside its point, never over another name, card, point or control.
+test('a 282-page wiki at Fit names at least 40 of its pages', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto(GRAPH)
+  await settled(page)
+  await upToDate(page)
+  const canvas = page.locator('canvas.graph-canvas')
+  const named =
+    Number(await canvas.getAttribute('data-cards')) + Number(await canvas.getAttribute('data-labels'))
+  expect(named).toBeGreaterThanOrEqual(40)
+})
