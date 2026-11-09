@@ -185,6 +185,54 @@ test.describe('the cloud, moving (motion allowed)', () => {
     expect(await yawOf(page)).toBe(held)
   })
 
+  // Review R3: what the pointer finds is what is drawn now, not where the cloud stood before it turned.
+  test('R3: a click on a turning cloud picks only what is drawn there once it stops', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    test.slow()
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const canvas = page.locator('canvas.graph-canvas')
+    // Still under the keyboard: where its page is drawn now.
+    await canvas.focus()
+    await expect(canvas).toHaveAttribute('data-spinning', 'false')
+    await expect(canvas).toHaveAttribute('data-active', /\d+,\d+/)
+    const [x, y] = ((await canvas.getAttribute('data-active')) ?? '').split(',').map(Number) as [
+      number,
+      number,
+    ]
+    // Away from the canvas it turns again, far enough for that page to be somewhere else.
+    await page.locator('.graph-strip h1').click()
+    await page.mouse.move(2, 2)
+    await expect(canvas).toHaveAttribute('data-spinning', 'true', { timeout: 9000 })
+    const from = await yawOf(page)
+    await expect
+      .poll(async () => ((await yawOf(page)) - from + 360) % 360, { timeout: 9000 })
+      .toBeGreaterThan(25)
+    // A click on that old spot: whatever it picks has its card drawn there.
+    await canvas.click({ position: { x, y } })
+    await expect
+      .poll(() =>
+        canvas.evaluate((c) => (c as HTMLElement).dataset.drawnSeq === (c as HTMLElement).dataset.sentSeq),
+      )
+      .toBe(true)
+    await page.waitForTimeout(300)
+    // Picked: the page is drawn under the pointer (its point near, or its card over the spot).
+    const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
+    if ((await inspector.count()) === 0) return
+    const [ax, ay] = ((await canvas.getAttribute('data-active')) ?? '').split(',').map(Number) as [
+      number,
+      number,
+    ]
+    const card = await canvas.getAttribute('data-selected-card')
+    const [cx, cy, cw, ch] = (card ?? '0,0,0,0').split(',').map(Number) as [number, number, number, number]
+    const onCard = x >= cx && x <= cx + cw && y >= cy && y <= cy + ch
+    expect(onCard || Math.hypot(ax - x, ay - y) <= 24).toBe(true)
+  })
+
   test('SB5: a hidden tab stops the turn and the light', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
     await page.goto(GRAPH)

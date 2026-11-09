@@ -897,6 +897,7 @@ function GraphCanvas({
   // The cards of the last picture of this layout: what the pointer is on is found in them first.
   const cards = useRef<Card[]>([])
   const hits = useRef<Card[]>([])
+  const pendingClick = useRef<{ sx: number; sy: number } | null>(null)
   const [ready, setReady] = useState(false)
   const [active, setActiveState] = useState(-1)
   // Where the keyboard is, also kept at once: a key pressed before the screen draws again (a fast typist,
@@ -1018,6 +1019,14 @@ function GraphCanvas({
     zoomedIn.current = d.view.scale >= TILE_SCALE
     // The flat projection the picture was drawn with: what the pointer and the arrow keys work on.
     if (d.xy) positions.current = d.xy
+    // Turning, the points move under the pointer every frame: nothing is picked until a still picture says
+    // where they are (review R3). A click made meanwhile waits for it.
+    else if (d.spinning) positions.current = null
+    const waiting = pendingClick.current
+    if (waiting && positions.current && !d.spinning) {
+      pendingClick.current = null
+      pickAt(waiting.sx, waiting.sy)
+    }
     cards.current = d.cards
     // What the pointer can pick: the cards first, then the names written beside points.
     hits.current = d.labels.length ? [...d.cards, ...d.labels] : d.cards
@@ -1204,6 +1213,7 @@ function GraphCanvas({
   useEffect(() => {
     layoutId.current += 1
     positions.current = null
+    pendingClick.current = null
     cards.current = []
     hits.current = []
     settled.current = false
@@ -1539,13 +1549,14 @@ function GraphCanvas({
     }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
-  const at = (e: PointerEvent) => {
+  const onCanvas = (e: PointerEvent) => {
+    const rect = (canvas.current as HTMLCanvasElement).getBoundingClientRect()
+    return [e.clientX - rect.left, e.clientY - rect.top] as const
+  }
+  const at = (e: PointerEvent) => (canvas.current ? itemAt(...onCanvas(e)) : -1)
+  const itemAt = (sx: number, sy: number) => {
     const x = shownXY()
-    const c = canvas.current
-    if (!x || !c) return -1
-    const rect = c.getBoundingClientRect()
-    const sx = e.clientX - rect.left
-    const sy = e.clientY - rect.top
+    if (!x) return -1
     const onCard = hitCard(hits.current, sx, sy)
     if (onCard >= 0 && latest.current.nodes[onCard]) return onCard
     const [wx, wy] = toWorld(sx, sy)
@@ -1585,8 +1596,13 @@ function GraphCanvas({
   const onPointerUp = (e: PointerEvent) => {
     const d = drag.current
     drag.current = null
-    if (!d || d.moved) return
-    const i = at(e)
+    if (!d || d.moved || !canvas.current) return
+    const [sx, sy] = onCanvas(e)
+    if (!shownXY()) pendingClick.current = { sx, sy }
+    else pickAt(sx, sy)
+  }
+  const pickAt = (sx: number, sy: number) => {
+    const i = itemAt(sx, sy)
     if (i >= 0) {
       setActive(i)
       onSelect(i)

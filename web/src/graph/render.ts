@@ -443,8 +443,9 @@ export class Renderer {
     // What the page needs back to find what is under the pointer: the projection, when it changed and the
     // cloud is still.
     const xyOut = (): Float32Array | null => {
+      // Turning (or flat), the page holds no projection: the next still one is always sent (review R3).
       if (spinning || flat) {
-        if (flat) this.sent = ''
+        this.sent = ''
         return null
       }
       const key = `${this.frames}|${this.camera.yaw}|${this.camera.pitch}`
