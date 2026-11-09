@@ -280,7 +280,10 @@ test.describe('the cloud, moving (motion allowed)', () => {
   })
 
   // Review R3: what the pointer finds is what is drawn now, not where the cloud stood before it turned.
-  test('R3: a click on a turning cloud picks only what is drawn there once it stops', async ({
+  // Review R3, made strict by round 2 (S3): a click on a turning cloud picks the page drawn there once it
+  // stops. The spot is a page's point just before the turn starts again; the click lands while it turns (no
+  // projection held), waits for the still picture, and must open that page or one drawn right there.
+  test('R3: a click on a turning cloud picks the page drawn under it once it stops', async ({
     page,
     context,
     baseURL,
@@ -290,33 +293,29 @@ test.describe('the cloud, moving (motion allowed)', () => {
     await page.goto(GRAPH)
     await settled(page)
     const canvas = page.locator('canvas.graph-canvas')
-    // Still under the keyboard: where its page is drawn now.
+    // Still under the keyboard: where its page's card is drawn now.
     await canvas.focus()
     await expect(canvas).toHaveAttribute('data-spinning', 'false')
-    await expect(canvas).toHaveAttribute('data-active', /\d+,\d+/)
-    const [x, y] = ((await canvas.getAttribute('data-active')) ?? '').split(',').map(Number) as [
-      number,
-      number,
-    ]
-    // Away from the canvas it turns again, far enough for that page to be somewhere else.
+    await expect(canvas).toHaveAttribute('data-active-card', /\d+,\d+,\d+,\d+/)
+    const [kx, ky, kw, kh] = ((await canvas.getAttribute('data-active-card')) ?? '')
+      .split(',')
+      .map(Number) as [number, number, number, number]
+    // The middle of its card: still there, give or take the little the cloud turns before the click.
+    const [x, y] = [kx + kw / 2, ky + kh / 2]
+    // Away from the canvas, after the rest, it turns again from where it stood.
     await page.locator('.graph-strip h1').click()
     await page.mouse.move(2, 2)
     await expect(canvas).toHaveAttribute('data-spinning', 'true', { timeout: 9000 })
-    const from = await yawOf(page)
-    await expect
-      .poll(async () => ((await yawOf(page)) - from + 360) % 360, { timeout: 9000 })
-      .toBeGreaterThan(25)
-    // A click on that old spot: whatever it picks has its card drawn there.
+    // At once, while it turns (the page holds no projection), a click on that spot.
     await canvas.click({ position: { x, y } })
+    const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
+    await expect(inspector).toBeVisible()
     await expect
       .poll(() =>
         canvas.evaluate((c) => (c as HTMLElement).dataset.drawnSeq === (c as HTMLElement).dataset.sentSeq),
       )
       .toBe(true)
-    await page.waitForTimeout(300)
-    // Picked: the page is drawn under the pointer (its point near, or its card over the spot).
-    const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
-    if ((await inspector.count()) === 0) return
+    // The page picked is drawn under the pointer (its point near, or its card over the spot).
     const [ax, ay] = ((await canvas.getAttribute('data-active')) ?? '').split(',').map(Number) as [
       number,
       number,

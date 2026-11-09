@@ -1033,14 +1033,15 @@ function GraphCanvas({
     // Turning, the points move under the pointer every frame: nothing is picked until a still picture says
     // where they are (review R3). A click made meanwhile waits for it.
     else if (d.spinning) positions.current = null
+    cards.current = d.cards
+    // What the pointer can pick: the cards first, then the names written beside points.
+    hits.current = d.labels.length ? [...d.cards, ...d.labels] : d.cards
+    // What was asked while it turned, now that this still picture's points and cards are known (S5).
     if (later.current.length && positions.current && !d.spinning) {
       const jobs = later.current
       later.current = []
       for (const job of jobs) job()
     }
-    cards.current = d.cards
-    // What the pointer can pick: the cards first, then the names written beside points.
-    hits.current = d.labels.length ? [...d.cards, ...d.labels] : d.cards
     draws.current += 1
     // The painter's time for this layout, up to its settled picture (CA5 reads it: CDP cannot slow a worker).
     if (!marked.current.settled) painted.current += d.ms
