@@ -4,6 +4,7 @@
 import type { ComponentChildren } from 'preact'
 import { useEffect, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
+import { isCanvasRoute } from '../lib/nav.ts'
 import { rail } from '../lib/rail.ts'
 import { brainsResource } from '../screens/Home.tsx'
 import type { Me } from '../session.ts'
@@ -46,11 +47,14 @@ export function Shell({
   children: ComponentChildren
 }) {
   const [menu, setMenu] = useState(false)
-  const { path } = useLocation()
+  const { path, query } = useLocation()
+  // A canvas screen fills the space right of the rail and does not scroll (plan canvas-ui D4); the graph's
+  // list is a page like any other.
+  const canvas = isCanvasRoute(path) && query.view !== 'list'
   useFreshBrains()
   useEffect(() => setMenu(false), [path])
   return (
-    <div class="frame" data-rail={rail.value}>
+    <div class="frame" data-rail={rail.value} data-mode={canvas ? 'canvas' : undefined}>
       <a class="skip" href="#main">
         {T.skip}
       </a>

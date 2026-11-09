@@ -43,6 +43,7 @@ import { isField } from '../../lib/screen.ts'
 import { PAGE_STATUSES, PAGE_TYPES } from '../../lib/wiki.ts'
 import { online } from '../../session.ts'
 import { T } from '../../text.ts'
+import { Icon } from '../../ui/icons.tsx'
 import { viewState } from '../../ui/state.ts'
 import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
 import { pageHref, StatusTag, TypeTag, useBrain, useFilters, WikiHead } from './common.tsx'
@@ -109,11 +110,8 @@ function cleanFilters(v: Record<(typeof KEYS)[number], string>): Filters {
 // How long typing in the tag filter rests before it applies.
 const TAG_PAUSE_MS = 400
 
-// The zoom buttons sit this far from the top of the picture (.graph-tools in app.css).
-const TOOLS_TOP = 8
-// The picture's box: never shorter than this, and this far above the bottom of the window.
-const BOX_MIN = 220
-const BOX_GAP = 16
+// The room left between what is drawn and the controls over the picture.
+const BAND_GAP = 8
 
 const coarse = () => typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 
@@ -644,14 +642,25 @@ function GraphScreen({ slug }: { slug: string }) {
       />
     )
 
+  const layout = (
+    <div class={`graph-layout${target ? ' open' : ''}`}>
+      <div class="graph-main">{body}</div>
+      {emptyWiki ? null : inspector}
+    </div>
+  )
+  // The list is a page; the graph is a canvas that fills the screen, its controls over it (plan D4).
+  if (list)
+    return (
+      <>
+        {head}
+        {layout}
+      </>
+    )
   return (
-    <>
-      {head}
-      <div class={`graph-layout${target ? ' open' : ''}`}>
-        <div class="graph-main">{body}</div>
-        {emptyWiki ? null : inspector}
-      </div>
-    </>
+    <div class="graph-screen">
+      <div class="graph-over">{head}</div>
+      {layout}
+    </div>
   )
 }
 
@@ -776,8 +785,7 @@ function GraphCanvas({
   // The zoom buttons over the top of the picture: what they cover, from the canvas top (they wrap when narrow).
   // Read from an observer (never asked for in the middle of a task, CA6): 8 px from the top, then its height.
   const tools = useRef<HTMLDivElement>(null)
-  const band = useRef(0)
-  const toolsBand = () => band.current
+  const band = useRef({ top: 0, bottom: 0 })
   const labels = useMemo(() => labelsOf(model, counts), [model, counts])
   const hubList = useMemo(() => hubs(model, nodes, HUBS), [model, nodes])
   const role = useMemo(() => roles(model), [model])
@@ -903,7 +911,8 @@ function GraphCanvas({
       bridges: s.bridgePairs,
       orphanLabel: s.orphans && s.focus < 0 ? T.graph.orphans(s.orphans) : '',
       inset: inset.current,
-      top: toolsBand(),
+      top: band.current.top,
+      bottom: band.current.bottom,
     }
     post({ type: 'state', state })
   }
@@ -992,35 +1001,25 @@ function GraphCanvas({
     }
     const ro = new ResizeObserver(measure)
     ro.observe(el)
+    // The bands kept free: at the top under the screen's controls, at the bottom over the zoom buttons.
     const t = tools.current
-    const tro = new ResizeObserver((entries) => {
-      const h = entries[entries.length - 1]?.borderBoxSize?.[0]?.blockSize ?? 0
-      const next = h ? Math.ceil(h) + TOOLS_TOP : 0
-      if (next === band.current) return
-      band.current = next
+    const over = el.closest('.graph-screen')?.querySelector<HTMLElement>('.graph-over') ?? null
+    const tro = new ResizeObserver(() => {
+      const r = el.getBoundingClientRect()
+      const o = over?.getBoundingClientRect()
+      const b = t?.getBoundingClientRect()
+      const top = o?.height ? Math.ceil(o.bottom - r.top) + BAND_GAP : 0
+      const bottom = b?.height ? Math.ceil(r.bottom - b.top) + BAND_GAP : 0
+      if (top === band.current.top && bottom === band.current.bottom) return
+      band.current = { top, bottom }
       sendState()
     })
     if (t) tro.observe(t)
+    if (over) tro.observe(over)
     return () => {
       ro.disconnect()
       tro.disconnect()
     }
-  }, [])
-
-  // The picture ends above the fold: the box takes the window's height left under it (at least a usable
-  // one). Measured after each drawing of the screen (what is above it may have grown: the focus line, the
-  // filters) and when the window changes size; written only when it changes.
-  const fitBox = () => {
-    const el = box.current
-    if (!el) return
-    const top = el.getBoundingClientRect().top + window.scrollY
-    const px = `${Math.max(BOX_MIN, Math.floor(window.innerHeight - top - BOX_GAP))}px`
-    if (el.style.height !== px) el.style.height = px
-  }
-  useLayoutEffect(fitBox)
-  useEffect(() => {
-    window.addEventListener('resize', fitBox)
-    return () => window.removeEventListener('resize', fitBox)
   }, [])
 
   // The pixel ratio changes when the window moves to another screen or the page is zoomed: paint sharp again.
@@ -1239,14 +1238,35 @@ function GraphCanvas({
       <div class="graph-stage">
         <div class="graph-box" ref={box} data-scroll-x>
           <div class="graph-tools" ref={tools}>
-            <button type="button" class="button quiet" onClick={() => zoom(1.25)} aria-keyshortcuts="+">
-              {g.zoomIn}
+            <button
+              type="button"
+              class="tool"
+              onClick={fitAll}
+              aria-label={g.fitAll}
+              title={`${g.fitAll} (0)`}
+              aria-keyshortcuts="0"
+            >
+              <Icon name="fit" />
             </button>
-            <button type="button" class="button quiet" onClick={() => zoom(0.8)} aria-keyshortcuts="-">
-              {g.zoomOut}
+            <button
+              type="button"
+              class="tool"
+              onClick={() => zoom(1.25)}
+              aria-label={g.zoomIn}
+              title={`${g.zoomIn} (+)`}
+              aria-keyshortcuts="+"
+            >
+              <Icon name="zoomIn" />
             </button>
-            <button type="button" class="button quiet" onClick={fitAll} aria-keyshortcuts="0">
-              {g.fitAll}
+            <button
+              type="button"
+              class="tool"
+              onClick={() => zoom(0.8)}
+              aria-label={g.zoomOut}
+              title={`${g.zoomOut} (−)`}
+              aria-keyshortcuts="-"
+            >
+              <Icon name="zoomOut" />
             </button>
           </div>
           {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: "application" makes a screen reader hand the arrow keys to the canvas, which walks the graph with them */}
@@ -1328,7 +1348,7 @@ function Legend({
   const shapes = SHAPES.filter((t) => drawn.types.has(t))
   const lines = [...KINDS, 'group'].filter((k) => drawn.kinds.has(k))
   return (
-    <details class="graph-legend" open>
+    <details class="graph-legend">
       <summary>{g.legend}</summary>
       <div class="legend-cols">
         <div>

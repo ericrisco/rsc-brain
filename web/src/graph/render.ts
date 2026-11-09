@@ -144,8 +144,10 @@ export type State = {
   orphanLabel: string
   // The height at the bottom of the canvas a sheet covers (a phone's inspector): fit leaves it out.
   inset: number
-  // The band at the top the zoom buttons cover: fit draws below it.
+  // The band at the top the screen's controls cover: fit draws below it.
   top: number
+  // The band at the bottom the zoom buttons cover: fit draws above it.
+  bottom: number
 }
 
 export type Drawn = { view: View; active: [number, number] | null }
@@ -177,7 +179,14 @@ export class Renderer {
     const xy = st?.xy ?? this.layout
     if (!sc || !st || !xy || xy.length !== 2 * sc.n || st.width === 0 || st.height === 0) return null
     const view = st.autoFit
-      ? fit(xy, st.fit, st.width, Math.max(120, st.height - st.inset), fitPad(sc, st.fit), st.top)
+      ? fit(
+          xy,
+          st.fit,
+          st.width,
+          Math.max(120, st.height - Math.max(st.inset, st.bottom)),
+          fitPad(sc, st.fit),
+          st.top,
+        )
       : st.view
     const { palette, dpr } = st
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
