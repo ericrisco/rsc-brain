@@ -834,6 +834,7 @@ function GraphCanvas({
   const frame = useRef(0)
   const draws = useRef(0)
   const painted = useRef(0)
+  const seq = useRef(0)
   const frames = useRef(0)
   const settled = useRef(false)
   const marked = useRef({ ready: false, settled: false })
@@ -922,6 +923,7 @@ function GraphCanvas({
     dots: number
     titles: string[]
     ms: number
+    seq: number
     settled: boolean
   }) => {
     const c = canvas.current
@@ -934,6 +936,8 @@ function GraphCanvas({
     if (!marked.current.settled) painted.current += d.ms
     if (!c) return
     c.dataset.draws = String(draws.current)
+    // The last state sent and the one this picture shows: equal once the picture is up to date.
+    c.dataset.drawnSeq = String(d.seq)
     c.dataset.cards = String(d.cards.length)
     c.dataset.dots = String(d.dots)
     // The first cards with their size and words (tests read them).
@@ -976,6 +980,8 @@ function GraphCanvas({
   }
   const sendState = () => {
     const s = latest.current
+    seq.current += 1
+    if (canvas.current) canvas.current.dataset.sentSeq = String(seq.current)
     const { w, h } = size.current
     const state: State = {
       width: w,
@@ -998,6 +1004,7 @@ function GraphCanvas({
       orphanLabel: s.orphans && s.focus < 0 ? T.graph.orphans(s.orphans) : '',
       inset: inset.current,
       right: panelWidth(latest.current.panel),
+      seq: seq.current,
       top: band.current.top,
       bottom: band.current.bottom,
     }

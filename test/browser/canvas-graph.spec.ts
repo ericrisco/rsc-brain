@@ -8,6 +8,16 @@ const GRAPH = '/b/growth/wiki/graph'
 const settled = (page: Page) =>
   expect(page.locator('canvas.graph-canvas[data-settled]')).toHaveCount(1, { timeout: 20_000 })
 
+// The picture shows the last state the page sent its painter (State.seq echoed back as data-drawn-seq).
+const upToDate = (page: Page) =>
+  expect
+    .poll(() =>
+      page
+        .locator('canvas.graph-canvas')
+        .evaluate((c) => (c as HTMLElement).dataset.drawnSeq === (c as HTMLElement).dataset.sentSeq),
+    )
+    .toBe(true)
+
 const box = (page: Page, selector: string) =>
   page.locator(selector).evaluate((el) => {
     const r = el.getBoundingClientRect()
@@ -177,17 +187,18 @@ test('CA8: the inspector folds and unfolds at the right without moving the pictu
   await expect(page.locator('#graph-inspector')).toBeHidden()
   await canvas.focus()
   await expect(canvas).toHaveAttribute('data-active', /\d+,\d+/)
-  // The keyboard's first picture drawn, read the place; then open the panel and wait for the worker to draw
-  // the picture again before reading it (review A3: two frames of the page prove nothing about the worker).
-  await page.waitForTimeout(300)
+  // Read the place once the picture shows the last state sent; open the panel, and read it again once the
+  // picture shows the state that opening sent (review A3, R2-3: no fixed wait, no picture still on its way).
+  await upToDate(page)
   const before = await canvas.getAttribute('data-active')
-  const draws = Number(await canvas.getAttribute('data-draws'))
+  const sent = Number(await canvas.getAttribute('data-sent-seq'))
   const size = await box(page, 'canvas.graph-canvas')
   await toggle.click()
   await expect(toggle).toHaveAttribute('aria-expanded', 'true')
   const panel = page.locator('#graph-inspector')
   await expect(panel).toBeVisible()
-  await expect.poll(async () => Number(await canvas.getAttribute('data-draws'))).toBeGreaterThan(draws)
+  await expect.poll(async () => Number(await canvas.getAttribute('data-sent-seq'))).toBeGreaterThan(sent)
+  await upToDate(page)
   expect(await box(page, 'canvas.graph-canvas'), 'the canvas keeps its size').toEqual(size)
   expect(await canvas.getAttribute('data-active'), 'the picture has not moved').toBe(before)
   // Fit: the page under the keyboard is drawn left of the panel.

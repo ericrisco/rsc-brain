@@ -176,6 +176,8 @@ export type State = {
   right: number
   // The band at the bottom the zoom buttons cover: fit draws above it.
   bottom: number
+  // Which state this is: the picture drawn from it says so (tests wait for the picture of the last one).
+  seq: number
 }
 
 export type Drawn = {
@@ -189,6 +191,8 @@ export type Drawn = {
   titles: string[]
   // How long this picture took to paint, in ms (the timing tests add it up: CDP cannot slow a worker).
   ms: number
+  // The state this picture was drawn from (State.seq).
+  seq: number
 }
 
 const TITLE = '13px ui-sans-serif, system-ui, sans-serif'
@@ -501,6 +505,7 @@ export class Renderer {
           : this.wordsOf(ctx, sc, c.i, group).t
       }),
       ms: performance.now() - started,
+      seq: st.seq,
     }
   }
 
