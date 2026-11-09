@@ -644,7 +644,8 @@ export class Renderer {
       width: st.width,
       height: st.height,
       forced: new Set([st.active, st.selected, st.focus].filter((i) => i >= 0 && st.nodes[i])),
-      blocked: st.blocked,
+      // The controls, and the panel over the right of the canvas: no card or name goes under them.
+      blocked: st.right > 0 ? [...st.blocked, st.width - st.right, 0, st.right, st.height] : st.blocked,
     }
     const cards = placeCards({ ...placing, order: order() })
     // Where a card does not fit, the page's name beside its point (closing review).
