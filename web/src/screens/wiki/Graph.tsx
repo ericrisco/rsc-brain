@@ -933,9 +933,13 @@ function GraphCanvas({
     c.dataset.dots = String(d.dots)
     if (d.active) c.dataset.active = `${d.active[0]},${d.active[1]}`
     else delete c.dataset.active
+    // Where the cards of the keyboard's page and of the picked one are (tests read them).
     const ac = d.cards.find((k) => k.i === latest.current.active)
     if (ac) c.dataset.activeCard = `${ac.x},${ac.y},${ac.w},${ac.h}`
     else delete c.dataset.activeCard
+    const sc = d.cards.find((k) => k.i === latest.current.selected)
+    if (sc) c.dataset.selectedCard = `${sc.x},${sc.y},${sc.w},${sc.h}`
+    else delete c.dataset.selectedCard
     if (!marked.current.ready) {
       marked.current.ready = true
       performance.mark('graph:ready')

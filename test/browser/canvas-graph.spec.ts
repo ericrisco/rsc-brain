@@ -202,3 +202,124 @@ test('CA8: the inspector folds and unfolds at the right without moving the pictu
   await expect(panel).toBeHidden()
   await expect(toggle).toHaveAttribute('aria-expanded', 'false')
 })
+
+// CA9: by keyboard alone the canvas is reached, its pages walked, one opened in the panel and closed.
+test('CA9: the canvas by keyboard: Tab to it, arrows walk the pages, Enter opens, Escape closes', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto(GRAPH)
+  await settled(page)
+  const canvas = page.getByRole('application', { name: /^Graph of \d+ items$/ })
+  // The zoom tools come just before it: Tab from the last one reaches the canvas.
+  await page.getByRole('button', { name: 'Zoom out', exact: true }).focus()
+  await page.keyboard.press('Tab')
+  await expect(canvas).toBeFocused()
+  const said = page.locator('[aria-live="polite"]').filter({ hasText: /Enter to inspect/ })
+  await expect(said).toHaveCount(1)
+  const first = await canvas.getAttribute('data-active')
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('ArrowDown')
+  await expect.poll(() => canvas.getAttribute('data-active')).not.toBe(first)
+  await page.keyboard.press('Enter')
+  const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
+  await expect(inspector).toBeVisible()
+  await expect(canvas).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(inspector).toHaveCount(0)
+})
+
+// CA9: the page picked and the page under the keyboard are told apart by shape: a ring outside the
+// keyboard's card, none outside the picked one.
+test('CA9: picked and under the keyboard differ by shape, not by colour alone', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  // A small wiki: few lines cross the strips read above the cards.
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto(GRAPH)
+  await settled(page)
+  const canvas = page.locator('canvas.graph-canvas')
+  await canvas.focus()
+  await page.keyboard.press('Enter')
+  await expect(canvas).toHaveAttribute('data-selected-card', /\d+,\d+,\d+,\d+/)
+  const picked = await canvas.getAttribute('data-selected-card')
+  await page.keyboard.press('ArrowRight')
+  await expect.poll(() => canvas.getAttribute('data-active-card')).not.toBe(picked)
+  await expect(canvas).toHaveAttribute('data-active-card', /\d+,\d+,\d+,\d+/)
+  const rect = async (name: string) =>
+    ((await canvas.getAttribute(name)) ?? '').split(',').map(Number) as [number, number, number, number]
+  const c = await box(page, 'canvas.graph-canvas')
+  // Along the straight top of a card, in a strip 2–5 px above it: the share of columns where something other
+  // than the ground and its dots is drawn (a ring fills them all; a line crossing fills a few).
+  const ringAt = async ([x, y, w]: [number, number, number, number]) => {
+    const shot = await page.screenshot({
+      clip: { x: c.left + x + 20, y: c.top + y - 5, width: w - 40, height: 3 },
+    })
+    return page.evaluate(async (b64) => {
+      const css = getComputedStyle(document.documentElement)
+      const sw = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D
+      const rgb = (v: string) => {
+        sw.clearRect(0, 0, 1, 1)
+        sw.fillStyle = css.getPropertyValue(v).trim()
+        sw.fillRect(0, 0, 1, 1)
+        return [...sw.getImageData(0, 0, 1, 1).data].slice(0, 3)
+      }
+      const grounds = [rgb('--ground'), rgb('--grid-dot')]
+      const img = new Image()
+      img.src = `data:image/png;base64,${b64}`
+      await img.decode()
+      const k = document.createElement('canvas')
+      k.width = img.width
+      k.height = img.height
+      const x = k.getContext('2d') as CanvasRenderingContext2D
+      x.drawImage(img, 0, 0)
+      const d = x.getImageData(0, 0, k.width, k.height).data
+      const inked = new Set<number>()
+      for (let i = 0; i < d.length; i += 4)
+        if (
+          grounds.every(
+            (g) =>
+              Math.abs((d[i] as number) - (g[0] as number)) +
+                Math.abs((d[i + 1] as number) - (g[1] as number)) +
+                Math.abs((d[i + 2] as number) - (g[2] as number)) >
+              40,
+          )
+        )
+          inked.add((i / 4) % k.width)
+      return inked.size / k.width
+    }, shot.toString('base64'))
+  }
+  const active = await rect('data-active-card')
+  const selected = await rect('data-selected-card')
+  expect(await ringAt(active), 'a ring outside the keyboard’s card').toBeGreaterThan(0.9)
+  expect(await ringAt(selected), 'no ring outside the picked card').toBeLessThan(0.5)
+})
+
+// CA9: with reduced motion nothing on the canvas screen animates, the rail and panel included.
+test('CA9: with reduced motion nothing moves on the canvas screen', async ({ browser, baseURL }) => {
+  const context = await browser.newContext({
+    reducedMotion: 'reduce',
+    viewport: { width: 1920, height: 1080 },
+  })
+  const page = await context.newPage()
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.goto(GRAPH)
+  await settled(page)
+  await page.getByRole('button', { name: 'Expand the side bar' }).click()
+  await page.getByRole('button', { name: 'Inspector', exact: true }).click()
+  expect(await page.evaluate(() => document.getAnimations().length)).toBe(0)
+  const t = await page
+    .locator('.frame')
+    .evaluate((el) => [
+      getComputedStyle(el).transitionDuration,
+      getComputedStyle(el.querySelector('.rail') as Element).transitionDuration,
+    ])
+  for (const d of t) expect(d.split(',').every((x) => Number.parseFloat(x) === 0)).toBe(true)
+  await context.close()
+})
