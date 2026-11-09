@@ -2,7 +2,7 @@
 // search, and the account at the top; inside a brain, a side bar with its sections that folds into a
 // menu on a phone.
 import type { ComponentChildren } from 'preact'
-import { useEffect, useRef, useState } from 'preact/hooks'
+import { useEffect, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import { toReview } from '../lib/brains.ts'
 import { applyTheme, theme } from '../lib/theme.ts'
@@ -12,6 +12,7 @@ import { T } from '../text.ts'
 import { Brand } from '../ui/Brand.tsx'
 import { Dialog } from '../ui/Dialog.tsx'
 import { OfflineStrip } from '../ui/states.tsx'
+import { usePopover } from '../ui/usePopover.ts'
 import { CreateBrainDialog } from './CreateBrainDialog.tsx'
 import { HelpDialog } from './HelpDialog.tsx'
 import { Keyboard } from './Keyboard.tsx'
@@ -115,28 +116,8 @@ function SideBar({ brain }: { brain: BrainNav }) {
 }
 
 function AccountMenu({ me }: { me: Me }) {
-  const [open, setOpen] = useState(false)
+  const { open, setOpen, box, button } = usePopover()
   const { signOut, leaving, failed } = useSignOut()
-  const box = useRef<HTMLDivElement>(null)
-  const button = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const away = (e: Event) => {
-      if (box.current && !box.current.contains(e.target as Node)) setOpen(false)
-    }
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setOpen(false)
-        button.current?.focus()
-      }
-    }
-    document.addEventListener('pointerdown', away)
-    document.addEventListener('keydown', esc)
-    return () => {
-      document.removeEventListener('pointerdown', away)
-      document.removeEventListener('keydown', esc)
-    }
-  }, [open])
   const name = me.account.name
   return (
     <div class="account" ref={box}>
