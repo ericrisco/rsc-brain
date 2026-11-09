@@ -75,9 +75,10 @@ test('CA8: the pages are cards on a dotted ground; a click at the edge of a card
   const canvas = page.locator('canvas.graph-canvas')
   await expect.poll(async () => Number(await canvas.getAttribute('data-cards'))).toBeGreaterThan(0)
   await expect.poll(async () => Number(await canvas.getAttribute('data-dots'))).toBeGreaterThanOrEqual(6)
-  // The keyboard's page always has its card.
+  // The keyboard's page always has its card. Read once the keyboard is on the canvas and nothing has moved
+  // it since (a card read before a move would belong to the page before).
+  await expect(canvas).not.toHaveAttribute('data-active-card', /./)
   await canvas.focus()
-  await page.keyboard.press('ArrowRight')
   await expect(canvas).toHaveAttribute('data-active-card', /^-?\d+,-?\d+,\d+,\d+$/)
   const said =
     (await page
