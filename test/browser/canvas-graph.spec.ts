@@ -565,3 +565,40 @@ for (const size of [
       })
       .toBeLessThan(panel.left)
   })
+
+// Closing review C4: a link that names the page to inspect opens the panel with it, and its card is drawn
+// clear of the panel, at every width the panel shows.
+for (const size of [
+  { width: 1920, height: 1080 },
+  { width: 1366, height: 768 },
+  { width: 1100, height: 1000 },
+])
+  for (const seeded of [undefined, 300] as const)
+    test(`a link with ?inspect opens the panel, its page clear of it, ${size.width}, ${seeded ?? 11} pages`, async ({
+      page,
+      context,
+      baseURL,
+    }) => {
+      await scenario(context, baseURL as string, 'signed-in', {}, seeded ? { seeded } : {})
+      await page.setViewportSize(size)
+      const address = seeded ? 'product/segment/incident' : 'audience/retention'
+      await page.goto(`${GRAPH}?inspect=${encodeURIComponent(`p:${address}`)}`)
+      await settled(page)
+      await expect(page.getByRole('complementary', { name: /^Inspector \S/ })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Inspector', exact: true })).toHaveAttribute(
+        'aria-expanded',
+        'true',
+      )
+      await upToDate(page)
+      const c = await box(page, 'canvas.graph-canvas')
+      const panel = await box(page, '#graph-inspector')
+      const canvas = page.locator('canvas.graph-canvas')
+      await expect(canvas).toHaveAttribute('data-selected-card', /\d+,\d+,\d+,\d+/)
+      const [x, y, w, h] = ((await canvas.getAttribute('data-selected-card')) ?? '')
+        .split(',')
+        .map(Number) as [number, number, number, number]
+      expect(c.left + x + w, 'left of the panel').toBeLessThanOrEqual(panel.left)
+      expect(x).toBeGreaterThanOrEqual(0)
+      expect(y).toBeGreaterThanOrEqual(0)
+      expect(y + h).toBeLessThanOrEqual(c.bottom - c.top)
+    })
