@@ -87,3 +87,80 @@ test.describe('the cloud, still (reduced motion)', () => {
     await expect(inspector.getByRole('heading', { level: 2 })).toHaveText(title)
   })
 })
+
+test.describe('the cloud, moving (motion allowed)', () => {
+  test.use({ reducedMotion: 'no-preference', viewport: { width: 1920, height: 1080 } })
+  const yawOf = async (page: Page) =>
+    Number(await page.locator('canvas.graph-canvas').getAttribute('data-yaw'))
+
+  test('SB5: at rest it turns slowly, its yaw counting up, and light travels its lines', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const canvas = page.locator('canvas.graph-canvas')
+    await expect(canvas).toHaveAttribute('data-spinning', 'true')
+    const a = await yawOf(page)
+    await page.waitForTimeout(1500)
+    const b = await yawOf(page)
+    // About 7.2° a second (one turn in 50 s): more than a degree in 1.5 s, less than a quarter turn.
+    const turned = (b - a + 360) % 360
+    expect(turned).toBeGreaterThan(1)
+    expect(turned).toBeLessThan(90)
+    expect(Number(await canvas.getAttribute('data-pulses'))).toBeGreaterThan(0)
+    // Turning, no names swim with it: the cards come back when it stops.
+    await expect(canvas).toHaveAttribute('data-cards', '0')
+  })
+
+  test('SB5: the pointer stops it; it turns again after a rest; the keyboard stops it too', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    test.slow()
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const canvas = page.locator('canvas.graph-canvas')
+    await expect(canvas).toHaveAttribute('data-spinning', 'true')
+    const box = (await canvas.boundingBox()) as { x: number; y: number; width: number; height: number }
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3)
+    await page.mouse.move(box.x + box.width * 0.31, box.y + box.height * 0.31)
+    await expect(canvas).toHaveAttribute('data-spinning', 'false')
+    const stopped = await yawOf(page)
+    await page.waitForTimeout(1000)
+    expect(await yawOf(page)).toBe(stopped)
+    // Still, its pages have names again, and the light keeps travelling.
+    await expect.poll(async () => Number(await canvas.getAttribute('data-cards'))).toBeGreaterThan(0)
+    expect(Number(await canvas.getAttribute('data-pulses'))).toBeGreaterThan(0)
+    // The pointer leaves; after the rest (5 s) it turns again.
+    await page.mouse.move(box.x + 2, box.y + box.height + 40)
+    await expect(canvas).toHaveAttribute('data-spinning', 'true', { timeout: 9000 })
+    // The keyboard on the canvas stops it while it is there.
+    await canvas.focus()
+    await expect(canvas).toHaveAttribute('data-spinning', 'false')
+    const held = await yawOf(page)
+    await page.waitForTimeout(6000)
+    expect(await yawOf(page)).toBe(held)
+  })
+
+  test('SB5: a hidden tab stops the turn and the light', async ({ page, context, baseURL }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const canvas = page.locator('canvas.graph-canvas')
+    await expect(canvas).toHaveAttribute('data-spinning', 'true')
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await expect(canvas).toHaveAttribute('data-spinning', 'false')
+    await expect(canvas).toHaveAttribute('data-pulses', '0')
+    const draws = await canvas.getAttribute('data-draws')
+    await page.waitForTimeout(1000)
+    expect(await canvas.getAttribute('data-draws')).toBe(draws)
+  })
+})

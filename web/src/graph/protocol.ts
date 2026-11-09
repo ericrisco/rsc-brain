@@ -40,5 +40,7 @@ export type DrawnMessage = Drawn & {
   id: number
   // The layout this picture shows has settled.
   settled: boolean
+  // How many pictures `ms` adds up (a turning picture is told to the page a few times a second).
+  pictures: number
 }
 export type FromWorker = PositionsMessage | DrawnMessage

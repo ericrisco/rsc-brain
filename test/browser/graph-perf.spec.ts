@@ -80,6 +80,22 @@ test.describe('the graph under load (CPU ×4)', () => {
     expect(paint.every((x) => Number.isFinite(x) && x > 0)).toBe(true)
     expect(median(estimate)).toBeLessThan(3000)
     report('CA5 longest task ms (page CPU ×4)', String(await longest(page)))
+    // Turning, with light on its lines (spec amendment 2026-11-09): each picture's painting time in the
+    // worker, over two seconds of turn. Four times slower still paints 30 pictures a second.
+    const canvas = page.locator('canvas.graph-canvas')
+    await expect(canvas).toHaveAttribute('data-spinning', 'true')
+    const frameMs: number[] = []
+    for (let k = 0; k < 8; k++) {
+      await page.waitForTimeout(250)
+      frameMs.push(Number(await canvas.getAttribute('data-frame-ms')))
+    }
+    const sorted = [...frameMs].sort((a, b) => a - b)
+    const typical = sorted[Math.floor(sorted.length / 2)] as number
+    report('CA5 turning: worker ms a picture (not slowed)', frameMs.map((x) => x.toFixed(2)).join(', '))
+    expect(frameMs.every((x) => Number.isFinite(x) && x > 0)).toBe(true)
+    expect(4 * typical).toBeLessThan(1000 / 30)
+    report('CA5 longest task ms while turning (page CPU ×4)', String(await longest(page)))
+    expect(await longest(page)).toBeLessThan(200)
     // The list: the pages drawn, and the retired ones on asking: all 300. Read once the caption has its number.
     await page.getByRole('button', { name: 'List' }).click()
     const caption = page.getByRole('table', { name: /Pages of the wiki/ }).getByRole('caption')

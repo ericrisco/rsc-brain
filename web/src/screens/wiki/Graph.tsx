@@ -31,7 +31,6 @@ import {
 } from '../../graph/model.ts'
 import type { DrawnMessage, FromWorker, ToWorker } from '../../graph/protocol.ts'
 import {
-  type Drawn,
   type Fact,
   GROUP_SHAPE,
   NODE_R,
@@ -966,7 +965,7 @@ function GraphCanvas({
     }
     worker.current?.postMessage(m, transfer)
   }
-  const drawn = (d: DrawnMessage | (Drawn & { id: number; settled: boolean })) => {
+  const drawn = (d: DrawnMessage) => {
     const c = canvas.current
     // A picture of an older layout (a group left a moment ago) says nothing about this one.
     if (d.id !== layoutId.current) return
@@ -997,6 +996,9 @@ function GraphCanvas({
     else delete c.dataset.hub
     c.dataset.pulses = String(d.pulses)
     c.dataset.fact = String(d.fact)
+    // Each picture's painting time while it turns (the timing test reads it).
+    const pictures = d.pictures
+    if (d.spinning && pictures > 0) c.dataset.frameMs = (d.ms / pictures).toFixed(2)
     // The first cards with their size and words, for a test driving the browser only (closing review C5).
     if (probe)
       c.dataset.cardList = JSON.stringify(
@@ -1036,7 +1038,7 @@ function GraphCanvas({
       c.height = Math.round(st.height * st.dpr)
       const d = l.renderer.paint(l.ctx)
       if (d) {
-        drawn({ ...d, id: layoutId.current, settled: settled.current })
+        drawn({ ...d, type: 'drawn', id: layoutId.current, settled: settled.current, pictures: 1 })
         if (d.animating) paintHere()
       }
     })

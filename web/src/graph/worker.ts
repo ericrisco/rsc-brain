@@ -23,6 +23,7 @@ let frame = false
 // What was told to the page last, and the painting time of the pictures not told since (CA5 adds it up).
 let told = { at: 0, seq: -1, spinning: false, settled: false }
 let untold = 0
+let pictures = 0
 const TELL_EVERY = 250
 
 function paint() {
@@ -41,6 +42,7 @@ function paint() {
   const drawn = renderer.paint(ctx, now)
   if (!drawn) return
   untold += drawn.ms
+  pictures += 1
   const fresh =
     drawn.xy !== null ||
     drawn.seq !== told.seq ||
@@ -49,8 +51,16 @@ function paint() {
     now - told.at >= TELL_EVERY
   if (fresh) {
     told = { at: now, seq: drawn.seq, spinning: drawn.spinning, settled }
-    const message: DrawnMessage = { type: 'drawn', id: current, ...drawn, ms: untold, settled }
+    const message: DrawnMessage = {
+      type: 'drawn',
+      id: current,
+      ...drawn,
+      ms: untold,
+      pictures,
+      settled,
+    }
     untold = 0
+    pictures = 0
     scope.postMessage(message, drawn.xy ? [drawn.xy.buffer] : [])
   }
   if (drawn.animating) request()
