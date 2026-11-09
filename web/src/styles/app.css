@@ -983,6 +983,7 @@ dialog::backdrop {
 }
 
 .tiles .tile-label {
+  display: block;
   color: var(--muted);
   font-size: 13px;
 }
@@ -1006,6 +1007,34 @@ dialog::backdrop {
 
 .home-tiles {
   margin-bottom: 24px;
+}
+
+/* A tile whose number comes first in the words ("37 not in the wiki yet") and is drawn under them. */
+.tiles .tile {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 6px;
+}
+
+.tiles .tile .tile-label::first-letter {
+  text-transform: uppercase;
+}
+
+.tiles a.tile .tile-n {
+  color: var(--text);
+}
+
+.tiles a.tile:hover {
+  background: var(--raised);
+}
+
+.tiles > li:has(> a.tile) {
+  padding: 0;
+}
+
+.tiles > li > a.tile {
+  height: 100%;
+  padding: 16px 20px 18px;
 }
 
 .cards > li {
@@ -1134,28 +1163,6 @@ dialog::backdrop {
   color: var(--accent);
 }
 
-.numbers {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 32px;
-  padding: 14px 0;
-  border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-}
-
-.numbers li {
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.numbers strong {
-  margin-right: 4px;
-  color: var(--text);
-  font: 550 20px var(--mono);
-  letter-spacing: -0.03em;
-  font-variant-numeric: tabular-nums;
-}
-
 .overview-grid {
   display: grid;
   grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
@@ -1168,6 +1175,17 @@ dialog::backdrop {
   gap: 32px;
 }
 
+/* Wide: today's sessions, what waits and the health in three columns. */
+@media (min-width: 1500px) {
+  .overview-grid {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) minmax(0, 1fr);
+    gap: 32px 48px;
+  }
+
+  .overview-side {
+    display: contents;
+  }
+}
 .list {
   border-top: 1px solid var(--rule);
 }

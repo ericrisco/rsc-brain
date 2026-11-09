@@ -147,17 +147,17 @@ function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
       <h2 id="numbers-title" class="section-title">
         {o.numbers}
       </h2>
-      <ul class="numbers">
+      <ul class="tiles">
         {items.map(([n, label, href]) => (
           <li key={label}>
             {href ? (
-              <a href={href}>
-                <strong>{n}</strong> {label}
+              <a class="tile" href={href}>
+                <strong class="tile-n">{n}</strong> <span class="tile-label">{label}</span>
               </a>
             ) : (
-              <>
-                <strong>{n}</strong> {label}
-              </>
+              <span class="tile">
+                <strong class="tile-n">{n}</strong> <span class="tile-label">{label}</span>
+              </span>
             )}
           </li>
         ))}

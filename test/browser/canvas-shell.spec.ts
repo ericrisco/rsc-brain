@@ -12,7 +12,6 @@ const SIGNED_IN = ROWS.filter((r) => !r.preset)
 
 // The screens whose layout still holds a fixed reading column, and the task of plan B.4 that widens them.
 const PENDING: Record<string, string> = {
-  overview: 'B9',
   proposals: 'B10',
   proposal: 'B10',
   sessions: 'B10',
@@ -253,3 +252,31 @@ for (const state of ['folded', 'open'] as const) {
     }
   })
 }
+
+// B9: the overview of a brain is read at a glance on a wide screen: its figures in one row of tiles, and
+// today's sessions, what waits for review and the health side by side.
+test('at 1920×1080 the overview shows its figures in one row and its three parts side by side', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.setViewportSize(WIDE)
+  await page.goto('/b/growth')
+  const parts = ["Today's sessions", 'Waiting for review', 'Health'].map((name) =>
+    page.getByRole('region', { name, exact: true }),
+  )
+  for (const p of parts) await expect(p).toBeVisible()
+  const boxes = await Promise.all(parts.map((p) => p.boundingBox()))
+  const [today, waiting, health] = boxes.map((b) => b ?? { x: 0, y: 0, width: 0, height: 0 })
+  expect(Math.abs((waiting?.y ?? 0) - (today?.y ?? 0)), 'waiting beside today').toBeLessThanOrEqual(2)
+  expect(Math.abs((health?.y ?? 0) - (today?.y ?? 0)), 'health beside today').toBeLessThanOrEqual(2)
+  expect(today?.x ?? 0).toBeLessThan(waiting?.x ?? 0)
+  expect(waiting?.x ?? 0).toBeLessThan(health?.x ?? 0)
+  const tiles = page.getByRole('region', { name: 'In numbers' }).getByRole('listitem')
+  await expect(tiles).toHaveCount(5)
+  const tops = await tiles.evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)))
+  expect(new Set(tops).size, 'one row of figures').toBe(1)
+  const widths = await tiles.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width))
+  expect(Math.min(...widths), 'the tiles share the width').toBeGreaterThan(250)
+})
