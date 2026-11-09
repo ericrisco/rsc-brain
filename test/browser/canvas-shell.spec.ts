@@ -280,3 +280,32 @@ test('on a tablet the open rail is for the moment: not remembered, closed by a m
   // The wide screen's choice is left as it was.
   expect(await page.evaluate(() => localStorage.getItem('rscb.rail'))).toBe('open')
 })
+
+// Review R1: in a window under 760px tall the sections scroll inside the rail; the scroll must not cut off
+// the tooltips beside the rail, nor the bar that marks the current section at its left edge.
+test('at 1366×650 the folded rail scrolls its sections without cutting off a tooltip or the current bar', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.setViewportSize({ width: 1366, height: 650 })
+  await page.goto('/b/growth/wiki')
+  const nav = page.getByRole('navigation', { name: 'Sections of this brain' })
+  const wiki = nav.getByRole('link', { name: 'Wiki' })
+  await expect(wiki).toHaveAttribute('aria-current', 'page')
+  await wiki.focus()
+  const tip = wiki.locator('.rail-label')
+  await expect.poll(async () => ((await tip.boundingBox())?.width ?? 0) > 20).toBe(true)
+  // What is drawn at the middle of the tooltip and at the current bar is that item, not the screen behind.
+  const seen = await wiki.evaluate((link) => {
+    const label = link.querySelector('.rail-label') as HTMLElement
+    const t = label.getBoundingClientRect()
+    const l = link.getBoundingClientRect()
+    const atTip = document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2)
+    const atBar = document.elementFromPoint(l.left - 6.5, l.top + l.height / 2)
+    return { tip: Boolean(atTip && link.contains(atTip)), bar: Boolean(atBar && link.contains(atBar)) }
+  })
+  expect(seen.tip, 'the tooltip is drawn whole').toBe(true)
+  expect(seen.bar, 'the current bar is drawn').toBe(true)
+})

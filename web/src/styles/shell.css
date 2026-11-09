@@ -439,12 +439,23 @@
   }
 }
 
-/* A short window: the sections scroll, the head and foot stay. */
+/* A short window: the sections scroll, the head and foot stay. A box that scrolls cuts off what leaves it
+   sideways, so the scroll box reaches past the rail on both sides by the room the current bar and a
+   tooltip need; that room lets the pointer through to the screen under it (review R1). */
 @media (max-height: 759px) and (min-width: 768px) {
   .rail-nav {
+    --nav-out: 300px;
     min-height: 0;
+    margin: 0 calc(-1 * var(--nav-out)) 0 calc(-1 * var(--space-2));
+    padding-right: var(--nav-out);
+    padding-left: var(--space-2);
     overflow-y: auto;
-    scrollbar-width: thin;
+    scrollbar-width: none;
+    pointer-events: none;
+  }
+
+  .rail-nav > * {
+    pointer-events: auto;
   }
 }
 
