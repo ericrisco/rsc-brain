@@ -602,3 +602,21 @@ for (const size of [
       expect(y).toBeGreaterThanOrEqual(0)
       expect(y + h).toBeLessThanOrEqual(c.bottom - c.top)
     })
+
+// Closing review C5: the cards' words and sizes for the tests are made only when a test drives the browser
+// (navigator.webdriver); a person's browser never builds them, picture after picture.
+test('outside a test the painter does not build the cards’ list for tests', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await page.addInitScript(() =>
+    Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false }),
+  )
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto(GRAPH)
+  await settled(page)
+  const canvas = page.locator('canvas.graph-canvas')
+  await expect.poll(async () => Number(await canvas.getAttribute('data-cards'))).toBeGreaterThan(0)
+  await expect(canvas).not.toHaveAttribute('data-card-list', /./)
+})

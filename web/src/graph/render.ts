@@ -178,6 +178,8 @@ export type State = {
   bottom: number
   // Which state this is: the picture drawn from it says so (tests wait for the picture of the last one).
   seq: number
+  // A test drives the browser (navigator.webdriver): the picture also says the words of its cards.
+  probe: boolean
 }
 
 export type Drawn = {
@@ -200,6 +202,8 @@ const GROUP_TITLE = '600 13px ui-sans-serif, system-ui, sans-serif'
 const SUB = '12px ui-sans-serif, system-ui, sans-serif'
 // How far Fit zooms in at most: far enough that a small wiki's pages are drawn as cards side by side.
 const FIT_MAX = 8
+// How many cards a picture describes to a test.
+export const PROBE_CARDS = 40
 const TILE_TITLE = '600 14px ui-sans-serif, system-ui, sans-serif'
 // Where a card's words start: after the disc with the type's shape.
 const TEXT_X = 32
@@ -498,12 +502,15 @@ export class Renderer {
       active: a >= 0 && st.nodes[a] ? [Math.round(SX(a)), Math.round(SY(a))] : null,
       cards,
       dots: dots ? Math.round(dots.step * 10) / 10 : 0,
-      titles: cards.map((c) => {
-        const group = isGroup(c.i)
-        return tile
-          ? this.tileWords(ctx, sc, c.i, group).lines.join(' ')
-          : this.wordsOf(ctx, sc, c.i, group).t
-      }),
+      // Only for a browser a test drives (State.probe): never built for a person, picture after picture.
+      titles: st.probe
+        ? cards.slice(0, PROBE_CARDS).map((c) => {
+            const group = isGroup(c.i)
+            return tile
+              ? this.tileWords(ctx, sc, c.i, group).lines.join(' ')
+              : this.wordsOf(ctx, sc, c.i, group).t
+          })
+        : [],
       ms: performance.now() - started,
       seq: st.seq,
     }

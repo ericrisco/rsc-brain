@@ -32,6 +32,7 @@ import {
   GROUP_SHAPE,
   NODE_R,
   type Palette,
+  PROBE_CARDS,
   Renderer,
   type Scene,
   SHAPES,
@@ -727,6 +728,9 @@ function palette(): Palette {
   }
 }
 
+// A test drives this browser: the canvas says more about its picture (the cards' words and places).
+const probe = typeof navigator !== 'undefined' && navigator.webdriver === true
+
 const narrow = () => typeof matchMedia === 'function' && matchMedia('(max-width: 1099px)').matches
 
 // The inspector's panel over the right of a wide canvas: clamp(320px, 22vw, 420px) in app.css. On a narrow
@@ -940,10 +944,13 @@ function GraphCanvas({
     c.dataset.drawnSeq = String(d.seq)
     c.dataset.cards = String(d.cards.length)
     c.dataset.dots = String(d.dots)
-    // The first cards with their size and words (tests read them).
-    c.dataset.cardList = JSON.stringify(
-      d.cards.slice(0, 40).map((k, n) => ({ x: k.x, y: k.y, w: k.w, h: k.h, title: d.titles[n] ?? '' })),
-    )
+    // The first cards with their size and words, for a test driving the browser only (closing review C5).
+    if (probe)
+      c.dataset.cardList = JSON.stringify(
+        d.cards
+          .slice(0, PROBE_CARDS)
+          .map((k, n) => ({ x: k.x, y: k.y, w: k.w, h: k.h, title: d.titles[n] ?? '' })),
+      )
     if (d.active) c.dataset.active = `${d.active[0]},${d.active[1]}`
     else delete c.dataset.active
     // Where the cards of the keyboard's page and of the picked one are (tests read them).
@@ -1005,6 +1012,7 @@ function GraphCanvas({
       inset: inset.current,
       right: panelWidth(latest.current.panel),
       seq: seq.current,
+      probe,
       top: band.current.top,
       bottom: band.current.bottom,
     }
