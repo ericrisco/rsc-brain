@@ -32,6 +32,26 @@ export function toReview(brains: readonly Waiting[]): { count: number; href: str
   return { count, href: first ? `/b/${encodeURIComponent(first.slug)}/proposals` : '/' }
 }
 
+// The figures on home across the brains in use (review R4): an archived brain counts in none of them.
+type Counted = Waiting & {
+  status: string
+  stats: { pages: number; entries: number; pendingProposals: number }
+}
+export function homeTotals(brains: readonly Counted[]): {
+  brains: number
+  pages: number
+  entries: number
+  review: { count: number; href: string }
+} {
+  const active = brains.filter((b) => b.status !== 'archived')
+  return {
+    brains: active.length,
+    pages: active.reduce((n, b) => n + b.stats.pages, 0),
+    entries: active.reduce((n, b) => n + b.stats.entries, 0),
+    review: toReview(active),
+  }
+}
+
 // How many of today's sessions the overview gets at most: the server's TODAY_SESSIONS
 // (src/domain/overview.ts; a node test keeps them equal). At that many, there may be more.
 export const TODAY_SHOWN = 20

@@ -9,7 +9,7 @@ import { useEffect, useState } from 'preact/hooks'
 import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
-import { ago, toReview } from '../lib/brains.ts'
+import { ago, homeTotals } from '../lib/brains.ts'
 import { firstPersonAlone } from '../lib/people.ts'
 import { branding, justDeleted, justJoined, justSetUp, type Me, me, online } from '../session.ts'
 import { connectHref, createOpen } from '../shell/dialogs.ts'
@@ -205,16 +205,15 @@ function Card({ b }: { b: BrainRow }) {
   )
 }
 
-// The brains at a glance, summed: how many, how big, and what waits for me.
+// The brains in use at a glance, summed: how many, how big, and what waits for me.
 function Totals({ brains }: { brains: BrainRow[] }) {
   const h = T.home
-  const sum = (f: (b: BrainRow) => number) => brains.reduce((n, b) => n + f(b), 0)
-  const review = toReview(brains)
+  const t = homeTotals(brains)
   const items: Array<readonly [string, number, (string | undefined)?]> = [
-    [h.totalBrains, brains.length],
-    [h.totalPages, sum((b) => b.stats.pages)],
-    [h.totalEntries, sum((b) => b.stats.entries)],
-    [h.totalToReview, review.count, review.count ? review.href : undefined],
+    [h.totalBrains, t.brains],
+    [h.totalPages, t.pages],
+    [h.totalEntries, t.entries],
+    [h.totalToReview, t.review.count, t.review.count ? t.review.href : undefined],
   ]
   return (
     <section aria-label={h.totals} class="home-tiles">
