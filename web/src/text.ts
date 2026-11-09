@@ -1923,6 +1923,12 @@ export const T = {
     addCorrectionHere: 'Add a correction about this entry',
     // Add a correction
     correctionTitle: 'Add a correction',
+    correctionHowTitle: 'How a correction reaches the agents',
+    correctionHow: [
+      'It goes first in the context of every agent it touches, before any page or entry.',
+      'About a page or an entry: agents whose work is about it get it. About nothing in particular: every agent does, or only the one you name.',
+      'It stays in the journal like any entry: you can edit it, or forget it when it no longer holds.',
+    ],
     correctionLead:
       'Tell the agents what is wrong and what to do instead, in your own words. A correction goes first in the context of the agents it touches: the one it applies to, and any agent whose work is about what it names.',
     aboutWhat: 'What is it about?',

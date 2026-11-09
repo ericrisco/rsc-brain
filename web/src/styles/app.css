@@ -2254,6 +2254,23 @@ pre.version {
   max-width: 720px;
 }
 
+/* A short explanation beside a form: what happens with what the person writes. */
+.side-note {
+  position: sticky;
+  top: 24px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+}
+
+.side-points {
+  display: grid;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13.5px;
+}
+
 @media (max-width: 767px) {
   .pair {
     grid-template-columns: minmax(0, 1fr);
@@ -2279,9 +2296,45 @@ pre.version {
   margin-left: 6px;
 }
 
-/* A proposal reads in one column, at a reading width. */
+/* A proposal reads in one column, at a reading width; on a wide screen its changes keep that width and
+   why it was sent and the decision sit beside them, the decision in view while scrolling. */
 .proposal-view {
   max-width: 860px;
+}
+
+@media (min-width: 1280px) {
+  .proposal-view {
+    max-width: none;
+  }
+
+  .proposal-view > :not(.proposal-body) {
+    max-width: 960px;
+  }
+
+  .proposal-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) clamp(340px, 26vw, 460px);
+    grid-template-rows: auto 1fr;
+    column-gap: 48px;
+    align-items: start;
+  }
+
+  .proposal-body > .changes {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .proposal-body > .why {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .proposal-body > :not(.changes, .why) {
+    position: sticky;
+    top: 24px;
+    grid-column: 2;
+    grid-row: 2;
+  }
 }
 
 .back-link {

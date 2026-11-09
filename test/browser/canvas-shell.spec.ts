@@ -12,17 +12,6 @@ const SIGNED_IN = ROWS.filter((r) => !r.preset)
 
 // The screens whose layout still holds a fixed reading column, and the task of plan B.4 that widens them.
 const PENDING: Record<string, string> = {
-  proposals: 'B10',
-  proposal: 'B10',
-  sessions: 'B10',
-  session: 'B10',
-  entry: 'B10',
-  conflicts: 'B10',
-  forgotten: 'B10',
-  'to review': 'B10',
-  'add a correction': 'B10',
-  'entries about a page': 'B10',
-  activity: 'B10',
   page: 'B11',
   health: 'B11',
   'settings · members': 'B11',

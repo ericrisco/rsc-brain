@@ -816,142 +816,145 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
       {p.lastError && p.status === 'pending' ? <p class="alert">{w.lastError(p.lastError)}</p> : null}
       {review.canDecide || p.status !== 'pending' ? null : <ReadOnlyLine brain={brain} slug={slug} />}
 
-      <section class="why" aria-labelledby="why-title">
-        <h2 id="why-title" class="section-title">
-          {w.why}
-        </h2>
-        <p>{p.reason || '—'}</p>
-        {p.collected.length ? <p class="muted small">{w.collected(p.collected.length)}</p> : null}
-        {review.warnings.length ? (
-          <ul class="plain op-warnings">
-            {review.warnings.map((x) => (
-              <li key={x.code + x.message}>
-                <span class="tag warn">{T.kind.warning}</span> {x.message}
-              </li>
-            ))}
-          </ul>
-        ) : null}
-      </section>
-
-      <section class="changes" aria-labelledby="changes-title">
-        <h2 id="changes-title" class="section-title">
-          {w.changesTitle}
-        </h2>
-        {act && several ? <p class="muted small">{w.chooseHint}</p> : null}
-        {groups.map((g) => {
-          const cards = g.map((i) => {
-            const o = review.ops.find((x) => x.index === i) as ReviewOp
-            return (
-              <Card
-                key={i}
-                slug={slug}
-                o={o}
-                names={names}
-                purges={review.purges}
-                bornBy={
-                  review.ops.find(
-                    (x) =>
-                      x.index !== i &&
-                      ((x.op.op === 'create' && x.op.address === o.op.address) ||
-                        (x.op.op === 'move' && x.op.to === o.op.address)),
-                  )?.index ?? null
-                }
-                act={act}
-                choices={choices}
-                several={several}
-                onChoose={(on) => {
-                  const next = choose(choices.selected, i, on, review.ops)
-                  setNote(chooseNote(choices.selected, next, i, on, review.ops))
-                  save({ ...choices, selected: next })
-                }}
-                onBase={(on) =>
-                  save({
-                    ...choices,
-                    baseReviewed: on
-                      ? [...new Set([...choices.baseReviewed, i])]
-                      : choices.baseReviewed.filter((x) => x !== i),
-                  })
-                }
-                onCorrect={(c) => {
-                  const next = { ...choices.corrections }
-                  if (c) next[i] = c
-                  else delete next[i]
-                  save({ ...choices, corrections: next })
-                }}
-              />
-            )
-          })
-          if (g.length === 1) return cards
-          const gid = `group-${g[0]}`
-          return (
-            <fieldset key={gid} class="op-group" aria-describedby={`${gid}-why`}>
-              <legend class="group-title">{w.together}</legend>
-              <p id={`${gid}-why`} class="muted small group-why">
-                {togetherWhy(g, review.ops)}
-              </p>
-              {cards}
-            </fieldset>
-          )
-        })}
-      </section>
-
-      {act ? (
-        <section class="decide" aria-labelledby="decide-title">
-          <h2 id="decide-title" class="section-title">
-            {w.decideTitle}
+      {/* Wide: the changes in the main column, why and the decision beside them. */}
+      <div class="proposal-body">
+        <section class="why" aria-labelledby="why-title">
+          <h2 id="why-title" class="section-title">
+            {w.why}
           </h2>
-          <TextArea
-            id="proposal-comment"
-            label={w.comment}
-            hint={w.commentHint}
-            rows={3}
-            maxLength={4000}
-            value={choices.comment}
-            onValue={(v) => save({ ...choices, comment: v })}
-          />
-          {several ? <p class="meta">{w.chosen(choices.selected.length, pendingOps.length)}</p> : null}
-          <p class="said ok" role="status">
-            {note}
-          </p>
-          <div class={`decide-actions${chose ? ' chose' : ''}`}>
-            {chose ? null : approveAll}
-            {several ? (
+          <p>{p.reason || '—'}</p>
+          {p.collected.length ? <p class="muted small">{w.collected(p.collected.length)}</p> : null}
+          {review.warnings.length ? (
+            <ul class="plain op-warnings">
+              {review.warnings.map((x) => (
+                <li key={x.code + x.message}>
+                  <span class="tag warn">{T.kind.warning}</span> {x.message}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+
+        <section class="changes" aria-labelledby="changes-title">
+          <h2 id="changes-title" class="section-title">
+            {w.changesTitle}
+          </h2>
+          {act && several ? <p class="muted small">{w.chooseHint}</p> : null}
+          {groups.map((g) => {
+            const cards = g.map((i) => {
+              const o = review.ops.find((x) => x.index === i) as ReviewOp
+              return (
+                <Card
+                  key={i}
+                  slug={slug}
+                  o={o}
+                  names={names}
+                  purges={review.purges}
+                  bornBy={
+                    review.ops.find(
+                      (x) =>
+                        x.index !== i &&
+                        ((x.op.op === 'create' && x.op.address === o.op.address) ||
+                          (x.op.op === 'move' && x.op.to === o.op.address)),
+                    )?.index ?? null
+                  }
+                  act={act}
+                  choices={choices}
+                  several={several}
+                  onChoose={(on) => {
+                    const next = choose(choices.selected, i, on, review.ops)
+                    setNote(chooseNote(choices.selected, next, i, on, review.ops))
+                    save({ ...choices, selected: next })
+                  }}
+                  onBase={(on) =>
+                    save({
+                      ...choices,
+                      baseReviewed: on
+                        ? [...new Set([...choices.baseReviewed, i])]
+                        : choices.baseReviewed.filter((x) => x !== i),
+                    })
+                  }
+                  onCorrect={(c) => {
+                    const next = { ...choices.corrections }
+                    if (c) next[i] = c
+                    else delete next[i]
+                    save({ ...choices, corrections: next })
+                  }}
+                />
+              )
+            })
+            if (g.length === 1) return cards
+            const gid = `group-${g[0]}`
+            return (
+              <fieldset key={gid} class="op-group" aria-describedby={`${gid}-why`}>
+                <legend class="group-title">{w.together}</legend>
+                <p id={`${gid}-why`} class="muted small group-why">
+                  {togetherWhy(g, review.ops)}
+                </p>
+                {cards}
+              </fieldset>
+            )
+          })}
+        </section>
+
+        {act ? (
+          <section class="decide" aria-labelledby="decide-title">
+            <h2 id="decide-title" class="section-title">
+              {w.decideTitle}
+            </h2>
+            <TextArea
+              id="proposal-comment"
+              label={w.comment}
+              hint={w.commentHint}
+              rows={3}
+              maxLength={4000}
+              value={choices.comment}
+              onValue={(v) => save({ ...choices, comment: v })}
+            />
+            {several ? <p class="meta">{w.chosen(choices.selected.length, pendingOps.length)}</p> : null}
+            <p class="said ok" role="status">
+              {note}
+            </p>
+            <div class={`decide-actions${chose ? ' chose' : ''}`}>
+              {chose ? null : approveAll}
+              {several ? (
+                <p class="decide-row">
+                  <Button
+                    id="approve-some"
+                    kind={chose ? 'primary' : 'secondary'}
+                    data-shortcut="approve-some"
+                    data-needs={b.someNeedsComment ? 'proposal-comment' : undefined}
+                    pending={busy === 'some'}
+                    pendingLabel={w.approving}
+                    blocked={busy && busy !== 'some' ? blockedNow(true) : (blockedNow(false) ?? b.some)}
+                    onClick={() => void decide('some', review)}
+                  >
+                    {w.approveSome}
+                  </Button>
+                </p>
+              ) : null}
+              {chose ? approveAll : null}
               <p class="decide-row">
                 <Button
-                  id="approve-some"
-                  kind={chose ? 'primary' : 'secondary'}
-                  data-shortcut="approve-some"
-                  data-needs={b.someNeedsComment ? 'proposal-comment' : undefined}
-                  pending={busy === 'some'}
-                  pendingLabel={w.approving}
-                  blocked={busy && busy !== 'some' ? blockedNow(true) : (blockedNow(false) ?? b.some)}
-                  onClick={() => void decide('some', review)}
+                  kind="quiet"
+                  data-shortcut="return"
+                  data-needs={b.backNeedsComment ? 'proposal-comment' : undefined}
+                  aria-keyshortcuts="r"
+                  pending={busy === 'back'}
+                  pendingLabel={w.returning}
+                  blocked={busy && busy !== 'back' ? blockedNow(true) : (blockedNow(false) ?? b.back)}
+                  onClick={() => void decide('back', review)}
                 >
-                  {w.approveSome}
+                  {w.returnAll}
                 </Button>
               </p>
-            ) : null}
-            {chose ? approveAll : null}
-            <p class="decide-row">
-              <Button
-                kind="quiet"
-                data-shortcut="return"
-                data-needs={b.backNeedsComment ? 'proposal-comment' : undefined}
-                aria-keyshortcuts="r"
-                pending={busy === 'back'}
-                pendingLabel={w.returning}
-                blocked={busy && busy !== 'back' ? blockedNow(true) : (blockedNow(false) ?? b.back)}
-                onClick={() => void decide('back', review)}
-              >
-                {w.returnAll}
-              </Button>
-            </p>
-          </div>
-          <Problems error={error} focus={error?.code !== 'stale_base'} />
-        </section>
-      ) : error ? (
-        <Problems error={error} />
-      ) : null}
+            </div>
+            <Problems error={error} focus={error?.code !== 'stale_base'} />
+          </section>
+        ) : error ? (
+          <Problems error={error} />
+        ) : null}
+      </div>
     </div>
   )
 }

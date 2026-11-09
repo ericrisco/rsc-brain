@@ -254,118 +254,130 @@ export function JournalCorrect({ slug }: { slug: string }) {
     <>
       <WikiHead title={j.correctionTitle} lead={j.correctionLead} />
       <JournalNav brain={brain} />
-      <form
-        class="form correction-form"
-        noValidate
-        onSubmit={(e) => {
-          e.preventDefault()
-          void send()
-        }}
-      >
-        <fieldset class="choice">
-          <legend>{j.aboutWhat}</legend>
-          {(
-            [
-              ['page', j.aboutPageChoice],
-              ['entry', j.aboutEntryChoice],
-              ['nothing', j.aboutNothing],
-            ] as const
-          ).map(([v, label]) => (
-            <label key={v} class="radio">
-              <input
-                type="radio"
-                name="about"
-                value={v}
-                checked={f.about === v}
-                onChange={() => {
-                  chose.current = true
-                  setF({ ...f, about: v })
-                }}
-              />
-              <span>{label}</span>
-            </label>
-          ))}
-        </fieldset>
-        {f.about === 'page' ? (
-          <Picker<{ address: string; title: string; status: string }>
-            id="correction-page"
-            label={j.pageField}
-            hint={j.pageHint}
-            picked={f.page ? f.page.title : null}
-            problem={problems.page ?? null}
-            look={pages}
-            pick={(p) => {
-              setF({ ...f, page: { address: p.address, title: p.title } })
-              setProblems({ ...problems, page: undefined })
-            }}
-            list={(onPick) => <SuggestList s={pages} onPick={onPick} />}
+      <div class="split">
+        <form
+          class="form correction-form"
+          noValidate
+          onSubmit={(e) => {
+            e.preventDefault()
+            void send()
+          }}
+        >
+          <fieldset class="choice">
+            <legend>{j.aboutWhat}</legend>
+            {(
+              [
+                ['page', j.aboutPageChoice],
+                ['entry', j.aboutEntryChoice],
+                ['nothing', j.aboutNothing],
+              ] as const
+            ).map(([v, label]) => (
+              <label key={v} class="radio">
+                <input
+                  type="radio"
+                  name="about"
+                  value={v}
+                  checked={f.about === v}
+                  onChange={() => {
+                    chose.current = true
+                    setF({ ...f, about: v })
+                  }}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </fieldset>
+          {f.about === 'page' ? (
+            <Picker<{ address: string; title: string; status: string }>
+              id="correction-page"
+              label={j.pageField}
+              hint={j.pageHint}
+              picked={f.page ? f.page.title : null}
+              problem={problems.page ?? null}
+              look={pages}
+              pick={(p) => {
+                setF({ ...f, page: { address: p.address, title: p.title } })
+                setProblems({ ...problems, page: undefined })
+              }}
+              list={(onPick) => <SuggestList s={pages} onPick={onPick} />}
+            />
+          ) : null}
+          {f.about === 'entry' ? (
+            <Picker<{ id: string; title: string; at: string }>
+              id="correction-entry"
+              label={j.otherEntry}
+              hint={j.otherHint}
+              picked={f.entry ? f.entry.title : null}
+              problem={problems.entry ?? null}
+              look={entries}
+              pick={(x) => {
+                setF({ ...f, entry: { id: x.id, title: x.title } })
+                setProblems({ ...problems, entry: undefined })
+              }}
+              list={(onPick) => <EntryList s={entries} onPick={onPick} />}
+            />
+          ) : null}
+          <Field
+            id="correction-title"
+            label={j.correctionShort}
+            hint={j.correctionShortHint}
+            maxLength={200}
+            problem={problems.title ?? null}
+            value={f.title}
+            onValue={(v) => setF({ ...f, title: v })}
           />
-        ) : null}
-        {f.about === 'entry' ? (
-          <Picker<{ id: string; title: string; at: string }>
-            id="correction-entry"
-            label={j.otherEntry}
-            hint={j.otherHint}
-            picked={f.entry ? f.entry.title : null}
-            problem={problems.entry ?? null}
-            look={entries}
-            pick={(x) => {
-              setF({ ...f, entry: { id: x.id, title: x.title } })
-              setProblems({ ...problems, entry: undefined })
-            }}
-            list={(onPick) => <EntryList s={entries} onPick={onPick} />}
+          <TextArea
+            label={j.correctionText}
+            hint={j.correctionHint}
+            rows={6}
+            id="correction-content"
+            problem={problems.content ?? null}
+            value={f.content}
+            onValue={(v) => setF({ ...f, content: v })}
           />
-        ) : null}
-        <Field
-          id="correction-title"
-          label={j.correctionShort}
-          hint={j.correctionShortHint}
-          maxLength={200}
-          problem={problems.title ?? null}
-          value={f.title}
-          onValue={(v) => setF({ ...f, title: v })}
-        />
-        <TextArea
-          label={j.correctionText}
-          hint={j.correctionHint}
-          rows={6}
-          id="correction-content"
-          problem={problems.content ?? null}
-          value={f.content}
-          onValue={(v) => setF({ ...f, content: v })}
-        />
-        <Field
-          label={j.appliesToField}
-          hint={j.appliesToHint}
-          maxLength={80}
-          value={f.appliesTo}
-          onValue={(v) => setF({ ...f, appliesTo: v })}
-        />
-        <FormAlert error={error} />
-        <p class="actions">
-          <Button
-            type="submit"
-            kind="primary"
-            pending={pending}
-            pendingLabel={j.adding}
-            blocked={blockedNow(pending)}
-          >
-            {j.addIt}
-          </Button>
-          <a
-            class="button quiet"
-            href={
-              fromPage
-                ? pageHref(slug, fromPage)
-                : fromEntry
-                  ? entryHref(slug, fromEntry)
-                  : sessionsHref(slug)
-            }
-          >
-            {j.cancel}
-          </a>
-        </p>
-      </form>
+          <Field
+            label={j.appliesToField}
+            hint={j.appliesToHint}
+            maxLength={80}
+            value={f.appliesTo}
+            onValue={(v) => setF({ ...f, appliesTo: v })}
+          />
+          <FormAlert error={error} />
+          <p class="actions">
+            <Button
+              type="submit"
+              kind="primary"
+              pending={pending}
+              pendingLabel={j.adding}
+              blocked={blockedNow(pending)}
+            >
+              {j.addIt}
+            </Button>
+            <a
+              class="button quiet"
+              href={
+                fromPage
+                  ? pageHref(slug, fromPage)
+                  : fromEntry
+                    ? entryHref(slug, fromEntry)
+                    : sessionsHref(slug)
+              }
+            >
+              {j.cancel}
+            </a>
+          </p>
+        </form>
+        <aside class="side-note" aria-labelledby="correction-how">
+          <h2 id="correction-how" class="section-title">
+            {j.correctionHowTitle}
+          </h2>
+          <ul>
+            {j.correctionHow.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </aside>
+      </div>
     </>
   )
 }
