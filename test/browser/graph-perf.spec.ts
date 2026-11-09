@@ -1,6 +1,6 @@
 // Spec B6 CA5, CA6 and CA7 (PR22, T034), in Chromium with the page's CPU slowed down four times through CDP
 // (plan §5.2: the bound CI keeps; the reference machine is measured locally). CDP cannot slow a worker, so CA5
-// adds three times the layout worker's own time to what it measures. CA5: 300 pages are drawn within 3 s
+// adds three times the worker's own time (laying out and painting) to what it measures. CA5: 300 pages are drawn within 3 s
 // of opening (median of five loads). CA6: with 5 000 pages the graph comes by groups, three of them open one
 // after the other, a page is focused and the list shown, and no task of the page lasts 200 ms or more.
 // CA7: with reduced motion the worker sends one settled picture and nothing is drawn at rest.
@@ -54,6 +54,9 @@ test.describe('the graph under load (CPU ×4)', () => {
     // times the worker's own working time (the time inside the layout's slices: what four times slower stretches).
     const times: number[] = []
     const worker: number[] = []
+    // The painter's own time in the worker, every picture until the settled one (review A5): slowed four
+    // times too in the estimate.
+    const paint: number[] = []
     for (let i = 0; i < 5; i++) {
       await page.goto(GRAPH)
       await settled(page)
@@ -61,14 +64,17 @@ test.describe('the graph under load (CPU ×4)', () => {
         await page.evaluate(() => performance.getEntriesByName('graph:settled')[0]?.startTime ?? Number.NaN),
       )
       worker.push(Number(await page.locator('canvas.graph-canvas').getAttribute('data-layout-ms')))
+      paint.push(Number(await page.locator('canvas.graph-canvas').getAttribute('data-paint-ms')))
     }
-    const estimate = times.map((t, i) => t + 3 * (worker[i] as number))
+    const estimate = times.map((t, i) => t + 3 * ((worker[i] as number) + (paint[i] as number)))
     const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[2] as number
     report('CA5 graph:settled ms (page CPU ×4, worker not slowed)', times.map(Math.round).join(', '))
     report('CA5 worker working ms (not slowed)', worker.join(', '))
+    report('CA5 worker painting ms (not slowed)', paint.map(Math.round).join(', '))
     report('CA5 settled estimate ms (page and worker ×4)', estimate.map(Math.round).join(', '))
     expect(times.every(Number.isFinite)).toBe(true)
     expect(worker.every((x) => Number.isFinite(x) && x > 0)).toBe(true)
+    expect(paint.every((x) => Number.isFinite(x) && x > 0)).toBe(true)
     expect(median(estimate)).toBeLessThan(3000)
     report('CA5 longest task ms (page CPU ×4)', String(await longest(page)))
     // The list: the pages drawn, and the retired ones on asking: all 300. Read once the caption has its number.

@@ -833,6 +833,7 @@ function GraphCanvas({
   const size = useRef({ w: 0, h: 0 })
   const frame = useRef(0)
   const draws = useRef(0)
+  const painted = useRef(0)
   const frames = useRef(0)
   const settled = useRef(false)
   const marked = useRef({ ready: false, settled: false })
@@ -920,6 +921,7 @@ function GraphCanvas({
     cards: Card[]
     dots: number
     titles: string[]
+    ms: number
     settled: boolean
   }) => {
     const c = canvas.current
@@ -928,6 +930,8 @@ function GraphCanvas({
     view.current = d.view
     cards.current = d.cards
     draws.current += 1
+    // The painter's time for this layout, up to its settled picture (CA5 reads it: CDP cannot slow a worker).
+    if (!marked.current.settled) painted.current += d.ms
     if (!c) return
     c.dataset.draws = String(draws.current)
     c.dataset.cards = String(d.cards.length)
@@ -951,6 +955,7 @@ function GraphCanvas({
     }
     if (d.settled && !marked.current.settled) {
       marked.current.settled = true
+      c.dataset.paintMs = painted.current.toFixed(1)
       performance.mark('graph:settled')
       c.dataset.settled = 'true'
     }
@@ -1044,6 +1049,7 @@ function GraphCanvas({
     settled.current = false
     frames.current = 0
     marked.current.settled = false
+    painted.current = 0
     auto.current = true
     setReady(false)
     setActive(-1)

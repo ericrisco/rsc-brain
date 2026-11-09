@@ -187,6 +187,8 @@ export type Drawn = {
   dots: number
   // Each card's words as drawn (a cut title ends in "…"), in the order of `cards`.
   titles: string[]
+  // How long this picture took to paint, in ms (the timing tests add it up: CDP cannot slow a worker).
+  ms: number
 }
 
 const TITLE = '13px ui-sans-serif, system-ui, sans-serif'
@@ -225,6 +227,7 @@ export class Renderer {
     const st = this.state
     const xy = st?.xy ?? this.layout
     if (!sc || !st || !xy || xy.length !== 2 * sc.n || st.width === 0 || st.height === 0) return null
+    const started = performance.now()
     const fitWith = (pad: number) =>
       fit(xy, st.fit, st.width, Math.max(120, st.height - Math.max(st.inset, st.bottom)), pad, st.top, {
         max: FIT_MAX,
@@ -505,6 +508,7 @@ export class Renderer {
           ? this.tileWords(ctx, sc, c.i, group).lines.join(' ')
           : this.wordsOf(ctx, sc, c.i, group).t
       }),
+      ms: performance.now() - started,
     }
   }
 

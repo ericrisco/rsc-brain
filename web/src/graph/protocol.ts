@@ -42,6 +42,8 @@ export type DrawnMessage = {
   cards: Card[]
   dots: number
   titles: string[]
+  // How long the picture took to paint, in ms.
+  ms: number
   // The layout this picture shows has settled.
   settled: boolean
 }
