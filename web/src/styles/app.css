@@ -94,7 +94,7 @@ a:hover {
   font-size: 12px;
 }
 
-.topbar {
+.door .topbar {
   position: sticky;
   top: 0;
   z-index: 20;
@@ -105,14 +105,12 @@ a:hover {
   border-bottom: 1px solid var(--rule);
 }
 
+/* The logo and the installation's name: in the rail (shell.css) and in the bar of the doors. */
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  flex: 0 0 var(--sidebar);
   min-width: 0;
-  padding: 0 20px;
-  border-right: 1px solid var(--rule);
   text-decoration: none;
   font-family: var(--mono);
   font-size: 14px;
@@ -132,11 +130,6 @@ a:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.brand .slash {
-  color: var(--muted);
-  font-weight: 400;
 }
 
 kbd,
@@ -223,14 +216,6 @@ kbd,
    (prose, form fields) stay where they are set. */
 .page {
   max-width: var(--page-cap);
-}
-
-/* A fluid grid: as many columns of at least --col-min as fit. */
-.grid-fluid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--col-min, 360px)), 1fr));
-  gap: var(--grid-gap, 16px);
-  align-items: start;
 }
 
 /* The main column and a side one; one column below 1100px. */
@@ -571,19 +556,6 @@ legend .step {
   font-size: 13px;
 }
 
-.rows-head {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) 120px;
-  gap: 24px;
-  padding: 0 4px 8px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.rows-head span:last-child {
-  justify-self: end;
-}
-
 .tag {
   display: inline-block;
   padding: 0 6px;
@@ -703,8 +675,8 @@ pre.command .word {
 }
 
 .door .topbar .brand {
-  border-right: 0;
   flex: 1 1 auto;
+  padding: 0 20px;
 }
 
 .door main {
@@ -874,18 +846,8 @@ dialog::backdrop {
     display: inline-flex;
   }
 
-  .only-wide {
-    display: none;
-  }
-
-  .brand {
-    flex: 1 1 auto;
+  .door .topbar .brand {
     padding: 0 12px;
-    border-right: 0;
-  }
-
-  .rows-head {
-    display: none;
   }
 
   .rows li {
@@ -925,8 +887,7 @@ dialog::backdrop {
 /* The narrowest phones: the bar keeps its controls; the installation name stays for screen readers
    while the logo stands for it. Fonts differ by system, so the bar must not count on their width. */
 @media (max-width: 359px) {
-  .topbar .brand .name,
-  .topbar .brand .slash {
+  .door .topbar .brand .name {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -935,7 +896,7 @@ dialog::backdrop {
     white-space: nowrap;
   }
 
-  .topbar .brand {
+  .door .topbar .brand {
     flex: 0 0 auto;
     padding: 0 8px;
   }
@@ -1488,21 +1449,6 @@ select:disabled {
   gap: 6px;
   padding: 12px 0;
   border-top: 1px solid var(--rule);
-}
-
-/* A tip under the first steps: quieter than a step, no number, no status. A tip is never "done", so
-   the rule for done steps never meets it. */
-.step-tip {
-  display: grid;
-  gap: 8px;
-  margin-top: 16px;
-  padding: 14px 16px;
-  border-left: 2px solid var(--rule);
-}
-
-/* biome-ignore lint/style/noDescendingSpecificity: a tip is not a step; the rules of done steps never meet it */
-.step-tip h3 {
-  font: 550 14px var(--sans);
 }
 
 /* A one-time link, next to what made it. In a row it takes the whole width under the row. */
@@ -2271,13 +2217,6 @@ pre.version {
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: var(--r-card);
-}
-
-.side-points {
-  display: grid;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 13.5px;
 }
 
 @media (max-width: 767px) {
@@ -4022,14 +3961,6 @@ dialog.search-dialog {
 
 /* ── Brain settings and the administration (PR25a) ───────────────────── */
 
-.settings-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-  gap: 40px;
-  align-items: start;
-  margin-top: 20px;
-}
-
 .settings-main,
 .settings-side {
   display: grid;
@@ -4121,12 +4052,6 @@ dialog.search-dialog {
 .list > li.service > .once,
 .list > li.service > .main-keys {
   grid-column: 1 / -1;
-}
-
-@media (max-width: 1023px) {
-  .settings-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 @media (max-width: 479px) {
