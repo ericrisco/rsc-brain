@@ -386,7 +386,7 @@ test.describe('the legend and the fact card', () => {
 })
 
 // Polish (2026-11-09): the canvas is framed like the reference's first panel: coloured corners, and a strip
-// with the numbered chip, «GRAPH · <brain> · every page, one memory» and «<N> PAGES · <M> LINKS» in the panel's
+// with the numbered chip, «GRAPH · <brain> · what your agents know» and «<N> PAGES · <M> LINKS» in the panel's
 // colour. Graph | List | Filters and the Inspector switch sit in that strip and work as before. One legend,
 // the panel at the top left, folded from its own header.
 test('the canvas is a panel with its strip; one legend that folds from its header', async ({
@@ -408,7 +408,7 @@ test('the canvas is a panel with its strip; one legend that folds from its heade
   await expect(strip.locator('.panel-num')).toHaveText('01')
   await expect(strip.getByRole('heading', { level: 1 })).toHaveText('Graph')
   await expect(strip).toContainText('Growth')
-  await expect(strip).toContainText('every page, one memory')
+  await expect(strip).toContainText('what your agents know')
   const items = Number(await page.locator('canvas.graph-canvas').getAttribute('data-items'))
   await expect(strip.locator('.panel-meta')).toHaveText(new RegExp(`^${items} pages · [\\d,]+ links$`))
   // The strip runs along the top of the canvas; the controls sit in it.

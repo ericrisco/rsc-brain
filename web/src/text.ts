@@ -1646,7 +1646,7 @@ export const T = {
     linesAndMarks: 'Lines and marks',
     familiesCount: (n: number) => plural(n, 'family', 'families'),
     // The strip over the canvas: what it is about, and how much it holds.
-    stripAbout: (brain: string) => `${brain} · every page, one memory`,
+    stripAbout: (brain: string) => `${brain} · what your agents know`,
     stripMeta: (pages: number, links: number) => `${fmt(pages)} pages · ${fmt(links)} links`,
     familiesNote: 'Shape and colour say the type. Drag to turn.',
     shapes: 'Page types',
