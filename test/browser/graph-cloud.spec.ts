@@ -305,7 +305,13 @@ test.describe('the cloud, moving (motion allowed)', () => {
     // Away from the canvas, after the rest, it turns again from where it stood.
     await page.locator('.graph-strip h1').click()
     await page.mouse.move(2, 2)
-    await expect(canvas).toHaveAttribute('data-spinning', 'true', { timeout: 9000 })
+    // Caught on the first frame it turns (polled every animation frame, not every few hundred ms).
+    await page.waitForFunction(
+      () =>
+        (document.querySelector('canvas.graph-canvas') as HTMLElement | null)?.dataset.spinning === 'true',
+      undefined,
+      { polling: 'raf', timeout: 9000 },
+    )
     // At once, while it turns (the page holds no projection), a click on that spot.
     await canvas.click({ position: { x, y } })
     const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
