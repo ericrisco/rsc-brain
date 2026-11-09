@@ -97,3 +97,62 @@ test('CA8: the pages are cards on a dotted ground; a click at the edge of a card
   const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
   await expect(inspector.getByRole('heading', { level: 2 })).toHaveText(title)
 })
+
+// B15: the controls sit at the canvas's edges: its name and where you are at the top left, Graph | List at
+// the top in the middle with the filters beside it (opening them moves nothing), the zoom tools at the bottom
+// left with their names and keys, the legend at the bottom right.
+test('CA8: the canvas controls at its edges; the filters open over the picture without moving it', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto(GRAPH)
+  await settled(page)
+  const canvas = await box(page, 'canvas.graph-canvas')
+  const mid = (canvas.left + canvas.right) / 2
+  const title = await box(page, 'h1')
+  expect(title.left - canvas.left).toBeLessThan(48)
+  expect(title.top - canvas.top).toBeLessThan(48)
+  const views = await box(page, '.graph-views')
+  expect(Math.abs((views.left + views.right) / 2 - mid), 'Graph | List in the middle').toBeLessThan(160)
+  expect(views.top - canvas.top).toBeLessThan(32)
+  const tools = page.locator('.graph-tools')
+  for (const [name, key] of [
+    ['Fit', '0'],
+    ['Zoom in', '+'],
+    ['Zoom out', '-'],
+  ] as const) {
+    const b = tools.getByRole('button', { name, exact: true })
+    await expect(b).toHaveAttribute('aria-keyshortcuts', key)
+    const r = (await b.boundingBox()) as { width: number; height: number }
+    expect(Math.min(r.width, r.height)).toBeGreaterThanOrEqual(24)
+  }
+  const t = await box(page, '.graph-tools')
+  expect(t.left - canvas.left).toBeLessThan(32)
+  expect(canvas.bottom - t.bottom).toBeLessThan(32)
+  const legend = await box(page, '.graph-legend')
+  expect(canvas.right - legend.right).toBeLessThan(32)
+  expect(canvas.bottom - legend.bottom).toBeLessThan(32)
+  // The filters: a panel over the picture.
+  await page.locator('.graph-filters summary').click()
+  await expect(page.getByLabel('Words', { exact: true })).toBeVisible()
+  expect(await box(page, 'canvas.graph-canvas')).toEqual(canvas)
+  const panel = await box(page, '.graph-filters search')
+  expect(panel.top).toBeGreaterThan(views.top)
+})
+
+test('loading: the canvas shows its dotted ground and grey cards', async ({ page, context, baseURL }) => {
+  const s = await scenario(context, baseURL as string, 'signed-in')
+  await s.state('graph', 'loading')
+  await page.setViewportSize({ width: 1366, height: 768 })
+  await page.goto(GRAPH)
+  const loading = page.locator('.graph-box.loading')
+  await expect(loading).toBeVisible()
+  await expect(loading.locator('.skeleton-card')).not.toHaveCount(0)
+  const ground = await loading.evaluate((el) => getComputedStyle(el).backgroundImage)
+  expect(ground).toContain('radial-gradient')
+  const b = await box(page, '.graph-box.loading')
+  expect(b.bottom).toBeGreaterThanOrEqual(767)
+})
