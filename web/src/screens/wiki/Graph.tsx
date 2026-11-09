@@ -224,7 +224,12 @@ function GraphScreen({ slug }: { slug: string }) {
       opener.current = document.activeElement
     f.set({ inspect: key ?? '' })
   }
+  // Over the canvas the inspector is a panel that folds away (plan D9): open while something is picked, or
+  // when the person unfolds it to see what it offers.
+  const [pinned, setPinned] = useState(false)
   const close = () => {
+    setPinned(false)
+    if (!selected) return
     f.set({ inspect: '' })
     opener.current?.focus()
     opener.current = null
@@ -232,7 +237,7 @@ function GraphScreen({ slug }: { slug: string }) {
   // The inspector closes with Escape wherever the keyboard is, except in a field (Escape is the field's). Set
   // up before the browser paints the inspector, so an Escape pressed as soon as it shows is heard.
   useLayoutEffect(() => {
-    if (!selected) return
+    if (!selected && !pinned) return
     const esc = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented || isField(e.target as Element)) return
       e.preventDefault()
@@ -240,7 +245,7 @@ function GraphScreen({ slug }: { slug: string }) {
     }
     document.addEventListener('keydown', esc)
     return () => document.removeEventListener('keydown', esc)
-  }, [selected])
+  }, [selected, pinned])
 
   const focusOn = (address: string, h: 1 | 2, from?: { row: boolean }) => {
     if (from) focusFrom.current = { address, row: from.row }
@@ -575,6 +580,18 @@ function GraphScreen({ slug }: { slug: string }) {
         {viewsToggle}
         {filtersBox}
       </div>
+      {emptyWiki ? null : (
+        <button
+          type="button"
+          class="tool inspector-toggle"
+          aria-expanded={selected || pinned ? 'true' : 'false'}
+          aria-controls="graph-inspector"
+          onClick={() => (selected || pinned ? close() : setPinned(true))}
+        >
+          <Icon name="inspector" />
+          <span>{g.inspector}</span>
+        </button>
+      )}
     </>
   )
 
@@ -584,6 +601,7 @@ function GraphScreen({ slug }: { slug: string }) {
       slug={slug}
       model={model}
       target={target}
+      open={list || Boolean(target) || pinned}
       inGraph={!list}
       onClose={close}
       onFocus={(a, h) => focusOn(a, h, { row: false })}
@@ -665,6 +683,7 @@ function GraphScreen({ slug }: { slug: string }) {
           const it = model.items[i]
           if (it) select(keyOf(it))
         }}
+        panel={Boolean(target) || pinned}
         refit={`${group}|${loose}|${v.focus}|${hops}|${filters.q}|${filters.type}|${filters.status}|${filters.tag}|${filters.linkKind}|${counts ? 'c' : ''}`}
       />
     )
@@ -709,6 +728,11 @@ function palette(): Palette {
 }
 
 const narrow = () => typeof matchMedia === 'function' && matchMedia('(max-width: 1099px)').matches
+
+// The inspector's panel over the right of a wide canvas: clamp(320px, 22vw, 420px) in app.css. On a narrow
+// screen it is a sheet at the bottom instead (State.inset).
+const panelWidth = (open: boolean) =>
+  open && !narrow() ? Math.min(420, Math.max(320, 0.22 * window.innerWidth)) : 0
 
 const reducedMotion = () =>
   typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -768,6 +792,7 @@ function GraphCanvas({
   selected,
   startKey,
   onSelect,
+  panel,
   refit,
 }: {
   model: Model
@@ -783,6 +808,8 @@ function GraphCanvas({
   selected: number
   startKey: string | null
   onSelect: (i: number) => void
+  // The inspector's panel is open over the right of the canvas: Fit leaves it free.
+  panel: boolean
   // Changes when what is drawn changes: the view fits it again.
   refit: string
 }) {
@@ -855,6 +882,7 @@ function GraphCanvas({
     fitMask,
     bridgePairs,
     orphans,
+    panel,
   })
   latest.current = {
     nodes,
@@ -868,6 +896,7 @@ function GraphCanvas({
     fitMask,
     bridgePairs,
     orphans,
+    panel,
   }
   const shownXY = () => latest.current.rings ?? positions.current
 
@@ -954,6 +983,7 @@ function GraphCanvas({
       bridges: s.bridgePairs,
       orphanLabel: s.orphans && s.focus < 0 ? T.graph.orphans(s.orphans) : '',
       inset: inset.current,
+      right: panelWidth(latest.current.panel),
       top: band.current.top,
       bottom: band.current.bottom,
     }
@@ -1134,6 +1164,28 @@ function GraphCanvas({
   useEffect(() => {
     auto.current = true
   }, [refit])
+  // Opening or folding the panel never moves a settled picture (D9): the view stays as it is drawn; Fit then
+  // fits it in what the panel leaves.
+  const panelOnce = useRef(panel)
+  useEffect(() => {
+    const toggled = panelOnce.current !== panel
+    panelOnce.current = panel
+    if (toggled && settled.current) auto.current = false
+    // A page picked under the panel is brought into the part it leaves.
+    let moved = false
+    const x = shownXY()
+    const i = latest.current.selected
+    const free = size.current.w - panelWidth(panel)
+    if (panel && !auto.current && x && i >= 0) {
+      const v = view.current
+      const sx = (x[2 * i] as number) * v.scale + v.tx
+      if (sx > free - 24) {
+        view.current = { ...v, tx: v.tx + (free / 2 - sx) }
+        moved = true
+      }
+    }
+    if (toggled || moved) sendState()
+  }, [panel, selected])
   useEffect(sendState, [nodes, edges, focus, selected, active, refit, rings, hubList, bridgePairs, orphans])
 
   // The wheel zooms around the pointer; it must be able to stop the page from scrolling.

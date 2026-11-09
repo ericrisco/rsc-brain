@@ -156,3 +156,49 @@ test('loading: the canvas shows its dotted ground and grey cards', async ({ page
   const b = await box(page, '.graph-box.loading')
   expect(b.bottom).toBeGreaterThanOrEqual(767)
 })
+
+// D9 (B16): the inspector is a panel over the right of the canvas that folds away. Opening it resizes
+// nothing and does not move the picture; Fit then fits the picture in what it leaves; a page picked opens
+// it; Escape clears the page and folds it.
+test('CA8: the inspector folds and unfolds at the right without moving the picture; Fit leaves it free', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto(GRAPH)
+  await settled(page)
+  const canvas = page.locator('canvas.graph-canvas')
+  const toggle = page.getByRole('button', { name: 'Inspector', exact: true })
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.locator('#graph-inspector')).toBeHidden()
+  await canvas.focus()
+  await expect(canvas).toHaveAttribute('data-active', /\d+,\d+/)
+  const before = await canvas.getAttribute('data-active')
+  const size = await box(page, 'canvas.graph-canvas')
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  const panel = page.locator('#graph-inspector')
+  await expect(panel).toBeVisible()
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
+  expect(await box(page, 'canvas.graph-canvas'), 'the canvas keeps its size').toEqual(size)
+  expect(await canvas.getAttribute('data-active'), 'the picture has not moved').toBe(before)
+  // Fit: the page under the keyboard is drawn left of the panel.
+  await page.getByRole('button', { name: 'Fit', exact: true }).click()
+  const p = await box(page, '#graph-inspector')
+  await expect
+    .poll(async () => Number(((await canvas.getAttribute('data-active')) ?? '').split(',')[0]))
+    .toBeLessThan(p.left - size.left)
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(panel).toBeHidden()
+  // A page picked unfolds it; Escape folds it again.
+  await canvas.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('complementary', { name: /^Inspector \S/ })).toBeVisible()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await page.keyboard.press('Escape')
+  await expect(panel).toBeHidden()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+})

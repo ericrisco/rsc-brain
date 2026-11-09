@@ -22,6 +22,7 @@ export function Inspector({
   slug,
   model,
   target,
+  open,
   inGraph,
   onClose,
   onFocus,
@@ -32,6 +33,8 @@ export function Inspector({
   slug: string
   model: Model | null
   target: Target | null
+  // Shown: over the canvas the panel folds away when nothing is picked and the person did not unfold it.
+  open: boolean
   inGraph: boolean
   onClose: () => void
   onFocus: (address: string, hops: 1 | 2) => void
@@ -53,16 +56,34 @@ export function Inspector({
   }, [key])
   if (!target)
     return (
-      <aside class="graph-inspector empty" aria-labelledby="inspector-name">
-        <p class="section-title" id="inspector-name">
-          {g.inspector}
-        </p>
+      <aside
+        id="graph-inspector"
+        class="graph-inspector empty"
+        data-open={open ? '' : undefined}
+        aria-labelledby="inspector-name"
+      >
+        <div class="inspector-head">
+          <p class="section-title" id="inspector-name">
+            {g.inspector}
+          </p>
+          {inGraph ? (
+            <button type="button" class="button quiet" onClick={onClose}>
+              {g.closeInspector}
+            </button>
+          ) : null}
+        </div>
         <p class="meta">{g.inspectorEmpty}</p>
       </aside>
     )
   const at = model?.index.get(key) ?? -1
   return (
-    <aside class="graph-inspector" data-sheet={sheet} aria-labelledby="inspector-name inspector-title">
+    <aside
+      id="graph-inspector"
+      class="graph-inspector"
+      data-open=""
+      data-sheet={sheet}
+      aria-labelledby="inspector-name inspector-title"
+    >
       <div class="inspector-head">
         <p class="section-title" id="inspector-name">
           {g.inspector}

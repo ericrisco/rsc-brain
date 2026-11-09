@@ -495,7 +495,8 @@ export type View = { scale: number; tx: number; ty: number }
 
 // The scale and shift that put every drawn item inside a canvas of w × h with `pad` around, centred.
 // `top`: a band at the top kept free (the screen's controls sit over the picture there). `max`: the most it
-// zooms in (a small wiki drawn as cards needs room between them).
+// zooms in (a small wiki drawn as cards needs room between them). `right`: a panel over the right of the
+// canvas (the inspector): the picture is fitted and centred in what it leaves.
 export function fit(
   xy: Float32Array,
   visible: Uint8Array,
@@ -503,7 +504,7 @@ export function fit(
   h: number,
   pad: number,
   top = 0,
-  o: { max?: number } = {},
+  o: { max?: number; right?: number } = {},
 ): View {
   let x0 = Number.POSITIVE_INFINITY
   let y0 = Number.POSITIVE_INFINITY
@@ -521,13 +522,14 @@ export function fit(
   // What is left under the band; never less than a sliver, so a tiny canvas still draws.
   const band = Math.min(top, Math.max(0, h - 2 * pad - 40))
   const mid = band + (h - band) / 2
-  if (x0 === Number.POSITIVE_INFINITY) return { scale: 1, tx: w / 2, ty: mid }
+  const wide = w - Math.min(o.right ?? 0, Math.max(0, w - 2 * pad - 40))
+  if (x0 === Number.POSITIVE_INFINITY) return { scale: 1, tx: wide / 2, ty: mid }
   const scale = Math.min(
     o.max ?? 2,
-    (w - 2 * pad) / Math.max(x1 - x0, 1e-9),
+    (wide - 2 * pad) / Math.max(x1 - x0, 1e-9),
     (h - band - 2 * pad) / Math.max(y1 - y0, 1e-9),
   )
-  return { scale, tx: w / 2 - ((x0 + x1) / 2) * scale, ty: mid - ((y0 + y1) / 2) * scale }
+  return { scale, tx: wide / 2 - ((x0 + x1) / 2) * scale, ty: mid - ((y0 + y1) / 2) * scale }
 }
 
 // The shape code of a group box, and its radius in pixels by how many pages it holds (render.ts draws them).

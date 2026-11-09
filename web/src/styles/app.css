@@ -3243,6 +3243,42 @@ label.op-head:hover {
   margin: 8px 0 0;
 }
 
+/* The inspector's switch, at the top right of the picture. */
+.inspector-toggle {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px 0 10px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.inspector-toggle[aria-expanded="true"] {
+  border-color: var(--text);
+}
+
+.inspector-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* On a narrow screen the inspector is a sheet that opens when something is picked: no switch. */
+@media (max-width: 1099px) {
+  .inspector-toggle {
+    display: none;
+  }
+}
+
 /* The legend, over the bottom right of the picture. */
 .graph-screen .graph-legend {
   position: absolute;
@@ -3296,12 +3332,12 @@ label.op-head:hover {
     border-radius: 0;
   }
 
-  .graph-screen .graph-inspector.empty {
+  .graph-screen .graph-inspector:not([data-open]) {
     display: none;
   }
 
-  /* The legend moves left of an open panel. */
-  .graph-screen:has(.graph-inspector:not(.empty)) .graph-legend {
+  /* The legend and the panel's switch move left of the open panel. */
+  .graph-screen:has(.graph-inspector[data-open]) :is(.graph-legend, .inspector-toggle) {
     right: calc(clamp(320px, 22vw, 420px) + 16px);
   }
 }

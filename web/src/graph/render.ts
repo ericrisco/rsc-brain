@@ -159,6 +159,8 @@ export type State = {
   inset: number
   // The band at the top the screen's controls cover: fit draws below it.
   top: number
+  // The width at the right a panel covers (the inspector): fit draws left of it.
+  right: number
   // The band at the bottom the zoom buttons cover: fit draws above it.
   bottom: number
 }
@@ -213,7 +215,7 @@ export class Renderer {
           Math.max(120, st.height - Math.max(st.inset, st.bottom)),
           fitPad(sc, st.fit),
           st.top,
-          { max: FIT_MAX },
+          { max: FIT_MAX, right: st.right },
         )
       : st.view
     const { palette, dpr } = st
