@@ -494,8 +494,17 @@ export function hit(xy: Float32Array, visible: Uint8Array, x: number, y: number,
 export type View = { scale: number; tx: number; ty: number }
 
 // The scale and shift that put every drawn item inside a canvas of w × h with `pad` around, centred.
-// `top`: a band at the top kept free (the zoom buttons sit over the picture there).
-export function fit(xy: Float32Array, visible: Uint8Array, w: number, h: number, pad: number, top = 0): View {
+// `top`: a band at the top kept free (the screen's controls sit over the picture there). `max`: the most it
+// zooms in (a small wiki drawn as cards needs room between them).
+export function fit(
+  xy: Float32Array,
+  visible: Uint8Array,
+  w: number,
+  h: number,
+  pad: number,
+  top = 0,
+  o: { max?: number } = {},
+): View {
   let x0 = Number.POSITIVE_INFINITY
   let y0 = Number.POSITIVE_INFINITY
   let x1 = Number.NEGATIVE_INFINITY
@@ -514,7 +523,7 @@ export function fit(xy: Float32Array, visible: Uint8Array, w: number, h: number,
   const mid = band + (h - band) / 2
   if (x0 === Number.POSITIVE_INFINITY) return { scale: 1, tx: w / 2, ty: mid }
   const scale = Math.min(
-    2,
+    o.max ?? 2,
     (w - 2 * pad) / Math.max(x1 - x0, 1e-9),
     (h - band - 2 * pad) / Math.max(y1 - y0, 1e-9),
   )

@@ -8,12 +8,25 @@
 // for the kinds that have a direction; links with a group are wide and pale. In focus, the page sits in the
 // middle, one hop on a filled ring and two hops on a hollow, smaller one. Names go where they fit: the item
 // the person is on, its neighbours, the hubs, the groups, and everything once zoomed in.
+import { CARD_MAX, CARD_PAD, type Card, clipToRect, dotGrid, GROUP_MAX, placeCards } from './cards.ts'
 import type { View } from './model.ts'
 import { fit, fitPad, GROUP_SHAPE, groupRadius } from './model.ts'
 
 export { fitPad, GROUP_SHAPE, groupRadius }
 
-export type Palette = { text: string; muted: string; accent: string; danger: string; ground: string }
+export type Palette = {
+  text: string
+  muted: string
+  accent: string
+  danger: string
+  ground: string
+  // The canvas: its dots, a card's ground, line, words and second line.
+  dot: string
+  card: string
+  cardLine: string
+  cardInk: string
+  cardSub: string
+}
 
 export const SHAPES = ['topic', 'entity', 'decision', 'guide', 'agent', 'source', 'overview'] as const
 
@@ -150,26 +163,40 @@ export type State = {
   bottom: number
 }
 
-export type Drawn = { view: View; active: [number, number] | null }
+export type Drawn = {
+  view: View
+  active: [number, number] | null
+  // The cards drawn, first the most wanted (the page finds what is under the pointer from them).
+  cards: Card[]
+  // The step of the dotted ground in screen pixels (0: left out).
+  dots: number
+}
 
-const MAX_LABELS = 160
+const TITLE = '13px ui-sans-serif, system-ui, sans-serif'
+const GROUP_TITLE = '600 13px ui-sans-serif, system-ui, sans-serif'
+const SUB = '12px ui-sans-serif, system-ui, sans-serif'
+// How far Fit zooms in at most: far enough that a small wiki's pages are drawn as cards side by side.
+const FIT_MAX = 4
+// Where a card's words start: after the disc with the type's shape.
+const TEXT_X = 32
 
 export class Renderer {
   scene: Scene | null = null
   state: State | null = null
   layout: Float32Array | null = null
-  private widths = new Map<number, number>()
+  // Each item's words as a card shows them (cut to fit), and their width: measured once.
+  private words = new Map<number, { t: string; s: string; w: number }>()
 
   setScene(s: Scene): void {
     this.scene = s
     this.layout = null
-    this.widths.clear()
+    this.words.clear()
   }
 
   setLabels(labels: string[]): void {
     if (!this.scene) return
     this.scene = { ...this.scene, labels }
-    this.widths.clear()
+    this.words.clear()
   }
 
   // Paints a frame; null when there is nothing to paint yet.
@@ -186,6 +213,7 @@ export class Renderer {
           Math.max(120, st.height - Math.max(st.inset, st.bottom)),
           fitPad(sc, st.fit),
           st.top,
+          { max: FIT_MAX },
         )
       : st.view
     const { palette, dpr } = st
@@ -217,6 +245,23 @@ export class Renderer {
     const dim = (i: number) => sc.superseded[i] === 1 || (lit !== null && !lit[i])
     // Everything is drawn in screen pixels: line widths and dashes stay the same at any zoom.
 
+    // The dotted ground, moving with the view; each dot snapped to the device's pixels.
+    const dots = dotGrid(view)
+    if (dots) {
+      const d = Math.max(1, Math.round(1.5 * dpr)) / dpr
+      ctx.beginPath()
+      for (let y = dots.oy; y < st.height; y += dots.step)
+        for (let x = dots.ox; x < st.width; x += dots.step)
+          ctx.rect(Math.round(x * dpr) / dpr, Math.round(y * dpr) / dpr, d, d)
+      ctx.fillStyle = palette.dot
+      ctx.fill()
+    }
+
+    // The cards first: the lines stop at their edges, and an item with a card is drawn only as its card.
+    const cards = this.place(ctx, st, sc, SX, SY, isGroup)
+    const cardOf = new Int32Array(sc.n).fill(-1)
+    for (const [k, c] of cards.entries()) cardOf[c.i] = k
+
     if (st.hop && st.focus >= 0) {
       ctx.lineWidth = 1
       ctx.strokeStyle = palette.muted
@@ -246,10 +291,14 @@ export class Renderer {
           const j = sc.edges[2 * e + 1] as number
           const off = lit ? i !== st.hover && j !== st.hover : dim(i) || dim(j)
           if (off !== faint) continue
-          const x0 = SX(i)
-          const y0 = SY(i)
-          const x1 = SX(j)
-          const y1 = SY(j)
+          let x0 = SX(i)
+          let y0 = SY(i)
+          let x1 = SX(j)
+          let y1 = SY(j)
+          const ci = cardOf[i] as number
+          const cj = cardOf[j] as number
+          if (cj >= 0) [x1, y1] = clipToRect(x0, y0, x1, y1, cards[cj] as Card)
+          if (ci >= 0) [x0, y0] = clipToRect(x1, y1, x0, y0, cards[ci] as Card)
           if (k < 0) {
             // A link with a group: as wide as it is busy.
             ctx.moveTo(x0, y0)
@@ -261,7 +310,7 @@ export class Renderer {
           ctx.lineTo(x1, y1)
           any = true
           const len = Math.hypot(x1 - x0, y1 - y0)
-          if (style.arrow && len > 28) heads.push(x0, y0, x1, y1, len, radius(j))
+          if (style.arrow && len > 28) heads.push(x0, y0, x1, y1, len, cj >= 0 ? -1 : radius(j))
         }
         if (!any) continue
         ctx.setLineDash(style.dash)
@@ -348,7 +397,7 @@ export class Renderer {
 
     // Group boxes, sized by their pages.
     for (let i = 0; i < sc.n; i++) {
-      if (!st.nodes[i] || !isGroup(i)) continue
+      if (!st.nodes[i] || !isGroup(i) || (cardOf[i] as number) >= 0) continue
       const r = boxR(i)
       ctx.globalAlpha = lit && !lit[i] ? 0.35 : 1
       ctx.beginPath()
@@ -370,7 +419,7 @@ export class Renderer {
           ctx.beginPath()
           let any = false
           for (let i = 0; i < sc.n; i++) {
-            if (!st.nodes[i] || sc.shape[i] !== t || dim(i) !== faint) continue
+            if (!st.nodes[i] || sc.shape[i] !== t || dim(i) !== faint || (cardOf[i] as number) >= 0) continue
             if ((st.hop !== null && st.hop[i] === 2) !== hollow) continue
             shape(ctx, type, SX(i), SY(i), radius(i))
             any = true
@@ -393,7 +442,7 @@ export class Renderer {
     ctx.beginPath()
     let struck = false
     for (let i = 0; i < sc.pages; i++) {
-      if (!st.nodes[i] || sc.superseded[i] !== 1) continue
+      if (!st.nodes[i] || sc.superseded[i] !== 1 || (cardOf[i] as number) >= 0) continue
       const r = radius(i) * 1.5
       ctx.moveTo(SX(i) - r, SY(i) + r)
       ctx.lineTo(SX(i) + r, SY(i) - r)
@@ -407,7 +456,7 @@ export class Renderer {
 
     // Rings: the page in focus, the one selected, where the keyboard is.
     const ring = (i: number, width: number, gap: number, color: string) => {
-      if (i < 0 || !st.nodes[i]) return
+      if (i < 0 || !st.nodes[i] || (cardOf[i] as number) >= 0) return
       ctx.beginPath()
       ctx.arc(SX(i), SY(i), (isGroup(i) ? boxR(i) * 1.45 : radius(i) * 1.3) + gap, 0, Math.PI * 2)
       ctx.lineWidth = width
@@ -418,38 +467,70 @@ export class Renderer {
     ring(st.selected, 2.5, 3, palette.accent)
     ring(st.active, 2, 7, palette.accent)
 
-    this.names(ctx, st, sc, view, SX, SY, radius, isGroup, dim)
+    this.draw(ctx, st, sc, cards, lit)
     ctx.textBaseline = 'alphabetic'
     const a = st.active
-    return { view, active: a >= 0 && st.nodes[a] ? [Math.round(SX(a)), Math.round(SY(a))] : null }
+    return {
+      view,
+      active: a >= 0 && st.nodes[a] ? [Math.round(SX(a)), Math.round(SY(a))] : null,
+      cards,
+      dots: dots ? Math.round(dots.step * 10) / 10 : 0,
+    }
   }
 
-  // Names where they fit: never one over another, except the ones the person is on.
-  private names(
+  // An item's words on its card: a page's title, or a group's name and its pages on a second line; cut
+  // with "…" to the card's widest.
+  private wordsOf(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    sc: Scene,
+    i: number,
+    group: boolean,
+  ): { t: string; s: string; w: number } {
+    const known = this.words.get(i)
+    if (known) return known
+    const [raw = '', sub = ''] = (sc.labels[i] ?? '').split('\n')
+    const room = (group ? GROUP_MAX : CARD_MAX) - CARD_PAD
+    ctx.font = group ? GROUP_TITLE : TITLE
+    let t = raw
+    let w = ctx.measureText(t).width
+    if (w > room) {
+      let lo = 0
+      let hi = raw.length
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2)
+        if (ctx.measureText(`${raw.slice(0, mid).trimEnd()}…`).width <= room) lo = mid
+        else hi = mid - 1
+      }
+      t = `${raw.slice(0, lo).trimEnd()}…`
+      w = ctx.measureText(t).width
+    }
+    let sw = 0
+    if (sub) {
+      ctx.font = SUB
+      sw = ctx.measureText(sub).width
+    }
+    const out = { t, s: sub, w: Math.min(room, Math.max(w, sw)) }
+    this.words.set(i, out)
+    return out
+  }
+
+  // Where the cards go (cards.ts): the person's own items first and always, then the neighbours of what
+  // they are on, the hubs, the groups, and every other item where one still fits.
+  private place(
     ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
     st: State,
     sc: Scene,
-    view: View,
     SX: (i: number) => number,
     SY: (i: number) => number,
-    radius: (i: number) => number,
     isGroup: (i: number) => boolean,
-    dim: (i: number) => boolean,
-  ): void {
-    ctx.font = '12px ui-sans-serif, system-ui, sans-serif'
-    ctx.textBaseline = 'middle'
-    const placed: number[] = []
-    const overlaps = (x: number, y: number, w: number, h: number) => {
-      for (let p = 0; p < placed.length; p += 4)
-        if (
-          x < (placed[p] as number) + (placed[p + 2] as number) &&
-          x + w > (placed[p] as number) &&
-          y < (placed[p + 1] as number) + (placed[p + 3] as number) &&
-          y + h > (placed[p + 1] as number)
-        )
-          return true
-      return false
-    }
+  ): Card[] {
+    const sx = new Float32Array(2 * sc.n).fill(Number.NaN)
+    for (let i = 0; i < sc.n; i++)
+      if (st.nodes[i]) {
+        sx[2 * i] = SX(i)
+        sx[2 * i + 1] = SY(i)
+      }
+    const must = [st.active, st.selected, st.focus, st.hover].filter((i) => i >= 0 && st.nodes[i])
     const near = new Set<number>()
     for (const c of [st.active, st.selected, st.hover])
       if (c >= 0)
@@ -460,55 +541,102 @@ export class Renderer {
           if (i === c) near.add(j)
           if (j === c) near.add(i)
         }
-    const must = [st.active, st.selected, st.focus, st.hover].filter((i) => i >= 0)
-    const groups: number[] = []
-    for (let i = 0; i < sc.n; i++) if (isGroup(i)) groups.push(i)
-    const order = [...must, ...near, ...st.hubs, ...groups]
-    if (view.scale >= 1.4 || (st.hop && st.focus >= 0)) for (let i = 0; i < sc.n; i++) order.push(i)
-    const seen = new Set<number>()
-    let named = 0
-    for (const i of order) {
-      if (named >= MAX_LABELS) break
-      if (seen.has(i) || !st.nodes[i]) continue
-      seen.add(i)
-      const raw = sc.labels[i] ?? ''
-      const text = raw.length > 40 ? `${raw.slice(0, 39)}…` : raw
-      let w = this.widths.get(i)
-      if (w === undefined) {
-        w = ctx.measureText(text).width
-        this.widths.set(i, w)
-      }
-      const cx = SX(i)
-      const cy = SY(i)
-      if (cx < -10 || cx > st.width + 10 || cy < -10 || cy > st.height + 10) continue
-      const off = radius(i) * (isGroup(i) ? 1 : 1.3) + 6
-      // Right of the item, else left of it, else above, else below; always inside the canvas.
-      const inside = (x: number, y: number): [number, number] => [
-        Math.min(Math.max(4, x), st.width - w - 4),
-        Math.min(Math.max(10, y), st.height - 10),
-      ]
-      const spots: [number, number][] = [
-        inside(cx + off, cy),
-        inside(cx - off - w, cy),
-        inside(cx - w / 2, cy - off - 4),
-        inside(cx - w / 2, cy + off + 4),
-      ]
-      const forced = must.includes(i)
-      const spot =
-        spots.find(([x, y]) => !overlaps(x - 2, y - 8, w + 4, 16)) ?? (forced ? spots[0] : undefined)
-      if (!spot) continue
-      const [x, y] = spot
-      placed.push(x - 2, y - 8, w + 4, 16)
-      // A halo of the ground colour keeps the name readable over lines.
-      ctx.lineWidth = 4
-      ctx.lineJoin = 'round'
-      ctx.strokeStyle = st.palette.ground
-      ctx.globalAlpha = dim(i) ? 0.6 : 1
-      ctx.strokeText(text, x, y)
-      ctx.fillStyle = i === st.selected || i === st.active ? st.palette.accent : st.palette.text
-      ctx.fillText(text, x, y)
-      ctx.globalAlpha = 1
-      named += 1
+    function* order() {
+      yield* must
+      yield* near
+      yield* st.hubs
+      for (let i = 0; i < sc.n; i++) if (isGroup(i)) yield i
+      for (let i = 0; i < sc.n; i++) yield i
     }
+    return placeCards({
+      order: order(),
+      sx,
+      textW: (i) => this.wordsOf(ctx, sc, i, isGroup(i)).w,
+      group: isGroup,
+      width: st.width,
+      height: st.height,
+      forced: new Set([st.active, st.selected, st.focus].filter((i) => i >= 0 && st.nodes[i])),
+    })
+  }
+
+  // The cards, the most wanted on top. A page: a pill with its type's shape in a disc and its title. A
+  // group: two lines in a double outline. Selected: a 2 px border in the accent. Where the keyboard is: a
+  // ring outside the card (a shape of its own, never colour alone). Superseded: faint and struck through.
+  private draw(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    st: State,
+    sc: Scene,
+    cards: Card[],
+    lit: Uint8Array | null,
+  ): void {
+    const p = st.palette
+    for (let k = cards.length - 1; k >= 0; k--) {
+      const c = cards[k] as Card
+      const i = c.i
+      const group = sc.shape[i] === GROUP_SHAPE
+      const superseded = sc.superseded[i] === 1
+      const round = group ? 8 : c.h / 2
+      const words = this.wordsOf(ctx, sc, i, group)
+      ctx.globalAlpha = lit && !lit[i] ? 0.35 : superseded ? 0.6 : 1
+      ctx.beginPath()
+      ctx.roundRect(c.x + 0.5, c.y + 0.5, c.w - 1, c.h - 1, round)
+      ctx.fillStyle = p.card
+      ctx.fill()
+      const selected = i === st.selected
+      ctx.lineWidth = selected ? 2 : 1
+      ctx.strokeStyle = selected ? p.accent : i === st.focus ? p.text : p.cardLine
+      ctx.stroke()
+      if (group) {
+        ctx.beginPath()
+        ctx.roundRect(c.x + 3.5, c.y + 3.5, c.w - 7, c.h - 7, 5)
+        ctx.lineWidth = 1
+        ctx.strokeStyle = p.cardLine
+        ctx.stroke()
+      }
+      // The disc with the type's shape (a group: a small box), hollow at two hops in focus.
+      const dx = c.x + 16
+      const dy = c.y + c.h / 2
+      ctx.beginPath()
+      ctx.arc(dx, dy, 10, 0, Math.PI * 2)
+      ctx.fillStyle = p.ground
+      ctx.fill()
+      ctx.beginPath()
+      if (group) ctx.roundRect(dx - 5, dy - 5, 10, 10, 2.5)
+      else shape(ctx, SHAPES[sc.shape[i] as number] ?? 'topic', dx, dy, 4.5)
+      if (st.hop && st.hop[i] === 2) {
+        ctx.lineWidth = 1.5
+        ctx.strokeStyle = p.cardInk
+        ctx.stroke()
+      } else {
+        ctx.fillStyle = p.cardInk
+        ctx.fill('evenodd')
+      }
+      ctx.textBaseline = 'middle'
+      ctx.fillStyle = p.cardInk
+      ctx.font = group ? GROUP_TITLE : TITLE
+      if (group) {
+        ctx.fillText(words.t, c.x + TEXT_X, c.y + 16)
+        ctx.font = SUB
+        ctx.fillStyle = p.cardSub
+        ctx.fillText(words.s, c.x + TEXT_X, c.y + 31)
+      } else ctx.fillText(words.t, c.x + TEXT_X, dy + 0.5)
+      if (superseded) {
+        ctx.beginPath()
+        ctx.moveTo(c.x + TEXT_X, dy + 0.5)
+        ctx.lineTo(c.x + TEXT_X + ctx.measureText(words.t).width, dy + 0.5)
+        ctx.lineWidth = 1.2
+        ctx.strokeStyle = p.cardInk
+        ctx.stroke()
+      }
+      ctx.globalAlpha = 1
+      if (i === st.active) {
+        ctx.beginPath()
+        ctx.roundRect(c.x - 3.5, c.y - 3.5, c.w + 7, c.h + 7, round + 3.5)
+        ctx.lineWidth = 2
+        ctx.strokeStyle = p.accent
+        ctx.stroke()
+      }
+    }
+    ctx.globalAlpha = 1
   }
 }

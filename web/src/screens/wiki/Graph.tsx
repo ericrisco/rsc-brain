@@ -7,6 +7,7 @@
 // a group is that big); the list stays whole, by pages.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { useFresh } from '../../api/fresh.ts'
+import { type Card, hitCard } from '../../graph/cards.ts'
 import {
   areas,
   countKey,
@@ -672,7 +673,12 @@ function palette(): Palette {
     muted: v('--muted'),
     accent: v('--accent'),
     danger: v('--danger'),
-    ground: v('--surface'),
+    ground: v('--ground'),
+    dot: v('--grid-dot'),
+    card: v('--node-bg'),
+    cardLine: v('--node-line'),
+    cardInk: v('--node-ink'),
+    cardSub: v('--node-sub'),
   }
 }
 
@@ -688,14 +694,14 @@ const ARROWS: Record<string, Direction> = {
   ArrowRight: 'right',
 }
 
-// The words on the canvas for each item: a page's title, a group's last part and its pages.
+// The words on the canvas for each item: a page's title; a group's name, and its pages on a second line
+// (after a line break).
 function labelsOf(model: Model, counts: Map<string, number> | undefined): string[] {
   return model.items.map((it) => {
     if (it.kind === 'page') return it.title
     const n = counts?.get(countKey(it)) ?? it.count
-    return it.loose
-      ? T.graph.otherPagesCount(it.prefix, n)
-      : `${it.prefix.split('/').at(-1)} · ${n.toLocaleString('en-US')}`
+    const name = it.loose ? T.graph.otherPages(it.prefix) : (it.prefix.split('/').at(-1) as string)
+    return `${name}\n${T.graph.groupPages(n)}`
   })
 }
 
@@ -766,6 +772,8 @@ function GraphCanvas({
   const local = useRef<{ renderer: Renderer; ctx: CanvasRenderingContext2D } | null>(null)
   const layoutId = useRef(0)
   const positions = useRef<Float32Array | null>(null)
+  // The cards of the last picture of this layout: what the pointer is on is found in them first.
+  const cards = useRef<Card[]>([])
   const [ready, setReady] = useState(false)
   const [active, setActive] = useState(-1)
   const [said, setSaid] = useState('')
@@ -854,16 +862,29 @@ function GraphCanvas({
     }
     worker.current?.postMessage(m, transfer)
   }
-  const drawn = (d: { id: number; view: View; active: [number, number] | null; settled: boolean }) => {
+  const drawn = (d: {
+    id: number
+    view: View
+    active: [number, number] | null
+    cards: Card[]
+    dots: number
+    settled: boolean
+  }) => {
     const c = canvas.current
     // A picture of an older layout (a group left a moment ago) says nothing about this one.
     if (d.id !== layoutId.current) return
     view.current = d.view
+    cards.current = d.cards
     draws.current += 1
     if (!c) return
     c.dataset.draws = String(draws.current)
+    c.dataset.cards = String(d.cards.length)
+    c.dataset.dots = String(d.dots)
     if (d.active) c.dataset.active = `${d.active[0]},${d.active[1]}`
     else delete c.dataset.active
+    const ac = d.cards.find((k) => k.i === latest.current.active)
+    if (ac) c.dataset.activeCard = `${ac.x},${ac.y},${ac.w},${ac.h}`
+    else delete c.dataset.activeCard
     if (!marked.current.ready) {
       marked.current.ready = true
       performance.mark('graph:ready')
@@ -958,6 +979,7 @@ function GraphCanvas({
   useEffect(() => {
     layoutId.current += 1
     positions.current = null
+    cards.current = []
     settled.current = false
     frames.current = 0
     marked.current.settled = false
@@ -1196,7 +1218,11 @@ function GraphCanvas({
     const c = canvas.current
     if (!x || !c) return -1
     const rect = c.getBoundingClientRect()
-    const [wx, wy] = toWorld(e.clientX - rect.left, e.clientY - rect.top)
+    const sx = e.clientX - rect.left
+    const sy = e.clientY - rect.top
+    const onCard = hitCard(cards.current, sx, sy)
+    if (onCard >= 0 && latest.current.nodes[onCard]) return onCard
+    const [wx, wy] = toWorld(sx, sy)
     return hit(x, latest.current.nodes, wx, wy, reach())
   }
   const onPointerMove = (e: PointerEvent) => {

@@ -1,5 +1,6 @@
 // The messages between the graph screen and its worker (plan §3.4). The worker works out the layout and,
 // when the browser lets it hold the canvas (OffscreenCanvas), paints it too.
+import type { Card } from './cards.ts'
 import type { View } from './model.ts'
 import type { Scene, State } from './render.ts'
 
@@ -37,6 +38,9 @@ export type DrawnMessage = {
   id: number
   view: View
   active: [number, number] | null
+  // The cards drawn, first the most wanted, and the step of the dotted ground (0: none).
+  cards: Card[]
+  dots: number
   // The layout this picture shows has settled.
   settled: boolean
 }

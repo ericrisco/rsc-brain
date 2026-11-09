@@ -151,6 +151,10 @@ describe('the dotted ground', () => {
     assert.ok(g)
     assert.equal(g.step, 12)
   })
+  it('zoomed in, the dots stay close: the step halves while it is 40 px or more', () => {
+    assert.equal(dotGrid({ scale: 4, tx: 0, ty: 0 })?.step, 24)
+    assert.equal(dotGrid({ scale: 1.5, tx: 0, ty: 0 })?.step, 36)
+  })
   it('so far out that the dots would crowd under 6 px: none', () => {
     assert.equal(dotGrid({ scale: 0.001, tx: 0, ty: 0 }), null)
   })

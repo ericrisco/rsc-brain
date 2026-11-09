@@ -60,3 +60,40 @@ test('the list is a page: it scrolls, and the frame is not in canvas mode', asyn
   await settled(page)
   await expect(page.locator('.frame')).toHaveAttribute('data-mode', 'canvas')
 })
+
+// D6–D8: zoomed in, pages are readable cards; the ground is dotted; a click on a card, even at its edge,
+// picks its page.
+test('CA8: the pages are cards on a dotted ground; a click at the edge of a card opens it', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto(GRAPH)
+  await settled(page)
+  const canvas = page.locator('canvas.graph-canvas')
+  await expect.poll(async () => Number(await canvas.getAttribute('data-cards'))).toBeGreaterThan(0)
+  await expect.poll(async () => Number(await canvas.getAttribute('data-dots'))).toBeGreaterThanOrEqual(6)
+  // The keyboard's page always has its card.
+  await canvas.focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(canvas).toHaveAttribute('data-active-card', /^-?\d+,-?\d+,\d+,\d+$/)
+  const said =
+    (await page
+      .locator('[aria-live="polite"]')
+      .filter({ hasText: /Enter to inspect/ })
+      .textContent()) ?? ''
+  const title = said.split('. ')[0] as string
+  const [x, y, w, h] = ((await canvas.getAttribute('data-active-card')) ?? '').split(',').map(Number) as [
+    number,
+    number,
+    number,
+    number,
+  ]
+  expect(h).toBe(28)
+  // Two pixels inside its right edge: far from the page's point, still its card.
+  await canvas.click({ position: { x: x + w - 2, y: y + h / 2 } })
+  const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
+  await expect(inspector.getByRole('heading', { level: 2 })).toHaveText(title)
+})

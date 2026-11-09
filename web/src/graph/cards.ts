@@ -126,10 +126,12 @@ export function clipToRect(x0: number, y0: number, x1: number, y1: number, r: Re
 
 // The dotted ground: a dot every `step` px of the screen, shifted with the view so it moves with the
 // picture. Zoomed out the step doubles (up to four times) to stay 12 px or more; under 6 px it is left out.
+// Zoomed in it halves while it is 40 px or more, so the ground keeps its grain.
 export const DOT_STEP = 24
 export function dotGrid(view: View, base = DOT_STEP): { step: number; ox: number; oy: number } | null {
   let step = base * view.scale
   for (let k = 0; k < 4 && step < 12; k++) step *= 2
+  for (let k = 0; k < 8 && step >= 40; k++) step /= 2
   if (!(step >= 6)) return null
   const mod = (a: number) => ((a % step) + step) % step
   return { step, ox: mod(view.tx), oy: mod(view.ty) }
