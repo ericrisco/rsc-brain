@@ -485,9 +485,11 @@ for (const size of [
     await settled(page)
     await page.getByRole('button', { name: 'Inspector', exact: true }).click()
     const canvas = page.locator('canvas.graph-canvas')
-    const draws = Number(await canvas.getAttribute('data-draws'))
+    const sent = Number(await canvas.getAttribute('data-sent-seq'))
     await page.getByRole('button', { name: 'Fit', exact: true }).click()
-    await expect.poll(async () => Number(await canvas.getAttribute('data-draws'))).toBeGreaterThan(draws)
+    // The picture of the state Fit sent, not one already on its way (review R3-2).
+    await expect.poll(async () => Number(await canvas.getAttribute('data-sent-seq'))).toBeGreaterThan(sent)
+    await upToDate(page)
     const c = await box(page, 'canvas.graph-canvas')
     const panel = await box(page, '#graph-inspector')
     const cards = JSON.parse((await canvas.getAttribute('data-card-list')) ?? '[]') as {
