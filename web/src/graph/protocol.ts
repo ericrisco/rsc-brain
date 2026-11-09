@@ -41,6 +41,7 @@ export type DrawnMessage = {
   // The cards drawn, first the most wanted, and the step of the dotted ground (0: none).
   cards: Card[]
   dots: number
+  titles: string[]
   // The layout this picture shows has settled.
   settled: boolean
 }

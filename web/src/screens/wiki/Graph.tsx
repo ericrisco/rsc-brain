@@ -919,6 +919,7 @@ function GraphCanvas({
     active: [number, number] | null
     cards: Card[]
     dots: number
+    titles: string[]
     settled: boolean
   }) => {
     const c = canvas.current
@@ -931,6 +932,10 @@ function GraphCanvas({
     c.dataset.draws = String(draws.current)
     c.dataset.cards = String(d.cards.length)
     c.dataset.dots = String(d.dots)
+    // The first cards with their size and words (tests read them).
+    c.dataset.cardList = JSON.stringify(
+      d.cards.slice(0, 12).map((k, n) => ({ w: k.w, h: k.h, title: d.titles[n] ?? '' })),
+    )
     if (d.active) c.dataset.active = `${d.active[0]},${d.active[1]}`
     else delete c.dataset.active
     // Where the cards of the keyboard's page and of the picked one are (tests read them).

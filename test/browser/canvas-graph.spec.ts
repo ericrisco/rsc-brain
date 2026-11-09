@@ -92,7 +92,8 @@ test('CA8: the pages are cards on a dotted ground; a click at the edge of a card
     number,
     number,
   ]
-  expect(h).toBe(28)
+  // A pill (28 px) or, zoomed in, a tile.
+  expect(h === 28 || h >= 88).toBe(true)
   // Two pixels inside its right edge: far from the page's point, still its card.
   await canvas.click({ position: { x: x + w - 2, y: y + h / 2 } })
   const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
@@ -323,4 +324,29 @@ test('CA9: with reduced motion nothing moves on the canvas screen', async ({ bro
     ])
   for (const d of t) expect(d.split(',').every((x) => Number.parseFloat(x) === 0)).toBe(true)
   await context.close()
+})
+
+// A brain just started (two pages): Fit zooms in until its pages read as tiles, as tall as the nodes of a
+// flow editor, with their whole titles.
+test('CA8: a two-page brain fits as big tiles with whole titles', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 'small' })
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto(GRAPH)
+  await settled(page)
+  const canvas = page.locator('canvas.graph-canvas')
+  await expect(canvas).toHaveAttribute('data-cards', '2')
+  const tiles = JSON.parse((await canvas.getAttribute('data-card-list')) ?? '[]') as {
+    h: number
+    w: number
+    title: string
+  }[]
+  expect(tiles).toHaveLength(2)
+  for (const t of tiles) {
+    expect(t.h, 'a tile, not a pill').toBeGreaterThanOrEqual(88)
+    expect(t.title, 'the whole title').not.toContain('…')
+  }
+  expect(tiles.map((t) => t.title).sort()).toEqual([
+    'Duplicate candidates in the Payroll clerk CV screenings',
+    'Payroll clerk CV screenings',
+  ])
 })

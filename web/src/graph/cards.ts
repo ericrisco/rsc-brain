@@ -12,6 +12,15 @@ export const CARD_MAX = 220
 // A group's card: its name and its number of pages, on two lines.
 export const GROUP_H = 44
 export const GROUP_MAX = 240
+// Zoomed in this far, a card is a tile like a node of a flow editor: 96 px tall, its type's shape in a disc
+// at the top and its title under it on up to two lines, as wide as the title needs (never more than 300).
+export const TILE_SCALE = 3
+export const TILE_H = 96
+export const TILE_MIN = 132
+export const TILE_TEXT = 268
+// The pad Fit keeps around the picture when it is drawn in tiles: half the widest tile.
+export const TILE_PAD = 150
+
 // The most cards in one picture (as many as names were before).
 export const MAX_CARDS = 160
 // The room kept between two cards, and around a page a card must not cover.
@@ -39,6 +48,8 @@ export type Placing = {
   // Items that always get a card (where the keyboard is, what is selected), whatever they cover.
   forced: ReadonlySet<number>
   max?: number
+  // An item's card size, when it is not a pill (a tile, zoomed in): overrides textW and group.
+  size?: (i: number) => { w: number; h: number }
 }
 
 const CELL = 32
@@ -86,7 +97,7 @@ export function placeCards(p: Placing): Card[] {
     const x = p.sx[2 * i] as number
     const y = p.sx[2 * i + 1] as number
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue
-    const { w, h } = cardSize(p.textW(i), p.group(i))
+    const { w, h } = p.size ? p.size(i) : cardSize(p.textW(i), p.group(i))
     const r = { x: Math.round(x - w / 2), y: Math.round(y - h / 2), w, h }
     // Wholly off the canvas: nothing to draw.
     if (r.x + r.w < 0 || r.y + r.h < 0 || r.x > p.width || r.y > p.height) continue

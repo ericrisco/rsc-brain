@@ -63,6 +63,34 @@ export function lumpyData(): GraphData {
   return { pages, links }
 }
 
+// A brain just started: two pages, one link, one long title (canvas-ui: Fit makes them read as tiles).
+export function smallData(): GraphData {
+  const at = new Date(Date.UTC(2026, 9, 1)).toISOString()
+  return {
+    pages: [
+      {
+        address: 'hiring/cv-screenings',
+        title: 'Payroll clerk CV screenings',
+        type: 'topic',
+        status: 'current',
+        tags: [],
+        summary: 'How the CVs for the payroll clerk are screened.',
+        updatedAt: at,
+      },
+      {
+        address: 'hiring/duplicate-candidates',
+        title: 'Duplicate candidates in the Payroll clerk CV screenings',
+        type: 'guide',
+        status: 'current',
+        tags: [],
+        summary: 'What to do when a candidate applies twice.',
+        updatedAt: at,
+      },
+    ],
+    links: [{ from: 'hiring/duplicate-candidates', to: 'hiring/cv-screenings', kind: 'mentions' }],
+  }
+}
+
 export const merge = (a: GraphData, b: GraphData): GraphData => ({
   pages: [...a.pages, ...b.pages],
   links: [...a.links, ...b.links],

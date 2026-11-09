@@ -8,7 +8,20 @@
 // for the kinds that have a direction; links with a group are wide and pale. In focus, the page sits in the
 // middle, one hop on a filled ring and two hops on a hollow, smaller one. Names go where they fit: the item
 // the person is on, its neighbours, the hubs, the groups, and everything once zoomed in.
-import { CARD_MAX, CARD_PAD, type Card, clipToRect, dotGrid, GROUP_MAX, placeCards } from './cards.ts'
+import {
+  CARD_MAX,
+  CARD_PAD,
+  type Card,
+  clipToRect,
+  dotGrid,
+  GROUP_MAX,
+  placeCards,
+  TILE_H,
+  TILE_MIN,
+  TILE_PAD,
+  TILE_SCALE,
+  TILE_TEXT,
+} from './cards.ts'
 import type { View } from './model.ts'
 import { fit, fitPad, GROUP_SHAPE, groupRadius } from './model.ts'
 
@@ -172,13 +185,16 @@ export type Drawn = {
   cards: Card[]
   // The step of the dotted ground in screen pixels (0: left out).
   dots: number
+  // Each card's words as drawn (a cut title ends in "…"), in the order of `cards`.
+  titles: string[]
 }
 
 const TITLE = '13px ui-sans-serif, system-ui, sans-serif'
 const GROUP_TITLE = '600 13px ui-sans-serif, system-ui, sans-serif'
 const SUB = '12px ui-sans-serif, system-ui, sans-serif'
 // How far Fit zooms in at most: far enough that a small wiki's pages are drawn as cards side by side.
-const FIT_MAX = 4
+const FIT_MAX = 8
+const TILE_TITLE = '600 14px ui-sans-serif, system-ui, sans-serif'
 // Where a card's words start: after the disc with the type's shape.
 const TEXT_X = 32
 
@@ -193,12 +209,14 @@ export class Renderer {
     this.scene = s
     this.layout = null
     this.words.clear()
+    this.tiles.clear()
   }
 
   setLabels(labels: string[]): void {
     if (!this.scene) return
     this.scene = { ...this.scene, labels }
     this.words.clear()
+    this.tiles.clear()
   }
 
   // Paints a frame; null when there is nothing to paint yet.
@@ -207,17 +225,21 @@ export class Renderer {
     const st = this.state
     const xy = st?.xy ?? this.layout
     if (!sc || !st || !xy || xy.length !== 2 * sc.n || st.width === 0 || st.height === 0) return null
-    const view = st.autoFit
-      ? fit(
-          xy,
-          st.fit,
-          st.width,
-          Math.max(120, st.height - Math.max(st.inset, st.bottom)),
-          fitPad(sc, st.fit),
-          st.top,
-          { max: FIT_MAX, right: st.right },
-        )
-      : st.view
+    const fitWith = (pad: number) =>
+      fit(xy, st.fit, st.width, Math.max(120, st.height - Math.max(st.inset, st.bottom)), pad, st.top, {
+        max: FIT_MAX,
+        right: st.right,
+      })
+    let view = st.view
+    if (st.autoFit) {
+      view = fitWith(fitPad(sc, st.fit))
+      // Fitted close enough for tiles: fitted again with room for whole tiles at the edges.
+      if (view.scale >= TILE_SCALE) {
+        const roomy = fitWith(Math.max(fitPad(sc, st.fit), TILE_PAD))
+        if (roomy.scale >= TILE_SCALE) view = roomy
+      }
+    }
+    const tile = view.scale >= TILE_SCALE
     const { palette, dpr } = st
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, st.width, st.height)
@@ -260,7 +282,7 @@ export class Renderer {
     }
 
     // The cards first: the lines stop at their edges, and an item with a card is drawn only as its card.
-    const cards = this.place(ctx, st, sc, SX, SY, isGroup)
+    const cards = this.place(ctx, st, sc, SX, SY, isGroup, tile)
     const cardOf = new Int32Array(sc.n).fill(-1)
     for (const [k, c] of cards.entries()) cardOf[c.i] = k
 
@@ -469,7 +491,7 @@ export class Renderer {
     ring(st.selected, 2.5, 3, palette.accent)
     ring(st.active, 2, 7, palette.accent)
 
-    this.draw(ctx, st, sc, cards, lit)
+    this.draw(ctx, st, sc, cards, lit, tile)
     ctx.textBaseline = 'alphabetic'
     const a = st.active
     return {
@@ -477,6 +499,12 @@ export class Renderer {
       active: a >= 0 && st.nodes[a] ? [Math.round(SX(a)), Math.round(SY(a))] : null,
       cards,
       dots: dots ? Math.round(dots.step * 10) / 10 : 0,
+      titles: cards.map((c) => {
+        const group = isGroup(c.i)
+        return tile
+          ? this.tileWords(ctx, sc, c.i, group).lines.join(' ')
+          : this.wordsOf(ctx, sc, c.i, group).t
+      }),
     }
   }
 
@@ -516,6 +544,52 @@ export class Renderer {
     return out
   }
 
+  // An item's words on a tile: its title on up to two lines (wrapped at spaces, "…" only if it still does not
+  // fit), a group's pages under its name; and the tile's size.
+  private tiles = new Map<number, { lines: string[]; sub: string; w: number; h: number }>()
+  private tileWords(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    sc: Scene,
+    i: number,
+    group: boolean,
+  ): { lines: string[]; sub: string; w: number; h: number } {
+    const known = this.tiles.get(i)
+    if (known) return known
+    const [raw = '', sub = ''] = (sc.labels[i] ?? '').split('\n')
+    ctx.font = TILE_TITLE
+    const width = (t: string) => ctx.measureText(t).width
+    const lines: string[] = []
+    let rest = raw.trim()
+    const most = group ? 1 : 2
+    while (rest && lines.length < most) {
+      if (width(rest) <= TILE_TEXT) {
+        lines.push(rest)
+        break
+      }
+      if (lines.length === most - 1) {
+        let cut = rest
+        while (cut.length > 1 && width(`${cut}…`) > TILE_TEXT) cut = cut.slice(0, -1)
+        lines.push(`${cut.trimEnd()}…`)
+        break
+      }
+      const words = rest.split(' ')
+      let line = words[0] as string
+      let k = 1
+      while (k < words.length && width(`${line} ${words[k]}`) <= TILE_TEXT) line = `${line} ${words[k++]}`
+      if (width(line) > TILE_TEXT) {
+        while (line.length > 1 && width(line) > TILE_TEXT) line = line.slice(0, -1)
+        rest = rest.slice(line.length).trimStart()
+      } else rest = words.slice(k).join(' ')
+      lines.push(line)
+    }
+    const titleW = Math.max(0, ...lines.map(width))
+    ctx.font = SUB
+    const wide = Math.max(titleW, sub ? ctx.measureText(sub).width : 0)
+    const out = { lines, sub, w: Math.max(TILE_MIN, Math.ceil(wide) + 32), h: TILE_H }
+    this.tiles.set(i, out)
+    return out
+  }
+
   // Where the cards go (cards.ts): the person's own items first and always, then the neighbours of what
   // they are on, the hubs, the groups, and every other item where one still fits.
   private place(
@@ -525,6 +599,7 @@ export class Renderer {
     SX: (i: number) => number,
     SY: (i: number) => number,
     isGroup: (i: number) => boolean,
+    tile: boolean,
   ): Card[] {
     const sx = new Float32Array(2 * sc.n).fill(Number.NaN)
     for (let i = 0; i < sc.n; i++)
@@ -554,6 +629,7 @@ export class Renderer {
       order: order(),
       sx,
       textW: (i) => this.wordsOf(ctx, sc, i, isGroup(i)).w,
+      ...(tile ? { size: (i: number) => this.tileWords(ctx, sc, i, isGroup(i)) } : {}),
       group: isGroup,
       width: st.width,
       height: st.height,
@@ -570,8 +646,10 @@ export class Renderer {
     sc: Scene,
     cards: Card[],
     lit: Uint8Array | null,
+    tile: boolean,
   ): void {
     const p = st.palette
+    if (tile) return this.drawTiles(ctx, st, sc, cards, lit)
     for (let k = cards.length - 1; k >= 0; k--) {
       const c = cards[k] as Card
       const i = c.i
@@ -634,6 +712,87 @@ export class Renderer {
       if (i === st.active) {
         ctx.beginPath()
         ctx.roundRect(c.x - 3.5, c.y - 3.5, c.w + 7, c.h + 7, round + 3.5)
+        ctx.lineWidth = 2
+        ctx.strokeStyle = p.accent
+        ctx.stroke()
+      }
+    }
+    ctx.globalAlpha = 1
+  }
+
+  // Tiles: a rounded box with the type's shape in a disc at the top and the title under it. Selected: a 2 px
+  // border in the accent; where the keyboard is: a ring outside the tile; superseded: faint and struck.
+  private drawTiles(
+    ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+    st: State,
+    sc: Scene,
+    cards: Card[],
+    lit: Uint8Array | null,
+  ): void {
+    const p = st.palette
+    for (let k = cards.length - 1; k >= 0; k--) {
+      const c = cards[k] as Card
+      const i = c.i
+      const group = sc.shape[i] === GROUP_SHAPE
+      const superseded = sc.superseded[i] === 1
+      const words = this.tileWords(ctx, sc, i, group)
+      ctx.globalAlpha = lit && !lit[i] ? 0.35 : superseded ? 0.6 : 1
+      ctx.beginPath()
+      ctx.roundRect(c.x + 0.5, c.y + 0.5, c.w - 1, c.h - 1, 12)
+      ctx.fillStyle = p.card
+      ctx.fill()
+      const selected = i === st.selected
+      ctx.lineWidth = selected ? 2 : 1
+      ctx.strokeStyle = selected ? p.accent : i === st.focus ? p.text : p.cardLine
+      ctx.stroke()
+      if (group) {
+        ctx.beginPath()
+        ctx.roundRect(c.x + 4.5, c.y + 4.5, c.w - 9, c.h - 9, 8)
+        ctx.lineWidth = 1
+        ctx.strokeStyle = p.cardLine
+        ctx.stroke()
+      }
+      const cx = c.x + c.w / 2
+      const dy = c.y + 28
+      ctx.beginPath()
+      ctx.arc(cx, dy, 17, 0, Math.PI * 2)
+      ctx.fillStyle = p.ground
+      ctx.fill()
+      ctx.beginPath()
+      if (group) ctx.roundRect(cx - 8, dy - 8, 16, 16, 3)
+      else shape(ctx, SHAPES[sc.shape[i] as number] ?? 'topic', cx, dy, 7.5)
+      if (st.hop && st.hop[i] === 2) {
+        ctx.lineWidth = 1.5
+        ctx.strokeStyle = p.cardInk
+        ctx.stroke()
+      } else {
+        ctx.fillStyle = p.cardInk
+        ctx.fill('evenodd')
+      }
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      const lines = words.sub ? [...words.lines, words.sub] : words.lines
+      const first = lines.length > 1 ? c.y + 60 : c.y + 68
+      for (const [n, line] of lines.entries()) {
+        const sub = words.sub !== '' && n === lines.length - 1
+        ctx.font = sub ? SUB : TILE_TITLE
+        ctx.fillStyle = sub ? p.cardSub : p.cardInk
+        ctx.fillText(line, cx, first + n * 18)
+        if (superseded && !sub) {
+          const w = ctx.measureText(line).width
+          ctx.beginPath()
+          ctx.moveTo(cx - w / 2, first + n * 18)
+          ctx.lineTo(cx + w / 2, first + n * 18)
+          ctx.lineWidth = 1.2
+          ctx.strokeStyle = p.cardInk
+          ctx.stroke()
+        }
+      }
+      ctx.textAlign = 'start'
+      ctx.globalAlpha = 1
+      if (i === st.active) {
+        ctx.beginPath()
+        ctx.roundRect(c.x - 3.5, c.y - 3.5, c.w + 7, c.h + 7, 15.5)
         ctx.lineWidth = 2
         ctx.strokeStyle = p.accent
         ctx.stroke()
