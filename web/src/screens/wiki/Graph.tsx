@@ -720,6 +720,7 @@ function palette(): Palette {
     accent: v('--accent'),
     danger: v('--danger'),
     ground: v('--ground'),
+    edge: v('--edge'),
     dot: v('--grid-dot'),
     card: v('--node-bg'),
     cardLine: v('--node-line'),

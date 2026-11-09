@@ -28,6 +28,8 @@ import { fit, fitPad, GROUP_SHAPE, groupRadius } from './model.ts'
 export { fitPad, GROUP_SHAPE, groupRadius }
 
 export type Palette = {
+  // The lines at rest.
+  edge: string
   text: string
   muted: string
   accent: string
@@ -44,16 +46,21 @@ export type Palette = {
 export const SHAPES = ['topic', 'entity', 'decision', 'guide', 'agent', 'source', 'overview'] as const
 
 // Each link kind: its dash (screen px), width, and whether it points somewhere (an arrowhead at its end).
+// Quiet, as in a flow editor (closing review): thin at rest, the kinds told apart by dash and arrowhead.
 export const LINE: Record<string, { dash: number[]; width: number; arrow: boolean }> = {
-  mentions: { dash: [1.5, 4], width: 1.2, arrow: true },
+  mentions: { dash: [1.5, 4], width: 1, arrow: true },
   related: { dash: [], width: 1, arrow: false },
-  'depends-on': { dash: [8, 4], width: 1.4, arrow: true },
-  contradicts: { dash: [2, 3, 9, 3], width: 1.8, arrow: false },
-  supersedes: { dash: [], width: 2.6, arrow: true },
-  'part-of': { dash: [16, 5], width: 1.6, arrow: true },
-  'example-of': { dash: [7, 3, 1.5, 3], width: 1.2, arrow: true },
+  'depends-on': { dash: [8, 4], width: 1.1, arrow: true },
+  contradicts: { dash: [2, 3, 9, 3], width: 1, arrow: false },
+  supersedes: { dash: [], width: 1.4, arrow: true },
+  'part-of': { dash: [16, 5], width: 1.2, arrow: true },
+  'example-of': { dash: [7, 3, 1.5, 3], width: 1, arrow: true },
   group: { dash: [], width: 4, arrow: false },
 }
+
+// How strong the lines are: faint (another page under the pointer, or a superseded end), quiet at rest,
+// contradicts a little stronger in its tint, and lit (the lines of the page picked or under the pointer).
+export const EDGE = { faint: 0.08, quiet: 0.35, contradicts: 0.42, lit: 0.95 }
 
 type Path = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | Path2D
 
@@ -303,12 +310,14 @@ export class Renderer {
       ctx.globalAlpha = 1
     }
 
-    // Lines: one path per kind and dimness, arrowheads in one path per kind.
+    // Lines: one path per kind and strength, arrowheads in one path per kind. The lines of the page under the
+    // pointer, or else of the page picked, are drawn last and at full strength.
+    const on = st.hover >= 0 && st.nodes[st.hover] ? st.hover : st.selected
     ctx.lineCap = 'round'
     for (let k = -1; k < sc.kinds.length; k++) {
       const name = k < 0 ? 'group' : (sc.kinds[k] as string)
       const style = LINE[name] ?? (LINE.related as (typeof LINE)[string])
-      for (const faint of [false, true]) {
+      for (const tier of [0, 1, 2] as const) {
         ctx.beginPath()
         const heads: number[] = []
         let any = false
@@ -316,8 +325,9 @@ export class Renderer {
           if (!st.edges[e] || sc.kind[e] !== k) continue
           const i = sc.edges[2 * e] as number
           const j = sc.edges[2 * e + 1] as number
-          const off = lit ? i !== st.hover && j !== st.hover : dim(i) || dim(j)
-          if (off !== faint) continue
+          const touches = on >= 0 && (i === on || j === on)
+          const t = touches ? 2 : (lit ? i !== st.hover && j !== st.hover : dim(i) || dim(j)) ? 0 : 1
+          if (t !== tier) continue
           let x0 = SX(i)
           let y0 = SY(i)
           let x1 = SX(j)
@@ -326,37 +336,32 @@ export class Renderer {
           const cj = cardOf[j] as number
           if (cj >= 0) [x1, y1] = clipToRect(x0, y0, x1, y1, cards[cj] as Card)
           if (ci >= 0) [x0, y0] = clipToRect(x1, y1, x0, y0, cards[ci] as Card)
-          if (k < 0) {
-            // A link with a group: as wide as it is busy.
-            ctx.moveTo(x0, y0)
-            ctx.lineTo(x1, y1)
-            any = true
-            continue
-          }
           ctx.moveTo(x0, y0)
           ctx.lineTo(x1, y1)
           any = true
+          if (k < 0) continue
           const len = Math.hypot(x1 - x0, y1 - y0)
           if (style.arrow && len > 28) heads.push(x0, y0, x1, y1, len, cj >= 0 ? -1 : radius(j))
         }
         if (!any) continue
         ctx.setLineDash(style.dash)
         // Between groups: wide; from the pages of an opened group to the boxes around it: thin, many as they are.
-        ctx.lineWidth = k < 0 ? (sc.byGroups ? 3 : 0.8) : style.width
-        ctx.strokeStyle = name === 'contradicts' ? palette.danger : palette.muted
-        ctx.globalAlpha = faint
-          ? lit
-            ? 0.08
-            : 0.2
-          : lit
-            ? 0.95
-            : k < 0
-              ? sc.byGroups
-                ? 0.25
-                : 0.12
-              : name === 'contradicts'
-                ? 0.85
-                : 0.55
+        const width = k < 0 ? (sc.byGroups ? 3 : 0.8) : style.width
+        ctx.lineWidth = tier === 2 ? width + 0.6 : width
+        const contradicts = name === 'contradicts'
+        ctx.strokeStyle = contradicts ? palette.danger : tier === 2 ? palette.text : palette.edge
+        ctx.globalAlpha =
+          tier === 0
+            ? EDGE.faint
+            : tier === 2
+              ? EDGE.lit
+              : k < 0
+                ? sc.byGroups
+                  ? 0.25
+                  : 0.1
+                : contradicts
+                  ? EDGE.contradicts
+                  : EDGE.quiet
         ctx.stroke()
         if (heads.length) {
           ctx.setLineDash([])
@@ -375,11 +380,11 @@ export class Renderer {
             const tx = x1 - ux * (r + 2)
             const ty = y1 - uy * (r + 2)
             ctx.moveTo(tx, ty)
-            ctx.lineTo(tx - ux * 7 - uy * 3.5, ty - uy * 7 + ux * 3.5)
-            ctx.lineTo(tx - ux * 7 + uy * 3.5, ty - uy * 7 - ux * 3.5)
+            ctx.lineTo(tx - ux * 6 - uy * 3, ty - uy * 6 + ux * 3)
+            ctx.lineTo(tx - ux * 6 + uy * 3, ty - uy * 6 - ux * 3)
             ctx.closePath()
           }
-          ctx.fillStyle = name === 'contradicts' ? palette.danger : palette.muted
+          ctx.fillStyle = contradicts ? palette.danger : tier === 2 ? palette.text : palette.edge
           ctx.fill()
         }
       }
