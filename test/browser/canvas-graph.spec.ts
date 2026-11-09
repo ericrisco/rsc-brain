@@ -389,3 +389,34 @@ test('the inspector: link rows keep Inspect at the right of their first line; no
   expect(fonts.length).toBeGreaterThanOrEqual(2)
   for (const f of fonts) expect(f).not.toMatch(/mono|Menlo|Consolas/i)
 })
+
+// Review A1: with the panel open, the keyboard's page is kept in the part of the canvas the panel and the
+// controls leave: its card never ends under the panel.
+test('with the inspector open, walking right keeps the keyboard’s card clear of the panel', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto(GRAPH)
+  await settled(page)
+  const canvas = page.locator('canvas.graph-canvas')
+  await page.getByRole('button', { name: 'Inspector', exact: true }).click()
+  const c = await box(page, 'canvas.graph-canvas')
+  const panel = await box(page, '#graph-inspector')
+  await canvas.focus()
+  await page.keyboard.press('+')
+  await page.keyboard.press('+')
+  await page.keyboard.press('+')
+  const end = async () => {
+    const [x, , w] = ((await canvas.getAttribute('data-active-card')) ?? '0,0,0,0')
+      .split(',')
+      .map(Number) as [number, number, number]
+    return c.left + x + w
+  }
+  for (let n = 0; n < 12; n++) {
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(end, { message: `step ${n}: the card ends left of the panel` }).toBeLessThan(panel.left)
+  }
+})
