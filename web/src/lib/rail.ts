@@ -29,7 +29,11 @@ export const rail = signal<Rail>('folded')
 // A tablet (768–1099px): the open rail covers the screen there, so it opens for the moment only, and is
 // never read from nor saved to the remembered choice (review R2).
 export const TABLET = '(min-width: 768px) and (max-width: 1099px)'
-export const isTablet = (): boolean => typeof matchMedia === 'function' && matchMedia(TABLET).matches
+export const isTablet = (): boolean => {
+  // Read from globalThis: this module is also loaded by the node tests, where there is no window.
+  const mm = (globalThis as { matchMedia?: (q: string) => { matches: boolean } }).matchMedia
+  return typeof mm === 'function' && mm(TABLET).matches
+}
 
 type Where = { tablet?: boolean }
 
