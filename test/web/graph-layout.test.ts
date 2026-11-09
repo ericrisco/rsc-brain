@@ -339,12 +339,13 @@ describe('the layout of the graph in three dimensions', () => {
     })
 })
 
-// Polish (plan canvas-ui SB4): each family is a blob of its own around the hub, as in the reference: the
-// middle of every family lies farther from the middle of any other than twice either family's spread. Checked on
-// the seeded wiki of 300 pages the browser tests draw, where four links in five cross families and folders cut
-// across them.
-describe('the families as separate clouds', () => {
-  it('each family’s middle is farther from the others than twice its spread (seeded wiki)', () => {
+// Polish (plan canvas-ui SB4), eased by the review's visual pass: the families are colour regions of one
+// interwoven cloud, as in the reference. Each family's middle lies farther from any other's than 1.2 times either
+// family's spread (each colour has its region), and for the closest two less than twice it (they mix at their
+// edges: not separate blobs). Checked on the seeded wiki of 300 pages the browser tests draw, where four links in
+// five cross families and folders cut across them.
+describe('the families as colour regions of one cloud', () => {
+  it('each family has its region, and neighbouring families mix at their edges (seeded wiki)', () => {
     const g = generate({ pages: 300, seed: 48291 })
     const pages = g.pages.filter((p) => p.status !== 'retired')
     const index = new Map(pages.map((p, i) => [p.address, i]))
@@ -394,6 +395,7 @@ describe('the families as separate clouds', () => {
     for (let e = 0; e < edges.length; e += 2)
       if (family[edges[e] as number] !== family[edges[e + 1] as number]) crossing += 1
     assert.ok(crossing > 0.5 * (edges.length / 2), 'most links cross families in this wiki')
+    let closest = Number.POSITIVE_INFINITY
     for (let f = 0; f < fams; f++)
       for (let h = f + 1; h < fams; h++) {
         const a = mid[f] as number[]
@@ -406,9 +408,11 @@ describe('the families as separate clouds', () => {
         )
         const most = Math.max(spread[f] as number, spread[h] as number)
         assert.ok(
-          d > 2 * most,
+          d > 1.2 * most,
           `${PAGE_TYPES[f]} and ${PAGE_TYPES[h]}: ${d.toFixed(0)} apart, spread ${most.toFixed(0)}`,
         )
+        closest = Math.min(closest, d / most)
       }
+    assert.ok(closest < 2, `the two closest families mix at their edges: ${closest.toFixed(2)} spreads apart`)
   })
 })

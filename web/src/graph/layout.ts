@@ -19,11 +19,11 @@ export const LAYOUT = {
   areaPull: 0.12,
   // In three dimensions: how strongly a page is pulled to its family's place, and how far out the places are
   // (times the square root of the pages).
-  familyPull: 0.2,
-  familyReach: 14,
-  // In three dimensions a link between two families pulls this much of a link inside one: the families stay
-  // clouds of their own, joined by long, loose lines.
-  crossLink: 0.25,
+  familyPull: 0.14,
+  familyReach: 11,
+  // In three dimensions a link between two families pulls this much of a link inside one: the families are
+  // colour regions of one interwoven cloud, mixing at their edges.
+  crossLink: 0.45,
   // Barnes–Hut: a cell this small seen from this far counts as one body.
   theta2: 0.81,
   distanceMin2: 1,
