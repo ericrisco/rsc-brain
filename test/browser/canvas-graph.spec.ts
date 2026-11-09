@@ -620,3 +620,47 @@ test('outside a test the painter does not build the cards’ list for tests', as
   await expect.poll(async () => Number(await canvas.getAttribute('data-cards'))).toBeGreaterThan(0)
   await expect(canvas).not.toHaveAttribute('data-card-list', /./)
 })
+
+// Closing review, visual gap 2: no card is drawn under the canvas's controls (the legend, the zoom tools, the
+// bars at the top, the panel's switch), with the panel open or not, zoomed in or at Fit.
+for (const zoom of [0, 2])
+  test(`no card under the canvas controls, panel open${zoom ? ', zoomed in' : ''}`, async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.setViewportSize({ width: 1920, height: 1080 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const canvas = page.locator('canvas.graph-canvas')
+    await canvas.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('complementary', { name: /^Inspector \S/ })).toBeVisible()
+    for (let n = 0; n < zoom; n++) await page.keyboard.press('+')
+    await upToDate(page)
+    const c = await box(page, 'canvas.graph-canvas')
+    const controls = await Promise.all(
+      ['.graph-legend', '.graph-tools', '.graph-over', '.graph-center', '.inspector-toggle'].map((q) =>
+        box(page, q),
+      ),
+    )
+    const cards = JSON.parse((await canvas.getAttribute('data-card-list')) ?? '[]') as {
+      x: number
+      y: number
+      w: number
+      h: number
+      title: string
+    }[]
+    const picked = (await canvas.getAttribute('data-selected-card')) ?? ''
+    expect(cards.length).toBeGreaterThan(0)
+    for (const k of cards) {
+      if (`${k.x},${k.y},${k.w},${k.h}` === picked) continue
+      const r = { left: c.left + k.x, top: c.top + k.y, right: c.left + k.x + k.w, bottom: c.top + k.y + k.h }
+      for (const b of controls)
+        expect(
+          r.left < b.right && r.right > b.left && r.top < b.bottom && r.bottom > b.top,
+          `${k.title} under a control`,
+        ).toBe(false)
+    }
+  })

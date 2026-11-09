@@ -3,7 +3,7 @@
 // lines of the page picked (or under the pointer) at full strength.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { EDGE, LINE } from '../../web/src/graph/render.ts'
+import { EDGE, LINE } from '../../web/src/graph/lines.ts'
 
 describe('the lines of the graph', () => {
   const kinds = Object.keys(LINE).filter((k) => k !== 'group')

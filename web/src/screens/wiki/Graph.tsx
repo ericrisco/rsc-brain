@@ -849,7 +849,9 @@ function GraphCanvas({
   // The zoom buttons over the top of the picture: what they cover, from the canvas top (they wrap when narrow).
   // Read from an observer (never asked for in the middle of a task, CA6): 8 px from the top, then its height.
   const tools = useRef<HTMLDivElement>(null)
-  const band = useRef({ top: 0, bottom: 0 })
+  const band = useRef<{ top: number; bottom: number; blocked: number[] }>({ top: 0, bottom: 0, blocked: [] })
+  // Measures the controls over the canvas again (they move when the panel opens).
+  const measureBands = useRef<() => void>(() => {})
   const labels = useMemo(() => labelsOf(model, counts), [model, counts])
   const hubList = useMemo(() => hubs(model, nodes, HUBS), [model, nodes])
   const role = useMemo(() => roles(model), [model])
@@ -1016,6 +1018,7 @@ function GraphCanvas({
       probe,
       top: band.current.top,
       bottom: band.current.bottom,
+      blocked: band.current.blocked,
     }
     post({ type: 'state', state })
   }
@@ -1114,7 +1117,12 @@ function GraphCanvas({
       t,
       ...['.graph-over', '.graph-center'].map((q) => screen?.querySelector<HTMLElement>(q) ?? null),
     ]
-    const tro = new ResizeObserver(() => {
+    // No card is drawn under any control over the canvas, the legend and the panel's switch included
+    // (closing review): their boxes, from the canvas's corner.
+    const others = ['.graph-legend', '.inspector-toggle'].map(
+      (q) => screen?.querySelector<HTMLElement>(q) ?? null,
+    )
+    const bands = () => {
       const r = el.getBoundingClientRect()
       let top = 0
       let bottom = 0
@@ -1124,12 +1132,29 @@ function GraphCanvas({
         if (b.top + b.bottom < r.top + r.bottom) top = Math.max(top, Math.ceil(b.bottom - r.top) + BAND_GAP)
         else bottom = Math.max(bottom, Math.ceil(r.bottom - b.top) + BAND_GAP)
       }
-      if (top === band.current.top && bottom === band.current.bottom) return
-      band.current = { top, bottom }
+      const blocked: number[] = []
+      for (const x of [...controls, ...others]) {
+        const b = x?.getBoundingClientRect()
+        if (b?.width && b.height)
+          blocked.push(
+            b.left - r.left - BAND_GAP / 2,
+            b.top - r.top - BAND_GAP / 2,
+            b.width + BAND_GAP,
+            b.height + BAND_GAP,
+          )
+      }
+      const same =
+        top === band.current.top &&
+        bottom === band.current.bottom &&
+        blocked.join() === band.current.blocked.join()
+      if (same) return
+      band.current = { top, bottom, blocked }
       sendState()
-    })
+    }
+    measureBands.current = bands
+    const tro = new ResizeObserver(bands)
     // The box too: a new size of the window moves the controls at its bottom.
-    for (const x of [el, ...controls]) if (x) tro.observe(x)
+    for (const x of [el, ...controls, ...others]) if (x) tro.observe(x)
     return () => {
       ro.disconnect()
       tro.disconnect()
@@ -1202,6 +1227,8 @@ function GraphCanvas({
     const toggled = panelOnce.current !== panel
     panelOnce.current = panel
     if (toggled && settled.current) auto.current = false
+    // The panel's switch moves with the panel: where no card goes moves too.
+    if (toggled) requestAnimationFrame(() => measureBands.current())
     // A page picked is brought into the part the panel leaves, whether or not Fit was on (review A4).
     const moved = panel && bringIntoView(latest.current.selected, true)
     if (toggled || moved) sendState()

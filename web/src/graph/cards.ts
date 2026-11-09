@@ -50,6 +50,8 @@ export type Placing = {
   max?: number
   // An item's card size, when it is not a pill (a tile, zoomed in): overrides textW and group.
   size?: (i: number) => { w: number; h: number }
+  // Boxes no card may cover but a forced one (the controls over the canvas): x, y, w, h, x, y, …
+  blocked?: ArrayLike<number>
 }
 
 const CELL = 32
@@ -90,6 +92,21 @@ export function placeCards(p: Placing): Card[] {
     placed.some(
       (c) => r.x < c.x + c.w + GAP && r.x + r.w + GAP > c.x && r.y < c.y + c.h + GAP && r.y + r.h + GAP > c.y,
     )
+  const blocked = p.blocked ?? []
+  const under = (r: Rect) => {
+    for (let b = 0; b + 3 < blocked.length; b += 4) {
+      const bx = blocked[b] as number
+      const by = blocked[b + 1] as number
+      if (
+        r.x < bx + (blocked[b + 2] as number) &&
+        r.x + r.w > bx &&
+        r.y < by + (blocked[b + 3] as number) &&
+        r.y + r.h > by
+      )
+        return true
+    }
+    return false
+  }
   for (const i of p.order) {
     if (placed.length >= max) break
     if (seen.has(i) || i < 0 || i >= n) continue
@@ -102,7 +119,7 @@ export function placeCards(p: Placing): Card[] {
     // Wholly off the canvas: nothing to draw.
     if (r.x + r.w < 0 || r.y + r.h < 0 || r.x > p.width || r.y > p.height) continue
     if (!p.forced.has(i) && (r.x < 0 || r.y < 0 || r.x + r.w > p.width || r.y + r.h > p.height)) continue
-    if (!p.forced.has(i) && (meets(r) || covers(r, i))) continue
+    if (!p.forced.has(i) && (meets(r) || covers(r, i) || under(r))) continue
     placed.push({ i, ...r })
   }
   return placed

@@ -46,21 +46,9 @@ export type Palette = {
 export const SHAPES = ['topic', 'entity', 'decision', 'guide', 'agent', 'source', 'overview'] as const
 
 // Each link kind: its dash (screen px), width, and whether it points somewhere (an arrowhead at its end).
-// Quiet, as in a flow editor (closing review): thin at rest, the kinds told apart by dash and arrowhead.
-export const LINE: Record<string, { dash: number[]; width: number; arrow: boolean }> = {
-  mentions: { dash: [1.5, 4], width: 1, arrow: true },
-  related: { dash: [], width: 1, arrow: false },
-  'depends-on': { dash: [8, 4], width: 1.1, arrow: true },
-  contradicts: { dash: [2, 3, 9, 3], width: 1, arrow: false },
-  supersedes: { dash: [], width: 1.4, arrow: true },
-  'part-of': { dash: [16, 5], width: 1.2, arrow: true },
-  'example-of': { dash: [7, 3, 1.5, 3], width: 1, arrow: true },
-  group: { dash: [], width: 4, arrow: false },
-}
+import { EDGE, LINE } from './lines.ts'
 
-// How strong the lines are: faint (another page under the pointer, or a superseded end), quiet at rest,
-// contradicts a little stronger in its tint, and lit (the lines of the page picked or under the pointer).
-export const EDGE = { faint: 0.08, quiet: 0.35, contradicts: 0.42, lit: 0.95 }
+export { EDGE, LINE }
 
 type Path = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | Path2D
 
@@ -183,6 +171,8 @@ export type State = {
   right: number
   // The band at the bottom the zoom buttons cover: fit draws above it.
   bottom: number
+  // The boxes of the controls over the canvas (x, y, w, h, …): no card is drawn under them.
+  blocked: number[]
   // Which state this is: the picture drawn from it says so (tests wait for the picture of the last one).
   seq: number
   // A test drives the browser (navigator.webdriver): the picture also says the words of its cards.
@@ -647,6 +637,7 @@ export class Renderer {
       width: st.width,
       height: st.height,
       forced: new Set([st.active, st.selected, st.focus].filter((i) => i >= 0 && st.nodes[i])),
+      blocked: st.blocked,
     })
   }
 
