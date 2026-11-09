@@ -2296,8 +2296,8 @@ pre.version {
   margin-left: 6px;
 }
 
-/* A proposal reads in one column, at a reading width; on a wide screen its changes keep that width and
-   why it was sent and the decision sit beside them, the decision in view while scrolling. */
+/* A proposal reads in one column, at a reading width; on a wide screen why it was sent and its changes
+   keep that column and the decision sits beside them, in view while scrolling. */
 .proposal-view {
   max-width: 860px;
 }
@@ -2315,25 +2315,26 @@ pre.version {
     display: grid;
     grid-template-columns: minmax(0, 1fr) clamp(340px, 26vw, 460px);
     grid-template-rows: auto 1fr;
-    column-gap: 48px;
+    gap: 24px 48px;
     align-items: start;
+  }
+
+  /* In the order Tab reaches them: why, then the changes, in the main column; the decision beside. */
+  .proposal-body > .why {
+    grid-column: 1;
+    grid-row: 1;
   }
 
   .proposal-body > .changes {
     grid-column: 1;
-    grid-row: 1 / span 2;
-  }
-
-  .proposal-body > .why {
-    grid-column: 2;
-    grid-row: 1;
+    grid-row: 2;
   }
 
   .proposal-body > :not(.changes, .why) {
     position: sticky;
     top: 24px;
     grid-column: 2;
-    grid-row: 2;
+    grid-row: 1 / span 2;
   }
 }
 

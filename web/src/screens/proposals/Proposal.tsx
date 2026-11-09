@@ -816,7 +816,7 @@ export function ProposalScreen({ slug, id }: { slug: string; id: string }) {
       {p.lastError && p.status === 'pending' ? <p class="alert">{w.lastError(p.lastError)}</p> : null}
       {review.canDecide || p.status !== 'pending' ? null : <ReadOnlyLine brain={brain} slug={slug} />}
 
-      {/* Wide: the changes in the main column, why and the decision beside them. */}
+      {/* Wide: why and the changes in the main column, the decision beside them. */}
       <div class="proposal-body">
         <section class="why" aria-labelledby="why-title">
           <h2 id="why-title" class="section-title">
