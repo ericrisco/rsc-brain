@@ -1058,6 +1058,15 @@ function GraphCanvas({
       )
     if (d.active) c.dataset.active = `${d.active[0]},${d.active[1]}`
     else delete c.dataset.active
+    // Where the page's own copy of the projection puts that page: the pointer works on it (review R2).
+    const here = shownXY()
+    const ai = latest.current.active
+    if (probe && here && ai >= 0 && here.length > 2 * ai + 1) {
+      const v = view.current
+      const hx = Math.round((here[2 * ai] as number) * v.scale + v.tx)
+      const hy = Math.round((here[2 * ai + 1] as number) * v.scale + v.ty)
+      c.dataset.activeHere = `${hx},${hy}`
+    } else delete c.dataset.activeHere
     // Where the cards of the keyboard's page and of the picked one are (tests read them).
     const ac = d.cards.find((k) => k.i === latest.current.active)
     if (ac) c.dataset.activeCard = `${ac.x},${ac.y},${ac.w},${ac.h}`

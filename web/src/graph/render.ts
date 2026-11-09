@@ -294,8 +294,10 @@ export class Renderer {
   private box: { of: Float32Array; mask: Uint8Array; pitch: number; b: Float32Array } | null = null
   private proj = new Float32Array(0)
   private depth = new Float32Array(0)
+  // The projection last sent to the page, by everything it depends on: the frame (layout and fit mask) and the
+  // camera. Any of them changing moves the points on screen (review R2).
   private sent = ''
-  private sentOf: Float32Array | null = null
+  private frames = 0
   private last = 0
   private facts: Fact[] = []
   private factAt = 0
@@ -366,8 +368,10 @@ export class Renderer {
     if (flat) xy = st.xy as Float32Array
     else {
       const l = layout as Float32Array
-      if (!this.frame || this.frame.of !== l || this.frame.mask !== st.fit)
+      if (!this.frame || this.frame.of !== l || this.frame.mask !== st.fit) {
         this.frame = { of: l, mask: st.fit, f: frameOf(l, st.fit) }
+        this.frames += 1
+      }
       const f = this.frame.f
       if (this.proj.length !== 2 * sc.n) {
         this.proj = new Float32Array(2 * sc.n)
@@ -443,9 +447,8 @@ export class Renderer {
         if (flat) this.sent = ''
         return null
       }
-      const key = `${this.camera.yaw}|${this.camera.pitch}`
-      if (this.sentOf === layout && this.sent === key) return null
-      this.sentOf = layout
+      const key = `${this.frames}|${this.camera.yaw}|${this.camera.pitch}`
+      if (this.sent === key) return null
       this.sent = key
       return xy.slice()
     }

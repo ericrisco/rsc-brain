@@ -88,6 +88,45 @@ test.describe('the cloud, still (reduced motion)', () => {
   })
 })
 
+// Review R2: after a filter the cloud is framed on what is left, so every point moves on screen. The pointer
+// finds points on the page's copy of the projection; that copy must be the one the painter drew with, or a click
+// on a bare point picks the page drawn there before. data-active is where the painter drew the keyboard's page;
+// data-active-here is where the page's copy puts it.
+const sameProjection = async (page: Page) => {
+  const canvas = page.locator('canvas.graph-canvas')
+  await canvas.focus()
+  await expect(canvas).toHaveAttribute('data-active', /\d+,\d+/)
+  await expect
+    .poll(async () => {
+      const a = ((await canvas.getAttribute('data-active')) ?? '').split(',').map(Number)
+      const b = ((await canvas.getAttribute('data-active-here')) ?? '').split(',').map(Number)
+      return (
+        b.length === 2 && Math.abs((a[0] ?? 0) - (b[0] ?? 0)) <= 1 && Math.abs((a[1] ?? 0) - (b[1] ?? 0)) <= 1
+      )
+    })
+    .toBe(true)
+}
+
+test.describe('R2: a filter moves every point; the pointer follows', () => {
+  for (const motion of ['reduce', 'no-preference'] as const)
+    test(`the page hit-tests the projection the painter drew after a filter (${motion})`, async ({
+      page,
+      context,
+      baseURL,
+    }) => {
+      await page.emulateMedia({ reducedMotion: motion })
+      await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+      await page.setViewportSize({ width: 1920, height: 1080 })
+      await page.goto(GRAPH)
+      await settled(page)
+      await page.locator('.graph-filters summary').click()
+      await page.locator('#graph-type').selectOption('entity')
+      await page.locator('.graph-filters summary').click()
+      await settled(page)
+      await sameProjection(page)
+    })
+})
+
 test.describe('the cloud, moving (motion allowed)', () => {
   test.use({ reducedMotion: 'no-preference', viewport: { width: 1920, height: 1080 } })
   const yawOf = async (page: Page) =>
