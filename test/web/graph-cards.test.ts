@@ -13,6 +13,7 @@ import {
   fitCards,
   GROUP_H,
   hitCard,
+  keepInView,
   MAX_CARDS,
   placeCards,
   TILE_PAD,
@@ -188,5 +189,28 @@ describe('Fit and the tiles', () => {
   it('far from tiles, the tight fit stays', () => {
     const v = fitCards(fitWith(200), 48)
     assert.equal(v.scale, fitWith(200)(48).scale)
+  })
+})
+
+// Review R2-4: keeping an item in view moves the picture only by what sticks out, never re-centres an item
+// already in view, and settles even when the card is wider than the room left.
+describe('keeping an item in view', () => {
+  const room = { left: 0, top: 60, right: 1000, bottom: 700 }
+  it('in view: nothing moves', () => {
+    assert.equal(keepInView({ sx: 500, sy: 400, hw: 50, hh: 14, ...room }), null)
+  })
+  it('sticking out at the right: moved back by that much only', () => {
+    // The card's edge plus the 24 px gap reaches 1030: 30 too far.
+    assert.deepEqual(keepInView({ sx: 956, sy: 400, hw: 50, hh: 14, ...room }), { dx: -30, dy: 0 })
+  })
+  it('under the top controls: moved down by that much only', () => {
+    assert.deepEqual(keepInView({ sx: 500, sy: 80, hw: 50, hh: 14, ...room }), { dx: 0, dy: 18 })
+  })
+  it('a card wider than the room: centred once, then left alone', () => {
+    const wide = { hw: 700, hh: 48, ...room }
+    const first = keepInView({ sx: 900, sy: 400, ...wide })
+    assert.ok(first)
+    const again = keepInView({ sx: 900 + (first?.dx ?? 0), sy: 400 + (first?.dy ?? 0), ...wide })
+    assert.equal(again, null)
   })
 })

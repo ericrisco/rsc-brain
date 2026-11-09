@@ -156,3 +156,28 @@ export function fitCards(fitWith: (pad: number) => View, pad: number): View {
   if (tight.scale < TILE_SCALE) return tight
   return fitWith(Math.max(pad, TILE_PAD))
 }
+
+// How far to move the picture so an item at (sx, sy), its card hw × hh from its middle to each side, sits
+// inside the room left by the panel and the controls with a 24 px gap (review R2-4): only by what sticks
+// out; null when it is in view. A card wider (or taller) than the room is held at the room's middle, so it
+// settles there instead of moving at every step.
+export function keepInView(o: {
+  sx: number
+  sy: number
+  hw: number
+  hh: number
+  left: number
+  top: number
+  right: number
+  bottom: number
+}): { dx: number; dy: number } | null {
+  const along = (at: number, half: number, lo: number, hi: number) => {
+    const m = Math.min(half + 24, Math.max(0, (hi - lo) / 2))
+    if (at < lo + m) return lo + m - at
+    if (at > hi - m) return hi - m - at
+    return 0
+  }
+  const dx = along(o.sx, o.hw, o.left, o.right)
+  const dy = along(o.sy, o.hh, o.top, o.bottom)
+  return dx === 0 && dy === 0 ? null : { dx, dy }
+}

@@ -7,7 +7,7 @@
 // a group is that big); the list stays whole, by pages.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import { useFresh } from '../../api/fresh.ts'
-import { type Card, hitCard, TILE_PAD } from '../../graph/cards.ts'
+import { type Card, hitCard, keepInView, TILE_PAD } from '../../graph/cards.ts'
 import {
   areas,
   countKey,
@@ -1241,8 +1241,8 @@ function GraphCanvas({
     if (!x) return
     if (bringIntoView(i, true)) sendState()
   }
-  // Keeps item i, and its card, in the part of the canvas the panel and the controls leave (review A1): when
-  // it is outside, the view moves so it sits in the middle of that part. `always`: even while Fit is on.
+  // Keeps item i, and its card, in the part of the canvas the panel and the controls leave (review A1, R2-4):
+  // when it sticks out, the view moves by that much only. `always`: even while Fit is on.
   const bringIntoView = (i: number, always: boolean) => {
     const x = shownXY()
     if (!x || i < 0 || (!always && auto.current)) return false
@@ -1251,13 +1251,18 @@ function GraphCanvas({
     const sy = (x[2 * i + 1] as number) * v.scale + v.ty
     const { w, h } = size.current
     const card = cards.current.find((c) => c.i === i)
-    const mx = 24 + (card ? card.w / 2 : TILE_PAD)
-    const my = 24 + (card ? card.h / 2 : 48)
-    const right = w - panelWidth(latest.current.panel)
-    const top = band.current.top
-    const bottom = h - Math.max(band.current.bottom, inset.current)
-    if (sx >= mx && sx <= right - mx && sy >= top + my && sy <= bottom - my) return false
-    view.current = { ...v, tx: v.tx + (right / 2 - sx), ty: v.ty + ((top + bottom) / 2 - sy) }
+    const move = keepInView({
+      sx,
+      sy,
+      hw: card ? card.w / 2 : TILE_PAD,
+      hh: card ? card.h / 2 : 48,
+      left: 0,
+      top: band.current.top,
+      right: w - panelWidth(latest.current.panel),
+      bottom: h - Math.max(band.current.bottom, inset.current),
+    })
+    if (!move) return false
+    view.current = { ...v, tx: v.tx + move.dx, ty: v.ty + move.dy }
     auto.current = false
     return true
   }
