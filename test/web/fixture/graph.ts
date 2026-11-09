@@ -63,6 +63,51 @@ export function lumpyData(): GraphData {
   return { pages, links }
 }
 
+// A brain just started: two pages, one link, one long title (canvas-ui: Fit makes them read as tiles).
+export function smallData(): GraphData {
+  const at = new Date(Date.UTC(2026, 9, 1)).toISOString()
+  return {
+    pages: [
+      {
+        address: 'hiring/cv-screenings',
+        title: 'Payroll clerk CV screenings',
+        type: 'topic',
+        status: 'current',
+        tags: [],
+        summary: 'How the CVs for the payroll clerk are screened.',
+        updatedAt: at,
+      },
+      {
+        address: 'hiring/duplicate-candidates',
+        title: 'Duplicate candidates in the Payroll clerk CV screenings',
+        type: 'guide',
+        status: 'current',
+        tags: [],
+        summary: 'What to do when a candidate applies twice.',
+        updatedAt: at,
+      },
+    ],
+    links: [{ from: 'hiring/duplicate-candidates', to: 'hiring/cv-screenings', kind: 'mentions' }],
+  }
+}
+
+// Pages without any link (review R6: they lie in rows under the cloud, with their caption).
+export function looseData(n: number): GraphData {
+  const at = new Date(Date.UTC(2026, 9, 2)).toISOString()
+  return {
+    pages: Array.from({ length: n }, (_, k) => ({
+      address: `loose/note-${k + 1}`,
+      title: `Loose note ${k + 1}`,
+      type: 'source',
+      status: 'current',
+      tags: [],
+      summary: 'A note nothing links to yet.',
+      updatedAt: at,
+    })),
+    links: [],
+  }
+}
+
 export const merge = (a: GraphData, b: GraphData): GraphData => ({
   pages: [...a.pages, ...b.pages],
   links: [...a.links, ...b.links],

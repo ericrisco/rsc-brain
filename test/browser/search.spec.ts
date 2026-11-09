@@ -199,7 +199,7 @@ test('reopened in another brain, the old results are gone', async ({ page, conte
   await expect(dialog(page).getByRole('list', { name: 'Results' })).toBeVisible()
   await page.keyboard.press('Escape')
   // Moving inside the web (no reload): the dialog keeps its state, so the old answer must go.
-  await page.getByRole('link', { name: '← All brains' }).click()
+  await page.getByRole('link', { name: 'All brains', exact: true }).click()
   await page.getByRole('link', { name: 'Support' }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'Support' })).toBeVisible()
   await page.keyboard.press('Control+k')

@@ -4,7 +4,9 @@
 // most one view draws) to settle without the page noticing. The CPU times are bounds with a wide margin.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { arrange, createLayout, LAYOUT, ROLE } from '../../web/src/graph/layout.ts'
+import { arrange, createLayout, LAYOUT, ROLE, rim3 } from '../../web/src/graph/layout.ts'
+import { PAGE_TYPES } from '../../web/src/lib/wiki.ts'
+import { generate } from '../../web/test/data/generate.ts'
 
 // A ring of clusters: each node linked to the next two in its cluster, clusters linked in a ring.
 function sample(n: number, cluster = 20) {
@@ -141,6 +143,22 @@ describe('the layout of the graph', () => {
     assert.ok(gx > 0, 'on the side of the page it links with')
   })
 
+  // Review R6: in the cloud the rim is a ring about the vertical axis the cloud turns on, so it turns with it
+  // and never sweeps edge-on across the middle; each group on the side of the pages it links with.
+  it('in three dimensions puts the rim on a level ring around the cloud, toward the pages linked', () => {
+    // 0–3 linked, spread in x and z; 4 a group linked to 3, which lies far toward +z.
+    const xyz = new Float32Array([-10, -5, 0, 10, 5, 0, 0, 0, -10, 0, 0, 40, 0, 0, 0])
+    const role = new Uint8Array([0, 0, 0, 0, ROLE.rim])
+    const edges = new Uint32Array([0, 1, 1, 2, 2, 3, 3, 4])
+    rim3(xyz, role, edges)
+    const [x, y, z] = [xyz[12] as number, xyz[13] as number, xyz[14] as number]
+    assert.ok(z > 40, `toward +z and outside the cloud: ${z}`)
+    assert.ok(Math.abs(x) < 1, `on the side of page 3: ${x}`)
+    assert.ok(Math.abs(y) < 1e-6, `at the cloud's middle height: ${y}`)
+    // The free pages do not move.
+    assert.deepEqual([...xyz.slice(0, 12)], [-10, -5, 0, 10, 5, 0, 0, 0, -10, 0, 0, 40])
+  })
+
   it('many groups on the rim, all pointing the same way, are spread evenly and never overlap', () => {
     // A small cluster and 12 groups, every one linked to page 1: they would all pile up on its side.
     const n = 2 + 12
@@ -195,4 +213,206 @@ describe('the layout of the graph', () => {
       assert.ok(ms / steps < (n <= 300 ? 10 : n <= 2000 ? 60 : 150), `${(ms / steps).toFixed(1)} ms a step`)
     })
   }
+})
+
+// Spec amendment 2026-11-09, CA12 (plan canvas-ui SB4): the same forces in three dimensions. Each page gets x,
+// y and z; the families gather in clusters around the middle, where the brain's hub sits; the picture is the
+// same for the same data and seed, and the 2D layout above is unchanged.
+describe('the layout of the graph in three dimensions', () => {
+  const dist3 = (p: Float32Array, a: number, b: number) =>
+    Math.hypot(
+      (p[3 * a] as number) - (p[3 * b] as number),
+      (p[3 * a + 1] as number) - (p[3 * b + 1] as number),
+      (p[3 * a + 2] as number) - (p[3 * b + 2] as number),
+    )
+
+  it('gives every page x, y and z, the same for the same data and seed', () => {
+    const run = () => {
+      const l = createLayout({ n: 120, edges: sample(120), seed: 7, dims: 3 })
+      l.run(10_000)
+      return l.positions3()
+    }
+    const a = run()
+    assert.equal(a.length, 360)
+    assert.deepEqual(a, run())
+    // Depth is used: the pages spread along z about as much as along x.
+    let zs = 0
+    let xs = 0
+    for (let i = 0; i < 120; i++) {
+      zs += Math.abs(a[3 * i + 2] as number)
+      xs += Math.abs(a[3 * i] as number)
+    }
+    assert.ok(zs > 0.3 * xs, `z spread ${zs.toFixed(0)} against x spread ${xs.toFixed(0)}`)
+  })
+
+  it('linked pages end up nearer than unlinked ones, and none sit on each other', () => {
+    const edges = sample(200)
+    const l = createLayout({ n: 200, edges, seed: 3, dims: 3 })
+    l.run(10_000)
+    const p = l.positions3()
+    let linked = 0
+    for (let e = 0; e < edges.length; e += 2) linked += dist3(p, edges[e] as number, edges[e + 1] as number)
+    linked /= edges.length / 2
+    let all = 0
+    let pairs = 0
+    let closest = Number.POSITIVE_INFINITY
+    for (let i = 0; i < 200; i++)
+      for (let j = i + 1; j < 200; j++) {
+        const d = dist3(p, i, j)
+        all += d
+        pairs += 1
+        closest = Math.min(closest, d)
+      }
+    assert.ok(linked < 0.6 * (all / pairs), `linked ${linked.toFixed(1)} against ${(all / pairs).toFixed(1)}`)
+    assert.ok(closest > 0.5, `closest pair ${closest}`)
+  })
+
+  it('pages of a family gather in a cluster of their own around the middle', () => {
+    // Seven families of 30 pages, linked at random across families: the pull of a family still wins.
+    const n = 210
+    const family = Int32Array.from({ length: n }, (_, i) => i % 7)
+    const pairs: number[] = []
+    for (let i = 0; i < n; i++) pairs.push(i, (i * 37 + 11) % n)
+    const l = createLayout({ n, edges: new Uint32Array(pairs), seed: 5, dims: 3, family })
+    l.run(10_000)
+    const p = l.positions3()
+    let inside = 0
+    let across = 0
+    let ni = 0
+    let na = 0
+    for (let i = 0; i < n; i++)
+      for (let j = i + 1; j < n; j++) {
+        const d = dist3(p, i, j)
+        if (family[i] === family[j]) {
+          inside += d
+          ni += 1
+        } else {
+          across += d
+          na += 1
+        }
+      }
+    assert.ok(inside / ni < 0.75 * (across / na), `inside ${inside / ni} against across ${across / na}`)
+    // The middle of the whole cloud is near the origin, where the hub is drawn.
+    let cx = 0
+    let cy = 0
+    let cz = 0
+    let r = 0
+    for (let i = 0; i < n; i++) {
+      cx += p[3 * i] as number
+      cy += p[3 * i + 1] as number
+      cz += p[3 * i + 2] as number
+      r = Math.max(r, Math.hypot(p[3 * i] as number, p[3 * i + 1] as number, p[3 * i + 2] as number))
+    }
+    assert.ok(Math.hypot(cx / n, cy / n, cz / n) < 0.15 * r)
+  })
+
+  it('positions() still gives x and y, the projection-free view of the same layout', () => {
+    const l = createLayout({ n: 40, edges: sample(40), seed: 9, dims: 3 })
+    l.run(10_000)
+    const p3 = l.positions3()
+    const p2 = l.positions()
+    for (let i = 0; i < 40; i++) {
+      assert.equal(p2[2 * i], p3[3 * i])
+      assert.equal(p2[2 * i + 1], p3[3 * i + 1])
+    }
+  })
+
+  it('in two dimensions every z is 0', () => {
+    const l = createLayout({ n: 40, edges: sample(40), seed: 9 })
+    l.run(10_000)
+    const p3 = l.positions3()
+    for (let i = 0; i < 40; i++) assert.equal(p3[3 * i + 2], 0)
+  })
+
+  for (const n of [300, 2000])
+    it(`${n} pages settle in three dimensions in bounded CPU time`, () => {
+      const l = createLayout({
+        n,
+        edges: sample(n),
+        seed: 1,
+        dims: 3,
+        family: Int32Array.from({ length: n }, (_, i) => i % 7),
+      })
+      const ms = cpuMs(() => l.run(60_000))
+      assert.ok(l.done())
+      assert.ok(ms < (n === 300 ? 1500 : 12_000), `${ms.toFixed(0)} ms`)
+    })
+})
+
+// Polish (plan canvas-ui SB4), eased by the review's visual pass: the families are colour regions of one
+// interwoven cloud, as in the reference. Each family's middle lies farther from any other's than 1.2 times either
+// family's spread (each colour has its region), and for the closest two less than twice it (they mix at their
+// edges: not separate blobs). Checked on the seeded wiki of 300 pages the browser tests draw, where four links in
+// five cross families and folders cut across them.
+describe('the families as colour regions of one cloud', () => {
+  it('each family has its region, and neighbouring families mix at their edges (seeded wiki)', () => {
+    const g = generate({ pages: 300, seed: 48291 })
+    const pages = g.pages.filter((p) => p.status !== 'retired')
+    const index = new Map(pages.map((p, i) => [p.address, i]))
+    const seen = new Set<string>()
+    const raw: number[] = []
+    for (const [from, to] of g.links) {
+      const a = index.get(from)
+      const b = index.get(to)
+      if (a === undefined || b === undefined || a === b) continue
+      const key = a < b ? `${a}-${b}` : `${b}-${a}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      raw.push(a, b)
+    }
+    // Only linked pages feel the forces (as in the worker).
+    const linked = [...new Set(raw)].sort((a, b) => a - b)
+    const local = new Map(linked.map((p, k) => [p, k]))
+    const edges = Uint32Array.from(raw, (p) => local.get(p) as number)
+    const n = linked.length
+    const family = Int32Array.from(linked, (p) => Math.max(0, PAGE_TYPES.indexOf(pages[p]?.type as never)))
+    const folders = [...new Set(pages.map((p) => p.address.split('/')[0]))]
+    const area = Int32Array.from(linked, (p) => folders.indexOf(pages[p]?.address.split('/')[0]))
+    const l = createLayout({ n, edges, seed: 48291, dims: 3, family, area })
+    l.run(60_000)
+    const pos = l.positions3()
+    const fams = PAGE_TYPES.length
+    const mid = Array.from({ length: fams }, () => [0, 0, 0, 0])
+    for (let k = 0; k < n; k++) {
+      const m = mid[family[k] as number] as number[]
+      for (const a of [0, 1, 2]) m[a] = (m[a] as number) + (pos[3 * k + a] as number)
+      m[3] = (m[3] as number) + 1
+    }
+    for (const m of mid) if (m[3]) for (const a of [0, 1, 2]) m[a] = (m[a] as number) / (m[3] as number)
+    const spread = new Array<number>(fams).fill(0)
+    for (let k = 0; k < n; k++) {
+      const f = family[k] as number
+      const m = mid[f] as number[]
+      spread[f] =
+        (spread[f] as number) +
+        ((pos[3 * k] as number) - (m[0] as number)) ** 2 +
+        ((pos[3 * k + 1] as number) - (m[1] as number)) ** 2 +
+        ((pos[3 * k + 2] as number) - (m[2] as number)) ** 2
+    }
+    for (let f = 0; f < fams; f++)
+      spread[f] = Math.sqrt((spread[f] as number) / Math.max(1, (mid[f] as number[])[3] as number))
+    let crossing = 0
+    for (let e = 0; e < edges.length; e += 2)
+      if (family[edges[e] as number] !== family[edges[e + 1] as number]) crossing += 1
+    assert.ok(crossing > 0.5 * (edges.length / 2), 'most links cross families in this wiki')
+    let closest = Number.POSITIVE_INFINITY
+    for (let f = 0; f < fams; f++)
+      for (let h = f + 1; h < fams; h++) {
+        const a = mid[f] as number[]
+        const b = mid[h] as number[]
+        if (!a[3] || !b[3]) continue
+        const d = Math.hypot(
+          (a[0] as number) - (b[0] as number),
+          (a[1] as number) - (b[1] as number),
+          (a[2] as number) - (b[2] as number),
+        )
+        const most = Math.max(spread[f] as number, spread[h] as number)
+        assert.ok(
+          d > 1.2 * most,
+          `${PAGE_TYPES[f]} and ${PAGE_TYPES[h]}: ${d.toFixed(0)} apart, spread ${most.toFixed(0)}`,
+        )
+        closest = Math.min(closest, d / most)
+      }
+    assert.ok(closest < 2, `the two closest families mix at their edges: ${closest.toFixed(2)} spreads apart`)
+  })
 })

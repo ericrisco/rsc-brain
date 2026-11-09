@@ -1,216 +1,26 @@
-// The frame of every signed-in screen (spec B6 «Mapa de la web»): the installation's name and logo, the
-// search, and the account at the top; inside a brain, a side bar with its sections that folds into a
-// menu on a phone.
+// The frame of every signed-in screen (spec B6 «Mapa de la web», plan canvas-ui D1–D3): the rail at the
+// left, and the screen in all the width it leaves. On a phone the rail is a bar across the top and the
+// sections of a brain fold into a menu.
 import type { ComponentChildren } from 'preact'
-import { useEffect, useRef, useState } from 'preact/hooks'
+import { useEffect, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
-import { toReview } from '../lib/brains.ts'
-import { applyTheme, theme } from '../lib/theme.ts'
+import { isCanvasRoute } from '../lib/nav.ts'
+import { rail } from '../lib/rail.ts'
 import { brainsResource } from '../screens/Home.tsx'
 import type { Me } from '../session.ts'
 import { T } from '../text.ts'
-import { Brand } from '../ui/Brand.tsx'
 import { Dialog } from '../ui/Dialog.tsx'
 import { OfflineStrip } from '../ui/states.tsx'
 import { CreateBrainDialog } from './CreateBrainDialog.tsx'
 import { HelpDialog } from './HelpDialog.tsx'
 import { Keyboard } from './Keyboard.tsx'
-import { helpOpen, searchOpen } from './keys.ts'
 import { MaintenanceStrip } from './Maintenance.tsx'
+import { BrainLinks, type BrainNav, Rail } from './Rail.tsx'
 import { SearchDialog } from './SearchDialog.tsx'
-import { useSignOut } from './signOut.ts'
 
-export type BrainNav = { slug: string; name: string; role: string }
+export type { BrainNav } from './Rail.tsx'
 
-function BrainLinks({ brain }: { brain: BrainNav }) {
-  const { path } = useLocation()
-  const base = `/b/${encodeURIComponent(brain.slug)}`
-  // How many proposals wait in this brain, beside its section (from the brains and their numbers).
-  const waiting =
-    brainsResource().data.value?.brains.find((b) => b.slug === brain.slug)?.stats.pendingProposals ?? 0
-  const items = [
-    { href: base, label: T.shell.overview, here: path === base, keys: 'g o' },
-    // A proposal is in the proposals.
-    {
-      href: `${base}/proposals`,
-      label: T.shell.proposals,
-      here: path === `${base}/proposals` ? true : path.startsWith(`${base}/proposals/`) ? 'inside' : false,
-      keys: 'g r',
-      count: waiting,
-    },
-    // A page of the wiki is in the wiki.
-    {
-      href: `${base}/wiki`,
-      label: T.shell.wiki,
-      here: path === `${base}/wiki` ? true : path.startsWith(`${base}/pages/`) ? 'inside' : false,
-      keys: 'g w',
-    },
-    { href: `${base}/wiki/decisions`, label: T.shell.decisions, here: path === `${base}/wiki/decisions` },
-    { href: `${base}/wiki/log`, label: T.shell.log, here: path === `${base}/wiki/log` },
-    { href: `${base}/wiki/graph`, label: T.shell.graph, here: path === `${base}/wiki/graph` },
-    // Every screen of the journal is in the journal.
-    {
-      href: `${base}/journal`,
-      label: T.shell.journal,
-      here: path === `${base}/journal` ? true : path.startsWith(`${base}/journal/`) ? 'inside' : false,
-      keys: 'g j',
-    },
-    { href: `${base}/activity`, label: T.shell.activity, here: path === `${base}/activity` },
-    { href: `${base}/health`, label: T.shell.health, here: path === `${base}/health` },
-    // Only curators change a brain's settings (B4); the others are not offered the page.
-    ...(brain.role === 'curator'
-      ? [
-          {
-            href: `${base}/settings`,
-            label: T.shell.settings,
-            here:
-              path === `${base}/settings`
-                ? true
-                : path.startsWith(`${base}/settings/`)
-                  ? ('inside' as const)
-                  : false,
-          },
-        ]
-      : []),
-  ]
-  return (
-    <nav class="nav" aria-label={T.shell.brainNav}>
-      <a class="back" href="/">
-        {T.shell.allBrains}
-      </a>
-      <ul>
-        {items.map((i) => (
-          <li key={i.href}>
-            <a
-              href={i.href}
-              aria-current={i.here === 'inside' ? 'true' : i.here ? 'page' : undefined}
-              aria-keyshortcuts={'keys' in i ? i.keys : undefined}
-            >
-              {i.label}
-              {'count' in i && i.count ? (
-                <>
-                  {' '}
-                  <span class="nav-count">
-                    {i.count}
-                    <span class="sr-only"> {T.shell.pending}</span>
-                  </span>
-                </>
-              ) : null}
-            </a>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  )
-}
-
-function SideBar({ brain }: { brain: BrainNav }) {
-  return (
-    <>
-      <p class="brain-name">{brain.name}</p>
-      <p class="brain-role meta">{T.shell.yourRole(brain.role)}</p>
-      <BrainLinks brain={brain} />
-    </>
-  )
-}
-
-function AccountMenu({ me }: { me: Me }) {
-  const [open, setOpen] = useState(false)
-  const { signOut, leaving, failed } = useSignOut()
-  const box = useRef<HTMLDivElement>(null)
-  const button = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
-    if (!open) return
-    const away = (e: Event) => {
-      if (box.current && !box.current.contains(e.target as Node)) setOpen(false)
-    }
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setOpen(false)
-        button.current?.focus()
-      }
-    }
-    document.addEventListener('pointerdown', away)
-    document.addEventListener('keydown', esc)
-    return () => {
-      document.removeEventListener('pointerdown', away)
-      document.removeEventListener('keydown', esc)
-    }
-  }, [open])
-  const name = me.account.name
-  return (
-    <div class="account" ref={box}>
-      <button
-        ref={button}
-        type="button"
-        class="account-button"
-        aria-expanded={open ? 'true' : 'false'}
-        aria-controls="account-menu"
-        onClick={() => setOpen(!open)}
-      >
-        <span class="initial" aria-hidden="true">
-          {name.slice(0, 1).toUpperCase()}
-        </span>
-        <span class="who-name">{name}</span>
-        <span class="sr-only">{T.shell.account}</span>
-      </button>
-      {open ? (
-        <div class="account-menu" id="account-menu">
-          <div class="who">
-            <p class="meta">{T.shell.signedInAs}</p>
-            <p>{name}</p>
-            {me.account.email ? <p class="meta">{me.account.email}</p> : null}
-          </div>
-          <a href="/profile" onClick={() => setOpen(false)}>
-            <span>{T.shell.profile}</span>
-          </a>
-          <a href="/connect" onClick={() => setOpen(false)}>
-            <span>{T.shell.connect}</span>
-          </a>
-          {me.account.canInvite ? (
-            <a href="/people" onClick={() => setOpen(false)}>
-              <span>{T.shell.people}</span>
-            </a>
-          ) : null}
-          {me.account.isAdmin ? (
-            <a href="/admin/people" onClick={() => setOpen(false)}>
-              <span>{T.shell.admin}</span>
-            </a>
-          ) : null}
-          <button
-            type="button"
-            class="keyboard-only"
-            onClick={() => {
-              setOpen(false)
-              helpOpen.value = true
-            }}
-          >
-            <span>{T.shell.shortcuts}</span>
-            <kbd>?</kbd>
-          </button>
-          <button
-            type="button"
-            aria-pressed={theme.value === 'light' ? 'true' : 'false'}
-            onClick={() => applyTheme(theme.value === 'light' ? 'dark' : 'light')}
-          >
-            <span>{T.shell.themeLight}</span>
-            <span class="meta">{theme.value === 'light' ? 'on' : 'off'}</span>
-          </button>
-          <button type="button" onClick={() => void signOut()} aria-busy={leaving ? 'true' : undefined}>
-            <span>{leaving ? T.shell.signingOut : T.shell.signOut}</span>
-          </button>
-          {failed ? (
-            <p class="menu-alert" role="alert">
-              {T.shell.signOutFailed}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-// The brains and their numbers (the cards of home, what waits for review, the counter of the top bar) are
+// The brains and their numbers (the cards of home, what waits for review, the counter of the rail) are
 // asked again every 30 seconds and when the tab comes back (plan §3.3).
 function useFreshBrains() {
   useEffect(() => {
@@ -227,26 +37,6 @@ function useFreshBrains() {
   }, [])
 }
 
-// What waits for me to review, in the top bar: the proposals of the brains I curate; with one brain
-// waiting it leads to its inbox, with more to home, where each card says how many.
-function ToReview() {
-  const { path } = useLocation()
-  const brains = brainsResource().data.value?.brains
-  if (!brains) return null
-  const { count, href } = toReview(brains)
-  if (!count) return null
-  return (
-    <a class="top-link to-review" href={href} aria-current={path === href ? 'page' : undefined}>
-      <span class="to-review-n">{count}</span>
-      <span class="rest">
-        {' '}
-        <span class="wide-only">{count === 1 ? 'proposal' : 'proposals'} </span>
-        to review
-      </span>
-    </a>
-  )
-}
-
 export function Shell({
   me,
   brain,
@@ -257,61 +47,21 @@ export function Shell({
   children: ComponentChildren
 }) {
   const [menu, setMenu] = useState(false)
-  const { path } = useLocation()
+  const { path, query } = useLocation()
+  // A canvas screen fills the space right of the rail and does not scroll (plan canvas-ui D4); the graph's
+  // list is a page like any other.
+  const canvas = isCanvasRoute(path) && query.view !== 'list'
   useFreshBrains()
   useEffect(() => setMenu(false), [path])
   return (
-    <div class="frame">
+    <div class="frame" data-rail={rail.value} data-mode={canvas ? 'canvas' : undefined}>
       <a class="skip" href="#main">
         {T.skip}
       </a>
-      <header class="topbar">
-        {brain ? (
-          <button
-            type="button"
-            class="button quiet only-narrow"
-            aria-expanded={menu ? 'true' : 'false'}
-            onClick={() => setMenu(true)}
-          >
-            {T.shell.menu}
-          </button>
-        ) : null}
-        <Brand />
-        <div class="middle">
-          <button
-            type="button"
-            class="searchbox"
-            onClick={() => (searchOpen.value = true)}
-            aria-keyshortcuts="Meta+K Control+K"
-          >
-            <span class="label">{T.shell.searchHint}</span>
-            <span class="short">{T.shell.search}</span>
-            <kbd>⌘K</kbd>
-          </button>
-        </div>
-        <div class="end">
-          <ToReview />
-          {me.account.canInvite ? (
-            <a
-              class="top-link"
-              href="/people"
-              aria-current={path === '/people' ? 'page' : undefined}
-              aria-keyshortcuts="g p"
-            >
-              {T.shell.people}
-            </a>
-          ) : null}
-          <AccountMenu me={me} />
-        </div>
-      </header>
-      <OfflineStrip />
-      <MaintenanceStrip />
-      <div class={`body${brain ? '' : ' no-side'}`}>
-        {brain ? (
-          <aside class="sidebar">
-            <SideBar brain={brain} />
-          </aside>
-        ) : null}
+      <Rail me={me} brain={brain ?? null} menu={menu} onMenu={() => setMenu(true)} />
+      <div class="stage">
+        <OfflineStrip />
+        <MaintenanceStrip />
         <main id="main" class="content" tabIndex={-1}>
           <div class="page">{children}</div>
         </main>

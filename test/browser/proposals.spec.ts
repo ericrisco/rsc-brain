@@ -54,10 +54,11 @@ test.describe('the list', () => {
     await expect(page).toHaveURL(new RegExp(`${INBOX}$`))
     await expect(page.getByRole('heading', { level: 1, name: 'Proposals' })).toBeFocused()
     await expect(page).toHaveTitle(/^Proposals · /)
-    await expect(page.locator('aside').getByRole('link', { name: /Proposals/ })).toHaveAttribute(
-      'aria-current',
-      'page',
-    )
+    await expect(
+      page
+        .getByRole('navigation', { name: 'Sections of this brain' })
+        .getByRole('link', { name: /Proposals/ }),
+    ).toHaveAttribute('aria-current', 'page')
     const items = page.getByRole('list', { name: 'Pending proposals' }).getByRole('listitem')
     await expect(items).toHaveCount(3)
     // Oldest first: what has waited longest is reviewed first.
@@ -631,4 +632,26 @@ test.describe('the second pass of the PR21 review', () => {
     const landed = await page.evaluate(() => (window as unknown as { landed: string[] }).landed)
     expect(landed).not.toContain('alert')
   })
+})
+
+// Review of B10: on a wide screen the parts of a proposal sit in the order the keyboard reaches them: why it
+// was sent above its changes in the main column, then the decision beside them.
+test('1920 px: why, the changes and the decision are drawn in the order Tab reaches them', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto(`${INBOX}/prp_growth1`)
+  const why = page.locator('.proposal-body > .why')
+  const changes = page.locator('.proposal-body > .changes')
+  await expect(changes).toBeVisible()
+  const w = (await why.boundingBox()) as { x: number; y: number; width: number; height: number }
+  const c = (await changes.boundingBox()) as { x: number; y: number; width: number; height: number }
+  expect(Math.abs(w.x - c.x), 'why sits in the column of the changes').toBeLessThanOrEqual(1)
+  expect(w.y + w.height, 'why comes above the changes').toBeLessThanOrEqual(c.y)
+  const decide = page.locator('.proposal-body > :not(.why):not(.changes)').first()
+  const d = (await decide.boundingBox()) as { x: number; y: number; width: number; height: number }
+  expect(d.x, 'the decision is beside them').toBeGreaterThan(c.x + c.width)
 })

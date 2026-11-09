@@ -3,7 +3,15 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { TODAY_SESSIONS } from '../../src/domain/overview.ts'
-import { ago, clientLabel, slugOf, TODAY_SHOWN, todayCapped, toReview } from '../../web/src/lib/brains.ts'
+import {
+  ago,
+  clientLabel,
+  homeTotals,
+  slugOf,
+  TODAY_SHOWN,
+  todayCapped,
+  toReview,
+} from '../../web/src/lib/brains.ts'
 import { emailsOf, firstPersonAlone } from '../../web/src/lib/people.ts'
 
 // PR26: the overview shows the newest sessions of today, as many as the server sends; at that many there
@@ -133,5 +141,32 @@ describe('the words when invitation links are ready', () => {
       T.people.linkReady(['ana@x.test', 'bo@x.test']),
       'Links for ana@x.test, bo@x.test are ready: copy them now, each is shown only once.',
     )
+  })
+})
+
+// Review R4: the strip of figures on home (canvas-ui CA1: home uses the width) sums the brains in use; an
+// archived brain is shown on its card but counts in none of the figures.
+describe('the figures across your brains', () => {
+  const brain = (slug: string, status: string, pages: number, entries: number, pending: number) => ({
+    slug,
+    status,
+    role: 'curator',
+    stats: { pages, entries, pendingProposals: pending },
+  })
+  it('count active brains only', () => {
+    const t = homeTotals([
+      brain('growth', 'active', 10, 100, 2),
+      brain('support', 'active', 5, 50, 1),
+      brain('legal', 'archived', 1000, 9000, 7),
+    ])
+    assert.deepEqual(
+      { brains: t.brains, pages: t.pages, entries: t.entries, review: t.review.count },
+      { brains: 2, pages: 15, entries: 150, review: 3 },
+    )
+    assert.equal(t.review.href, '/b/growth/proposals')
+  })
+  it('nothing in use is all zeros', () => {
+    const t = homeTotals([brain('legal', 'archived', 3, 3, 3)])
+    assert.deepEqual([t.brains, t.pages, t.entries, t.review.count], [0, 0, 0, 0])
   })
 })

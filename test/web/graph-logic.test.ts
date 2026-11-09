@@ -434,6 +434,31 @@ describe('moving around', () => {
     // A canvas too short for the band still draws something.
     assert.ok(fit(ring, on, 300, 120, 40, 90).scale > 0)
   })
+  // canvas-ui D9: the inspector is a panel over the right of the canvas; Fit puts the picture in the rest,
+  // centred there.
+  it('leaves the panel at the right free: every centre lands left of it, centred in the rest', () => {
+    const ring = new Float32Array(
+      Array.from({ length: 24 }, (_, i) => (i % 2 ? Math.sin : Math.cos)((i >> 1) * 0.5) * 100),
+    )
+    const on = new Uint8Array(12).fill(1)
+    for (const [w, h, right] of [
+      [1920, 1080, 420],
+      [1366, 768, 320],
+    ] as const) {
+      const f = fit(ring, on, w, h, 40, 0, { right })
+      let x0 = Number.POSITIVE_INFINITY
+      let x1 = Number.NEGATIVE_INFINITY
+      for (let i = 0; i < 12; i++) {
+        const x = (ring[2 * i] as number) * f.scale + f.tx
+        assert.ok(x >= 40 - 1e-6 && x <= w - right - 40 + 1e-6, `x ${x} left of a panel of ${right} in ${w}`)
+        x0 = Math.min(x0, x)
+        x1 = Math.max(x1, x)
+      }
+      assert.ok(Math.abs((x0 + x1) / 2 - (w - right) / 2) < 1e-3, 'centred in what the panel leaves')
+    }
+    // A panel wider than the canvas leaves a sliver to draw in, never a negative one.
+    assert.ok(fit(ring, on, 300, 300, 40, 0, { right: 400 }).scale > 0)
+  })
 })
 
 // Review of PR26: the pad around the fitted picture holds the biggest group box drawn (a box is sized in

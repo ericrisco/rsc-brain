@@ -119,9 +119,11 @@ test.describe('the graph', () => {
     await canvas.click({ position: { x: x as number, y: y as number } })
     await expect(heading).toHaveText(title ?? '')
     await page.keyboard.press('Escape')
-    await canvas.hover({ position: { x: 20, y: 20 } })
+    // A drag from the middle of the picture (its corners hold the canvas's controls).
+    const size = (await canvas.boundingBox()) as { x: number; y: number; width: number; height: number }
+    await canvas.hover({ position: { x: size.width / 2, y: size.height / 2 } })
     await page.mouse.down()
-    await page.mouse.move(120, 160, { steps: 4 })
+    await page.mouse.move(size.x + size.width / 2 + 100, size.y + size.height / 2 + 140, { steps: 4 })
     await page.mouse.up()
     await expect(page.getByRole('complementary', { name: /^Inspector \S/ })).toHaveCount(0)
   })

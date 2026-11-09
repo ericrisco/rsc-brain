@@ -48,7 +48,7 @@ test('L1: a tab hidden before the first event catches up when shown again', asyn
 test('L2: a brain opened again shows what happened while away', async ({ page, context, baseURL }) => {
   const s = await scenario(context, baseURL as string, 'alone')
   await newBrain(page)
-  await page.getByRole('link', { name: '← All brains' }).click()
+  await page.getByRole('link', { name: 'All brains', exact: true }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'Your brains' })).toBeVisible()
   await s.emit('onboarding')
   await page.getByRole('link', { name: 'Onboarding' }).click()

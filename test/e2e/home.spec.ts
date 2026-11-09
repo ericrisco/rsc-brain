@@ -147,7 +147,7 @@ test('L2: leaving a brain for home and coming back shows what the agent wrote me
   const { slug, secret } = await brainWithAgent(page, 'Revisit')
   const steps = page.getByRole('region', { name: 'First steps' }).getByRole('listitem')
   await expect(steps.nth(0)).toContainText('To do')
-  await page.getByRole('link', { name: '← All brains' }).click()
+  await page.getByRole('link', { name: 'All brains', exact: true }).click()
   await expect(page.getByRole('heading', { level: 1, name: 'Your brains' })).toBeVisible()
   const saved = await request.post(`/v1/brains/${slug}/entries`, {
     headers: { authorization: `Bearer ${secret}` },

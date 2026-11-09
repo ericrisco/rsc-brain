@@ -16,8 +16,10 @@ async function audit(page: Page, where: string) {
   expect(bad).toEqual([])
 }
 
+// canvas-ui B18: on a desktop the rail is audited folded (its names as tooltips) and open (its names shown).
 const SIZES = {
   desktop: { width: 1440, height: 900 },
+  'desktop, rail open': { width: 1440, height: 900 },
   phone: { width: 375, height: 740 },
 } as const
 
@@ -25,12 +27,16 @@ for (const r of ROWS)
   for (const [theme, size] of [
     ['dark', 'desktop'],
     ['light', 'desktop'],
+    ['dark', 'desktop, rail open'],
+    ['light', 'desktop, rail open'],
     ['dark', 'phone'],
     ['light', 'phone'],
   ] as const)
     test(`axe: ${r.name}, ${theme}, ${size}`, async ({ page, context, baseURL }) => {
       await scenario(context, baseURL as string, r.preset ?? 'signed-in')
       await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
+      if (size === 'desktop, rail open')
+        await page.addInitScript(() => localStorage.setItem('rscb.rail', 'open'))
       await page.setViewportSize(SIZES[size])
       await page.goto(r.path)
       await expect(r.ready(page)).toBeVisible()

@@ -185,8 +185,11 @@ test.describe('U5: the small things', () => {
     await page.getByRole('link', { name: 'Growth' }).click()
     await expect(page).toHaveTitle('Growth · rsc-brain')
     await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeFocused()
-    await expect(page.locator('aside')).toContainText('You are a curator')
-    await page.locator('aside').getByRole('link', { name: '← All brains' }).click()
+    await expect(page.getByRole('banner')).toContainText('You are a curator')
+    await page
+      .getByRole('navigation', { name: 'Sections of this brain' })
+      .getByRole('link', { name: 'All brains', exact: true })
+      .click()
     await expect(page.getByRole('heading', { level: 1, name: 'Your brains' })).toBeFocused()
   })
 

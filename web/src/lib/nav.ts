@@ -22,3 +22,9 @@ export function tokenFromHash(hash: string): string | null {
   const t = params.get('token')
   return t && /^[A-Za-z0-9_-]{8,200}$/.test(t) ? t : null
 }
+
+// The screens drawn on a canvas that fills the space right of the rail, without a page to scroll (plan
+// canvas-ui D4): the graph of a brain. Every other screen is a page.
+export function isCanvasRoute(path: string): boolean {
+  return /^\/b\/[^/]+\/wiki\/graph\/?$/.test(path)
+}

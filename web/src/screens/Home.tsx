@@ -9,7 +9,7 @@ import { useEffect, useState } from 'preact/hooks'
 import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
-import { ago } from '../lib/brains.ts'
+import { ago, homeTotals } from '../lib/brains.ts'
 import { firstPersonAlone } from '../lib/people.ts'
 import { branding, justDeleted, justJoined, justSetUp, type Me, me, online } from '../session.ts'
 import { connectHref, createOpen } from '../shell/dialogs.ts'
@@ -17,6 +17,7 @@ import { useSignOut } from '../shell/signOut.ts'
 import { T } from '../text.ts'
 import { Button } from '../ui/Button.tsx'
 import { CopyButton } from '../ui/CopyButton.tsx'
+import { colourAt, PanelHead, panelNumber } from '../ui/Panel.tsx'
 import { viewState } from '../ui/state.ts'
 import { ErrorState, Skeleton } from '../ui/states.tsx'
 
@@ -174,12 +175,16 @@ function InvitePanel() {
   )
 }
 
-function Card({ b }: { b: BrainRow }) {
+// A brain's card is a panel: numbered after the totals (01), each in the next family colour.
+function Card({ b, n }: { b: BrainRow; n: number }) {
   const waiting = b.stats.pendingProposals
   const when = ago(b.stats.lastActivityAt)
   return (
-    <li class={b.status === 'archived' ? 'archived' : undefined}>
+    <li class={b.status === 'archived' ? 'panel archived' : 'panel'} data-c={colourAt(n - 1)}>
       <div class="card-head">
+        <span class="panel-num" aria-hidden="true">
+          {panelNumber(n)}
+        </span>
         <a class="name" href={`/b/${encodeURIComponent(b.slug)}`}>
           {b.name}
         </a>
@@ -202,6 +207,40 @@ function Card({ b }: { b: BrainRow }) {
       </p>
       <p class="meta">{when ? T.home.lastActivity(when) : T.home.noActivity}</p>
     </li>
+  )
+}
+
+// The brains in use at a glance, summed: how many, how big, and what waits for me.
+function Totals({ brains }: { brains: BrainRow[] }) {
+  const h = T.home
+  const t = homeTotals(brains)
+  const items: Array<readonly [string, number, (string | undefined)?]> = [
+    [h.totalBrains, t.brains],
+    [h.totalPages, t.pages],
+    [h.totalEntries, t.entries],
+    [h.totalToReview, t.review.count, t.review.count ? t.review.href : undefined],
+  ]
+  return (
+    <section aria-label={h.totals} class="home-tiles panel pad" data-c="orange">
+      <PanelHead n={1} title={h.totalsTitle} about={h.totalsAbout} />
+      <ul class="tiles">
+        {items.map(([label, n, href], k) => (
+          <li key={label} data-c={colourAt(k)}>
+            {href ? (
+              <a href={href}>
+                <span class="tile-label">{label}</span>
+                <span class="tile-n">{n.toLocaleString('en')}</span>
+              </a>
+            ) : (
+              <>
+                <span class="tile-label">{label}</span>
+                <span class="tile-n">{n.toLocaleString('en')}</span>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }
 
@@ -274,10 +313,11 @@ export function Home() {
       {state === 'ready' && data ? (
         <>
           {who?.account.isAdmin ? <InvitePanel /> : null}
+          <Totals brains={data.brains} />
           <section aria-label={T.home.title}>
             <ul class="cards">
-              {data.brains.map((b) => (
-                <Card key={b.slug} b={b} />
+              {data.brains.map((b, k) => (
+                <Card key={b.slug} b={b} n={k + 2} />
               ))}
             </ul>
           </section>

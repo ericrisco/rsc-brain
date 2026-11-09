@@ -84,14 +84,19 @@ test('each shortcut and its visible control do the same', async ({ page, context
   // address really changes (C4).
   await page.goto('/b/growth/somewhere-else')
   await expect(page.getByRole('heading', { name: 'Nothing here' })).toBeVisible()
-  await expect(page.locator('aside').getByRole('link', { name: 'Overview' })).toBeVisible()
+  await expect(
+    page.getByRole('navigation', { name: 'Sections of this brain' }).getByRole('link', { name: 'Overview' }),
+  ).toBeVisible()
   await page.keyboard.press('g')
   await page.keyboard.press('o')
   await expect(page).toHaveURL(/\/b\/growth$/)
   await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
   await page.goto('/b/growth/somewhere-else')
   await expect(page.getByRole('heading', { name: 'Nothing here' })).toBeVisible()
-  await page.locator('aside').getByRole('link', { name: 'Overview' }).click()
+  await page
+    .getByRole('navigation', { name: 'Sections of this brain' })
+    .getByRole('link', { name: 'Overview' })
+    .click()
   await expect(page).toHaveURL(/\/b\/growth$/)
   await expect(page.getByRole('heading', { level: 1, name: 'Growth' })).toBeVisible()
 
@@ -101,7 +106,10 @@ test('each shortcut and its visible control do the same', async ({ page, context
   await expect(page).toHaveURL(/\/b\/growth\/wiki$/)
   await expect(page.getByRole('heading', { level: 1, name: 'Wiki' })).toBeVisible()
   await page.goto('/b/growth')
-  await page.locator('aside').getByRole('link', { name: 'Wiki' }).click()
+  await page
+    .getByRole('navigation', { name: 'Sections of this brain' })
+    .getByRole('link', { name: 'Wiki' })
+    .click()
   await expect(page).toHaveURL(/\/b\/growth\/wiki$/)
 
   // go-journal: "g j" and "Journal" in the side bar (PR20).
@@ -110,7 +118,10 @@ test('each shortcut and its visible control do the same', async ({ page, context
   await expect(page).toHaveURL(/\/b\/growth\/journal$/)
   await expect(page.getByRole('heading', { level: 1, name: 'Sessions' })).toBeVisible()
   await page.goto('/b/growth')
-  await page.locator('aside').getByRole('link', { name: 'Journal' }).click()
+  await page
+    .getByRole('navigation', { name: 'Sections of this brain' })
+    .getByRole('link', { name: 'Journal' })
+    .click()
   await expect(page).toHaveURL(/\/b\/growth\/journal$/)
 
   // go-proposals: "g r" and "Proposals" in the side bar (PR21).
@@ -120,7 +131,7 @@ test('each shortcut and its visible control do the same', async ({ page, context
   await expect(page.getByRole('heading', { level: 1, name: 'Proposals' })).toBeVisible()
   await page.goto('/b/growth')
   await page
-    .locator('aside')
+    .getByRole('navigation', { name: 'Sections of this brain' })
     .getByRole('link', { name: /^Proposals/ })
     .click()
   await expect(page).toHaveURL(/\/b\/growth\/proposals$/)

@@ -153,7 +153,10 @@ test('an agent writes; a contributor corrects their own entry; a reader sees no 
   const a = await ana.ctx.newPage()
   // The journal: sessions newest first, Ana's agent and Eric's.
   await a.goto(`/b/${SLUG}`)
-  await a.locator('aside').getByRole('link', { name: 'Journal' }).click()
+  await a
+    .getByRole('navigation', { name: 'Sections of this brain' })
+    .getByRole('link', { name: 'Journal' })
+    .click()
   await expect(a.getByRole('heading', { level: 1, name: 'Sessions' })).toBeVisible()
   await a.getByRole('link', { name: 'Review the October intros' }).click()
   await expect(a.locator('.facts')).toContainText('of Eric')

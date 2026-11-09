@@ -4,6 +4,28 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.4.0
+
+A new face for the web: a canvas you can turn, in a dark style.
+
+- **An icon rail and the full width.** The navigation is a narrow rail of icons at the left (their names on
+  hover and to screen readers), and every screen uses the whole window.
+- **A dark style.** Dark panels with numbered heads and a colour each, in one monospaced face (JetBrains Mono,
+  served by the installation itself). Light is still there: choose it in the account menu.
+- **The graph is a cloud that turns.** The wiki's pages float in three dimensions around the brain, one colour
+  and one shape for each kind of page, with a legend that counts them. It turns slowly when you leave it alone;
+  light runs along the links, and a card shows one page after another with where it comes from. At first sight
+  each page shows only its strongest links, and the pages without links lie in a row underneath.
+- **Your hands on it.** Drag to turn it, zoom past Fit and the drag moves it instead; two fingers move and
+  pinch it. A touch, a key or the pointer stops it, and it turns again after a short rest. Click a page to
+  open it in the inspector; the arrow keys walk from page to page.
+- **Still when you ask.** With reduced motion in the system nothing moves: the cloud is drawn once, from a
+  fixed angle. Nothing moves either while the tab or the canvas is out of sight.
+- **List, the same as text.** Every page of the graph is also in List, a table you can sort and filter: the
+  alternative for a screen reader or for anyone who prefers reading.
+- **The list screens redone.** Brains, the brain's overview, the wiki, its map, history and proposals take the
+  new panels: what matters first, the counts at a glance, the actions where you need them.
+
 ## v0.3.0
 
 Update rsc-brain from its own web, and know what version is out.

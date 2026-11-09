@@ -190,7 +190,7 @@ test.describe('invite people from home', () => {
     await dialog.getByLabel('Name').fill('Onboarding')
     await dialog.getByRole('button', { name: 'Create brain' }).click()
     await expect(page.getByRole('heading', { level: 1, name: 'Onboarding' })).toBeVisible()
-    await page.getByRole('link', { name: '← All brains' }).click()
+    await page.getByRole('link', { name: 'All brains', exact: true }).click()
     await expect(page.getByRole('region', { name: 'Invite people' })).toBeVisible()
     await page.getByRole('link', { name: 'Onboarding' }).click()
     // Someone accepts an invitation elsewhere.
@@ -204,7 +204,7 @@ test.describe('invite people from home', () => {
       body: JSON.stringify({ token: INVITE, name: 'Marta', password: PASSWORD }),
     })
     expect(res.status).toBe(201)
-    await page.getByRole('link', { name: '← All brains' }).click()
+    await page.getByRole('link', { name: 'All brains', exact: true }).click()
     await expect(page.getByRole('link', { name: 'Onboarding' })).toBeVisible()
     await expect(page.getByRole('region', { name: 'Invite people' })).toHaveCount(0)
   })
@@ -264,4 +264,20 @@ test.describe('Get started: the command to connect an agent', () => {
       assert.equal(await page.evaluate(() => navigator.clipboard.readText()), command)
       if (width === 320) await page.screenshot({ path: 'test-results/get-started-320.png', fullPage: true })
     })
+})
+
+// Closing review C2: home shows how many brains are listed (archived ones too) and, in its figures, how many
+// are in use; the figure says so, so the two numbers never read as one disagreeing with the other.
+test('the heading counts the brains listed; the figure counts the active ones and says so', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.goto('/')
+  await expect(page.getByText('3 brains', { exact: true })).toBeVisible()
+  const tile = page.getByRole('region', { name: 'Across your brains' }).getByRole('listitem').first()
+  await expect(tile).toContainText('Active brains')
+  await expect(tile).toContainText('2')
 })

@@ -1,5 +1,5 @@
-// Spec B6 «Mapa de la web», «Accesibilidad» and DESIGN.md (plan T003): the frame at 1440, 768, 390 and
-// 320 px without sideways scroll, the side bar that folds into a menu on a phone, the account menu with
+// Spec B6 «Mapa de la web», «Accesibilidad» and DESIGN.md (plan T003), with the rail of plan canvas-ui: the
+// frame at 1440, 768, 390 and 320 px without sideways scroll, the side bar that folds into a menu on a phone, the account menu with
 // the light theme, signing out, and a visible focus.
 import { expect, noSideScroll, scenario, test } from './fixture.ts'
 
@@ -35,10 +35,10 @@ test('inside a brain, the side bar holds its sections on a wide screen', async (
 }) => {
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto('/b/growth')
-  const side = page.locator('aside.sidebar')
+  const side = page.getByRole('navigation', { name: 'Sections of this brain' })
   await expect(side).toBeVisible()
   await expect(side.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
-  await side.getByRole('link', { name: '← All brains' }).click()
+  await side.getByRole('link', { name: 'All brains', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Your brains' })).toBeVisible()
 })
 
@@ -50,7 +50,7 @@ test('on a phone, the side bar folds into a menu that Esc closes, giving the foc
   await page.setViewportSize({ width: 390, height: 844 })
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto('/b/growth')
-  await expect(page.locator('aside.sidebar')).toBeHidden()
+  await expect(page.getByRole('navigation', { name: 'Sections of this brain' })).toBeHidden()
   const menu = page.getByRole('button', { name: 'Menu' })
   await menu.click()
   const sheet = page.getByRole('dialog', { name: 'Growth' })
@@ -60,7 +60,10 @@ test('on a phone, the side bar folds into a menu that Esc closes, giving the foc
   await expect(sheet).toBeHidden()
   await expect(menu).toBeFocused()
   await menu.click()
-  await page.getByRole('dialog', { name: 'Growth' }).getByRole('link', { name: '← All brains' }).click()
+  await page
+    .getByRole('dialog', { name: 'Growth' })
+    .getByRole('link', { name: 'All brains', exact: true })
+    .click()
   await expect(page.getByRole('heading', { name: 'Your brains' })).toBeVisible()
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
@@ -79,9 +82,10 @@ test('the light theme is a choice that stays; dark is the default', async ({ pag
   expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe(ground)
 })
 
-// Review of PR18: until the person chooses, the theme follows the system; once chosen, it stays.
+// Spec amendment 2026-11-09 (CA11): until the person chooses, the web is dark whatever the system says; once
+// chosen, the choice stays, whatever the system says.
 for (const system of ['dark', 'light'] as const) {
-  test(`with a ${system} system and no choice yet, the web is ${system}; a choice then stays`, async ({
+  test(`with a ${system} system and no choice yet, the web is dark; a choice then stays`, async ({
     page,
     context,
     baseURL,
@@ -90,21 +94,20 @@ for (const system of ['dark', 'light'] as const) {
     await scenario(context, baseURL as string, 'signed-in')
     await page.goto('/')
     const html = page.locator('html')
-    await expect(html).toHaveAttribute('data-theme', system)
-    // The system changes while the page is open, and no choice was made: the web follows.
+    await expect(html).toHaveAttribute('data-theme', 'dark')
+    // The system changes while the page is open, and no choice was made: the web stays dark.
     const other = system === 'dark' ? 'light' : 'dark'
     await page.emulateMedia({ colorScheme: other })
-    await expect(html).toHaveAttribute('data-theme', other)
-    await page.emulateMedia({ colorScheme: system })
-    await expect(html).toHaveAttribute('data-theme', system)
-    // The person chooses the other one: it stays, whatever the system says.
+    await page.waitForTimeout(200)
+    await expect(html).toHaveAttribute('data-theme', 'dark')
+    // The person chooses light: it stays, whatever the system says.
     await page.getByRole('button', { name: /Account/ }).click()
     await page.getByRole('button', { name: /Light theme/ }).click()
-    await expect(html).toHaveAttribute('data-theme', other)
+    await expect(html).toHaveAttribute('data-theme', 'light')
     await page.reload()
-    await expect(html).toHaveAttribute('data-theme', other)
-    await page.emulateMedia({ colorScheme: other === 'dark' ? 'light' : 'dark' })
-    await expect(html).toHaveAttribute('data-theme', other)
+    await expect(html).toHaveAttribute('data-theme', 'light')
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await expect(html).toHaveAttribute('data-theme', 'light')
   })
 }
 

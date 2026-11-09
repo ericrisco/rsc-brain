@@ -55,8 +55,19 @@ for (const [w, h, seeded] of [
     const shot = await page.screenshot({
       clip: { x: r.x - 4, y: r.y, width: r.width + 4, height: r.height + 4 },
     })
-    // Read the capture in the page: how many pixels differ from the picture's ground (its first pixel).
+    // Read the capture in the page: how many pixels differ from the picture's ground. The ground is dotted
+    // (canvas-ui D8): a pixel the colour of the ground or of its dots is ground.
     const inked = await page.evaluate(async (b64) => {
+      const css = getComputedStyle(document.documentElement)
+      const swatch = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D
+      const rgb = (v: string) => {
+        swatch.clearRect(0, 0, 1, 1)
+        swatch.fillStyle = css.getPropertyValue(v).trim()
+        swatch.fillRect(0, 0, 1, 1)
+        const d = swatch.getImageData(0, 0, 1, 1).data
+        return [d[0] as number, d[1] as number, d[2] as number]
+      }
+      const grounds = [rgb('--ground'), rgb('--grid-dot')]
       const img = new Image()
       img.src = `data:image/png;base64,${b64}`
       await img.decode()
@@ -66,14 +77,16 @@ for (const [w, h, seeded] of [
       const x = c.getContext('2d') as CanvasRenderingContext2D
       x.drawImage(img, 0, 0)
       const d = x.getImageData(0, 0, c.width, c.height).data
-      const [r0, g0, b0] = [d[0] as number, d[1] as number, d[2] as number]
       let n = 0
       for (let i = 0; i < d.length; i += 4)
         if (
-          Math.abs((d[i] as number) - r0) +
-            Math.abs((d[i + 1] as number) - g0) +
-            Math.abs((d[i + 2] as number) - b0) >
-          30
+          grounds.every(
+            ([r0, g0, b0]) =>
+              Math.abs((d[i] as number) - (r0 as number)) +
+                Math.abs((d[i + 1] as number) - (g0 as number)) +
+                Math.abs((d[i + 2] as number) - (b0 as number)) >
+              30,
+          )
         )
           n += 1
       return n

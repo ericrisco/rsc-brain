@@ -15,6 +15,10 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${PORT}`,
     ...devices['Desktop Chrome'],
     viewport: { width: 1440, height: 900 },
+    // A still picture by default: with motion allowed the graph's cloud turns at rest (spec amendment
+    // 2026-11-09, CA12), so checks that read where a page is drawn and then click it run on the still view.
+    // The tests of motion (the turn, the pulses, CA5 to CA7) ask for 'no-preference' themselves.
+    reducedMotion: 'reduce',
     trace: 'retain-on-failure',
   },
   webServer: {
