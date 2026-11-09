@@ -20,7 +20,10 @@ export const LAYOUT = {
   // In three dimensions: how strongly a page is pulled to its family's place, and how far out the places are
   // (times the square root of the pages).
   familyPull: 0.2,
-  familyReach: 18,
+  familyReach: 14,
+  // In three dimensions a link between two families pulls this much of a link inside one: the families stay
+  // clouds of their own, joined by long, loose lines.
+  crossLink: 0.25,
   // Barnes–Hut: a cell this small seen from this far counts as one body.
   theta2: 0.81,
   distanceMin2: 1,
@@ -129,6 +132,8 @@ export function createLayout(input: LayoutInput): Layout {
     const ds = degree[s] as number
     const dt = degree[t] as number
     linkStrength[e] = 1 / Math.min(ds, dt)
+    if (three && input.family && input.family[s] !== input.family[t])
+      linkStrength[e] = (linkStrength[e] as number) * LAYOUT.crossLink
     bias[e] = ds / (ds + dt)
     // Heavy nodes (groups) sit further apart.
     distance[e] =
@@ -394,8 +399,7 @@ export function createLayout(input: LayoutInput): Layout {
       const a = area[i] as number
       const c = count.get(a)
       if (a < 0 || !c || c < 2) continue
-      // In three dimensions the families make the clusters; the areas only keep a page near its folder.
-      const k = LAYOUT.areaPull * (three ? 0.3 : 1) * alpha
+      const k = LAYOUT.areaPull * alpha
       vx[i] = (vx[i] as number) + ((sumX.get(a) as number) / c - (x[i] as number)) * k
       vy[i] = (vy[i] as number) + ((sumY.get(a) as number) / c - (y[i] as number)) * k
       if (three) vz[i] = (vz[i] as number) + ((sumZ.get(a) as number) / c - (z[i] as number)) * k
@@ -421,7 +425,9 @@ export function createLayout(input: LayoutInput): Layout {
       ticks += 1
       links()
       charge()
-      if (input.area) areas(input.area)
+      // In three dimensions with families, the families make the clusters: folders cut across them and do
+      // not pull.
+      if (input.area && !places) areas(input.area)
       if (places && input.family) families(input.family, places)
       for (let i = 0; i < n; i++) {
         vx[i] = ((vx[i] as number) - (x[i] as number) * LAYOUT.centre * alpha) * LAYOUT.velocityKeep

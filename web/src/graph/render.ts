@@ -813,7 +813,9 @@ export class Renderer {
       const touches = on >= 0 && (i === on || j === on)
       const tier = touches ? 2 : (lit ? i !== st.hover && j !== st.hover : dim(i) || dim(j)) ? 0 : 1
       const k = sc.kind[e] as number
-      const key = tier === 1 ? `${k}|1|${sc.fam[i]}|${Math.min(bucket(i), bucket(j))}` : `${k}|${tier}|0|3`
+      // A line inside a family takes its colour; a line between two families stays a faint grey.
+      const family = sc.fam[i] === sc.fam[j] ? String(sc.fam[i]) : 'x'
+      const key = tier === 1 ? `${k}|1|${family}|${Math.min(bucket(i), bucket(j))}` : `${k}|${tier}|0|3`
       let x0 = SX(i)
       let y0 = SY(i)
       let x1 = SX(j)
@@ -845,13 +847,20 @@ export class Renderer {
       ctx.setLineDash(style.dash)
       const width = k < 0 ? (sc.byGroups ? 2.5 : 0.8) : style.width
       ctx.lineWidth = tier === 2 ? width + 0.6 : width * 0.85
-      ctx.strokeStyle = contradicts ? p.danger : tier === 2 ? p.text : (p.fam[Number(fs)] ?? p.edge)
+      const across = fs === 'x'
+      ctx.strokeStyle = contradicts
+        ? p.danger
+        : tier === 2
+          ? p.text
+          : across
+            ? p.edge
+            : (p.fam[Number(fs)] ?? p.edge)
       ctx.globalAlpha =
         tier === 0
           ? EDGE.faint * 0.7
           : tier === 2
             ? EDGE.lit
-            : (contradicts ? EDGE.contradicts : 0.46) * (FADE[Number(bs)] as number)
+            : (contradicts ? EDGE.contradicts : across ? 0.13 : 0.5) * (FADE[Number(bs)] as number)
       ctx.stroke()
       // Arrowheads on the lines of the page under the pointer or picked: the rest would only be noise.
       if (tier === 2 && style.arrow && k >= 0) {

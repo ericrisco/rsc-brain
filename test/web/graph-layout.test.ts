@@ -5,6 +5,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { arrange, createLayout, LAYOUT, ROLE } from '../../web/src/graph/layout.ts'
+import { PAGE_TYPES } from '../../web/src/lib/wiki.ts'
+import { generate } from '../../web/test/data/generate.ts'
 
 // A ring of clusters: each node linked to the next two in its cluster, clusters linked in a ring.
 function sample(n: number, cluster = 20) {
@@ -319,4 +321,78 @@ describe('the layout of the graph in three dimensions', () => {
       assert.ok(l.done())
       assert.ok(ms < (n === 300 ? 1500 : 12_000), `${ms.toFixed(0)} ms`)
     })
+})
+
+// Polish (plan canvas-ui SB4): each family is a blob of its own around the hub, as in the reference: the
+// middle of every family lies farther from the middle of any other than twice either family's spread. Checked on
+// the seeded wiki of 300 pages the browser tests draw, where four links in five cross families and folders cut
+// across them.
+describe('the families as separate clouds', () => {
+  it('each family’s middle is farther from the others than twice its spread (seeded wiki)', () => {
+    const g = generate({ pages: 300, seed: 48291 })
+    const pages = g.pages.filter((p) => p.status !== 'retired')
+    const index = new Map(pages.map((p, i) => [p.address, i]))
+    const seen = new Set<string>()
+    const raw: number[] = []
+    for (const [from, to] of g.links) {
+      const a = index.get(from)
+      const b = index.get(to)
+      if (a === undefined || b === undefined || a === b) continue
+      const key = a < b ? `${a}-${b}` : `${b}-${a}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      raw.push(a, b)
+    }
+    // Only linked pages feel the forces (as in the worker).
+    const linked = [...new Set(raw)].sort((a, b) => a - b)
+    const local = new Map(linked.map((p, k) => [p, k]))
+    const edges = Uint32Array.from(raw, (p) => local.get(p) as number)
+    const n = linked.length
+    const family = Int32Array.from(linked, (p) => Math.max(0, PAGE_TYPES.indexOf(pages[p]?.type as never)))
+    const folders = [...new Set(pages.map((p) => p.address.split('/')[0]))]
+    const area = Int32Array.from(linked, (p) => folders.indexOf(pages[p]?.address.split('/')[0]))
+    const l = createLayout({ n, edges, seed: 48291, dims: 3, family, area })
+    l.run(60_000)
+    const pos = l.positions3()
+    const fams = PAGE_TYPES.length
+    const mid = Array.from({ length: fams }, () => [0, 0, 0, 0])
+    for (let k = 0; k < n; k++) {
+      const m = mid[family[k] as number] as number[]
+      for (const a of [0, 1, 2]) m[a] = (m[a] as number) + (pos[3 * k + a] as number)
+      m[3] = (m[3] as number) + 1
+    }
+    for (const m of mid) if (m[3]) for (const a of [0, 1, 2]) m[a] = (m[a] as number) / (m[3] as number)
+    const spread = new Array<number>(fams).fill(0)
+    for (let k = 0; k < n; k++) {
+      const f = family[k] as number
+      const m = mid[f] as number[]
+      spread[f] =
+        (spread[f] as number) +
+        ((pos[3 * k] as number) - (m[0] as number)) ** 2 +
+        ((pos[3 * k + 1] as number) - (m[1] as number)) ** 2 +
+        ((pos[3 * k + 2] as number) - (m[2] as number)) ** 2
+    }
+    for (let f = 0; f < fams; f++)
+      spread[f] = Math.sqrt((spread[f] as number) / Math.max(1, (mid[f] as number[])[3] as number))
+    let crossing = 0
+    for (let e = 0; e < edges.length; e += 2)
+      if (family[edges[e] as number] !== family[edges[e + 1] as number]) crossing += 1
+    assert.ok(crossing > 0.5 * (edges.length / 2), 'most links cross families in this wiki')
+    for (let f = 0; f < fams; f++)
+      for (let h = f + 1; h < fams; h++) {
+        const a = mid[f] as number[]
+        const b = mid[h] as number[]
+        if (!a[3] || !b[3]) continue
+        const d = Math.hypot(
+          (a[0] as number) - (b[0] as number),
+          (a[1] as number) - (b[1] as number),
+          (a[2] as number) - (b[2] as number),
+        )
+        const most = Math.max(spread[f] as number, spread[h] as number)
+        assert.ok(
+          d > 2 * most,
+          `${PAGE_TYPES[f]} and ${PAGE_TYPES[h]}: ${d.toFixed(0)} apart, spread ${most.toFixed(0)}`,
+        )
+      }
+  })
 })
