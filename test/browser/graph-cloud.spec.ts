@@ -88,6 +88,15 @@ test.describe('the cloud, still (reduced motion)', () => {
   })
 })
 
+// Review R9: the painter writes in the interface's face. Its worker has no stylesheet: it loads the same
+// self-hosted JetBrains Mono itself and says so once the face is in.
+test('R9: the canvas writes its names in JetBrains Mono', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.goto(GRAPH)
+  await settled(page)
+  await expect(page.locator('canvas.graph-canvas')).toHaveAttribute('data-font', 'JetBrains Mono')
+})
+
 // Review R2: after a filter the cloud is framed on what is left, so every point moves on screen. The pointer
 // finds points on the page's copy of the projection; that copy must be the one the painter drew with, or a click
 // on a bare point picks the page drawn there before. data-active is where the painter drew the keyboard's page;

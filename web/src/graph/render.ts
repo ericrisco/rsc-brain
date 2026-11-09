@@ -418,6 +418,13 @@ export class Renderer {
     this.tiles.clear()
   }
 
+  // A face came in: every width measured with the fallback is wrong, and so is the still layer.
+  fontsChanged(): void {
+    this.words.clear()
+    this.tiles.clear()
+    this.still = null
+  }
+
   setFacts(facts: Fact[]): void {
     this.facts = facts
     this.factIndex = -1

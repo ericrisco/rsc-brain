@@ -5,6 +5,11 @@
 // per animation frame while the cloud turns or light travels its lines. Work goes in slices of 8 ms, so a new
 // layout (a group opened) replaces the old one at once, and a frame is painted at most once per animation
 // frame, whatever asked for it. A turning picture is told to the page at most four times a second.
+
+// The interface's face, self-hosted (shared.css v2). A worker has no stylesheet: it loads the face into its
+// own font set so the canvas writes in it too (review R9).
+import mono400 from '../styles/fonts/jetbrains-mono-latin-400-normal.woff2?url'
+import mono700 from '../styles/fonts/jetbrains-mono-latin-700-normal.woff2?url'
 import { arrange, createLayout, rim3 } from './layout.ts'
 import type { DrawnMessage, FromWorker, LayoutRequest, ToWorker } from './protocol.ts'
 import { Renderer } from './render.ts'
@@ -25,6 +30,28 @@ let told = { at: 0, seq: -1, spinning: false, settled: false }
 let untold = 0
 let pictures = 0
 const TELL_EVERY = 250
+let font = ''
+
+const faces = (scope as unknown as { fonts?: { add(f: FontFace): void } }).fonts
+if (faces && typeof FontFace !== 'undefined')
+  Promise.all(
+    (
+      [
+        [mono400, '400'],
+        [mono700, '700'],
+      ] as const
+    ).map(([url, weight]) => new FontFace('JetBrains Mono', `url(${url})`, { weight }).load()),
+  )
+    .then((loaded) => {
+      for (const f of loaded) faces.add(f)
+      font = 'JetBrains Mono'
+      renderer.fontsChanged()
+      told.seq = -1
+      request()
+    })
+    .catch(() => {
+      // The fallback faces stay: the names still read.
+    })
 
 function paint() {
   frame = false
@@ -58,6 +85,7 @@ function paint() {
       ms: untold,
       pictures,
       settled,
+      font,
     }
     untold = 0
     pictures = 0

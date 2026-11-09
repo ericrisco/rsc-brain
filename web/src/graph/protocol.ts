@@ -42,5 +42,7 @@ export type DrawnMessage = Drawn & {
   settled: boolean
   // How many pictures `ms` adds up (a turning picture is told to the page a few times a second).
   pictures: number
+  // The face the names are written in, once the worker has loaded it (review R9); '' until then.
+  font: string
 }
 export type FromWorker = PositionsMessage | DrawnMessage

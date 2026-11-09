@@ -1040,6 +1040,7 @@ function GraphCanvas({
     c.dataset.draws = String(draws.current)
     // The last state sent and the one this picture shows: equal once the picture is up to date.
     c.dataset.drawnSeq = String(d.seq)
+    if (d.font) c.dataset.font = d.font
     c.dataset.cards = String(d.cards.length)
     c.dataset.labels = String(d.labels.length)
     c.dataset.dots = String(d.dots)
@@ -1113,7 +1114,7 @@ function GraphCanvas({
       c.height = Math.round(st.height * st.dpr)
       const d = l.renderer.paint(l.ctx)
       if (d) {
-        drawn({ ...d, type: 'drawn', id: layoutId.current, settled: settled.current, pictures: 1 })
+        drawn({ ...d, type: 'drawn', id: layoutId.current, settled: settled.current, pictures: 1, font: '' })
         if (d.animating) paintHere()
       }
     })
