@@ -941,6 +941,9 @@ function GraphCanvas({
   // The cloud turns at rest: a touch (pointer, wheel, keys, the keyboard on the canvas) stops it, and it turns
   // again after CAMERA.restMs without one. Never with reduced motion, never while the tab is hidden.
   const touched = useRef(false)
+  // Set only by the person's own zoom or move (not by the panel or a page kept in view): past Fit, a drag
+  // moves the picture (review S2). Fit clears it.
+  const handMoved = useRef(false)
   // Whether any of the canvas is in sight: out of it nothing moves (review R7).
   const inSight = useRef(true)
   const restTimer = useRef(0)
@@ -1467,6 +1470,7 @@ function GraphCanvas({
   }, [])
 
   const zoom = (k: number, cx = size.current.w / 2, cy = size.current.h / 2) => {
+    handMoved.current = true
     const v = view.current
     const scale = Math.min(12, Math.max(0.02, v.scale * k))
     const real = scale / v.scale
@@ -1476,6 +1480,7 @@ function GraphCanvas({
   }
   const fitAll = () => {
     auto.current = true
+    handMoved.current = false
     sendState()
   }
   const toWorld = (sx: number, sy: number) => {
@@ -1618,7 +1623,7 @@ function GraphCanvas({
       tx: view.current.tx,
       ty: view.current.ty,
       ...camera.current,
-      pan: e.shiftKey || zoomedIn.current || !auto.current || latest.current.rings !== null,
+      pan: e.shiftKey || zoomedIn.current || handMoved.current || latest.current.rings !== null,
       moved: false,
     }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
@@ -1651,6 +1656,7 @@ function GraphCanvas({
       const wy = (p.y - p.view.ty) / p.view.scale
       view.current = { scale, tx: now.x - wx * scale, ty: now.y - wy * scale }
       auto.current = false
+      handMoved.current = true
       sendState()
       return
     }
@@ -1663,6 +1669,7 @@ function GraphCanvas({
       if (d.pan) {
         view.current = { ...view.current, tx: d.tx + dx, ty: d.ty + dy }
         auto.current = false
+        handMoved.current = true
       } else
         turned.current = {
           yaw: d.yaw - dx * 0.008,

@@ -125,6 +125,34 @@ for (const width of [1100, 1366, 1920])
     }
   })
 
+// Review round 2, S2: only the person's own zoom or move takes the picture past Fit. The panel opening and
+// closing, or a page kept in view, move the picture too, but a drag still turns the cloud afterwards.
+test('S2: after a page is picked and the panel closed, a drag at Fit turns the cloud', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.setViewportSize({ width: 1366, height: 768 })
+  await page.goto(GRAPH)
+  await settled(page)
+  const canvas = page.locator('canvas.graph-canvas')
+  await canvas.focus()
+  for (let k = 0; k < 4; k++) await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Enter')
+  const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
+  await expect(inspector).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(inspector).toHaveCount(0)
+  const box = (await canvas.boundingBox()) as { x: number; y: number; width: number; height: number }
+  const yaw = await canvas.getAttribute('data-yaw')
+  await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.5)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width * 0.6 + 150, box.y + box.height * 0.5, { steps: 6 })
+  await page.mouse.up()
+  await expect(canvas).not.toHaveAttribute('data-yaw', yaw ?? '')
+})
+
 // Review R2: after a filter the cloud is framed on what is left, so every point moves on screen. The pointer
 // finds points on the page's copy of the projection; that copy must be the one the painter drew with, or a click
 // on a bare point picks the page drawn there before. data-active is where the painter drew the keyboard's page;
