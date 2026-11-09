@@ -219,8 +219,32 @@ kbd,
   padding: 28px var(--gutter) 64px;
 }
 
+/* The page uses all the width the rail leaves, up to the shared cap (plan canvas-ui §0); reading widths
+   (prose, form fields) stay where they are set. */
 .page {
-  max-width: 1168px;
+  max-width: var(--page-cap);
+}
+
+/* A fluid grid: as many columns of at least --col-min as fit. */
+.grid-fluid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--col-min, 360px)), 1fr));
+  gap: var(--grid-gap, 16px);
+  align-items: start;
+}
+
+/* The main column and a side one; one column below 1100px. */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--side-w, clamp(320px, 22vw, 420px));
+  gap: 32px 40px;
+  align-items: start;
+}
+
+@media (max-width: 1099px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .title-row {
@@ -933,8 +957,55 @@ dialog::backdrop {
 /* A brain per card: flat, a rule between, the whole card opens the brain. */
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 16px;
+}
+
+/* Figures in a row of tiles: a word above, the number below. */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+}
+
+.tiles > li {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  margin: -1px 0 0 -1px;
+  padding: 16px 20px 18px;
+  border-top: 1px solid var(--rule);
+  border-left: 1px solid var(--rule);
+}
+
+.tiles .tile-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tiles .tile-n {
+  color: var(--text);
+  font: 550 26px / 1.1 var(--mono);
+  letter-spacing: -0.03em;
+}
+
+.tiles a {
+  display: grid;
+  gap: 6px;
+  text-decoration: none;
+}
+
+.tiles a:hover .tile-label {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.home-tiles {
+  margin-bottom: 24px;
 }
 
 .cards > li {
@@ -1469,13 +1540,21 @@ select:disabled {
 }
 
 .filters .field {
-  flex: 1 1 160px;
+  flex: 0 1 220px;
   min-width: 0;
   margin: 0;
 }
 
 .filters .field.grow {
-  flex: 3 1 240px;
+  flex: 0 1 440px;
+}
+
+/* On a narrow screen each field takes the line. */
+@media (max-width: 767px) {
+  .filters .field,
+  .filters .field.grow {
+    flex: 1 1 160px;
+  }
 }
 
 /* biome-ignore lint/style/noDescendingSpecificity: scoped to a wiki block; it never competes with the earlier rule */
@@ -1484,21 +1563,31 @@ select:disabled {
   margin: 25px 0 0;
 }
 
-.map-type + .map-type {
-  margin-top: 32px;
+/* The map reads like a newspaper: its types and areas flow into as many columns as the width holds. */
+.map {
+  column-width: 380px;
+  column-gap: 48px;
+}
+
+.map-type {
+  break-inside: avoid;
+  margin-bottom: 32px;
 }
 
 .type-title {
+  break-after: avoid;
   margin-bottom: 12px;
   font: 550 16px / 1.3 var(--sans);
 }
 
-/* Groups side by side where there is room: an area is read as one column of pages. */
+/* An area is read as one column of pages, never cut between two columns. */
 .map-groups {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
-  gap: 8px 32px;
-  align-items: start;
+  gap: 24px;
+}
+
+.map-group {
+  break-inside: avoid;
 }
 
 .map-group .area {

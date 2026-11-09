@@ -395,8 +395,14 @@
 
   /* The name as a tooltip, on hover or keyboard focus; Esc hides it until the next item. It is the same
      element that names the control, so it stays while the pointer is over it (WCAG 1.4.13). */
-  .frame[data-rail="folded"] .rail:not([data-tips="off"]) .rail-item:not([aria-expanded="true"]):hover > .rail-label,
-  .frame[data-rail="folded"] .rail:not([data-tips="off"]) .rail-item:not([aria-expanded="true"]):focus-visible > .rail-label {
+  .frame[data-rail="folded"]
+    .rail:not([data-tips="off"])
+    .rail-item:not([aria-expanded="true"]):hover
+    > .rail-label,
+  .frame[data-rail="folded"]
+    .rail:not([data-tips="off"])
+    .rail-item:not([aria-expanded="true"]):focus-visible
+    > .rail-label {
     left: calc(100% + 10px);
     top: 50%;
     z-index: 45;

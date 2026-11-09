@@ -9,7 +9,7 @@ import { useEffect, useState } from 'preact/hooks'
 import { useFresh } from '../api/fresh.ts'
 import { api } from '../api/index.ts'
 import { resource } from '../api/resource.ts'
-import { ago } from '../lib/brains.ts'
+import { ago, toReview } from '../lib/brains.ts'
 import { firstPersonAlone } from '../lib/people.ts'
 import { branding, justDeleted, justJoined, justSetUp, type Me, me, online } from '../session.ts'
 import { connectHref, createOpen } from '../shell/dialogs.ts'
@@ -205,6 +205,40 @@ function Card({ b }: { b: BrainRow }) {
   )
 }
 
+// The brains at a glance, summed: how many, how big, and what waits for me.
+function Totals({ brains }: { brains: BrainRow[] }) {
+  const h = T.home
+  const sum = (f: (b: BrainRow) => number) => brains.reduce((n, b) => n + f(b), 0)
+  const review = toReview(brains)
+  const items: Array<readonly [string, number, (string | undefined)?]> = [
+    [h.totalBrains, brains.length],
+    [h.totalPages, sum((b) => b.stats.pages)],
+    [h.totalEntries, sum((b) => b.stats.entries)],
+    [h.totalToReview, review.count, review.count ? review.href : undefined],
+  ]
+  return (
+    <section aria-label={h.totals} class="home-tiles">
+      <ul class="tiles">
+        {items.map(([label, n, href]) => (
+          <li key={label}>
+            {href ? (
+              <a href={href}>
+                <span class="tile-label">{label}</span>
+                <span class="tile-n">{n.toLocaleString('en')}</span>
+              </a>
+            ) : (
+              <>
+                <span class="tile-label">{label}</span>
+                <span class="tile-n">{n.toLocaleString('en')}</span>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 export function Home() {
   const r = brainsResource()
   const who = me().data.value
@@ -274,6 +308,7 @@ export function Home() {
       {state === 'ready' && data ? (
         <>
           {who?.account.isAdmin ? <InvitePanel /> : null}
+          <Totals brains={data.brains} />
           <section aria-label={T.home.title}>
             <ul class="cards">
               {data.brains.map((b) => (
