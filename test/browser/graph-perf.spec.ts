@@ -3,7 +3,8 @@
 // adds three times the worker's own time (laying out and painting) to what it measures. CA5: 300 pages are drawn within 3 s
 // of opening (median of five loads). CA6: with 5 000 pages the graph comes by groups, three of them open one
 // after the other, a page is focused and the list shown, and no task of the page lasts 200 ms or more.
-// CA7: with reduced motion the worker sends one settled picture and nothing is drawn at rest.
+// CA7: with reduced motion the worker sends one settled picture and nothing is drawn at rest. With motion
+// allowed the layout is seen settling (more than one picture), and is still once at rest.
 import { appendFileSync, mkdirSync } from 'node:fs'
 import type { Page } from '@playwright/test'
 import { expect, scenario, test } from './fixture.ts'
@@ -39,8 +40,7 @@ async function slowCpu(page: Page) {
 
 test.describe('the graph under load (CPU ×4)', () => {
   test.describe.configure({ timeout: 180_000 })
-  // With motion allowed: the cloud turns and light travels its lines while it is measured (spec amendment
-  // 2026-11-09: the budget holds with the turn and the pulses on).
+  // With motion allowed: the layout is seen settling, and a page is dragged while it is measured (v0.5.0).
   test.use({ reducedMotion: 'no-preference' })
 
   test('CA5: 300 pages are drawn within 3 seconds; the list has all 300', async ({
@@ -80,40 +80,36 @@ test.describe('the graph under load (CPU ×4)', () => {
     expect(paint.every((x) => Number.isFinite(x) && x > 0)).toBe(true)
     expect(median(estimate)).toBeLessThan(3000)
     report('CA5 longest task ms (page CPU ×4)', String(await longest(page)))
-    // Turning, with light on its lines (spec amendment 2026-11-09): each picture's painting time in the
-    // worker, over two seconds of turn. Four times slower still paints 30 pictures a second.
+    // A page dragged (v0.5.0): the layout moves under the pointer; each picture's painting time in the worker,
+    // over two seconds of drag. Four times slower still paints 30 pictures a second, and the page is never
+    // blocked 200 ms.
     const canvas = page.locator('canvas.graph-canvas')
-    await expect(canvas).toHaveAttribute('data-spinning', 'true')
+    const all = await page.evaluate(() =>
+      (
+        window as unknown as { __graph: { items(): { x: number; y: number; role: number }[] } }
+      ).__graph.items(),
+    )
+    const b = (await canvas.boundingBox()) as { x: number; y: number; width: number; height: number }
+    const held = all.find(
+      (it) => it.role === 0 && it.x > b.width * 0.25 && it.x < b.width * 0.5 && it.y > b.height * 0.3,
+    ) as { x: number; y: number }
+    await page.mouse.move(b.x + held.x, b.y + held.y)
+    await page.mouse.down()
     const frameMs: number[] = []
     for (let k = 0; k < 8; k++) {
+      await page.mouse.move(b.x + held.x + 20 * (k + 1), b.y + held.y + 10 * (k + 1), { steps: 4 })
       await page.waitForTimeout(250)
       frameMs.push(Number(await canvas.getAttribute('data-frame-ms')))
     }
+    await page.mouse.up()
     const sorted = [...frameMs].sort((a, b) => a - b)
     const typical = sorted[Math.floor(sorted.length / 2)] as number
-    report('CA5 turning: worker ms a picture (not slowed)', frameMs.map((x) => x.toFixed(2)).join(', '))
+    report('CA5 dragging: worker ms a picture (not slowed)', frameMs.map((x) => x.toFixed(2)).join(', '))
     expect(frameMs.every((x) => Number.isFinite(x) && x > 0)).toBe(true)
     expect(4 * typical).toBeLessThan(1000 / 30)
-    report('CA5 longest task ms while turning (page CPU ×4)', String(await longest(page)))
+    report('CA5 longest task ms while dragging (page CPU ×4)', String(await longest(page)))
     expect(await longest(page)).toBeLessThan(200)
-    // Still under the pointer, light still travels (review R7): the still picture is not painted again for
-    // each frame of light, only the light is. Each such frame costs a small part of a turning one.
-    const b = (await canvas.boundingBox()) as { x: number; y: number; width: number; height: number }
-    await page.mouse.move(b.x + b.width * 0.2, b.y + b.height * 0.8)
-    await page.mouse.move(b.x + b.width * 0.21, b.y + b.height * 0.8)
-    await expect(canvas).toHaveAttribute('data-spinning', 'false')
-    const stillMs: number[] = []
-    for (let k = 0; k < 8; k++) {
-      await page.waitForTimeout(250)
-      stillMs.push(Number(await canvas.getAttribute('data-still-ms')))
-    }
-    const still = [...stillMs].sort((a, b) => a - b)[Math.floor(stillMs.length / 2)] as number
-    report(
-      'CA5 still with light: worker ms a picture (not slowed)',
-      stillMs.map((x) => x.toFixed(2)).join(', '),
-    )
-    expect(stillMs.every((x) => Number.isFinite(x) && x > 0)).toBe(true)
-    expect(still).toBeLessThan(typical * 0.4)
+    await expect(canvas).toHaveAttribute('data-moving', 'false', { timeout: 30_000 })
     // The list: the pages drawn, and the retired ones on asking: all 300. Read once the caption has its number.
     await page.getByRole('button', { name: 'List' }).click()
     const caption = page.getByRole('table', { name: /Pages of the wiki/ }).getByRole('caption')

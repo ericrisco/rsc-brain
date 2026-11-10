@@ -17,6 +17,20 @@
   --primary-bg: oklch(0.94 0.006 260);
   --primary-fg: oklch(0.145 0.015 262);
   --scrim: oklch(0.08 0.012 262 / 0.75);
+  /* The graph's communities (v0.5.0): ten categorical colours told apart on the dark ground, the small
+     communities' shared grey and the pages without links' lighter one. */
+  --com-0: oklch(0.72 0.15 255);
+  --com-1: oklch(0.77 0.16 60);
+  --com-2: oklch(0.68 0.2 25);
+  --com-3: oklch(0.78 0.12 185);
+  --com-4: oklch(0.78 0.17 140);
+  --com-5: oklch(0.88 0.16 98);
+  --com-6: oklch(0.7 0.16 300);
+  --com-7: oklch(0.8 0.13 350);
+  --com-8: oklch(0.66 0.09 55);
+  --com-9: oklch(0.74 0.11 110);
+  --com-other: oklch(0.6 0.012 260);
+  --com-lone: oklch(0.8 0.01 260);
 }
 
 :root[data-theme="light"] {
@@ -33,6 +47,18 @@
   --primary-bg: oklch(0.2 0.012 260);
   --primary-fg: oklch(0.985 0.003 95);
   --scrim: oklch(0.2 0.01 260 / 0.4);
+  --com-0: oklch(0.52 0.16 255);
+  --com-1: oklch(0.6 0.17 55);
+  --com-2: oklch(0.55 0.2 25);
+  --com-3: oklch(0.55 0.1 185);
+  --com-4: oklch(0.55 0.15 140);
+  --com-5: oklch(0.62 0.13 90);
+  --com-6: oklch(0.5 0.17 300);
+  --com-7: oklch(0.6 0.18 350);
+  --com-8: oklch(0.48 0.08 55);
+  --com-9: oklch(0.52 0.1 110);
+  --com-other: oklch(0.62 0.01 260);
+  --com-lone: oklch(0.45 0.01 260);
 }
 
 :root {

@@ -18,6 +18,10 @@ const upToDate = (page: Page) =>
     )
     .toBe(true)
 
+type Item = { key: string; x: number; y: number; shown: boolean }
+const items = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __graph: { items(): Item[] } }).__graph.items())
+
 const box = (page: Page, selector: string) =>
   page.locator(selector).evaluate((el) => {
     const r = el.getBoundingClientRect()
@@ -73,7 +77,7 @@ test('the list is a page: it scrolls, and the frame is not in canvas mode', asyn
 
 // B15: the controls sit at the canvas's edges: its name and where you are at the top left, Graph | List at
 // the top in the middle with the filters beside it (opening them moves nothing), the zoom tools at the bottom
-// left with their names and keys, the legend at the bottom right.
+// left with their names and keys, the communities at the right.
 test('CA8: the canvas controls at its edges; the filters open over the picture without moving it', async ({
   page,
   context,
@@ -105,11 +109,13 @@ test('CA8: the canvas controls at its edges; the filters open over the picture w
   const t = await box(page, '.graph-tools')
   expect(t.left - canvas.left).toBeLessThan(32)
   expect(canvas.bottom - t.bottom).toBeLessThan(32)
-  // The one legend (polish 2026-11-09): at the top left, under the name, clear of the zoom tools.
-  const legend = await box(page, '.graph-legend')
-  expect(legend.left - canvas.left).toBeLessThan(32)
-  expect(legend.top).toBeGreaterThan(title.bottom)
-  expect(legend.bottom).toBeLessThan(t.top)
+  // The communities (v0.5.0): at the right, under the strip and the panel's switch, clear of the zoom tools.
+  const communities = await box(page, '.graph-communities')
+  expect(canvas.right - communities.right).toBeLessThan(32)
+  expect(communities.top).toBeGreaterThan(title.bottom)
+  expect(communities.top).toBeGreaterThanOrEqual((await box(page, '.inspector-toggle')).bottom)
+  expect(communities.left, 'clear of the middle').toBeGreaterThan(mid)
+  expect(communities.bottom).toBeLessThan(canvas.bottom)
   // The filters: a panel over the picture.
   await page.locator('.graph-filters summary').click()
   await expect(page.getByLabel('Words', { exact: true })).toBeVisible()
@@ -200,7 +206,7 @@ test('CA9: the canvas by keyboard: Tab to it, arrows walk the pages, Enter opens
   await expect(canvas).toBeFocused()
   const said = page.locator('[aria-live="polite"]').filter({ hasText: /Enter to inspect/ })
   await expect(said).toHaveCount(1)
-  // Each arrow moves the keyboard to another page (in the cloud drawn in depth, Right then Down may come
+  // Each arrow moves the keyboard to another page (Right then Down may come
   // back to where it started: each step is checked on its own). The start is read once it is drawn.
   await expect(canvas).toHaveAttribute('data-active', /\d+,\d+/)
   const first = await canvas.getAttribute('data-active')
@@ -217,14 +223,13 @@ test('CA9: the canvas by keyboard: Tab to it, arrows walk the pages, Enter opens
   await expect(inspector).toHaveCount(0)
 })
 
-// CA9: the page picked and the page under the keyboard are told apart by shape: a ring outside the
-// keyboard's card, none outside the picked one.
+// CA9: the page picked and the page under the keyboard are told apart by shape: a solid ring close around the
+// page picked, a dashed one further out around the keyboard's page.
 test('CA9: picked and under the keyboard differ by shape, not by colour alone', async ({
   page,
   context,
   baseURL,
 }) => {
-  // A small wiki: few lines cross the strips read above the cards.
   await scenario(context, baseURL as string, 'signed-in')
   await page.setViewportSize({ width: 1920, height: 1080 })
   await page.goto(GRAPH)
@@ -232,30 +237,31 @@ test('CA9: picked and under the keyboard differ by shape, not by colour alone', 
   const canvas = page.locator('canvas.graph-canvas')
   await canvas.focus()
   await page.keyboard.press('Enter')
-  await expect(canvas).toHaveAttribute('data-selected-card', /\d+,\d+,\d+,\d+/)
-  const picked = await canvas.getAttribute('data-selected-card')
+  await expect(canvas).toHaveAttribute('data-selected', /\d+,\d+/)
+  const picked = await canvas.getAttribute('data-selected')
   await page.keyboard.press('ArrowRight')
-  await expect.poll(() => canvas.getAttribute('data-active-card')).not.toBe(picked)
-  await expect(canvas).toHaveAttribute('data-active-card', /\d+,\d+,\d+,\d+/)
-  const rect = async (name: string) =>
-    ((await canvas.getAttribute(name)) ?? '').split(',').map(Number) as [number, number, number, number]
+  await expect.poll(() => canvas.getAttribute('data-active')).not.toBe(picked)
+  await upToDate(page)
+  const rings = Object.fromEntries(
+    ((await canvas.getAttribute('data-rings')) ?? '').split(' ').map((r) => {
+      const [what, line, radius] = r.split(':')
+      return [what, { line, radius: Number(radius) }]
+    }),
+  ) as Record<string, { line: string; radius: number }>
+  expect(rings.selected?.line).toBe('solid')
+  expect(rings.active?.line).toBe('dashed')
+  // Drawn: the keyboard's ring is inked around its page, all the way round where it is not a gap.
   const c = await box(page, 'canvas.graph-canvas')
-  // Along the straight top of a card, in a strip 2–5 px above it: the share of columns where something other
-  // than the ground and its dots is drawn (a ring fills them all; a line crossing fills a few).
-  const ringAt = async ([x, y, w]: [number, number, number, number]) => {
-    const shot = await page.screenshot({
-      clip: { x: c.left + x + 20, y: c.top + y - 5, width: w - 40, height: 3 },
-    })
-    return page.evaluate(async (b64) => {
-      const css = getComputedStyle(document.documentElement)
-      const sw = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D
-      const rgb = (v: string) => {
-        sw.clearRect(0, 0, 1, 1)
-        sw.fillStyle = css.getPropertyValue(v).trim()
-        sw.fillRect(0, 0, 1, 1)
-        return [...sw.getImageData(0, 0, 1, 1).data].slice(0, 3)
-      }
-      const grounds = [rgb('--ground'), rgb('--grid-dot')]
+  const [ax, ay] = ((await canvas.getAttribute('data-active')) ?? '').split(',').map(Number) as [
+    number,
+    number,
+  ]
+  const r = rings.active?.radius ?? 0
+  const shot = await page.screenshot({
+    clip: { x: c.left + ax - r - 4, y: c.top + ay - r - 4, width: 2 * r + 8, height: 2 * r + 8 },
+  })
+  const inked = await page.evaluate(
+    async ([b64, radius]) => {
       const img = new Image()
       img.src = `data:image/png;base64,${b64}`
       await img.decode()
@@ -264,26 +270,34 @@ test('CA9: picked and under the keyboard differ by shape, not by colour alone', 
       k.height = img.height
       const x = k.getContext('2d') as CanvasRenderingContext2D
       x.drawImage(img, 0, 0)
-      const d = x.getImageData(0, 0, k.width, k.height).data
-      const inked = new Set<number>()
-      for (let i = 0; i < d.length; i += 4)
+      const ground = getComputedStyle(document.documentElement).getPropertyValue('--ground').trim()
+      const sw = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D
+      sw.fillStyle = ground
+      sw.fillRect(0, 0, 1, 1)
+      const g = sw.getImageData(0, 0, 1, 1).data
+      let on = 0
+      const steps = 72
+      for (let s = 0; s < steps; s++) {
+        const a = (s / steps) * Math.PI * 2
+        const px = Math.round(k.width / 2 + Math.cos(a) * (radius as number))
+        const py = Math.round(k.height / 2 + Math.sin(a) * (radius as number))
+        const d = x.getImageData(px, py, 1, 1).data
         if (
-          grounds.every(
-            (g) =>
-              Math.abs((d[i] as number) - (g[0] as number)) +
-                Math.abs((d[i + 1] as number) - (g[1] as number)) +
-                Math.abs((d[i + 2] as number) - (g[2] as number)) >
-              40,
-          )
+          Math.abs((d[0] ?? 0) - (g[0] ?? 0)) +
+            Math.abs((d[1] ?? 0) - (g[1] ?? 0)) +
+            Math.abs((d[2] ?? 0) - (g[2] ?? 0)) >
+          60
         )
-          inked.add((i / 4) % k.width)
-      return inked.size / k.width
-    }, shot.toString('base64'))
-  }
-  const active = await rect('data-active-card')
-  const selected = await rect('data-selected-card')
-  expect(await ringAt(active), 'a ring outside the keyboard’s card').toBeGreaterThan(0.9)
-  expect(await ringAt(selected), 'no ring outside the picked card').toBeLessThan(0.5)
+          on += 1
+      }
+      return on / steps
+    },
+    [shot.toString('base64'), r] as const,
+  )
+  // Dashed: much of the way round, with gaps.
+  expect(inked).toBeGreaterThan(0.3)
+  expect(inked).toBeLessThan(0.95)
+  expect(rings.active?.radius ?? 0, 'further out').toBeGreaterThan(rings.selected?.radius ?? 0)
 })
 
 // CA9: with reduced motion nothing on the canvas screen animates, the rail and panel included.
@@ -309,32 +323,6 @@ test('CA9: with reduced motion nothing moves on the canvas screen', async ({ bro
   await context.close()
 })
 
-// A brain just started (two pages): Fit zooms in until its pages read as tiles, as tall as the nodes of a
-// flow editor, with their whole titles.
-test('CA8: a two-page brain fits as big tiles with whole titles', async ({ page, context, baseURL }) => {
-  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 'small' })
-  await page.setViewportSize({ width: 1920, height: 1080 })
-  await page.goto(GRAPH)
-  await settled(page)
-  const canvas = page.locator('canvas.graph-canvas')
-  await expect(canvas).toHaveAttribute('data-cards', '2')
-  const tiles = JSON.parse((await canvas.getAttribute('data-card-list')) ?? '[]') as {
-    h: number
-    w: number
-    title: string
-  }[]
-  expect(tiles).toHaveLength(2)
-  for (const t of tiles) {
-    expect(t.h, 'a tile, not a pill').toBeGreaterThanOrEqual(88)
-    expect(t.title, 'the whole title').not.toContain('…')
-  }
-  expect(tiles.map((t) => t.title).sort()).toEqual([
-    'Duplicate candidates in the Payroll clerk CV screenings',
-    'Payroll clerk CV screenings',
-  ])
-})
-
-// The inspector reads as words, not code: each link a row with its words at the left (wrapping if long) and
 // a compact Inspect on its first line at the right; the page's type, status and address as plain text.
 test('the inspector: link rows keep Inspect at the right of their first line; no code type', async ({
   page,
@@ -376,13 +364,9 @@ test('the inspector: link rows keep Inspect at the right of their first line; no
   for (const f of fonts) expect(f).toBe(body)
 })
 
-// Closing review C5: the cards' words and sizes for the tests are made only when a test drives the browser
-// (navigator.webdriver); a person's browser never builds them, picture after picture.
-test('outside a test the painter does not build the cards’ list for tests', async ({
-  page,
-  context,
-  baseURL,
-}) => {
+// Closing review C5: what the picture says to tests (its counts and rings) is made only when a test drives the
+// browser (navigator.webdriver); a person's browser never builds it, picture after picture.
+test('outside a test the painter does not build what it tells tests', async ({ page, context, baseURL }) => {
   await page.addInitScript(() =>
     Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false }),
   )
@@ -390,100 +374,49 @@ test('outside a test the painter does not build the cards’ list for tests', as
   await page.goto(GRAPH)
   await settled(page)
   const canvas = page.locator('canvas.graph-canvas')
-  await expect.poll(async () => Number(await canvas.getAttribute('data-cards'))).toBeGreaterThan(0)
-  await expect(canvas).not.toHaveAttribute('data-card-list', /./)
-})
-
-// reference. At Fit nothing is named but the hub and the families' pills; a page picked is named with its
-// neighbours and nothing else; the pointer on a point names it.
-test('the still cloud names only the picked page and its neighbours; the pointer names the rest', async ({
-  page,
-  context,
-  baseURL,
-}) => {
-  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
-  await page.setViewportSize({ width: 1920, height: 1080 })
-  await page.goto(GRAPH)
-  await settled(page)
-  await upToDate(page)
-  const canvas = page.locator('canvas.graph-canvas')
-  const named = async () =>
-    Number(await canvas.getAttribute('data-cards')) + Number(await canvas.getAttribute('data-labels'))
-  expect(await named()).toBe(0)
-  await expect(canvas).toHaveAttribute('data-families', /,/)
-  // Picked: its card, and at most its neighbours'.
   await canvas.focus()
-  await page.keyboard.press('Enter')
-  const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
-  await expect(inspector.getByRole('link', { name: 'Open page' })).toBeVisible()
-  await upToDate(page)
-  const links = await inspector.locator('.inspector-links li').count()
-  const picked = await named()
-  expect(picked).toBeGreaterThan(0)
-  expect(picked).toBeLessThanOrEqual(1 + links)
-  await expect(canvas).toHaveAttribute('data-selected-card', /\d+,\d+,\d+,\d+/)
-  // Nothing picked, the pointer on a point names it.
-  await page.keyboard.press('Escape')
-  await expect(inspector).toHaveCount(0)
-  await canvas.blur()
-  await upToDate(page)
-  const b = (await canvas.boundingBox()) as { x: number; y: number; width: number; height: number }
-  let found = false
-  for (let y = 0.3; y < 0.8 && !found; y += 0.02)
-    for (let x = 0.3; x < 0.75 && !found; x += 0.01) {
-      await page.mouse.move(b.x + b.width * x, b.y + b.height * y)
-      found = (await canvas.getAttribute('data-hover')) !== null
-    }
-  expect(found, 'a point under the pointer').toBe(true)
-  await upToDate(page)
-  expect(await named()).toBeGreaterThan(0)
+  await expect(canvas).toHaveAttribute('data-active', /\d+,\d+/)
+  for (const a of ['data-counts', 'data-rings', 'data-active-here'])
+    await expect(canvas).not.toHaveAttribute(a, /./)
+  expect(await page.evaluate(() => '__graph' in window)).toBe(false)
 })
 
-// Review R4: what the pointer picks and where the cards go are checked with the cloud still (reduced motion)
-// and with motion allowed, where a touch stops the turn and the picture is still again.
+// Review R4: what the pointer picks and where a page picked is drawn are checked at rest with reduced motion and
+// with motion allowed (v0.5.0: the layout settles, and then the picture is still).
 function pickingAndClearance() {
-  // D6–D8: zoomed in, pages are readable cards; the ground is dotted; a click on a card, even at its edge,
-  // picks its page.
-  test('CA8: the pages are cards on a dotted ground; a click at the edge of a card opens it', async ({
-    page,
-    context,
-    baseURL,
-  }) => {
+  const xyOf = async (page: Page, attr: string) =>
+    ((await page.locator('canvas.graph-canvas').getAttribute(attr)) ?? '').split(',').map(Number) as [
+      number,
+      number,
+    ]
+  // The left edge of whatever covers the right of the canvas: the inspector, and the communities left of it.
+  const coverLeft = async (page: Page) =>
+    Math.min((await box(page, '#graph-inspector')).left, (await box(page, '.graph-communities')).left)
+
+  // A click on a page, a little off its middle, picks it.
+  test('a click near a page opens it in the inspector', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.setViewportSize({ width: 1920, height: 1080 })
     await page.goto(GRAPH)
     await settled(page)
     const canvas = page.locator('canvas.graph-canvas')
-    await expect.poll(async () => Number(await canvas.getAttribute('data-cards'))).toBeGreaterThan(0)
-    await expect.poll(async () => Number(await canvas.getAttribute('data-dots'))).toBeGreaterThanOrEqual(6)
-    // The keyboard's page always has its card. Read once the keyboard is on the canvas and nothing has moved
-    // it since (a card read before a move would belong to the page before).
-    await expect(canvas).not.toHaveAttribute('data-active-card', /./)
     await canvas.focus()
-    await expect(canvas).toHaveAttribute('data-active-card', /^-?\d+,-?\d+,\d+,\d+$/)
+    await expect(canvas).toHaveAttribute('data-active', /^-?\d+,-?\d+$/)
     const said =
       (await page
         .locator('[aria-live="polite"]')
         .filter({ hasText: /Enter to inspect/ })
         .textContent()) ?? ''
     const title = said.split('. ')[0] as string
-    const [x, y, w, h] = ((await canvas.getAttribute('data-active-card')) ?? '').split(',').map(Number) as [
-      number,
-      number,
-      number,
-      number,
-    ]
-    // A pill (28 px) or, zoomed in, a tile.
-    expect(h === 28 || h >= 88).toBe(true)
-    // Two pixels inside its right edge: far from the page's point, still its card.
-    await canvas.click({ position: { x: x + w - 2, y: y + h / 2 } })
+    const [x, y] = await xyOf(page, 'data-active')
+    await canvas.click({ position: { x: x + 3, y: y - 2 } })
     const inspector = page.getByRole('complementary', { name: /^Inspector \S/ })
     await expect(inspector.getByRole('heading', { level: 2 })).toHaveText(title)
   })
 
-  // Review A1: with the panel open, the keyboard's page is kept in the part of the canvas the panel and the
-  // controls leave: its card never ends under the panel.
-  test('with the inspector open, walking right keeps the keyboard’s card clear of the panel', async ({
+  // Review A1: with the panel open, the keyboard's page is kept in the part of the canvas the panels and the
+  // controls leave: it never ends under them.
+  test('with the inspector open, walking right keeps the keyboard’s page clear of the panels', async ({
     page,
     context,
     baseURL,
@@ -495,22 +428,18 @@ function pickingAndClearance() {
     const canvas = page.locator('canvas.graph-canvas')
     await page.getByRole('button', { name: 'Inspector', exact: true }).click()
     const c = await box(page, 'canvas.graph-canvas')
-    const panel = await box(page, '#graph-inspector')
     await canvas.focus()
     await page.keyboard.press('+')
     await page.keyboard.press('+')
     await page.keyboard.press('+')
-    const end = async () => {
-      const [x, , w] = ((await canvas.getAttribute('data-active-card')) ?? '0,0,0,0')
-        .split(',')
-        .map(Number) as [number, number, number]
-      return c.left + x + w
-    }
+    const cover = await coverLeft(page)
     for (let n = 0; n < 12; n++) {
       await page.keyboard.press('ArrowRight')
       await expect
-        .poll(end, { message: `step ${n}: the card ends left of the panel` })
-        .toBeLessThan(panel.left)
+        .poll(async () => c.left + (await xyOf(page, 'data-active'))[0], {
+          message: `step ${n}: the page is left of the panels`,
+        })
+        .toBeLessThan(cover)
     }
   })
 
@@ -534,30 +463,26 @@ function pickingAndClearance() {
       await expect(page.getByRole('complementary', { name: /^Inspector \S/ })).toBeVisible()
       const c = await box(page, 'canvas.graph-canvas')
       const panel = await box(page, '#graph-inspector')
+      await expect(canvas).toHaveAttribute('data-selected', /\d+,\d+/)
       await expect
-        .poll(async () => {
-          const [x, , w] = ((await canvas.getAttribute('data-selected-card')) ?? '9999,0,0,0')
-            .split(',')
-            .map(Number) as [number, number, number]
-          return c.left + x + w
-        })
+        .poll(async () => c.left + (await xyOf(page, 'data-selected'))[0] + 12)
         .toBeLessThan(panel.left)
     })
 
-  // Review R2-1: whatever scale Fit lands on with the panel open, every card it draws is whole: inside the
-  // canvas and left of the panel (tiles never keep the narrow pad of the pills).
+  // Review R2-1: Fit with the panel open draws every page inside the canvas, left of the panels and clear of
+  // the controls at the top and bottom.
   for (const size of [
     { width: 1920, height: 1080 },
     { width: 1366, height: 768 },
     { width: 1280, height: 720 },
     { width: 1100, height: 900 },
   ])
-    test(`Fit with the panel open draws every card whole at ${size.width}×${size.height}`, async ({
+    test(`Fit with the panel open draws every page in the room left at ${size.width}×${size.height}`, async ({
       page,
       context,
       baseURL,
     }) => {
-      await scenario(context, baseURL as string, 'signed-in')
+      await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
       await page.setViewportSize(size)
       await page.goto(GRAPH)
       await settled(page)
@@ -569,82 +494,18 @@ function pickingAndClearance() {
       await expect.poll(async () => Number(await canvas.getAttribute('data-sent-seq'))).toBeGreaterThan(sent)
       await upToDate(page)
       const c = await box(page, 'canvas.graph-canvas')
-      const panel = await box(page, '#graph-inspector')
-      const cards = JSON.parse((await canvas.getAttribute('data-card-list')) ?? '[]') as {
-        x: number
-        y: number
-        w: number
-        h: number
-        title: string
-      }[]
-      expect(cards.length).toBeGreaterThan(0)
-      for (const k of cards) {
-        expect(k.x, `${k.title} inside the canvas`).toBeGreaterThanOrEqual(0)
-        expect(k.y, `${k.title} inside the canvas`).toBeGreaterThanOrEqual(0)
-        expect(k.y + k.h, `${k.title} inside the canvas`).toBeLessThanOrEqual(c.bottom - c.top)
-        expect(c.left + k.x + k.w, `${k.title} left of the panel`).toBeLessThanOrEqual(panel.left)
+      const cover = await coverLeft(page)
+      const shown = (await items(page)).filter((it) => it.shown)
+      expect(shown.length).toBeGreaterThan(0)
+      for (const it of shown) {
+        expect(it.x, `${it.key} inside the canvas`).toBeGreaterThanOrEqual(0)
+        expect(it.y, `${it.key} inside the canvas`).toBeGreaterThanOrEqual(0)
+        expect(it.y, `${it.key} inside the canvas`).toBeLessThanOrEqual(c.bottom - c.top)
+        expect(c.left + it.x, `${it.key} left of the panels`).toBeLessThanOrEqual(cover)
       }
     })
 
-  // Review R2-2: with Fit on (auto), a page picked by pointer at the right edge, drawn as a point until then,
-  // gets its card clear of the panel. Narrow, tall windows: the picture fills the width, up to the panel.
-  for (const size of [
-    { width: 1100, height: 1000 },
-    { width: 1200, height: 1080 },
-  ])
-    test(`with Fit on, a point picked at the right edge gets its card clear of the panel at ${size.width}`, async ({
-      page,
-      context,
-      baseURL,
-    }) => {
-      await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
-      await page.setViewportSize(size)
-      await page.goto(GRAPH)
-      await settled(page)
-      await page.getByRole('button', { name: 'Inspector', exact: true }).click()
-      await page.getByRole('button', { name: 'Fit', exact: true }).click()
-      await upToDate(page)
-      const panel = await box(page, '#graph-inspector')
-      // The rightmost point under the pointer (not a card) in the part the panel leaves.
-      const spot = await page.locator('canvas.graph-canvas').evaluate((c, right) => {
-        const el = c as HTMLCanvasElement
-        const r = el.getBoundingClientRect()
-        const cards = JSON.parse(el.dataset.cardList ?? '[]') as {
-          x: number
-          y: number
-          w: number
-          h: number
-        }[]
-        for (let x = right - 30; x > right - 200; x -= 3)
-          for (let y = r.top + 120; y < r.bottom - 80; y += 3) {
-            if (
-              cards.some(
-                (k) =>
-                  x - r.left >= k.x && x - r.left <= k.x + k.w && y - r.top >= k.y && y - r.top <= k.y + k.h,
-              )
-            )
-              continue
-            el.dispatchEvent(new PointerEvent('pointermove', { clientX: x, clientY: y, bubbles: true }))
-            if (el.dataset.hover !== undefined) return { x: x - r.left, y: y - r.top }
-          }
-        return null
-      }, panel.left)
-      expect(spot, 'a point near the panel').not.toBeNull()
-      const canvas = page.locator('canvas.graph-canvas')
-      await canvas.click({ position: spot as { x: number; y: number } })
-      await expect(page.getByRole('complementary', { name: /^Inspector \S/ })).toBeVisible()
-      const c = await box(page, 'canvas.graph-canvas')
-      await expect
-        .poll(async () => {
-          const [x, , w] = ((await canvas.getAttribute('data-selected-card')) ?? '9999,0,0,0')
-            .split(',')
-            .map(Number) as [number, number, number]
-          return c.left + x + w
-        })
-        .toBeLessThan(panel.left)
-    })
-
-  // Closing review C4: a link that names the page to inspect opens the panel with it, and its card is drawn
+  // Closing review C4: a link that names the page to inspect opens the panel with it, and the page is drawn
   // clear of the panel, at every width the panel shows.
   for (const size of [
     { width: 1920, height: 1080 },
@@ -671,71 +532,47 @@ function pickingAndClearance() {
         const c = await box(page, 'canvas.graph-canvas')
         const panel = await box(page, '#graph-inspector')
         const canvas = page.locator('canvas.graph-canvas')
-        await expect(canvas).toHaveAttribute('data-selected-card', /\d+,\d+,\d+,\d+/)
-        const [x, y, w, h] = ((await canvas.getAttribute('data-selected-card')) ?? '')
-          .split(',')
-          .map(Number) as [number, number, number, number]
-        expect(c.left + x + w, 'left of the panel').toBeLessThanOrEqual(panel.left)
+        await expect(canvas).toHaveAttribute('data-selected', /\d+,\d+/)
+        const [x, y] = await xyOf(page, 'data-selected')
+        expect(c.left + x, 'left of the panel').toBeLessThan(panel.left)
         expect(x).toBeGreaterThanOrEqual(0)
         expect(y).toBeGreaterThanOrEqual(0)
-        expect(y + h).toBeLessThanOrEqual(c.bottom - c.top)
+        expect(y).toBeLessThanOrEqual(c.bottom - c.top)
       })
 
-  // Closing review, visual gap 2: no card is drawn under the canvas's controls (the legend, the zoom tools, the
-  // bars at the top, the panel's switch) nor under the open panel, at Fit or zoomed in.
-  for (const zoom of [0, 2])
-    test(`no card under the canvas controls, panel open${zoom ? ', zoomed in' : ''}`, async ({
-      page,
-      context,
-      baseURL,
-    }) => {
-      await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
-      await page.setViewportSize({ width: 1920, height: 1080 })
-      await page.goto(GRAPH)
-      await settled(page)
-      const canvas = page.locator('canvas.graph-canvas')
-      await canvas.focus()
-      await page.keyboard.press('Enter')
-      await expect(page.getByRole('complementary', { name: /^Inspector \S/ })).toBeVisible()
-      for (let n = 0; n < zoom; n++) await page.keyboard.press('+')
-      await upToDate(page)
-      const c = await box(page, 'canvas.graph-canvas')
-      const controls = await Promise.all(
-        [
-          '.graph-legend',
-          '.graph-tools',
-          '.graph-over',
-          '.graph-center',
-          '.inspector-toggle',
-          '#graph-inspector',
-        ].map((q) => box(page, q)),
-      )
-      const cards = JSON.parse((await canvas.getAttribute('data-card-list')) ?? '[]') as {
-        x: number
-        y: number
-        w: number
-        h: number
-        title: string
-      }[]
-      const picked = (await canvas.getAttribute('data-selected-card')) ?? ''
-      expect(cards.length).toBeGreaterThan(0)
-      for (const k of cards) {
-        if (`${k.x},${k.y},${k.w},${k.h}` === picked) continue
-        const r = {
-          left: c.left + k.x,
-          top: c.top + k.y,
-          right: c.left + k.x + k.w,
-          bottom: c.top + k.y + k.h,
-        }
-        for (const b of controls)
-          expect(
-            r.left < b.right && r.right > b.left && r.top < b.bottom && r.bottom > b.top,
-            `${k.title} under a control`,
-          ).toBe(false)
-      }
-    })
-
-  // Closing review, visual gap 3, revised by the style polish (2026-11-09): the still cloud is quiet like the
+  // Closing review, visual gap 2: at Fit no page is drawn under the canvas's controls (the zoom tools, the
+  // bars at the top, the panel's switch, the communities) nor under the open panel.
+  test('at Fit no page under the canvas controls, panel open', async ({ page, context, baseURL }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.setViewportSize({ width: 1920, height: 1080 })
+    await page.goto(GRAPH)
+    await settled(page)
+    const canvas = page.locator('canvas.graph-canvas')
+    await canvas.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('complementary', { name: /^Inspector \S/ })).toBeVisible()
+    await page.getByRole('button', { name: 'Fit', exact: true }).click()
+    await upToDate(page)
+    const c = await box(page, 'canvas.graph-canvas')
+    const controls = await Promise.all(
+      [
+        '.graph-tools',
+        '.graph-over',
+        '.graph-center',
+        '.inspector-toggle',
+        '#graph-inspector',
+        '.graph-communities',
+      ].map((q) => box(page, q)),
+    )
+    for (const it of (await items(page)).filter((x) => x.shown)) {
+      const x = c.left + it.x
+      const y = c.top + it.y
+      for (const b of controls)
+        expect(x > b.left && x < b.right && y > b.top && y < b.bottom, `${it.key} under a control`).toBe(
+          false,
+        )
+    }
+  })
 }
 
 test.describe('reduced motion', () => pickingAndClearance())

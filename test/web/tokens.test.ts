@@ -263,6 +263,34 @@ describe("Brain's tokens over the shared ones (tokens.css)", () => {
     })
   }
 
+  // v0.5.0: the graph's communities, dots on the canvas's ground: each colour stands out from the ground
+  // (3:1, WCAG 1.4.11 for graphics) and from the other nine, and the two greys from both.
+  for (const t of ['light', 'dark'] as const) {
+    it(`the communities' colours stand out from the ground and from each other, in ${t}`, () => {
+      const vars = theme(brain, t)
+      const names = [...Array.from({ length: 10 }, (_, k) => `--com-${k}`), '--com-other', '--com-lone']
+      for (const n of names) {
+        const c = contrast(vars, n, '--ground')
+        assert.ok(c >= 3, `${n} on --ground in ${t}: ${c.toFixed(2)}:1`)
+      }
+      // Two colours differ in hue or clearly in lightness (OKLCH, as written).
+      const lch = (n: string) => {
+        const m = /^oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)$/.exec(vars.get(n) ?? '')
+        assert.ok(m, `${n} is an oklch() colour`)
+        return [Number(m[1]), Number(m[2]), Number(m[3])] as const
+      }
+      for (let a = 0; a < names.length; a++)
+        for (let b = a + 1; b < names.length; b++) {
+          const [la, ca, ha] = lch(names[a] as string)
+          const [lb, cb, hb] = lch(names[b] as string)
+          const hue = Math.min(Math.abs(ha - hb), 360 - Math.abs(ha - hb))
+          const apart =
+            (ca > 0.05 && cb > 0.05 && hue >= 25) || Math.abs(la - lb) >= 0.08 || Math.abs(ca - cb) >= 0.06
+          assert.ok(apart, `${names[a]} and ${names[b]} too alike in ${t}`)
+        }
+    })
+  }
+
   it('Brain keeps its own accent (hue 156) over the shared sheet', () => {
     for (const t of ['light', 'dark'] as const) assert.match(theme(brain, t).get('--accent') ?? '', / 156\)$/)
   })

@@ -297,7 +297,7 @@ export function hubs(m: Model, nodes: Uint8Array, count: number): number[] {
     .slice(0, count)
 }
 
-// Where each item goes once the forces are done (layout.ts ROLE): a page with no link is parked; in one
+// Where each item goes (layout.ts ROLE): a page with no link goes on the ring around the linked ones; in one
 // group, the boxes of the other groups go on the rim.
 export function roles(m: Model): Uint8Array {
   return new Uint8Array(
@@ -305,57 +305,6 @@ export function roles(m: Model): Uint8Array {
       it.kind === 'group' ? (m.mode === 'groups' ? 0 : 2) : (m.degree[i] as number) === 0 ? 1 : 0,
     ),
   )
-}
-
-// The area of each page: the next part of its address under the group open (or the first part); −1 for a box.
-export function areas(m: Model): Int32Array {
-  const depth = m.prefix === null ? 0 : m.prefix.split('/').length
-  const ids = new Map<string, number>()
-  return new Int32Array(
-    m.items.map((it) => {
-      if (it.kind !== 'page') return -1
-      const key = it.address
-        .split('/')
-        .slice(0, depth + 1)
-        .join('/')
-      if (!ids.has(key)) ids.set(key, ids.size)
-      return ids.get(key) as number
-    }),
-  )
-}
-
-// The biggest linked part of what is drawn (and the boxes on the rim): what the view fits, so a few pages far
-// off never shrink the rest. Nothing linked: everything drawn.
-export function mainCluster(m: Model, nodes: Uint8Array, edges: Uint8Array): Uint8Array {
-  const n = nodes.length
-  const parent = Int32Array.from({ length: n }, (_, i) => i)
-  const find = (i: number): number => {
-    while (parent[i] !== i) {
-      parent[i] = parent[parent[i] as number] as number
-      i = parent[i] as number
-    }
-    return i
-  }
-  for (let e = 0; e < edges.length; e++) {
-    if (!edges[e]) continue
-    const i = m.edges[2 * e] as number
-    const j = m.edges[2 * e + 1] as number
-    if (m.mode !== 'groups' && (i >= m.pages || j >= m.pages)) continue
-    parent[find(i)] = find(j)
-  }
-  const size = new Map<number, number>()
-  for (let i = 0; i < n; i++) if (nodes[i]) size.set(find(i), (size.get(find(i)) ?? 0) + 1)
-  let best = -1
-  let most = 1
-  for (const [root, c] of size)
-    if (c > most) {
-      most = c
-      best = root
-    }
-  const out = new Uint8Array(n)
-  for (let i = 0; i < n; i++)
-    out[i] = nodes[i] && (best === -1 || find(i) === best || (m.mode !== 'groups' && i >= m.pages)) ? 1 : 0
-  return out
 }
 
 // The radii of the rings of focus: one hop, two hops.
@@ -523,7 +472,7 @@ export function fit(
   const band = Math.min(top, Math.max(0, h - 2 * pad - 40))
   const mid = band + (h - band) / 2
   const wide0 = w - Math.min(o.right ?? 0, Math.max(0, w - 2 * pad - 40))
-  // A column at the left (the legend) is left out too, when room remains.
+  // A column at the left is left out too, when room remains.
   const left = Math.min(o.left ?? 0, Math.max(0, wide0 - 2 * pad - 40))
   const wide = wide0 - left
   if (x0 === Number.POSITIVE_INFINITY) return { scale: 1, tx: left + wide / 2, ty: mid }
@@ -535,19 +484,43 @@ export function fit(
   return { scale, tx: left + wide / 2 - ((x0 + x1) / 2) * scale, ty: mid - ((y0 + y1) / 2) * scale }
 }
 
-// The shape code of a group box, and its radius in pixels by how many pages it holds (render.ts draws them).
-export const GROUP_SHAPE = 255
+// The radius of a group's box in pixels, by how many pages it holds (render.ts draws them).
 export const groupRadius = (count: number) => Math.min(28, 7 + 1.1 * Math.sqrt(count))
 
 // The pad around what is fitted: room for the biggest group box drawn whole (a box is sized in pixels, not
 // by the zoom), and never less than 48 px.
 export function fitPad(
-  sc: { n: number; shape: Uint8Array; count: ArrayLike<number>; byGroups: boolean },
+  sc: { n: number; group: Uint8Array; count: ArrayLike<number>; byGroups: boolean },
   fitted: Uint8Array,
 ): number {
   let reach = 0
   for (let i = 0; i < sc.n; i++)
-    if (fitted[i] && sc.shape[i] === GROUP_SHAPE)
+    if (fitted[i] && sc.group[i])
       reach = Math.max(reach, groupRadius(sc.count[i] as number) * (sc.byGroups ? 1 : 0.6))
   return 24 + Math.max(24, reach)
+}
+
+// How far to move the picture so an item at (sx, sy), hw × hh from its middle to each side, sits inside the
+// room left by the panels and the controls with a 24 px gap (review R2-4): only by what sticks out; null when
+// it is in view. An item wider (or taller) than the room is held at the room's middle, so it settles there
+// instead of moving at every step.
+export function keepInView(o: {
+  sx: number
+  sy: number
+  hw: number
+  hh: number
+  left: number
+  top: number
+  right: number
+  bottom: number
+}): { dx: number; dy: number } | null {
+  const along = (at: number, half: number, lo: number, hi: number) => {
+    const m = Math.min(half + 24, Math.max(0, (hi - lo) / 2))
+    if (at < lo + m) return lo + m - at
+    if (at > hi - m) return hi - m - at
+    return 0
+  }
+  const dx = along(o.sx, o.hw, o.left, o.right)
+  const dy = along(o.sy, o.hh, o.top, o.bottom)
+  return dx === 0 && dy === 0 ? null : { dx, dy }
 }
