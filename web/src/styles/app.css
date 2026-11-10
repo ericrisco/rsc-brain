@@ -459,23 +459,19 @@ legend .step {
   color: var(--accent);
 }
 
-/* A banner above a card is as wide as the card, not as the page. */
-.page:has(> .state.next) > .alert {
-  max-width: 720px;
-}
-
-.page:has(> .state:not(.next)) > .alert {
-  max-width: 640px;
-}
-
+/* A state fills the work area, its words centred in it, so an empty screen is never a card stuck on the left. */
 .state {
   display: grid;
   gap: 8px;
-  justify-items: start;
-  padding: 24px;
+  justify-items: center;
+  padding: 56px 24px;
   background: var(--surface);
   border-radius: var(--radius);
-  max-width: 640px;
+  text-align: center;
+}
+
+.state > * {
+  max-width: 72ch;
 }
 
 .state h2 {
@@ -583,13 +579,11 @@ legend .step {
 
 /* The way forward when a brain list is empty, and copying a text. */
 
-.state.next {
-  max-width: 720px;
-}
-
+/* A numbered way forward reads as a list even inside a centred state. */
 .steps {
   display: grid;
   gap: 14px;
+  text-align: start;
   margin: 4px 0 8px;
   padding-left: 22px;
   list-style: decimal;
@@ -1239,7 +1233,6 @@ dialog::backdrop {
 .first-steps {
   display: grid;
   gap: 8px;
-  max-width: 820px;
   padding: 20px 22px;
   background: var(--surface);
   border-radius: var(--radius);
@@ -1251,7 +1244,8 @@ dialog::backdrop {
 
 .first-steps ol {
   display: grid;
-  gap: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 0 32px;
   margin-top: 8px;
 }
 
@@ -1536,30 +1530,30 @@ select:disabled {
 }
 
 /* The map reads like a newspaper: its types and areas flow into as many columns as the width holds. */
+/* One band per type across the whole width; inside it, its areas flow in as many columns as fit. */
 .map {
-  column-width: 380px;
-  column-gap: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .map-type {
-  break-inside: avoid;
   margin-bottom: 32px;
 }
 
 .type-title {
-  break-after: avoid;
   margin-bottom: 12px;
   font: 550 16px / 1.3 var(--sans);
 }
 
 /* An area is read as one column of pages, never cut between two columns. */
 .map-groups {
-  display: grid;
-  gap: 24px;
+  column-width: 340px;
+  column-gap: 40px;
 }
 
 .map-group {
   break-inside: avoid;
+  margin-bottom: 24px;
 }
 
 .map-group .area {
@@ -3495,6 +3489,13 @@ label.op-head:hover {
   margin-top: 8px;
 }
 
+/* Inside the search, a state is a short line in the list, not a band across the work area. */
+dialog.search-dialog .state {
+  justify-items: start;
+  padding: 16px;
+  text-align: start;
+}
+
 dialog.search-dialog {
   width: min(920px, calc(100vw - 32px));
   /* Held at the top, not centred: opening the filters or getting results never moves what is above. */
@@ -4698,7 +4699,7 @@ input[type="file"]::file-selector-button {
   margin: 10px 0 12px;
 }
 
-/* The map's columns: a type's panel never reaches into the column before it (its corners sit on its border,
+/* The map's bands: a type's panel never reaches into the one beside it (its corners sit on its border,
    not outside it), and a page's address goes under its title, the monospaced address being too wide to sit
    beside it. */
 .map-type.panel::before {

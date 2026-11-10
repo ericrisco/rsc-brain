@@ -4,6 +4,14 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.4.1
+
+Nothing sits against the left edge with half the screen empty.
+
+- **Empty, error and "nothing here" screens** fill the work area, their words in the middle, instead of a small card at the left.
+- **First steps** of a new brain use the whole width, the three steps side by side.
+- **The wiki's map** lays each folder out in as many columns as the screen holds, instead of one long column.
+
 ## v0.4.0
 
 A new face for the web: a canvas you can turn, in a dark style.
