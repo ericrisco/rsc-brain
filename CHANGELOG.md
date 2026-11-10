@@ -4,6 +4,25 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.5.0
+
+The graph is a flat, living picture you can take in your hands.
+
+- **Pages you can move.** The graph lies flat and settles by itself: linked pages pull together, the rest
+  spread out, and then it rests. Drag any page and its neighbours follow it; let go and it finds its place
+  again. Drag the background to move the picture; the wheel, a pinch or the buttons zoom, Fit brings it all
+  back.
+- **Coloured by community.** Pages that link a lot to each other form a community, each in a colour of its
+  own, with its most linked page as its name. The Communities panel at the right lists them, biggest first,
+  with how many pages each holds: untick one to hide it, or use Select all. The panel folds away.
+- **No words in the way.** The canvas is dots and lines only. Point at a page to see its title and address
+  beside it, with its links lit up. Click it and it stays lit with its neighbours, the rest fades, and the
+  inspector shows its summary, type, links and Open page in words big enough to read.
+- **Pages without links around the edge.** They sit evenly on a ring around everything else, in their own
+  grey, listed as No links.
+- **Calmer.** No more turning cloud, light running along the lines or cards cycling through pages. With
+  reduced motion the graph is worked out out of sight and drawn once, still.
+
 ## v0.4.1
 
 Nothing sits against the left edge with half the screen empty.
