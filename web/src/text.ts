@@ -1633,30 +1633,21 @@ export const T = {
     canvasLabel: (n: number) => `Graph of ${plural(n, 'item')}`,
     canvasRole: 'graph',
     canvasHelp:
-      'Arrow keys move to the linked page that lies that way. Enter opens it in the inspector, Escape closes the inspector. Plus and minus zoom, 0 fits everything. Drag to turn the cloud; zoomed in, or with Shift, a drag moves it. The list shows the same as text.',
+      'Arrow keys move to the linked page that lies that way. Enter opens it in the inspector, Escape closes the inspector. Plus and minus zoom, 0 fits everything. Drag a page to move it and its neighbours; drag the background to move the picture. The list shows the same as text.',
     touchHelp:
-      'Tap a page to open it in the inspector. Drag to turn the cloud; zoomed in, a drag moves it. Two fingers move and pinch it; Fit brings it back. The list shows the same as text.',
-    // The fact card's second line: where the page lives and when it last changed.
-    factSub: (address: string, date: string) => `${address} · ${date}`,
+      'Tap a page to open it in the inspector. Drag a page to move it; drag the background to move the picture. Two fingers move and pinch it; Fit brings it back. The list shows the same as text.',
     zoomIn: 'Zoom in',
     zoomOut: 'Zoom out',
     fitAll: 'Fit',
-    legend: 'Legend',
-    families: 'Families',
-    linesAndMarks: 'Lines and marks',
-    familiesCount: (n: number) => plural(n, 'family', 'families'),
     // The strip over the canvas: what it is about, and how much it holds.
     stripAbout: (brain: string) => `${brain} · what your agents know`,
     stripMeta: (pages: number, links: number) => `${fmt(pages)} pages · ${fmt(links)} links`,
-    familiesNote: 'Shape and colour say the type. Drag to turn.',
-    shapes: 'Page types',
-    lines: 'Link kinds',
-    marks: 'Marks',
-    dimmed: 'Superseded: dimmed and struck through',
-    bigger: 'Bigger: more links',
-    ringOne: 'In focus, one hop: filled',
-    ringTwo: 'In focus, two hops: hollow and smaller',
-    arrows: 'An arrowhead points at the page a link leads to.',
+    // The Communities panel over the canvas (v0.5.0).
+    communities: 'Communities',
+    communitiesShown: 'Communities shown on the graph',
+    selectAll: 'Select all',
+    otherCommunities: 'Other small communities',
+    noLinksRow: 'No links',
     onPage: (title: string, type: string, status: string, links: number) =>
       `${title}. ${type}, ${status}. ${plural(links, 'link')} here. Enter to inspect.`,
     onGroup: (prefix: string, count: number) =>
@@ -1725,7 +1716,6 @@ export const T = {
     chip: (name: string, value: string) => `${name}: ${value}`,
     via: (name: string) => `via ${name}`,
     viaHidden: (name: string) => `via ${name} (hidden by filter)`,
-    orphans: (n: number) => `Pages with no links (${fmt(n)})`,
     more: 'More',
     less: 'Less',
     skipToPager: 'Skip to the page buttons',

@@ -39,7 +39,7 @@ for (const theme of ['dark', 'light'] as const) {
     await audit(page, `${theme} sign-in with an error`)
   })
 
-  // The graph (PR22): the canvas with its inspector open, and the list, in both themes.
+  // The graph (PR22): the canvas with its inspector and communities open, and the list, in both themes.
   test(`the graph and its list, ${theme}`, async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
     await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)
@@ -48,7 +48,8 @@ for (const theme of ['dark', 'light'] as const) {
     await page.locator('canvas.graph-canvas').focus()
     await page.keyboard.press('Enter')
     await expect(page.getByRole('link', { name: 'Open page' })).toBeVisible()
-    await page.getByText('Legend').click()
+    // The Communities panel open, with its boxes, is audited with the rest.
+    await expect(page.getByRole('checkbox', { name: 'Select all' })).toBeVisible()
     await audit(page, `${theme} graph`)
     await page.getByRole('button', { name: 'List', exact: true }).click()
     await expect(page.getByRole('table', { name: /Pages of the wiki/ }).locator('tbody tr')).toHaveCount(50)

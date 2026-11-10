@@ -7,17 +7,15 @@ import { describe, it } from 'node:test'
 import { ROLE } from '../../web/src/graph/layout.ts'
 import {
   type Answer,
-  areas,
   fit,
   fitPad,
   focusView,
-  GROUP_SHAPE,
   groupRadius,
   hit,
   hubs,
+  keepInView,
   keyOf,
   linksOf,
-  mainCluster,
   modelOf,
   NO_FILTERS,
   neighbourhood,
@@ -267,41 +265,10 @@ describe('reading the picture', () => {
     // B and D both link with two; D is linked to twice.
     assert.deepEqual(hubs(m, new Uint8Array([1, 1, 1, 1]), 2), [3, 0])
   })
-  it('roles: pages without links are parked, the boxes of other groups go on the rim', () => {
+  it('roles: pages without links go on the ring, the boxes of other groups go on the rim', () => {
     assert.deepEqual(Array.from(roles(modelOf(pages))), [ROLE.free, ROLE.free, ROLE.free, ROLE.orphan])
     assert.deepEqual(Array.from(roles(modelOf(oneGroup))), [ROLE.free, ROLE.free, ROLE.rim])
     assert.deepEqual(Array.from(roles(modelOf(groups))), [ROLE.free, ROLE.free])
-  })
-  it('areas: the next part of the address under the open group pulls pages together', () => {
-    const m = modelOf({
-      ...base,
-      mode: 'pages',
-      prefix: 'a',
-      total: 3,
-      nodes: [
-        ['a/x/1', '1', 'topic', 'current', []],
-        ['a/y/1', '2', 'topic', 'current', []],
-        ['a/x/2', '3', 'topic', 'current', []],
-      ],
-    })
-    const a = areas(m)
-    assert.equal(a[0], a[2])
-    assert.notEqual(a[0], a[1])
-  })
-  it('the main cluster is the biggest linked part of what is drawn: the view fits it', () => {
-    const m = modelOf({
-      ...pages,
-      edges: [
-        [0, 1, 1],
-        [1, 2, 1],
-      ],
-    })
-    const v = visibility(m, NO_FILTERS)
-    assert.deepEqual(Array.from(mainCluster(m, v.nodes, v.edges)), [1, 1, 1, 0])
-    // Nothing linked: everything drawn counts.
-    const lone = modelOf({ ...pages, edges: [] })
-    const w = visibility(lone, NO_FILTERS)
-    assert.deepEqual(Array.from(mainCluster(lone, w.nodes, w.edges)), [1, 1, 1, 1])
   })
   it('focus lays the page in the middle, one hop on a ring, two hops on a wider one', () => {
     const m = modelOf(pages)
@@ -467,7 +434,7 @@ describe('the pad around the fitted picture', () => {
   it('48 for pages; a big group box widens it; a group hidden from the fit does not', () => {
     const scene = (counts: number[], groups: boolean[], byGroups = true) => ({
       n: counts.length,
-      shape: Uint8Array.from(groups.map((g) => (g ? GROUP_SHAPE : 0))),
+      group: Uint8Array.from(groups.map((g) => (g ? 1 : 0))),
       count: Uint32Array.from(counts),
       byGroups,
     })
@@ -478,5 +445,28 @@ describe('the pad around the fitted picture', () => {
     assert.equal(fitPad(big, new Uint8Array([0, 1])), 48)
     // Drawn among pages (the gathered pages of a level), a group box is smaller.
     assert.equal(fitPad(scene([2000], [true], false), new Uint8Array([1])), 48)
+  })
+})
+
+// Review R2-4: keeping an item in view moves the picture only by what sticks out, never re-centres an item
+// already in view, and settles even when the card is wider than the room left.
+describe('keeping an item in view', () => {
+  const room = { left: 0, top: 60, right: 1000, bottom: 700 }
+  it('in view: nothing moves', () => {
+    assert.equal(keepInView({ sx: 500, sy: 400, hw: 50, hh: 14, ...room }), null)
+  })
+  it('sticking out at the right: moved back by that much only', () => {
+    // The card's edge plus the 24 px gap reaches 1030: 30 too far.
+    assert.deepEqual(keepInView({ sx: 956, sy: 400, hw: 50, hh: 14, ...room }), { dx: -30, dy: 0 })
+  })
+  it('under the top controls: moved down by that much only', () => {
+    assert.deepEqual(keepInView({ sx: 500, sy: 80, hw: 50, hh: 14, ...room }), { dx: 0, dy: 18 })
+  })
+  it('a card wider than the room: centred once, then left alone', () => {
+    const wide = { hw: 700, hh: 48, ...room }
+    const first = keepInView({ sx: 900, sy: 400, ...wide })
+    assert.ok(first)
+    const again = keepInView({ sx: 900 + (first?.dx ?? 0), sy: 400 + (first?.dy ?? 0), ...wide })
+    assert.equal(again, null)
   })
 })

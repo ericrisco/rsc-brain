@@ -91,7 +91,7 @@ export function smallData(): GraphData {
   }
 }
 
-// Pages without any link (review R6: they lie in rows under the cloud, with their caption).
+// Pages without any link (v0.5.0: they sit on a ring around the linked ones).
 export function looseData(n: number): GraphData {
   const at = new Date(Date.UTC(2026, 9, 2)).toISOString()
   return {

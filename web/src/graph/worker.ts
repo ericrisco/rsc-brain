@@ -1,17 +1,10 @@
-// The graph's Web Worker (plan §3.4): it works out the layout, in three dimensions, and, holding the canvas
-// (OffscreenCanvas), paints it, so the page never waits for either. The camera's flat projection goes back to
-// the page with each still picture (it finds what is under the pointer and where an arrow key leads). With
-// reduced motion one picture, the settled one; otherwise a picture every ~32 ms while it settles, and then one
-// per animation frame while the cloud turns or light travels its lines. Work goes in slices of 8 ms, so a new
-// layout (a group opened) replaces the old one at once, and a frame is painted at most once per animation
-// frame, whatever asked for it. A turning picture is told to the page at most four times a second.
-
-// The interface's face, self-hosted (shared.css v2). A worker has no stylesheet: it loads the face into its
-// own font set so the canvas writes in it too (review R9).
-import mono400 from '../styles/fonts/jetbrains-mono-latin-400-normal.woff2?url'
-import mono700 from '../styles/fonts/jetbrains-mono-latin-700-normal.woff2?url'
-import { arrange, createLayout, rim3 } from './layout.ts'
-import type { DrawnMessage, FromWorker, LayoutRequest, ToWorker } from './protocol.ts'
+// The graph's Web Worker (plan §3.4; v0.5.0): it runs the live layout and, holding the canvas (OffscreenCanvas),
+// paints it, so the page never waits for either. While the layout moves (settling, or a page held by the
+// pointer) it takes a few steps and paints once per animation frame, and tells the page where every item is;
+// at rest it paints only when what is shown changes. With reduced motion, or the canvas out of sight, nothing is
+// animated: the layout is worked out to rest in slices of 8 ms and drawn once, still.
+import { createLayout, type Layout } from './layout.ts'
+import type { FromWorker, LayoutRequest, ToWorker } from './protocol.ts'
 import { Renderer } from './render.ts'
 
 const scope = self as unknown as {
@@ -20,170 +13,149 @@ const scope = self as unknown as {
   requestAnimationFrame?: (f: () => void) => number
 }
 
+// Steps a frame while the layout moves, within a time budget: from a cold start to rest in about a second.
+const STEPS_A_FRAME = 5
+const FRAME_BUDGET_MS = 12
+// Steps a slice when the layout is worked out still (reduced motion), between which messages are heard.
+const SLICE_MS = 8
+
 let current = -1
-let settled = false
+let sim: Layout | null = null
 let canvas: OffscreenCanvas | null = null
 const renderer = new Renderer()
+let reduced = false
+let seen = true
+// The layout has come to rest once (the page marks the settled picture), and the worker's working time until.
+let settled = false
+let busy = 0
+// A frame is asked for; a still layout is being worked out in slices.
 let frame = false
-// What was told to the page last, and the painting time of the pictures not told since (CA5 adds it up).
-let told = { at: 0, seq: -1, spinning: false, settled: false }
-let untold = 0
-let pictures = 0
-const TELL_EVERY = 250
-let font = ''
+let slicing = false
+// The layout moved since it was last told to the page.
+let moved = false
 
-const faces = (scope as unknown as { fonts?: { add(f: FontFace): void } }).fonts
-if (faces && typeof FontFace !== 'undefined')
-  Promise.all(
-    (
-      [
-        [mono400, '400'],
-        [mono700, '700'],
-      ] as const
-    ).map(([url, weight]) => new FontFace('JetBrains Mono', `url(${url})`, { weight }).load()),
-  )
-    .then((loaded) => {
-      for (const f of loaded) faces.add(f)
-      font = 'JetBrains Mono'
-      renderer.fontsChanged()
-      told.seq = -1
-      request()
-    })
-    .catch(() => {
-      // The fallback faces stay: the names still read.
-    })
+const timed = <T>(f: () => T): T => {
+  const t = performance.now()
+  const out = f()
+  if (!settled) busy += performance.now() - t
+  return out
+}
+
+// Tells the page where every item is, and gives the painter the same.
+function publish() {
+  if (!sim) return
+  moved = false
+  const xy = sim.positions()
+  const done = sim.done()
+  const first = done && !settled
+  if (first) settled = true
+  renderer.layout = xy
+  const copy = xy.slice()
+  scope.postMessage({ type: 'positions', id: current, xy: copy, done, ...(first ? { ms: busy } : {}) }, [
+    copy.buffer,
+  ])
+}
+
+const animating = () => sim !== null && !sim.done() && !reduced && seen && !slicing
 
 function paint() {
   frame = false
+  if (animating() && sim) {
+    const s = sim
+    timed(() => s.run(FRAME_BUDGET_MS, STEPS_A_FRAME))
+    moved = true
+  }
+  if (moved) publish()
   const st = renderer.state
-  if (!canvas || !st) return
-  const w = Math.round(st.width * st.dpr)
-  const h = Math.round(st.height * st.dpr)
-  if (canvas.width !== w || canvas.height !== h) {
-    canvas.width = w
-    canvas.height = h
-  }
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-  const now = performance.now()
-  const drawn = renderer.paint(ctx, now)
-  if (!drawn) return
-  untold += drawn.ms
-  pictures += 1
-  const fresh =
-    drawn.xy !== null ||
-    drawn.seq !== told.seq ||
-    drawn.spinning !== told.spinning ||
-    settled !== told.settled ||
-    now - told.at >= TELL_EVERY
-  if (fresh) {
-    told = { at: now, seq: drawn.seq, spinning: drawn.spinning, settled }
-    const message: DrawnMessage = {
-      type: 'drawn',
-      id: current,
-      ...drawn,
-      ms: untold,
-      pictures,
-      settled,
-      font,
+  if (canvas && st) {
+    const w = Math.round(st.width * st.dpr)
+    const h = Math.round(st.height * st.dpr)
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w
+      canvas.height = h
     }
-    untold = 0
-    pictures = 0
-    scope.postMessage(message, drawn.xy ? [drawn.xy.buffer] : [])
+    const ctx = canvas.getContext('2d')
+    const drawn = ctx ? renderer.paint(ctx) : null
+    if (drawn) {
+      if (!settled) busy += drawn.ms
+      scope.postMessage({ type: 'drawn', id: current, ...drawn, settled, moving: animating() })
+    }
   }
-  if (drawn.animating) request()
+  if (animating()) request()
 }
 function request() {
-  if (frame || !canvas) return
+  if (frame) return
   frame = true
-  if (scope.requestAnimationFrame) scope.requestAnimationFrame(paint)
+  if (canvas && scope.requestAnimationFrame) scope.requestAnimationFrame(paint)
   else setTimeout(paint, 16)
 }
 
-function layout(m: LayoutRequest) {
-  // The worker's own working time, idle gaps between slices left out (CA5 reads it).
-  let busy = 0
-  const timed = <T>(f: () => T): T => {
-    const t = performance.now()
-    const out = f()
-    busy += performance.now() - t
-    return out
+// Works the layout out to rest without painting between, in slices so a new message is heard at once; then
+// it is told and drawn once.
+// A page held never comes to rest: the rest waits until it is let go.
+function still() {
+  if (slicing || !sim || sim.held() >= 0) return
+  slicing = true
+  const id = current
+  const slice = () => {
+    if (id !== current || !sim || sim.held() >= 0) {
+      slicing = false
+      return
+    }
+    const s = sim
+    if (!timed(() => s.run(SLICE_MS))) {
+      setTimeout(slice, 0)
+      return
+    }
+    slicing = false
+    moved = true
+    request()
   }
+  slice()
+}
+
+function layout(m: LayoutRequest) {
   current = m.id
   settled = false
-  // Only the pages with links feel the forces; the rest is placed around them when they are done.
-  const free: number[] = []
-  for (let i = 0; i < m.n; i++) if (m.role[i] === 0) free.push(i)
-  const local = new Map(free.map((g, l) => [g, l]))
-  const pairs: number[] = []
-  for (let e = 0; e < m.edges.length; e += 2) {
-    const a = local.get(m.edges[e] as number)
-    const b = local.get(m.edges[e + 1] as number)
-    if (a !== undefined && b !== undefined) pairs.push(a, b)
-  }
-  const l = timed(() =>
-    createLayout({
-      n: free.length,
-      edges: new Uint32Array(pairs),
-      seed: m.seed,
-      weights: Float32Array.from(free, (g) => m.weights[g] as number),
-      area: Int32Array.from(free, (g) => m.area[g] as number),
-      dims: 3,
-      family: Int32Array.from(free, (g) => m.family[g] as number),
-    }),
-  )
-
-  const post = (done: boolean) => {
-    const part = l.positions3()
-    // The pages without links are placed on the flat picture, at depth 0 (the painter parks them again).
-    const xy = new Float32Array(2 * m.n)
-    free.forEach((g, k) => {
-      xy[2 * g] = part[3 * k] as number
-      xy[2 * g + 1] = part[3 * k + 1] as number
-    })
-    timed(() => arrange(xy, m.role, m.edges))
-    const xyz = new Float32Array(3 * m.n)
-    for (let i = 0; i < m.n; i++) {
-      xyz[3 * i] = xy[2 * i] as number
-      xyz[3 * i + 1] = xy[2 * i + 1] as number
-    }
-    free.forEach((g, k) => {
-      xyz[3 * g + 2] = part[3 * k + 2] as number
-    })
-    // The rim in three dimensions: a level ring the cloud turns with (the pages without links are parked
-    // flat under the cloud by the painter).
-    rim3(xyz, m.role, m.edges)
-    if (done) settled = true
-    renderer.layout = xyz
+  busy = 0
+  slicing = false
+  sim = timed(() => createLayout({ n: m.n, edges: m.edges, seed: m.seed, weights: m.weights, role: m.role }))
+  // Moving, the first picture is the start; still, the one at rest.
+  if (reduced || !seen) still()
+  else {
+    moved = true
     request()
-    const copy = xyz.slice()
-    scope.postMessage({ type: 'positions', id: m.id, xyz: copy, done, ...(done ? { ms: busy } : {}) }, [
-      copy.buffer,
-    ])
   }
-  let last = performance.now()
-  if (!m.reducedMotion && !l.done()) post(false)
-  if (l.done()) return post(true)
-  const slice = () => {
-    if (current !== m.id) return
-    if (timed(() => l.run(8))) return post(true)
-    const now = performance.now()
-    if (!m.reducedMotion && now - last >= 32) {
-      last = now
-      post(false)
-    }
-    setTimeout(slice, 0)
+}
+
+function hold(id: number, i: number, x: number, y: number) {
+  if (id !== current || !sim) return
+  if (i >= 0) sim.hold(i, x, y)
+  else sim.release()
+  if (reduced || !seen) {
+    // Still: the page held follows the pointer and nothing else moves; let go, the rest is worked out at once.
+    moved = true
+    if (i < 0) still()
+    else request()
+  } else {
+    moved = true
+    request()
   }
-  setTimeout(slice, 0)
 }
 
 scope.onmessage = (e) => {
   const m = e.data
-  if (m.type === 'layout') layout(m)
-  else if (m.type === 'canvas') canvas = m.canvas
+  if (m.type === 'layout') return layout(m)
+  if (m.type === 'hold') return hold(m.id, m.i, m.x, m.y)
+  if (m.type === 'canvas') canvas = m.canvas
   else if (m.type === 'scene') renderer.setScene(m.scene)
-  else if (m.type === 'labels') renderer.setLabels(m.labels)
-  else if (m.type === 'facts') renderer.setFacts(m.facts)
   else if (m.type === 'state') renderer.state = m.state
+  else if (m.type === 'motion') {
+    const was = reduced || !seen
+    reduced = m.reduced
+    seen = m.seen
+    // Less motion asked for, or out of sight, while it moves: the rest is worked out still.
+    if (!was && (reduced || !seen) && sim && !sim.done()) still()
+  }
   request()
 }

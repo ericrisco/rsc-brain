@@ -1,73 +1,71 @@
-// The layout of the graph (plan §3.4): a force layout over typed arrays, run in the graph's Web Worker. Pages
-// push each other apart (Barnes–Hut on an octree, so 2 000 pages cost a few milliseconds a step), links pull
-// their two ends together, and a weak pull to the middle keeps pages without links in sight. It cools down
-// step by step and stops; the same pages, links and seed always give the same picture. No DOM here.
+// The layout of the graph (plan §3.4; v0.5.0): a live force simulation in two dimensions over typed arrays,
+// run in the graph's Web Worker. Pages push each other apart (Barnes–Hut on a quadtree, so 2 000 pages cost a
+// few milliseconds a step) and keep a little room around them, links pull their two ends together, and a weak
+// pull to the middle keeps the picture together. It cools down step by step and comes to rest; a page held
+// by the pointer warms it again, so its neighbours follow, and once let go it cools down again. The same
+// pages, links and seed always give the same picture. No DOM here.
 //
-// In two dimensions every z stays 0 and the octree is the quadtree it used to be. In three (spec amendment
-// 2026-11-09, CA12) the same forces act along z too, and each family is pulled toward a place of its own on a
-// sphere around the middle, so families gather in clusters around the brain's hub.
+// The pages without links (ROLE.orphan) feel no force: they sit evenly spaced on a ring just outside the
+// linked pages, and in one group the boxes of the other groups (ROLE.rim) on a ring outside that. Both rings
+// follow the linked pages as they move; a page on a ring held by the pointer goes back to its place once let go.
 
 export const LAYOUT = {
-  maxTicks: 300,
   alphaMin: 0.001,
+  // From a cold start to rest in this many steps.
+  settleTicks: 300,
+  // How warm the simulation is kept while a page is held.
+  dragAlpha: 0.3,
   // Each step keeps 60% of the speed.
   velocityKeep: 0.6,
   charge: -30,
   linkDistance: 30,
   centre: 0.04,
-  // How strongly a page is pulled to the middle of its area.
-  areaPull: 0.12,
-  // In three dimensions: how strongly a page is pulled to its family's place, and how far out the places are
-  // (times the square root of the pages).
-  familyPull: 0.14,
-  familyReach: 11,
-  // In three dimensions a link between two families pulls this much of a link inside one: the families are
-  // colour regions of one interwoven cloud, mixing at their edges.
-  crossLink: 0.45,
+  // The room kept around a page, in layout units, times how it grows with its links (render.ts grows it the
+  // same way on screen).
+  collide: 4,
+  collideStrength: 0.7,
   // Barnes–Hut: a cell this small seen from this far counts as one body.
   theta2: 0.81,
   distanceMin2: 1,
+  // The rings: how far outside the linked pages, and the least room between two places on them.
+  ringGap: 40,
+  orphanStep: 14,
+  rimStep: 80,
+  // How much of the way to its place on a ring a page goes each step.
+  anchorPull: 0.2,
 }
+
+// Where a node goes (layout.ts and model.ts roles): laid out by the forces (`free`), on the ring of pages
+// without links (`orphan`), or on the rim around them (`rim`: a group a page of an opened group links with).
+export const ROLE = { free: 0, orphan: 1, rim: 2 } as const
 
 export type LayoutInput = {
   n: number
-  // Links as pairs of node indices: [from0, to0, from1, to1, ...].
+  // Links as pairs of node indices: [from0, to0, from1, to1, ...]. A link with a node off the forces is left out.
   edges: Uint32Array
   seed: number
   // How heavy each node is (a group of many pages pushes harder); 1 by default.
   weights?: Float32Array
-  // The area each node is in (−1: none): a weak pull keeps an area's pages together.
-  area?: Int32Array
-  // 2 (the default) or 3: in three, every node also has a z.
-  dims?: 2 | 3
-  // In three dimensions, each node's family (−1: none): a family is pulled to a place of its own.
-  family?: Int32Array
+  // Each node's role (ROLE); all free by default.
+  role?: Uint8Array
 }
 
 export type Layout = {
   tick(): void
-  // Steps until `budgetMs` has passed or it is done; says whether it is done.
-  run(budgetMs: number): boolean
+  // Steps until `budgetMs` has passed, `maxTicks` are done, or it rests; says whether it rests.
+  run(budgetMs: number, maxTicks?: number): boolean
+  // At rest: cold, nothing held, every page on a ring at its place.
   done(): boolean
   // [x0, y0, x1, y1, ...], a new array each time (it is handed over to the page).
   positions(): Float32Array
-  // [x0, y0, z0, x1, y1, z1, ...], a new array each time; z is 0 in two dimensions.
-  positions3(): Float32Array
-}
-
-// Where each of `count` families is pulled to: spread evenly on a sphere of radius `r` (a Fibonacci sphere),
-// flattened a little, so the clusters lie around the vertical axis the picture turns on.
-export function familyPlaces(count: number, r: number): Float64Array {
-  const out = new Float64Array(3 * count)
-  for (let k = 0; k < count; k++) {
-    const yk = count === 1 ? 0 : 1 - (2 * (k + 0.5)) / count
-    const ring = Math.sqrt(1 - yk * yk)
-    const a = k * Math.PI * (3 - Math.sqrt(5))
-    out[3 * k] = r * ring * Math.cos(a)
-    out[3 * k + 1] = r * yk * 0.5
-    out[3 * k + 2] = r * ring * Math.sin(a)
-  }
-  return out
+  // Holds node i at (x, y) and keeps the simulation warm until it is let go.
+  hold(i: number, x: number, y: number): void
+  // Lets the node held go: it moves with the forces again, and the simulation cools down.
+  release(): void
+  // The node held, or −1.
+  held(): number
+  // Steps taken since the start.
+  ticks(): number
 }
 
 // mulberry32: small and the same everywhere.
@@ -82,85 +80,85 @@ function rng(seed: number) {
   }
 }
 
+// How much bigger a page is drawn, and the room kept around it, with its links: up to three times.
+export const grow = (degree: number) => Math.min(3, 1 + 0.25 * Math.sqrt(degree))
+
 export function createLayout(input: LayoutInput): Layout {
-  const { n, edges } = input
-  const three = input.dims === 3
+  const { n } = input
+  const role = input.role ?? new Uint8Array(n)
   const random = rng(input.seed)
   const jiggle = () => (random() - 0.5) * 1e-6
   const x = new Float64Array(n)
   const y = new Float64Array(n)
-  const z = new Float64Array(n)
   const vx = new Float64Array(n)
   const vy = new Float64Array(n)
-  const vz = new Float64Array(n)
   const strength = new Float64Array(n)
-  for (let i = 0; i < n; i++) {
-    const a = i * Math.PI * (3 - Math.sqrt(5))
-    if (three) {
-      // A spiral on nested spheres to start from: even, and the same every time.
-      const r = 10 * Math.cbrt(0.5 + i) * 2
-      const h = n === 1 ? 0 : 1 - (2 * (i + 0.5)) / n
-      const ring = Math.sqrt(1 - h * h)
-      x[i] = r * ring * Math.cos(a)
-      y[i] = r * h
-      z[i] = r * ring * Math.sin(a)
-    } else {
-      // A sunflower spiral to start from: even, and the same every time.
-      const r = 10 * Math.sqrt(0.5 + i)
-      x[i] = r * Math.cos(a)
-      y[i] = r * Math.sin(a)
-    }
-    strength[i] = LAYOUT.charge * Math.sqrt(input.weights?.[i] ?? 1)
+  const room = new Float64Array(n)
+  // The nodes the forces move, and the others (on a ring), each list in index order.
+  const free: number[] = []
+  const ringed: number[] = []
+  for (let i = 0; i < n; i++) (role[i] === ROLE.free ? free : ringed).push(i)
+  // Links between two free nodes only.
+  const pairs: number[] = []
+  for (let e = 0; e + 1 < input.edges.length; e += 2) {
+    const s = input.edges[e] as number
+    const t = input.edges[e + 1] as number
+    if (s !== t && s < n && t < n && role[s] === ROLE.free && role[t] === ROLE.free) pairs.push(s, t)
   }
-  // The families' places, in three dimensions.
-  let places: Float64Array | null = null
-  if (three && input.family) {
-    let count = 0
-    for (let i = 0; i < n; i++) count = Math.max(count, (input.family[i] as number) + 1)
-    if (count > 0) places = familyPlaces(count, LAYOUT.familyReach * Math.sqrt(n))
-  }
-  // Links: each pulls with a strength shared by the busier end, as springs of the same rest length.
-  const m = edges.length >> 1
+  const m = pairs.length >> 1
   const degree = new Float64Array(n)
-  for (let e = 0; e < 2 * m; e++) degree[edges[e] as number] = (degree[edges[e] as number] ?? 0) + 1
+  for (const i of pairs) degree[i] = (degree[i] as number) + 1
+  free.forEach((i, k) => {
+    // A sunflower spiral to start from: even, and the same every time.
+    const a = k * Math.PI * (3 - Math.sqrt(5))
+    const r = 10 * Math.sqrt(0.5 + k)
+    x[i] = r * Math.cos(a)
+    y[i] = r * Math.sin(a)
+    strength[i] = LAYOUT.charge * Math.sqrt(input.weights?.[i] ?? 1)
+    room[i] = LAYOUT.collide * grow(degree[i] as number)
+  })
+  // Links: each pulls with a strength shared by the busier end, as springs of the same rest length.
   const linkStrength = new Float64Array(m)
   const bias = new Float64Array(m)
   const distance = new Float64Array(m)
   for (let e = 0; e < m; e++) {
-    const s = edges[2 * e] as number
-    const t = edges[2 * e + 1] as number
+    const s = pairs[2 * e] as number
+    const t = pairs[2 * e + 1] as number
     const ds = degree[s] as number
     const dt = degree[t] as number
     linkStrength[e] = 1 / Math.min(ds, dt)
-    if (three && input.family && input.family[s] !== input.family[t])
-      linkStrength[e] = (linkStrength[e] as number) * LAYOUT.crossLink
     bias[e] = ds / (ds + dt)
     // Heavy nodes (groups) sit further apart.
     distance[e] =
       LAYOUT.linkDistance *
       Math.max(1, Math.sqrt(Math.sqrt((input.weights?.[s] ?? 1) + (input.weights?.[t] ?? 1))))
   }
-  let alpha = n <= 1 ? 0 : 1
-  const alphaDecay = 1 - LAYOUT.alphaMin ** (1 / LAYOUT.maxTicks)
+  let alpha = free.length <= 1 && ringed.length === 0 ? 0 : 1
+  let alphaTarget = 0
+  const alphaDecay = 1 - LAYOUT.alphaMin ** (1 / LAYOUT.settleTicks)
   let ticks = 0
+  let holding = -1
+  let holdX = 0
+  let holdY = 0
+  // Where each ringed node belongs.
+  const ax = new Float64Array(n)
+  const ay = new Float64Array(n)
 
-  // The octree, rebuilt each step in flat arrays: per cell its 8 children (-1: none), its first page (a leaf),
-  // its weight and centre. Pages in the same leaf are chained by `next`. With every z at 0 only the first four
-  // children are ever used: it is the quadtree of the plane.
+  // The quadtree, rebuilt each step in flat arrays: per cell its 4 children (-1: none), its first node (a leaf),
+  // its weight and centre. Nodes in the same leaf are chained by `next`.
   let child = new Int32Array(0)
   let point = new Int32Array(0)
   let cw = new Float64Array(0)
   let cx = new Float64Array(0)
   let cy = new Float64Array(0)
-  let cz = new Float64Array(0)
   let csize = new Float64Array(0)
   const next = new Int32Array(n)
   let cells = 0
 
-  function grow(cap: number) {
+  function grow2(cap: number) {
     if (cap <= point.length) return
     const size = Math.max(cap, point.length * 2, 64)
-    const c2 = new Int32Array(size * 8).fill(-1)
+    const c2 = new Int32Array(size * 4).fill(-1)
     c2.set(child)
     child = c2
     const p2 = new Int32Array(size).fill(-1)
@@ -174,17 +172,14 @@ export function createLayout(input: LayoutInput): Layout {
     cw = more(cw)
     cx = more(cx)
     cy = more(cy)
-    cz = more(cz)
     csize = more(csize)
   }
-  const internal = (k: number) => {
-    for (let q = 0; q < 8; q++) if (child[8 * k + q] !== -1) return true
-    return false
-  }
+  const internal = (k: number) =>
+    child[4 * k] !== -1 || child[4 * k + 1] !== -1 || child[4 * k + 2] !== -1 || child[4 * k + 3] !== -1
   function cell(size: number): number {
-    grow(cells + 1)
+    grow2(cells + 1)
     const k = cells++
-    child.fill(-1, 8 * k, 8 * k + 8)
+    child.fill(-1, 4 * k, 4 * k + 4)
     point[k] = -1
     csize[k] = size
     return k
@@ -194,71 +189,60 @@ export function createLayout(input: LayoutInput): Layout {
     cells = 0
     let x0 = Number.POSITIVE_INFINITY
     let y0 = Number.POSITIVE_INFINITY
-    let z0 = Number.POSITIVE_INFINITY
     let x1 = Number.NEGATIVE_INFINITY
     let y1 = Number.NEGATIVE_INFINITY
-    let z1 = Number.NEGATIVE_INFINITY
-    for (let i = 0; i < n; i++) {
+    for (const i of free) {
       const xi = x[i] as number
       const yi = y[i] as number
-      const zi = z[i] as number
       if (xi < x0) x0 = xi
       if (xi > x1) x1 = xi
       if (yi < y0) y0 = yi
       if (yi > y1) y1 = yi
-      if (zi < z0) z0 = zi
-      if (zi > z1) z1 = zi
     }
-    const size = Math.max(x1 - x0, y1 - y0, z1 - z0, 1) * 1.0001
+    const size = Math.max(x1 - x0, y1 - y0, 1) * 1.0001
     const root = cell(size)
-    for (let i = 0; i < n; i++) {
+    for (const i of free) {
       next[i] = -1
       let k = root
       let kx = x0
       let ky = y0
-      let kz = z0
       let ks = size
       let depth = 0
       const xi = x[i] as number
       const yi = y[i] as number
-      const zi = z[i] as number
       for (;;) {
         const p = point[k] as number
         const leaf = p !== -1
         if (!leaf && !internal(k)) {
-          // An empty cell (only the root can be one): it takes the page.
+          // An empty cell (only the root can be one): it takes the node.
           point[k] = i
           break
         }
         if (leaf) {
           // The same place, or as deep as it goes: share the leaf.
-          if (depth > 40 || ((x[p] as number) === xi && (y[p] as number) === yi && (z[p] as number) === zi)) {
+          if (depth > 40 || ((x[p] as number) === xi && (y[p] as number) === yi)) {
             next[i] = next[p] as number
             next[p] = i
             break
           }
-          // Split: the page there moves one level down.
+          // Split: the node there moves one level down.
           point[k] = -1
           const half = ks / 2
-          const q =
-            ((x[p] as number) >= kx + half ? 1 : 0) |
-            ((y[p] as number) >= ky + half ? 2 : 0) |
-            ((z[p] as number) >= kz + half ? 4 : 0)
+          const q = ((x[p] as number) >= kx + half ? 1 : 0) | ((y[p] as number) >= ky + half ? 2 : 0)
           const c = cell(half)
-          child[8 * k + q] = c
+          child[4 * k + q] = c
           point[c] = p
         }
         const half = ks / 2
-        const q = (xi >= kx + half ? 1 : 0) | (yi >= ky + half ? 2 : 0) | (zi >= kz + half ? 4 : 0)
+        const q = (xi >= kx + half ? 1 : 0) | (yi >= ky + half ? 2 : 0)
         if (q & 1) kx += half
         if (q & 2) ky += half
-        if (q & 4) kz += half
         ks = half
         depth += 1
-        const c = child[8 * k + q] as number
+        const c = child[4 * k + q] as number
         if (c === -1) {
           const fresh = cell(half)
-          child[8 * k + q] = fresh
+          child[4 * k + q] = fresh
           point[fresh] = i
           break
         }
@@ -270,41 +254,38 @@ export function createLayout(input: LayoutInput): Layout {
       let w = 0
       let sx = 0
       let sy = 0
-      let sz = 0
       if ((point[k] as number) !== -1) {
         for (let p = point[k] as number; p !== -1; p = next[p] as number) {
           const s = strength[p] as number
           w += s
           sx += s * (x[p] as number)
           sy += s * (y[p] as number)
-          sz += s * (z[p] as number)
         }
       } else {
-        for (let q = 0; q < 8; q++) {
-          const c = child[8 * k + q] as number
+        for (let q = 0; q < 4; q++) {
+          const c = child[4 * k + q] as number
           if (c === -1) continue
           const s = cw[c] as number
           w += s
           sx += s * (cx[c] as number)
           sy += s * (cy[c] as number)
-          sz += s * (cz[c] as number)
         }
       }
       cw[k] = w
       cx[k] = w === 0 ? 0 : sx / w
       cy[k] = w === 0 ? 0 : sy / w
-      cz[k] = w === 0 ? 0 : sz / w
     }
   }
 
-  const stack = new Int32Array(8 * 64 + 16)
+  // Repulsion, and the room around each node: two nodes nearer than their rooms are pushed apart.
+  const stack = new Int32Array(4 * 64 + 16)
   function charge() {
-    if (n < 2) return
+    if (free.length < 2) return
     build()
-    for (let i = 0; i < n; i++) {
+    for (const i of free) {
       const xi = x[i] as number
       const yi = y[i] as number
-      const zi = z[i] as number
+      const ri = room[i] as number
       let top = 0
       stack[top++] = 0
       while (top > 0) {
@@ -313,20 +294,18 @@ export function createLayout(input: LayoutInput): Layout {
         if (w === 0) continue
         let dx = (cx[k] as number) - xi
         let dy = (cy[k] as number) - yi
-        let dz = (cz[k] as number) - zi
-        let l = dx * dx + dy * dy + dz * dz
+        let l = dx * dx + dy * dy
         const s = csize[k] as number
         const leaf = (point[k] as number) !== -1
         if (!leaf && (s * s) / l < LAYOUT.theta2) {
           if (l < LAYOUT.distanceMin2) l = Math.sqrt(LAYOUT.distanceMin2 * l)
           vx[i] = (vx[i] as number) + (dx * w * alpha) / l
           vy[i] = (vy[i] as number) + (dy * w * alpha) / l
-          if (three) vz[i] = (vz[i] as number) + (dz * w * alpha) / l
           continue
         }
         if (!leaf) {
-          for (let q = 0; q < 8; q++) {
-            const c = child[8 * k + q] as number
+          for (let q = 0; q < 4; q++) {
+            const c = child[4 * k + q] as number
             if (c !== -1) stack[top++] = c
           }
           continue
@@ -335,16 +314,21 @@ export function createLayout(input: LayoutInput): Layout {
           if (p === i) continue
           dx = (x[p] as number) - xi
           dy = (y[p] as number) - yi
-          dz = (z[p] as number) - zi
           if (dx === 0) dx = jiggle()
           if (dy === 0) dy = jiggle()
-          if (three && dz === 0) dz = jiggle()
-          l = dx * dx + dy * dy + dz * dz
+          l = dx * dx + dy * dy
+          const near = ri + (room[p] as number)
+          if (l < near * near) {
+            // Too close: each moves half the overlap apart.
+            const d = Math.sqrt(l)
+            const push = ((near - d) / d) * 0.5 * LAYOUT.collideStrength
+            vx[i] = (vx[i] as number) - dx * push
+            vy[i] = (vy[i] as number) - dy * push
+          }
           if (l < LAYOUT.distanceMin2) l = Math.sqrt(LAYOUT.distanceMin2 * l)
           const ws = strength[p] as number
           vx[i] = (vx[i] as number) + (dx * ws * alpha) / l
           vy[i] = (vy[i] as number) + (dy * ws * alpha) / l
-          if (three) vz[i] = (vz[i] as number) + (dz * ws * alpha) / l
         }
       }
     }
@@ -352,103 +336,95 @@ export function createLayout(input: LayoutInput): Layout {
 
   function links() {
     for (let e = 0; e < m; e++) {
-      const s = edges[2 * e] as number
-      const t = edges[2 * e + 1] as number
+      const s = pairs[2 * e] as number
+      const t = pairs[2 * e + 1] as number
       let dx = (x[t] as number) + (vx[t] as number) - (x[s] as number) - (vx[s] as number)
       let dy = (y[t] as number) + (vy[t] as number) - (y[s] as number) - (vy[s] as number)
-      let dz = three ? (z[t] as number) + (vz[t] as number) - (z[s] as number) - (vz[s] as number) : 0
       if (dx === 0) dx = jiggle()
       if (dy === 0) dy = jiggle()
-      if (three && dz === 0) dz = jiggle()
-      let l = Math.sqrt(dx * dx + dy * dy + dz * dz)
+      let l = Math.sqrt(dx * dx + dy * dy)
       l = ((l - (distance[e] as number)) / l) * alpha * (linkStrength[e] as number)
       dx *= l
       dy *= l
-      dz *= l
       const b = bias[e] as number
       vx[t] = (vx[t] as number) - dx * b
       vy[t] = (vy[t] as number) - dy * b
       vx[s] = (vx[s] as number) + dx * (1 - b)
       vy[s] = (vy[s] as number) + dy * (1 - b)
-      if (three) {
-        vz[t] = (vz[t] as number) - dz * b
-        vz[s] = (vz[s] as number) + dz * (1 - b)
-      }
     }
   }
 
-  // Each page drifts toward the middle of its area (where the area's pages are now).
-  const sumX = new Map<number, number>()
-  const sumY = new Map<number, number>()
-  const sumZ = new Map<number, number>()
-  const count = new Map<number, number>()
-  function areas(area: Int32Array) {
-    sumX.clear()
-    sumY.clear()
-    sumZ.clear()
-    count.clear()
-    for (let i = 0; i < n; i++) {
-      const a = area[i] as number
-      if (a < 0) continue
-      sumX.set(a, (sumX.get(a) ?? 0) + (x[i] as number))
-      sumY.set(a, (sumY.get(a) ?? 0) + (y[i] as number))
-      sumZ.set(a, (sumZ.get(a) ?? 0) + (z[i] as number))
-      count.set(a, (count.get(a) ?? 0) + 1)
-    }
-    for (let i = 0; i < n; i++) {
-      const a = area[i] as number
-      const c = count.get(a)
-      if (a < 0 || !c || c < 2) continue
-      const k = LAYOUT.areaPull * alpha
-      vx[i] = (vx[i] as number) + ((sumX.get(a) as number) / c - (x[i] as number)) * k
-      vy[i] = (vy[i] as number) + ((sumY.get(a) as number) / c - (y[i] as number)) * k
-      if (three) vz[i] = (vz[i] as number) + ((sumZ.get(a) as number) / c - (z[i] as number)) * k
+  // The places on the rings, around the free nodes as they are now.
+  function places() {
+    if (!ringed.length) return
+    const at = ringPlaces(x, y, role, pairsAll)
+    for (const i of ringed) {
+      ax[i] = at[2 * i] as number
+      ay[i] = at[2 * i + 1] as number
     }
   }
+  // The links with a group on the rim: it is placed toward the pages it links with.
+  const rimLinks: number[] = []
+  for (let e = 0; e + 1 < input.edges.length; e += 2) {
+    const s = input.edges[e] as number
+    const t = input.edges[e + 1] as number
+    if (role[s] === ROLE.rim || role[t] === ROLE.rim) rimLinks.push(s, t)
+  }
+  const pairsAll = new Uint32Array(rimLinks)
+  places()
+  for (const i of ringed) {
+    x[i] = ax[i] as number
+    y[i] = ay[i] as number
+  }
 
-  // Each page drifts toward its family's place.
-  function families(family: Int32Array, at: Float64Array) {
-    const k = LAYOUT.familyPull * alpha
-    for (let i = 0; i < n; i++) {
-      const f = family[i] as number
-      if (f < 0) continue
-      vx[i] = (vx[i] as number) + ((at[3 * f] as number) - (x[i] as number)) * k
-      vy[i] = (vy[i] as number) + ((at[3 * f + 1] as number) - (y[i] as number)) * k
-      vz[i] = (vz[i] as number) + ((at[3 * f + 2] as number) - (z[i] as number)) * k
-    }
+  // How far the ringed nodes are from their places, at most.
+  const offPlace = () => {
+    let far = 0
+    for (const i of ringed)
+      if (i !== holding)
+        far = Math.max(
+          far,
+          Math.abs((x[i] as number) - (ax[i] as number)) + Math.abs((y[i] as number) - (ay[i] as number)),
+        )
+    return far
   }
 
   const layout: Layout = {
     tick() {
-      if (layout.done()) return
-      alpha += (0 - alpha) * alphaDecay
+      alpha += (alphaTarget - alpha) * alphaDecay
       ticks += 1
       links()
       charge()
-      // In three dimensions with families, the families make the clusters: folders cut across them and do
-      // not pull.
-      if (input.area && !places) areas(input.area)
-      if (places && input.family) families(input.family, places)
-      for (let i = 0; i < n; i++) {
+      for (const i of free) {
         vx[i] = ((vx[i] as number) - (x[i] as number) * LAYOUT.centre * alpha) * LAYOUT.velocityKeep
         vy[i] = ((vy[i] as number) - (y[i] as number) * LAYOUT.centre * alpha) * LAYOUT.velocityKeep
         x[i] = (x[i] as number) + (vx[i] as number)
         y[i] = (y[i] as number) + (vy[i] as number)
-        if (three) {
-          vz[i] = ((vz[i] as number) - (z[i] as number) * LAYOUT.centre * alpha) * LAYOUT.velocityKeep
-          z[i] = (z[i] as number) + (vz[i] as number)
-        }
+      }
+      if (holding >= 0) {
+        x[holding] = holdX
+        y[holding] = holdY
+        vx[holding] = 0
+        vy[holding] = 0
+      }
+      places()
+      for (const i of ringed) {
+        if (i === holding) continue
+        x[i] = (x[i] as number) + ((ax[i] as number) - (x[i] as number)) * LAYOUT.anchorPull
+        y[i] = (y[i] as number) + ((ay[i] as number) - (y[i] as number)) * LAYOUT.anchorPull
       }
     },
-    run(budgetMs) {
+    run(budgetMs, maxTicks = Number.POSITIVE_INFINITY) {
       const start = performance.now()
-      while (!layout.done()) {
+      let k = 0
+      while (!layout.done() && k < maxTicks) {
         layout.tick()
+        k += 1
         if (performance.now() - start >= budgetMs) break
       }
       return layout.done()
     },
-    done: () => n <= 1 || alpha < LAYOUT.alphaMin || ticks >= LAYOUT.maxTicks,
+    done: () => holding < 0 && alphaTarget === 0 && alpha < LAYOUT.alphaMin && offPlace() < 0.5,
     positions() {
       const out = new Float32Array(2 * n)
       for (let i = 0; i < n; i++) {
@@ -457,154 +433,110 @@ export function createLayout(input: LayoutInput): Layout {
       }
       return out
     },
-    positions3() {
-      const out = new Float32Array(3 * n)
-      for (let i = 0; i < n; i++) {
-        out[3 * i] = x[i] as number
-        out[3 * i + 1] = y[i] as number
-        out[3 * i + 2] = z[i] as number
-      }
-      return out
+    hold(i, hx, hy) {
+      if (i < 0 || i >= n) return
+      holding = i
+      holdX = hx
+      holdY = hy
+      x[i] = hx
+      y[i] = hy
+      alphaTarget = LAYOUT.dragAlpha
+      if (alpha < LAYOUT.dragAlpha) alpha = Math.max(alpha, LAYOUT.dragAlpha * 0.5)
     },
+    release() {
+      holding = -1
+      alphaTarget = 0
+    },
+    held: () => holding,
+    ticks: () => ticks,
   }
   return layout
 }
 
-// Where a node goes when the forces are done: laid out by them (`free`), parked in rows under the picture
-// (`orphan`: a page with no link, which would only stretch it), or on a rim around it (`rim`: a group a page
-// of an opened group links with, on the side of those pages).
-export const ROLE = { free: 0, orphan: 1, rim: 2 } as const
-
-export function arrange(xy: Float32Array, role: Uint8Array, edges: Uint32Array): void {
+// Where the ringed nodes go around the free ones as they are (x, y per node): the pages without links evenly
+// spaced on a ring just outside the farthest free node, in index order from the top; the rim's groups on a
+// ring outside that, each toward the free pages it links with. The places of free nodes are left as they are.
+// Returned as [x0, y0, …] for every node.
+export function ringPlaces(
+  x: ArrayLike<number>,
+  y: ArrayLike<number>,
+  role: Uint8Array,
+  edges: Uint32Array,
+): Float64Array {
   const n = role.length
+  const out = new Float64Array(2 * n)
   let x0 = Number.POSITIVE_INFINITY
   let y0 = Number.POSITIVE_INFINITY
   let x1 = Number.NEGATIVE_INFINITY
   let y1 = Number.NEGATIVE_INFINITY
-  let free = 0
+  const orphans: number[] = []
+  const rim: number[] = []
   for (let i = 0; i < n; i++) {
-    if (role[i] !== ROLE.free) continue
-    free += 1
-    const x = xy[2 * i] as number
-    const y = xy[2 * i + 1] as number
-    if (x < x0) x0 = x
-    if (x > x1) x1 = x
-    if (y < y0) y0 = y
-    if (y > y1) y1 = y
+    out[2 * i] = x[i] as number
+    out[2 * i + 1] = y[i] as number
+    if (role[i] === ROLE.orphan) orphans.push(i)
+    else if (role[i] === ROLE.rim) rim.push(i)
+    else {
+      const xi = x[i] as number
+      const yi = y[i] as number
+      if (xi < x0) x0 = xi
+      if (xi > x1) x1 = xi
+      if (yi < y0) y0 = yi
+      if (yi > y1) y1 = yi
+    }
   }
-  if (free === 0) {
-    x0 = 0
-    x1 = 0
-    y0 = 0
-    y1 = 0
-  }
+  if (!Number.isFinite(x0)) [x0, x1, y0, y1] = [0, 0, 0, 0]
   const cx = (x0 + x1) / 2
   const cy = (y0 + y1) / 2
   let reach = 0
   for (let i = 0; i < n; i++)
     if (role[i] === ROLE.free)
-      reach = Math.max(reach, Math.hypot((xy[2 * i] as number) - cx, (xy[2 * i + 1] as number) - cy))
-  // Rows of pages without links, under the picture, as wide as it (at least 8 a row).
-  const gap = 24
-  const perRow = Math.max(8, Math.floor((x1 - x0) / gap) + 1)
-  let k = 0
-  for (let i = 0; i < n; i++) {
-    if (role[i] !== ROLE.orphan) continue
-    xy[2 * i] = x0 + (k % perRow) * gap
-    xy[2 * i + 1] = (free ? y1 : 0) + 3 * gap + Math.floor(k / perRow) * gap
-    k += 1
+      reach = Math.max(reach, Math.hypot((x[i] as number) - cx, (y[i] as number) - cy))
+  let radius = reach > 0 ? reach + LAYOUT.ringGap : 0
+  if (orphans.length) {
+    // Wide enough to leave orphanStep between two places.
+    radius = Math.max(radius, (orphans.length * LAYOUT.orphanStep) / (2 * Math.PI))
+    const step = (2 * Math.PI) / orphans.length
+    orphans.forEach((i, k) => {
+      const a = -Math.PI / 2 + k * step
+      out[2 * i] = cx + radius * Math.cos(a)
+      out[2 * i + 1] = cy + radius * Math.sin(a)
+    })
+    radius += LAYOUT.ringGap
   }
-  ring(xy, role, edges, cx, cy, reach)
-}
-
-// In three dimensions (review R6): the rim is a level ring about the vertical axis the cloud turns on, at the
-// cloud's middle height, each group toward the pages it links with as seen from above (x, z). The free pages
-// do not move.
-export function rim3(xyz: Float32Array, role: Uint8Array, edges: Uint32Array): void {
-  const n = role.length
-  let x0 = Number.POSITIVE_INFINITY
-  let x1 = Number.NEGATIVE_INFINITY
-  let y0 = Number.POSITIVE_INFINITY
-  let y1 = Number.NEGATIVE_INFINITY
-  let z0 = Number.POSITIVE_INFINITY
-  let z1 = Number.NEGATIVE_INFINITY
-  let rims = 0
-  for (let i = 0; i < n; i++) {
-    if (role[i] === ROLE.rim) rims += 1
-    if (role[i] !== ROLE.free) continue
-    const x = xyz[3 * i] as number
-    const y = xyz[3 * i + 1] as number
-    const z = xyz[3 * i + 2] as number
-    x0 = Math.min(x0, x)
-    x1 = Math.max(x1, x)
-    y0 = Math.min(y0, y)
-    y1 = Math.max(y1, y)
-    z0 = Math.min(z0, z)
-    z1 = Math.max(z1, z)
-  }
-  if (!rims) return
-  if (!Number.isFinite(x0)) [x0, x1, y0, y1, z0, z1] = [0, 0, 0, 0, 0, 0]
-  const cx = (x0 + x1) / 2
-  const cz = (z0 + z1) / 2
-  // The ground plan: x and z as a flat picture, laid out like the flat rim, then put back.
-  const plan = new Float32Array(2 * n)
-  let reach = 0
-  for (let i = 0; i < n; i++) {
-    plan[2 * i] = xyz[3 * i] as number
-    plan[2 * i + 1] = xyz[3 * i + 2] as number
-    if (role[i] === ROLE.free)
-      reach = Math.max(reach, Math.hypot((plan[2 * i] as number) - cx, (plan[2 * i + 1] as number) - cz))
-  }
-  ring(plan, role, edges, cx, cz, reach)
-  for (let i = 0; i < n; i++) {
-    if (role[i] !== ROLE.rim) continue
-    xyz[3 * i] = plan[2 * i] as number
-    xyz[3 * i + 1] = (y0 + y1) / 2
-    xyz[3 * i + 2] = plan[2 * i + 1] as number
-  }
-}
-
-// The rim on a flat picture: each group where its pages point, then spread evenly in that order.
-function ring(
-  xy: Float32Array,
-  role: Uint8Array,
-  edges: Uint32Array,
-  cx: number,
-  cy: number,
-  reach: number,
-): void {
-  const n = role.length
-  const rim: { i: number; angle: number }[] = []
-  for (let i = 0; i < n; i++) {
-    if (role[i] !== ROLE.rim) continue
+  if (!rim.length) return out
+  // Each group where its pages point, then spread evenly in that order, turned so each sits as near its own as
+  // the others allow.
+  const toward = rim.map((i, k) => {
     let sx = 0
     let sy = 0
-    for (let e = 0; e < edges.length; e += 2) {
+    for (let e = 0; e + 1 < edges.length; e += 2) {
       const a = edges[e] as number
       const b = edges[e + 1] as number
       const other = a === i ? b : b === i ? a : -1
       if (other < 0 || role[other] !== ROLE.free) continue
-      sx += (xy[2 * other] as number) - cx
-      sy += (xy[2 * other + 1] as number) - cy
+      sx += (x[other] as number) - cx
+      sy += (y[other] as number) - cy
     }
-    rim.push({ i, angle: sx === 0 && sy === 0 ? rim.length : Math.atan2(sy, sx) })
-  }
-  if (!rim.length) return
-  rim.sort((a, b) => a.angle - b.angle)
-  // Evenly spaced, in the order of their directions, turned so each sits as near its own as the others allow;
-  // the circle is wide enough to leave 80 between neighbours (a box and its name), and outside the cloud.
-  const step = (Math.PI * 2) / rim.length
-  const radius = Math.max(reach + 80, rim.length > 1 ? 80 / (2 * Math.sin(step / 2)) : 0)
+    return { i, angle: sx === 0 && sy === 0 ? k : Math.atan2(sy, sx) }
+  })
+  toward.sort((a, b) => a.angle - b.angle || a.i - b.i)
+  const step = (2 * Math.PI) / toward.length
+  const r = Math.max(
+    radius + (orphans.length ? 0 : LAYOUT.rimStep - LAYOUT.ringGap),
+    toward.length > 1 ? LAYOUT.rimStep / (2 * Math.sin(step / 2)) : 0,
+  )
   let sx = 0
   let sy = 0
-  rim.forEach((r, k) => {
-    sx += Math.cos(r.angle - k * step)
-    sy += Math.sin(r.angle - k * step)
+  toward.forEach((t, k) => {
+    sx += Math.cos(t.angle - k * step)
+    sy += Math.sin(t.angle - k * step)
   })
   const turn = sx === 0 && sy === 0 ? 0 : Math.atan2(sy, sx)
-  rim.forEach((r, k) => {
-    const angle = rim.length === 1 ? r.angle : turn + k * step
-    xy[2 * r.i] = cx + radius * Math.cos(angle)
-    xy[2 * r.i + 1] = cy + radius * Math.sin(angle)
+  toward.forEach((t, k) => {
+    const a = toward.length === 1 ? t.angle : turn + k * step
+    out[2 * t.i] = cx + r * Math.cos(a)
+    out[2 * t.i + 1] = cy + r * Math.sin(a)
   })
+  return out
 }

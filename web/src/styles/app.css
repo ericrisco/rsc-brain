@@ -2688,59 +2688,6 @@ label.op-head:hover {
   max-width: 72ch;
 }
 
-.graph-legend {
-  margin-top: 12px;
-}
-
-/* biome-ignore lint/style/noDescendingSpecificity: scoped to the graph; it never competes with the earlier rule */
-.graph-legend summary {
-  min-height: 24px;
-  cursor: pointer;
-  color: var(--nav);
-}
-
-.legend-cols {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px 48px;
-  margin-top: 12px;
-}
-
-/* biome-ignore lint/style/noDescendingSpecificity: scoped to the graph; it never competes with the earlier rule */
-.legend-cols li {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 24px;
-}
-
-.legend-shape {
-  width: 16px;
-  height: 16px;
-}
-
-.legend-line {
-  stroke: var(--muted);
-}
-
-.legend-line.danger {
-  stroke: var(--danger);
-  fill: var(--danger);
-}
-
-.legend-line.group {
-  stroke-opacity: 0.4;
-}
-
-.legend-line polygon,
-.legend-shape {
-  fill: var(--muted);
-}
-
-.legend-shape {
-  fill: var(--text);
-}
-
 .graph-inspector {
   position: sticky;
   top: 16px;
@@ -3253,20 +3200,6 @@ label.op-head:hover {
   }
 }
 
-/* The one legend, at the top left under the name: a panel that folds from its own head (polish 2026-11-09). */
-.graph-screen .graph-legend {
-  --panel-c: var(--fam-cyan);
-  min-width: 240px;
-  max-width: 100%;
-  max-height: calc(100vh - 220px);
-  overflow: auto;
-  margin: 0;
-  padding: 0 14px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-line);
-  font-size: 12px;
-}
-
 /* How the keyboard walks the picture: said to screen readers, shown while the keyboard is on it. */
 .graph-screen .graph-section > .hint {
   position: absolute;
@@ -3308,7 +3241,7 @@ label.op-head:hover {
     display: none;
   }
 
-  /* The legend and the panel's switch move left of the open panel. */
+  /* The panel's switch and the communities move left of the open panel. */
   .graph-screen:has(.graph-inspector[data-open]) .inspector-toggle {
     right: calc(clamp(320px, 22vw, 420px) + 16px);
   }
@@ -4552,8 +4485,8 @@ input[type="file"]::file-selector-button {
   white-space: normal;
 }
 
-/* Over the canvas, at the top left: its name and where you are, and under them the families drawn (plan
-   canvas-ui SB6). Only the boxes take the pointer; the room between them is the canvas's. */
+/* Over the canvas, at the top left: where you are (plan canvas-ui SB6). Only the boxes take the pointer; the
+   room between them is the canvas's. */
 .graph-left {
   position: absolute;
   top: 12px;
@@ -4576,34 +4509,7 @@ input[type="file"]::file-selector-button {
   max-width: none;
 }
 
-/* biome-ignore lint/style/noDescendingSpecificity: a family's row in the legend over the canvas */
-.graph-families li {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-height: 24px;
-  color: var(--panel-ink);
-}
-
-.graph-families .legend-shape {
-  fill: var(--panel-c);
-}
-
-.graph-families .fam-count {
-  color: var(--panel-c);
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.fam-note {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-/* Narrow: the column takes the width (the legend starts folded). */
+/* Narrow: the column takes the width. */
 @media (max-width: 1099px) {
   .graph-left {
     max-width: calc(100% - 32px);
@@ -4651,54 +4557,6 @@ input[type="file"]::file-selector-button {
   top: 60px;
 }
 
-.graph-legend > summary.legend-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 40px;
-  margin: 0 -14px 10px;
-  padding: 0 14px;
-  background: var(--panel-head-bg);
-  border-bottom: 1px solid var(--panel-line);
-  cursor: pointer;
-  list-style: none;
-}
-
-.legend-head::-webkit-details-marker {
-  display: none;
-}
-
-.graph-legend:not([open]) > .legend-head {
-  margin-bottom: 0;
-  border-bottom: 0;
-}
-
-.graph-legend .legend-cols {
-  margin-top: 8px;
-  gap: 12px 32px;
-}
-
-.legend-head .panel-title {
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.legend-more {
-  margin-top: 8px;
-}
-
-/* biome-ignore lint/style/noDescendingSpecificity: the nested fold of the legend */
-.legend-more > summary {
-  min-height: 24px;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.graph-legend > .fam-note {
-  margin: 10px 0 12px;
-}
-
 /* The map's bands: a type's panel never reaches into the one beside it (its corners sit on its border,
    not outside it), and a page's address goes under its title, the monospaced address being too wide to sit
    beside it. */
@@ -4716,4 +4574,193 @@ input[type="file"]::file-selector-button {
     grid-row: auto;
     text-align: left;
   }
+}
+
+/* ── The graph's communities and its tooltip (v0.5.0) ─────────────────────
+   The panel at the right of the canvas names the communities the picture is coloured by, each with a box that
+   shows or hides it; it folds from its head and never reaches the middle of the picture. */
+.graph-communities {
+  --panel-c: var(--fam-cyan);
+  position: absolute;
+  top: 60px;
+  right: 16px;
+  z-index: 4;
+  width: min(280px, calc(100% - 32px));
+  max-height: calc(100% - 140px);
+  overflow: auto;
+  padding: 0 14px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-line);
+  border-radius: var(--r-card);
+  font-size: 13px;
+}
+
+.com-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  margin: 0 -14px 6px;
+  padding: 0 14px;
+  background: var(--panel-head-bg);
+  border-bottom: 1px solid var(--panel-line);
+  cursor: pointer;
+  list-style: none;
+}
+
+.com-head::-webkit-details-marker {
+  display: none;
+}
+
+.graph-communities:not([open]) > .com-head {
+  margin-bottom: 0;
+  border-bottom: 0;
+}
+
+.com-head .panel-title {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.com-head .panel-meta {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.com-list {
+  margin: 0 0 10px;
+  padding: 0;
+  border: 0;
+}
+
+.com-row {
+  display: grid;
+  grid-template-columns: 18px 12px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  color: var(--panel-ink);
+  cursor: pointer;
+}
+
+.com-row.com-all {
+  grid-template-columns: 18px minmax(0, 1fr);
+  border-bottom: 1px solid var(--panel-line);
+  margin-bottom: 4px;
+}
+
+.com-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.com-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--com-other);
+}
+
+.com-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.com-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.com-row[data-com="0"] .com-dot {
+  background: var(--com-0);
+}
+.com-row[data-com="1"] .com-dot {
+  background: var(--com-1);
+}
+.com-row[data-com="2"] .com-dot {
+  background: var(--com-2);
+}
+.com-row[data-com="3"] .com-dot {
+  background: var(--com-3);
+}
+.com-row[data-com="4"] .com-dot {
+  background: var(--com-4);
+}
+.com-row[data-com="5"] .com-dot {
+  background: var(--com-5);
+}
+.com-row[data-com="6"] .com-dot {
+  background: var(--com-6);
+}
+.com-row[data-com="7"] .com-dot {
+  background: var(--com-7);
+}
+.com-row[data-com="8"] .com-dot {
+  background: var(--com-8);
+}
+.com-row[data-com="9"] .com-dot {
+  background: var(--com-9);
+}
+.com-row[data-com="lone"] .com-dot {
+  background: var(--com-lone);
+}
+
+/* Wide, with the inspector open: the communities sit left of it. */
+@media (min-width: 1100px) {
+  .graph-screen:has(.graph-inspector[data-open]) .graph-communities {
+    right: calc(clamp(320px, 22vw, 420px) + 16px);
+  }
+}
+
+/* Narrow: the panel takes less room (it starts folded), above Graph | List and the filters at the bottom. */
+@media (max-width: 1099px) {
+  .graph-communities {
+    top: auto;
+    bottom: 124px;
+    width: min(260px, calc(100% - 32px));
+    max-height: 45%;
+  }
+}
+
+/* The name of the page under the pointer, near it: big enough to read, on its own ground. */
+.graph-tip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  display: grid;
+  gap: 2px;
+  max-width: 320px;
+  padding: 8px 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+  box-shadow: 0 6px 20px -12px oklch(0 0 0 / 0.5);
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.graph-tip[hidden] {
+  display: none;
+}
+
+.tip-title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.tip-sub {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }
