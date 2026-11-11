@@ -508,14 +508,17 @@ const compactO = (i: { sessionId?: string; requestKey?: string }) => ({
 })
 
 // A person's correction written in the web, inside a transaction the caller holds: a curator returning
-// a wiki proposal leaves the reason as a correction for the agent that proposed (spec B2 «Devolver»).
+// a wiki proposal leaves the reason as a correction for the agent that proposed (spec B2 «Devolver»); so does
+// a key that decides with the permission to write to the wiki (spec v0.7).
 export async function webCorrection(
   ctx: Ctx,
   db: Db,
   brainId: string,
   input: { title: string; content: string; appliesTo?: string; refs?: string[] },
+  // A key with the permission to write to the wiki decided (spec v0.7): its owner returns it, through it.
+  o: { decidedByKey?: boolean } = {},
 ): Promise<Receipt> {
-  if (ctx.who.credential.kind !== 'web' || ctx.who.kind !== 'person') {
+  if (!o.decidedByKey && (ctx.who.credential.kind !== 'web' || ctx.who.kind !== 'person')) {
     throw invalid('Only a person in the web writes corrections this way.', 'Use the rsc-brain web.')
   }
   return write(

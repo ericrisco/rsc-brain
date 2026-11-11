@@ -1,10 +1,73 @@
 # rsc-brain
 
-A self-hosted knowledge server for AI agents and the people who work with them.
+**The memory your AI agents are missing, and the one your company can keep.**
 
-Agents write down what they do in a **journal**. People approve what becomes the **wiki**: typed pages with typed links, each citing its sources. Any agent can search it, over MCP or HTTP, before it works.
+Every AI agent you use starts from zero. It does not remember the decision you made last Tuesday, the bug it
+already fixed twice, the customer who hates being called before ten, or why the billing service is built the way
+it is. You explain it again. Then another agent, another tool or another colleague needs it, and you explain it
+again. Whatever it learned leaves with the session.
 
-> Status: early development. Not ready for use.
+rsc-brain is where that knowledge stays. It runs on your own server. Every agent that connects to it reads what
+the team already knows before it works, and writes down what it learned after. People decide what becomes the
+company's record.
+
+## Why it matters
+
+- **Agents stop relearning your business.** Context that took an hour to explain is there at the start of the next
+  session, in every tool: Claude Code, Codex, Cursor, OpenCode, or your own program.
+- **Knowledge survives the people and the tools.** When someone leaves, a vendor changes or a model is replaced,
+  what was learned is still in the brain, in plain pages anyone can read.
+- **One truth, not twenty chats.** Decisions, lessons and facts end up in one wiki with sources, instead of
+  scattered across chat histories nobody will search.
+- **People stay in charge.** Agents propose; a curator, or a key a curator trusts, decides. Every change has a
+  revision, a reason and an undo, and what agents write cites its sources.
+- **Your data stays yours.** Self-hosted, MIT licensed, on PostgreSQL. No model runs on the server and none of your
+  data is sent anywhere unless you turn it on. The only call out by default is a daily check for a new version,
+  and an empty `RSC_BRAIN_REPO_URL` stops it.
+
+## How it works
+
+```
+ agents ──write──▶  JOURNAL   ──compile──▶  PROPOSALS  ──decide──▶  WIKI   ◀──search──  every agent
+                    what they                 what should            what the
+                    did and learned           become knowledge       team knows
+```
+
+1. **The journal.** While they work, agents save decisions, lessons, attempts, facts and preferences. Free to
+   write, with receipts, no duplicates on retry, and secrets removed before anything is stored.
+2. **The wiki.** An agent compiles the journal into typed pages with typed links (depends on, part of, supersedes,
+   contradicts…), each citing the entries it came from. A curator approves all, part, corrects or returns it with a
+   comment the agent learns from. A key the curator trusts can write and decide directly, over MCP or the API.
+3. **Search before deciding.** Pages and journal searched together, accent-insensitive, in Spanish and English,
+   ranked by BM25 with the optional `pg_search` extension; optional search by meaning, mixed by rank fusion.
+   Superseded knowledge never outranks what replaced it.
+4. **A wiki that checks itself.** Orphan pages, broken links, open contradictions, stale pages, near-duplicate
+   titles. Whoever proposes is warned before sending, and agents are asked to clean up when nobody has for a day.
+5. **See it.** A full-screen graph coloured by community, pages without links around it, history for every page,
+   and a live feed of what agents are doing.
+
+## What teams use it for
+
+- **Software teams:** the reasons behind the architecture, the incidents and their fixes, the conventions a new
+  agent must follow before it touches the code.
+- **Operations:** runbooks that update themselves from what actually happened, not from what someone wrote two
+  years ago.
+- **Client work:** what each client asked, decided and disliked, available to every agent and person on the account.
+- **Research:** sources read once and compiled into pages that grow with every new paper, instead of a pile of PDFs.
+
+## In one minute
+
+Install it ([Install](#install) has every option), then connect your agent:
+
+```sh
+sh rsc-brain.sh install --local                      # PostgreSQL included; the web opens on http://localhost:8090
+claude mcp add --transport http rsc-brain http://localhost:8090/mcp --scope user
+claude mcp login rsc-brain
+```
+
+Then ask your agent: *"What does this brain know about X?"* At the end of the session: *"Save what we learned."*
+
+> Status: early development.
 
 ## License
 
@@ -380,6 +443,23 @@ the web, never with a key), and any curator takes it back; it counts from the ne
 - A key without it gets `403 wiki_write_not_allowed`, which says how to propose instead.
 - A short key of a service writes with the permission of the main key that made it.
 
+### Deciding proposals with a key
+
+The same permission lets a key decide the proposals of that brain, as a curator does in the web. It lists them
+(`brain_proposals` with `"mine": false`), reads one as a curator sees it, with its `fingerprint`
+(`brain_review`, or `GET /v1/proposals/:id/review`), and decides it (`brain_decide`, or
+`POST /v1/proposals/:id/approve` and `POST /v1/proposals/:id/return`):
+
+- approve it all; approve the operations in `approve` and send the rest back with a `comment`; correct an
+  operation in `corrections` and approve; or send it all back with a `comment`. What is approved applies all
+  at once or not at all, and an operation needs those it depends on.
+- Only what was read is approved: a `fingerprint` that no longer matches gets `409 proposal_changed` with the
+  current review, and nothing applies. A proposal decided already gets `409 already_decided`.
+- The log and the activity say who decided and with which key. The agent that proposed gets the comment as a
+  correction. Repeating a decision with the same `requestKey` decides once and returns the same result.
+- A key without the permission gets `403 web_only`. The permission is checked on every request, so taking it
+  back between reading and deciding refuses the decision.
+
 ### Warnings before and after a change
 
 A proposal, a direct write, and a check that writes nothing (`brain_check`, or
@@ -420,7 +500,7 @@ works, never save secrets, close with a summary.
   `mem_suggest_topic`, `mem_relate`, `mem_forget`, `mem_session_summary`, `mem_session_end`,
   `mem_search`, `mem_get`, `mem_timeline`, `brain_page`, `brain_neighbors`, `brain_map`,
   `brain_health`, `brain_compile_pack`, `brain_check`, `brain_write`, `brain_propose`, `brain_proposals`,
-  `brain_withdraw`, `brain_create`. A key sees only the tools it may use.
+  `brain_review`, `brain_decide`, `brain_withdraw`, `brain_create`. A key sees only the tools it may use.
 - Each tool runs the same `/v1` route a program would, with the same key: the same checks, limits
   and results.
 - Curators link repositories to their brain, so an agent finds it with `brain_resolve`.

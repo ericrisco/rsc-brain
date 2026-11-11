@@ -543,7 +543,7 @@ export const TOOLS: Tool[] = [
     name: 'brain_proposals',
     title: 'My proposals',
     description:
-      'Your proposals in a brain and what became of them: pending (and whether old), approved, returned with the comment, withdrawn or superseded.',
+      'Your proposals in a brain and what became of them: pending (and whether old), approved, returned with the comment, withdrawn or superseded. With "mine": false, everyone\'s: the queue to decide, when your key may write to the wiki.',
     inputSchema: obj({
       brain: BRAIN,
       session: SESSION,
@@ -551,6 +551,7 @@ export const TOOLS: Tool[] = [
         type: 'string',
         enum: ['all', 'pending', 'approved', 'partially_approved', 'returned', 'withdrawn', 'superseded'],
       },
+      mine: { type: 'boolean', description: "Only yours (the default); false for everyone's." },
       cursor: str('The "next" value of the previous page.'),
     }),
     writes: false,
@@ -558,8 +559,76 @@ export const TOOLS: Tool[] = [
     call: async (a, k) => ({
       method: 'GET',
       path: `/v1/brains/${enc(await k.brain(a))}/proposals`,
-      query: { mine: '1', status: text(a, 'status') ?? 'all', ...query(a, { cursor: 'cursor' }) },
+      query: {
+        ...(a.mine === false ? {} : { mine: '1' }),
+        status: text(a, 'status') ?? 'all',
+        ...query(a, { cursor: 'cursor' }),
+      },
     }),
+  },
+  // Spec v0.7: a key a curator let write to the wiki reads a proposal as a curator does, then decides it.
+  {
+    name: 'brain_review',
+    title: 'Review a proposal',
+    description:
+      'A proposal as a curator reviews it: each operation with the page before and after, its reason and sources, what it depends on, the warnings, and the fingerprint to decide it with (brain_decide). Only for a key a curator gave the permission to write to the wiki.',
+    inputSchema: obj({ id: str('The proposal id.') }, ['id']),
+    writes: false,
+    annotations: { readOnlyHint: true },
+    call: async (a) => ({
+      method: 'GET',
+      path: `/v1/proposals/${enc(text(a, 'id', true) as string)}/review`,
+    }),
+  },
+  {
+    name: 'brain_decide',
+    title: 'Decide a proposal',
+    description:
+      'Decides a pending proposal, as a curator does in the web, when a curator gave your key the permission to write to the wiki. "approve": all of it, or the operations in "approve" with a "comment" for the rest, which goes back to its author; "corrections" changes an operation first. "return": all of it goes back, with a "comment". Send the fingerprint of the review you read (brain_review): if the proposal changed, nothing is applied and the current review comes back.',
+    inputSchema: obj(
+      {
+        id: str('The proposal id.'),
+        decision: { type: 'string', enum: ['approve', 'return'] },
+        fingerprint: str('The "fingerprint" of the review you read.', { maxLength: 64 }),
+        approve: {
+          type: 'array',
+          items: { type: 'integer', minimum: 0 },
+          description: 'Approve only these operations; the rest goes back (needs a comment).',
+        },
+        comment: str('Why the rest, or all of it, goes back. Its author learns from it.'),
+        corrections: {
+          type: 'object',
+          description:
+            'Operation number → the fields you changed (title, summary, body), "purges" of the review, and for an edit the "revision" of the page you saw.',
+        },
+        baseReviewed: {
+          type: 'array',
+          items: { type: 'integer', minimum: 0 },
+          description: 'Edits written on an older revision that you checked and approve as they are.',
+        },
+        requestKey: str('Any unique text: repeating the call with the same key returns the same result.'),
+      },
+      ['id', 'decision', 'fingerprint'],
+    ),
+    writes: true,
+    annotations: { readOnlyHint: false, idempotentHint: true },
+    call: async (a) => {
+      const id = enc(text(a, 'id', true) as string)
+      const decision = text(a, 'decision', true)
+      if (decision !== 'approve' && decision !== 'return')
+        throw invalid('"decision" is "approve" or "return".', 'Send "decision": "approve" or "return".')
+      return decision === 'return'
+        ? {
+            method: 'POST',
+            path: `/v1/proposals/${id}/return`,
+            body: pick(a, ['fingerprint', 'comment', 'requestKey']),
+          }
+        : {
+            method: 'POST',
+            path: `/v1/proposals/${id}/approve`,
+            body: pick(a, ['fingerprint', 'approve', 'comment', 'corrections', 'baseReviewed', 'requestKey']),
+          }
+    },
   },
   {
     name: 'brain_withdraw',

@@ -67,6 +67,14 @@ describe('activity in words', () => {
       describeEvent(ev('proposal.decided', { target: { id: 'p', label: 'approved' } })).did,
       'decided a proposal: approved',
     )
+    // Spec v0.7: decided by a key with the permission to write to the wiki; the label names the key after its status.
+    const byKey = describeEvent(
+      ev('proposal.decided', { target: { id: 'p', label: 'partially_approved with the key Ana_agent' } }),
+    )
+    assert.deepEqual(
+      [byKey.did, byKey.what],
+      ['decided a proposal: partially approved', 'with the key Ana_agent'],
+    )
     assert.equal(describeEvent(ev('wiki.changed')).did, 'applied to the wiki:')
     assert.equal(describeEvent(ev('wiki.changed', { target: null })).did, 'changed the wiki')
     // The installation itself (a session closed for being idle).

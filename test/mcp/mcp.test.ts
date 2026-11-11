@@ -213,6 +213,7 @@ describe('the MCP endpoint', { skip: skipPg }, () => {
       'mem_session_end',
       'brain_propose',
       'brain_withdraw',
+      'brain_decide',
       'brain_create',
     ]) {
       assert.ok(!names.includes(n), n)

@@ -4,6 +4,22 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.7.0
+
+A trusted agent clears the queue of proposals without opening the web.
+
+- **Deciding proposals with a key.** A key a curator let write to the wiki of a brain can also decide its
+  proposals, by MCP (`brain_review`, `brain_decide`) or the API, with the same four choices as the web: approve
+  it all, approve part and send the rest back with a comment, correct an operation and approve, or send it all
+  back. It reads the same review a curator sees first, and only what it read is approved: if the proposal
+  changed, nothing applies and the current review comes back. Repeating a decision with the same request key
+  decides once.
+- **Who decided, with which key.** The log and the activity say a proposal was decided by its key's owner with
+  that key. The agent that proposed gets the comment as a correction, whoever decided.
+- **The queue to decide.** `brain_proposals` lists everyone's proposals with `"mine": false`.
+- Without the permission, a key still cannot decide, and taking the permission back counts from the next
+  request, even between reading a proposal and deciding it.
+
 ## v0.6.0
 
 Trusted agents keep the wiki up to date by themselves, and search puts the right page first.

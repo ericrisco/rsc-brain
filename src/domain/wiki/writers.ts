@@ -17,11 +17,21 @@ export function keyIdOf(c: Credential): string | null {
   return null
 }
 
-const hasPermission = async (db: Db, brainId: string, c: Credential): Promise<boolean> => {
+// `lock`: asked by a write or a decision, inside its transaction. The permission is held until it commits, so a
+// curator taking it back waits for it, or comes first and the key is refused (P4: no change lands after a revoke).
+export const hasPermission = async (
+  db: Db,
+  brainId: string,
+  c: Credential,
+  lock = false,
+): Promise<boolean> => {
   const key = keyIdOf(c)
   if (!key) return false
   return Boolean(
-    await db.one('SELECT 1 FROM wiki_writers WHERE brain_id = $1 AND key_id = $2', [brainId, key]),
+    await db.one(
+      `SELECT 1 FROM wiki_writers WHERE brain_id = $1 AND key_id = $2${lock ? ' FOR SHARE' : ''}`,
+      [brainId, key],
+    ),
   )
 }
 
@@ -30,13 +40,29 @@ const hasPermission = async (db: Db, brainId: string, c: Credential): Promise<bo
 // answer says what is missing and how to propose instead (CA2).
 export async function mayWriteWiki(ctx: Ctx, brain: Brain, role: Parameters<typeof atLeast>[0]) {
   await allow(ctx, 'wiki.propose', { role, brainStatus: brain.status }, brain.id)
-  if (await hasPermission(ctx.db, brain.id, ctx.who.credential)) return
+  if (await hasPermission(ctx.db, brain.id, ctx.who.credential, true)) return
   throw new AppError(
     403,
     'wiki_write_not_allowed',
     `This key may not write to the wiki of "${brain.slug}" directly.`,
     `Propose the change instead (brain_propose, or POST /v1/brains/${brain.slug}/proposals) for a curator to approve; or ask a curator of the brain to give this key the permission to write to the wiki.`,
   )
+}
+
+// The key's name as the log keeps it: a token's or main key's name, an app's name; a short key's main key, with
+// the job it was made for.
+export async function keyName(db: Db, ctx: Ctx): Promise<string> {
+  const c = ctx.who.credential
+  const id = keyIdOf(c)
+  const r = id
+    ? await db.one<{ name: string }>(
+        `SELECT coalesce((SELECT name FROM credentials WHERE id = $1),
+                         (SELECT client_name FROM oauth_grants WHERE id = $1)) AS name`,
+        [id],
+      )
+    : undefined
+  const name = r?.name ?? 'a key'
+  return c.kind === 'short' && c.ref ? `${name} (${c.ref})` : name
 }
 
 export type Writer = {

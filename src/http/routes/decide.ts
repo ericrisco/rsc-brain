@@ -1,6 +1,7 @@
-// Deciding on proposals and editing pages by hand: the same routes for everyone, but only a person's
-// web session gets through (spec B2 clarifications). Any key, even a curator's token, is told that
-// approval happens in the web (CA9) and the wiki does not change.
+// Deciding on proposals and editing pages by hand: the same routes for everyone. Editing by hand is a person's
+// web session's (spec B2 clarifications). Deciding is too, or a key's that a curator let write to the wiki (spec
+// v0.7); any other key, even a curator's token, is told that approval happens in the web (B2 CA9) and the wiki does
+// not change.
 
 import { invalid } from '../../core/errors.ts'
 import { approveProposal, returnProposal, reviewProposal } from '../../domain/wiki/decide.ts'
@@ -49,6 +50,7 @@ export const decideRoutes: Route[] = [
           comment: str(b, 'comment'),
           corrections: corrections as Record<string, unknown> | undefined,
           baseReviewed: indices(b, 'baseReviewed'),
+          requestKey: str(b, 'requestKey', { max: 200 }),
         }),
       ),
     }
@@ -56,10 +58,15 @@ export const decideRoutes: Route[] = [
   route('POST /v1/proposals/:id/return', async (r) => {
     const b = obj(r.body)
     return {
-      body: await returnProposal(ctxOf(r), r.params.id as string, {
-        fingerprint: reqStr(b, 'fingerprint', 64),
-        comment: reqStr(b, 'comment'),
-      }),
+      body: await returnProposal(
+        ctxOf(r),
+        r.params.id as string,
+        compact({
+          fingerprint: reqStr(b, 'fingerprint', 64),
+          comment: reqStr(b, 'comment'),
+          requestKey: str(b, 'requestKey', { max: 200 }),
+        }),
+      ),
     }
   }),
   // Editing a page by hand is the web's (direct edits arrive with the web session).

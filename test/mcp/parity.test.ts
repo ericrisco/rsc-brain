@@ -37,6 +37,7 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
   let eric: { id: string; key: string }
   let readOnly: string
   let stranger: { id: string; key: string }
+  let web = ''
   let n = 0
   const twin: Record<string, Record<Side, string>> = {}
 
@@ -85,10 +86,10 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
     const r = await w.call(eric.key, 'POST', '/v1/brains/par/sessions', { purpose: 'twin' })
     return (r.body.session as { id: string }).id
   }
-  const proposal = async (side: Side) => {
+  const proposal = async (side: Side, what = 'Withdraw', where = 'drafts') => {
     const r = await w.call(eric.key, 'POST', '/v1/brains/par/proposals', {
-      title: `Withdraw ${side}side`,
-      ops: [opOn(`drafts/${side}side`)],
+      title: `${what} ${side}side`,
+      ops: [opOn(`${where}/${side}side`)],
     })
     assert.equal(r.status, 201, r.text)
     return (r.body.proposal as { id: string }).id
@@ -108,6 +109,9 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
     reason: 'From the journal.',
   })
   const t = (name: string, side: Side) => twin[name]?.[side] as string
+  // The fingerprint a curator reads in the web, which a key with the permission reads the same (spec v0.7).
+  const seen = async (id: string) =>
+    String((await w.callWeb(web, 'GET', `/v1/proposals/${id}/review`)).body.fingerprint)
 
   const CASES: Record<string, Case> = {
     brain_list: { args: () => ({}), api: () => ['GET', '/v1/brains'] },
@@ -224,6 +228,27 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
       args: () => ({ brain: 'par', status: 'pending' }),
       api: () => ['GET', '/v1/brains/par/proposals?mine=1&status=pending'],
     },
+    // Spec v0.7: Eric's key may write to the wiki of "par", so it reads and decides its proposals.
+    brain_review: {
+      args: (s) => ({ id: t('review', s) }),
+      api: (s) => ['GET', `/v1/proposals/${t('review', s)}/review`],
+      // A hash of the proposal, whose title names its side.
+      drop: (r) => {
+        delete r.fingerprint
+      },
+    },
+    brain_decide: {
+      args: async (s) => ({
+        id: t('decide', s),
+        decision: 'approve',
+        fingerprint: await seen(t('decide', s)),
+      }),
+      api: async (s) => [
+        'POST',
+        `/v1/proposals/${t('decide', s)}/approve`,
+        { fingerprint: await seen(t('decide', s)) },
+      ],
+    },
     brain_withdraw: {
       args: (s) => ({ id: t('withdraw', s) }),
       api: (s) => ['POST', `/v1/proposals/${t('withdraw', s)}/withdraw`],
@@ -240,7 +265,7 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
     stranger = await w.person('Stranger')
     readOnly = await w.token(eric.id, { perm: 'read' })
     await w.call(eric.key, 'POST', '/v1/brains', { slug: 'par', purpose: 'Parity.' })
-    const web = await w.web(eric.id)
+    web = await w.web(eric.id)
     await w.callWeb(web, 'POST', '/v1/brains/par/repos', { repo: 'github.com/risco/parity' })
     const page = await w.callWeb(web, 'POST', '/v1/brains/par/wiki/changes', {
       op: 'create',
@@ -265,6 +290,8 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
     await twins('summary', () => session())
     await twins('end', () => session())
     await twins('withdraw', (s) => proposal(s))
+    await twins('review', (s) => proposal(s, 'Review', 'reviewed'))
+    await twins('decide', (s) => proposal(s, 'Decide', 'decided'))
   })
   after(async () => w.close())
 
