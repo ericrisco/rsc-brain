@@ -4,6 +4,7 @@
 // database that already has a migration this code does not know is from a newer release: refuse.
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { Log } from '../core/log.ts'
 import { mayHoldSecret, redact } from '../privacy/redact.ts'
 import type { Db } from './db.ts'
 import { ensureSearchIndexes } from './extensions.ts'
@@ -78,7 +79,7 @@ export async function migrationFiles(dir: string): Promise<string[]> {
 export async function migrate(
   db: Db,
   dir: string = MIGRATIONS_DIR,
-  o: { until?: readonly string[] } = {},
+  o: { until?: readonly string[]; log?: Log } = {},
 ): Promise<string[]> {
   const files = await migrationFiles(dir)
   const all: Step[] = [
@@ -92,7 +93,7 @@ export async function migrate(
   const ids = all.map((x) => x.id)
   const beyond = (o.until ?? []).filter((id) => !ids.includes(id)).sort()
   if (beyond.length > 0) throw new NewerDatabaseError(beyond)
-  return db.tx(async (tx) => {
+  const applied = await db.tx(async (tx) => {
     await tx.query('SELECT pg_advisory_xact_lock($1)', [LOCK])
     await tx.query(
       'CREATE TABLE IF NOT EXISTS schema_migrations (id text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())',
@@ -102,17 +103,33 @@ export async function migrate(
     )
     const unknown = [...done].filter((id) => !ids.includes(id)).sort()
     if (unknown.length > 0) throw new NewerDatabaseError(unknown)
-    const applied: string[] = []
+    const now: string[] = []
     for (const step of all) {
       if (done.has(step.id)) continue
       if (o.until && !o.until.includes(step.id)) continue
       await step.run(tx)
       await tx.query('INSERT INTO schema_migrations (id) VALUES ($1)', [step.id])
-      applied.push(step.id)
+      now.push(step.id)
     }
-    // Not a numbered step: the BM25 indexes follow whether pg_search is installed now (spec v0.6), and a
-    // partial migration (a restore loading its copy) has no tables to index yet.
-    if (!o.until && dir === MIGRATIONS_DIR) await ensureSearchIndexes(tx)
-    return applied
+    return now
   })
+  // Not a numbered step: the BM25 indexes follow whether pg_search is installed now (spec v0.6), after the
+  // migrations committed and apart from them, so a failure here (a role that may not use the extension's schema)
+  // never undoes a migration nor stops the start: it is logged, and search keeps its own ranking. A partial
+  // migration (a restore loading its copy) has no tables to index yet.
+  if (!o.until && dir === MIGRATIONS_DIR) {
+    await db.tx(async (tx) => {
+      // A savepoint: when the caller's transaction holds this one (a restore), its failure stays here too.
+      await tx.query('SAVEPOINT search_indexes')
+      try {
+        await ensureSearchIndexes(tx)
+        await tx.query('RELEASE SAVEPOINT search_indexes')
+      } catch (err) {
+        await tx.query('ROLLBACK TO SAVEPOINT search_indexes')
+        const code = (err as { code?: unknown }).code
+        o.log?.warn('search_index_failed', typeof code === 'string' ? { code } : {})
+      }
+    })
+  }
+  return applied
 }

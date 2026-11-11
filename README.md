@@ -350,8 +350,10 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_search;
 ```
 
-On its next start rsc-brain makes the index it needs and says in its log what search uses
-(`"event":"search","code":"bm25"`).
+On its next start rsc-brain makes the index it needs, as its own role (no other grant is needed), and says in its
+log what search uses (`"event":"search","code":"bm25"`). If the index cannot be made, the log says
+`"event":"search_index_failed"` with the database's error code, rsc-brain starts anyway, and search keeps its own
+ranking.
 
 ## People, keys and mail
 

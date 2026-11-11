@@ -173,7 +173,7 @@ async function main(argv: string[]): Promise<number> {
   if (cmd === 'serve') {
     const cfg = readConfig()
     const db = openPool(cfg.databaseUrl)
-    await migrate(db)
+    await migrate(db, undefined, { log })
     // Which optional extensions search uses (spec v0.6): BM25 ranking, meaning compared by pgvector.
     const features = await searchFeatures(db)
     log.info('search', {

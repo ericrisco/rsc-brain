@@ -34,6 +34,8 @@ export const LOG_EVENTS = [
   // At start, what search ranks with (spec v0.6): code bm25 or words, and whether meaning uses pgvector
   // (outcome ok when it does).
   'search',
+  // The BM25 indexes could not be made (the database's error code): search keeps its own ranking (spec v0.6).
+  'search_index_failed',
 ] as const
 export type LogEvent = (typeof LOG_EVENTS)[number]
 
