@@ -23,8 +23,10 @@ import {
   submitProposal,
   withdrawProposal,
 } from '../../domain/wiki/proposals.ts'
+import { checkWiki, writeWiki } from '../../domain/wiki/write.ts'
+import { grantWriter, listWriters, revokeWriter } from '../../domain/wiki/writers.ts'
 import { MAX_REPLY_CHARS } from '../bounds.ts'
-import { compact, obj, oneOf, reqStr, str } from '../input.ts'
+import { bool, compact, obj, oneOf, reqStr, str } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
@@ -195,10 +197,49 @@ export const wikiRoutes: Route[] = [
         collected: b.collected,
         supersedes: str(b, 'supersedes', { max: 40 }),
         agent: str(b, 'agent'),
+        maintenance: bool(b, 'maintenance'),
       }),
     )
     return { status: 201, body: out }
   }),
+  // A key a curator let write to the wiki sends the operations of a proposal; they apply at once (spec v0.6).
+  route('POST /v1/brains/:slug/wiki/write', async (r) => {
+    const b = obj(r.body)
+    const out = await writeWiki(
+      ctxOf(r),
+      r.params.slug as string,
+      compact({
+        title: reqStr(b, 'title'),
+        reason: str(b, 'reason'),
+        ops: b.ops,
+        collected: b.collected,
+        agent: str(b, 'agent'),
+        maintenance: bool(b, 'maintenance'),
+        requestKey: str(b, 'requestKey'),
+      }),
+    )
+    return { status: 201, body: out }
+  }),
+  // The same body as a proposal: what would block it, and what it would leave incoherent; nothing is written, so
+  // it keeps answering during maintenance (what it tries is undone).
+  {
+    ...route('POST /v1/brains/:slug/wiki/check', async (r) => {
+      const b = obj(r.body)
+      return {
+        body: await checkWiki(
+          ctxOf(r),
+          r.params.slug as string,
+          compact({
+            title: reqStr(b, 'title'),
+            reason: str(b, 'reason'),
+            ops: b.ops,
+            collected: b.collected,
+          }),
+        ),
+      }
+    }),
+    maintenance: 'reads',
+  },
   route('GET /v1/brains/:slug/proposals', async (r) => ({
     body: await listProposals(
       ctxOf(r),
@@ -218,6 +259,17 @@ export const wikiRoutes: Route[] = [
       }),
     ),
   })),
+  // The keys that write to the wiki directly (spec v0.6): its curators list them, give it in the web, take it back.
+  route('GET /v1/brains/:slug/wiki/writers', async (r) => ({
+    body: { writers: await listWriters(ctxOf(r), r.params.slug as string) },
+  })),
+  route('PUT /v1/brains/:slug/wiki/writers/:keyId', async (r) => ({
+    body: { writer: await grantWriter(ctxOf(r), r.params.slug as string, r.params.keyId as string) },
+  })),
+  route('DELETE /v1/brains/:slug/wiki/writers/:keyId', async (r) => {
+    await revokeWriter(ctxOf(r), r.params.slug as string, r.params.keyId as string)
+    return { body: { removed: r.params.keyId } }
+  }),
   route('GET /v1/proposals/:id', async (r) => ({ body: await getProposal(ctxOf(r), r.params.id as string) })),
   route('POST /v1/proposals/:id/withdraw', async (r) => ({
     body: { proposal: await withdrawProposal(ctxOf(r), r.params.id as string) },

@@ -9,6 +9,7 @@ import { type Ctx, ok } from './context.ts'
 import { inWeb } from './guards.ts'
 import { mintPersonToken } from './keys.ts'
 import { EXPIRY_NOTICE_DAYS } from './notices.ts'
+import { grantOnCreate, wikiWriteOf } from './wiki/writers.ts'
 
 export const TOKEN_DAYS = [30, 90, 365] as const
 export const ALL_BRAINS_NOTE =
@@ -16,7 +17,15 @@ export const ALL_BRAINS_NOTE =
 
 export async function createToken(
   ctx: Ctx,
-  input: { name: unknown; perm: unknown; brains?: unknown; allBrains?: unknown; days?: unknown },
+  input: {
+    name: unknown
+    perm: unknown
+    brains?: unknown
+    allBrains?: unknown
+    days?: unknown
+    // The brains where it may write to the wiki directly (spec v0.6), each one where the person is a curator.
+    wikiWrite?: unknown
+  },
 ) {
   inWeb(ctx, 'Creating a token')
   if (ctx.who.kind !== 'person') throw invalid('Tokens belong to people.', 'Use a main key for a service.')
@@ -55,20 +64,30 @@ export async function createToken(
       if (!brainIds.includes(b.id)) brainIds.push(b.id)
     }
   }
-  const k = await mintPersonToken(ctx.db, ctx.clock, {
-    accountId: ctx.who.accountId,
-    name,
-    perm: input.perm,
-    ...(all ? { allBrains: true } : { brainIds }),
-    days: days as number,
+  const wikiWrite = input.wikiWrite ?? []
+  if (!Array.isArray(wikiWrite) || wikiWrite.length > 100 || wikiWrite.some((s) => typeof s !== 'string')) {
+    throw invalid('"wikiWrite" is a list of brain names.', 'Send ["slug", …], or leave it out.')
+  }
+  const perm = input.perm
+  const k = await ctx.db.tx(async (db) => {
+    const c = { ...ctx, db }
+    const k = await mintPersonToken(db, ctx.clock, {
+      accountId: ctx.who.accountId,
+      name,
+      perm,
+      ...(all ? { allBrains: true } : { brainIds }),
+      days: days as number,
+    })
+    await ok(
+      c,
+      'token.create',
+      null,
+      k.id,
+      `${name}, ${perm}, ${all ? 'all brains' : `${brainIds.length} brain(s)`}`,
+    )
+    await grantOnCreate(c, db, k.id, [...new Set(wikiWrite as string[])], { allBrains: all, brainIds, perm })
+    return k
   })
-  await ok(
-    ctx,
-    'token.create',
-    null,
-    k.id,
-    `${name}, ${input.perm}, ${all ? 'all brains' : `${brainIds.length} brain(s)`}`,
-  )
   return {
     token: { id: k.id, secret: k.secret, last4: k.secret.slice(-4), expiresAt: k.expiresAt },
     message: 'Copy it now: rsc-brain shows it only this once.',
@@ -87,6 +106,10 @@ export async function listTokens(ctx: Ctx) {
     [ctx.who.accountId, now],
   )
   const soon = now.getTime() + EXPIRY_NOTICE_DAYS * 86_400_000
+  const writes = await wikiWriteOf(
+    ctx.db,
+    rows.map((k) => String(k.id)),
+  )
   // Expired ones are listed too, marked (the profile groups them); revoked ones never.
   return rows.map((k) => ({
     id: String(k.id),
@@ -101,6 +124,7 @@ export async function listTokens(ctx: Ctx) {
     expiresSoon: (k.expires_at as Date).getTime() <= soon,
     lastUsedAt: k.last_used_at == null ? null : (k.last_used_at as Date).toISOString(),
     lastClient: k.last_client == null ? null : String(k.last_client),
+    wikiWrite: writes.get(String(k.id)) ?? [],
   }))
 }
 

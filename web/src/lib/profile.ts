@@ -54,12 +54,28 @@ export type TokenForm = {
   // all: every brain of mine, including later ones; some: the ones chosen.
   scope: 'all' | 'some'
   brains: string[]
+  // The brains where it may write to the wiki directly (v0.6), of those wikiWriteChoices offers.
+  wikiWrite?: string[]
 }
 
-export type TokenBody = { name: string; perm: 'read' | 'write'; days: number } & (
+export type TokenBody = { name: string; perm: 'read' | 'write'; days: number; wikiWrite?: string[] } & (
   | { allBrains: true }
   | { brains: string[] }
 )
+
+type BrainRole = { slug: string; name: string; role: string }
+
+// Where a token may be let write to the wiki directly (spec v0.6): the brains it reaches with read + write in
+// which the person is a curator — only a curator gives that permission. `on`: it has it now.
+export function wikiWriteChoices(
+  t: { perm: string; allBrains: boolean; brains: readonly string[] | null; wikiWrite?: readonly string[] },
+  brains: readonly BrainRole[],
+): { slug: string; name: string; on: boolean }[] {
+  if (t.perm !== 'write') return []
+  return brains
+    .filter((b) => b.role === 'curator' && (t.allBrains || (t.brains ?? []).includes(b.slug)))
+    .map((b) => ({ slug: b.slug, name: b.name, on: (t.wikiWrite ?? []).includes(b.slug) }))
+}
 
 // What to send, or what to fix first (by field), in the server's own rules (B4: 1 to 80 characters).
 export function tokenRequest(f: TokenForm): {
@@ -73,7 +89,14 @@ export function tokenRequest(f: TokenForm): {
   if (f.scope === 'some' && f.brains.length === 0)
     problems.brains = 'Choose at least one brain, or all of them.'
   if (problems.name || problems.brains) return { body: null, problems }
-  const base = { name, perm: f.perm, days: f.days }
+  // Only what the token reaches with read + write, and only where the person is a curator (wikiWriteChoices).
+  const wikiWrite = f.perm === 'write' ? (f.wikiWrite ?? []) : []
+  const base = {
+    name,
+    perm: f.perm,
+    days: f.days,
+    ...(wikiWrite.length ? { wikiWrite: [...wikiWrite] } : {}),
+  }
   return {
     body: f.scope === 'all' ? { ...base, allBrains: true } : { ...base, brains: [...f.brains] },
     problems,

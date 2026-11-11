@@ -9,6 +9,7 @@ import { type Ctx, inBrain } from './context.ts'
 import { words } from './entries.ts'
 import { neighboursOf } from './search.ts'
 import { track } from './trail.ts'
+import { type Cleanup, cleanupDue } from './wiki/health.ts'
 import { pageRefs, settingsOf } from './wiki/pages.ts'
 
 export const CONTEXT = { default: 32_000, min: 4_000, max: 128_000 }
@@ -81,6 +82,8 @@ export type StartContext = {
   /** The size used, and whether the one asked for was outside 4 000–128 000 and moved into it. */
   max: number
   adjusted: boolean
+  /** When the wiki is due a cleanup (spec v0.6 «Limpieza diaria»): the suggestion and the health report. */
+  cleanup?: Cleanup
 }
 
 export async function startContext(
@@ -88,7 +91,7 @@ export async function startContext(
   slug: string,
   o: { task?: string; agent?: string; max?: number; ref?: string },
 ): Promise<StartContext> {
-  const { brain } = await inBrain(ctx, { slug })
+  const { brain, role } = await inBrain(ctx, { slug })
   const asked = o.max ?? CONTEXT.default
   const max = Math.min(CONTEXT.max, Math.max(CONTEXT.min, asked))
   if ((o.task ?? '').length > 2000) throw invalid('The task is longer than 2000 characters.', 'Summarise it.')
@@ -207,9 +210,14 @@ export async function startContext(
     const room = max - reserve - HEADER.length - purpose.length - open.length - close.length
     usage = open + (note.length > room ? `${note.slice(0, Math.max(0, room - 1))}…` : note) + close
   }
+  // The daily cleanup, when due, opens the context after the note: short, with the report in "cleanup" (CA10).
+  const cleanup = await cleanupDue(ctx, brain, role)
+  const cleaning = cleanup
+    ? `\n\n## Wiki cleanup suggested\n${cleanup.suggestion} The report is in "cleanup" (or brain_health).`
+    : ''
   type Piece = { text: string; section: string; ids: string[]; count: number; item?: ContextItem }
   const pieces: Piece[] = []
-  const head = HEADER + purpose + usage
+  const head = HEADER + purpose + usage + cleaning
   let used = head.length
   const seen = new Set<string>()
   const missed = new Map<string, string>() // an item that did not fit, and the first part it was due in
@@ -298,5 +306,14 @@ export async function startContext(
     ref,
   })
   const items = pieces.flatMap((x) => (x.item ? [x.item] : []))
-  return { text, chars: text.length, included, omitted, items, max, adjusted: max !== asked }
+  return {
+    text,
+    chars: text.length,
+    included,
+    omitted,
+    items,
+    max,
+    adjusted: max !== asked,
+    ...(cleanup ? { cleanup } : {}),
+  }
 }

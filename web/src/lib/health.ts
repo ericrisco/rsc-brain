@@ -13,7 +13,14 @@ export type Health = {
   unavailableSources: { address: string; title?: string; entryId: string; state: 'forgotten' | 'purged' }[]
   long: (Ref & { chars: number })[]
   similarTitles: { a: string; aTitle?: string; b: string; bTitle?: string }[]
-  maintenance: { suggested: boolean; approvalsSince: number; every: number }
+  // v0.6: a cleanup is due (none approved or written in 24 hours, none waiting, problems found).
+  maintenance: {
+    suggested: boolean
+    lastAt: string | null
+    pending: boolean
+    approvalsSince: number
+    every: number
+  }
 }
 
 export type SectionId =

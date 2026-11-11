@@ -16,6 +16,7 @@ export const V1 = [
   'DELETE /v1/keys/{id}',
   'DELETE /v1/me/apps/{id}',
   'DELETE /v1/me/tokens/{id}',
+  'DELETE /v1/brains/{slug}/wiki/writers/{keyId}',
   'DELETE /v1/me/totp',
   'GET /v1/admin/accounts',
   'GET /v1/admin/accounts/{id}/apps',
@@ -57,6 +58,7 @@ export const V1 = [
   'GET /v1/brains/{slug}/wiki/health',
   'GET /v1/brains/{slug}/wiki/log',
   'GET /v1/brains/{slug}/wiki/settings',
+  'GET /v1/brains/{slug}/wiki/writers',
   'GET /v1/brains/{slug}/wiki/map',
   'GET /v1/brains/{slug}/wiki/pages',
   'GET /v1/branding',
@@ -110,6 +112,8 @@ export const V1 = [
   'POST /v1/brains/{slug}/import',
   'POST /v1/brains/{slug}/members',
   'POST /v1/brains/{slug}/proposals',
+  'POST /v1/brains/{slug}/wiki/check',
+  'POST /v1/brains/{slug}/wiki/write',
   'POST /v1/brains/{slug}/relations',
   'POST /v1/brains/{slug}/repos',
   'POST /v1/brains/{slug}/sessions',
@@ -154,6 +158,7 @@ export const V1 = [
   'PUT /v1/brains/{slug}/members/{account}',
   'PUT /v1/brains/{slug}/notify',
   'PUT /v1/brains/{slug}/wiki/settings',
+  'PUT /v1/brains/{slug}/wiki/writers/{keyId}',
 ]
 
 // The status of every refusal the web's fixture gives, by its code: within v1 a code keeps its status.

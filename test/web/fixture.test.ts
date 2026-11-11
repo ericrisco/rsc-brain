@@ -920,6 +920,12 @@ describe('the fixture API', () => {
       tokens: Array<{ lastUsedAt: string | null }>
     }
     assert.ok(used.tokens[0]?.lastUsedAt)
+    // v0.6: a curator lets it write to the wiki of a brain directly, and takes it back.
+    assert.equal((await call('PUT', `/v1/brains/growth/wiki/writers/${id}`, o)).status, 200)
+    const writes = (await call('GET', '/v1/me/tokens', o)).body as { tokens: Array<{ wikiWrite: string[] }> }
+    assert.deepEqual(writes.tokens[0]?.wikiWrite, ['growth'])
+    assert.equal((await call('DELETE', `/v1/brains/growth/wiki/writers/${id}`, o)).status, 200)
+    assert.equal((await call('DELETE', `/v1/brains/growth/wiki/writers/${id}`, o)).status, 404)
     assert.equal((await call('DELETE', `/v1/me/tokens/${id}`, o)).status, 200)
     assert.equal((await call('DELETE', `/v1/me/tokens/${id}`, o)).status, 404)
     const apps = (await call('GET', '/v1/me/apps', o)).body as { apps: Array<{ id: string }> }

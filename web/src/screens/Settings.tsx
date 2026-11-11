@@ -889,10 +889,9 @@ function Health({ slug, archived, account }: { slug: string; archived: boolean; 
       setV({
         staleDays: kept('staleDays') ?? String(base.staleDays),
         longChars: kept('longChars') ?? String(base.longChars),
-        maintenanceEvery: kept('maintenanceEvery') ?? String(base.maintenanceEvery),
       })
     else
-      for (const k of ['staleDays', 'longChars', 'maintenanceEvery'] as const)
+      for (const k of ['staleDays', 'longChars'] as const)
         follow(
           (x) => String(x[k]),
           (f) => setV((prev) => (prev ? { ...prev, [k]: f(prev[k]) } : prev)),
@@ -901,7 +900,6 @@ function Health({ slug, archived, account }: { slug: string; archived: boolean; 
   const fields: Array<{ k: ThresholdName; label: string; hint: string }> = [
     { k: 'staleDays', label: S.staleDays, hint: S.staleHint },
     { k: 'longChars', label: S.longChars, hint: S.longHint },
-    { k: 'maintenanceEvery', label: S.every, hint: S.everyHint },
   ]
   return (
     <Part id="health" title={S.health} lead={S.healthLead}>
@@ -922,7 +920,6 @@ function Health({ slug, archived, account }: { slug: string; archived: boolean; 
               void save({
                 staleDays: Number(v.staleDays),
                 longChars: Number(v.longChars),
-                maintenanceEvery: Number(v.maintenanceEvery),
               }).then((done) => {
                 if (done) for (const f of fields) fieldDrafts.clear(account, slug, f.k)
               })

@@ -234,7 +234,9 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
     assert.ok(!after.conflicts.some((c) => c.b === 'h/y'))
   })
 
-  it('every so many approvals, the web suggests a maintenance proposal; asking for one starts the count again', async () => {
+  // Since v0.6 the suggestion is the daily cleanup (test/wiki/cleanup.test.ts): the count of approvals is still
+  // kept for API v1, and decides nothing.
+  it('the count of approvals is kept for API v1; the suggestion follows the daily cleanup, not the count', async () => {
     await w.callWeb(ericWeb, 'PUT', '/v1/brains/yt/wiki/settings', { maintenanceEvery: 2 })
     for (const i of [1, 2]) {
       const id = (
@@ -262,15 +264,27 @@ describe('wiki by hand, health and purge', { skip: skipPg }, () => {
         200,
       )
     }
-    const h = (await w.call(ana.key, 'GET', '/v1/brains/yt/wiki/health')).body as {
-      maintenance: { suggested: boolean }
+    type M = {
+      maintenance: { suggested: boolean; approvalsSince: number; every: number; lastAt: string | null }
     }
-    assert.equal(h.maintenance.suggested, true)
+    const h = (await w.call(ana.key, 'GET', '/v1/brains/yt/wiki/health')).body as M
+    assert.deepEqual(
+      [h.maintenance.approvalsSince >= 2, h.maintenance.every, h.maintenance.lastAt],
+      [true, 2, null],
+    )
+    const problems = [
+      'orphans',
+      'broken',
+      'conflicts',
+      'stale',
+      'unavailableSources',
+      'long',
+      'similarTitles',
+    ].some((k) => ((h as unknown as Record<string, unknown[]>)[k] ?? []).length > 0)
+    assert.equal(h.maintenance.suggested, problems)
     await w.callWeb(ericWeb, 'POST', '/v1/brains/yt/wiki/maintenance-asked')
-    const again = (await w.call(ana.key, 'GET', '/v1/brains/yt/wiki/health')).body as {
-      maintenance: { suggested: boolean }
-    }
-    assert.equal(again.maintenance.suggested, false)
+    const again = (await w.call(ana.key, 'GET', '/v1/brains/yt/wiki/health')).body as M
+    assert.deepEqual([again.maintenance.approvalsSince, again.maintenance.suggested], [0, problems])
   })
 
   it('CA25: purging a page revision: the text is nowhere, the page goes back to the revision before, the mark stays', async () => {

@@ -293,7 +293,7 @@ describe('health', () => {
     unavailableSources: [],
     long: [],
     similarTitles: [],
-    maintenance: { suggested: false, approvalsSince: 0, every: 20 },
+    maintenance: { suggested: false, lastAt: null, pending: false, approvalsSince: 0, every: 20 },
   }
 
   it('has the sections of B2, in the order that matters most', () => {

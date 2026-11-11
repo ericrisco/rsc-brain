@@ -11,6 +11,7 @@ import { allow, type Ctx, inBrain } from '../context.ts'
 import { emit } from '../events.ts'
 import { installation } from '../installation.ts'
 import { decode, encode, PAGE, type Page as PageOf } from '../listing.ts'
+import { type Checked, checkChange } from './coherence.ts'
 import { mentionsOf, nearlySame, type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
 
 export const OLD_AFTER_MS = 30 * 24 * 60 * 60 * 1000
@@ -53,6 +54,8 @@ export type Proposal = {
   lastError: string | null
   createdAt: string
   purged: boolean
+  // A cleanup of the wiki (spec v0.6 «Limpieza diaria»).
+  maintenance: boolean
 }
 
 export const proposalOf = (r: Row, now: Date): Proposal => ({
@@ -73,6 +76,7 @@ export const proposalOf = (r: Row, now: Date): Proposal => ({
   lastError: r.last_error == null ? null : String(r.last_error),
   createdAt: (r.created_at as Date).toISOString(),
   purged: r.purged_at != null,
+  maintenance: Boolean(r.maintenance),
 })
 
 // Who proposed and who decided, by name: what a person reads in the inbox (spec B6 «Proposals»).
@@ -343,21 +347,30 @@ export type ProposalInput = {
   collected?: unknown
   supersedes?: string
   agent?: string
+  // A maintenance pass: the cleanup of the wiki (spec v0.6).
+  maintenance?: boolean
 }
 
 const loadOps = async (db: Db, id: string): Promise<ProposalOp[]> =>
   (await db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [id])).map(proposalOpOf)
 
-export async function submitProposal(
-  ctx: Ctx,
-  slug: string,
-  input: ProposalInput,
-): Promise<{ proposal: Proposal; ops: ProposalOp[]; warnings: Warning[] }> {
+// What a proposal and a direct write both carry (spec v0.6: «las mismas operaciones»), read and redacted, with
+// the problems of each operation collected so the agent gets them all at once.
+export type Package = {
+  title: string
+  reason: string
+  collected: string[]
+  agent: string | null
+  ops: (Op | null)[]
+  problems: Problem[]
+}
+
+export function readPackage(ctx: Ctx, input: ProposalInput, what = 'A proposal'): Package {
   const title = redact(input.title.trim()).text
   const reason = redact((input.reason ?? '').trim()).text
   if (!title || title.length > WIKI_LIMITS.title) {
     throw invalid(
-      `A proposal needs a title of 1 to ${WIKI_LIMITS.title} characters.`,
+      `${what} needs a title of 1 to ${WIKI_LIMITS.title} characters.`,
       'Say in one line what it changes.',
     )
   }
@@ -365,7 +378,7 @@ export async function submitProposal(
     throw invalid(`The reason is longer than ${WIKI_LIMITS.reason} characters.`, 'Shorten it.')
   }
   if (!Array.isArray(input.ops) || input.ops.length === 0) {
-    throw invalid('A proposal carries a list "ops" with at least one operation.', 'Add the operations.')
+    throw invalid(`${what} carries a list "ops" with at least one operation.`, 'Add the operations.')
   }
   const collectedRaw = input.collected ?? []
   if (
@@ -386,10 +399,19 @@ export async function submitProposal(
   if (input.ops.length > WIKI_LIMITS.ops) {
     problems.push({
       op: null,
-      message: `A proposal has at most ${WIKI_LIMITS.ops} operations; this one has ${input.ops.length}.`,
+      message: `${what} has at most ${WIKI_LIMITS.ops} operations; this one has ${input.ops.length}.`,
     })
   }
   const ops = input.ops.slice(0, WIKI_LIMITS.ops).map((raw, i) => readOp(raw, i, problems))
+  return { title, reason, collected, agent, ops, problems }
+}
+
+export async function submitProposal(
+  ctx: Ctx,
+  slug: string,
+  input: ProposalInput,
+): Promise<{ proposal: Proposal; ops: ProposalOp[]; warnings: Warning[] } & Checked> {
+  const { title, reason, collected, agent, ops, problems } = readPackage(ctx, input)
   const out = await ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
     const { brain, role } = await inBrain(c, { slug }, 'share')
@@ -426,8 +448,9 @@ export async function submitProposal(
     const now = ctx.clock()
     const id = newId('prp')
     const row = await db.one(
-      `INSERT INTO proposals (id, brain_id, title, reason, author_id, credential_id, agent, supersedes_id, collected, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      `INSERT INTO proposals (id, brain_id, title, reason, author_id, credential_id, agent, supersedes_id, collected, created_at,
+         maintenance)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
       [
         id,
         brain.id,
@@ -439,6 +462,7 @@ export async function submitProposal(
         replaced?.id ?? null,
         collected,
         now,
+        Boolean(input.maintenance),
       ],
     )
     for (const [i, op] of good.entries()) {
@@ -460,10 +484,12 @@ export async function submitProposal(
       proposal: proposalOf(row as Row, now),
       ops: await loadOps(db, id),
       warnings: await warningsOf(db, brain.id, good),
+      // What it would leave incoherent, on the wiki as it would be, and what is linked to it (spec v0.6 CA7, CA9).
+      checked: await checkChange(c, db, brain.id, good, { keep: false }),
     }
   })
   await proposalNotice(ctx, out.brain, out.proposal.id, out.ops.length)
-  return { proposal: out.proposal, ops: out.ops, warnings: out.warnings }
+  return { proposal: out.proposal, ops: out.ops, warnings: out.warnings, ...out.checked }
 }
 
 // Curators who asked for it get a mail: which brain, who proposes, how many changes and a link that

@@ -417,13 +417,13 @@ test.describe('settings of a brain', () => {
     await expect(health.getByLabel('Stale after (days)')).toHaveValue('90')
     // Meanwhile another curator changes how long a page may be, and when it is stale.
     await s.settingsEdit('growth', { longChars: 30000 })
-    // I change only the maintenance. What this part shows changed under me: said, theirs taken into the
+    // I change only when a page is stale. What this part shows changed under me: said, theirs taken into the
     // field I did not touch, mine kept; saving again keeps both.
-    await health.getByLabel('Maintenance every (approvals)').fill('25')
+    await health.getByLabel('Stale after (days)').fill('25')
     await health.getByRole('button', { name: 'Save' }).click()
     await expect(health.getByRole('alert')).toContainText('Someone changed this')
     await expect(health.getByLabel('Long after (characters)')).toHaveValue('30000')
-    await expect(health.getByLabel('Maintenance every (approvals)')).toHaveValue('25')
+    await expect(health.getByLabel('Stale after (days)')).toHaveValue('25')
     await health.getByRole('button', { name: 'Save' }).click()
     await expect(health.getByRole('status')).toContainText('Saved.')
     await s.settingsEdit('growth', { staleDays: 60 })
@@ -438,7 +438,6 @@ test.describe('settings of a brain', () => {
     await page.reload()
     await expect(health.getByLabel('Long after (characters)')).toHaveValue('30000')
     await expect(health.getByLabel('Stale after (days)')).toHaveValue('45')
-    await expect(health.getByLabel('Maintenance every (approvals)')).toHaveValue('25')
   })
 
   test('a draft lives in memory only and goes once saved: what another curator saves later shows', async ({

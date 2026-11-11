@@ -705,6 +705,22 @@ test.describe('the log', () => {
     await expect(page).toHaveURL(/\/wiki\/log$/)
   })
 
+  test('v0.6 CA17: a change a key wrote directly says so, and with which key', async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    await page.goto('/b/growth/wiki/log')
+    await page.getByLabel('Kind of change').selectOption('write')
+    await expect(page).toHaveURL(/kind=write/)
+    const line = page.getByRole('list', { name: 'Changes' }).getByRole('listitem')
+    await expect(line).toHaveCount(1)
+    await expect(line).toContainText('Written directly')
+    await expect(line).toContainText('with the key Claude Code laptop')
+    await expect(line).toContainText('Cleanup')
+  })
+
   test('a long log goes by pages, «Show more» adds the next', async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in', { log: 'much-data' })
     await page.goto('/b/growth/wiki/log')

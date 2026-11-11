@@ -282,6 +282,8 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
           kind: 'proposal',
           proposalId: String(row.id),
           summary: `${rest.length > 0 ? 'Partly approved' : 'Approved'}: ${String(row.title)}`,
+          // An approved maintenance proposal is a cleanup (spec v0.6 «Limpieza diaria»).
+          maintenance: Boolean(row.maintenance),
         })
       ).revised
     } catch (err) {

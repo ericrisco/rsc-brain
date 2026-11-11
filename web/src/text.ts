@@ -374,6 +374,13 @@ export const T = {
     read: 'Read only',
     write: 'Read and write',
     readerOnly: 'Read only: you are a reader in these brains, so a token cannot write there.',
+    // Spec v0.6: writing to a wiki directly, without a proposal.
+    wikiWrite: 'Writes to the wiki directly',
+    wikiWriteHint:
+      'Without this, its agent proposes changes and a curator approves them. With it, its changes apply at once; each one is in the log and can be undone.',
+    wikiWriteIn: (brain: string) => `Can write to the wiki of ${brain}`,
+    wikiWriteOn: (name: string, brain: string) => `${name} can now write to the wiki of ${brain} directly.`,
+    wikiWriteOff: (name: string, brain: string) => `${name} proposes again in ${brain}.`,
     expires: 'Expires in',
     days: (n: number) => `${n} days`,
     create: 'Create token',
@@ -741,13 +748,11 @@ export const T = {
       'Its stored meanings are deleted now and nothing more is sent. Word search keeps working.',
     health: 'Health thresholds',
     healthLead:
-      'When a page shows in Health as stale or long, and how often agents are asked for maintenance.',
+      'When a page shows in Health as stale or long. Agents are asked for a cleanup when nobody cleaned the wiki in a day.',
     staleDays: 'Stale after (days)',
     staleHint: 'A page with new entries about it and no change for this many days.',
     longChars: 'Long after (characters)',
     longHint: 'A page longer than this is suggested for a split.',
-    every: 'Maintenance every (approvals)',
-    everyHint: 'After this many approved proposals, Health suggests a maintenance pass.',
     import: {
       title: 'Import a documentation folder',
       lead: 'Fill this brain from a folder: a 02-DOCS folder (wiki/ and raw/) or an Obsidian vault, as a .zip, or a faithful export of another rsc-brain installation.',
@@ -1426,6 +1431,7 @@ export const T = {
       `Revision ${fmt(n)} · ${kind} by ${who || 'someone'}`,
     revisionKinds: {
       proposal: 'approved proposal',
+      write: 'written directly',
       direct: 'edit by hand',
       revert: 'restored',
       purge: 'purge',
@@ -1555,12 +1561,17 @@ export const T = {
     noDecisionsTitle: 'No decisions yet',
     noDecisionsLead: 'Decision pages appear here, newest first, once a curator approves them.',
     logTitle: 'Log',
+    // Spec v0.6: a change a key with the permission wrote, without a proposal; and a cleanup pass.
+    writtenDirectly: 'Written directly',
+    cleanup: 'Cleanup',
+    byKey: (who: string, key: string) => `by ${who || 'someone'}, with the key ${key}`,
     logLead: 'One line for each change applied to this wiki, newest first.',
     lines: (n: number) => plural(n, 'change'),
     kind: 'Kind of change',
     anyKind: 'All changes',
     logKinds: {
       proposal: 'Approved proposals',
+      write: 'Written directly by a key',
       direct: 'Edits by hand',
       revert: 'Restored revisions',
       purge: 'Purges',
@@ -2391,10 +2402,10 @@ export const T = {
       similarTitles: ['the pair of almost equal titles', 'pairs of almost equal titles'],
     } as Record<string, readonly [string, string]>,
     allProblems: (n: number) => (n === 1 ? 'the 1 problem' : `all ${n} problems`),
-    maintenance: (n: number) =>
-      `${n} proposals were approved since the last maintenance. Ask an agent for a maintenance proposal.`,
+    maintenance: (last: string | null) =>
+      `${last ? `The last cleanup was ${last}.` : 'This wiki has never been cleaned.'} Agents that start work here are asked for one; you can ask one now.`,
     maintenanceAsk: (brain: string) =>
-      `Use brain_health and brain_compile_pack, then brain_propose a maintenance proposal for the brain "${brain}".`,
+      `Use brain_health to see what needs care in the wiki of the brain "${brain}", fix what you can, and send it as one change marked as maintenance: brain_propose (or brain_write, if your key may write) with "maintenance": true.`,
     copyMaintenance: 'Copy the instruction',
     showAll: (n: number) => `Show all ${n}`,
     showLess: 'Show fewer',

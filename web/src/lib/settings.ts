@@ -60,11 +60,11 @@ export function memberRows(members: readonly Member[], me: string): MemberRow[] 
   }))
 }
 
-// The health thresholds, with the ranges the server accepts (src/domain/wiki/direct.ts).
+// The health thresholds, with the ranges the server accepts (src/domain/wiki/direct.ts). Since v0.6 a cleanup is
+// suggested daily, so how often by approvals is no longer one of them.
 export const THRESHOLDS = {
   staleDays: { min: 1, max: 3650 },
   longChars: { min: 1000, max: 100_000 },
-  maintenanceEvery: { min: 1, max: 1000 },
 } as const
 export type ThresholdName = keyof typeof THRESHOLDS
 
@@ -88,7 +88,6 @@ export type SettingsRead = {
   meaningExcluded: boolean
   staleDays: number
   longChars: number
-  maintenanceEvery: number
 }
 type Edit = Partial<{
   guide: string
@@ -96,7 +95,6 @@ type Edit = Partial<{
   meaningExcluded: boolean
   staleDays: number
   longChars: number
-  maintenanceEvery: number
 }>
 export type SettingsBody = Record<string, unknown> & { base: Record<string, unknown> }
 
@@ -118,7 +116,7 @@ export function settingsSave(read: SettingsRead, edit: Edit): SettingsBody {
     out.base.usageNote = read.usageNote
     if (edit.usageNote.trim() !== read.usageNote) out.usageNote = edit.usageNote.trim()
   }
-  for (const k of ['meaningExcluded', 'staleDays', 'longChars', 'maintenanceEvery'] as const) {
+  for (const k of ['meaningExcluded', 'staleDays', 'longChars'] as const) {
     if (edit[k] === undefined) continue
     out.base[k] = read[k]
     if (edit[k] !== read[k]) out[k] = edit[k]

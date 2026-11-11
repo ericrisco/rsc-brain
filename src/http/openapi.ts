@@ -37,6 +37,45 @@ const obj = (properties: Record<string, Schema>, optional: string[] = []): Schem
 })
 const NEXT = nul(s('The value to ask for the next page with; null on the last page.'))
 const DATE = s('When.', { format: 'date-time' })
+// What a change would leave incoherent, and the pages around it (spec v0.6).
+const CHECKED = {
+  coherence: list(
+    obj({
+      code: s('What is wrong.', {
+        enum: ['duplicate_title', 'broken_link', 'orphan_created', 'stale_page', 'open_conflict'],
+      }),
+      message: s('Said in words.'),
+      addresses: list(s('An address.'), 'The pages it is about.'),
+    }),
+    'Warnings on the wiki as it would be after the change. They never block.',
+  ),
+  neighbours: list(
+    obj({
+      address: s('The page.'),
+      title: s('Its title.'),
+      summary: s('Its summary.'),
+      type: s('Its type.'),
+      status: s('current or stale.'),
+      revision: n('Its revision now.'),
+      link: obj({
+        page: s('The page the change touches.'),
+        kind: s('The kind of link.'),
+        direction: s('out: from that page; in: to it.'),
+      }),
+    }),
+    'The pages linked to what the change touches (at most 20), to read for contradictions in meaning.',
+  ),
+}
+const WRITER = obj({
+  keyId: s('The key: a token or main key (crd_…), or a connected app (app_…).'),
+  kind: s('token, main or app.'),
+  name: s('The name of the key, or of the app.'),
+  last4: nul(s('Its last four characters; null for an app.')),
+  owner: s('Whose key it is.'),
+  ownerId: s('Their account id.'),
+  grantedBy: s('The curator who gave the permission.'),
+  grantedAt: DATE,
+})
 const WIKI_SETTINGS = obj({
   guide: s('The compile guide in use.'),
   guideDefault: s('The default compile guide.'),
@@ -47,8 +86,10 @@ const WIKI_SETTINGS = obj({
   meaningExcluded: b('Left out of meaning search.'),
   staleDays: n('Days after which a page with new entries counts as stale.'),
   longChars: n('Characters after which a page counts as long.'),
-  maintenanceEvery: n('Approvals between maintenance suggestions.'),
-  approvalsSince: n('Approvals since the last maintenance suggestion.'),
+  maintenanceEvery: n(
+    'Kept for API v1: since v0.6 a cleanup is suggested daily, not every so many approvals.',
+  ),
+  approvalsSince: n('Kept for API v1: approvals since a curator last asked for maintenance.'),
 })
 const MEMBER_SET = obj({
   accountId: s('Account id.'),
@@ -776,7 +817,7 @@ const HAND: Record<string, Op> = {
   },
   'GET /v1/brains/{slug}/wiki/health': {
     summary:
-      'The checks of the wiki (no AI): orphans, broken links, conflicts, stale pages, sources no longer available, long pages, titles almost the same; and whether a maintenance proposal is due.',
+      'The checks of the wiki (no AI): orphans, broken links, conflicts, stale pages, sources no longer available, long pages, titles almost the same; and whether a cleanup is due (daily, since v0.6).',
     reply: (() => {
       const ref = obj({ address: s('The page.'), title: s('Its title.') })
       const pair = obj({
@@ -814,9 +855,13 @@ const HAND: Record<string, Op> = {
         long: list(obj({ address: s('The page.'), title: s('Its title.'), chars: n('Its length.') })),
         similarTitles: list(pair),
         maintenance: obj({
-          suggested: b('A maintenance proposal is due.'),
-          approvalsSince: n('Approvals since the last one.'),
-          every: n('Every how many approvals.'),
+          suggested: b(
+            'A cleanup is due: there are problems, none was approved or written in the last 24 hours, and none waits for approval.',
+          ),
+          lastAt: nul(s('The last cleanup approved or written.', { format: 'date-time' })),
+          pending: b('A maintenance proposal waits for approval.'),
+          approvalsSince: n('Kept for API v1; decides nothing since v0.6.'),
+          every: n('Kept for API v1; decides nothing since v0.6.'),
         }),
       })
     })(),
@@ -824,7 +869,7 @@ const HAND: Record<string, Op> = {
   'GET /v1/brains/{slug}/wiki/log': {
     summary: 'One line per change applied to the wiki, newest first.',
     query: {
-      kind: 'proposal, direct, revert or purge.',
+      kind: 'proposal, direct, revert, purge or write.',
       page: 'Only lines that touched this address.',
       cursor: 'The "next" of the previous page.',
       limit: 'Lines per answer.',
@@ -836,11 +881,16 @@ const HAND: Record<string, Op> = {
           at: s('When.', { format: 'date-time' }),
           actorId: s('Who.'),
           actorName: s('Their name.'),
-          kind: s('proposal, direct, revert or purge.', { enum: ['proposal', 'direct', 'revert', 'purge'] }),
+          kind: s(
+            'proposal (approved), direct (by hand in the web), revert, purge, or write (written directly by a key with the permission).',
+            { enum: ['proposal', 'direct', 'revert', 'purge', 'write'] },
+          ),
           proposalId: nul(s('The proposal it applied.')),
           summary: s('What changed.'),
           reason: nul(s('Why: the curator’s reason, or the proposal’s.')),
           pages: list(s('Address.')),
+          keyName: nul(s('For a write: the key that wrote it, by its name then.')),
+          maintenance: b('A maintenance pass: an approved maintenance proposal or a write marked as one.'),
         }),
       ),
       next: NEXT,
@@ -1106,8 +1156,12 @@ const HAND: Record<string, Op> = {
         brains: list(s('The name of a brain.'), 'The brains it reaches.'),
         allBrains: b('Every brain you are a member of, including brains you join later.'),
         days: n('30, 90 or 365 (90 by default).'),
+        wikiWrite: list(
+          s('The name of a brain.'),
+          'The brains where it may write to the wiki directly, without a proposal: each one where you are a curator and the token reaches.',
+        ),
       },
-      ['brains', 'allBrains', 'days'],
+      ['brains', 'allBrains', 'days', 'wikiWrite'],
     ),
     reply: obj(
       {
@@ -1141,10 +1195,26 @@ const HAND: Record<string, Op> = {
           expiresSoon: b('It ends within the notice period.'),
           lastUsedAt: nul(s('Its last request; null until its first.', { format: 'date-time' })),
           lastClient: nul(s('The program that made its last request.')),
+          wikiWrite: list(s('The name of a brain.'), 'The brains where it may write to the wiki directly.'),
         }),
         'Working ones first, newest first; then the expired ones.',
       ),
     }),
+  },
+  'GET /v1/brains/{slug}/wiki/writers': {
+    summary:
+      'The keys that may write to the wiki of the brain directly, without a proposal (its curators). A short key writes with the permission of the main key that made it.',
+    reply: obj({ writers: list(WRITER) }),
+  },
+  'PUT /v1/brains/{slug}/wiki/writers/{keyId}': {
+    summary:
+      'Let a key write to the wiki of the brain directly (a curator of the brain, in the rsc-brain web only). The key must reach the brain with read + write, and be of a contributor or curator. Giving it twice is once.',
+    reply: obj({ writer: WRITER }),
+  },
+  'DELETE /v1/brains/{slug}/wiki/writers/{keyId}': {
+    summary:
+      'Take the permission back (a curator of the brain, from the web or a key): from the next request the key proposes again. What it wrote stays.',
+    reply: obj({ removed: s('The key.') }),
   },
   'DELETE /v1/me/tokens/{id}': {
     summary: 'Revoke one of your tokens (the rsc-brain web only): it stops at its next request.',
@@ -1697,27 +1767,41 @@ const HAND: Record<string, Op> = {
   'GET /v1/brains/{slug}/context': {
     summary: 'The start context of a brain, for a task and size.',
     query: { task: 'What you are about to do.', max: 'Characters (4000–128000).' },
-    reply: obj({
-      text: s('The context.'),
-      chars: n('Its length.'),
-      included: { type: 'object' },
-      omitted: { type: 'object' },
-      items: list(
-        obj(
-          {
-            section: s('The part it is in, as counted in included.'),
-            kind: s('entry or page.', { enum: ['entry', 'page'] }),
-            id: s('The entry or page id, as in its delimiter.'),
-            type: s('Its type.'),
-            title: s('Its title.'),
-            address: s('A page: its address.'),
-          },
-          ['address'],
+    reply: obj(
+      {
+        text: s('The context.'),
+        chars: n('Its length.'),
+        included: { type: 'object' },
+        omitted: { type: 'object' },
+        items: list(
+          obj(
+            {
+              section: s('The part it is in, as counted in included.'),
+              kind: s('entry or page.', { enum: ['entry', 'page'] }),
+              id: s('The entry or page id, as in its delimiter.'),
+              type: s('Its type.'),
+              title: s('Its title.'),
+              address: s('A page: its address.'),
+            },
+            ['address'],
+          ),
+          'Each entry and page included, in the order of the text (added in F1-PR13; the map lines are not items).',
         ),
-        'Each entry and page included, in the order of the text (added in F1-PR13; the map lines are not items).',
-      ),
-      max: n('The size it was built for.'),
-    }),
+        max: n('The size it was built for.'),
+        cleanup: obj({
+          lastAt: nul(s('The last cleanup approved or written.', { format: 'date-time' })),
+          problems: n('How many problems the health has.'),
+          counts: {
+            type: 'object',
+            description:
+              'How many of each: orphans, broken, conflicts, stale, unavailableSources, long, similarTitles.',
+          },
+          health: { type: 'object', description: 'The health report, each list cut to its first 20.' },
+          suggestion: s('What to do, in words.'),
+        }),
+      },
+      ['cleanup'],
+    ),
   },
   'GET /v1/brains/{slug}/proposals': {
     summary: 'Proposals of a brain (mine=1 for yours); the first page counts each status.',
@@ -1769,10 +1853,61 @@ const HAND: Record<string, Op> = {
         ops: list({ type: 'object' }, 'The operations.'),
         collected: list(s('Entry id.')),
         supersedes: s('A pending proposal of yours it replaces.'),
+        maintenance: b(
+          'This is a cleanup of the wiki (a maintenance pass): approved, it counts as the daily cleanup.',
+        ),
       },
-      ['reason', 'collected', 'supersedes'],
+      ['reason', 'collected', 'supersedes', 'maintenance'],
     ),
-    reply: { type: 'object' },
+    reply: {
+      type: 'object',
+      description: 'The proposal, its operations, its warnings, and (v0.6) coherence and neighbours.',
+    },
+  },
+  'POST /v1/brains/{slug}/wiki/check': {
+    summary:
+      'What a change would do, without doing it (anyone who may propose): the problems that would block it; and when there are none, the warnings on the wiki as it would be and the pages linked to what it touches.',
+    body: obj(
+      {
+        title: s('What it changes.'),
+        reason: s('Why.'),
+        ops: list({ type: 'object' }, 'The operations, as in a proposal.'),
+        collected: list(s('Entry id.')),
+      },
+      ['reason', 'collected'],
+    ),
+    reply: obj({
+      problems: list(
+        obj({ op: nul(n('The operation, or null for the whole.')), message: s('What to fix.') }),
+      ),
+      ...CHECKED,
+    }),
+  },
+  'POST /v1/brains/{slug}/wiki/write': {
+    summary:
+      'Write to the wiki at once, without a proposal: only a key a curator of the brain gave the permission (403 wiki_write_not_allowed otherwise, with how to propose instead). The operations and checks of a proposal; all apply or none. An edit whose page changed since its baseRevision is refused (409 page_changed, with "current"). A retry with the same requestKey returns the same receipt.',
+    status: 201,
+    body: obj(
+      {
+        title: s('What it changes.'),
+        reason: s('Why.'),
+        ops: list({ type: 'object' }, 'The operations, as in a proposal.'),
+        collected: list(s('Entry id.'), 'Entries read that add nothing new: they leave the uncompiled list.'),
+        maintenance: b('This is a cleanup of the wiki (a maintenance pass).'),
+        requestKey: s('Repeating the request with the same key returns the same receipt.'),
+      },
+      ['reason', 'collected', 'maintenance', 'requestKey'],
+    ),
+    reply: obj({
+      ...CHECKED,
+      applied: b('Always true: it was written.'),
+      logId: s('Its line in the log of the wiki.'),
+      revised: list(
+        obj({ index: n('The operation.'), address: s('The page.'), revision: n('The revision it made.') }, [
+          'index',
+        ]),
+      ),
+    }),
   },
   'GET /v1/brains/{slug}/trail': {
     summary: 'What was searched and read, by ref, session or page.',
@@ -2220,7 +2355,7 @@ const HAND: Record<string, Op> = {
         meaningExcluded: b('Leave this brain out of meaning search (its vectors are deleted).'),
         staleDays: n('Days after which a page with new entries counts as stale (1–3650).'),
         longChars: n('Characters after which a page counts as long (1000–100000).'),
-        maintenanceEvery: n('Approvals between maintenance suggestions (1–1000).'),
+        maintenanceEvery: n('Kept for API v1 (1–1000); since v0.6 it decides nothing.'),
       },
       [
         'revision',

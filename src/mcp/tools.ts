@@ -459,6 +459,7 @@ export const TOOLS: Tool[] = [
           description: 'Entry ids compiled with no change to the wiki.',
         },
         supersedes: str('The id of a pending proposal of yours that this one replaces.'),
+        maintenance: { type: 'boolean', description: 'This is a cleanup of the wiki (a maintenance pass).' },
       },
       ['title', 'ops'],
     ),
@@ -467,7 +468,75 @@ export const TOOLS: Tool[] = [
     call: async (a, k) => ({
       method: 'POST',
       path: `/v1/brains/${enc(await k.brain(a))}/proposals`,
-      body: pick(a, ['title', 'reason', 'ops', 'collected', 'supersedes']),
+      body: pick(a, ['title', 'reason', 'ops', 'collected', 'supersedes', 'maintenance']),
+    }),
+  },
+  {
+    name: 'brain_check',
+    title: 'Check wiki changes',
+    description:
+      'What a change to the wiki would break, before sending it: the problems that would block it, the warnings (duplicate_title, broken_link, orphan_created, stale_page, open_conflict) on the wiki as it would be, and the pages linked to what it touches, to read for contradictions. Writes nothing.',
+    inputSchema: obj(
+      {
+        brain: BRAIN,
+        session: SESSION,
+        title: str('What it changes, in one line.'),
+        reason: str('Why.'),
+        ops: {
+          type: 'array',
+          items: { type: 'object' },
+          minItems: 1,
+          description: 'The operations, as for brain_propose or brain_write.',
+        },
+        collected: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Entry ids compiled with no change.',
+        },
+      },
+      ['title', 'ops'],
+    ),
+    writes: false,
+    annotations: { readOnlyHint: true },
+    call: async (a, k) => ({
+      method: 'POST',
+      path: `/v1/brains/${enc(await k.brain(a))}/wiki/check`,
+      body: pick(a, ['title', 'reason', 'ops', 'collected']),
+    }),
+  },
+  {
+    name: 'brain_write',
+    title: 'Write to the wiki',
+    description:
+      'Applies changes to the wiki at once, when a curator gave your key the permission to write to it; otherwise use brain_propose. The same operations as a proposal, checked the same way; an edit names the revision it read. Returns the revisions made.',
+    inputSchema: obj(
+      {
+        brain: BRAIN,
+        session: SESSION,
+        title: str('What it changes, in one line.'),
+        reason: str('Why.'),
+        ops: {
+          type: 'array',
+          items: { type: 'object' },
+          minItems: 1,
+          description: 'The operations (see the guide in brain_compile_pack).',
+        },
+        collected: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Entry ids compiled with no change to the wiki.',
+        },
+        maintenance: { type: 'boolean', description: 'This is a cleanup of the wiki (a maintenance pass).' },
+        requestKey: str('Any unique text: repeating the call with the same key returns the same receipt.'),
+      },
+      ['title', 'ops'],
+    ),
+    writes: true,
+    annotations: { readOnlyHint: false, idempotentHint: true },
+    call: async (a, k) => ({
+      method: 'POST',
+      path: `/v1/brains/${enc(await k.brain(a))}/wiki/write`,
+      body: pick(a, ['title', 'reason', 'ops', 'collected', 'maintenance', 'requestKey']),
     }),
   },
   {

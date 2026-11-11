@@ -68,7 +68,7 @@ export const BACKUP_TABLES: readonly BackupTable[] = [
   t(
     'proposals',
     `id brain_id title reason author_id credential_id agent status supersedes_id superseded_by collected comment
-     decided_by decided_at last_error created_at purged_by purged_at purged_reason`,
+     decided_by decided_at last_error created_at purged_by purged_at purged_reason maintenance`,
   ),
   t(
     'proposal_ops',
@@ -89,6 +89,7 @@ export const BACKUP_TABLES: readonly BackupTable[] = [
   t('page_links', 'brain_id from_page kind to_page to_address', 'brain_id from_page kind to_address'),
   t('page_sources', 'page_id entry_id url title', 'page_id entry_id url'),
   t('memberships', 'brain_id account_id role created_at notify_proposals', 'brain_id account_id'),
+  t('wiki_writers', 'brain_id key_id granted_by granted_at', 'brain_id key_id'),
   t(
     'invitations',
     `id email token_hash grants is_admin can_create_brains invited_by created_at expires_at used_at revoked_at
@@ -100,7 +101,10 @@ export const BACKUP_TABLES: readonly BackupTable[] = [
   t('events', 'id brain_id at kind account_id credential_id ref target_id label query result_ids seq client'),
   t('trail', 'id brain_id at account_id credential_id ref kind query result_ids session_id'),
   t('trail_counts', 'brain_id target_id reads searches contexts until', 'brain_id target_id'),
-  t('wiki_log', 'id brain_id at actor_id kind proposal_id summary pages reason'),
+  t(
+    'wiki_log',
+    'id brain_id at actor_id kind proposal_id summary pages reason credential_id key_name maintenance',
+  ),
   t(
     'wiki_settings',
     `brain_id guide map_intro stale_days long_chars maintenance_every approvals_since usage_note meaning_excluded`,

@@ -89,6 +89,9 @@ export type LogLine = {
   summary: string
   reason?: string | null
   pages: string[]
+  // Written directly by a key with the permission (kind "write", v0.6): the key's name; and a cleanup.
+  keyName?: string | null
+  maintenance?: boolean
 }
 export type Listing<T> = { items: T[]; next: string | null; total: number }
 export type TrailLine = {

@@ -23,11 +23,16 @@ export class ApplyError extends AppError {
 
 export type ApplyItem = { op: Op; index?: number; corrected?: boolean; baseReviewed?: boolean }
 export type ApplyMeta = {
-  kind: 'proposal' | 'direct' | 'revert'
+  // 'write': a key with the permission wrote it directly (spec v0.6).
+  kind: 'proposal' | 'direct' | 'revert' | 'write'
   proposalId?: string
   summary: string
   // Why, for a change by hand or a restore (a proposal keeps its reasons on itself and its operations).
   reason?: string
+  // The key that wrote it directly, by its name then (spec v0.6 «escrito directamente por <clave>»).
+  keyName?: string
+  // A maintenance pass: an approved maintenance proposal or a write marked as one (spec v0.6 «Limpieza diaria»).
+  maintenance?: boolean
 }
 export type Revised = { index?: number; pageId: string; address: string; revision: number }
 
@@ -58,7 +63,7 @@ export async function applyOps(
   brainId: string,
   items: ApplyItem[],
   meta: ApplyMeta,
-): Promise<{ revised: Revised[]; pages: string[] }> {
+): Promise<{ revised: Revised[]; pages: string[]; logId: string }> {
   // One writer per brain's wiki at a time: approvals, direct edits and reverts queue here.
   await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`wiki:${brainId}`])
   const now = ctx.clock()
@@ -419,10 +424,13 @@ export async function applyOps(
   }
 
   const pages = [...touched]
+  const logId = newId('wlg')
   await db.query(
-    'INSERT INTO wiki_log (id, brain_id, at, actor_id, kind, proposal_id, summary, pages, reason) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+    `INSERT INTO wiki_log (id, brain_id, at, actor_id, kind, proposal_id, summary, pages, reason, credential_id,
+       key_name, maintenance)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
     [
-      newId('wlg'),
+      logId,
       brainId,
       now,
       ctx.who.accountId,
@@ -431,6 +439,9 @@ export async function applyOps(
       meta.summary.slice(0, 500),
       pages,
       meta.kind === 'proposal' ? null : (meta.reason ?? null),
+      ctx.who.credential.id,
+      meta.keyName?.slice(0, 200) ?? null,
+      Boolean(meta.maintenance),
     ],
   )
   await emit(db, ctx, {
@@ -439,5 +450,5 @@ export async function applyOps(
     targetId: meta.proposalId ?? null,
     label: meta.summary,
   })
-  return { revised, pages }
+  return { revised, pages, logId }
 }
