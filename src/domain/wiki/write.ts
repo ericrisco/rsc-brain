@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto'
 import { AppError, conflict, invalid } from '../../core/errors.ts'
 import type { Db } from '../../db/db.ts'
 import { allow, type Ctx, inBrain } from '../context.ts'
-import { type Checked, checkChange } from './coherence.ts'
+import { type Checked, checkChange, checksNow } from './coherence.ts'
 import type { Op, Problem } from './model.ts'
 import { getPage } from './pages.ts'
 import { knownAddresses, type ProposalInput, problemsOf, readPackage } from './proposals.ts'
@@ -16,11 +16,31 @@ import { keyIdOf, mayWriteWiki } from './writers.ts'
 
 export type WriteInput = ProposalInput & { maintenance?: boolean; requestKey?: string }
 
-export type WriteReceipt = {
+// What a retry with the same request key gets again, as stored: ids and revisions only, never page text (a purge
+// since must not survive in it). Warnings and neighbours are added to it from the wiki as it stands.
+type Stored = {
   applied: true
   logId: string
   revised: { index?: number; address: string; revision: number }[]
-} & Checked
+}
+export type WriteReceipt = Stored & Checked
+
+// The checks of a stored receipt, from the pages it wrote as they are now (by any address they have had).
+async function rebuilt(db: Db, brainId: string, r: Stored, now: Date): Promise<WriteReceipt> {
+  const ids = await db.query<{ id: string }>(
+    'SELECT DISTINCT page_id AS id FROM page_addresses WHERE brain_id = $1 AND address = ANY($2)',
+    [brainId, r.revised.map((x) => x.address)],
+  )
+  return {
+    ...r,
+    ...(await checksNow(
+      db,
+      brainId,
+      ids.map((x) => x.id),
+      now,
+    )),
+  }
+}
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 
@@ -68,12 +88,15 @@ export async function writeWiki(ctx: Ctx, slug: string, input: WriteInput): Prom
       await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
         `${ctx.who.credential.id}:${keyHash}`,
       ])
-      const seen = await db.one<{ request_hash: string; receipt: WriteReceipt }>(
+      const seen = await db.one<{ request_hash: string; receipt: Stored }>(
         'SELECT request_hash, receipt FROM request_keys WHERE credential_id = $1 AND key = $2',
         [ctx.who.credential.id, keyHash],
       )
       if (seen) {
-        if (seen.request_hash === requestHash) return seen.receipt
+        if (seen.request_hash === requestHash) {
+          const { applied, logId, revised } = seen.receipt
+          return rebuilt(db, brain.id, { applied, logId, revised }, ctx.clock())
+        }
         throw conflict(
           'request_key_reused',
           'This request key was already used for a different request.',
@@ -135,7 +158,7 @@ export async function writeWiki(ctx: Ctx, slug: string, input: WriteInput): Prom
         [...cited],
       ])
     }
-    const receipt: WriteReceipt = {
+    const stored: Stored = {
       applied: true,
       logId,
       revised: revised.map((r) => ({
@@ -143,16 +166,14 @@ export async function writeWiki(ctx: Ctx, slug: string, input: WriteInput): Prom
         address: r.address,
         revision: r.revision,
       })),
-      coherence,
-      neighbours,
     }
     if (keyHash && requestHash) {
       await db.query(
         'INSERT INTO request_keys (credential_id, key, request_hash, receipt, created_at) VALUES ($1, $2, $3, $4, $5)',
-        [ctx.who.credential.id, keyHash, requestHash, JSON.stringify(receipt), ctx.clock()],
+        [ctx.who.credential.id, keyHash, requestHash, JSON.stringify(stored), ctx.clock()],
       )
     }
-    return receipt
+    return { ...stored, coherence, neighbours }
   })
 }
 

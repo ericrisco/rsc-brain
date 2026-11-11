@@ -194,6 +194,22 @@ async function after(db: Db, brainId: string, b: Before, touched: string[]): Pro
   return { coherence: out, neighbours }
 }
 
+// The warnings and neighbours of pages as the wiki stands now, for a change applied earlier: the receipt a retry
+// returns keeps no page text (a purge since must not come back through it), so they are worked out again. Nothing
+// is known of before: a page with no links counts as an orphan the change left.
+export async function checksNow(db: Db, brainId: string, pageIds: string[], now: Date): Promise<Checked> {
+  if (pageIds.length === 0) return NONE
+  const s = await settingsOf(db, brainId)
+  const cutoff = new Date(now.getTime() - s.staleDays * 86_400_000)
+  const stale = await db.query(
+    `SELECT p.address FROM pages p WHERE p.id = ANY($1) AND ${LIVE}
+        AND (p.status = 'stale' OR (p.updated_at < $2 AND EXISTS (SELECT 1 FROM entries e WHERE ${WRITTEN_ABOUT_SINCE})))
+      ORDER BY p.address`,
+    [pageIds, cutoff],
+  )
+  return after(db, brainId, { known: [], around: [], orphans: new Set(), stale }, pageIds)
+}
+
 // Applies `ops` inside the caller's transaction and returns the warnings of the result. `keep`: a direct write,
 // which stays; otherwise (a proposal, a check) everything it did is undone before returning. A change that cannot
 // be applied as it stands (a proposal that waits on another) brings no warnings: they are advice, never a refusal.
