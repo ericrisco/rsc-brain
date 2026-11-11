@@ -380,6 +380,23 @@ the web, never with a key), and any curator takes it back; it counts from the ne
 - A key without it gets `403 wiki_write_not_allowed`, which says how to propose instead.
 - A short key of a service writes with the permission of the main key that made it.
 
+### Deciding proposals with a key
+
+The same permission lets a key decide the proposals of that brain, as a curator does in the web. It lists them
+(`brain_proposals` with `"mine": false`), reads one as a curator sees it, with its `fingerprint`
+(`brain_review`, or `GET /v1/proposals/:id/review`), and decides it (`brain_decide`, or
+`POST /v1/proposals/:id/approve` and `POST /v1/proposals/:id/return`):
+
+- approve it all; approve the operations in `approve` and send the rest back with a `comment`; correct an
+  operation in `corrections` and approve; or send it all back with a `comment`. What is approved applies all
+  at once or not at all, and an operation needs those it depends on.
+- Only what was read is approved: a `fingerprint` that no longer matches gets `409 proposal_changed` with the
+  current review, and nothing applies. A proposal decided already gets `409 already_decided`.
+- The log and the activity say who decided and with which key. The agent that proposed gets the comment as a
+  correction. Repeating a decision with the same `requestKey` decides once and returns the same result.
+- A key without the permission gets `403 web_only`. The permission is checked on every request, so taking it
+  back between reading and deciding refuses the decision.
+
 ### Warnings before and after a change
 
 A proposal, a direct write, and a check that writes nothing (`brain_check`, or
@@ -420,7 +437,7 @@ works, never save secrets, close with a summary.
   `mem_suggest_topic`, `mem_relate`, `mem_forget`, `mem_session_summary`, `mem_session_end`,
   `mem_search`, `mem_get`, `mem_timeline`, `brain_page`, `brain_neighbors`, `brain_map`,
   `brain_health`, `brain_compile_pack`, `brain_check`, `brain_write`, `brain_propose`, `brain_proposals`,
-  `brain_withdraw`, `brain_create`. A key sees only the tools it may use.
+  `brain_review`, `brain_decide`, `brain_withdraw`, `brain_create`. A key sees only the tools it may use.
 - Each tool runs the same `/v1` route a program would, with the same key: the same checks, limits
   and results.
 - Curators link repositories to their brain, so an agent finds it with `brain_resolve`.
