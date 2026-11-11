@@ -1,0 +1,202 @@
+{
+  "about": "Spec v0.6: a fixed set of searches over a small wiki shaped like a real brain's, with the first results each must give when search ranks by BM25. Words that are everywhere (brain, wiki, graph, page) and words that are rare (louvain, rrf, bm25, totp) on purpose.",
+  "pages": [
+    {
+      "address": "brain/overview",
+      "title": "What the brain is",
+      "summary": "One installation, many brains.",
+      "body": "A brain keeps a journal agents write freely and a wiki people approve. The brain answers over MCP and HTTP. Every brain has members: curators, contributors and readers. The brain never runs a model of its own."
+    },
+    {
+      "address": "brain/journal",
+      "title": "The journal",
+      "summary": "Entries agents write freely.",
+      "body": "Agents save entries to the journal of a brain: decisions, learnings, attempts, facts. The journal is searched with the wiki. A brain journal entry can be forgotten or purged."
+    },
+    {
+      "address": "wiki/proposals",
+      "title": "Proposals",
+      "summary": "How the wiki changes.",
+      "body": "The wiki changes through proposals an agent sends and a curator approves in the web. A proposal carries operations: create, edit, move, link, status, merge and revert. The wiki keeps every revision."
+    },
+    {
+      "address": "wiki/health",
+      "title": "Wiki health",
+      "summary": "What needs care in the wiki.",
+      "body": "The wiki checks itself: orphan pages, broken links, open contradictions, stale pages, long pages and titles almost the same. The health of the wiki is shown in the web for every brain."
+    },
+    {
+      "address": "wiki/graph",
+      "title": "The graph of the wiki",
+      "summary": "Pages as a living graph.",
+      "body": "The graph of the wiki draws every page as a node and every link as an edge. The graph moves; the graph can be filtered; the graph shows the page you open. Graph nodes are coloured by their community, found with Louvain over the links."
+    },
+    {
+      "address": "wiki/graph-layout",
+      "title": "Graph layout",
+      "summary": "How the graph is drawn.",
+      "body": "The graph layout places graph nodes with forces. Graph edges pull, graph nodes push, the graph settles. A big graph is drawn in a worker so the graph never blocks the page. Graph labels show when the graph is zoomed."
+    },
+    {
+      "address": "search/how",
+      "title": "How search works",
+      "summary": "Words, phrases and meaning.",
+      "body": "Search finds entries and pages together, by any of the words, by quoted phrases and without excluded words, in Spanish and English forms and without accents. With pg_search it ranks by BM25. Meaning search is optional."
+    },
+    {
+      "address": "search/meaning",
+      "title": "Meaning search",
+      "summary": "Close in meaning, optional.",
+      "body": "When the administration turns it on, texts are sent to a provider and stored as vectors. Words and meaning are mixed by reciprocal rank fusion, RRF, so a result found both ways comes first."
+    },
+    {
+      "address": "search/order",
+      "title": "The order of results",
+      "summary": "Bands, current pages, superseded last.",
+      "body": "Results within fifteen percent share a band; inside a band a current page goes first, then the newest. A superseded page never goes before the page that replaced it."
+    },
+    {
+      "address": "keys/tokens",
+      "title": "Personal tokens",
+      "summary": "Keys people make for their agents.",
+      "body": "A person makes a token in the profile for an agent: its brains, read or read and write, and how long it lasts. The token is shown once. A curator can let a token write to the wiki directly."
+    },
+    {
+      "address": "keys/second-factor",
+      "title": "Second factor",
+      "summary": "TOTP for people who sign in.",
+      "body": "People who sign in to the web can add a second factor: a TOTP code from an authenticator app, with recovery codes. The key of the second factor is shown in groups of four."
+    },
+    {
+      "address": "ops/backups",
+      "title": "Backups",
+      "summary": "The daily copy and restoring it.",
+      "body": "rsc-brain makes a daily copy of the database and keeps fourteen. A copy restores into a new installation. A copy made with pg_dump restores with pg_restore too."
+    },
+    {
+      "address": "ops/updates",
+      "title": "Updates",
+      "summary": "Updating from the web.",
+      "body": "The administration updates rsc-brain from the web to a published version, with a way back if the update fails. Writes wait during maintenance; reads keep working."
+    },
+    {
+      "address": "notes/graph-ideas",
+      "title": "Graph ideas",
+      "summary": "Things to try on the graph.",
+      "body": "Ideas for the graph: a graph minimap, graph search, graph clusters, a graph timeline. Maybe a graph of the journal too."
+    },
+    {
+      "address": "notes/brain-names",
+      "title": "Brain names",
+      "summary": "How brains are named.",
+      "body": "A brain name is a slug: lowercase words joined by hyphens. The brain name appears in every address of the brain."
+    }
+  ],
+  "queries": [
+    {
+      "q": "louvain graph",
+      "first": [
+        "wiki/graph"
+      ],
+      "why": "the rare word wins over the page that repeats the common one"
+    },
+    {
+      "q": "graph layout",
+      "first": [
+        "wiki/graph-layout"
+      ],
+      "why": "both words, one of them in the title"
+    },
+    {
+      "q": "totp",
+      "first": [
+        "keys/second-factor"
+      ],
+      "why": "a rare word in the summary and the body"
+    },
+    {
+      "q": "rrf meaning",
+      "first": [
+        "search/meaning"
+      ],
+      "why": "the rare word and the title word"
+    },
+    {
+      "q": "bm25 search",
+      "first": [
+        "search/how"
+      ],
+      "why": "the rare word, and search in its title"
+    },
+    {
+      "q": "superseded order",
+      "first": [
+        "search/order"
+      ],
+      "why": "the title word and the rarer word"
+    },
+    {
+      "q": "brain journal",
+      "first": [
+        "brain/journal"
+      ],
+      "why": "journal in the title beats brain everywhere"
+    },
+    {
+      "q": "pg_restore",
+      "first": [
+        "ops/backups"
+      ],
+      "why": "a rare technical word"
+    },
+    {
+      "q": "token write wiki",
+      "first": [
+        "keys/tokens"
+      ],
+      "why": "token is rare and in the title; wiki is common"
+    },
+    {
+      "q": "proposals curator",
+      "first": [
+        "wiki/proposals"
+      ],
+      "why": "the title word"
+    },
+    {
+      "q": "graph community",
+      "first": [
+        "wiki/graph"
+      ],
+      "why": "community is rare; the newer notes repeat graph"
+    },
+    {
+      "q": "graph worker",
+      "first": [
+        "wiki/graph-layout"
+      ],
+      "why": "worker is rare"
+    },
+    {
+      "q": "stale pages",
+      "first": [
+        "wiki/health"
+      ],
+      "why": "stale is rarer than pages"
+    },
+    {
+      "q": "copy restore",
+      "first": [
+        "ops/backups"
+      ],
+      "why": "both words, in one page only"
+    },
+    {
+      "q": "agents write",
+      "first": [
+        "brain/journal"
+      ],
+      "why": "journal is about agents writing"
+    }
+  ]
+}

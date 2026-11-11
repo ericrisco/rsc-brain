@@ -4,6 +4,14 @@
 // Forgotten entries only for curators who ask, purged ones never, retired pages never.
 import { AppError, invalid } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
+import {
+  BM25_FIELDS,
+  type Bm25Table,
+  bm25Expr,
+  forgetSearchFeatures,
+  type SearchFeatures,
+  searchFeatures,
+} from '../db/extensions.ts'
 import { listBrains } from './brains.ts'
 import { type Ctx, inBrain } from './context.ts'
 import { ENTRY_TYPES, words } from './entries.ts'
@@ -105,6 +113,8 @@ export function parseQuery(q: string): ParsedQuery {
 const BAND = Math.log(1.15)
 // How much a current page is lifted over entries and stale pages of similar relevance.
 const CURRENT_LIFT = 1.25
+// With BM25 (spec v0.6), how much more a word in the title counts than the same word in the rest.
+export const TITLE_BOOST = 2
 
 type Candidate = {
   kind: 'entry' | 'page'
@@ -182,14 +192,26 @@ export async function search(ctx: Ctx, r: SearchRequest): Promise<SearchResult> 
           query.anyWords.join(' '),
           [...(entriesToo ? ['entry' as const] : []), ...(pagesToo ? ['page' as const] : [])],
         )
-  const candidates = [
+  const gather = async (bm25: boolean) => [
     ...(entriesToo
-      ? await entryCandidates(ctx, r, targets, include, query, empty, prefix, want, meaning.entries)
+      ? await entryCandidates(ctx, r, targets, include, query, empty, prefix, want, meaning.entries, bm25)
       : []),
     ...(pagesToo
-      ? await pageCandidates(ctx, r, targets, include, query, empty, prefix, want, meaning.pages)
+      ? await pageCandidates(ctx, r, targets, include, query, empty, prefix, want, meaning.pages, bm25)
       : []),
   ]
+  // BM25 when pg_search is there (spec v0.6); if it fails (an index dropped since it was found), the ranking
+  // of PostgreSQL's own text search, so a search never fails because of the extension.
+  const root = ctx.root ?? ctx.db
+  const features: SearchFeatures = await searchFeatures(root)
+  let candidates: Candidate[]
+  try {
+    candidates = await gather(features.bm25)
+  } catch (err) {
+    if (!features.bm25) throw err
+    forgetSearchFeatures(root)
+    candidates = await gather(false)
+  }
   const ordered = candidates.sort(byOrder)
   const slice = ordered.slice(offset, offset + limit)
   const items = await describe(ctx.db, ctx.clock(), slice, query, empty)
@@ -257,6 +279,9 @@ type Near = { ids: string[]; sims: number[] }
 
 // The match and the score of a search over one kind. With results close in meaning, a result matches by
 // words or by meaning; `byWords` says which.
+// `ranked`: rank by BM25 over this table's index (spec v0.6), for the brains in `scope`. What matches is still
+// decided by the text search below (words, phrases, exclusions as before); BM25 only scores it, through `with`,
+// a query of its own the caller puts in front. A match the index does not score goes after those it does.
 function textConditions(
   col: string,
   idCol: string,
@@ -265,7 +290,8 @@ function textConditions(
   p: (v: unknown) => string,
   conditions: string[],
   near: Near,
-): { score: string; byWords: string } {
+  ranked: { table: Bm25Table; scope: string } | null = null,
+): { score: string; byWords: string; with?: string } {
   // Exclusions apply on their own, also with nothing else asked: a result with any excluded word, in
   // any of the three word forms, or with an excluded phrase, is left out.
   if (q.excluded.length > 0) {
@@ -284,10 +310,26 @@ function textConditions(
   const words = `${col} @@ ${tsq}`
   // Normalised by the length of the text, so a long page and a short entry compare. ts_rank, not the
   // cover-density ts_rank_cd: much cheaper on long pages, and the order is close (CA18).
-  const rank = `ts_rank(${col}, ${tsq}, 1)`
+  let rank = `ts_rank(${col}, ${tsq}, 1)`
+  let bm: string | undefined
+  const text = [...q.anyWords, ...q.phrases].join(' ')
+  if (ranked && text.trim()) {
+    const t = p(text)
+    // Each field read three ways (plain, Spanish, English); the title weighs TITLE_BOOST times the rest.
+    const match = BM25_FIELDS.map(
+      (f) =>
+        `${bm25Expr(ranked.table, f.part, 'x.')}::pdb.alias('${f.alias}') ||| ${t}::text${
+          f.part === 'title' ? `::pdb.boost(${TITLE_BOOST})` : ''
+        }`,
+    ).join(' OR ')
+    bm = `bm AS MATERIALIZED (SELECT x.id, pdb.score(x.id) AS s FROM ${ranked.table} x
+                               WHERE x.brain_id = ANY(${ranked.scope}::text[]) AND (${match}))`
+    rank = `coalesce((SELECT bm.s FROM bm WHERE bm.id = ${idCol}), 0)`
+  }
+  const withBm = bm ? { with: bm } : {}
   if (near.ids.length === 0) {
     conditions.push(words)
-    return { score: rank, byWords: 'true' }
+    return { score: rank, byWords: 'true', ...withBm }
   }
   const ids = p(near.ids)
   const sim = `coalesce((SELECT u.s FROM unnest(${ids}::text[], ${p(near.sims)}::real[]) AS u(i, s) WHERE u.i = ${idCol}), 0)`
@@ -297,6 +339,7 @@ function textConditions(
     // result found by words (spec B3 «El orden»: the most pertinent first).
     score: `(CASE WHEN ${words} THEN ${rank} ELSE ${sim} END)`,
     byWords: `coalesce(${words}, false)`,
+    ...withBm,
   }
 }
 
@@ -325,9 +368,11 @@ async function entryCandidates(
   prefix: string | undefined,
   want: number,
   near: Near,
+  bm25 = false,
 ): Promise<Candidate[]> {
   const { params, p } = paramList()
-  const conditions = [`e.brain_id = ANY(${p(targets.map((t) => t.id))})`, "e.state <> 'purged'"]
+  const scope = p(targets.map((t) => t.id))
+  const conditions = [`e.brain_id = ANY(${scope})`, "e.state <> 'purged'"]
   const curatorOf = targets.filter((t) => t.curator).map((t) => t.id)
   conditions.push(
     include.has('forgotten')
@@ -354,10 +399,23 @@ async function entryCandidates(
       `EXISTS (SELECT 1 FROM entry_revisions rv WHERE rv.entry_id = e.id AND rv.stamped_ref = ${p(r.ref)})`,
     )
   }
-  const { score, byWords } = textConditions('e.search', 'e.id', query, empty, p, conditions, near)
+  const {
+    score,
+    byWords,
+    with: bm,
+  } = textConditions(
+    'e.search',
+    'e.id',
+    query,
+    empty,
+    p,
+    conditions,
+    near,
+    bm25 ? { table: 'entries', scope } : null,
+  )
   const band = empty ? '0' : bandOf(score)
   const rows = await ctx.db.query<Row>(
-    `SELECT e.id, b.slug, e.created_at AS at, ${depthOf('entries', 'e')} AS depth, ${band} AS band, ${byWords} AS by_words
+    `${bm ? `WITH ${bm} ` : ''}SELECT e.id, b.slug, e.created_at AS at, ${depthOf('entries', 'e')} AS depth, ${band} AS band, ${byWords} AS by_words
        FROM entries e JOIN brains b ON b.id = e.brain_id
       WHERE ${conditions.join(' AND ')}
       ORDER BY depth, by_words DESC, band DESC, e.created_at DESC, e.id
@@ -386,12 +444,11 @@ async function pageCandidates(
   prefix: string | undefined,
   want: number,
   near: Near,
+  bm25 = false,
 ): Promise<Candidate[]> {
   const { params, p } = paramList()
-  const conditions = [
-    `p.brain_id = ANY(${p(targets.map((t) => t.id))})`,
-    `p.status = ANY(${p(pageStatuses(include))}::text[])`,
-  ]
+  const scope = p(targets.map((t) => t.id))
+  const conditions = [`p.brain_id = ANY(${scope})`, `p.status = ANY(${p(pageStatuses(include))}::text[])`]
   if (r.types?.length) conditions.push(`p.type = ANY(${p(r.types)}::text[])`)
   if (r.tags?.length) conditions.push(`p.tags @> ${p(r.tags)}::text[]`)
   if (prefix !== undefined) {
@@ -412,11 +469,24 @@ async function pageCandidates(
       `EXISTS (SELECT 1 FROM page_revisions rv WHERE rv.page_id = p.id AND rv.credential_id = ${p(r.client)})`,
     )
   }
-  const { score: raw, byWords } = textConditions('p.search', 'p.id', query, empty, p, conditions, near)
+  const {
+    score: raw,
+    byWords,
+    with: bm,
+  } = textConditions(
+    'p.search',
+    'p.id',
+    query,
+    empty,
+    p,
+    conditions,
+    near,
+    bm25 ? { table: 'pages', scope } : null,
+  )
   const first = empty ? '0' : "(p.status = 'current')::int"
   const band = empty ? '0' : bandOf(`${raw} * CASE WHEN p.status = 'current' THEN ${CURRENT_LIFT} ELSE 1 END`)
   const rows = await ctx.db.query<Row>(
-    `SELECT p.id, b.slug, p.updated_at AS at, ${depthOf('pages', 'p')} AS depth, ${band} AS band, ${first} AS first, ${byWords} AS by_words
+    `${bm ? `WITH ${bm} ` : ''}SELECT p.id, b.slug, p.updated_at AS at, ${depthOf('pages', 'p')} AS depth, ${band} AS band, ${first} AS first, ${byWords} AS by_words
        FROM pages p JOIN brains b ON b.id = p.brain_id
       WHERE ${conditions.join(' AND ')}
       ORDER BY depth, by_words DESC, band DESC, first DESC, p.updated_at DESC, p.id

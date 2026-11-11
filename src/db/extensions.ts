@@ -14,20 +14,25 @@ const FORMS = [
   ['_es', ", 'stemmer=spanish'"],
   ['_en', ", 'stemmer=english'"],
 ] as const
-// The text is one expression per table (migration 0026); a query names it exactly as the index does.
-export const BM25_TEXT = {
-  pages: { title: 'title', text: 'public.brain_page_text(address, summary, body, tags)' },
-  entries: { title: 'title', text: 'public.brain_entry_text(topic, content, tags)' },
+// The text is one expression per table (migration 0026); a query names it exactly as the index does, with the
+// alias of its table (`x.`) in front of each column.
+const TEXT = {
+  pages: (x: string) => `public.brain_page_text(${x}address, ${x}summary, ${x}body, ${x}tags)`,
+  entries: (x: string) => `public.brain_entry_text(${x}topic, ${x}content, ${x}tags)`,
 } as const
-export type Bm25Table = keyof typeof BM25_TEXT
+export type Bm25Table = keyof typeof TEXT
+export const BM25_TABLES = Object.keys(TEXT) as Bm25Table[]
+
+export const bm25Expr = (t: Bm25Table, part: 'title' | 'text', x = ''): string =>
+  part === 'title' ? `${x}title` : TEXT[t](x)
 
 const fields = (t: Bm25Table): string[] =>
   FORMS.flatMap(([suffix, stem]) => [
-    `(${BM25_TEXT[t].title}::pdb.simple('alias=title${suffix}', 'ascii_folding=true'${stem}))`,
-    `(${BM25_TEXT[t].text}::pdb.simple('alias=text${suffix}', 'ascii_folding=true'${stem}))`,
+    `(${bm25Expr(t, 'title')}::pdb.simple('alias=title${suffix}', 'ascii_folding=true'${stem}))`,
+    `(${bm25Expr(t, 'text')}::pdb.simple('alias=text${suffix}', 'ascii_folding=true'${stem}))`,
   ])
 
-// The fields a query reads, by alias: the title ones weigh `titleBoost` times the others.
+// The fields a query reads, by alias.
 export const BM25_FIELDS = FORMS.flatMap(([suffix]) => [
   { part: 'title' as const, alias: `title${suffix}` },
   { part: 'text' as const, alias: `text${suffix}` },
@@ -47,7 +52,7 @@ const installed = async (db: Db): Promise<Set<string>> =>
 export async function ensureSearchIndexes(db: Db): Promise<string[]> {
   if (!(await installed(db)).has('pg_search')) return []
   const made: string[] = []
-  for (const t of Object.keys(BM25_TEXT) as Bm25Table[]) {
+  for (const t of BM25_TABLES) {
     const name = `${t}_bm25`
     const there = await db.one<{ table: string | null; index: string | null }>(
       'SELECT to_regclass($1)::text AS table, to_regclass($2)::text AS index',
