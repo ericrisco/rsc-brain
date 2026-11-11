@@ -8,7 +8,8 @@ export const INSTRUCTIONS = `rsc-brain is a shared memory for you and the people
 3. Write while you work: mem_save each decision with its why, each discovery, each failed attempt, and anything the person corrects (save it as a "learning"). Use a topic for what evolves, so it is revised instead of duplicated. Start with mem_session_start and pass its session to later calls.
 4. Never save secrets: no keys, passwords or tokens. Wrap anything private in <private>...</private>.
 5. Close: mem_session_summary with goal, done, discovered, decided and pending.
-6. If asked to compile, use brain_compile_pack and brain_propose. Do not invent: cite the entries you use. A person approves every change to the wiki.
+6. If asked to compile, use brain_compile_pack, then brain_propose; a person approves it. If a curator let your key write to the wiki, brain_write applies it at once. Do not invent: cite the entries you use. Read the warnings and the linked pages each answer brings (brain_check asks first) and fix contradictions.
+7. When mem_context brings a cleanup, fix what its report lists and send it with "maintenance": true.
 
 Every error says what happened and how to proceed. A brain you cannot use answers as if it did not exist.`
 

@@ -86,8 +86,10 @@ const WIKI_SETTINGS = obj({
   meaningExcluded: b('Left out of meaning search.'),
   staleDays: n('Days after which a page with new entries counts as stale.'),
   longChars: n('Characters after which a page counts as long.'),
-  maintenanceEvery: n('Approvals between maintenance suggestions.'),
-  approvalsSince: n('Approvals since the last maintenance suggestion.'),
+  maintenanceEvery: n(
+    'Kept for API v1: since v0.6 a cleanup is suggested daily, not every so many approvals.',
+  ),
+  approvalsSince: n('Kept for API v1: approvals since a curator last asked for maintenance.'),
 })
 const MEMBER_SET = obj({
   accountId: s('Account id.'),
@@ -815,7 +817,7 @@ const HAND: Record<string, Op> = {
   },
   'GET /v1/brains/{slug}/wiki/health': {
     summary:
-      'The checks of the wiki (no AI): orphans, broken links, conflicts, stale pages, sources no longer available, long pages, titles almost the same; and whether a maintenance proposal is due.',
+      'The checks of the wiki (no AI): orphans, broken links, conflicts, stale pages, sources no longer available, long pages, titles almost the same; and whether a cleanup is due (daily, since v0.6).',
     reply: (() => {
       const ref = obj({ address: s('The page.'), title: s('Its title.') })
       const pair = obj({
@@ -853,9 +855,13 @@ const HAND: Record<string, Op> = {
         long: list(obj({ address: s('The page.'), title: s('Its title.'), chars: n('Its length.') })),
         similarTitles: list(pair),
         maintenance: obj({
-          suggested: b('A maintenance proposal is due.'),
-          approvalsSince: n('Approvals since the last one.'),
-          every: n('Every how many approvals.'),
+          suggested: b(
+            'A cleanup is due: there are problems, none was approved or written in the last 24 hours, and none waits for approval.',
+          ),
+          lastAt: nul(s('The last cleanup approved or written.', { format: 'date-time' })),
+          pending: b('A maintenance proposal waits for approval.'),
+          approvalsSince: n('Kept for API v1; decides nothing since v0.6.'),
+          every: n('Kept for API v1; decides nothing since v0.6.'),
         }),
       })
     })(),
@@ -1761,27 +1767,41 @@ const HAND: Record<string, Op> = {
   'GET /v1/brains/{slug}/context': {
     summary: 'The start context of a brain, for a task and size.',
     query: { task: 'What you are about to do.', max: 'Characters (4000–128000).' },
-    reply: obj({
-      text: s('The context.'),
-      chars: n('Its length.'),
-      included: { type: 'object' },
-      omitted: { type: 'object' },
-      items: list(
-        obj(
-          {
-            section: s('The part it is in, as counted in included.'),
-            kind: s('entry or page.', { enum: ['entry', 'page'] }),
-            id: s('The entry or page id, as in its delimiter.'),
-            type: s('Its type.'),
-            title: s('Its title.'),
-            address: s('A page: its address.'),
-          },
-          ['address'],
+    reply: obj(
+      {
+        text: s('The context.'),
+        chars: n('Its length.'),
+        included: { type: 'object' },
+        omitted: { type: 'object' },
+        items: list(
+          obj(
+            {
+              section: s('The part it is in, as counted in included.'),
+              kind: s('entry or page.', { enum: ['entry', 'page'] }),
+              id: s('The entry or page id, as in its delimiter.'),
+              type: s('Its type.'),
+              title: s('Its title.'),
+              address: s('A page: its address.'),
+            },
+            ['address'],
+          ),
+          'Each entry and page included, in the order of the text (added in F1-PR13; the map lines are not items).',
         ),
-        'Each entry and page included, in the order of the text (added in F1-PR13; the map lines are not items).',
-      ),
-      max: n('The size it was built for.'),
-    }),
+        max: n('The size it was built for.'),
+        cleanup: obj({
+          lastAt: nul(s('The last cleanup approved or written.', { format: 'date-time' })),
+          problems: n('How many problems the health has.'),
+          counts: {
+            type: 'object',
+            description:
+              'How many of each: orphans, broken, conflicts, stale, unavailableSources, long, similarTitles.',
+          },
+          health: { type: 'object', description: 'The health report, each list cut to its first 20.' },
+          suggestion: s('What to do, in words.'),
+        }),
+      },
+      ['cleanup'],
+    ),
   },
   'GET /v1/brains/{slug}/proposals': {
     summary: 'Proposals of a brain (mine=1 for yours); the first page counts each status.',
@@ -1833,8 +1853,11 @@ const HAND: Record<string, Op> = {
         ops: list({ type: 'object' }, 'The operations.'),
         collected: list(s('Entry id.')),
         supersedes: s('A pending proposal of yours it replaces.'),
+        maintenance: b(
+          'This is a cleanup of the wiki (a maintenance pass): approved, it counts as the daily cleanup.',
+        ),
       },
-      ['reason', 'collected', 'supersedes'],
+      ['reason', 'collected', 'supersedes', 'maintenance'],
     ),
     reply: {
       type: 'object',
@@ -2332,7 +2355,7 @@ const HAND: Record<string, Op> = {
         meaningExcluded: b('Leave this brain out of meaning search (its vectors are deleted).'),
         staleDays: n('Days after which a page with new entries counts as stale (1–3650).'),
         longChars: n('Characters after which a page counts as long (1000–100000).'),
-        maintenanceEvery: n('Approvals between maintenance suggestions (1–1000).'),
+        maintenanceEvery: n('Kept for API v1 (1–1000); since v0.6 it decides nothing.'),
       },
       [
         'revision',

@@ -197,6 +197,7 @@ export const wikiRoutes: Route[] = [
         collected: b.collected,
         supersedes: str(b, 'supersedes', { max: 40 }),
         agent: str(b, 'agent'),
+        maintenance: bool(b, 'maintenance'),
       }),
     )
     return { status: 201, body: out }

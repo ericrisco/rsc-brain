@@ -54,6 +54,8 @@ export type Proposal = {
   lastError: string | null
   createdAt: string
   purged: boolean
+  // A cleanup of the wiki (spec v0.6 «Limpieza diaria»).
+  maintenance: boolean
 }
 
 export const proposalOf = (r: Row, now: Date): Proposal => ({
@@ -74,6 +76,7 @@ export const proposalOf = (r: Row, now: Date): Proposal => ({
   lastError: r.last_error == null ? null : String(r.last_error),
   createdAt: (r.created_at as Date).toISOString(),
   purged: r.purged_at != null,
+  maintenance: Boolean(r.maintenance),
 })
 
 // Who proposed and who decided, by name: what a person reads in the inbox (spec B6 «Proposals»).
@@ -344,6 +347,8 @@ export type ProposalInput = {
   collected?: unknown
   supersedes?: string
   agent?: string
+  // A maintenance pass: the cleanup of the wiki (spec v0.6).
+  maintenance?: boolean
 }
 
 const loadOps = async (db: Db, id: string): Promise<ProposalOp[]> =>
@@ -443,8 +448,9 @@ export async function submitProposal(
     const now = ctx.clock()
     const id = newId('prp')
     const row = await db.one(
-      `INSERT INTO proposals (id, brain_id, title, reason, author_id, credential_id, agent, supersedes_id, collected, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      `INSERT INTO proposals (id, brain_id, title, reason, author_id, credential_id, agent, supersedes_id, collected, created_at,
+         maintenance)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
       [
         id,
         brain.id,
@@ -456,6 +462,7 @@ export async function submitProposal(
         replaced?.id ?? null,
         collected,
         now,
+        Boolean(input.maintenance),
       ],
     )
     for (const [i, op] of good.entries()) {

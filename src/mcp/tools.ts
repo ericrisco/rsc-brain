@@ -459,6 +459,7 @@ export const TOOLS: Tool[] = [
           description: 'Entry ids compiled with no change to the wiki.',
         },
         supersedes: str('The id of a pending proposal of yours that this one replaces.'),
+        maintenance: { type: 'boolean', description: 'This is a cleanup of the wiki (a maintenance pass).' },
       },
       ['title', 'ops'],
     ),
@@ -467,7 +468,7 @@ export const TOOLS: Tool[] = [
     call: async (a, k) => ({
       method: 'POST',
       path: `/v1/brains/${enc(await k.brain(a))}/proposals`,
-      body: pick(a, ['title', 'reason', 'ops', 'collected', 'supersedes']),
+      body: pick(a, ['title', 'reason', 'ops', 'collected', 'supersedes', 'maintenance']),
     }),
   },
   {
