@@ -132,4 +132,51 @@ describe('the permission to write to the wiki (v0.6)', { skip: skipPg }, () => {
     const outside = await token(ericWeb, { name: 'Eric x', brains: ['ops'], wikiWrite: ['yt'] })
     assert.equal(outside.status, 400, outside.text)
   })
+
+  // Review of feat/v06 (6): the permission does not outlive what it stood on. Its owner dropping below contributor,
+  // leaving the brain, or the key being revoked takes it away for good: a later promotion does not bring it back.
+  const rows = async (keyId: string) =>
+    Number((await w.db.one('SELECT count(*)::int AS n FROM wiki_writers WHERE key_id = $1', [keyId]))?.n)
+  const anaToken = async (name: string) => {
+    const t = await token(anaWeb, { name, brains: ['yt'] })
+    const id = (t.body.token as { id: string }).id
+    assert.equal((await grant(ericWeb, 'yt', id)).status, 200)
+    return id
+  }
+
+  it('its owner made a reader: gone, and made a contributor again it does not come back', async () => {
+    const id = await anaToken('Ana demoted')
+    assert.equal(
+      (await w.callWeb(ericWeb, 'PUT', `/v1/brains/yt/members/${ana.id}`, { role: 'reader' })).status,
+      200,
+    )
+    assert.equal(await rows(id), 0)
+    assert.equal(
+      (await w.callWeb(ericWeb, 'PUT', `/v1/brains/yt/members/${ana.id}`, { role: 'contributor' })).status,
+      200,
+    )
+    assert.equal(await rows(id), 0)
+  })
+
+  it('its owner leaves the brain: gone', async () => {
+    const id = await anaToken('Ana leaving')
+    assert.equal((await w.callWeb(ericWeb, 'DELETE', `/v1/brains/yt/members/${ana.id}`)).status, 200)
+    assert.equal(await rows(id), 0)
+    await w.member('yt', ana.id, 'contributor')
+    assert.equal(await rows(id), 0)
+  })
+
+  it('the key revoked: gone; a connected app ended: gone', async () => {
+    const id = await anaToken('Ana revoked')
+    assert.equal((await w.callWeb(anaWeb, 'DELETE', `/v1/me/tokens/${id}`)).status, 200)
+    assert.equal(await rows(id), 0)
+    const brain = (await w.db.one("SELECT id FROM brains WHERE slug = 'yt'"))?.id as string
+    await w.app(ana.id, [brain], { client: 'Revoked app' })
+    const g = await w.db.one<{ grant_id: string }>(
+      "SELECT grant_id FROM credentials WHERE kind = 'app' AND name = 'Revoked app'",
+    )
+    assert.equal((await grant(ericWeb, 'yt', g?.grant_id as string)).status, 200)
+    assert.equal((await w.callWeb(anaWeb, 'DELETE', `/v1/me/apps/${g?.grant_id}`)).status, 200)
+    assert.equal(await rows(g?.grant_id as string), 0)
+  })
 })
