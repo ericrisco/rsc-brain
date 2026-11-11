@@ -223,7 +223,9 @@ describe('search by meaning', { skip: skipPg }, () => {
     assert.ok(!f.items.some((h) => h.why === 'meaning'))
   })
 
-  it('review: with an exact phrase, meaning adds nothing; words come before meaning', async () => {
+  // Since v0.6 (CA14) words and meaning are mixed by RRF: the first found by words and the first found by
+  // meaning share a position, so neither list goes first by itself (test/search/rrf.test.ts has the order).
+  it('review: with an exact phrase, meaning adds nothing; without one, words and meaning both count', async () => {
     const on = await w.callWeb(adminWeb, 'PUT', '/v1/admin/meaning', { provider: 'test', accept: true })
     assert.equal(on.status, 200, on.text)
     const a = await page('yt', 'r/a', 'A', 'voces claras para el narrador')
@@ -233,9 +235,8 @@ describe('search by meaning', { skip: skipPg }, () => {
     const phrase = (await find(`${q('"voces claras"')}&prefix=r`)).items.map((h) => h.id)
     assert.deepEqual(phrase, [a])
     const voice = (await find(`${q('voice')}&prefix=r`)).items
-    assert.equal(voice[0]?.id, x)
-    assert.equal(voice[0]?.why, 'words')
-    assert.ok(voice.slice(1).every((h) => h.why === 'meaning'))
+    assert.equal(voice.find((h) => h.id === x)?.why, 'words')
+    assert.ok(voice.filter((h) => h.id !== x).every((h) => h.why === 'meaning'))
     assert.ok([a, b].every((id) => voice.some((h) => h.id === id)))
   })
 

@@ -5,6 +5,7 @@
 import { seal } from '../auth/vault.ts'
 import { AppError, invalid, notFound } from '../core/errors.ts'
 import type { Db, Row } from '../db/db.ts'
+import { searchFeatures } from '../db/extensions.ts'
 import { type Providers, SEND_CHARS } from '../meaning/providers.ts'
 import { applyStored, destinationOf, environmentOf, keyOpens, stored } from '../meaning/stored.ts'
 import { audit } from './audit.ts'
@@ -493,7 +494,13 @@ export async function meaningMatches(
   } catch {
     return none('unavailable')
   }
-  // A vector whose text changed since (an edit, a purge) is not used: it speaks of the old text.
+  // A vector whose text changed since (an edit, a purge) is not used: it speaks of the old text. Vectors are
+  // normalised, so closeness is their inner product: pgvector's operator when it is installed (spec v0.6),
+  // the sum of products otherwise.
+  const { vector } = await searchFeatures(ctx.root ?? ctx.db)
+  const closeness = vector
+    ? '(-(v.vec::vector <#> $4::real[]::vector))'
+    : '(SELECT sum(a * b) FROM unnest(v.vec, $4::real[]) AS t(a, b))'
   let rows: Row[]
   try {
     rows = await ctx.db.tx(async (tx) => {
@@ -501,7 +508,7 @@ export async function meaningMatches(
       return tx.query<Row>(
         `SELECT top.kind, top.target_id, top.sim FROM (
            SELECT v.kind, v.target_id, v.text_hash,
-                  (SELECT sum(a * b) FROM unnest(v.vec, $4::real[]) AS t(a, b)) AS sim
+                  ${closeness} AS sim
              FROM meaning_vectors v
             WHERE v.brain_id = ANY($1) AND v.provider = $2 AND v.model = $3 AND cardinality(v.vec) = $5
               AND v.kind = ANY($6)
