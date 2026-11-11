@@ -17,11 +17,21 @@ export function keyIdOf(c: Credential): string | null {
   return null
 }
 
-export const hasPermission = async (db: Db, brainId: string, c: Credential): Promise<boolean> => {
+// `lock`: asked by a write or a decision, inside its transaction. The permission is held until it commits, so a
+// curator taking it back waits for it, or comes first and the key is refused (P4: no change lands after a revoke).
+export const hasPermission = async (
+  db: Db,
+  brainId: string,
+  c: Credential,
+  lock = false,
+): Promise<boolean> => {
   const key = keyIdOf(c)
   if (!key) return false
   return Boolean(
-    await db.one('SELECT 1 FROM wiki_writers WHERE brain_id = $1 AND key_id = $2', [brainId, key]),
+    await db.one(
+      `SELECT 1 FROM wiki_writers WHERE brain_id = $1 AND key_id = $2${lock ? ' FOR SHARE' : ''}`,
+      [brainId, key],
+    ),
   )
 }
 
@@ -30,7 +40,7 @@ export const hasPermission = async (db: Db, brainId: string, c: Credential): Pro
 // answer says what is missing and how to propose instead (CA2).
 export async function mayWriteWiki(ctx: Ctx, brain: Brain, role: Parameters<typeof atLeast>[0]) {
   await allow(ctx, 'wiki.propose', { role, brainStatus: brain.status }, brain.id)
-  if (await hasPermission(ctx.db, brain.id, ctx.who.credential)) return
+  if (await hasPermission(ctx.db, brain.id, ctx.who.credential, true)) return
   throw new AppError(
     403,
     'wiki_write_not_allowed',

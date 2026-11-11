@@ -6,6 +6,8 @@
 // its owner.
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
+import type { Credential } from '../../src/auth/principal.ts'
+import { hasPermission } from '../../src/domain/wiki/writers.ts'
 import { MODERN } from '../../src/mcp/server.ts'
 import { skipPg } from '../helpers/pg.ts'
 import { type World, world } from '../helpers/world.ts'
@@ -379,5 +381,58 @@ describe('deciding proposals with a key (v0.7)', { skip: skipPg }, () => {
     assert.match(m.error ?? '', /^web_only/)
     assert.equal(await status(id), 'pending')
     assert.equal(await page('ca7/page'), undefined)
+  })
+
+  it('CA7, at once: a revoke waits for a decision or write holding the permission; after it, the key is refused', async () => {
+    assert.equal((await w.callWeb(ericWeb, 'PUT', `/v1/brains/yt/wiki/writers/${writer.id}`)).status, 200)
+    const brain = await w.db.one<{ id: string }>("SELECT id FROM brains WHERE slug = 'yt'")
+    const key = { kind: 'token', id: writer.id } as Credential
+    // The other way round: while a revoke holds the grant, a decision and a direct write wait for it.
+    const held = await propose([create('ca7/held')])
+    const heldFp = (await webReview(held)).fingerprint
+    let done = 0
+    let waiting: Promise<number>[] = []
+    await w.db.tx(async (db) => {
+      await db.query('SELECT 1 FROM wiki_writers WHERE key_id = $1 FOR UPDATE', [writer.id])
+      waiting = [
+        w.call(writer.secret, 'POST', `/v1/proposals/${held}/approve`, { fingerprint: heldFp }),
+        w.call(writer.secret, 'POST', '/v1/brains/yt/wiki/write', {
+          title: 'Held',
+          ops: [create('ca7/held-w')],
+        }),
+      ].map((p) =>
+        p.then((r) => {
+          done += 1
+          return r.status
+        }),
+      )
+      await new Promise((r) => setTimeout(r, 300))
+      assert.equal(done, 0, 'a decision or a write went on while a revoke held the permission')
+    })
+    assert.deepEqual(await Promise.all(waiting), [200, 201])
+    let revoked = false
+    let revoke: Promise<number> | undefined
+    // A decision (or a direct write) asks for the permission inside its transaction, then works on.
+    await w.db.tx(async (db) => {
+      assert.equal(await hasPermission(db, String(brain?.id), key, true), true)
+      revoke = w.callWeb(ericWeb, 'DELETE', `/v1/brains/yt/wiki/writers/${writer.id}`).then((r) => {
+        revoked = true
+        return r.status
+      })
+      await new Promise((r) => setTimeout(r, 300))
+      assert.equal(revoked, false, 'the revoke went through while a decision held the permission')
+    })
+    assert.equal(await revoke, 200)
+    const id = await propose([create('ca7/race')])
+    const r = await w.call(writer.secret, 'POST', `/v1/proposals/${id}/approve`, {
+      fingerprint: (await webReview(id)).fingerprint,
+    })
+    assert.deepEqual([r.status, r.body.error?.code], [403, 'web_only'], r.text)
+    const write = await w.call(writer.secret, 'POST', '/v1/brains/yt/wiki/write', {
+      title: 'After',
+      ops: [create('ca7/written')],
+    })
+    assert.deepEqual([write.status, write.body.error?.code], [403, 'wiki_write_not_allowed'], write.text)
+    assert.equal(await status(id), 'pending')
   })
 })

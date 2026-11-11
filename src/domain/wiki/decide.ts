@@ -57,7 +57,7 @@ async function load(
     },
   )
   const web = ctx.who.credential.kind === 'web'
-  if (!web && !(await hasPermission(ctx.db, brain.id, ctx.who.credential))) throw notThisKey()
+  if (!web && !(await hasPermission(ctx.db, brain.id, ctx.who.credential, lock))) throw notThisKey()
   const action = web ? 'wiki.decide' : 'wiki.propose'
   const facts = { role, brainStatus: brain.status }
   if (decide) await allow(ctx, action, facts, brain.id)
