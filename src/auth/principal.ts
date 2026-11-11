@@ -22,6 +22,8 @@ export type Credential = {
   agent: string | null
   onBehalfId: string | null
   parentId: string | null
+  // The connection an app key belongs to: the key a person sees, across the keys each refresh hands out.
+  grantId: string | null
 }
 
 export type Principal = {
@@ -210,6 +212,7 @@ export async function resolveKey(
       agent: r.agent == null ? null : String(r.agent),
       onBehalfId: r.on_behalf_id == null ? null : String(r.on_behalf_id),
       parentId: r.parent_id == null ? null : String(r.parent_id),
+      grantId: r.grant_id == null ? null : String(r.grant_id),
     },
     rateLimit: Number(r.rate_limit),
     client: clientOfKey({

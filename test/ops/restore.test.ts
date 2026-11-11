@@ -607,6 +607,9 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
       const sections: Section[] = []
       const counts: Array<Array<string | null>> = []
       for (const t of BACKUP_TABLES) {
+        // A table made by a later migration (wiki_writers, v0.6) is not in a copy of the older release.
+        if (!(await old.db.one<{ r: string | null }>('SELECT to_regclass($1)::text AS r', [t.name]))?.r)
+          continue
         const cols = (
           await old.db.query<{ c: string }>(
             `SELECT attname AS c FROM pg_attribute WHERE attrelid = $1::regclass AND attnum > 0 AND NOT attisdropped
@@ -638,7 +641,7 @@ describe('restore on PostgreSQL', { skip: skipPg }, () => {
         createdAt: '2026-10-01T00:00:00.000Z',
         installation: { id: 1, name: 'Older' },
         reason: 'manual',
-        tables: BACKUP_TABLES.map((t) => t.name),
+        tables: sections.map((x) => x.table),
         lastWriteAt: null,
       } as unknown as Header
       const file = join(dir, 'older.rscb')

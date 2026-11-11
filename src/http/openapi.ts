@@ -37,6 +37,16 @@ const obj = (properties: Record<string, Schema>, optional: string[] = []): Schem
 })
 const NEXT = nul(s('The value to ask for the next page with; null on the last page.'))
 const DATE = s('When.', { format: 'date-time' })
+const WRITER = obj({
+  keyId: s('The key: a token or main key (crd_…), or a connected app (app_…).'),
+  kind: s('token, main or app.'),
+  name: s('The name of the key, or of the app.'),
+  last4: nul(s('Its last four characters; null for an app.')),
+  owner: s('Whose key it is.'),
+  ownerId: s('Their account id.'),
+  grantedBy: s('The curator who gave the permission.'),
+  grantedAt: DATE,
+})
 const WIKI_SETTINGS = obj({
   guide: s('The compile guide in use.'),
   guideDefault: s('The default compile guide.'),
@@ -1106,8 +1116,12 @@ const HAND: Record<string, Op> = {
         brains: list(s('The name of a brain.'), 'The brains it reaches.'),
         allBrains: b('Every brain you are a member of, including brains you join later.'),
         days: n('30, 90 or 365 (90 by default).'),
+        wikiWrite: list(
+          s('The name of a brain.'),
+          'The brains where it may write to the wiki directly, without a proposal: each one where you are a curator and the token reaches.',
+        ),
       },
-      ['brains', 'allBrains', 'days'],
+      ['brains', 'allBrains', 'days', 'wikiWrite'],
     ),
     reply: obj(
       {
@@ -1141,10 +1155,26 @@ const HAND: Record<string, Op> = {
           expiresSoon: b('It ends within the notice period.'),
           lastUsedAt: nul(s('Its last request; null until its first.', { format: 'date-time' })),
           lastClient: nul(s('The program that made its last request.')),
+          wikiWrite: list(s('The name of a brain.'), 'The brains where it may write to the wiki directly.'),
         }),
         'Working ones first, newest first; then the expired ones.',
       ),
     }),
+  },
+  'GET /v1/brains/{slug}/wiki/writers': {
+    summary:
+      'The keys that may write to the wiki of the brain directly, without a proposal (its curators). A short key writes with the permission of the main key that made it.',
+    reply: obj({ writers: list(WRITER) }),
+  },
+  'PUT /v1/brains/{slug}/wiki/writers/{keyId}': {
+    summary:
+      'Let a key write to the wiki of the brain directly (a curator of the brain, in the rsc-brain web only). The key must reach the brain with read + write, and be of a contributor or curator. Giving it twice is once.',
+    reply: obj({ writer: WRITER }),
+  },
+  'DELETE /v1/brains/{slug}/wiki/writers/{keyId}': {
+    summary:
+      'Take the permission back (a curator of the brain, from the web or a key): from the next request the key proposes again. What it wrote stays.',
+    reply: obj({ removed: s('The key.') }),
   },
   'DELETE /v1/me/tokens/{id}': {
     summary: 'Revoke one of your tokens (the rsc-brain web only): it stops at its next request.',

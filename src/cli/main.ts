@@ -955,6 +955,7 @@ async function importCommand(args: string[]): Promise<number> {
             agent: null,
             onBehalfId: null,
             parentId: null,
+            grantId: null,
           },
           rateLimit: 0,
           client: 'rsc-brain import',

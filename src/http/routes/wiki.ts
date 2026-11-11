@@ -23,6 +23,7 @@ import {
   submitProposal,
   withdrawProposal,
 } from '../../domain/wiki/proposals.ts'
+import { grantWriter, listWriters, revokeWriter } from '../../domain/wiki/writers.ts'
 import { MAX_REPLY_CHARS } from '../bounds.ts'
 import { compact, obj, oneOf, reqStr, str } from '../input.ts'
 import { type Route, route } from '../router.ts'
@@ -218,6 +219,17 @@ export const wikiRoutes: Route[] = [
       }),
     ),
   })),
+  // The keys that write to the wiki directly (spec v0.6): its curators list them, give it in the web, take it back.
+  route('GET /v1/brains/:slug/wiki/writers', async (r) => ({
+    body: { writers: await listWriters(ctxOf(r), r.params.slug as string) },
+  })),
+  route('PUT /v1/brains/:slug/wiki/writers/:keyId', async (r) => ({
+    body: { writer: await grantWriter(ctxOf(r), r.params.slug as string, r.params.keyId as string) },
+  })),
+  route('DELETE /v1/brains/:slug/wiki/writers/:keyId', async (r) => {
+    await revokeWriter(ctxOf(r), r.params.slug as string, r.params.keyId as string)
+    return { body: { removed: r.params.keyId } }
+  }),
   route('GET /v1/proposals/:id', async (r) => ({ body: await getProposal(ctxOf(r), r.params.id as string) })),
   route('POST /v1/proposals/:id/withdraw', async (r) => ({
     body: { proposal: await withdrawProposal(ctxOf(r), r.params.id as string) },

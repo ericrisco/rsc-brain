@@ -137,6 +137,7 @@ export const peopleRoutes: Route[] = [
         brains: b.brains,
         allBrains: b.allBrains,
         days: b.days,
+        wikiWrite: b.wikiWrite,
       }),
     }
   }),
