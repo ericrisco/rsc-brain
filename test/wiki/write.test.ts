@@ -224,7 +224,8 @@ describe('writing to the wiki directly (v0.6)', { skip: skipPg }, () => {
       assert.deepEqual(codes, ['applied', 'page_changed'], JSON.stringify(results.map((r) => r.body)))
       const lost = results.find((r) => r.status !== 201)
       assert.equal(
-        (lost?.body.error as unknown as { current: { page: { revision: number } } }).current.page.revision,
+        (lost?.body.error as unknown as { current?: { page: { revision: number } } } | undefined)?.current
+          ?.page.revision,
         now + 1,
       )
     }
