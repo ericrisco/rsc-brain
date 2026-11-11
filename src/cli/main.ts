@@ -15,6 +15,7 @@ import { failureFields, stdoutLog as log } from '../core/log.ts'
 import { UNZIP_LIMITS, UnzipError } from '../core/unzip.ts'
 import { VERSION } from '../core/version.ts'
 import { openPool } from '../db/db.ts'
+import { searchFeatures } from '../db/extensions.ts'
 import { migrate } from '../db/migrate.ts'
 import { accountByEmail, createAccount } from '../domain/accounts.ts'
 import { companionSetup, setupDone } from '../domain/installation.ts'
@@ -173,6 +174,12 @@ async function main(argv: string[]): Promise<number> {
     const cfg = readConfig()
     const db = openPool(cfg.databaseUrl)
     await migrate(db)
+    // Which optional extensions search uses (spec v0.6): BM25 ranking, meaning compared by pgvector.
+    const features = await searchFeatures(db)
+    log.info('search', {
+      code: features.bm25 ? 'bm25' : 'words',
+      outcome: features.vector ? 'ok' : undefined,
+    })
     // What was sealed before purposes is sealed again, bound to its column (once; logged).
     const resealed = await resealV1(db, cfg.secret)
     if (resealed) log.info('resealed', { count: resealed })

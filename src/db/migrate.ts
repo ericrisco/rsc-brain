@@ -6,6 +6,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { mayHoldSecret, redact } from '../privacy/redact.ts'
 import type { Db } from './db.ts'
+import { ensureSearchIndexes } from './extensions.ts'
 
 const LOCK = 7_310_420_001 // any constant shared by every migrator of this product
 const NAME = /^\d{4}_[a-z0-9_]+\.sql$/
@@ -109,6 +110,9 @@ export async function migrate(
       await tx.query('INSERT INTO schema_migrations (id) VALUES ($1)', [step.id])
       applied.push(step.id)
     }
+    // Not a numbered step: the BM25 indexes follow whether pg_search is installed now (spec v0.6), and a
+    // partial migration (a restore loading its copy) has no tables to index yet.
+    if (!o.until && dir === MIGRATIONS_DIR) await ensureSearchIndexes(tx)
     return applied
   })
 }

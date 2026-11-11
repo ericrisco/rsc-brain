@@ -31,6 +31,9 @@ export const LOG_EVENTS = [
   // RSC_BRAIN_LOCAL_ONLY at start: whether the container's gateway was found (code gateway / no_gateway), or a warning
   // when it does not look like a Docker network's (unusual_gateway).
   'local_only',
+  // At start, what search ranks with (spec v0.6): code bm25 or words, and whether meaning uses pgvector
+  // (outcome ok when it does).
+  'search',
 ] as const
 export type LogEvent = (typeof LOG_EVENTS)[number]
 
