@@ -211,6 +211,25 @@ describe('writing to the wiki directly (v0.6)', { skip: skipPg }, () => {
     assert.equal(await page('also-new'), undefined)
   })
 
+  it('CA6, two writes at once on the same revision: one applies, the other gets page_changed with current', async () => {
+    for (let round = 0; round < 6; round++) {
+      const now = (await page('hooks'))?.revision as number
+      const edit = (body: string) =>
+        write(writer.secret, {
+          title: `Race ${round}`,
+          ops: [{ op: 'edit', address: 'hooks', baseRevision: now, body, reason: 'Mine.' }],
+        })
+      const results = await Promise.all([edit(`A ${round}`), edit(`B ${round}`)])
+      const codes = results.map((r) => (r.status === 201 ? 'applied' : r.body.error?.code)).sort()
+      assert.deepEqual(codes, ['applied', 'page_changed'], JSON.stringify(results.map((r) => r.body)))
+      const lost = results.find((r) => r.status !== 201)
+      assert.equal(
+        (lost?.body.error as unknown as { current: { page: { revision: number } } }).current.page.revision,
+        now + 1,
+      )
+    }
+  })
+
   it('the checks of a proposal block a write, all listed', async () => {
     const r = await write(writer.secret, {
       title: 'Bad',

@@ -117,7 +117,10 @@ export async function writeWiki(ctx: Ctx, slug: string, input: WriteInput): Prom
       throw err
     }
     const ops = pkg.ops as Op[]
-    // An edit goes against the revision the agent read: if the page moved on, nothing is written (CA6).
+    // An edit goes against the revision the agent read: if the page moved on, nothing is written (CA6). Checked
+    // under the brain's wiki lock, the one the writer of pages takes (re-entered there), so a write racing on the
+    // same revision waits, then sees the page moved and gets page_changed with it, not a failure to apply.
+    await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`wiki:${brain.id}`])
     const known = await knownAddresses(db, brain.id, ops)
     for (const o of ops) {
       if (o.op !== 'edit' || o.baseRevision === undefined) continue
