@@ -87,6 +87,17 @@ describe('words and meaning mixed by RRF (v0.6)', { skip: skipPg }, () => {
     assert.equal(got.find((h) => h.address === 'meaning-only')?.why, 'meaning')
   })
 
+  // Owner's call on review of feat/v06 (3): the mixed score orders as it is, without bands; being current and
+  // being newer only break exact ties.
+  it('the RRF score orders without bands: first by words and older goes before fifth by words and newer', async () => {
+    for (const [i, n] of [5, 4, 3, 2, 1].entries()) {
+      // The same length each; the fewer times the word, the lower by words, and each newer than the last.
+      await page(`band-${i}`, 'Note', `${'retention '.repeat(n)}${'filler '.repeat(6 - n)}`.trim())
+    }
+    const all = (await find('retention')).map((h) => h.address).filter((a) => a?.startsWith('band-'))
+    assert.deepEqual(all, ['band-0', 'band-1', 'band-2', 'band-3', 'band-4'])
+  })
+
   it('closeness is the same with pgvector as without it', async () => {
     const order = async () => (await find('retention')).map((h) => `${h.address}:${h.why}`)
     const withAll = await order()

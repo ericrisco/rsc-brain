@@ -130,6 +130,8 @@ type Candidate = {
   tier: number
   word: number | null // the score by words, when found by them
   sim: number | null // how close in meaning, when found by meaning
+  // With meaning on: the RRF score, which orders as it is (no bands); 0 otherwise.
+  fused: number
 }
 
 // Reciprocal rank fusion (spec v0.6 «Búsqueda», CA14): a result's score is the sum, over the lists it is in, of
@@ -138,8 +140,9 @@ export const RRF_K = 60
 export const rrf = (positions: number[]): number => positions.reduce((s, n) => s + 1 / (RRF_K + n), 0)
 
 // With meaning search on, the results found by words and those close in meaning, mixed by RRF: positions by
-// words (a current page lifted as before) and by closeness, each over entries and pages together. The bands
-// come from the fused score, so the rules of the order (current first, then newest) still apply after.
+// words (a current page lifted as before) and by closeness, each over entries and pages together. The fused score
+// orders as it is, without bands (owner's call on review of feat/v06): being current and being newer only break
+// exact ties, and a superseded result still goes after its successor (depth comes first).
 function fuse(all: Candidate[]): void {
   const position = (list: Candidate[], key: (c: Candidate) => number) => {
     const out = new Map<Candidate, number>()
@@ -156,7 +159,8 @@ function fuse(all: Candidate[]): void {
   )
   for (const c of all) {
     const at = [byWords.get(c), byMeaning.get(c)].filter((n): n is number => n !== undefined)
-    c.band = Math.floor(Math.log(Math.max(rrf(at), 1e-9)) / BAND)
+    c.fused = rrf(at)
+    c.band = 0
     c.tier = 1
   }
 }
@@ -478,6 +482,7 @@ async function entryCandidates(
     tier: x.by_words !== false ? 1 : 0,
     word: x.word == null ? null : Number(x.word),
     sim: x.sim == null ? null : Number(x.sim),
+    fused: 0,
   }))
 }
 
@@ -560,6 +565,7 @@ async function pageCandidates(
     tier: x.by_words !== false ? 1 : 0,
     word: x.word == null ? null : Number(x.word),
     sim: x.sim == null ? null : Number(x.sim),
+    fused: 0,
   }))
 }
 
@@ -576,6 +582,7 @@ function byOrder(a: Candidate, b: Candidate): number {
   return (
     a.depth - b.depth ||
     b.tier - a.tier ||
+    b.fused - a.fused ||
     b.band - a.band ||
     b.first - a.first ||
     b.at.getTime() - a.at.getTime() ||
