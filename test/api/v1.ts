@@ -112,6 +112,7 @@ export const V1 = [
   'POST /v1/brains/{slug}/import',
   'POST /v1/brains/{slug}/members',
   'POST /v1/brains/{slug}/proposals',
+  'POST /v1/brains/{slug}/wiki/check',
   'POST /v1/brains/{slug}/wiki/write',
   'POST /v1/brains/{slug}/relations',
   'POST /v1/brains/{slug}/repos',

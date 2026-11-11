@@ -471,6 +471,39 @@ export const TOOLS: Tool[] = [
     }),
   },
   {
+    name: 'brain_check',
+    title: 'Check wiki changes',
+    description:
+      'What a change to the wiki would break, before sending it: the problems that would block it, the warnings (duplicate_title, broken_link, orphan_created, stale_page, open_conflict) on the wiki as it would be, and the pages linked to what it touches, to read for contradictions. Writes nothing.',
+    inputSchema: obj(
+      {
+        brain: BRAIN,
+        session: SESSION,
+        title: str('What it changes, in one line.'),
+        reason: str('Why.'),
+        ops: {
+          type: 'array',
+          items: { type: 'object' },
+          minItems: 1,
+          description: 'The operations, as for brain_propose or brain_write.',
+        },
+        collected: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Entry ids compiled with no change.',
+        },
+      },
+      ['title', 'ops'],
+    ),
+    writes: false,
+    annotations: { readOnlyHint: true },
+    call: async (a, k) => ({
+      method: 'POST',
+      path: `/v1/brains/${enc(await k.brain(a))}/wiki/check`,
+      body: pick(a, ['title', 'reason', 'ops', 'collected']),
+    }),
+  },
+  {
     name: 'brain_write',
     title: 'Write to the wiki',
     description:

@@ -23,7 +23,7 @@ import {
   submitProposal,
   withdrawProposal,
 } from '../../domain/wiki/proposals.ts'
-import { writeWiki } from '../../domain/wiki/write.ts'
+import { checkWiki, writeWiki } from '../../domain/wiki/write.ts'
 import { grantWriter, listWriters, revokeWriter } from '../../domain/wiki/writers.ts'
 import { MAX_REPLY_CHARS } from '../bounds.ts'
 import { bool, compact, obj, oneOf, reqStr, str } from '../input.ts'
@@ -218,6 +218,17 @@ export const wikiRoutes: Route[] = [
       }),
     )
     return { status: 201, body: out }
+  }),
+  // The same body as a proposal: what would block it, and what it would leave incoherent; nothing is written.
+  route('POST /v1/brains/:slug/wiki/check', async (r) => {
+    const b = obj(r.body)
+    return {
+      body: await checkWiki(
+        ctxOf(r),
+        r.params.slug as string,
+        compact({ title: reqStr(b, 'title'), reason: str(b, 'reason'), ops: b.ops, collected: b.collected }),
+      ),
+    }
   }),
   route('GET /v1/brains/:slug/proposals', async (r) => ({
     body: await listProposals(

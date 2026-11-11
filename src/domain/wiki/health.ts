@@ -19,7 +19,23 @@ export type Health = {
   maintenance: { suggested: boolean; approvalsSince: number; every: number }
 }
 
-const LIVE = "p.status IN ('current', 'stale')"
+export const LIVE = "p.status IN ('current', 'stale')"
+
+// A page `p` no link reaches and whose links reach no other page. A link counts if it reaches a page: typed links
+// always do; mentions when their address resolves. Shared with the warnings of a change (coherence.ts).
+export const ORPHAN = `NOT EXISTS (SELECT 1 FROM page_links l WHERE l.from_page = p.id
+              AND (l.to_page IS NOT NULL OR EXISTS (SELECT 1 FROM page_addresses a
+                   WHERE a.brain_id = l.brain_id AND a.address = l.to_address AND a.page_id <> p.id)))
+        AND NOT EXISTS (SELECT 1 FROM page_links l WHERE l.to_page = p.id AND l.from_page <> p.id)
+        AND NOT EXISTS (SELECT 1 FROM page_links l JOIN page_addresses a
+                         ON a.brain_id = l.brain_id AND a.address = l.to_address
+                        WHERE a.page_id = p.id AND l.from_page <> p.id)`
+
+// An active entry `e` of the page's brain written after the page last changed and about it: by its topic, by
+// [[address]] or by naming its address — the whole address as a word: "sales" is not in "presales", nor "h/old"
+// in "h/older".
+export const WRITTEN_ABOUT_SINCE = `e.brain_id = p.brain_id AND e.state = 'active' AND e.created_at > p.updated_at
+        AND (e.topic = p.address OR e.content ~ ('(^|[^a-z0-9/-])' || p.address || '($|[^a-z0-9/-])'))`
 
 export async function wikiHealth(ctx: Ctx, slug: string): Promise<Health> {
   const { brain } = await inBrain(ctx, { slug })
@@ -27,17 +43,9 @@ export async function wikiHealth(ctx: Ctx, slug: string): Promise<Health> {
   const s = await settingsOf(db, brain.id)
   const ref = (r: Record<string, unknown>): Ref => ({ address: String(r.address), title: String(r.title) })
 
-  // A link counts if it reaches a page: typed links always do; mentions when their address resolves.
   const orphans = await db.query(
     `SELECT p.address, p.title FROM pages p
-      WHERE p.brain_id = $1 AND ${LIVE}
-        AND NOT EXISTS (SELECT 1 FROM page_links l WHERE l.from_page = p.id
-              AND (l.to_page IS NOT NULL OR EXISTS (SELECT 1 FROM page_addresses a
-                   WHERE a.brain_id = l.brain_id AND a.address = l.to_address AND a.page_id <> p.id)))
-        AND NOT EXISTS (SELECT 1 FROM page_links l WHERE l.to_page = p.id AND l.from_page <> p.id)
-        AND NOT EXISTS (SELECT 1 FROM page_links l JOIN page_addresses a
-                         ON a.brain_id = l.brain_id AND a.address = l.to_address
-                        WHERE a.page_id = p.id AND l.from_page <> p.id)
+      WHERE p.brain_id = $1 AND ${LIVE} AND ${ORPHAN}
       ORDER BY p.address`,
     [brain.id],
   )
@@ -65,9 +73,7 @@ export async function wikiHealth(ctx: Ctx, slug: string): Promise<Health> {
   const cutoff = new Date(ctx.clock().getTime() - s.staleDays * 86_400_000)
   const stale = await db.query(
     `SELECT p.address, p.title, p.updated_at, count(e.id)::int AS n
-       FROM pages p JOIN entries e ON e.brain_id = p.brain_id AND e.state = 'active' AND e.created_at > p.updated_at
-        -- The whole address as a word: "sales" is not in "presales", nor "h/old" in "h/older".
-        AND (e.topic = p.address OR e.content ~ ('(^|[^a-z0-9/-])' || p.address || '($|[^a-z0-9/-])'))
+       FROM pages p JOIN entries e ON ${WRITTEN_ABOUT_SINCE}
       WHERE p.brain_id = $1 AND ${LIVE} AND p.updated_at < $2
       GROUP BY p.id ORDER BY p.address`,
     [brain.id, cutoff],

@@ -11,6 +11,7 @@ import { allow, type Ctx, inBrain } from '../context.ts'
 import { emit } from '../events.ts'
 import { installation } from '../installation.ts'
 import { decode, encode, PAGE, type Page as PageOf } from '../listing.ts'
+import { type Checked, checkChange } from './coherence.ts'
 import { mentionsOf, nearlySame, type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
 
 export const OLD_AFTER_MS = 30 * 24 * 60 * 60 * 1000
@@ -404,7 +405,7 @@ export async function submitProposal(
   ctx: Ctx,
   slug: string,
   input: ProposalInput,
-): Promise<{ proposal: Proposal; ops: ProposalOp[]; warnings: Warning[] }> {
+): Promise<{ proposal: Proposal; ops: ProposalOp[]; warnings: Warning[] } & Checked> {
   const { title, reason, collected, agent, ops, problems } = readPackage(ctx, input)
   const out = await ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
@@ -476,10 +477,12 @@ export async function submitProposal(
       proposal: proposalOf(row as Row, now),
       ops: await loadOps(db, id),
       warnings: await warningsOf(db, brain.id, good),
+      // What it would leave incoherent, on the wiki as it would be, and what is linked to it (spec v0.6 CA7, CA9).
+      checked: await checkChange(c, db, brain.id, good, { keep: false }),
     }
   })
   await proposalNotice(ctx, out.brain, out.proposal.id, out.ops.length)
-  return { proposal: out.proposal, ops: out.ops, warnings: out.warnings }
+  return { proposal: out.proposal, ops: out.ops, warnings: out.warnings, ...out.checked }
 }
 
 // Curators who asked for it get a mail: which brain, who proposes, how many changes and a link that

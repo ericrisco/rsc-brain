@@ -37,6 +37,35 @@ const obj = (properties: Record<string, Schema>, optional: string[] = []): Schem
 })
 const NEXT = nul(s('The value to ask for the next page with; null on the last page.'))
 const DATE = s('When.', { format: 'date-time' })
+// What a change would leave incoherent, and the pages around it (spec v0.6).
+const CHECKED = {
+  coherence: list(
+    obj({
+      code: s('What is wrong.', {
+        enum: ['duplicate_title', 'broken_link', 'orphan_created', 'stale_page', 'open_conflict'],
+      }),
+      message: s('Said in words.'),
+      addresses: list(s('An address.'), 'The pages it is about.'),
+    }),
+    'Warnings on the wiki as it would be after the change. They never block.',
+  ),
+  neighbours: list(
+    obj({
+      address: s('The page.'),
+      title: s('Its title.'),
+      summary: s('Its summary.'),
+      type: s('Its type.'),
+      status: s('current or stale.'),
+      revision: n('Its revision now.'),
+      link: obj({
+        page: s('The page the change touches.'),
+        kind: s('The kind of link.'),
+        direction: s('out: from that page; in: to it.'),
+      }),
+    }),
+    'The pages linked to what the change touches (at most 20), to read for contradictions in meaning.',
+  ),
+}
 const WRITER = obj({
   keyId: s('The key: a token or main key (crd_…), or a connected app (app_…).'),
   kind: s('token, main or app.'),
@@ -1807,7 +1836,29 @@ const HAND: Record<string, Op> = {
       },
       ['reason', 'collected', 'supersedes'],
     ),
-    reply: { type: 'object' },
+    reply: {
+      type: 'object',
+      description: 'The proposal, its operations, its warnings, and (v0.6) coherence and neighbours.',
+    },
+  },
+  'POST /v1/brains/{slug}/wiki/check': {
+    summary:
+      'What a change would do, without doing it (anyone who may propose): the problems that would block it; and when there are none, the warnings on the wiki as it would be and the pages linked to what it touches.',
+    body: obj(
+      {
+        title: s('What it changes.'),
+        reason: s('Why.'),
+        ops: list({ type: 'object' }, 'The operations, as in a proposal.'),
+        collected: list(s('Entry id.')),
+      },
+      ['reason', 'collected'],
+    ),
+    reply: obj({
+      problems: list(
+        obj({ op: nul(n('The operation, or null for the whole.')), message: s('What to fix.') }),
+      ),
+      ...CHECKED,
+    }),
   },
   'POST /v1/brains/{slug}/wiki/write': {
     summary:
@@ -1825,6 +1876,7 @@ const HAND: Record<string, Op> = {
       ['reason', 'collected', 'maintenance', 'requestKey'],
     ),
     reply: obj({
+      ...CHECKED,
       applied: b('Always true: it was written.'),
       logId: s('Its line in the log of the wiki.'),
       revised: list(

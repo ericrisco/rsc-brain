@@ -7,9 +7,9 @@
 import { createHash } from 'node:crypto'
 import { AppError, conflict, invalid } from '../../core/errors.ts'
 import type { Db } from '../../db/db.ts'
-import { type Ctx, inBrain } from '../context.ts'
-import { applyOps } from './apply.ts'
-import type { Op } from './model.ts'
+import { allow, type Ctx, inBrain } from '../context.ts'
+import { type Checked, checkChange } from './coherence.ts'
+import type { Op, Problem } from './model.ts'
 import { getPage } from './pages.ts'
 import { knownAddresses, type ProposalInput, problemsOf, readPackage } from './proposals.ts'
 import { keyIdOf, mayWriteWiki } from './writers.ts'
@@ -20,7 +20,7 @@ export type WriteReceipt = {
   applied: true
   logId: string
   revised: { index?: number; address: string; revision: number }[]
-}
+} & Checked
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
 
@@ -110,19 +110,19 @@ export async function writeWiki(ctx: Ctx, slug: string, input: WriteInput): Prom
       }
     }
     const name = await keyName(db, c)
-    const { revised, logId } = await applyOps(
-      c,
-      db,
-      brain.id,
-      ops.map((op, index) => ({ op, index })),
-      {
+    // Applied, and looked at as it now stands: the warnings and the neighbours come with the receipt (CA7, CA9).
+    const { applied, coherence, neighbours } = await checkChange(c, db, brain.id, ops, {
+      keep: true,
+      meta: {
         kind: 'write',
         summary: `Written directly by ${name}: ${pkg.title}`,
         reason: pkg.reason || (ops.length === 1 ? (ops[0]?.reason ?? '') : ''),
         keyName: name,
         maintenance: Boolean(input.maintenance),
       },
-    )
+    })
+    if (!applied) throw invalid('Nothing to write.', 'Send at least one operation.')
+    const { revised, logId } = applied
     // The entries it cites, and those collected without changes, are compiled, as with an approved proposal.
     const cited = new Set<string>(pkg.collected)
     for (const o of ops) {
@@ -143,6 +143,8 @@ export async function writeWiki(ctx: Ctx, slug: string, input: WriteInput): Prom
         address: r.address,
         revision: r.revision,
       })),
+      coherence,
+      neighbours,
     }
     if (keyHash && requestHash) {
       await db.query(
@@ -151,5 +153,23 @@ export async function writeWiki(ctx: Ctx, slug: string, input: WriteInput): Prom
       )
     }
     return receipt
+  })
+}
+
+// Asking first (CA8): the problems that would block the change, and when there are none, the warnings and the
+// neighbours it would have — worked out on the wiki as it would be, then undone. For anyone who may propose.
+export async function checkWiki(
+  ctx: Ctx,
+  slug: string,
+  input: ProposalInput,
+): Promise<{ problems: Problem[] } & Checked> {
+  const pkg = readPackage(ctx, input, 'A change')
+  return ctx.db.tx(async (db) => {
+    const c = { ...ctx, db }
+    const { brain, role } = await inBrain(c, { slug })
+    await allow(c, 'wiki.propose', { role, brainStatus: brain.status }, brain.id)
+    const problems = [...pkg.problems, ...(await problemsOf(db, brain.id, pkg.ops, pkg.collected))]
+    if (problems.length > 0) return { problems, coherence: [], neighbours: [] }
+    return { problems, ...(await checkChange(c, db, brain.id, pkg.ops as Op[], { keep: false })) }
   })
 }

@@ -203,6 +203,10 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
         { title: `Hooks ${s}side`, ops: [opOn(`audience/${s}side`)] },
       ],
     },
+    brain_check: {
+      args: () => ({ brain: 'par', title: 'Check', ops: [opOn('checked/page')] }),
+      api: () => ['POST', '/v1/brains/par/wiki/check', { title: 'Check', ops: [opOn('checked/page')] }],
+    },
     // Spec v0.6: Eric's key may write to the wiki of "par" (given in before()).
     brain_write: {
       args: (s) => ({ brain: 'par', title: `Write ${s}side`, ops: [opOn(`written/${s}side`)] }),
@@ -211,6 +215,10 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
         '/v1/brains/par/wiki/write',
         { title: `Write ${s}side`, ops: [opOn(`written/${s}side`)] },
       ],
+      // The second twin's title is the first's: a duplicate_title the first one did not have.
+      drop: (r) => {
+        delete r.coherence
+      },
     },
     brain_proposals: {
       args: () => ({ brain: 'par', status: 'pending' }),
