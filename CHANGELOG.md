@@ -4,6 +4,28 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.6.0
+
+Trusted agents keep the wiki up to date by themselves, and search puts the right page first.
+
+- **Writing to the wiki directly.** A curator can let one key write to the wiki of their brain, on the token
+  in the profile, when making it or later. Its changes apply at once, each with a revision and a line in the
+  log that says which key wrote it, and are undone like any other. Without the permission, an agent proposes
+  as before. The curator takes it back at any time, and it counts from the next request.
+- **Warnings with every change.** Proposing, writing or just checking a change answers with what it would
+  leave incoherent: a title almost the same as another, a link to nowhere, a page left with no links, a stale
+  page or an open contradiction touched. And with the pages linked to it, for the agent to read. Warnings
+  never block.
+- **A daily cleanup.** When nobody cleaned a wiki in a day and its health has problems, the agent that starts
+  work there is asked to clean it, with the report. This replaces the reminder every so many approvals; the
+  Health screen says when the last cleanup was.
+- **Better search order.** With the optional `pg_search` extension, results are ranked by BM25: a rare word
+  counts more than a common one, and a word in the title more than in the text. With search by meaning on,
+  words and meaning are mixed so a result found both ways comes first; the optional `pgvector` extension
+  works out closeness. Without them, search works as before.
+- **Copies with the standard tools.** A copy made with `pg_dump` now restores whole with `pg_restore` into a
+  new database.
+
 ## v0.5.0
 
 The graph is a flat, living picture you can take in your hands.

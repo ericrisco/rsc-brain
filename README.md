@@ -331,6 +331,28 @@ present, and the administration turns it on in the web, accepting that text is s
 
 A curator can exclude a brain: its vectors are deleted and nothing more of it is sent.
 
+## Better ranking with optional extensions
+
+Search works on any PostgreSQL 17 or newer with `unaccent`. Two optional extensions improve the order of
+results; rsc-brain uses them when they are installed in its database and works as before when they are not:
+
+- **`pg_search`**: results are ranked by BM25, so a rare word counts more than a common one repeated, and a
+  word in the title counts twice as much as the same word in the text. Words still match without accents and
+  in their Spanish and English forms, and quoted phrases and excluded words filter as always.
+- **`pgvector`**: with search by meaning on, closeness is worked out by its operator. Words and meaning are
+  mixed by reciprocal rank fusion, so a result found both ways comes before one found only one way.
+
+rsc-brain never installs them (its database role is no superuser). An administrator creates them in the
+database of rsc-brain, as a superuser:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_search;
+```
+
+On its next start rsc-brain makes the index it needs and says in its log what search uses
+(`"event":"search","code":"bm25"`).
+
 ## People, keys and mail
 
 - The administration invites people by email to brains, each with a role: curator, contributor or
@@ -341,6 +363,35 @@ A curator can exclude a brain: its vectors are deleted and nothing more of it is
   a cut. With it they mint short keys, one per job.
 - Mail is optional. Set the sending account in the web. Its password is stored sealed with
   `RSC_BRAIN_SECRET`. The mail log keeps who, what kind, when and how it ended, never the content.
+
+## Writing to the wiki directly
+
+By default an agent proposes changes to the wiki and a curator approves them in the web. A curator can let
+one key write to the wiki of their brain directly: in the profile, on a token ("Can write to the wiki of …"),
+when making it or later. The permission is per key and per brain, only a curator of that brain gives it (in
+the web, never with a key), and any curator takes it back; it counts from the next request.
+
+- A key with the permission sends the same operations as a proposal (`brain_write`, or
+  `POST /v1/brains/:slug/wiki/write`), checked the same way. They apply at once, all or none, each page with a
+  new revision and the change with a line in the log that says which key wrote it. It is undone like any
+  other change: go back to a revision. Repeating a write with the same `requestKey` writes nothing twice.
+- A key without it gets `403 wiki_write_not_allowed`, which says how to propose instead.
+- A short key of a service writes with the permission of the main key that made it.
+
+### Warnings before and after a change
+
+A proposal, a direct write, and a check that writes nothing (`brain_check`, or
+`POST /v1/brains/:slug/wiki/check`) answer with what the change would leave incoherent, worked out on the
+wiki as it would be after it: `duplicate_title`, `broken_link`, `orphan_created`, `stale_page` and
+`open_conflict`, each with the pages it is about. They come with `neighbours`, the pages linked to what the
+change touches, so the agent can read them for contradictions. Warnings never block.
+
+### The daily cleanup
+
+A cleanup is a proposal or a direct write marked `"maintenance": true`. When nobody cleaned a wiki in the
+last 24 hours, none waits for approval and its health has problems, an agent that starts work in the brain
+(`mem_context`) is asked to clean it, with the health report. The Health screen says when the last cleanup
+was.
 
 ## Connecting agents with the standard sign-in
 
@@ -366,8 +417,8 @@ works, never save secrets, close with a summary.
 - Tools: `brain_list`, `brain_resolve`, `mem_context`, `mem_session_start`, `mem_save`, `mem_update`,
   `mem_suggest_topic`, `mem_relate`, `mem_forget`, `mem_session_summary`, `mem_session_end`,
   `mem_search`, `mem_get`, `mem_timeline`, `brain_page`, `brain_neighbors`, `brain_map`,
-  `brain_health`, `brain_compile_pack`, `brain_propose`, `brain_proposals`, `brain_withdraw`,
-  `brain_create`. A key sees only the tools it may use.
+  `brain_health`, `brain_compile_pack`, `brain_check`, `brain_write`, `brain_propose`, `brain_proposals`,
+  `brain_withdraw`, `brain_create`. A key sees only the tools it may use.
 - Each tool runs the same `/v1` route a program would, with the same key: the same checks, limits
   and results.
 - Curators link repositories to their brain, so an agent finds it with `brain_resolve`.
