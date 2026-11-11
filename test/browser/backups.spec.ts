@@ -466,7 +466,7 @@ test.describe('Admin › Backups & system: the version', () => {
     await expect(service).toContainText('Could not check for a new version')
     await expect(service).not.toContainText('This is the newest')
     await expect(service).toContainText('Tried 5 min ago.')
-    await expect(service).not.toContainText('3 days ago')
+    await expect(service).not.toContainText(/\b3 days ago/)
   })
 
   test('a newer version it knew stays said when the last check failed', async ({
