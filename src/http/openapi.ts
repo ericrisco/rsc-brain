@@ -834,7 +834,7 @@ const HAND: Record<string, Op> = {
   'GET /v1/brains/{slug}/wiki/log': {
     summary: 'One line per change applied to the wiki, newest first.',
     query: {
-      kind: 'proposal, direct, revert or purge.',
+      kind: 'proposal, direct, revert, purge or write.',
       page: 'Only lines that touched this address.',
       cursor: 'The "next" of the previous page.',
       limit: 'Lines per answer.',
@@ -846,11 +846,16 @@ const HAND: Record<string, Op> = {
           at: s('When.', { format: 'date-time' }),
           actorId: s('Who.'),
           actorName: s('Their name.'),
-          kind: s('proposal, direct, revert or purge.', { enum: ['proposal', 'direct', 'revert', 'purge'] }),
+          kind: s(
+            'proposal (approved), direct (by hand in the web), revert, purge, or write (written directly by a key with the permission).',
+            { enum: ['proposal', 'direct', 'revert', 'purge', 'write'] },
+          ),
           proposalId: nul(s('The proposal it applied.')),
           summary: s('What changed.'),
           reason: nul(s('Why: the curator’s reason, or the proposal’s.')),
           pages: list(s('Address.')),
+          keyName: nul(s('For a write: the key that wrote it, by its name then.')),
+          maintenance: b('A maintenance pass: an approved maintenance proposal or a write marked as one.'),
         }),
       ),
       next: NEXT,
@@ -1803,6 +1808,31 @@ const HAND: Record<string, Op> = {
       ['reason', 'collected', 'supersedes'],
     ),
     reply: { type: 'object' },
+  },
+  'POST /v1/brains/{slug}/wiki/write': {
+    summary:
+      'Write to the wiki at once, without a proposal: only a key a curator of the brain gave the permission (403 wiki_write_not_allowed otherwise, with how to propose instead). The operations and checks of a proposal; all apply or none. An edit whose page changed since its baseRevision is refused (409 page_changed, with "current"). A retry with the same requestKey returns the same receipt.',
+    status: 201,
+    body: obj(
+      {
+        title: s('What it changes.'),
+        reason: s('Why.'),
+        ops: list({ type: 'object' }, 'The operations, as in a proposal.'),
+        collected: list(s('Entry id.'), 'Entries read that add nothing new: they leave the uncompiled list.'),
+        maintenance: b('This is a cleanup of the wiki (a maintenance pass).'),
+        requestKey: s('Repeating the request with the same key returns the same receipt.'),
+      },
+      ['reason', 'collected', 'maintenance', 'requestKey'],
+    ),
+    reply: obj({
+      applied: b('Always true: it was written.'),
+      logId: s('Its line in the log of the wiki.'),
+      revised: list(
+        obj({ index: n('The operation.'), address: s('The page.'), revision: n('The revision it made.') }, [
+          'index',
+        ]),
+      ),
+    }),
   },
   'GET /v1/brains/{slug}/trail': {
     summary: 'What was searched and read, by ref, session or page.',

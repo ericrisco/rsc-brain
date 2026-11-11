@@ -471,6 +471,41 @@ export const TOOLS: Tool[] = [
     }),
   },
   {
+    name: 'brain_write',
+    title: 'Write to the wiki',
+    description:
+      'Applies changes to the wiki at once, when a curator gave your key the permission to write to it; otherwise use brain_propose. The same operations as a proposal, checked the same way; an edit names the revision it read. Returns the revisions made.',
+    inputSchema: obj(
+      {
+        brain: BRAIN,
+        session: SESSION,
+        title: str('What it changes, in one line.'),
+        reason: str('Why.'),
+        ops: {
+          type: 'array',
+          items: { type: 'object' },
+          minItems: 1,
+          description: 'The operations (see the guide in brain_compile_pack).',
+        },
+        collected: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Entry ids compiled with no change to the wiki.',
+        },
+        maintenance: { type: 'boolean', description: 'This is a cleanup of the wiki (a maintenance pass).' },
+        requestKey: str('Any unique text: repeating the call with the same key returns the same receipt.'),
+      },
+      ['title', 'ops'],
+    ),
+    writes: true,
+    annotations: { readOnlyHint: false, idempotentHint: true },
+    call: async (a, k) => ({
+      method: 'POST',
+      path: `/v1/brains/${enc(await k.brain(a))}/wiki/write`,
+      body: pick(a, ['title', 'reason', 'ops', 'collected', 'maintenance', 'requestKey']),
+    }),
+  },
+  {
     name: 'brain_proposals',
     title: 'My proposals',
     description:

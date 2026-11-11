@@ -233,7 +233,7 @@ export type RevisionSummary = {
   address: string
   title: string
   status: PageStatus
-  kind: 'proposal' | 'direct' | 'revert' | 'purge'
+  kind: 'proposal' | 'direct' | 'revert' | 'purge' | 'write'
   change: RevisionChange
   restoredFrom: number | null
   reason: string | null
@@ -411,9 +411,13 @@ export type LogLine = {
   // Why: the curator's for a change by hand, the proposal's for an approval.
   reason: string | null
   pages: string[]
+  // Written directly by a key with the permission (kind 'write', spec v0.6): the key, by its name then.
+  keyName: string | null
+  // A maintenance pass (spec v0.6 «Limpieza diaria»).
+  maintenance: boolean
 }
 
-export const LOG_KINDS = ['proposal', 'direct', 'revert', 'purge'] as const
+export const LOG_KINDS = ['proposal', 'direct', 'revert', 'purge', 'write'] as const
 export type LogKind = (typeof LOG_KINDS)[number]
 
 // The log, newest first; by kind of change and by a page it touched, when asked.
@@ -453,6 +457,8 @@ export async function wikiLog(
       summary: String(r.summary),
       reason: r.why == null || r.kind === 'purge' ? null : String(r.why),
       pages: (r.pages as string[]) ?? [],
+      keyName: r.key_name == null ? null : String(r.key_name),
+      maintenance: Boolean(r.maintenance),
     })),
     total: total?.n ?? 0,
     next: rows.length > limit && last ? encode(last.at as Date, String(last.id)) : null,

@@ -203,6 +203,15 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
         { title: `Hooks ${s}side`, ops: [opOn(`audience/${s}side`)] },
       ],
     },
+    // Spec v0.6: Eric's key may write to the wiki of "par" (given in before()).
+    brain_write: {
+      args: (s) => ({ brain: 'par', title: `Write ${s}side`, ops: [opOn(`written/${s}side`)] }),
+      api: (s) => [
+        'POST',
+        '/v1/brains/par/wiki/write',
+        { title: `Write ${s}side`, ops: [opOn(`written/${s}side`)] },
+      ],
+    },
     brain_proposals: {
       args: () => ({ brain: 'par', status: 'pending' }),
       api: () => ['GET', '/v1/brains/par/proposals?mine=1&status=pending'],
@@ -234,6 +243,11 @@ describe('CA10: parity between the MCP tools and the API', { skip: skipPg }, () 
       body: 'Viewers stay when the first minute holds. See [[audience/hooks]].',
     })
     assert.equal(page.status, 201, page.text)
+    const writer = await w.db.one<{ id: string }>(
+      "SELECT id FROM credentials WHERE account_id = $1 AND kind = 'token' AND perm = 'write'",
+      [eric.id],
+    )
+    assert.equal((await w.callWeb(web, 'PUT', `/v1/brains/par/wiki/writers/${writer?.id}`)).status, 200)
     sourceId = await entry('Source')
     await entry('Context')
     await twins('update', (s) => entry(`Update ${s}side`))

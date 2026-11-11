@@ -348,16 +348,23 @@ export type ProposalInput = {
 const loadOps = async (db: Db, id: string): Promise<ProposalOp[]> =>
   (await db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [id])).map(proposalOpOf)
 
-export async function submitProposal(
-  ctx: Ctx,
-  slug: string,
-  input: ProposalInput,
-): Promise<{ proposal: Proposal; ops: ProposalOp[]; warnings: Warning[] }> {
+// What a proposal and a direct write both carry (spec v0.6: «las mismas operaciones»), read and redacted, with
+// the problems of each operation collected so the agent gets them all at once.
+export type Package = {
+  title: string
+  reason: string
+  collected: string[]
+  agent: string | null
+  ops: (Op | null)[]
+  problems: Problem[]
+}
+
+export function readPackage(ctx: Ctx, input: ProposalInput, what = 'A proposal'): Package {
   const title = redact(input.title.trim()).text
   const reason = redact((input.reason ?? '').trim()).text
   if (!title || title.length > WIKI_LIMITS.title) {
     throw invalid(
-      `A proposal needs a title of 1 to ${WIKI_LIMITS.title} characters.`,
+      `${what} needs a title of 1 to ${WIKI_LIMITS.title} characters.`,
       'Say in one line what it changes.',
     )
   }
@@ -365,7 +372,7 @@ export async function submitProposal(
     throw invalid(`The reason is longer than ${WIKI_LIMITS.reason} characters.`, 'Shorten it.')
   }
   if (!Array.isArray(input.ops) || input.ops.length === 0) {
-    throw invalid('A proposal carries a list "ops" with at least one operation.', 'Add the operations.')
+    throw invalid(`${what} carries a list "ops" with at least one operation.`, 'Add the operations.')
   }
   const collectedRaw = input.collected ?? []
   if (
@@ -386,10 +393,19 @@ export async function submitProposal(
   if (input.ops.length > WIKI_LIMITS.ops) {
     problems.push({
       op: null,
-      message: `A proposal has at most ${WIKI_LIMITS.ops} operations; this one has ${input.ops.length}.`,
+      message: `${what} has at most ${WIKI_LIMITS.ops} operations; this one has ${input.ops.length}.`,
     })
   }
   const ops = input.ops.slice(0, WIKI_LIMITS.ops).map((raw, i) => readOp(raw, i, problems))
+  return { title, reason, collected, agent, ops, problems }
+}
+
+export async function submitProposal(
+  ctx: Ctx,
+  slug: string,
+  input: ProposalInput,
+): Promise<{ proposal: Proposal; ops: ProposalOp[]; warnings: Warning[] }> {
+  const { title, reason, collected, agent, ops, problems } = readPackage(ctx, input)
   const out = await ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
     const { brain, role } = await inBrain(c, { slug }, 'share')

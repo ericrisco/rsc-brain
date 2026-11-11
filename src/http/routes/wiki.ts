@@ -23,9 +23,10 @@ import {
   submitProposal,
   withdrawProposal,
 } from '../../domain/wiki/proposals.ts'
+import { writeWiki } from '../../domain/wiki/write.ts'
 import { grantWriter, listWriters, revokeWriter } from '../../domain/wiki/writers.ts'
 import { MAX_REPLY_CHARS } from '../bounds.ts'
-import { compact, obj, oneOf, reqStr, str } from '../input.ts'
+import { bool, compact, obj, oneOf, reqStr, str } from '../input.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
@@ -196,6 +197,24 @@ export const wikiRoutes: Route[] = [
         collected: b.collected,
         supersedes: str(b, 'supersedes', { max: 40 }),
         agent: str(b, 'agent'),
+      }),
+    )
+    return { status: 201, body: out }
+  }),
+  // A key a curator let write to the wiki sends the operations of a proposal; they apply at once (spec v0.6).
+  route('POST /v1/brains/:slug/wiki/write', async (r) => {
+    const b = obj(r.body)
+    const out = await writeWiki(
+      ctxOf(r),
+      r.params.slug as string,
+      compact({
+        title: reqStr(b, 'title'),
+        reason: str(b, 'reason'),
+        ops: b.ops,
+        collected: b.collected,
+        agent: str(b, 'agent'),
+        maintenance: bool(b, 'maintenance'),
+        requestKey: str(b, 'requestKey'),
       }),
     )
     return { status: 201, body: out }
