@@ -23,6 +23,7 @@ import {
   TOKEN_DAYS,
   type TokenForm,
   tokenRequest,
+  wikiWriteChoices,
   writeAllowed,
 } from '../lib/profile.ts'
 import { branding, justSignedOut, type Me, me, online } from '../session.ts'
@@ -48,6 +49,8 @@ type Token = {
   expiresSoon: boolean
   lastUsedAt: string | null
   lastClient: string | null
+  // The brains where it writes to the wiki directly (v0.6).
+  wikiWrite: string[]
 }
 type App = {
   id: string
@@ -159,7 +162,19 @@ function NewTokenForm({
   onCancel: () => void
 }) {
   const brains = brainsResource().data.value?.brains ?? []
-  const [f, setF] = useState<TokenForm>({ name: '', perm: 'write', days: 90, scope: 'all', brains: [] })
+  const [f, setF] = useState<TokenForm>({
+    name: '',
+    perm: 'write',
+    days: 90,
+    scope: 'all',
+    brains: [],
+    wikiWrite: [],
+  })
+  // Where it may write to the wiki directly: brains it reaches where the person is a curator (v0.6).
+  const wikiChoices = wikiWriteChoices(
+    { perm: f.perm, allBrains: f.scope === 'all', brains: f.brains, wikiWrite: f.wikiWrite ?? [] },
+    brains,
+  )
   // «Read and write» only where the person writes: a reader's token reads (B4).
   const roles = new Map(brains.map((b) => [b.slug, b.role]))
   const canWrite = brains.length === 0 || writeAllowed(f, roles)
@@ -300,6 +315,31 @@ function NewTokenForm({
           </span>
         )}
       </fieldset>
+      {wikiChoices.length ? (
+        <fieldset class="choice" aria-describedby="token-wiki-hint">
+          <legend>{P.wikiWrite}</legend>
+          <span id="token-wiki-hint" class="hint">
+            {P.wikiWriteHint}
+          </span>
+          <ul class="token-brains">
+            {wikiChoices.map((b) => (
+              <li key={b.slug} class="pick">
+                <input
+                  type="checkbox"
+                  id={`tw-${b.slug}`}
+                  checked={b.on}
+                  onChange={(e) => {
+                    const on = (e.currentTarget as HTMLInputElement).checked
+                    const now = f.wikiWrite ?? []
+                    setF({ ...f, wikiWrite: on ? [...now, b.slug] : now.filter((x) => x !== b.slug) })
+                  }}
+                />
+                <label for={`tw-${b.slug}`}>{P.wikiWriteIn(b.name)}</label>
+              </li>
+            ))}
+          </ul>
+        </fieldset>
+      ) : null}
       <div class="field">
         <label for="token-days">{P.expires}</label>
         <select
@@ -468,6 +508,7 @@ function Tokens({ start, forget }: { start: boolean; forget: number }) {
                 <p class="meta">
                   {lastUseLabel(t)} · {P.endsOn(T.date(t.expiresAt))}
                 </p>
+                <WikiWrite token={t} onSaid={setSaid} />
               </Revocable>
             ))}
           </ul>
@@ -511,6 +552,57 @@ function Tokens({ start, forget }: { start: boolean; forget: number }) {
         </>
       )}
     </section>
+  )
+}
+
+// Spec v0.6 CA17: in each brain where the person is a curator, whether this token writes to the wiki directly.
+// Each box saves at once; what it did is said in the status line of the tokens.
+function WikiWrite({ token, onSaid }: { token: Token; onSaid: (s: string) => void }) {
+  const brains = brainsResource().data.value?.brains ?? []
+  const choices = wikiWriteChoices(token, brains)
+  // What each box shows while its save is under way; the list read again after it decides.
+  const [shown, setShown] = useState<Record<string, boolean>>({})
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<ApiError | null>(null)
+  if (choices.length === 0) return null
+  const set = async (slug: string, name: string, on: boolean) => {
+    setBusy(slug)
+    setError(null)
+    setShown((x) => ({ ...x, [slug]: on }))
+    try {
+      await api.call(on ? 'giveWikiWrite' : 'takeWikiWrite', { path: { slug, keyId: token.id } })
+      onSaid(on ? P.wikiWriteOn(token.name, name) : P.wikiWriteOff(token.name, name))
+      await tokensResource().reload()
+    } catch (e) {
+      setError(e as ApiError)
+    } finally {
+      setShown((x) => {
+        const { [slug]: _, ...rest } = x
+        return rest
+      })
+      setBusy(null)
+    }
+  }
+  // Not a list: these boxes live inside one item of the list of tokens.
+  return (
+    <fieldset class="choice wiki-write">
+      <legend class="meta">{P.wikiWrite}</legend>
+      <FormAlert error={error} />
+      <div class="token-brains">
+        {choices.map((b) => (
+          <div key={b.slug} class="pick">
+            <input
+              type="checkbox"
+              id={`ww-${token.id}-${b.slug}`}
+              checked={shown[b.slug] ?? b.on}
+              disabled={busy !== null || Boolean(blocked())}
+              onChange={(e) => void set(b.slug, b.name, (e.currentTarget as HTMLInputElement).checked)}
+            />
+            <label for={`ww-${token.id}-${b.slug}`}>{P.wikiWriteIn(b.name)}</label>
+          </div>
+        ))}
+      </div>
+    </fieldset>
   )
 }
 

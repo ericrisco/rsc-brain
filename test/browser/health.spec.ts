@@ -38,10 +38,14 @@ test('«ask an agent to fix this» copies an instruction with the tool and the b
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('all 13 problems')
 })
 
-test('a maintenance proposal due is said, with its instruction', async ({ page, context, baseURL }) => {
+test('a cleanup due is said, with its instruction (v0.6: daily, not every so many approvals)', async ({
+  page,
+  context,
+  baseURL,
+}) => {
   await scenario(context, baseURL as string, 'signed-in')
   await page.goto(H)
-  await expect(page.getByText('21 proposals were approved since the last maintenance.')).toBeVisible()
+  await expect(page.getByText('This wiki has never been cleaned.')).toBeVisible()
 })
 
 test('empty says «Nothing to fix»', async ({ page, context, baseURL }) => {

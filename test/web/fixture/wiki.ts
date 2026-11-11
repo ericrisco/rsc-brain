@@ -41,11 +41,14 @@ type Line = {
   at: string
   actorId: string
   actorName: string
-  kind: 'proposal' | 'direct' | 'revert' | 'purge'
+  kind: 'proposal' | 'direct' | 'revert' | 'purge' | 'write'
   proposalId: string | null
   summary: string
   reason: string | null
   pages: string[]
+  // v0.6: written directly by a key with the permission, and a cleanup pass.
+  keyName?: string | null
+  maintenance?: boolean
 }
 export type PageCorrection = {
   id: string
@@ -215,6 +218,20 @@ export function freshWiki(): Wiki {
       pages: [r.address],
     })),
   )
+  // A key a curator let write to the wiki tidied it directly (v0.6).
+  log.push({
+    id: 'log_write_1',
+    at: '2026-10-28T18:00:00.000Z',
+    actorId: 'acc_eric',
+    actorName: 'Eric',
+    kind: 'write',
+    proposalId: null,
+    summary: 'Written directly by Claude Code laptop: Link the orphan pages',
+    reason: 'Daily cleanup.',
+    pages: ['overview/audience'],
+    keyName: 'Claude Code laptop',
+    maintenance: true,
+  })
   log.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : a.id < b.id ? 1 : -1))
   return { pages, log, seq: 1 }
 }
@@ -541,8 +558,13 @@ export function decisionsOf(w: Wiki, extra: GenPage[]) {
 
 export function logOf(w: Wiki, q: Q, many: boolean): Answer {
   const kind = q.get('kind')
-  if (kind && !['proposal', 'direct', 'revert', 'purge'].includes(kind))
-    return err(400, 'invalid_request', '"kind" is one of: proposal, direct, revert, purge.', 'Fix "kind".')
+  if (kind && !['proposal', 'direct', 'revert', 'purge', 'write'].includes(kind))
+    return err(
+      400,
+      'invalid_request',
+      '"kind" is one of: proposal, direct, revert, purge, write.',
+      'Fix "kind".',
+    )
   const extra: Line[] = many
     ? Array.from({ length: 120 }, (_, i) => ({
         id: `log_many_${String(i).padStart(3, '0')}`,
@@ -562,7 +584,7 @@ export function logOf(w: Wiki, q: Q, many: boolean): Answer {
   )
   const limit = Math.min(200, Number(q.get('limit') ?? 50) || 50)
   const start = Number(q.get('cursor') ? Buffer.from(q.get('cursor') as string, 'base64url').toString() : 0)
-  const items = rows.slice(start, start + limit)
+  const items = rows.slice(start, start + limit).map((l) => ({ keyName: null, maintenance: false, ...l }))
   const end = start + limit
   return {
     status: 200,

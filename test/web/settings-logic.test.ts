@@ -84,25 +84,18 @@ describe('members of a brain', () => {
 
 describe('health thresholds', () => {
   it('accepts the ranges the server accepts and names each field out of them', () => {
-    assert.deepEqual(thresholdProblems({ staleDays: '90', longChars: '20000', maintenanceEvery: '20' }), {})
-    const p = thresholdProblems({ staleDays: '0', longChars: '999', maintenanceEvery: '1001' })
-    assert.deepEqual(Object.keys(p).sort(), ['longChars', 'maintenanceEvery', 'staleDays'])
+    assert.deepEqual(thresholdProblems({ staleDays: '90', longChars: '20000' }), {})
+    const p = thresholdProblems({ staleDays: '0', longChars: '999' })
+    assert.deepEqual(Object.keys(p).sort(), ['longChars', 'staleDays'])
     // The bounds themselves are in.
-    assert.deepEqual(
-      thresholdProblems({ staleDays: '3650', longChars: '100000', maintenanceEvery: '1000' }),
-      {},
-    )
-    assert.deepEqual(thresholdProblems({ staleDays: '1', longChars: '1000', maintenanceEvery: '1' }), {})
-    assert.deepEqual(
-      Object.keys(thresholdProblems({ staleDays: '3651', longChars: '100001', maintenanceEvery: '1001' }))
-        .length,
-      3,
-    )
+    assert.deepEqual(thresholdProblems({ staleDays: '3650', longChars: '100000' }), {})
+    assert.deepEqual(thresholdProblems({ staleDays: '1', longChars: '1000' }), {})
+    assert.deepEqual(Object.keys(thresholdProblems({ staleDays: '3651', longChars: '100001' })).length, 2)
     assert.match(String(p.staleDays), /1 to 3650/)
-    assert.deepEqual(
-      Object.keys(thresholdProblems({ staleDays: '1.5', longChars: 'x', maintenanceEvery: '' })).sort(),
-      ['longChars', 'maintenanceEvery', 'staleDays'],
-    )
+    assert.deepEqual(Object.keys(thresholdProblems({ staleDays: '1.5', longChars: 'x' })).sort(), [
+      'longChars',
+      'staleDays',
+    ])
   })
 })
 
@@ -116,7 +109,6 @@ describe('what a save sends: only the fields changed, each with the value it was
     meaningExcluded: false,
     staleDays: 90,
     longChars: 20000,
-    maintenanceEvery: 20,
   }
   it('nothing changed still sends the base of what the part shows: the server compares it', () => {
     assert.deepEqual(settingsSave(read, { guide: 'Default guide.' }), { base: { guide: null } })
@@ -137,12 +129,12 @@ describe('what a save sends: only the fields changed, each with the value it was
     })
   })
   it('thresholds: only those that changed, as numbers', () => {
-    assert.deepEqual(settingsSave(read, { staleDays: 30, longChars: 20000, maintenanceEvery: 20 }), {
+    assert.deepEqual(settingsSave(read, { staleDays: 30, longChars: 20000 }), {
       staleDays: 30,
-      base: { staleDays: 90, longChars: 20000, maintenanceEvery: 20 },
+      base: { staleDays: 90, longChars: 20000 },
     })
-    assert.deepEqual(settingsSave(read, { staleDays: 90, longChars: 20000, maintenanceEvery: 20 }), {
-      base: { staleDays: 90, longChars: 20000, maintenanceEvery: 20 },
+    assert.deepEqual(settingsSave(read, { staleDays: 90, longChars: 20000 }), {
+      base: { staleDays: 90, longChars: 20000 },
     })
   })
 })

@@ -26,6 +26,37 @@ async function secretGone(page: Page, secret: string) {
   expect(kept.includes(secret), 'the token is nowhere on the page or in what it keeps').toBe(false)
 }
 
+test('v0.6 CA17: a curator sees and changes whether a token writes to the wiki directly, also when making it', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/profile')
+  const tokens = page.getByRole('region', { name: 'Tokens' })
+  const laptop = tokens.getByRole('listitem').filter({ hasText: 'Claude Code laptop' })
+  const growth = laptop.getByRole('checkbox', { name: 'Can write to the wiki of Growth' })
+  await expect(growth).not.toBeChecked()
+  await growth.check()
+  await expect(tokens.getByRole('status')).toContainText(
+    'Claude Code laptop can now write to the wiki of Growth directly.',
+  )
+  await expect(growth).toBeChecked()
+  await growth.uncheck()
+  await expect(tokens.getByRole('status')).toContainText('Claude Code laptop proposes again in Growth.')
+  // A read-only token is never offered it.
+  const ci = tokens.getByRole('listitem').filter({ hasText: 'CI reader' })
+  await expect(ci.getByRole('checkbox')).toHaveCount(0)
+  // When making one: only with read + write, only brains where I am a curator.
+  await tokens.getByRole('button', { name: 'Create a token' }).click()
+  const form = tokens.getByRole('form', { name: 'New token' })
+  await form.getByLabel('Name').fill('Agent that writes')
+  await form.getByRole('checkbox', { name: 'Can write to the wiki of Growth' }).check()
+  await form.getByRole('button', { name: 'Create token' }).click()
+  await expect(tokens.getByText('Agent that writes')).toBeVisible()
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
+})
+
 test('CA13: a token is made with a name, brains, permission and expiry; shown once; then never again', async ({
   page,
   context,

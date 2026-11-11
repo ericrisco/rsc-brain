@@ -215,7 +215,7 @@ export function HealthScreen({ slug }: { slug: string }) {
       {data?.maintenance.suggested ? (
         <div class="alert warn health-maintenance" role="note">
           <span class="kind">{T.kind.warning}</span>
-          <span>{h.maintenance(data.maintenance.approvalsSince)}</span>
+          <span>{h.maintenance(data.maintenance.lastAt ? T.dateTime(data.maintenance.lastAt) : null)}</span>
           <span>
             <Act slug={slug} can={can} text={h.maintenanceAsk(slug)} label={h.copyMaintenance} />
           </span>

@@ -14,7 +14,7 @@ import { Empty, ErrorState, Skeleton } from '../../ui/states.tsx'
 import { pageHref, useBrain, useFilters, WikiHead } from './common.tsx'
 import type { Listing, LogLine } from './data.ts'
 
-const KINDS = ['proposal', 'direct', 'revert', 'purge'] as const
+const KINDS = ['proposal', 'write', 'direct', 'revert', 'purge'] as const
 
 export function WikiLog({ slug }: { slug: string }) {
   const { brain, gate } = useBrain(slug)
@@ -136,10 +136,15 @@ export function WikiLog({ slug }: { slug: string }) {
           <ul class="list log" aria-label={w.changesList}>
             {lines.map((l) => (
               <li key={l.id}>
-                <p class="list-title">{l.summary}</p>
+                <p class="list-title">
+                  {l.summary}
+                  {l.kind === 'write' ? <span class="tag">{w.writtenDirectly}</span> : null}
+                  {l.maintenance ? <span class="tag">{w.cleanup}</span> : null}
+                </p>
                 {l.reason ? <p class="why">{w.why(l.reason)}</p> : null}
                 <p class="meta">
-                  <span class="mono">{T.dateTime(l.at)}</span> · {w.by(l.actorName)}
+                  <span class="mono">{T.dateTime(l.at)}</span> ·{' '}
+                  {l.kind === 'write' && l.keyName ? w.byKey(l.actorName, l.keyName) : w.by(l.actorName)}
                   {l.pages.length ? ' · ' : null}
                   {l.pages.map((p, i) => (
                     <span key={p}>

@@ -23,6 +23,7 @@ import {
   passwordChanged,
   permLabel,
   tokenRequest,
+  wikiWriteChoices,
   writeAllowed,
 } from '../../web/src/lib/profile.ts'
 
@@ -91,6 +92,47 @@ describe('a new token, from the form', () => {
       brains: 'Choose at least one brain, or all of them.',
     })
     assert.equal(tokenRequest({ ...base, name: ' Laptop ' }).body?.name, 'Laptop')
+  })
+})
+
+// Spec v0.6 CA17: a curator lets a token write to the wiki of a brain directly, when making it or later.
+describe('writing to the wiki directly, by token', () => {
+  const brains = [
+    { slug: 'growth', name: 'Growth', role: 'curator' },
+    { slug: 'support', name: 'Support', role: 'contributor' },
+    { slug: 'ops', name: 'Ops', role: 'curator' },
+  ]
+  it('offers the brains the token reaches with read + write where the person is a curator', () => {
+    assert.deepEqual(
+      wikiWriteChoices({ perm: 'write', allBrains: true, brains: null, wikiWrite: ['ops'] }, brains),
+      [
+        { slug: 'growth', name: 'Growth', on: false },
+        { slug: 'ops', name: 'Ops', on: true },
+      ],
+    )
+    assert.deepEqual(
+      wikiWriteChoices({ perm: 'write', allBrains: false, brains: ['support', 'growth'] }, brains).map(
+        (x) => x.slug,
+      ),
+      ['growth'],
+    )
+    assert.deepEqual(wikiWriteChoices({ perm: 'read', allBrains: true, brains: null }, brains), [])
+  })
+  it('sends the brains chosen, only for a read + write token', () => {
+    const base = { name: 'Agent', perm: 'write' as const, days: 90, scope: 'all' as const, brains: [] }
+    assert.deepEqual(tokenRequest({ ...base, wikiWrite: ['growth'] }).body, {
+      name: 'Agent',
+      perm: 'write',
+      days: 90,
+      wikiWrite: ['growth'],
+      allBrains: true,
+    })
+    assert.deepEqual(tokenRequest({ ...base, perm: 'read', wikiWrite: ['growth'] }).body, {
+      name: 'Agent',
+      perm: 'read',
+      days: 90,
+      allBrains: true,
+    })
   })
 })
 

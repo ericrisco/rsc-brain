@@ -246,6 +246,8 @@ type FxToken = {
   expiresSoon: boolean
   lastUsedAt: string | null
   lastClient: string | null
+  // The brains where it writes to the wiki directly (v0.6).
+  wikiWrite?: string[]
 }
 type FxApp = {
   account: string
@@ -261,7 +263,7 @@ type FxApp = {
   endsAt: string
   ended: boolean
 }
-const tokenView = ({ account: _a, ...t }: FxToken) => t
+const tokenView = ({ account: _a, ...t }: FxToken) => ({ ...t, wikiWrite: t.wikiWrite ?? [] })
 const appView = ({ account: _a, ...a }: FxApp) => a
 const TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DP'
 
@@ -1225,6 +1227,10 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         expiresSoon: false,
         lastUsedAt: null,
         lastClient: null,
+        // Where it writes to the wiki directly: only brains where the person is a curator (v0.6).
+        wikiWrite: (Array.isArray(body.wikiWrite) ? (body.wikiWrite as string[]) : []).filter(
+          (x) => brainsOf(s, who).find((b) => b.slug === x)?.role === 'curator',
+        ),
       })
       return {
         status: 201,
@@ -1275,6 +1281,48 @@ const OPS: Record<string, { screen?: Screen; run: (c: Ctx) => Answer }> = {
         return err(404, 'not_found', 'No token with that id is available to you.', 'Check the token id.')
       s.tokens = s.tokens.filter((x) => x !== t)
       return { status: 200, body: { revoked: t.id } }
+    },
+  },
+  // v0.6: a curator, in the web, lets a token write to the wiki of a brain directly, and takes it back.
+  'PUT /v1/brains/{slug}/wiki/writers/{keyId}': {
+    run: ({ s, who, params, web }) => {
+      if (!who) return UNAUTHORIZED
+      if (!web) return CSRF
+      if (brainsOf(s, who).find((b) => b.slug === params.slug)?.role !== 'curator')
+        return err(
+          403,
+          'forbidden',
+          'This needs the curator role in the brain.',
+          'Ask a curator of the brain.',
+        )
+      const t = s.tokens.find((x) => x.id === params.keyId)
+      if (!t) return err(404, 'not_found', 'No key with that id.', 'Check the key.')
+      t.wikiWrite = [...new Set([...(t.wikiWrite ?? []), params.slug as string])]
+      return {
+        status: 200,
+        body: {
+          writer: {
+            keyId: t.id,
+            kind: 'token',
+            name: t.name,
+            last4: t.last4,
+            owner: who.name,
+            ownerId: who.id,
+            grantedBy: who.name,
+            grantedAt: NOW(),
+          },
+        },
+      }
+    },
+  },
+  'DELETE /v1/brains/{slug}/wiki/writers/{keyId}': {
+    run: ({ s, who, params }) => {
+      if (!who) return UNAUTHORIZED
+      const t = s.tokens.find((x) => x.id === params.keyId)
+      if (!t || !(t.wikiWrite ?? []).includes(params.slug as string))
+        return err(404, 'not_found', 'This key cannot write to that wiki.', 'Check the key.')
+      t.wikiWrite = (t.wikiWrite ?? []).filter((x) => x !== params.slug)
+      return { status: 200, body: { removed: t.id } }
     },
   },
   'GET /v1/me/apps': {
@@ -2547,7 +2595,13 @@ function healthOf(slug: string, st: State | undefined) {
     }>,
     long: [] as Array<{ address: string; title: string; chars: number }>,
     similarTitles: [] as Array<{ a: string; aTitle: string; b: string; bTitle: string }>,
-    maintenance: { suggested: false, approvalsSince: 3, every: 20 },
+    maintenance: {
+      suggested: false,
+      lastAt: '2026-10-28T18:00:00.000Z',
+      pending: false,
+      approvalsSince: 3,
+      every: 20,
+    },
   }
   if (st === 'empty' || (slug !== 'growth' && slug !== 'support')) return none
   const h = {
@@ -2591,7 +2645,7 @@ function healthOf(slug: string, st: State | undefined) {
         bTitle: 'Monthly retention report for the support channel, September 2026',
       },
     ],
-    maintenance: { suggested: true, approvalsSince: 21, every: 20 },
+    maintenance: { suggested: true, lastAt: null, pending: false, approvalsSince: 21, every: 20 },
   }
   if (st === 'much-data')
     h.orphans = Array.from({ length: 60 }, (_, i) => ({
@@ -2641,6 +2695,8 @@ const PRIVATE = new Set([
   'POST /v1/me/tokens',
   'GET /v1/me/tokens',
   'DELETE /v1/me/tokens/{id}',
+  'PUT /v1/brains/{slug}/wiki/writers/{keyId}',
+  'DELETE /v1/brains/{slug}/wiki/writers/{keyId}',
   'GET /v1/me/apps',
   'DELETE /v1/me/apps/{id}',
   'PUT /v1/brains/{slug}/notify',
