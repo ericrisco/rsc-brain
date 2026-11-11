@@ -12,7 +12,7 @@ import { type Checked, checkChange, checksNow } from './coherence.ts'
 import type { Op, Problem } from './model.ts'
 import { getPage } from './pages.ts'
 import { knownAddresses, type ProposalInput, problemsOf, readPackage } from './proposals.ts'
-import { keyIdOf, mayWriteWiki } from './writers.ts'
+import { keyName, mayWriteWiki } from './writers.ts'
 
 export type WriteInput = ProposalInput & { maintenance?: boolean; requestKey?: string }
 
@@ -43,22 +43,6 @@ async function rebuilt(db: Db, brainId: string, r: Stored, now: Date): Promise<W
 }
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex')
-
-// The key's name as the log keeps it: a token's or main key's name, an app's name; a short key's main key, with
-// the job it was made for.
-async function keyName(db: Db, ctx: Ctx): Promise<string> {
-  const c = ctx.who.credential
-  const id = keyIdOf(c)
-  const r = id
-    ? await db.one<{ name: string }>(
-        `SELECT coalesce((SELECT name FROM credentials WHERE id = $1),
-                         (SELECT client_name FROM oauth_grants WHERE id = $1)) AS name`,
-        [id],
-      )
-    : undefined
-  const name = r?.name ?? 'a key'
-  return c.kind === 'short' && c.ref ? `${name} (${c.ref})` : name
-}
 
 export async function writeWiki(ctx: Ctx, slug: string, input: WriteInput): Promise<WriteReceipt> {
   const pkg = readPackage(ctx, input, 'A write')

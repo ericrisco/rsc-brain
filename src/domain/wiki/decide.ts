@@ -2,6 +2,10 @@
 // the rest with a comment, correct an operation first, or return it all. What is approved applies all
 // at once or not at all; a returned comment becomes a correction in the journal for the agent that
 // proposed, so it learns why. Only what was seen is approved: the fingerprint must match.
+// A key a curator let write to the wiki decides the same way, by MCP and the API (spec v0.7; P5 v2.2.0): the
+// permission is asked on every request, inside the decision (CA7), and the log and the activity name the key and
+// its owner. A retry with the same request key gets the same decision again, and decides once (CA8).
+import { createHash } from 'node:crypto'
 import { can } from '../../auth/can.ts'
 import { actorOf } from '../../auth/principal.ts'
 import { AppError, conflict, invalid, notFound } from '../../core/errors.ts'
@@ -13,16 +17,38 @@ import { emit } from '../events.ts'
 import { ApplyError, type ApplyItem, applyOps, type Revised } from './apply.ts'
 import { type Op, type Problem, readOp, WIKI_LIMITS } from './model.ts'
 import { named, type Proposal, type ProposalOp, proposalOf, proposalOpOf } from './proposals.ts'
-import { buildReview, dependencies, fingerprint, type Review, webOnly, wikiPurges } from './review.ts'
+import { buildReview, dependencies, fingerprint, type Review, wikiPurges } from './review.ts'
+import { hasPermission, keyName } from './writers.ts'
 
-// `decide`: the person is about to decide (a curator of an active brain); otherwise only reading the
-// review, which every member may do in the web (spec B6 CA17: a reader sees the inbox, read-only).
+// A key without the permission: approval stays the web's (spec B2 CA9), or comes with the permission (v0.7 CA5).
+const notThisKey = () =>
+  new AppError(
+    403,
+    'web_only',
+    'Approval happens in the web.',
+    'Open the proposal in the rsc-brain web, as a curator; or ask a curator of the brain to give this key the permission to write to the wiki, and it decides over MCP (brain_decide) and the API.',
+  )
+
+// Who decided through a key, as the log and the activity say it: the key's owner and the key's name.
+type ByKey = { owner: string; key: string }
+
+// `decide`: about to decide; otherwise only reading the review. In the web, a person decides as a curator of an
+// active brain, and every member reads the review (spec B6 CA17: a reader sees the inbox, read-only). A key reads
+// and decides only with the permission to write to the brain's wiki, and decides with the bar of writing to it
+// (a contributor or more, read + write, the brain not archived), like a direct write (spec v0.7).
 async function load(
   ctx: Ctx,
   id: string,
   lock: boolean,
   decide = true,
-): Promise<{ row: Row; brainId: string; slug: string; canDecide: boolean; curator: boolean }> {
+): Promise<{
+  row: Row
+  brainId: string
+  slug: string
+  canDecide: boolean
+  curator: boolean
+  byKey: ByKey | null
+}> {
   const row = await ctx.db.one(`SELECT * FROM proposals WHERE id = $1${lock ? ' FOR UPDATE' : ''}`, [id])
   if (!row) throw notFound('proposal')
   const { brain, role } = await inBrain(ctx, { id: String(row.brain_id) }, lock ? 'share' : null).catch(
@@ -30,11 +56,77 @@ async function load(
       throw notFound('proposal')
     },
   )
-  webOnly(ctx)
+  const web = ctx.who.credential.kind === 'web'
+  if (!web && !(await hasPermission(ctx.db, brain.id, ctx.who.credential))) throw notThisKey()
+  const action = web ? 'wiki.decide' : 'wiki.propose'
   const facts = { role, brainStatus: brain.status }
-  if (decide) await allow(ctx, 'wiki.decide', facts, brain.id)
-  const canDecide = can(actorOf(ctx.who), 'wiki.decide', facts).ok
-  return { row, brainId: brain.id, slug: brain.slug, canDecide, curator: role === 'curator' }
+  if (decide) await allow(ctx, action, facts, brain.id)
+  const canDecide = can(actorOf(ctx.who), action, facts).ok
+  let byKey: ByKey | null = null
+  if (!web && decide) {
+    const owner = await ctx.db.one<{ name: string }>('SELECT name FROM accounts WHERE id = $1', [
+      ctx.who.accountId,
+    ])
+    byKey = { owner: owner?.name ?? 'someone', key: await keyName(ctx.db, ctx) }
+  }
+  return { row, brainId: brain.id, slug: brain.slug, canDecide, curator: role === 'curator', byKey }
+}
+
+const sha = (s: string) => createHash('sha256').update(s).digest('hex')
+
+// What a retry with the same request key gets again, as stored: ids and revisions only, never the text of a page
+// (a purge since must not survive in it, spec v0.6). The proposal and its operations are read again as they are.
+type Stored = { proposalId: string; applied: Revised[] }
+
+async function decisionOf(ctx: Ctx, s: Stored): Promise<Decision> {
+  const row = (await ctx.db.one('SELECT * FROM proposals WHERE id = $1', [s.proposalId])) as Row
+  const ops = (
+    await ctx.db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [s.proposalId])
+  ).map(proposalOpOf)
+  return { proposal: await named(ctx.db, proposalOf(row, ctx.clock())), ops, applied: s.applied }
+}
+
+const checkRequestKey = (k: string | undefined) => {
+  if (k !== undefined && (!k.trim() || k.length > 200))
+    throw invalid('A request key has 1 to 200 characters.', 'Use a fresh random id per request, e.g. a UUID.')
+}
+
+// Same key, same request: the same decision (CA8). Two retries racing are serialised here, as a direct write's are;
+// `keep` stores the receipt once the decision is made, in the same transaction.
+async function once(
+  ctx: Ctx,
+  requestKey: string | undefined,
+  request: unknown[],
+): Promise<{ again: Decision | null; keep: (d: Decision) => Promise<void> }> {
+  if (requestKey === undefined) return { again: null, keep: async () => {} }
+  const credential = ctx.who.credential.id
+  const key = sha(requestKey)
+  const hash = sha(JSON.stringify(['wiki.decide', ...request]))
+  await ctx.db.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${credential}:${key}`])
+  const seen = await ctx.db.one<{ request_hash: string; receipt: Stored }>(
+    'SELECT request_hash, receipt FROM request_keys WHERE credential_id = $1 AND key = $2',
+    [credential, key],
+  )
+  if (seen) {
+    if (seen.request_hash !== hash) {
+      throw conflict(
+        'request_key_reused',
+        'This request key was already used for a different request.',
+        'Use a new request key for a new decision; reuse a key only to retry the very same request.',
+      )
+    }
+    return { again: await decisionOf(ctx, seen.receipt), keep: async () => {} }
+  }
+  return {
+    again: null,
+    keep: async (d) => {
+      const stored: Stored = { proposalId: d.proposal.id, applied: d.applied }
+      await ctx.db.query(
+        'INSERT INTO request_keys (credential_id, key, request_hash, receipt, created_at) VALUES ($1, $2, $3, $4, $5)',
+        [credential, key, hash, JSON.stringify(stored), ctx.clock()],
+      )
+    },
+  }
 }
 
 export async function reviewProposal(ctx: Ctx, id: string): Promise<Review & { canDecide: boolean }> {
@@ -91,18 +183,31 @@ const commentOf = (raw: string | undefined): string | undefined => {
 }
 
 // The returned part becomes a person's correction that applies to whoever proposed (spec B2, CA8).
-async function teach(ctx: Ctx, brainId: string, row: Row, comment: string, returned: ProposalOp[]) {
+async function teach(
+  ctx: Ctx,
+  brainId: string,
+  row: Row,
+  comment: string,
+  returned: ProposalOp[],
+  byKey: boolean,
+) {
   const author = await ctx.db.one<{ name: string }>('SELECT name FROM accounts WHERE id = $1', [
     row.author_id,
   ])
   const appliesTo = String(row.agent ?? author?.name ?? 'the proposer').slice(0, 80)
   const which = returned.map((o) => `${o.index} (${o.op.op} ${o.op.address})`).join(', ')
-  await webCorrection(ctx, ctx.db, brainId, {
-    title: `Returned: ${String(row.title)}`.slice(0, 200),
-    content: `${comment}\n\nReturned operations of proposal ${row.id}: ${which}.`.slice(0, 32_000),
-    appliesTo,
-    refs: [String(row.id)],
-  })
+  await webCorrection(
+    ctx,
+    ctx.db,
+    brainId,
+    {
+      title: `Returned: ${String(row.title)}`.slice(0, 200),
+      content: `${comment}\n\nReturned operations of proposal ${row.id}: ${which}.`.slice(0, 32_000),
+      appliesTo,
+      refs: [String(row.id)],
+    },
+    { decidedByKey: byKey },
+  )
 }
 
 // What a person may correct before approving (spec B2: «Edit de una operación»): the words of a new page,
@@ -172,20 +277,36 @@ function overlay(
 
 export type Decision = { proposal: Proposal; ops: ProposalOp[]; applied: Revised[] }
 
+// The activity's label of a decision: its status, first (the web's live notice reads it), then the key, if one.
+const decidedLabel = (status: string, byKey: ByKey | null) =>
+  byKey ? `${status} with the key ${byKey.key}` : status
+
 export type ApproveInput = {
   fingerprint: string
   approve?: number[]
   comment?: string
   corrections?: Record<string, unknown>
   baseReviewed?: number[]
+  requestKey?: string
 }
 
 export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput): Promise<Decision> {
   const comment = commentOf(input.comment)
+  checkRequestKey(input.requestKey)
   let failure: ApplyError | null = null
   const out = await ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
-    const { row, brainId } = await load(c, id, true)
+    const { row, brainId, byKey } = await load(c, id, true)
+    const { again, keep } = await once(c, input.requestKey, [
+      'approve',
+      id,
+      input.fingerprint,
+      input.approve ?? null,
+      comment ?? null,
+      input.corrections ?? null,
+      input.baseReviewed ?? null,
+    ])
+    if (again) return again
     const ops = await stillAsSeen(c, row, input.fingerprint)
     const all = ops.map((o) => o.index)
     const original = ops.map((o) => o.op)
@@ -281,7 +402,8 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
         await applyOps(c, db, brainId, items, {
           kind: 'proposal',
           proposalId: String(row.id),
-          summary: `${rest.length > 0 ? 'Partly approved' : 'Approved'}: ${String(row.title)}`,
+          summary: `${rest.length > 0 ? 'Partly approved' : 'Approved'}${byKey ? ` by ${byKey.owner} with the key ${byKey.key}` : ''}: ${String(row.title)}`,
+          ...(byKey ? { keyName: byKey.key } : {}),
           // An approved maintenance proposal is a cleanup (spec v0.6 «Limpieza diaria»).
           maintenance: Boolean(row.maintenance),
         })
@@ -345,6 +467,7 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
         row,
         comment,
         ops.filter((o) => rest.includes(o.index)),
+        byKey !== null,
       )
     }
     await db.query(
@@ -352,11 +475,18 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
        ON CONFLICT (brain_id) DO UPDATE SET approvals_since = wiki_settings.approvals_since + 1`,
       [brainId],
     )
-    await emit(db, c, { brainId, kind: 'proposal.decided', targetId: String(row.id), label: status })
+    await emit(db, c, {
+      brainId,
+      kind: 'proposal.decided',
+      targetId: String(row.id),
+      label: decidedLabel(status, byKey),
+    })
     const final = (
       await db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [row.id])
     ).map(proposalOpOf)
-    return { proposal: await named(db, proposalOf(done as Row, now)), ops: final, applied }
+    const decision = { proposal: await named(db, proposalOf(done as Row, now)), ops: final, applied }
+    await keep(decision)
+    return decision
   })
   if (failure) throw failure
   return out as Decision
@@ -365,12 +495,15 @@ export async function approveProposal(ctx: Ctx, id: string, input: ApproveInput)
 export async function returnProposal(
   ctx: Ctx,
   id: string,
-  input: { fingerprint: string; comment: string },
+  input: { fingerprint: string; comment: string; requestKey?: string },
 ): Promise<Decision> {
   const comment = commentOf(input.comment) as string
+  checkRequestKey(input.requestKey)
   return ctx.db.tx(async (db) => {
     const c = { ...ctx, db }
-    const { row, brainId } = await load(c, id, true)
+    const { row, brainId, byKey } = await load(c, id, true)
+    const { again, keep } = await once(c, input.requestKey, ['return', id, input.fingerprint, comment])
+    if (again) return again
     const ops = await stillAsSeen(c, row, input.fingerprint)
     const now = ctx.clock()
     await db.query("UPDATE proposal_ops SET status = 'returned' WHERE proposal_id = $1", [row.id])
@@ -378,11 +511,18 @@ export async function returnProposal(
       `UPDATE proposals SET status = 'returned', decided_by = $2, decided_at = $3, comment = $4 WHERE id = $1 RETURNING *`,
       [row.id, ctx.who.accountId, now, comment],
     )
-    await teach(c, brainId, row, comment, ops)
-    await emit(db, c, { brainId, kind: 'proposal.decided', targetId: String(row.id), label: 'returned' })
+    await teach(c, brainId, row, comment, ops, byKey !== null)
+    await emit(db, c, {
+      brainId,
+      kind: 'proposal.decided',
+      targetId: String(row.id),
+      label: decidedLabel('returned', byKey),
+    })
     const final = (
       await db.query('SELECT * FROM proposal_ops WHERE proposal_id = $1 ORDER BY idx', [row.id])
     ).map(proposalOpOf)
-    return { proposal: await named(db, proposalOf(done as Row, now)), ops: final, applied: [] }
+    const decision = { proposal: await named(db, proposalOf(done as Row, now)), ops: final, applied: [] }
+    await keep(decision)
+    return decision
   })
 }

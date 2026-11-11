@@ -1816,12 +1816,12 @@ const HAND: Record<string, Op> = {
   },
   'GET /v1/proposals/{id}/review': {
     summary:
-      'A proposal as a person reviews it in the web: each operation with the page before and after, what it depends on, and an old base in three versions. Any member reads it; only a curator decides.',
+      'A proposal as a person reviews it in the web: each operation with the page before and after, what it depends on, and an old base in three versions. Any member reads it in the web; only a curator decides. A key reads it, and decides, only with the permission to write to the wiki (403 web_only otherwise).',
     reply: REVIEW,
   },
   'POST /v1/proposals/{id}/approve': {
     summary:
-      'Approve a proposal in the web (curators): all of it, or the operations in "approve" with a "comment" for the rest. "corrections" replaces an operation first; "baseReviewed" accepts an old base.',
+      'Approve a proposal in the web (curators), or with a key a curator gave the permission to write to the wiki (403 web_only otherwise; the log names the key and its owner): all of it, or the operations in "approve" with a "comment" for the rest. "corrections" replaces an operation first; "baseReviewed" accepts an old base. A retry with the same requestKey returns the same decision.',
     body: obj(
       {
         fingerprint: s('The fingerprint of the review you saw.'),
@@ -1833,14 +1833,23 @@ const HAND: Record<string, Op> = {
             'Operation number → { the fields you edited (title, summary, body; at least one), "revision" of the page you saw (edits), "purges" of the review }; laid over the operation and checked like any. A correction written before a purge of the wiki is refused (409 proposal_changed).',
         },
         baseReviewed: list(n('Operation number.'), 'Old bases you reviewed.'),
+        requestKey: s('Repeating the request with the same key returns the same decision.'),
       },
-      ['approve', 'comment', 'corrections', 'baseReviewed'],
+      ['approve', 'comment', 'corrections', 'baseReviewed', 'requestKey'],
     ),
     reply: DECISION,
   },
   'POST /v1/proposals/{id}/return': {
-    summary: 'Return a whole proposal in the web (curators), with a comment the agent learns from.',
-    body: obj({ fingerprint: s('The fingerprint of the review you saw.'), comment: s('Why it goes back.') }),
+    summary:
+      'Return a whole proposal in the web (curators), or with a key a curator gave the permission to write to the wiki, with a comment the agent learns from. A retry with the same requestKey returns the same decision.',
+    body: obj(
+      {
+        fingerprint: s('The fingerprint of the review you saw.'),
+        comment: s('Why it goes back.'),
+        requestKey: s('Repeating the request with the same key returns the same decision.'),
+      },
+      ['requestKey'],
+    ),
     reply: DECISION,
   },
   'POST /v1/brains/{slug}/proposals': {
