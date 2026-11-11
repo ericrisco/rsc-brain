@@ -4,7 +4,7 @@
 // closeness is its operator's).
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
-import { limitSearchFeatures } from '../../src/db/extensions.ts'
+import { limitSearchFeatures, searchFeatures } from '../../src/db/extensions.ts'
 import { embedRound } from '../../src/domain/meaning.ts'
 import { RRF_K, rrf } from '../../src/domain/search.ts'
 import { type FakeProvider, fakeProvider } from '../helpers/meaning.ts'
@@ -96,6 +96,30 @@ describe('words and meaning mixed by RRF (v0.6)', { skip: skipPg }, () => {
     }
     const all = (await find('retention')).map((h) => h.address).filter((a) => a?.startsWith('band-'))
     assert.deepEqual(all, ['band-0', 'band-1', 'band-2', 'band-3', 'band-4'])
+  })
+
+  // Review of feat/v06 (5): when pgvector's operator fails (here a stored vector it refuses), closeness is worked
+  // out the other way, and meaning search stays on.
+  it('pgvector failing: the closeness is the sum of products, and meaning stays on', async (t) => {
+    if (!(await searchFeatures(w.db)).vector) return t.skip('pgvector is not used on this database')
+    const p = await w.db.one<{ id: string; brain_id: string }>(
+      "SELECT id, brain_id FROM pages WHERE address = 'words-only'",
+    )
+    const nan = [Number.NaN, ...new Array(31).fill(0)]
+    await w.db.query(
+      `INSERT INTO meaning_vectors (kind, target_id, brain_id, provider, model, text_hash, vec, updated_at)
+       VALUES ('page', $1, $2, 'test', 'fake-1', 'not this text', $3::real[], now())`,
+      [p?.id, p?.brain_id, nan],
+    )
+    try {
+      const got = await find('retention')
+      assert.ok(
+        got.some((h) => h.address === 'meaning-only' && h.why === 'meaning'),
+        JSON.stringify(got),
+      )
+    } finally {
+      await w.db.query("DELETE FROM meaning_vectors WHERE text_hash = 'not this text'")
+    }
   })
 
   it('closeness is the same with pgvector as without it', async () => {

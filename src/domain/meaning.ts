@@ -498,12 +498,8 @@ export async function meaningMatches(
   // normalised, so closeness is their inner product: pgvector's operator when it is installed (spec v0.6),
   // the sum of products otherwise.
   const { vector } = await searchFeatures(ctx.root ?? ctx.db)
-  const closeness = vector
-    ? '(-(v.vec::vector <#> $4::real[]::vector))'
-    : '(SELECT sum(a * b) FROM unnest(v.vec, $4::real[]) AS t(a, b))'
-  let rows: Row[]
-  try {
-    rows = await ctx.db.tx(async (tx) => {
+  const scan = (closeness: string) =>
+    ctx.db.tx(async (tx) => {
       await tx.query(`SET LOCAL statement_timeout = ${SCAN_TIMEOUT_MS}`)
       return tx.query<Row>(
         `SELECT top.kind, top.target_id, top.sim FROM (
@@ -525,6 +521,13 @@ export async function meaningMatches(
         [taking, p.name, p.model, q, q.length, kinds],
       )
     })
+  const SUM = '(SELECT sum(a * b) FROM unnest(v.vec, $4::real[]) AS t(a, b))'
+  let rows: Row[]
+  try {
+    // pgvector refusing a stored vector, or failing any other way: closeness the other way (review of feat/v06).
+    rows = vector
+      ? await scan('(-(v.vec::vector <#> $4::real[]::vector))').catch(() => scan(SUM))
+      : await scan(SUM)
   } catch {
     return none('unavailable')
   }
