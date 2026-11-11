@@ -220,17 +220,26 @@ export const wikiRoutes: Route[] = [
     )
     return { status: 201, body: out }
   }),
-  // The same body as a proposal: what would block it, and what it would leave incoherent; nothing is written.
-  route('POST /v1/brains/:slug/wiki/check', async (r) => {
-    const b = obj(r.body)
-    return {
-      body: await checkWiki(
-        ctxOf(r),
-        r.params.slug as string,
-        compact({ title: reqStr(b, 'title'), reason: str(b, 'reason'), ops: b.ops, collected: b.collected }),
-      ),
-    }
-  }),
+  // The same body as a proposal: what would block it, and what it would leave incoherent; nothing is written, so
+  // it keeps answering during maintenance (what it tries is undone).
+  {
+    ...route('POST /v1/brains/:slug/wiki/check', async (r) => {
+      const b = obj(r.body)
+      return {
+        body: await checkWiki(
+          ctxOf(r),
+          r.params.slug as string,
+          compact({
+            title: reqStr(b, 'title'),
+            reason: str(b, 'reason'),
+            ops: b.ops,
+            collected: b.collected,
+          }),
+        ),
+      }
+    }),
+    maintenance: 'reads',
+  },
   route('GET /v1/brains/:slug/proposals', async (r) => ({
     body: await listProposals(
       ctxOf(r),

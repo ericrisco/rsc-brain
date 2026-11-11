@@ -41,6 +41,8 @@ const NOT_WRITES: Record<string, 'reads' | 'own'> = {
   // still good. They change nothing.
   'POST /v1/resolve': 'reads',
   'POST /v1/brains/:slug/topics/suggest': 'reads',
+  // v0.6: checks a change to the wiki and undoes what it tried.
+  'POST /v1/brains/:slug/wiki/check': 'reads',
   'POST /v1/auth/reset/look': 'reads',
   'POST /v1/invitations/look': 'reads',
   // The MCP endpoint gates each tool call itself (write tools are refused; reading tools answer).
