@@ -64,8 +64,10 @@ export function describeEvent(e: LiveEvent): Said {
   let what: string | null = label
   if (e.kind === 'search') what = e.query ? `“${e.query}”` : null
   else if (e.kind === 'proposal.decided') {
-    did = label ? `${did}: ${label.replace(/_/g, ' ')}` : did
-    what = null
+    // Its status, then, when a key decided (spec v0.7), "with the key <name>".
+    const [status, ...key] = (label ?? '').split(' ')
+    did = status ? `${did}: ${status.replace(/_/g, ' ')}` : did
+    what = key.length ? key.join(' ') : null
   } else if (e.kind === 'entry.changed') ({ did, what } = entryChange(label))
   else if (e.kind === 'wiki.changed') ({ did, what } = wikiChange(label))
   return {

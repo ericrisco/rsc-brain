@@ -239,7 +239,8 @@ export function decidedNotice(
   const how =
     e.kind === 'proposal.withdrawn'
       ? T.proposals.live.withdrawn
-      : (T.proposals.live[String(t.label)] ?? T.proposals.live.approved)
+      : // The status leads the label; a key that decided follows it (spec v0.7).
+        (T.proposals.live[String(t.label).split(' ')[0] as string] ?? T.proposals.live.approved)
   return { who: who.name, text: T.proposals.liveNotice(how as string, who.name) }
 }
 

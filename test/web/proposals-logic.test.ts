@@ -185,6 +185,15 @@ describe('decidedNotice', () => {
       decidedNotice(e({ target: { id: 'prp_1', label: 'returned' } }), 'prp_1', 'acc_eric')?.text,
       'Returned by Eva just now. This proposal is read-only now.',
     )
+    // Spec v0.7: decided with a key; the status comes first in the label.
+    assert.equal(
+      decidedNotice(
+        e({ target: { id: 'prp_1', label: 'returned with the key Eva agent' } }),
+        'prp_1',
+        'acc_eric',
+      )?.text,
+      'Returned by Eva just now. This proposal is read-only now.',
+    )
     assert.equal(
       decidedNotice(
         e({ kind: 'proposal.withdrawn', target: { id: 'prp_1', label: 'T' } }),
