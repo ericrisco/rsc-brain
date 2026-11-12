@@ -1,0 +1,869 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rsc-brain</title>
+<meta name="description" content="A self-hosted memory for AI agents. Agents write down what they learn, people decide what becomes the record, and every agent reads it before it works.">
+<meta property="og:title" content="rsc-brain — the memory your AI agents are missing">
+<meta property="og:description" content="Agents write down what they learn. People decide what becomes the record. Every agent reads it before it works. Self-hosted, MIT.">
+<meta property="og:image" content="assets/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0b0f17">
+<link rel="icon" href="assets/mark.svg" type="image/svg+xml">
+<style>
+@font-face { font-family: "JetBrains Mono"; src: url("fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2"); font-weight: 400; font-display: swap; } /* taste-skill-ignore: brand face / data-ui fragment */
+@font-face { font-family: "JetBrains Mono"; src: url("fonts/jetbrains-mono-latin-700-normal.woff2") format("woff2"); font-weight: 700; font-display: swap; } /* taste-skill-ignore: brand face / data-ui fragment */
+
+:root {
+  color-scheme: dark;
+  --ground: oklch(0.145 0.015 262);
+  --surface: oklch(0.175 0.016 262);
+  --raised: oklch(0.225 0.018 262);
+  --deep: oklch(0.12 0.014 262);
+  --text: oklch(0.94 0.006 260);
+  --muted: oklch(0.76 0.012 260);
+  --faint: oklch(0.6 0.014 260);
+  --accent: oklch(0.82 0.16 156);
+  --accent-ink: oklch(0.18 0.03 156);
+  --rule: oklch(0.27 0.018 262);
+  --warn: oklch(0.84 0.14 80);
+  --bad: oklch(0.74 0.15 25);
+  --com-0: oklch(0.72 0.15 255);
+  --com-1: oklch(0.77 0.16 60);
+  --com-2: oklch(0.68 0.2 25);
+  --com-3: oklch(0.78 0.12 185);
+  --com-4: oklch(0.78 0.17 140);
+  --com-5: oklch(0.88 0.16 98);
+  --com-lone: oklch(0.8 0.01 260);
+  --brand: "JetBrains Mono", ui-monospace, monospace; /* taste-skill-ignore: brand face / data-ui fragment */
+  --m: clamp(16px, 2.4vw, 40px);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --r: 8px;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; background: var(--ground); color: var(--text); font-family: var(--brand); font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; overflow-x: clip; }
+a { color: inherit; }
+img { display: block; max-width: 100%; height: auto; }
+h1, h2, h3, p { margin: 0; }
+h1, h2, h3 { font-weight: 700; letter-spacing: -0.03em; line-height: 1.08; text-wrap: balance; }
+.soft { color: var(--muted); }
+code, pre, kbd { font-family: var(--brand); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+.vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.skip { position: absolute; top: 0; left: var(--m); transform: translateY(-120%); }
+.skip:focus { transform: none; left: var(--m); top: 12px; z-index: 10; background: var(--text); color: var(--ground); padding: 8px 12px; }
+section { padding: clamp(72px, 9vw, 128px) var(--m); }
+.wrap { max-width: 1360px; margin: 0 auto; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 48px; padding: 0 22px; border: 0; border-radius: var(--r); background: var(--text); color: var(--ground); font: 700 15px/1 var(--brand); text-decoration: none; cursor: pointer; }
+.btn:hover { background: var(--accent); color: var(--accent-ink); }
+.link { color: var(--text); text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 4px; }
+.link:hover { text-decoration-color: var(--accent); }
+
+/* ---------- hero ---------- */
+.hero { position: relative; display: grid; grid-template-columns: 1fr 1fr; min-height: 100svh; padding: 0; }
+.hero-left { position: relative; display: flex; flex-direction: column; justify-content: space-between; padding: 40px var(--m); background: var(--ground); }
+.hero-right { position: relative; display: grid; place-items: center; padding: 96px var(--m) 56px; background: var(--surface); }
+.brand { display: inline-flex; align-items: center; gap: 12px; font-weight: 700; font-size: 16px; text-decoration: none; }
+.brand img { width: 30px; height: 30px; }
+.hero-left header { display: flex; justify-content: space-between; align-items: center; gap: 16px; font-size: 15px; }
+.top-link-m { display: none; }
+.top-link { position: absolute; top: 44px; right: var(--m); font-size: 15px; z-index: 2; }
+.hero-copy { max-width: 600px; }
+.hero h1 { font-size: clamp(34px, 3.6vw, 56px); margin-bottom: 24px; }
+.hero-copy p { font-size: 16px; color: var(--muted); max-width: 46ch; margin-bottom: 32px; }
+.hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 24px; font-size: 15px; }
+.lines .line { display: block; overflow: hidden; padding-bottom: 0.08em; margin-bottom: -0.08em; }
+.lines [data-line] { display: block; }
+@media (prefers-reduced-motion: no-preference) {
+  .js .lines [data-line] { transform: translateY(105%); animation: line-up 900ms var(--ease-out) forwards; animation-delay: calc(var(--i) * 110ms + 120ms); }
+  .js .hero-copy .after { opacity: 0; animation: fade-up 700ms var(--ease-out) 520ms forwards; }
+}
+@keyframes line-up { to { transform: none; } }
+@keyframes fade-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: no-preference) {
+  .js .rv { opacity: 0; transform: translateY(18px); transition: opacity 700ms var(--ease-out), transform 700ms var(--ease-out); transition-delay: calc(var(--d, 0) * 70ms); }
+  .js .rv.in { opacity: 1; transform: none; }
+}
+
+/* fragments share the product's own conventions */
+[data-ui] { font-size: 13px; line-height: 1.45; color: var(--text); }
+[data-ui] .ui-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 0 14px; border-radius: 6px; border: 1px solid var(--rule); background: var(--raised); color: var(--text); font: 700 13px/1 var(--brand); cursor: pointer; }
+[data-ui] .ui-btn:hover { border-color: var(--faint); }
+[data-ui] .ui-btn.primary { background: var(--text); color: var(--ground); border-color: var(--text); }
+[data-ui] .ui-btn.primary:hover { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+[data-ui] .tag { white-space: nowrap; display: inline-block; padding: 1px 7px; border-radius: 4px; background: var(--raised); color: var(--muted); font-size: 13px; }
+[data-ui] .tag.ok { background: oklch(0.82 0.16 156 / 0.16); color: var(--accent); }
+[data-ui] .tag.warn { background: oklch(0.84 0.14 80 / 0.16); color: var(--warn); }
+
+.review { width: min(520px, 100%); background: var(--ground); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; } /* taste-skill-ignore: brand face / data-ui fragment */
+.review-head { display: flex; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--rule); } /* taste-skill-ignore: brand face / data-ui fragment */
+.review-head strong { display: block; font-size: 15px; }
+.review-head > .tag { align-self: start; }
+.review-head span { color: var(--muted); font-size: 13px; }
+.review-body { padding: 14px 16px; display: grid; gap: 12px; }
+.op-title { display: flex; justify-content: space-between; gap: 8px; }
+.diff { border-radius: 6px; background: var(--deep); padding: 10px 12px; display: grid; gap: 4px; font-size: 13px; }
+.diff .del { color: var(--bad); }
+.diff .add { color: var(--accent); }
+.meta-line { color: var(--muted); font-size: 13px; }
+.review-graph { position: relative; height: 150px; border-radius: 6px; background: var(--deep); overflow: hidden; }
+.review-graph svg { width: 100%; height: 100%; display: block; }
+.review-graph .readout { position: absolute; left: 10px; bottom: 8px; font-size: 13px; color: var(--muted); }
+.review-graph .new-node { transform-box: fill-box; transform-origin: center; }
+.review-graph .pulse { opacity: 0; }
+.review.approved .review-graph .pulse { animation: pulse 1400ms var(--ease-out) 1; }
+@keyframes pulse { 0% { opacity: .7; r: 6; } 100% { opacity: 0; r: 26; } }
+.review-graph .new-link, .review-graph .new-node { opacity: 0; transition: opacity 400ms; }
+.review.approved .review-graph .new-link, .review.approved .review-graph .new-node { opacity: 1; }
+.review-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--rule); background: var(--surface); } /* taste-skill-ignore: brand face / data-ui fragment */
+.review-foot .grow { flex: 1; }
+.review textarea { width: 100%; min-height: 60px; resize: vertical; border: 1px solid var(--rule); border-radius: 6px; background: var(--deep); color: var(--text); font: 13px/1.45 var(--brand); padding: 8px 10px; }
+.review .result { display: none; color: var(--muted); }
+.review .result strong { color: var(--text); }
+.review.approved .result.r-ok, .review.returned .result.r-back { display: block; }
+.review .returning { display: none; }
+.review.returning-open .returning { display: block; }
+.review.approved .decide, .review.returned .decide, .review.returning-open .decide { display: none; }
+.review .again, .review .returning.ui-btn { display: none; }
+.review.returning-open .returning.ui-btn { display: inline-flex; }
+.review.approved .again, .review.returned .again { display: inline-flex; }
+.review.returned .review-body .diff { opacity: .55; }
+
+/* ---------- intro ---------- */
+.intro .lead { font-size: clamp(20px, 2.2vw, 32px); line-height: 1.3; max-width: 62ch; }
+.intro .lead strong { font-weight: 700; }
+.cols4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; margin-top: 72px; font-size: 15px; line-height: 1.5; color: var(--muted); }
+.cols4 b { color: var(--text); }
+.intro-pic { margin-top: 88px; display: grid; grid-template-columns: 5fr 7fr; gap: 40px; align-items: end; }
+.intro-pic img { border-radius: 12px; }
+.intro-pic h2 { font-size: clamp(26px, 2.6vw, 38px); margin-bottom: 16px; }
+.intro-pic p { color: var(--muted); max-width: 44ch; }
+
+/* ---------- how it works (pinned) ---------- */
+.how { background: var(--surface); }
+.how-grid { display: grid; grid-template-columns: 5fr 7fr; gap: 56px; }
+.how h2 { font-size: clamp(26px, 2.6vw, 38px); margin-bottom: 8px; }
+.how-head p { color: var(--muted); max-width: 40ch; }
+.step { min-height: 72vh; display: flex; flex-direction: column; justify-content: center; opacity: .3; transition: opacity 300ms; }
+.step.on { opacity: 1; }
+.step h3 { font-size: clamp(26px, 2.6vw, 38px); margin-bottom: 14px; }
+.step p { color: var(--muted); max-width: 42ch; }
+.stage { position: sticky; top: 18vh; align-self: start; display: grid; place-items: center; border-radius: 14px; background: var(--deep); padding: 24px; margin-top: 28vh; }
+.panel { width: 100%; background: var(--ground); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; } /* taste-skill-ignore: brand face / data-ui fragment */
+.panel-head { display: flex; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--rule); color: var(--muted); font-size: 13px; } /* taste-skill-ignore: brand face / data-ui fragment */
+.panel-head strong { color: var(--text); font-size: 13px; }
+.state { display: none; }
+.stage[data-state="0"] .state[data-s="0"], .stage[data-state="1"] .state[data-s="1"], .stage[data-state="2"] .state[data-s="2"] { display: block; animation: fade-up 350ms var(--ease-out); }
+.rows { display: grid; }
+.row { display: grid; grid-template-columns: 128px 1fr auto; gap: 12px; align-items: baseline; padding: 11px 16px; border-bottom: 1px solid var(--rule); } /* taste-skill-ignore: brand face / data-ui fragment */
+.row:last-child { border-bottom: 0; }
+.row small { color: var(--muted); font-size: 13px; }
+.row .t { color: var(--muted); font-size: 13px; text-align: right; }
+.row.hi { background: var(--surface); }
+.page-view { padding: 16px; display: grid; gap: 12px; }
+.page-view .ptitle { font-size: 18px; letter-spacing: -0.02em; }
+.page-view p { color: var(--muted); }
+.links { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ---------- see it ---------- */
+.see h2 { font-size: clamp(26px, 2.6vw, 38px); margin-bottom: 16px; }
+.see-head { display: grid; grid-template-columns: 5fr 7fr; gap: 40px; align-items: end; margin-bottom: 40px; }
+.see-head p { color: var(--muted); max-width: 52ch; }
+.shot { border-radius: 12px; overflow: hidden; background: var(--surface); }
+.shot figcaption { padding: 14px 4px 0; color: var(--muted); font-size: 15px; background: var(--ground); }
+figure { margin: 0; }
+.shots2 { display: grid; grid-template-columns: 1fr; gap: 56px; margin-top: 56px; }
+.shots2 .shot:last-child { width: 66%; margin-left: auto; }
+
+/* ---------- search demo ---------- */
+.search { background: var(--surface); }
+.search-head { display: grid; grid-template-columns: 5fr 7fr; gap: 40px; align-items: end; margin-bottom: 40px; }
+.search h2 { font-size: clamp(26px, 2.6vw, 38px); margin-bottom: 12px; }
+.search-head p { color: var(--muted); max-width: 52ch; }
+.demo { display: grid; grid-template-columns: 62fr 38fr; border-radius: 12px; overflow: hidden; background: var(--ground); min-height: 600px; }
+.demo-main { padding: 22px; display: grid; grid-template-rows: auto auto 1fr; gap: 14px; }
+.demo-side { background: var(--raised); padding: 10px 18px 18px; display: grid; align-content: start; }
+.q { display: flex; align-items: center; gap: 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--deep); padding: 0 12px; } /* taste-skill-ignore: brand face / data-ui fragment */
+.q svg { flex: none; color: var(--muted); }
+.q input { flex: 1; min-width: 0; height: 44px; border: 0; background: transparent; color: var(--text); font: 15px var(--brand); outline: none; }
+.q:focus-within { border-color: var(--accent); }
+.how-ranked { color: var(--muted); font-size: 13px; }
+.results { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; align-content: start; }
+.res { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; padding: 12px 14px; border-radius: 8px; background: var(--surface); }
+.res .title { font-weight: 700; font-size: 15px; }
+.res .score { color: var(--muted); font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+.res .snip { grid-column: 1 / -1; color: var(--muted); font-size: 13px; }
+.res .snip mark { background: oklch(0.82 0.16 156 / 0.18); color: var(--accent); border-radius: 3px; padding: 0 2px; }
+.res .kinds { grid-column: 1 / -1; display: flex; gap: 6px; flex-wrap: wrap; }
+.res.sup { opacity: .62; }
+.empty-res { color: var(--muted); padding: 12px 2px; }
+.ctl { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; border-bottom: 1px solid var(--rule); font-size: 13px; } /* taste-skill-ignore: brand face / data-ui fragment */
+.ctl:last-of-type { border-bottom: 0; }
+.ctl small { display: block; color: var(--muted); font-size: 13px; }
+.switch { position: relative; flex: none; width: 40px; height: 22px; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.switch span { position: absolute; inset: 0; border-radius: 11px; background: var(--rule); transition: background 150ms; pointer-events: none; }
+.switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--text); transition: transform 150ms; }
+.switch input:checked + span { background: var(--accent); }
+.switch input:checked + span::after { transform: translateX(18px); background: var(--accent-ink); }
+.switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ctl input[type=range] { width: 110px; accent-color: var(--accent); }
+.ctl output { min-width: 24px; text-align: right; font-variant-numeric: tabular-nums; }
+.side-note { margin-top: 14px; color: var(--muted); font-size: 13px; }
+.search-foot { margin-top: 20px; color: var(--muted); font-size: 15px; }
+
+/* ---------- comparison ---------- */
+.compare h2 { font-size: clamp(32px, 3.6vw, 52px); margin-bottom: 8px; }
+.ctable { display: grid; grid-template-columns: 5fr repeat(3, 7fr / 3); position: relative; }
+.ctable { grid-template-columns: minmax(0, 5fr) repeat(3, minmax(0, 2.33fr)); }
+.crow { display: contents; }
+.crow > div { min-height: 68px; padding: 16px 18px; display: flex; align-items: center; font-size: 15px; color: var(--muted); }
+.crow > div:first-child { color: var(--text); font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+.crow:nth-child(odd of .crow) > div { background: var(--surface); }
+.crow > div.us { background: var(--accent) !important; color: var(--accent-ink); font-weight: 700; }
+.crow.headrow > div { min-height: 56px; font-weight: 700; color: var(--text); background: transparent !important; font-size: 15px; }
+.crow.headrow > div.us { background: var(--accent) !important; border-radius: 10px 10px 0 0; padding-top: 32px; min-height: 80px; color: var(--accent-ink); }
+.crow:last-child > div.us { border-radius: 0 0 10px 10px; }
+.mobile-compare { display: none; }
+
+/* ---------- connect ---------- */
+.connect { background: var(--surface); }
+.connect-head { display: flex; justify-content: space-between; align-items: end; gap: 24px; flex-wrap: wrap; margin-bottom: 56px; }
+.connect h2 { font-size: clamp(32px, 3.6vw, 52px); line-height: 1.05; }
+.connect h2 .soft { display: block; }
+.tabs-wrap { display: grid; grid-template-columns: 190px 1fr; gap: 40px; }
+.tabs { display: grid; gap: 6px; align-content: start; }
+.tab { min-height: 64px; padding: 10px 16px; border: 0; border-radius: 8px; background: var(--raised); color: var(--text); text-align: left; font: 700 15px/1.2 var(--brand); cursor: pointer; }
+.tab small { display: block; margin-top: 4px; color: var(--muted); font-weight: 400; font-size: 13px; }
+.tab[aria-selected="true"] { background: var(--text); color: var(--ground); }
+.tab[aria-selected="true"] small { color: oklch(0.35 0.015 262); }
+.bands { display: grid; gap: 4px; align-content: start; }
+.band { display: grid; grid-template-columns: 170px minmax(0, 1fr) auto; align-items: center; gap: 20px; min-height: 76px; padding: 14px 20px; border-radius: 8px; background: var(--ground); }
+.band:nth-child(even) { background: var(--deep); }
+.band .what { font-weight: 700; font-size: 16px; }
+.band .what small { display: block; font-weight: 400; font-size: 13px; color: var(--muted); margin-top: 2px; }
+.band pre { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.band pre .c { color: var(--faint); }
+.copy { min-height: 36px; padding: 0 12px; border: 0; border-radius: 6px; background: var(--raised); color: var(--text); font: 700 13px/1 var(--brand); cursor: pointer; }
+.copy:hover { background: var(--text); color: var(--ground); }
+.connect-note { margin-top: 20px; color: var(--muted); font-size: 15px; max-width: 78ch; }
+
+/* ---------- faq ---------- */
+.faq-grid { display: grid; grid-template-columns: 5fr 1fr 6fr; }
+.qs { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; align-content: start; }
+.qs h2 { font-size: clamp(26px, 2.6vw, 38px); color: var(--text); font-weight: 700; letter-spacing: -0.03em; margin-bottom: 16px; }
+.qbtn { display: flex; gap: 14px; align-items: baseline; width: 100%; padding: 9px 0; border: 0; background: none; color: var(--muted); font: 18px/1.4 var(--brand); text-align: left; cursor: pointer; }
+.qbtn::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); transform: translateY(-2px); }
+.qbtn[aria-expanded="true"] { color: var(--text); }
+.qbtn[aria-expanded="true"]::before { background: var(--accent); }
+.qbtn:hover { color: var(--text); }
+.answer-inline { display: none; }
+.pane { grid-column: 3; position: sticky; top: 120px; align-self: start; font-size: clamp(18px, 1.8vw, 26px); line-height: 1.35; max-width: 32ch; }
+.pane p { animation: fade 150ms ease-out; }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+.pane p + p { margin-top: 16px; font-size: 16px; color: var(--muted); line-height: 1.55; max-width: 48ch; }
+
+/* ---------- cta ---------- */
+.faq { padding-bottom: 40px; }
+.cta { padding-top: 80px; padding-bottom: 0; }
+.cta-line { font-size: clamp(30px, 5.2vw, 84px); font-weight: 700; letter-spacing: -0.04em; line-height: 1.08; }
+.cta-line .go { display: inline-flex; align-items: center; height: 1.08em; padding: 0 .28em; border: 0; border-radius: .14em; background: var(--accent); color: var(--accent-ink); font: inherit; letter-spacing: inherit; cursor: pointer; vertical-align: bottom; }
+.cta-line .go:hover { background: var(--text); color: var(--ground); }
+.install { margin-top: 48px; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 40px; align-items: start; }
+.install pre { margin: 0; padding: 22px 24px; border-radius: 10px; background: var(--surface); font-size: 15px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.install pre .c { color: var(--faint); }
+.install p { color: var(--muted); font-size: 15px; }
+.install p + p { margin-top: 12px; }
+.copied { color: var(--accent); min-height: 1.5em; margin-top: 14px; font-size: 15px; }
+
+/* ---------- footer ---------- */
+footer { padding: 26svh var(--m) 30px; display: grid; grid-template-columns: 1fr auto 1fr; gap: 24px; font-size: 15px; color: var(--muted); }
+footer nav { display: flex; gap: 24px; flex-wrap: wrap; justify-content: center; }
+footer nav a { color: var(--text); text-decoration: none; }
+footer nav a:hover { color: var(--accent); }
+footer .end { text-align: right; }
+
+/* ---------- tablet ---------- */
+@media (max-width: 1100px) {
+  .hero { grid-template-columns: 1fr; min-height: 0; }
+  .hero-right { position: static; padding: 48px var(--m) 64px; }
+  .hero-left { min-height: 0; gap: 56px; padding-top: 36px; padding-bottom: 48px; }
+  .hero-right .brand-m { display: none; }
+  .top-link { display: none; }
+  .top-link-m { display: inline; }
+  .cols4 { grid-template-columns: 1fr 1fr; gap: 40px 24px; }
+  .intro-pic, .see-head, .search-head { grid-template-columns: 1fr; gap: 24px; }
+  .how-grid { grid-template-columns: 1fr; gap: 0; }
+  .stage { display: none; }
+  .step, .step.on { min-height: 0; opacity: 1; padding-top: 56px; }
+  .stage-m { display: block; margin-top: 24px; padding: 14px; border-radius: 12px; background: var(--deep); }
+  .stage-m .panel { width: 100%; }
+  .demo { grid-template-columns: 1fr; }
+  .tabs-wrap { grid-template-columns: 1fr; gap: 20px; }
+  .tabs { grid-template-columns: repeat(3, 1fr); }
+  .faq-grid { grid-template-columns: 1fr; }
+  .pane { display: none; }
+  .qs h2 { font-size: clamp(26px, 2.6vw, 38px); color: var(--text); font-weight: 700; letter-spacing: -0.03em; }
+  .answer-inline { display: block; padding: 4px 0 14px 22px; font-size: 18px; line-height: 1.45; }
+  .answer-inline[hidden] { display: none; }
+  .install { grid-template-columns: 1fr; }
+}
+@media (min-width: 1101px) { .hero-right .brand-m, .stage-m { display: none; } }
+.hero-right .brand-m { display: none; }
+
+/* ---------- phone ---------- */
+@media (max-width: 680px) {
+  .hero-right { padding: 32px 16px 40px; }
+  .hero h1 { font-size: 30px; }
+  .top-link { top: 36px; }
+  .cols4 { grid-template-columns: 1fr; gap: 28px; }
+  .shots2 { grid-template-columns: 1fr; }
+  .shots2 .shot:last-child { width: 100%; }
+  .row { grid-template-columns: 1fr; gap: 6px; }
+  .row .tag { justify-self: start; }
+  .row .t { display: none; }
+  .demo-main { padding: 14px; }
+  .demo-side { padding: 4px 14px 14px; }
+  .ctable { display: none; }
+  .mobile-compare { display: grid; gap: 4px; }
+  .mc { padding: 18px; border-radius: 8px; background: var(--surface); display: grid; gap: 8px; }
+  .mc:nth-child(even) { background: var(--deep); }
+  .mc h3 { font-size: 18px; letter-spacing: -0.01em; }
+  .mc div { font-size: 15px; color: var(--muted); }
+  .mc div b { color: var(--text); }
+  .mc .us { background: var(--accent); color: var(--accent-ink); padding: 8px 10px; border-radius: 6px; }
+  .mc .us b { color: var(--accent-ink); }
+  .tabs { grid-template-columns: 1fr 1fr; }
+  .tab { min-height: 56px; }
+  .band { grid-template-columns: 1fr; gap: 10px; padding: 16px; }
+  .band .copy { justify-self: start; }
+  .cta-line { font-size: 8vw; }
+  footer { grid-template-columns: 1fr; gap: 8px; padding-top: 20svh; padding-bottom: 24px; font-size: 15px; }
+  footer nav { justify-content: flex-start; gap: 16px; }
+  footer .end { text-align: left; }
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<main id="main">
+
+<!-- ======================= HERO ======================= -->
+<section class="hero" aria-labelledby="hero-title">
+  <div class="hero-left">
+    <header><a class="brand" href="#main"><img src="assets/mark.svg" alt="" width="30" height="30">rsc-brain</a><a class="link top-link-m" href="https://github.com/ericrisco/rsc-brain">GitHub</a></header>
+    <div class="hero-copy">
+      <h1 id="hero-title" class="lines">
+        <span class="line"><span data-line style="--i:0">Memory for your</span></span>
+        <span class="line"><span data-line style="--i:1">AI agents</span></span>
+      </h1>
+      <p class="after">Agents write down what they learn. People decide what becomes the record. Every agent reads it before it works. Self-hosted, on your own server.</p>
+      <div class="hero-actions after">
+        <a class="btn" href="#install">Install rsc-brain</a>
+        <a class="link" href="#how">See how it works</a>
+      </div>
+    </div>
+  </div>
+  <div class="hero-right">
+    <a class="brand brand-m" href="#main"><img src="assets/mark.svg" alt="" width="30" height="30">rsc-brain</a>
+    <a class="top-link link" href="https://github.com/ericrisco/rsc-brain">GitHub</a>
+
+    <div class="review" id="review" data-ui aria-label="A proposal waiting for your decision. Try it.">
+      <div class="review-head">
+        <div><strong>Proposal · Stripe retries</strong><span>from codex · session 3f2a · 2 min ago</span></div>
+        <span class="tag warn" id="rv-status">waiting</span>
+      </div>
+      <div class="review-body">
+        <div class="op-title"><span>Update page <b>billing/stripe-retries</b></span><span class="tag">rev 6 → 7</span></div>
+        <div class="diff" aria-label="Before and after">
+          <span class="del">− Retries: 3 attempts, 10 s apart.</span>
+          <span class="add">+ Retries: 5 attempts, backoff from 2 s.</span>
+          <span class="add">+ Refunds never retry; they page on-call.</span>
+        </div>
+        <div class="meta-line">Why: the incident on 10 Nov. Sources: journal #212, #219. Links: depends on <b>billing/webhooks</b>.</div>
+        <div class="review-graph" aria-hidden="true">
+          <svg viewBox="0 0 480 150" id="mini-graph"></svg>
+          <div class="readout" id="readout">wiki · 41 pages · 112 links</div>
+        </div>
+        <div class="returning">
+          <label for="rv-comment" class="meta-line">Comment for the agent</label>
+          <textarea id="rv-comment">Keep 3 attempts for card declines. Only network errors get 5.</textarea>
+        </div>
+        <p class="result r-ok"><strong>Approved.</strong> Revision 7 is live and every agent reads it from now on. <a class="link" href="#" data-act="reset">Undo</a></p>
+        <p class="result r-back"><strong>Returned to codex.</strong> Your comment is in its journal as a correction; it reads it next session.</p>
+      </div>
+      <div class="review-foot">
+        <span class="grow meta-line">Sample proposal · try it</span>
+        <button class="ui-btn decide" data-act="return">Return…</button>
+        <button class="ui-btn primary decide" data-act="approve">Approve</button>
+        <button class="ui-btn returning" data-act="cancel">Cancel</button>
+        <button class="ui-btn primary returning" data-act="send">Return with comment</button>
+        <button class="ui-btn again" data-act="reset">Try again</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= INTRO ======================= -->
+<section class="intro" aria-labelledby="intro-title">
+  <div class="wrap">
+    <h2 id="intro-title" class="vh">What rsc-brain is</h2>
+    <p class="lead">Every agent starts from zero. It forgets last Tuesday's decision and why billing works the way it does. <strong>rsc-brain is where that stays.</strong></p>
+    <div class="cols4">
+      <p><b>Who it is for.</b> Teams that already work with coding agents and assistants every day, and are tired of explaining the same context in every session, to every tool, to every new colleague.</p>
+      <p><b>What it keeps.</b> A journal of what agents did and learned, and a wiki of what the team decided is true: typed pages with typed links, each citing the journal entries it came from, with revisions and an undo.</p>
+      <p><b>Where it runs.</b> On your own server or laptop, in containers, on PostgreSQL. MIT licensed. No model runs on the server and nothing is sent anywhere unless you switch it on.</p>
+      <p><b>How agents reach it.</b> Over MCP, with the standard sign-in or a personal token: Claude Code, Codex, Cursor, OpenCode, any MCP client. Programs use the same routes over HTTP.</p>
+    </div>
+    <div class="intro-pic">
+      <div>
+        <h2>Many agents, one record</h2>
+        <p>Each agent saves while it works, in whatever tool you use. The brain turns those notes into one record that the next agent, and the next person, can trust.</p>
+      </div>
+      <img src="assets/agents.webp" alt="Notes stream from several agent terminals and settle into one orderly graph." width="1600" height="900" loading="lazy">
+    </div>
+  </div>
+</section>
+
+<!-- ======================= HOW IT WORKS ======================= -->
+<section class="how" id="how" aria-labelledby="how-title">
+  <div class="wrap how-grid">
+    <div class="how-steps">
+      <div class="how-head">
+        <h2 id="how-title">How it works</h2>
+        <p>From a note in a session to what the whole team knows, with a person in charge. The panels show a sample brain.</p>
+      </div>
+      <div class="step on" data-step="0">
+        <h3>Agents keep a journal as they work.</h3>
+        <p>Decisions, lessons, attempts, facts, preferences. Every save has a receipt, a retry never duplicates, a topic is revised instead of repeated, and secrets are removed before anything is stored.</p>
+      </div>
+      <div class="step" data-step="1">
+        <h3>Then one proposes what should become knowledge.</h3>
+        <p>Typed pages and links, each citing its sources. Before sending, it is warned about contradictions and pages that may say otherwise. Changes made on an older revision are flagged.</p>
+      </div>
+      <div class="step" data-step="2">
+        <h3>A person decides. Every agent reads the result.</h3>
+        <p>Approve all or part, correct, or return with a comment the agent learns from. A key a curator trusts can decide too, over MCP. Search ranks what replaced a page above what it replaced.</p>
+      </div>
+    </div>
+    <div class="stage" id="stage" data-state="0">
+      <div class="panel" data-ui>
+        <div class="state" data-s="0">
+          <div class="panel-head"><strong>Journal · billing</strong><span>today · 3 sessions</span></div>
+          <div class="rows">
+            <div class="row hi"><span class="tag ok">decision</span><span>Stripe retries go to 5 with backoff from 2 s.<br><small>codex · topic billing/stripe</small></span><span class="t">14:02</span></div>
+            <div class="row"><span class="tag">lesson</span><span>Refund retries double-charged on 10 Nov. Never retry refunds.<br><small>claude-code · incident</small></span><span class="t">13:41</span></div>
+            <div class="row"><span class="tag">attempt</span><span>Tried idempotency keys per line item; Stripe rejects them.<br><small>claude-code</small></span><span class="t">13:20</span></div>
+            <div class="row"><span class="tag">fact</span><span>Webhook signatures rotate every 90 days.<br><small>cursor · source: Stripe docs</small></span><span class="t">11:08</span></div>
+            <div class="row"><span class="tag">secret removed</span><span>sk_live_•••• was redacted before saving.<br><small>opencode</small></span><span class="t">10:55</span></div>
+          </div>
+        </div>
+        <div class="state" data-s="1">
+          <div class="panel-head"><strong>Proposal #14 · 3 changes</strong><span class="tag warn">1 warning</span></div>
+          <div class="rows">
+            <div class="row hi"><span class="tag ok">update</span><span>billing/stripe-retries<br><small>5 attempts, backoff · cites #212, #219</small></span><span class="t">rev 6→7</span></div>
+            <div class="row"><span class="tag ok">create</span><span>incidents/2026-11-10-refunds<br><small>what happened, what changed · cites #208</small></span><span class="t">new</span></div>
+            <div class="row"><span class="tag">link</span><span>stripe-retries <b>supersedes</b> retry-policy-v1<br><small>the old page ranks below the new one</small></span><span class="t">typed</span></div>
+            <div class="row"><span class="tag warn">check</span><span>payments/refunds says “refunds retry 3 times”.<br><small>possible contradiction · neighbour page</small></span><span class="t">warn</span></div>
+          </div>
+        </div>
+        <div class="state" data-s="2">
+          <div class="panel-head"><strong>billing/stripe-retries</strong><span>rev 7 · approved by you · undo</span></div>
+          <div class="page-view">
+            <strong class="ptitle">Stripe retries</strong>
+            <p>Network errors retry 5 times with exponential backoff from 2 s. Card declines keep 3 attempts. Refunds never retry; they page on-call.</p>
+            <div class="links"><span class="tag">depends on billing/webhooks</span><span class="tag">part of billing</span><span class="tag ok">supersedes retry-policy-v1</span></div>
+            <div class="meta-line">Sources: journal #208, #212, #219 · Read by 4 agents today</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= SEE IT ======================= -->
+<section class="see" aria-labelledby="see-title">
+  <div class="wrap">
+    <div class="see-head">
+      <h2 id="see-title">See what your agents know</h2>
+      <p>The web shows the wiki as a living graph, coloured by the communities its own links form. Pages with no links yet circle the whole brain, so what is disconnected is obvious at a glance.</p>
+    </div>
+    <figure class="shot">
+      <img src="assets/ui-graph.webp" alt="The wiki as a full-screen graph: pages as dots coloured by community, a ring of unlinked pages around it, and a panel listing the communities." width="1600" height="1000" loading="lazy">
+      <figcaption>The graph. Drag a page and its neighbours follow; hover for a title, click to read.</figcaption>
+    </figure>
+    <div class="shots2">
+      <figure class="shot">
+        <img src="assets/ui-proposal-review.webp" alt="A proposal under review, each change shown before and after with the curator's controls." width="2200" height="1520" loading="lazy">
+        <figcaption>Review. Every change before and after, with its reason, sources and warnings.</figcaption>
+      </figure>
+      <figure class="shot">
+        <img src="assets/ui-health.webp" alt="The health view listing orphan pages, broken links, contradictions and stale pages." width="1600" height="1000" loading="lazy">
+        <figcaption>Health. Orphans, broken links, contradictions, stale pages, near-duplicates.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= SEARCH DEMO ======================= -->
+<section class="search" id="search" aria-labelledby="search-title">
+  <div class="wrap">
+    <div class="search-head">
+      <div>
+        <h2 id="search-title">Search before deciding</h2>
+      </div>
+      <p>Agents search the wiki and the journal together before they act. Try it: this is the ranking rsc-brain uses, running in your browser over a small sample brain.</p>
+    </div>
+    <div class="demo">
+      <div class="demo-main" data-ui>
+        <label class="q" for="q">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="q" type="search" value="stripe retries" autocomplete="off" spellcheck="false" aria-label="Search the sample brain">
+        </label>
+        <div class="how-ranked" id="how-ranked" aria-live="polite"></div>
+        <ol class="results" id="results"></ol>
+      </div>
+      <div class="demo-side" data-ui aria-label="Ranking controls">
+        <div class="ctl"><span>BM25 ranking<small>else plain word match</small></span><label class="switch"><input type="checkbox" id="c-bm25" checked aria-label="BM25 ranking"><span></span></label></div>
+        <div class="ctl"><span>Search by meaning<small>optional, off by default</small></span><label class="switch"><input type="checkbox" id="c-sem" aria-label="Search by meaning"><span></span></label></div>
+        <div class="ctl"><span>Rank fusion k<small>mixes both lists</small></span><span><input type="range" id="c-k" min="10" max="100" step="10" value="60" aria-label="Rank fusion k"> <output id="k-out">60</output></span></div>
+        <div class="ctl"><span>Ignore accents<small>devolucion = devolución</small></span><label class="switch"><input type="checkbox" id="c-fold" checked aria-label="Ignore accents"><span></span></label></div>
+        <div class="ctl"><span>Include the journal<small>not only wiki pages</small></span><label class="switch"><input type="checkbox" id="c-journal" checked aria-label="Include the journal"><span></span></label></div>
+        <div class="ctl"><span>Demote superseded<small>replacements rank first</small></span><label class="switch"><input type="checkbox" id="c-sup" checked aria-label="Demote superseded pages"><span></span></label></div>
+        <p class="side-note">Try “devolucion” with and without accents, “why did refunds fail”, or switch meaning on and search “backoff”.</p>
+      </div>
+    </div>
+    <p class="search-foot">On a real installation BM25 comes from the <code>pg_search</code> extension when PostgreSQL has it, with a full-text fallback when it does not. <a class="link" href="https://github.com/ericrisco/rsc-brain/blob/main/DOCS.md#better-ranking-with-optional-extensions">Ranking in the reference</a></p>
+  </div>
+</section>
+
+<!-- ======================= COMPARISON ======================= -->
+<section class="compare" aria-labelledby="compare-title">
+  <div class="wrap">
+    <h2 id="compare-title">Why not just…</h2>
+    <div class="ctable" role="table" aria-label="rsc-brain compared with notes in chat history and a vector store">
+      <div class="crow headrow" role="row"><div role="columnheader">&nbsp;</div><div role="columnheader" class="us">rsc-brain</div><div role="columnheader">Notes in chat history</div><div role="columnheader">A vector store</div></div>
+      <div class="crow" role="row"><div role="rowheader">Outlives the session</div><div class="us" role="cell">Yes, on your server</div><div role="cell">Until the chat is gone</div><div role="cell">Yes</div></div>
+      <div class="crow" role="row"><div role="rowheader">Shared by every agent and tool</div><div class="us" role="cell">Yes, any MCP client</div><div role="cell">One tool, one person</div><div role="cell">If you wire each one</div></div>
+      <div class="crow" role="row"><div role="rowheader">A person decides what is true</div><div class="us" role="cell">Yes, proposals and review</div><div role="cell">No</div><div role="cell">No, whatever was stored</div></div>
+      <div class="crow" role="row"><div role="rowheader">Sources for every claim</div><div class="us" role="cell">Each page cites its entries</div><div role="cell">Buried in a thread</div><div role="cell">Chunks without context</div></div>
+      <div class="crow" role="row"><div role="rowheader">Knows what was replaced</div><div class="us" role="cell">Yes, it ranks below</div><div role="cell">No</div><div role="cell">Old and new look alike</div></div>
+      <div class="crow" role="row"><div role="rowheader">Flags contradictions</div><div class="us" role="cell">Before and after a change</div><div role="cell">No</div><div role="cell">No</div></div>
+      <div class="crow" role="row"><div role="rowheader">Readable by people</div><div class="us" role="cell">A wiki with history</div><div role="cell">Scroll and hope</div><div role="cell">Not really</div></div>
+      <div class="crow" role="row"><div role="rowheader">Secrets kept out</div><div class="us" role="cell">Removed before saving</div><div role="cell">Whatever was pasted</div><div role="cell">Whatever was embedded</div></div>
+    </div>
+    <div class="mobile-compare" id="mobile-compare"></div>
+  </div>
+</section>
+
+<!-- ======================= CONNECT ======================= -->
+<section class="connect" id="connect" aria-labelledby="connect-title">
+  <div class="wrap">
+    <div class="connect-head">
+      <h2 id="connect-title"><span class="soft">Connect the agent</span>you already use</h2>
+      <a class="btn" href="https://github.com/ericrisco/rsc-brain/blob/main/DOCS.md#connect-your-agent">Full setup guide</a>
+    </div>
+    <div class="tabs-wrap">
+      <div class="tabs" role="tablist" aria-label="Agents">
+        <button class="tab" role="tab" aria-selected="true" data-agent="claude">Claude Code<small>sign-in or token</small></button>
+        <button class="tab" role="tab" aria-selected="false" data-agent="codex">Codex<small>sign-in or token</small></button>
+        <button class="tab" role="tab" aria-selected="false" data-agent="cursor">Cursor<small>mcp.json</small></button>
+        <button class="tab" role="tab" aria-selected="false" data-agent="opencode">OpenCode<small>opencode.json</small></button>
+        <button class="tab" role="tab" aria-selected="false" data-agent="bridge">Other agents<small>the local bridge</small></button>
+        <button class="tab" role="tab" aria-selected="false" data-agent="api">Your program<small>HTTP API</small></button>
+      </div>
+      <div class="bands" role="tabpanel" id="bands" aria-live="polite"></div>
+    </div>
+    <p class="connect-note">Replace <code>brain.example.com</code> with your installation. The web's <b>Connect your agent</b> page gives each block with your address already in it, and keeps tokens out of shared files.</p>
+  </div>
+</section>
+
+<!-- ======================= FAQ ======================= -->
+<section class="faq" aria-label="Questions">
+  <div class="wrap faq-grid">
+    <ul class="qs" id="qs"><li><h2>Questions</h2></li></ul>
+    <div class="pane" id="pane" aria-live="polite"></div>
+  </div>
+</section>
+
+<!-- ======================= CTA ======================= -->
+<section class="cta" id="install" aria-labelledby="cta-title">
+  <div class="wrap">
+    <h2 id="cta-title" class="cta-line">Keep what agents learn, from <button class="go" id="copy-install" type="button">today</button></h2>
+    <p class="copied" id="copied" aria-live="polite"></p>
+    <div class="install">
+<pre><code><span class="c"># download the launcher from a release and check it</span>
+curl -fsSLO https://github.com/ericrisco/rsc-brain/releases/download/v0.7.0/rsc-brain.sh
+shasum -a 256 rsc-brain.sh   <span class="c"># must match the release notes</span>
+
+<span class="c"># PostgreSQL included; the web opens on http://localhost:8090</span>
+sh rsc-brain.sh install --local</code></pre>
+      <div>
+        <p>You need Docker with Compose v2 and git, on macOS or Linux. Open the address, make the administration account, keep the installation key it shows you.</p>
+        <p>On a server with a domain, <code>install --domain brain.example.com</code> puts HTTPS in front. An existing PostgreSQL, updates, encrypted copies and uninstall are all in the <a class="link" href="https://github.com/ericrisco/rsc-brain/blob/main/DOCS.md#install">install reference</a>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <span>Memory for AI agents</span>
+  <nav aria-label="Footer">
+    <a href="https://github.com/ericrisco/rsc-brain">GitHub</a>
+    <a href="https://github.com/ericrisco/rsc-brain/blob/main/DOCS.md">Reference</a>
+    <a href="https://github.com/ericrisco/rsc-brain/blob/main/CHANGELOG.md">Changelog</a>
+    <a href="https://github.com/ericrisco/rsc-brain/blob/main/LICENSE">MIT</a>
+  </nav>
+  <span class="end">2026 · this page sets no cookies</span>
+</footer>
+
+<script>
+document.documentElement.classList.add('js');
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- hero: mini graph + decision ---------- */
+(() => {
+  const svg = $('#mini-graph');
+  const C = ['var(--com-0)', 'var(--com-1)', 'var(--com-3)', 'var(--com-4)', 'var(--com-5)'];
+  const nodes = [
+    [70, 40, 0], [110, 70, 0], [60, 95, 0], [140, 35, 0], [100, 115, 0],
+    [220, 55, 1], [260, 90, 1], [205, 105, 1], [250, 35, 1],
+    [340, 50, 2], [380, 85, 2], [330, 110, 2], [410, 45, 2],
+    [170, 90, 3], [300, 125, 4], [440, 115, 4]
+  ];
+  const links = [[0,1],[1,2],[1,3],[2,4],[1,4],[5,6],[6,7],[5,8],[5,7],[9,10],[10,11],[9,12],[10,12],[13,1],[13,5],[6,9],[14,11],[14,6],[15,10]];
+  const ring = [[18,22],[16,78],[462,18],[468,140]];
+  let out = '';
+  for (const [a, b] of links) out += `<line x1="${nodes[a][0]}" y1="${nodes[a][1]}" x2="${nodes[b][0]}" y2="${nodes[b][1]}" stroke="oklch(0.4 0.02 262)" stroke-width="1"/>`;
+  // approving updates billing/stripe-retries (an existing page) and adds its two new links
+  out += `<line class="new-link" x1="205" y1="105" x2="250" y2="35" stroke="var(--accent)" stroke-width="1.5"/>`;
+  out += `<line class="new-link" x1="205" y1="105" x2="300" y2="125" stroke="var(--accent)" stroke-width="1.5"/>`;
+  for (const [x, y, c] of nodes) out += `<circle cx="${x}" cy="${y}" r="4.5" fill="${C[c]}"/>`;
+  for (const [x, y] of ring) out += `<circle cx="${x}" cy="${y}" r="3" fill="var(--com-lone)" opacity=".6"/>`;
+  out += `<circle class="pulse" cx="205" cy="105" r="6" fill="none" stroke="var(--accent)" stroke-width="2"/>`;
+  out += `<circle class="new-node" cx="205" cy="105" r="6" fill="var(--accent)"/>`;
+  svg.innerHTML = out;
+
+  const card = $('#review'), status = $('#rv-status'), readout = $('#readout');
+  const set = (cls, label, tagCls, text) => {
+    card.classList.remove('approved', 'returned', 'returning-open');
+    if (cls) card.classList.add(cls);
+    status.textContent = label; status.className = 'tag ' + tagCls;
+    readout.textContent = text;
+  };
+  card.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    e.preventDefault();
+    const act = b.dataset.act;
+    if (act === 'approve') set('approved', 'approved', 'ok', 'wiki · 41 pages · 114 links · revision 7 live');
+    if (act === 'return') { set('returning-open', 'waiting', 'warn', 'wiki · 41 pages · 112 links'); $('#rv-comment').focus(); }
+    if (act === 'cancel') set('', 'waiting', 'warn', 'wiki · 41 pages · 112 links');
+    if (act === 'send') set('returned', 'returned', '', 'wiki unchanged · correction sent to codex');
+    if (act === 'reset') set('', 'waiting', 'warn', 'wiki · 41 pages · 112 links');
+  });
+})();
+
+/* ---------- how it works: pinned state ---------- */
+(() => {
+  const steps = $$('.step'), stage = $('#stage');
+  const pick = () => {
+    const mid = innerHeight * (innerWidth > 1100 ? 0.5 : 0.75);
+    let best = 0, bestD = Infinity;
+    steps.forEach((s, i) => { const r = s.getBoundingClientRect(); const d = Math.abs(r.top + Math.min(r.height, 260) / 2 - mid); if (d < bestD) { bestD = d; best = i; } });
+    steps.forEach((s, i) => s.classList.toggle('on', i === best));
+    if (stage.dataset.state !== String(best)) stage.dataset.state = best;
+  };
+  addEventListener('scroll', pick, { passive: true }); addEventListener('resize', pick); pick();
+  // phones and tablets: no pinning, each statement carries its own state of the fragment
+  steps.forEach((st, i) => {
+    const m = document.createElement('div');
+    m.className = 'stage-m'; m.dataset.state = i; m.setAttribute('aria-hidden', 'true');
+    const panel = $('.panel', stage).cloneNode(true);
+    $$('.state', panel).forEach((x) => { if (x.dataset.s !== String(i)) x.remove(); else x.style.display = 'block'; });
+    m.appendChild(panel); st.appendChild(m);
+  });
+})();
+
+/* ---------- search demo ---------- */
+(() => {
+  const DOCS = [
+    { id: 'p1', kind: 'page', title: 'billing/stripe-retries', text: 'Stripe retries: network errors retry 5 times with exponential backoff from 2 s. Card declines keep 3 attempts. Refunds never retry; they page on-call.', concepts: ['retry', 'payment', 'incident'] },
+    { id: 'p2', kind: 'page', title: 'billing/retry-policy-v1', text: 'Retry policy: every failed Stripe charge retries 3 times, 10 s apart.', concepts: ['retry', 'payment'], supersededBy: 'p1' },
+    { id: 'p3', kind: 'page', title: 'incidents/2026-11-10-refunds', text: 'Refunds were retried after a timeout and some customers were charged twice. Fixed by never retrying refunds.', concepts: ['incident', 'payment', 'retry'] },
+    { id: 'p4', kind: 'page', title: 'billing/webhooks', text: 'Stripe webhooks are verified by signature. Signatures rotate every 90 days; the secret lives in the vault.', concepts: ['payment', 'security'] },
+    { id: 'p5', kind: 'page', title: 'pagos/reintentos', text: 'Reintentos de pago: los cobros con tarjeta se reintentan tres veces; una devolución nunca se reintenta.', concepts: ['retry', 'payment'] },
+    { id: 'p6', kind: 'page', title: 'deploy/hetzner', text: 'Production runs on one Hetzner server behind Tailscale. Updates keep a rollback point and an encrypted copy.', concepts: ['deploy'] },
+    { id: 'p7', kind: 'page', title: 'api/rate-limits', text: 'Each key may make 600 requests per minute. Clients should back off and honour Retry-After.', concepts: ['retry', 'api'] },
+    { id: 'p8', kind: 'page', title: 'conventions/errors', text: 'Errors carry a code, a message and how to proceed, so an agent knows what to try next.', concepts: ['api'] },
+    { id: 'j1', kind: 'decision', title: 'journal #212', text: 'Decided: Stripe retries go to 5 with backoff from 2 s for network errors.', concepts: ['retry', 'payment'] },
+    { id: 'j2', kind: 'lesson', title: 'journal #219', text: 'Lesson: retrying refunds double charged customers on 10 Nov. Refunds must fail loudly.', concepts: ['incident', 'payment', 'retry'] },
+    { id: 'j3', kind: 'attempt', title: 'journal #204', text: 'Tried idempotency keys per line item; Stripe rejects them on partial captures.', concepts: ['payment'] },
+    { id: 'j4', kind: 'fact', title: 'journal #198', text: 'Hetzner volume snapshots take about 4 minutes for the brain database.', concepts: ['deploy'] }
+  ];
+  const SYN = { retry: ['retry', 'retries', 'retried', 'retrying', 'backoff', 'reintento', 'reintentos', 'attempt', 'attempts', 'again'], payment: ['stripe', 'charge', 'charged', 'payment', 'pago', 'pagos', 'cobro', 'refund', 'refunds', 'billing', 'card'], incident: ['incident', 'fail', 'failed', 'outage', 'why', 'broke', 'twice'], deploy: ['deploy', 'server', 'hetzner', 'production', 'release'], security: ['secret', 'signature', 'vault', 'token'], api: ['api', 'error', 'errors', 'limit', 'requests'] };
+  const STOP = new Set(['the', 'a', 'an', 'of', 'to', 'and', 'or', 'is', 'are', 'did', 'do', 'de', 'la', 'el', 'los', 'las', 'y', 'for', 'on', 'in', 'they', 'some', 'every', 'each']);
+  const ui = { q: $('#q'), bm: $('#c-bm25'), sem: $('#c-sem'), k: $('#c-k'), kout: $('#k-out'), fold: $('#c-fold'), jr: $('#c-journal'), sup: $('#c-sup'), list: $('#results'), how: $('#how-ranked') };
+  const norm = (s, fold) => { s = s.toLowerCase(); return fold ? s.normalize('NFD').replace(/[̀-ͯ]/g, '') : s; };
+  const toks = (s, fold) => norm(s, fold).split(/[^a-z0-9À-ɏ]+/).filter((t) => t.length > 1 && !STOP.has(t));
+  const stem = (t) => t.replace(/(ies)$/, 'y').replace(/(ing|ed|es|s)$/, '');
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  function lexical(docs, q, fold, bm25) {
+    const qt = [...new Set(toks(q, fold).map(stem))];
+    const D = docs.map((d) => toks(d.title + ' ' + d.text, fold).map(stem));
+    const avg = D.reduce((a, t) => a + t.length, 0) / D.length;
+    const N = D.length;
+    const df = Object.fromEntries(qt.map((t) => [t, D.filter((ts) => ts.includes(t)).length]));
+    return docs.map((d, i) => {
+      let s = 0;
+      for (const t of qt) {
+        const f = D[i].filter((x) => x === t).length; if (!f) continue;
+        if (bm25) { const idf = Math.log(1 + (N - df[t] + 0.5) / (df[t] + 0.5)); s += idf * (f * 2.2) / (f + 1.2 * (0.25 + 0.75 * D[i].length / avg)); }
+        else s += f / D[i].length;
+      }
+      return { d, s };
+    }).filter((x) => x.s > 0).sort((a, b) => b.s - a.s);
+  }
+  function meaning(docs, q, fold) {
+    const qt = toks(q, fold);
+    const qc = Object.keys(SYN).filter((c) => SYN[c].some((w) => qt.includes(norm(w, true)) || qt.includes(w)));
+    if (!qc.length) return [];
+    return docs.map((d) => ({ d, s: d.concepts.filter((c) => qc.includes(c)).length / Math.sqrt(qc.length * d.concepts.length) }))
+      .filter((x) => x.s > 0.3).sort((a, b) => b.s - a.s);
+  }
+  function highlight(text, q, fold) {
+    const qt = new Set(toks(q, fold).map(stem));
+    return text.split(/(\s+)/).map((w) => { const t = stem(norm(w.replace(/[^\p{L}\p{N}-]/gu, ''), fold)); return t && qt.has(t) ? `<mark>${esc(w)}</mark>` : esc(w); }).join('');
+  }
+  function run() {
+    const t0 = performance.now();
+    const q = ui.q.value.trim(), fold = ui.fold.checked, k = +ui.k.value;
+    ui.kout.textContent = k;
+    ui.k.disabled = !ui.sem.checked;
+    const docs = DOCS.filter((d) => ui.jr.checked || d.kind === 'page');
+    let lex = q ? lexical(docs, q, fold, ui.bm.checked) : [];
+    let ranked, method;
+    if (ui.sem.checked && q) {
+      const sem = meaning(docs, q, fold);
+      const score = new Map();
+      lex.forEach((x, i) => score.set(x.d, (score.get(x.d) || 0) + 1 / (k + i + 1)));
+      sem.forEach((x, i) => score.set(x.d, (score.get(x.d) || 0) + 1 / (k + i + 1)));
+      ranked = [...score].map(([d, s]) => ({ d, s })).sort((a, b) => b.s - a.s);
+      method = `${ui.bm.checked ? 'BM25' : 'word match'} + meaning, fused by rank (k = ${k})`;
+    } else { ranked = lex; method = ui.bm.checked ? 'BM25' : 'plain word match'; }
+    if (ui.sup.checked) {
+      const pos = new Map(ranked.map((x, i) => [x.d.id, i]));
+      ranked = ranked.map((x, i) => ({ ...x, o: x.d.supersededBy && pos.has(x.d.supersededBy) ? Math.max(i, pos.get(x.d.supersededBy)) + 0.5 : x.d.supersededBy ? i + 100 : i })).sort((a, b) => a.o - b.o);
+    }
+    const ms = (performance.now() - t0).toFixed(1);
+    ui.how.textContent = q ? `${ranked.length} result${ranked.length === 1 ? '' : 's'} · ${method}${fold ? ' · accents ignored' : ''} · ${ms} ms` : 'Type to search the sample brain.';
+    if (q && !ranked.length) { ui.list.innerHTML = `<li class="empty-res">Nothing matches “${esc(q)}”. ${ui.sem.checked ? '' : 'Try switching on search by meaning.'}</li>`; return; }
+    const top = ranked.length ? ranked[0].s : 1;
+    ui.list.innerHTML = ranked.slice(0, 6).map((x) => {
+      const sup = x.d.supersededBy ? DOCS.find((d) => d.id === x.d.supersededBy).title : '';
+      return `<li class="res${sup && ui.sup.checked ? ' sup' : ''}"><span class="title">${esc(x.d.title)}</span><span class="score">${(x.s / top).toFixed(2)}</span><span class="snip">${highlight(x.d.text, q, fold)}</span><span class="kinds"><span class="tag${x.d.kind === 'page' ? '' : ' ok'}">${x.d.kind === 'page' ? 'wiki page' : 'journal · ' + x.d.kind}</span>${sup ? `<span class="tag warn">superseded by ${esc(sup)}</span>` : ''}</span></li>`;
+    }).join('');
+  }
+  ['input', 'change'].forEach((ev) => [ui.q, ui.bm, ui.sem, ui.k, ui.fold, ui.jr, ui.sup].forEach((el) => el.addEventListener(ev, run)));
+  run();
+})();
+
+/* ---------- comparison on phones ---------- */
+(() => {
+  const rows = $$('.ctable .crow').slice(1);
+  const heads = ['rsc-brain', 'Notes in chat history', 'A vector store'];
+  $('#mobile-compare').innerHTML = rows.map((r) => {
+    const c = $$('div', r).map((d) => d.textContent);
+    return `<div class="mc"><h3>${c[0]}</h3><div class="us"><b>${heads[0]}:</b> ${c[1]}</div><div><b>${heads[1]}:</b> ${c[2]}</div><div><b>${heads[2]}:</b> ${c[3]}</div></div>`;
+  }).join('');
+})();
+
+/* ---------- connect tabs ---------- */
+(() => {
+  const A = 'https://brain.example.com/mcp';
+  const B = {
+    claude: [['Add the server', 'one line, for every project', `claude mcp add --transport http rsc-brain ${A} --scope user`], ['Sign in', 'the browser opens once', 'claude mcp login rsc-brain'], ['Optional reminder', 'loads context at start, asks for a summary at the end', 'rsc-brain hook session-start --url ' + A + '\nrsc-brain hook stop --url ' + A], ['Check', 'ask your agent', '“What does this brain know about billing?”']],
+    codex: [['Add the server', 'standard sign-in', `codex mcp add rsc-brain --url ${A}`], ['Sign in', 'the browser opens once', 'codex mcp login rsc-brain'], ['Or with a token', '~/.codex/config.toml', `[mcp_servers.rsc-brain]\nurl = "${A}"\nbearer_token_env_var = "RSC_BRAIN_TOKEN_CODEX"`], ['Check', 'ask your agent', '“What does this brain know about billing?”']],
+    cursor: [['Add the server', '.cursor/mcp.json', `{ "mcpServers": { "rsc-brain": { "url": "${A}" } } }`], ['Sign in', 'the first time Cursor uses it', '“Cursor opens the browser; sign in and pick the brains to share.”'], ['Check', 'ask your agent', '“What does this brain know about billing?”']],
+    opencode: [['Add the server', 'opencode.json', `{ "mcp": { "rsc-brain": { "type": "remote", "url": "${A}" } } }`], ['With a token', 'kept in the environment, not the file', '"headers": { "Authorization": "Bearer {env:RSC_BRAIN_TOKEN_OPENCODE}" }'], ['Check', 'ask your agent', '“What does this brain know about billing?”']],
+    bridge: [['Save your token', 'asked at a hidden prompt, file mode 600', "mkdir -p ~/.config/rsc-brain && (umask 077 && printf 'Token: ' && read -rs t && printf '%s\\n' \"$t\" > ~/.config/rsc-brain/token)"], ['Run the bridge', 'for agents that only start local programs', `rsc-brain bridge --url ${A}`], ['As a local server', 'in the agent\'s MCP config', `{ "command": "rsc-brain", "args": ["bridge", "--url", "${A}"] }`]],
+    api: [['Describe the API', 'OpenAPI 3.1, no key needed', 'curl https://brain.example.com/v1/openapi.json'], ['Which brain is this repo?', 'with a personal token', 'curl -H "Authorization: Bearer $RSC_BRAIN_TOKEN" -H "Content-Type: application/json" \\\n  -d "{\\"repos\\": [\\"$(git remote get-url origin)\\"]}" https://brain.example.com/v1/resolve'], ['Follow it live', 'Server-Sent Events', 'curl -N -H "Authorization: Bearer $RSC_BRAIN_TOKEN" \\\n  https://brain.example.com/v1/brains/billing/events']]
+  };
+  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const bands = $('#bands');
+  const show = (key) => {
+    $$('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.agent === key)));
+    bands.innerHTML = B[key].map(([w, n, code]) => `<div class="band"><div class="what">${w}<small>${n}</small></div><pre><code>${esc(code)}</code></pre>${code.startsWith('“') ?'<span></span>' : '<button class="copy" type="button">Copy</button>'}</div>`).join('');
+  };
+  $$('.tab').forEach((t) => {
+    t.addEventListener('click', () => show(t.dataset.agent));
+    t.addEventListener('keydown', (e) => {
+      const tabs = $$('.tab'), i = tabs.indexOf(t);
+      const n = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 0;
+      if (n) { e.preventDefault(); const nx = tabs[(i + n + tabs.length) % tabs.length]; nx.focus(); show(nx.dataset.agent); }
+    });
+  });
+  bands.addEventListener('click', async (e) => {
+    const b = e.target.closest('.copy'); if (!b) return;
+    try { await navigator.clipboard.writeText(b.previousElementSibling.textContent); b.textContent = 'Copied'; } catch { b.textContent = 'Select and copy'; }
+    setTimeout(() => (b.textContent = 'Copy'), 1600);
+  });
+  show('claude');
+})();
+
+/* ---------- faq ---------- */
+(() => {
+  const F = [
+    ['Does anything leave my server?', 'No model runs on the server and nothing is sent anywhere by default.', 'The one outbound call is a daily check for a newer version, which an empty RSC_BRAIN_REPO_URL switches off. Search by meaning is optional and off; you choose its provider and what is sent.'],
+    ['What do I need to run it?', 'Docker with Compose v2 and git, on macOS or Linux. PostgreSQL comes included, or you point it at your own.', 'With pg_search and pgvector on your PostgreSQL, ranking gets BM25 and search by meaning gets faster. Without them it still works.'],
+    ['Can an agent write to the wiki directly?', 'Only if a curator gives its key that permission, per brain.', 'Then it writes, reviews and decides proposals over MCP or the API, with the same checks as the web. Taking the permission away applies on the next request.'],
+    ['What if an agent gets something wrong?', 'It stays a proposal until someone approves it. Every applied change has a revision, a reason, its sources and an undo.', 'Returning a proposal with a comment puts that comment in the agent’s journal as a correction, so it learns for the next session.'],
+    ['How are secrets kept out?', 'Keys, tokens and passwords are removed before anything is stored.', 'Agents are also told, on connecting, never to save them. Personal tokens live in files only you can read, never on a command line or in a shared config.'],
+    ['Can several teams share one installation?', 'Yes. One installation holds a brain per product, client or channel.', 'People are invited by role, keys are scoped to brains, and a log says who did what, exportable as CSV.'],
+    ['Is it open source?', 'MIT licensed. Read it, run it, change it.', 'It is in early development; the changelog says what each version added.']
+  ];
+  const qs = $('#qs'), pane = $('#pane');
+  F.forEach(([q, a, more], i) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<button class="qbtn" aria-expanded="false" aria-controls="a${i}">${q}</button><div class="answer-inline" id="a${i}" hidden><p>${a}</p><p class="soft" style="font-size:15px;margin-top:8px">${more}</p></div>`;
+    qs.appendChild(li);
+  });
+  const btns = $$('.qbtn', qs);
+  const select = (i, toggle) => {
+    btns.forEach((b, j) => { const on = j === i ? (toggle ? b.getAttribute('aria-expanded') !== 'true' : true) : false; b.setAttribute('aria-expanded', String(on)); $('#a' + j).hidden = !on; });
+    pane.innerHTML = `<p>${F[i][1]}</p><p>${F[i][2]}</p>`;
+  };
+  btns.forEach((b, i) => {
+    b.addEventListener('mouseenter', () => { if (innerWidth > 1100) select(i); });
+    b.addEventListener('focus', () => { if (innerWidth > 1100) select(i); });
+    b.addEventListener('click', () => select(i, innerWidth <= 1100));
+  });
+  select(0);
+})();
+
+/* ---------- reveal once on scroll ---------- */
+(() => {
+  if (reduced || innerWidth <= 1100 || !('IntersectionObserver' in window)) return;
+  const groups = ['.cols4', '.intro-pic', '.see-head', '.shots2', '.search-head', '.connect-head', '.install'];
+  const els = [];
+  groups.forEach((g) => $$(g).forEach((p) => [...p.children].forEach((c, i) => { c.style.setProperty('--d', i); els.push(c); })));
+  ['.see .shot:not(.shots2 .shot)', '.demo', '.compare h2', '.ctable', '.tabs-wrap', '.faq-grid', '.intro .lead'].forEach((q) => $$(q).forEach((e) => els.push(e)));
+  const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { rootMargin: '0px 0px -8% 0px' });
+  els.forEach((e) => { e.classList.add('rv'); io.observe(e); });
+})();
+
+/* ---------- cta copy ---------- */
+$('#copy-install').addEventListener('click', async () => {
+  const text = $('#install pre').textContent.split('\n').filter((l) => l.trim() && !l.trim().startsWith('#')).map((l) => l.replace(/\s+#.*$/, '')).join('\n');
+  try { await navigator.clipboard.writeText(text); $('#copied').textContent = 'Copied. Paste it in a terminal on the machine that will keep the brain.'; }
+  catch { $('#copied').textContent = 'Copy the three lines below into a terminal.'; }
+});
+</script>
+</body>
+</html>
