@@ -61,6 +61,8 @@ section { padding: clamp(72px, 9vw, 128px) var(--m); }
 .btn:hover { background: var(--accent); color: var(--accent-ink); }
 .link { color: var(--text); text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 4px; }
 .link:hover { text-decoration-color: var(--accent); }
+.linkbtn { padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 4px; cursor: pointer; }
+.linkbtn:hover { text-decoration-color: var(--accent); }
 
 /* ---------- hero ---------- */
 .hero { position: relative; display: grid; grid-template-columns: 1fr 1fr; min-height: 100svh; padding: 0; }
@@ -154,7 +156,7 @@ section { padding: clamp(72px, 9vw, 128px) var(--m); }
 .stage { position: sticky; top: 18vh; align-self: start; display: grid; place-items: center; border-radius: 14px; background: var(--deep); padding: 24px; margin-top: 28vh; }
 .panel { width: 100%; background: var(--ground); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; } /* taste-skill-ignore: brand face / data-ui fragment */
 .panel-head { display: flex; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--rule); color: var(--muted); font-size: 13px; } /* taste-skill-ignore: brand face / data-ui fragment */
-.panel-head strong { color: var(--text); font-size: 13px; }
+.panel .panel-head strong { color: var(--text); font-size: 13px; }
 .state { display: none; }
 .stage[data-state="0"] .state[data-s="0"], .stage[data-state="1"] .state[data-s="1"], .stage[data-state="2"] .state[data-s="2"] { display: block; animation: fade-up 350ms var(--ease-out); }
 .rows { display: grid; }
@@ -185,7 +187,7 @@ figure { margin: 0; }
 .search-head p { color: var(--muted); max-width: 52ch; }
 .demo { display: grid; grid-template-columns: 62fr 38fr; border-radius: 12px; overflow: hidden; background: var(--ground); min-height: 600px; }
 .demo-main { padding: 22px; display: grid; grid-template-rows: auto auto 1fr; gap: 14px; }
-.demo-side { background: var(--raised); padding: 10px 18px 18px; display: grid; align-content: start; }
+.demo-side { min-width: 0; margin: 0; border: 0; background: var(--raised); padding: 10px 18px 18px; display: grid; align-content: start; }
 .q { display: flex; align-items: center; gap: 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--deep); padding: 0 12px; } /* taste-skill-ignore: brand face / data-ui fragment */
 .q svg { flex: none; color: var(--muted); }
 .q input { flex: 1; min-width: 0; height: 44px; border: 0; background: transparent; color: var(--text); font: 15px var(--brand); outline: none; }
@@ -217,16 +219,15 @@ figure { margin: 0; }
 
 /* ---------- comparison ---------- */
 .compare h2 { font-size: clamp(32px, 3.6vw, 52px); margin-bottom: 8px; }
-.ctable { display: grid; grid-template-columns: 5fr repeat(3, 7fr / 3); position: relative; }
-.ctable { grid-template-columns: minmax(0, 5fr) repeat(3, minmax(0, 2.33fr)); }
-.crow { display: contents; }
-.crow > div { min-height: 68px; padding: 16px 18px; display: flex; align-items: center; font-size: 15px; color: var(--muted); }
-.crow > div:first-child { color: var(--text); font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
-.crow:nth-child(odd of .crow) > div { background: var(--surface); }
-.crow > div.us { background: var(--accent) !important; color: var(--accent-ink); font-weight: 700; }
-.crow.headrow > div { min-height: 56px; font-weight: 700; color: var(--text); background: transparent !important; font-size: 15px; }
-.crow.headrow > div.us { background: var(--accent) !important; border-radius: 10px 10px 0 0; padding-top: 32px; min-height: 80px; color: var(--accent-ink); }
-.crow:last-child > div.us { border-radius: 0 0 10px 10px; }
+.ctable { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.ctable thead td:first-child { width: 40%; }
+.ctable th, .ctable td { height: 68px; padding: 16px 18px; text-align: left; vertical-align: middle; font-size: 15px; font-weight: 400; color: var(--muted); }
+.ctable thead th { height: 56px; font-weight: 700; color: var(--text); }
+.ctable tbody th { color: var(--text); font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
+.ctable tbody tr:nth-child(odd) > :not(.us) { background: var(--surface); }
+.ctable .us { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
+.ctable thead .us { height: 80px; padding-top: 32px; border-radius: 10px 10px 0 0; }
+.ctable tbody tr:last-child .us { border-radius: 0 0 10px 10px; }
 .mobile-compare { display: none; }
 
 /* ---------- connect ---------- */
@@ -275,8 +276,8 @@ figure { margin: 0; }
 .install { margin-top: 48px; display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 40px; align-items: start; }
 .install pre { margin: 0; padding: 22px 24px; border-radius: 10px; background: var(--surface); font-size: 15px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .install pre .c { color: var(--faint); }
-.install p { color: var(--muted); font-size: 15px; }
-.install p + p { margin-top: 12px; }
+.cta .install p { color: var(--muted); font-size: 15px; }
+.cta .install p + p { margin-top: 12px; }
 .copied { color: var(--accent); min-height: 1.5em; margin-top: 14px; font-size: 15px; }
 
 /* ---------- footer ---------- */
@@ -371,37 +372,37 @@ footer .end { text-align: right; }
     <a class="brand brand-m" href="#main"><img src="assets/mark.svg" alt="" width="30" height="30">rsc-brain</a>
     <a class="top-link link" href="https://github.com/ericrisco/rsc-brain">GitHub</a>
 
-    <div class="review" id="review" data-ui aria-label="A proposal waiting for your decision. Try it.">
+    <div class="review" id="review" data-ui>
       <div class="review-head">
         <div><strong>Proposal · Stripe retries</strong><span>from codex · session 3f2a · 2 min ago</span></div>
         <span class="tag warn" id="rv-status">waiting</span>
       </div>
       <div class="review-body">
         <div class="op-title"><span>Update page <b>billing/stripe-retries</b></span><span class="tag">rev 6 → 7</span></div>
-        <div class="diff" aria-label="Before and after">
+        <div class="diff">
           <span class="del">− Retries: 3 attempts, 10 s apart.</span>
           <span class="add">+ Retries: 5 attempts, backoff from 2 s.</span>
           <span class="add">+ Refunds never retry; they page on-call.</span>
         </div>
         <div class="meta-line">Why: the incident on 10 Nov. Sources: journal #212, #219. Links: depends on <b>billing/webhooks</b>.</div>
         <div class="review-graph" aria-hidden="true">
-          <svg viewBox="0 0 480 150" id="mini-graph"></svg>
+          <svg viewBox="0 0 480 150" id="mini-graph" aria-hidden="true" focusable="false"></svg>
           <div class="readout" id="readout">wiki · 41 pages · 112 links</div>
         </div>
         <div class="returning">
           <label for="rv-comment" class="meta-line">Comment for the agent</label>
           <textarea id="rv-comment">Keep 3 attempts for card declines. Only network errors get 5.</textarea>
         </div>
-        <p class="result r-ok"><strong>Approved.</strong> Revision 7 is live and every agent reads it from now on. <a class="link" href="#" data-act="reset">Undo</a></p>
+        <p class="result r-ok"><strong>Approved.</strong> Revision 7 is live and every agent reads it from now on. <button type="button" class="linkbtn" data-act="reset">Undo</button></p>
         <p class="result r-back"><strong>Returned to codex.</strong> Your comment is in its journal as a correction; it reads it next session.</p>
       </div>
       <div class="review-foot">
         <span class="grow meta-line">Sample proposal · try it</span>
-        <button class="ui-btn decide" data-act="return">Return…</button>
-        <button class="ui-btn primary decide" data-act="approve">Approve</button>
-        <button class="ui-btn returning" data-act="cancel">Cancel</button>
-        <button class="ui-btn primary returning" data-act="send">Return with comment</button>
-        <button class="ui-btn again" data-act="reset">Try again</button>
+        <button type="button" class="ui-btn decide" data-act="return">Return…</button>
+        <button type="button" class="ui-btn primary decide" data-act="approve">Approve</button>
+        <button type="button" class="ui-btn returning" data-act="cancel">Cancel</button>
+        <button type="button" class="ui-btn primary returning" data-act="send">Return with comment</button>
+        <button type="button" class="ui-btn again" data-act="reset">Try again</button>
       </div>
     </div>
   </div>
@@ -526,7 +527,7 @@ footer .end { text-align: right; }
         <div class="how-ranked" id="how-ranked" aria-live="polite"></div>
         <ol class="results" id="results"></ol>
       </div>
-      <div class="demo-side" data-ui aria-label="Ranking controls">
+      <fieldset class="demo-side" data-ui><legend class="vh">Ranking controls</legend>
         <div class="ctl"><span>BM25 ranking<small>else plain word match</small></span><label class="switch"><input type="checkbox" id="c-bm25" checked aria-label="BM25 ranking"><span></span></label></div>
         <div class="ctl"><span>Search by meaning<small>optional, off by default</small></span><label class="switch"><input type="checkbox" id="c-sem" aria-label="Search by meaning"><span></span></label></div>
         <div class="ctl"><span>Rank fusion k<small>mixes both lists</small></span><span><input type="range" id="c-k" min="10" max="100" step="10" value="60" aria-label="Rank fusion k"> <output id="k-out">60</output></span></div>
@@ -534,7 +535,7 @@ footer .end { text-align: right; }
         <div class="ctl"><span>Include the journal<small>not only wiki pages</small></span><label class="switch"><input type="checkbox" id="c-journal" checked aria-label="Include the journal"><span></span></label></div>
         <div class="ctl"><span>Demote superseded<small>replacements rank first</small></span><label class="switch"><input type="checkbox" id="c-sup" checked aria-label="Demote superseded pages"><span></span></label></div>
         <p class="side-note">Try “devolucion” with and without accents, “why did refunds fail”, or switch meaning on and search “backoff”.</p>
-      </div>
+      </fieldset>
     </div>
     <p class="search-foot">On a real installation BM25 comes from the <code>pg_search</code> extension when PostgreSQL has it, with a full-text fallback when it does not. <a class="link" href="https://github.com/ericrisco/rsc-brain/blob/main/DOCS.md#better-ranking-with-optional-extensions">Ranking in the reference</a></p>
   </div>
@@ -544,17 +545,20 @@ footer .end { text-align: right; }
 <section class="compare" aria-labelledby="compare-title">
   <div class="wrap">
     <h2 id="compare-title">Why not just…</h2>
-    <div class="ctable" role="table" aria-label="rsc-brain compared with notes in chat history and a vector store">
-      <div class="crow headrow" role="row"><div role="columnheader">&nbsp;</div><div role="columnheader" class="us">rsc-brain</div><div role="columnheader">Notes in chat history</div><div role="columnheader">A vector store</div></div>
-      <div class="crow" role="row"><div role="rowheader">Outlives the session</div><div class="us" role="cell">Yes, on your server</div><div role="cell">Until the chat is gone</div><div role="cell">Yes</div></div>
-      <div class="crow" role="row"><div role="rowheader">Shared by every agent and tool</div><div class="us" role="cell">Yes, any MCP client</div><div role="cell">One tool, one person</div><div role="cell">If you wire each one</div></div>
-      <div class="crow" role="row"><div role="rowheader">A person decides what is true</div><div class="us" role="cell">Yes, proposals and review</div><div role="cell">No</div><div role="cell">No, whatever was stored</div></div>
-      <div class="crow" role="row"><div role="rowheader">Sources for every claim</div><div class="us" role="cell">Each page cites its entries</div><div role="cell">Buried in a thread</div><div role="cell">Chunks without context</div></div>
-      <div class="crow" role="row"><div role="rowheader">Knows what was replaced</div><div class="us" role="cell">Yes, it ranks below</div><div role="cell">No</div><div role="cell">Old and new look alike</div></div>
-      <div class="crow" role="row"><div role="rowheader">Flags contradictions</div><div class="us" role="cell">Before and after a change</div><div role="cell">No</div><div role="cell">No</div></div>
-      <div class="crow" role="row"><div role="rowheader">Readable by people</div><div class="us" role="cell">A wiki with history</div><div role="cell">Scroll and hope</div><div role="cell">Not really</div></div>
-      <div class="crow" role="row"><div role="rowheader">Secrets kept out</div><div class="us" role="cell">Removed before saving</div><div role="cell">Whatever was pasted</div><div role="cell">Whatever was embedded</div></div>
-    </div>
+    <table class="ctable">
+      <caption class="vh">rsc-brain compared with notes in chat history and a vector store</caption>
+      <thead><tr><td></td><th scope="col" class="us">rsc-brain</th><th scope="col">Notes in chat history</th><th scope="col">A vector store</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Outlives the session</th><td class="us">Yes, on your server</td><td>Until the chat is gone</td><td>Yes</td></tr>
+        <tr><th scope="row">Shared by every agent and tool</th><td class="us">Yes, any MCP client</td><td>One tool, one person</td><td>If you wire each one</td></tr>
+        <tr><th scope="row">A person decides what is true</th><td class="us">Yes, proposals and review</td><td>No</td><td>No, whatever was stored</td></tr>
+        <tr><th scope="row">Sources for every claim</th><td class="us">Each page cites its entries</td><td>Buried in a thread</td><td>Chunks without context</td></tr>
+        <tr><th scope="row">Knows what was replaced</th><td class="us">Yes, it ranks below</td><td>No</td><td>Old and new look alike</td></tr>
+        <tr><th scope="row">Flags contradictions</th><td class="us">Before and after a change</td><td>No</td><td>No</td></tr>
+        <tr><th scope="row">Readable by people</th><td class="us">A wiki with history</td><td>Scroll and hope</td><td>Not really</td></tr>
+        <tr><th scope="row">Secrets kept out</th><td class="us">Removed before saving</td><td>Whatever was pasted</td><td>Whatever was embedded</td></tr>
+      </tbody>
+    </table>
     <div class="mobile-compare" id="mobile-compare"></div>
   </div>
 </section>
@@ -568,12 +572,12 @@ footer .end { text-align: right; }
     </div>
     <div class="tabs-wrap">
       <div class="tabs" role="tablist" aria-label="Agents">
-        <button class="tab" role="tab" aria-selected="true" data-agent="claude">Claude Code<small>sign-in or token</small></button>
-        <button class="tab" role="tab" aria-selected="false" data-agent="codex">Codex<small>sign-in or token</small></button>
-        <button class="tab" role="tab" aria-selected="false" data-agent="cursor">Cursor<small>mcp.json</small></button>
-        <button class="tab" role="tab" aria-selected="false" data-agent="opencode">OpenCode<small>opencode.json</small></button>
-        <button class="tab" role="tab" aria-selected="false" data-agent="bridge">Other agents<small>the local bridge</small></button>
-        <button class="tab" role="tab" aria-selected="false" data-agent="api">Your program<small>HTTP API</small></button>
+        <button type="button" class="tab" role="tab" aria-selected="true" data-agent="claude">Claude Code<small>sign-in or token</small></button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-agent="codex">Codex<small>sign-in or token</small></button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-agent="cursor">Cursor<small>mcp.json</small></button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-agent="opencode">OpenCode<small>opencode.json</small></button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-agent="bridge">Other agents<small>the local bridge</small></button>
+        <button type="button" class="tab" role="tab" aria-selected="false" data-agent="api">Your program<small>HTTP API</small></button>
       </div>
       <div class="bands" role="tabpanel" id="bands" aria-live="polite"></div>
     </div>
@@ -654,7 +658,7 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const set = (cls, label, tagCls, text) => {
     card.classList.remove('approved', 'returned', 'returning-open');
     if (cls) card.classList.add(cls);
-    status.textContent = label; status.className = 'tag ' + tagCls;
+    status.textContent = label; status.className = `tag ${tagCls}`;
     readout.textContent = text;
   };
   card.addEventListener('click', (e) => {
@@ -676,7 +680,7 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const mid = innerHeight * (innerWidth > 1100 ? 0.5 : 0.75);
     let best = 0, bestD = Infinity;
     steps.forEach((s, i) => { const r = s.getBoundingClientRect(); const d = Math.abs(r.top + Math.min(r.height, 260) / 2 - mid); if (d < bestD) { bestD = d; best = i; } });
-    steps.forEach((s, i) => s.classList.toggle('on', i === best));
+    steps.forEach((s, i) => { s.classList.toggle('on', i === best); });
     if (stage.dataset.state !== String(best)) stage.dataset.state = best;
   };
   addEventListener('scroll', pick, { passive: true }); addEventListener('resize', pick); pick();
@@ -716,7 +720,7 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function lexical(docs, q, fold, bm25) {
     const qt = [...new Set(toks(q, fold).map(stem))];
-    const D = docs.map((d) => toks(d.title + ' ' + d.text, fold).map(stem));
+    const D = docs.map((d) => toks(`${d.title} ${d.text}`, fold).map(stem));
     const avg = D.reduce((a, t) => a + t.length, 0) / D.length;
     const N = D.length;
     const df = Object.fromEntries(qt.map((t) => [t, D.filter((ts) => ts.includes(t)).length]));
@@ -747,13 +751,13 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     ui.kout.textContent = k;
     ui.k.disabled = !ui.sem.checked;
     const docs = DOCS.filter((d) => ui.jr.checked || d.kind === 'page');
-    let lex = q ? lexical(docs, q, fold, ui.bm.checked) : [];
+    const lex = q ? lexical(docs, q, fold, ui.bm.checked) : [];
     let ranked, method;
     if (ui.sem.checked && q) {
       const sem = meaning(docs, q, fold);
       const score = new Map();
-      lex.forEach((x, i) => score.set(x.d, (score.get(x.d) || 0) + 1 / (k + i + 1)));
-      sem.forEach((x, i) => score.set(x.d, (score.get(x.d) || 0) + 1 / (k + i + 1)));
+      lex.forEach((x, i) => { score.set(x.d, (score.get(x.d) || 0) + 1 / (k + i + 1)); });
+      sem.forEach((x, i) => { score.set(x.d, (score.get(x.d) || 0) + 1 / (k + i + 1)); });
       ranked = [...score].map(([d, s]) => ({ d, s })).sort((a, b) => b.s - a.s);
       method = `${ui.bm.checked ? 'BM25' : 'word match'} + meaning, fused by rank (k = ${k})`;
     } else { ranked = lex; method = ui.bm.checked ? 'BM25' : 'plain word match'; }
@@ -767,19 +771,19 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const top = ranked.length ? ranked[0].s : 1;
     ui.list.innerHTML = ranked.slice(0, 6).map((x) => {
       const sup = x.d.supersededBy ? DOCS.find((d) => d.id === x.d.supersededBy).title : '';
-      return `<li class="res${sup && ui.sup.checked ? ' sup' : ''}"><span class="title">${esc(x.d.title)}</span><span class="score">${(x.s / top).toFixed(2)}</span><span class="snip">${highlight(x.d.text, q, fold)}</span><span class="kinds"><span class="tag${x.d.kind === 'page' ? '' : ' ok'}">${x.d.kind === 'page' ? 'wiki page' : 'journal · ' + x.d.kind}</span>${sup ? `<span class="tag warn">superseded by ${esc(sup)}</span>` : ''}</span></li>`;
+      return `<li class="res${sup && ui.sup.checked ? ' sup' : ''}"><span class="title">${esc(x.d.title)}</span><span class="score">${(x.s / top).toFixed(2)}</span><span class="snip">${highlight(x.d.text, q, fold)}</span><span class="kinds"><span class="tag${x.d.kind === 'page' ? '' : ' ok'}">${x.d.kind === 'page' ? 'wiki page' : `journal · ${x.d.kind}`}</span>${sup ? `<span class="tag warn">superseded by ${esc(sup)}</span>` : ''}</span></li>`;
     }).join('');
   }
-  ['input', 'change'].forEach((ev) => [ui.q, ui.bm, ui.sem, ui.k, ui.fold, ui.jr, ui.sup].forEach((el) => el.addEventListener(ev, run)));
+  for (const ev of ['input', 'change']) for (const el of [ui.q, ui.bm, ui.sem, ui.k, ui.fold, ui.jr, ui.sup]) el.addEventListener(ev, run);
   run();
 })();
 
 /* ---------- comparison on phones ---------- */
 (() => {
-  const rows = $$('.ctable .crow').slice(1);
+  const rows = $$('.ctable tbody tr');
   const heads = ['rsc-brain', 'Notes in chat history', 'A vector store'];
   $('#mobile-compare').innerHTML = rows.map((r) => {
-    const c = $$('div', r).map((d) => d.textContent);
+    const c = $$('th, td', r).map((d) => d.textContent);
     return `<div class="mc"><h3>${c[0]}</h3><div class="us"><b>${heads[0]}:</b> ${c[1]}</div><div><b>${heads[1]}:</b> ${c[2]}</div><div><b>${heads[2]}:</b> ${c[3]}</div></div>`;
   }).join('');
 })();
@@ -788,7 +792,7 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 (() => {
   const A = 'https://brain.example.com/mcp';
   const B = {
-    claude: [['Add the server', 'one line, for every project', `claude mcp add --transport http rsc-brain ${A} --scope user`], ['Sign in', 'the browser opens once', 'claude mcp login rsc-brain'], ['Optional reminder', 'loads context at start, asks for a summary at the end', 'rsc-brain hook session-start --url ' + A + '\nrsc-brain hook stop --url ' + A], ['Check', 'ask your agent', '“What does this brain know about billing?”']],
+    claude: [['Add the server', 'one line, for every project', `claude mcp add --transport http rsc-brain ${A} --scope user`], ['Sign in', 'the browser opens once', 'claude mcp login rsc-brain'], ['Optional reminder', 'loads context at start, asks for a summary at the end', `rsc-brain hook session-start --url ${A}\nrsc-brain hook stop --url ${A}`], ['Check', 'ask your agent', '“What does this brain know about billing?”']],
     codex: [['Add the server', 'standard sign-in', `codex mcp add rsc-brain --url ${A}`], ['Sign in', 'the browser opens once', 'codex mcp login rsc-brain'], ['Or with a token', '~/.codex/config.toml', `[mcp_servers.rsc-brain]\nurl = "${A}"\nbearer_token_env_var = "RSC_BRAIN_TOKEN_CODEX"`], ['Check', 'ask your agent', '“What does this brain know about billing?”']],
     cursor: [['Add the server', '.cursor/mcp.json', `{ "mcpServers": { "rsc-brain": { "url": "${A}" } } }`], ['Sign in', 'the first time Cursor uses it', '“Cursor opens the browser; sign in and pick the brains to share.”'], ['Check', 'ask your agent', '“What does this brain know about billing?”']],
     opencode: [['Add the server', 'opencode.json', `{ "mcp": { "rsc-brain": { "type": "remote", "url": "${A}" } } }`], ['With a token', 'kept in the environment, not the file', '"headers": { "Authorization": "Bearer {env:RSC_BRAIN_TOKEN_OPENCODE}" }'], ['Check', 'ask your agent', '“What does this brain know about billing?”']],
@@ -798,7 +802,7 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const bands = $('#bands');
   const show = (key) => {
-    $$('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.agent === key)));
+    for (const t of $$('.tab')) t.setAttribute('aria-selected', String(t.dataset.agent === key));
     bands.innerHTML = B[key].map(([w, n, code]) => `<div class="band"><div class="what">${w}<small>${n}</small></div><pre><code>${esc(code)}</code></pre>${code.startsWith('“') ?'<span></span>' : '<button class="copy" type="button">Copy</button>'}</div>`).join('');
   };
   $$('.tab').forEach((t) => {
@@ -831,12 +835,12 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const qs = $('#qs'), pane = $('#pane');
   F.forEach(([q, a, more], i) => {
     const li = document.createElement('li');
-    li.innerHTML = `<button class="qbtn" aria-expanded="false" aria-controls="a${i}">${q}</button><div class="answer-inline" id="a${i}" hidden><p>${a}</p><p class="soft" style="font-size:15px;margin-top:8px">${more}</p></div>`;
+    li.innerHTML = `<button type="button" class="qbtn" aria-expanded="false" aria-controls="a${i}">${q}</button><div class="answer-inline" id="a${i}" hidden><p>${a}</p><p class="soft" style="font-size:15px;margin-top:8px">${more}</p></div>`;
     qs.appendChild(li);
   });
   const btns = $$('.qbtn', qs);
   const select = (i, toggle) => {
-    btns.forEach((b, j) => { const on = j === i ? (toggle ? b.getAttribute('aria-expanded') !== 'true' : true) : false; b.setAttribute('aria-expanded', String(on)); $('#a' + j).hidden = !on; });
+    btns.forEach((b, j) => { const on = j === i ? (toggle ? b.getAttribute('aria-expanded') !== 'true' : true) : false; b.setAttribute('aria-expanded', String(on)); $(`#a${j}`).hidden = !on; });
     pane.innerHTML = `<p>${F[i][1]}</p><p>${F[i][2]}</p>`;
   };
   btns.forEach((b, i) => {
@@ -852,8 +856,8 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (reduced || innerWidth <= 1100 || !('IntersectionObserver' in window)) return;
   const groups = ['.cols4', '.intro-pic', '.see-head', '.shots2', '.search-head', '.connect-head', '.install'];
   const els = [];
-  groups.forEach((g) => $$(g).forEach((p) => [...p.children].forEach((c, i) => { c.style.setProperty('--d', i); els.push(c); })));
-  ['.see .shot:not(.shots2 .shot)', '.demo', '.compare h2', '.ctable', '.tabs-wrap', '.faq-grid', '.intro .lead'].forEach((q) => $$(q).forEach((e) => els.push(e)));
+  for (const g of groups) for (const p of $$(g)) [...p.children].forEach((c, i) => { c.style.setProperty('--d', i); els.push(c); });
+  ['.see .shot:not(.shots2 .shot)', '.demo', '.compare h2', '.ctable', '.tabs-wrap', '.faq-grid', '.intro .lead'].forEach((q) => { els.push(...$$(q)); });
   const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { rootMargin: '0px 0px -8% 0px' });
   els.forEach((e) => { e.classList.add('rv'); io.observe(e); });
 })();
