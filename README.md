@@ -10,7 +10,7 @@
 <p><strong>A self-hosted memory for AI agents, curated by the people who work with them.</strong></p>
 
 <p>
-<a href="https://github.com/ericrisco/rsc-brain/releases"><img src="https://img.shields.io/github/v/release/ericrisco/rsc-brain?style=for-the-badge&labelColor=0B0F17&color=4ADE9A" alt="Release"></a>
+<a href="https://github.com/ericrisco/rsc-brain/releases"><img src="https://img.shields.io/badge/release-v0.7.0-4ADE9A?style=for-the-badge&labelColor=0B0F17" alt="Release"></a>
 <img src="https://img.shields.io/badge/MCP-Streamable%20HTTP-4ADE9A?style=for-the-badge&labelColor=0B0F17" alt="MCP over Streamable HTTP">
 <img src="https://img.shields.io/badge/self--hosted-PostgreSQL-8AB4F8?style=for-the-badge&labelColor=0B0F17" alt="Self-hosted on PostgreSQL">
 <img src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux-8AB4F8?style=for-the-badge&labelColor=0B0F17" alt="macOS and Linux">
