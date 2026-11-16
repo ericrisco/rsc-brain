@@ -1,12 +1,12 @@
 // A menu that opens under its button (the account menu, the brain switcher): a press outside closes it,
 // and Esc closes it giving the focus back to the button.
-import { useEffect, useRef, useState } from 'preact/hooks'
+import { useLayoutEffect, useRef, useState } from 'preact/hooks'
 
 export function usePopover<B extends HTMLElement = HTMLDivElement>() {
   const [open, setOpen] = useState(false)
   const box = useRef<B>(null)
   const button = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return
     const away = (e: Event) => {
       if (box.current && !box.current.contains(e.target as Node)) setOpen(false)

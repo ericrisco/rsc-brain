@@ -40,21 +40,61 @@ export type Revised = { index?: number; pageId: string; address: string; revisio
 // another operation brings into being (a page it creates, the new address of a move) goes after it, so
 // a link listed before the page it points at still applies. Approval grouping (dependencies) is a
 // different question: "edit y" before "merge y into x" must still edit y, then merge.
-export function applyOrder(ops: Op[]): number[] {
-  const born = ops.map((o) => (o.op === 'create' ? [o.address] : o.op === 'move' ? [o.to] : []))
+// The addresses an operation brings into being: the page it creates, or the new address of a move.
+function bornOf(o: Op): string[] {
+  return o.op === 'create' ? [o.address] : o.op === 'move' ? [o.to] : []
+}
+
+// A cycle is one dependency group: finish its creates and links before any operation consuming it.
+// At most 50 operations (WIKI_LIMITS.ops), so transitive closure keeps the grouping small and explicit.
+function applyGroups(ops: Op[]): number[][] {
+  const born = ops.map(bornOf)
   const after = ops.map((o, i) => {
     const mine = new Set(uses(o))
     return ops.flatMap((_, j) => (j !== i && (born[j] ?? []).some((a) => mine.has(a)) ? [j] : []))
   })
+  const reaches = after.map((deps, i) => new Set([i, ...deps]))
+  for (const [pivot, targets] of reaches.entries()) {
+    for (const sources of reaches) {
+      if (sources.has(pivot)) for (const target of targets) sources.add(target)
+    }
+  }
+  const unseen = new Set(ops.map((_, i) => i))
+  const pending: number[][] = []
+  for (const i of unseen) {
+    const group = [...unseen].filter((j) => reaches[i]?.has(j) && reaches[j]?.has(i))
+    pending.push(group)
+    for (const j of group) unseen.delete(j)
+  }
+  // A cycle waits for its last producer, just as an acyclic forward link does. Independent
+  // operations between its members keep their turn instead of being jumped by a later create.
+  pending.sort((a, b) => Math.max(...a) - Math.max(...b))
   const done = new Set<number>()
-  const out: number[] = []
-  while (out.length < ops.length) {
-    const next = ops.findIndex((_, i) => !done.has(i) && (after[i] ?? []).every((j) => done.has(j)))
-    const pick = next === -1 ? ops.findIndex((_, i) => !done.has(i)) : next
-    done.add(pick)
-    out.push(pick)
+  const out: number[][] = []
+  while (pending.length) {
+    const next = pending.findIndex((g) =>
+      g.every((i) => (after[i] ?? []).every((j) => done.has(j) || g.includes(j))),
+    )
+    const group = pending.splice(next, 1)[0] as number[]
+    const remaining = new Set(group)
+    const ordered: number[] = []
+    while (remaining.size) {
+      // A create can defer its links, but a move still needs its source page to exist first.
+      const ready =
+        [...remaining].find(
+          (i) => ops[i]?.op === 'create' || (after[i] ?? []).every((j) => !remaining.has(j)),
+        ) ?? ([...remaining][0] as number)
+      ordered.push(ready)
+      remaining.delete(ready)
+      done.add(ready)
+    }
+    out.push(ordered)
   }
   return out
+}
+
+export function applyOrder(ops: Op[]): number[] {
+  return applyGroups(ops).flat()
 }
 
 export async function applyOps(
@@ -69,10 +109,19 @@ export async function applyOps(
   const now = ctx.clock()
   const revised: Revised[] = []
   const touched = new Set<string>()
-  const sorted = applyOrder(items.map((x) => x.op)).map((i) => ({ it: items[i] as ApplyItem }))
+  const groups = applyGroups(items.map((x) => x.op)).map((group) =>
+    group.map((i) => ({ it: items[i] as ApplyItem })),
+  )
   // Each page's revision before this call: an edit's baseRevision is checked against it, not against
   // what earlier operations of the same approval made of the page (a move, then an edit of it).
   const startRevision = new Map<string, number>()
+  // Creates that link each other (an index and its pages, which point back with part-of) have no order in
+  // which every link finds its page, yet the proposal was accepted because each page "is created here". A
+  // create's link to an address its dependency group still brings into being waits for that group,
+  // then lands before downstream operations: one more revision of the page it starts from.
+  const unborn = new Map<string, number>()
+  for (const { it } of groups.flat()) for (const a of bornOf(it.op)) unborn.set(a, (unborn.get(a) ?? 0) + 1)
+  const deferred = new Map<string, { it: ApplyItem; links: { kind: LinkKind; to: string }[] }>()
 
   const fail = (it: ApplyItem, message: string): never => {
     throw new ApplyError(it.index, message)
@@ -201,226 +250,254 @@ export async function applyOps(
     await revise(it, String(p.id))
   }
 
-  for (const { it } of sorted) {
-    const o = it.op
-    switch (o.op) {
-      case 'create': {
-        const taken = await db.one(
-          'SELECT page_id FROM page_addresses WHERE brain_id = $1 AND address = $2',
-          [brainId, o.address],
-        )
-        if (taken) fail(it, `the address "${o.address}" is taken or reserved.`)
-        await checkEntries(it, o.sources)
-        const id = newId('pg')
-        await db.query(
-          `INSERT INTO pages (id, brain_id, address, type, title, summary, body, tags, status, revision, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'current',1,$9,$9)`,
-          [id, brainId, o.address, o.type, o.title, o.summary, o.body, o.tags, now],
-        )
-        await db.query(
-          'INSERT INTO page_addresses (brain_id, address, page_id, created_at) VALUES ($1,$2,$3,$4)',
-          [brainId, o.address, id, now],
-        )
-        await addSources(id, o.sources)
-        await setMentions({ id, address: o.address }, o.body)
-        const supersedes: Row[] = []
-        for (const l of o.links) {
-          const to = await page(it, l.to)
-          if (l.kind === 'supersedes') supersedes.push(to)
-          await db.query(
-            `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
-             ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
-            [brainId, id, l.kind, to.id],
+  for (const group of groups) {
+    // A cyclic group's supersedes effects follow create order, whether its links were ready or deferred.
+    const supersedes: { it: ApplyItem; from: string; to: string }[] = []
+    for (const { it } of group) {
+      const o = it.op
+      for (const a of bornOf(o)) unborn.set(a, (unborn.get(a) ?? 1) - 1)
+      switch (o.op) {
+        case 'create': {
+          const taken = await db.one(
+            'SELECT page_id FROM page_addresses WHERE brain_id = $1 AND address = $2',
+            [brainId, o.address],
           )
-        }
-        await revise(it, id)
-        for (const t of supersedes) await setStatus(it, t, 'superseded', id)
-        break
-      }
-      case 'edit': {
-        const p = await page(it, o.address)
-        if (
-          o.baseRevision !== undefined &&
-          (startRevision.get(String(p.id)) ?? Number(p.revision)) !== o.baseRevision &&
-          !it.baseReviewed
-        ) {
-          fail(
-            it,
-            `"${p.address}" changed since revision ${o.baseRevision} (it is at ${startRevision.get(String(p.id)) ?? p.revision}).`,
-          )
-        }
-        const sets: string[] = []
-        const values: unknown[] = []
-        const set = (col: string, v: unknown) => {
-          values.push(v)
-          sets.push(`${col} = $${values.length + 2}`)
-        }
-        if (o.type !== undefined) set('type', o.type)
-        if (o.title !== undefined) set('title', o.title)
-        if (o.summary !== undefined) set('summary', o.summary)
-        if (o.body !== undefined) set('body', o.body)
-        if (o.tags !== undefined) set('tags', o.tags)
-        await bump(String(p.id), sets.join(', '), values)
-        if (o.sources !== undefined) {
+          if (taken) fail(it, `the address "${o.address}" is taken or reserved.`)
           await checkEntries(it, o.sources)
-          await setSources(String(p.id), o.sources)
-        }
-        if (o.body !== undefined) await setMentions({ id: String(p.id), address: String(p.address) }, o.body)
-        await revise(it, String(p.id))
-        break
-      }
-      case 'move': {
-        const p = await page(it, o.address)
-        const holder = await db.one(
-          'SELECT page_id FROM page_addresses WHERE brain_id = $1 AND address = $2',
-          [brainId, o.to],
-        )
-        if (holder && holder.page_id !== p.id)
-          fail(it, `the address "${o.to}" is taken or reserved by another page.`)
-        if (!holder) {
+          const id = newId('pg')
+          await db.query(
+            `INSERT INTO pages (id, brain_id, address, type, title, summary, body, tags, status, revision, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'current',1,$9,$9)`,
+            [id, brainId, o.address, o.type, o.title, o.summary, o.body, o.tags, now],
+          )
           await db.query(
             'INSERT INTO page_addresses (brain_id, address, page_id, created_at) VALUES ($1,$2,$3,$4)',
-            [brainId, o.to, p.id, now],
+            [brainId, o.address, id, now],
           )
-        }
-        await bump(String(p.id), 'address = $3', [o.to])
-        await revise(it, String(p.id), `moved from "${p.address}"`)
-        break
-      }
-      case 'link': {
-        const p = await page(it, o.address)
-        const t = await page(it, o.to)
-        await addLink(it, p, o.kind, t)
-        await bump(String(p.id), '', [])
-        await revise(it, String(p.id))
-        // "supersedes": this page replaces that one, which becomes superseded (spec B2 «Enlaces»).
-        if (o.kind === 'supersedes') await setStatus(it, t, 'superseded', String(p.id))
-        break
-      }
-      case 'unlink': {
-        const p = await page(it, o.address)
-        const t = await page(it, o.to)
-        await db.query('DELETE FROM page_links WHERE from_page = $1 AND kind = $2 AND to_page = $3', [
-          p.id,
-          o.kind,
-          t.id,
-        ])
-        await bump(String(p.id), '', [])
-        await revise(it, String(p.id))
-        break
-      }
-      case 'status': {
-        const p = await page(it, o.address)
-        const by =
-          o.status === 'superseded' && o.supersededBy ? String((await page(it, o.supersededBy)).id) : null
-        if (by === p.id) fail(it, 'a page cannot supersede itself.')
-        await setStatus(it, p, o.status, by)
-        break
-      }
-      case 'merge': {
-        const x = await page(it, o.address)
-        const y = await page(it, o.from)
-        if (x.id === y.id) fail(it, 'a page cannot be merged into itself.')
-        const drop = new Set(o.dropSources.map(sourceKey))
-        const ys = await db.query('SELECT entry_id, url, title FROM page_sources WHERE page_id = $1', [y.id])
-        await addSources(
-          String(x.id),
-          ys
-            .map(
-              (s): Source =>
-                s.entry_id != null
-                  ? { entryId: String(s.entry_id) }
-                  : s.title == null
-                    ? { url: String(s.url) }
-                    : { url: String(s.url), title: String(s.title) },
-            )
-            .filter((s) => !drop.has(sourceKey(s))),
-        )
-        const dropLinks = new Set(o.dropLinks.map((l) => `${l.kind}>${l.to}`))
-        // y's typed links now leave from x, but those the operation drops.
-        const yOut = await db.query(
-          `SELECT l.kind, l.to_page, t.address FROM page_links l JOIN pages t ON t.id = l.to_page
-            WHERE l.from_page = $1`,
-          [y.id],
-        )
-        for (const l of yOut) {
-          if (l.to_page === x.id || dropLinks.has(`${l.kind}>${l.address}`)) continue
-          await db.query(
-            `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
+          await addSources(id, o.sources)
+          await setMentions({ id, address: o.address }, o.body)
+          for (const l of o.links) {
+            if (l.kind === 'supersedes') supersedes.push({ it, from: id, to: l.to })
+            if ((unborn.get(l.to) ?? 0) > 0) {
+              const waiting = deferred.get(id) ?? { it, links: [] }
+              waiting.links.push(l)
+              deferred.set(id, waiting)
+              continue
+            }
+            const to = await page(it, l.to)
+            await db.query(
+              `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
              ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
-            [brainId, x.id, l.kind, l.to_page],
-          )
+              [brainId, id, l.kind, to.id],
+            )
+          }
+          await revise(it, id)
+          break
         }
-        await db.query('DELETE FROM page_links WHERE from_page = $1 AND to_page IS NOT NULL', [y.id])
-        // Links that went to y now lead to x.
-        await db.query(
-          `INSERT INTO page_links (brain_id, from_page, kind, to_page)
+        case 'edit': {
+          const p = await page(it, o.address)
+          if (
+            o.baseRevision !== undefined &&
+            (startRevision.get(String(p.id)) ?? Number(p.revision)) !== o.baseRevision &&
+            !it.baseReviewed
+          ) {
+            fail(
+              it,
+              `"${p.address}" changed since revision ${o.baseRevision} (it is at ${startRevision.get(String(p.id)) ?? p.revision}).`,
+            )
+          }
+          const sets: string[] = []
+          const values: unknown[] = []
+          const set = (col: string, v: unknown) => {
+            values.push(v)
+            sets.push(`${col} = $${values.length + 2}`)
+          }
+          if (o.type !== undefined) set('type', o.type)
+          if (o.title !== undefined) set('title', o.title)
+          if (o.summary !== undefined) set('summary', o.summary)
+          if (o.body !== undefined) set('body', o.body)
+          if (o.tags !== undefined) set('tags', o.tags)
+          await bump(String(p.id), sets.join(', '), values)
+          if (o.sources !== undefined) {
+            await checkEntries(it, o.sources)
+            await setSources(String(p.id), o.sources)
+          }
+          if (o.body !== undefined)
+            await setMentions({ id: String(p.id), address: String(p.address) }, o.body)
+          await revise(it, String(p.id))
+          break
+        }
+        case 'move': {
+          const p = await page(it, o.address)
+          const holder = await db.one(
+            'SELECT page_id FROM page_addresses WHERE brain_id = $1 AND address = $2',
+            [brainId, o.to],
+          )
+          if (holder && holder.page_id !== p.id)
+            fail(it, `the address "${o.to}" is taken or reserved by another page.`)
+          if (!holder) {
+            await db.query(
+              'INSERT INTO page_addresses (brain_id, address, page_id, created_at) VALUES ($1,$2,$3,$4)',
+              [brainId, o.to, p.id, now],
+            )
+          }
+          await bump(String(p.id), 'address = $3', [o.to])
+          await revise(it, String(p.id), `moved from "${p.address}"`)
+          break
+        }
+        case 'link': {
+          const p = await page(it, o.address)
+          const t = await page(it, o.to)
+          await addLink(it, p, o.kind, t)
+          await bump(String(p.id), '', [])
+          await revise(it, String(p.id))
+          // "supersedes": this page replaces that one, which becomes superseded (spec B2 «Enlaces»).
+          if (o.kind === 'supersedes') await setStatus(it, t, 'superseded', String(p.id))
+          break
+        }
+        case 'unlink': {
+          const p = await page(it, o.address)
+          const t = await page(it, o.to)
+          await db.query('DELETE FROM page_links WHERE from_page = $1 AND kind = $2 AND to_page = $3', [
+            p.id,
+            o.kind,
+            t.id,
+          ])
+          await bump(String(p.id), '', [])
+          await revise(it, String(p.id))
+          break
+        }
+        case 'status': {
+          const p = await page(it, o.address)
+          const by =
+            o.status === 'superseded' && o.supersededBy ? String((await page(it, o.supersededBy)).id) : null
+          if (by === p.id) fail(it, 'a page cannot supersede itself.')
+          await setStatus(it, p, o.status, by)
+          break
+        }
+        case 'merge': {
+          const x = await page(it, o.address)
+          const y = await page(it, o.from)
+          if (x.id === y.id) fail(it, 'a page cannot be merged into itself.')
+          const drop = new Set(o.dropSources.map(sourceKey))
+          const ys = await db.query('SELECT entry_id, url, title FROM page_sources WHERE page_id = $1', [
+            y.id,
+          ])
+          await addSources(
+            String(x.id),
+            ys
+              .map(
+                (s): Source =>
+                  s.entry_id != null
+                    ? { entryId: String(s.entry_id) }
+                    : s.title == null
+                      ? { url: String(s.url) }
+                      : { url: String(s.url), title: String(s.title) },
+              )
+              .filter((s) => !drop.has(sourceKey(s))),
+          )
+          const dropLinks = new Set(o.dropLinks.map((l) => `${l.kind}>${l.to}`))
+          // y's typed links now leave from x, but those the operation drops.
+          const yOut = await db.query(
+            `SELECT l.kind, l.to_page, t.address FROM page_links l JOIN pages t ON t.id = l.to_page
+            WHERE l.from_page = $1`,
+            [y.id],
+          )
+          for (const l of yOut) {
+            if (l.to_page === x.id || dropLinks.has(`${l.kind}>${l.address}`)) continue
+            await db.query(
+              `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
+             ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
+              [brainId, x.id, l.kind, l.to_page],
+            )
+          }
+          await db.query('DELETE FROM page_links WHERE from_page = $1 AND to_page IS NOT NULL', [y.id])
+          // Links that went to y now lead to x.
+          await db.query(
+            `INSERT INTO page_links (brain_id, from_page, kind, to_page)
            SELECT brain_id, from_page, kind, $2 FROM page_links WHERE to_page = $1 AND from_page <> $2
               AND kind <> 'supersedes'
            ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
-          [y.id, x.id],
-        )
-        await db.query('DELETE FROM page_links WHERE to_page = $1', [y.id])
-        // Every address y had now leads to x, so [[y]] mentions resolve to x without touching bodies.
-        await db.query('UPDATE page_addresses SET page_id = $2 WHERE page_id = $1', [y.id, x.id])
-        await bump(String(x.id), 'body = $3', [o.body])
-        await setMentions({ id: String(x.id), address: String(x.address) }, o.body)
-        await revise(it, String(x.id), `merged "${y.address}" into it`)
-        await setStatus(it, y, 'superseded', String(x.id))
-        break
-      }
-      case 'revert': {
-        const p = await page(it, o.address)
-        const r = await db.one('SELECT * FROM page_revisions WHERE page_id = $1 AND revision = $2', [
-          p.id,
-          o.toRevision,
-        ])
-        if (!r) fail(it, `"${p.address}" has no revision ${o.toRevision}.`)
-        const old = r as Row
-        if (old.purged_at) fail(it, `revision ${o.toRevision} of "${p.address}" was purged.`)
-        await bump(String(p.id), 'type = $3, title = $4, summary = $5, body = $6, tags = $7', [
-          old.type,
-          old.title,
-          old.summary,
-          old.body,
-          old.tags,
-        ])
-        // Sources purged since that revision do not come back.
-        const was = (old.sources as Source[]) ?? []
-        const ids = was.flatMap((s) => ('entryId' in s ? [s.entryId] : []))
-        const alive = new Set(
-          ids.length === 0
-            ? []
-            : (
-                await db.query(
-                  "SELECT id FROM entries WHERE brain_id = $1 AND id = ANY($2) AND state <> 'purged'",
-                  [brainId, ids],
-                )
-              ).map((r) => String(r.id)),
-        )
-        await setSources(
-          String(p.id),
-          was.filter((s) => !('entryId' in s) || alive.has(s.entryId)),
-        )
-        await db.query('DELETE FROM page_links WHERE from_page = $1 AND to_page IS NOT NULL', [p.id])
-        for (const l of (old.links as { kind: LinkKind; to: string }[]) ?? []) {
-          const t = await db.one(
-            'SELECT p.id FROM page_addresses a JOIN pages p ON p.id = a.page_id WHERE a.brain_id = $1 AND a.address = $2',
-            [brainId, l.to],
+            [y.id, x.id],
           )
-          if (t && t.id !== p.id) {
-            await db.query(
-              `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
-               ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
-              [brainId, p.id, l.kind, t.id],
-            )
-          }
+          await db.query('DELETE FROM page_links WHERE to_page = $1', [y.id])
+          // Every address y had now leads to x, so [[y]] mentions resolve to x without touching bodies.
+          await db.query('UPDATE page_addresses SET page_id = $2 WHERE page_id = $1', [y.id, x.id])
+          await bump(String(x.id), 'body = $3', [o.body])
+          await setMentions({ id: String(x.id), address: String(x.address) }, o.body)
+          await revise(it, String(x.id), `merged "${y.address}" into it`)
+          await setStatus(it, y, 'superseded', String(x.id))
+          break
         }
-        await setMentions({ id: String(p.id), address: String(p.address) }, String(old.body))
-        await revise(it, String(p.id), `back to revision ${o.toRevision}`)
-        break
+        case 'revert': {
+          const p = await page(it, o.address)
+          const r = await db.one('SELECT * FROM page_revisions WHERE page_id = $1 AND revision = $2', [
+            p.id,
+            o.toRevision,
+          ])
+          if (!r) fail(it, `"${p.address}" has no revision ${o.toRevision}.`)
+          const old = r as Row
+          if (old.purged_at) fail(it, `revision ${o.toRevision} of "${p.address}" was purged.`)
+          await bump(String(p.id), 'type = $3, title = $4, summary = $5, body = $6, tags = $7', [
+            old.type,
+            old.title,
+            old.summary,
+            old.body,
+            old.tags,
+          ])
+          // Sources purged since that revision do not come back.
+          const was = (old.sources as Source[]) ?? []
+          const ids = was.flatMap((s) => ('entryId' in s ? [s.entryId] : []))
+          const alive = new Set(
+            ids.length === 0
+              ? []
+              : (
+                  await db.query(
+                    "SELECT id FROM entries WHERE brain_id = $1 AND id = ANY($2) AND state <> 'purged'",
+                    [brainId, ids],
+                  )
+                ).map((r) => String(r.id)),
+          )
+          await setSources(
+            String(p.id),
+            was.filter((s) => !('entryId' in s) || alive.has(s.entryId)),
+          )
+          await db.query('DELETE FROM page_links WHERE from_page = $1 AND to_page IS NOT NULL', [p.id])
+          for (const l of (old.links as { kind: LinkKind; to: string }[]) ?? []) {
+            const t = await db.one(
+              'SELECT p.id FROM page_addresses a JOIN pages p ON p.id = a.page_id WHERE a.brain_id = $1 AND a.address = $2',
+              [brainId, l.to],
+            )
+            if (t && t.id !== p.id) {
+              await db.query(
+                `INSERT INTO page_links (brain_id, from_page, kind, to_page) VALUES ($1, $2, $3, $4)
+               ON CONFLICT (from_page, kind, to_page) WHERE to_page IS NOT NULL DO NOTHING`,
+                [brainId, p.id, l.kind, t.id],
+              )
+            }
+          }
+          await setMentions({ id: String(p.id), address: String(p.address) }, String(old.body))
+          await revise(it, String(p.id), `back to revision ${o.toRevision}`)
+          break
+        }
       }
     }
+
+    for (const [pageId, { it, links }] of deferred) {
+      const from = await db.one('SELECT * FROM pages WHERE id = $1 FOR UPDATE', [pageId])
+      if (!from) fail(it, 'the page it creates is gone before its links could be added.')
+      for (const l of links) {
+        const to = await page(it, l.to)
+        await addLink(it, from as Row, l.kind, to)
+      }
+      await bump(pageId, '', [])
+      await revise(it, pageId, 'links to pages created in the same approval')
+    }
+
+    for (const effect of supersedes) {
+      await setStatus(effect.it, await page(effect.it, effect.to), 'superseded', effect.from)
+    }
+    deferred.clear()
   }
 
   const pages = [...touched]

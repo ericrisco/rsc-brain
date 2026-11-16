@@ -3,7 +3,7 @@
 // and the button that shows the names. Folded it is 56px of icons whose names stay in the page, hidden to
 // the eye and shown as a tooltip on hover or focus (Esc hides it); open it is 220px with the names. On a
 // phone it is a bar across the top, and the sections fold into a menu.
-import { useEffect, useRef, useState } from 'preact/hooks'
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
 import { toReview } from '../lib/brains.ts'
 import { foldRail, isTablet, rail, startRail, TABLET, toggleRail } from '../lib/rail.ts'
@@ -345,7 +345,7 @@ function useTabletRail(path: string, open: boolean) {
     mq.addEventListener('change', changed)
     return () => mq.removeEventListener('change', changed)
   }, [])
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open || !isTablet()) return
     const esc = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !e.defaultPrevented) foldRail()

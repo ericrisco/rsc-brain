@@ -217,6 +217,162 @@ describe('wiki decisions in the web', { skip: skipPg }, () => {
     }
   })
 
+  it('creates that link each other apply: an index and its pages, which point back with part-of', async () => {
+    const id = await propose([
+      create('cyc/index', {
+        links: [
+          { kind: 'related', to: 'cyc/a' },
+          { kind: 'related', to: 'cyc/b' },
+        ],
+      }),
+      create('cyc/a', { links: [{ kind: 'part-of', to: 'cyc/index' }] }),
+      create('cyc/b', { links: [{ kind: 'part-of', to: 'cyc/index' }] }),
+    ])
+    const r = await approve(id)
+    assert.equal(r.status, 200, r.text)
+    type Shown = { page: { revision: number }; links: { out: { kind: string; address: string }[] } }
+    const out = (p: Shown) => p.links.out.map((l) => `${l.kind} ${l.address}`).sort()
+    const index = (await page('cyc/index')) as Shown
+    assert.deepEqual(out(index), ['related cyc/a', 'related cyc/b'])
+    assert.equal(index.page.revision, 2)
+    for (const a of ['cyc/a', 'cyc/b']) {
+      const p = (await page(a)) as Shown
+      assert.deepEqual(out(p), ['part-of cyc/index'])
+      assert.equal(p.page.revision, 1)
+    }
+  })
+
+  it('a create linking to a page that nothing brings into being still applies nothing', async () => {
+    await w.db.query(`CREATE FUNCTION drop_target() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.address = 'lost/b' THEN DELETE FROM page_addresses WHERE address = 'lost/b'; END IF;
+      RETURN NULL; END $$`)
+    await w.db.query(
+      'CREATE TRIGGER drop_target AFTER INSERT ON page_addresses FOR EACH ROW EXECUTE FUNCTION drop_target()',
+    )
+    const id = await propose([
+      create('lost/a', { links: [{ kind: 'related', to: 'lost/b' }] }),
+      create('lost/b', { links: [{ kind: 'part-of', to: 'lost/a' }] }),
+    ])
+    const r = await approve(id)
+    await w.db.query('DROP TRIGGER drop_target ON page_addresses')
+    assert.deepEqual([r.status, r.body.error?.code], [409, 'apply_failed'])
+    assert.match(String(r.body.error?.message), /^Operation 0: there is no page at "lost\/b"/)
+    const n = await w.db.one<{ n: number }>(
+      "SELECT count(*)::int AS n FROM pages WHERE address LIKE 'lost/%'",
+    )
+    assert.equal(n?.n, 0)
+  })
+
+  const linkedCreates = (prefix: string, kind = 'related') => [
+    create(`${prefix}/a`, { links: [{ kind, to: `${prefix}/b` }] }),
+    create(`${prefix}/b`, { links: [{ kind: 'related', to: `${prefix}/a` }] }),
+  ]
+  const outgoing = async (address: string) =>
+    ((await page(address)).links as { out: { kind: string; address: string }[] }).out
+      .map((l) => `${l.kind} ${l.address}`)
+      .sort()
+
+  it('a cyclic create does not jump over an earlier independent status operation', async () => {
+    assert.equal((await approve(await propose([create('cycle-between/x')]))).status, 200)
+    const id = await propose([
+      create('cycle-between/a', { links: [{ kind: 'related', to: 'cycle-between/b' }] }),
+      { op: 'status', address: 'cycle-between/x', status: 'current', reason: 'keep' },
+      create('cycle-between/b', {
+        links: [
+          { kind: 'related', to: 'cycle-between/a' },
+          { kind: 'supersedes', to: 'cycle-between/x' },
+        ],
+      }),
+    ])
+    const r = await approve(id)
+    assert.equal(r.status, 200, r.text)
+    const target = await w.db.one(
+      "SELECT winner.address FROM pages p JOIN pages winner ON winner.id = p.superseded_by WHERE p.address = 'cycle-between/x'",
+    )
+    assert.equal(target?.address, 'cycle-between/b')
+  })
+
+  it('the later supersedes wins inside the same create cycle', async () => {
+    const id = await propose([
+      create('cycle-order/a', { links: [{ kind: 'supersedes', to: 'cycle-order/c' }] }),
+      create('cycle-order/c', { links: [{ kind: 'related', to: 'cycle-order/b' }] }),
+      create('cycle-order/b', {
+        links: [
+          { kind: 'related', to: 'cycle-order/a' },
+          { kind: 'supersedes', to: 'cycle-order/c' },
+        ],
+      }),
+    ])
+    const r = await approve(id)
+    assert.equal(r.status, 200, r.text)
+    const target = await w.db.one(
+      "SELECT winner.address FROM pages p JOIN pages winner ON winner.id = p.superseded_by WHERE p.address = 'cycle-order/c'",
+    )
+    assert.equal(target?.address, 'cycle-order/b')
+  })
+
+  it('a later unlink wins over a link in a create cycle', async () => {
+    const id = await propose([
+      ...linkedCreates('cycle-unlink'),
+      {
+        op: 'unlink',
+        address: 'cycle-unlink/a',
+        to: 'cycle-unlink/b',
+        kind: 'related',
+        reason: 'Remove it.',
+      },
+    ])
+    const r = await approve(id)
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(await outgoing('cycle-unlink/a'), [])
+  })
+
+  it('a later status wins over supersedes in a create cycle', async () => {
+    const id = await propose([
+      ...linkedCreates('cycle-status', 'supersedes'),
+      { op: 'status', address: 'cycle-status/b', status: 'current', reason: 'Keep it current.' },
+    ])
+    const r = await approve(id)
+    assert.equal(r.status, 200, r.text)
+    assert.equal(((await page('cycle-status/b')).page as { status: string }).status, 'current')
+  })
+
+  it('a later merge transfers the outgoing links of a created cycle page', async () => {
+    const id = await propose([
+      ...linkedCreates('cycle-merge'),
+      create('cycle-merge/c'),
+      {
+        op: 'merge',
+        address: 'cycle-merge/c',
+        from: 'cycle-merge/a',
+        body: 'Merged text.',
+        reason: 'Combine them.',
+      },
+    ])
+    const r = await approve(id)
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(await outgoing('cycle-merge/c'), ['related cycle-merge/b'])
+  })
+
+  it('a cycle through a move creates its source before moving and before a later unlink', async () => {
+    const id = await propose([
+      { op: 'move', address: 'cycle-move/b', to: 'cycle-move/new-b', reason: 'Rename it.' },
+      create('cycle-move/a', { links: [{ kind: 'related', to: 'cycle-move/new-b' }] }),
+      create('cycle-move/b', { links: [{ kind: 'related', to: 'cycle-move/a' }] }),
+      {
+        op: 'unlink',
+        address: 'cycle-move/a',
+        to: 'cycle-move/new-b',
+        kind: 'related',
+        reason: 'Remove it.',
+      },
+    ])
+    const r = await approve(id)
+    assert.equal(r.status, 200, r.text)
+    assert.deepEqual(await outgoing('cycle-move/a'), [])
+    assert.deepEqual(await outgoing('cycle-move/new-b'), ['related cycle-move/a'])
+  })
+
   it('CA5: a failure in the middle applies nothing; the proposal stays pending with the error', async () => {
     await w.db.query(`CREATE FUNCTION fail_page() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN IF NEW.address = 'ca5/p7' THEN RAISE EXCEPTION 'injected failure'; END IF; RETURN NEW; END $$`)
