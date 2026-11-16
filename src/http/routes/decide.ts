@@ -15,6 +15,7 @@ import {
 } from '../../domain/wiki/direct.ts'
 import { purgePageRevisions, purgeProposal } from '../../domain/wiki/purge.ts'
 import { bool, compact, int, type Obj, obj, reqStr, str, strList } from '../input.ts'
+import { reviewReply } from '../review-reply.ts'
 import { type Route, route } from '../router.ts'
 import { ctxOf } from './brains.ts'
 
@@ -29,7 +30,7 @@ function indices(b: Obj, key: string): number[] | undefined {
 
 export const decideRoutes: Route[] = [
   route('GET /v1/proposals/:id/review', async (r) => ({
-    body: await reviewProposal(ctxOf(r), r.params.id as string),
+    body: reviewReply(await reviewProposal(ctxOf(r), r.params.id as string), r.query),
   })),
   route('POST /v1/proposals/:id/approve', async (r) => {
     const b = obj(r.body)

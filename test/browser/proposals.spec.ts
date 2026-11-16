@@ -11,6 +11,27 @@ import { expect, noSideScroll, scenario, test } from './fixture.ts'
 
 const INBOX = '/b/growth/proposals'
 
+test('a truncated review shows a recoverable error instead of staying on Loading', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.route('**/v1/proposals/prp_growth1/review', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ cut: { message: 'Too large' }, partial: '{"ops":' }),
+    }),
+  )
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  await page.goto(`${INBOX}/prp_growth1`)
+  await expect(page.locator('[data-state="error"]')).toContainText('The server sent an incomplete reply.')
+  await expect(page.getByRole('button', { name: /try again|retry/i })).toBeVisible()
+  expect(errors).toEqual([])
+})
+
 async function audit(page: Page, where: string) {
   const r = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa', 'best-practice'])

@@ -133,6 +133,70 @@ function errorOf(status: number, text: string): ApiError {
   )
 }
 
+function answerOf(text: string): unknown {
+  const value = text ? JSON.parse(text) : {}
+  if (value?.cut && typeof value.partial === 'string') {
+    throw new ApiError(
+      200,
+      'reply_cut',
+      'The server sent an incomplete reply.',
+      'Reload and try again. If it keeps failing, ask an administrator to update rsc-brain.',
+    )
+  }
+  return value
+}
+
+// Do not expose any operations to the screen until every part of the same review is present.
+async function wholeReview(
+  first: unknown,
+  next: (offset: number, snapshot: string) => Promise<unknown>,
+): Promise<unknown> {
+  const bad = () =>
+    new ApiError(
+      200,
+      'bad_answer',
+      'The review could not be loaded completely.',
+      'Reload the review and try again.',
+    )
+  let value = first as { reviewChunk?: Record<string, unknown> }
+  if (!value?.reviewChunk) return first
+  let offset = 0
+  let snapshot: string | undefined
+  let total: number | undefined
+  const parts: string[] = []
+  for (;;) {
+    const p = value?.reviewChunk
+    if (
+      !p ||
+      typeof p.text !== 'string' ||
+      p.text.length === 0 ||
+      p.offset !== offset ||
+      typeof p.snapshot !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(p.snapshot) ||
+      !Number.isSafeInteger(p.total) ||
+      (p.total as number) <= 0 ||
+      (snapshot !== undefined && p.snapshot !== snapshot) ||
+      (total !== undefined && p.total !== total)
+    )
+      throw bad()
+    snapshot = p.snapshot
+    total = p.total as number
+    parts.push(p.text)
+    offset += p.text.length
+    if (offset > total || (p.next === null ? offset !== total : p.next !== offset || offset >= total))
+      throw bad()
+    if (p.next === null) break
+    value = (await next(offset, snapshot)) as typeof value
+  }
+  try {
+    const review = JSON.parse(parts.join(''))
+    if (!review?.proposal || !Array.isArray(review.ops) || typeof review.fingerprint !== 'string') throw bad()
+    return review
+  } catch {
+    throw bad()
+  }
+}
+
 export function createClient(o: {
   transport: Transport
   upload?: Upload
@@ -147,7 +211,7 @@ export function createClient(o: {
   }
   const offline = () =>
     new ApiError(0, 'offline', 'rsc-brain could not be reached.', 'Check your connection and try again.')
-  return {
+  const client: Client = {
     async upload<T>(
       op: OpName,
       c: CallOptions,
@@ -184,7 +248,7 @@ export function createClient(o: {
         throw offline()
       }
       const text = await res.text()
-      if (res.status >= 200 && res.status < 300) return (text ? JSON.parse(text) : {}) as T
+      if (res.status >= 200 && res.status < 300) return answerOf(text) as T
       const err = refused(errorOf(res.status, text))
       if (res.status === 401 && !c.quiet) o.onSignedOut(signInPath(o.here()))
       throw err
@@ -254,12 +318,22 @@ export function createClient(o: {
         throw offline()
       }
       const text = await res.text()
-      if (res.status >= 200 && res.status < 300) return (text ? JSON.parse(text) : {}) as T
+      if (res.status >= 200 && res.status < 300) {
+        const value = answerOf(text)
+        return (
+          op === 'proposalReview' && c.query?.offset === undefined
+            ? await wholeReview(value, (offset, snapshot) =>
+                client.call('proposalReview', { ...c, query: { ...c.query, offset, snapshot } }),
+              )
+            : value
+        ) as T
+      }
       const err = refused(errorOf(res.status, text))
       if (res.status === 401 && !('public' in def) && !c.quiet) o.onSignedOut(signInPath(o.here()))
       throw err
     },
   }
+  return client
 }
 
 // What an upload's network error means (review of PR32): a server that refuses early (a brain not empty, another

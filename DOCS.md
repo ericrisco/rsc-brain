@@ -432,9 +432,19 @@ works, never save secrets, close with a summary.
   `mem_search`, `mem_get`, `mem_timeline`, `brain_page`, `brain_neighbors`, `brain_map`,
   `brain_health`, `brain_compile_pack`, `brain_check`, `brain_write`, `brain_propose`, `brain_proposals`,
   `brain_review`, `brain_decide`, `brain_withdraw`, `brain_create`. A key sees only the tools it may use.
+
 - Each tool runs the same `/v1` route a program would, with the same key: the same checks, limits
   and results.
 - Curators link repositories to their brain, so an agent finds it with `brain_resolve`.
+
+Large proposal reviews are returned in bounded parts, including when a single operation is large.
+`brain_review` and `GET /v1/proposals/:id/review` return `reviewChunk` instead of a cut reply:
+append its `text` in `offset` order, request the same review with `offset=next` and its `snapshot`,
+and repeat until `next` is `null`. Parse the joined JSON and review all operations before deciding.
+`max` sets the part size (1024–120000 characters); `offset=0` requests parts even for a small review.
+A change to the proposal or page states returns `409 review_changed`; restart from the beginning.
+Every part checks access again. Small reviews keep their ordinary response. The web assembles parts
+automatically and only enables decisions after the complete review has loaded.
 
 ## Connect your agent
 

@@ -609,7 +609,13 @@ const SHAPES: Record<string, Record<string, string[]>> = {
 }
 
 type Json = Record<string, unknown>
-type Schema = { type?: string; properties?: Record<string, Schema>; required?: string[]; items?: Schema }
+type Schema = {
+  type?: string
+  properties?: Record<string, Schema>
+  required?: string[]
+  items?: Schema
+  oneOf?: Schema[]
+}
 
 // `where` walks down: "brains[].stats" is the stats of the first brain.
 function fieldsAt(body: Json, where: string): Json {
@@ -629,6 +635,13 @@ function opOf(paths: Record<string, Record<string, Json>>, path: string, method:
   const op = paths[path]?.[method]
   assert.ok(op, `the description has no ${method} ${path}`)
   return op
+}
+
+function schemaFor(s: Schema, body: Json): Schema {
+  if (!s.oneOf) return s
+  const matching = s.oneOf.filter((variant) => variant.required?.every((field) => field in body))
+  assert.equal(matching.length, 1, 'the answer must match exactly one documented response variant')
+  return matching[0] as Schema
 }
 
 function schemaAt(s: Schema, where: string): Schema {
@@ -791,10 +804,23 @@ describe('the v1 contract', { skip: skipPg }, () => {
       const responses = opOf(paths, path, method.toLowerCase()).responses as Json
       const ok = (responses['200'] ?? responses['201'] ?? responses['202']) as Json
       const schema = ((ok.content as Json)['application/json'] as Json).schema as Schema
+      if (op === 'GET /v1/proposals/{id}/review') {
+        const id = (proposed.body.proposal as Json).id
+        const chunked = await w.callWeb(await w.web(eric.id), 'GET', `/v1/proposals/${id}/review?offset=0`)
+        assert.equal(chunked.status, 200, chunked.text)
+        const variant = schemaFor(schema, chunked.body)
+        for (const field of ['reviewChunk', 'howToProceed']) assert.ok(variant.required?.includes(field))
+        const part = fieldsAt(chunked.body, 'reviewChunk')
+        const described = schemaAt(variant, 'reviewChunk')
+        for (const field of ['text', 'offset', 'next', 'total', 'snapshot']) {
+          assert.ok(field in part)
+          assert.ok(described.required?.includes(field), `reviewChunk must document ${field}`)
+        }
+      }
       for (const [where, fields] of Object.entries(shape)) {
         const got = fieldsAt(body, where)
         for (const f of fields) assert.ok(f in got, `${op}: "${where || 'body'}" lost "${f}"`)
-        const described = schemaAt(schema, where)
+        const described = schemaAt(schemaFor(schema, body), where)
         for (const f of fields) {
           assert.ok(described.required?.includes(f), `${op}: the description does not pin "${where}.${f}"`)
         }
