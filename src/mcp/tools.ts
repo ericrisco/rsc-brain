@@ -571,13 +571,27 @@ export const TOOLS: Tool[] = [
     name: 'brain_review',
     title: 'Review a proposal',
     description:
-      'A proposal as a curator reviews it: each operation with the page before and after, its reason and sources, what it depends on, the warnings, and the fingerprint to decide it with (brain_decide). Only for a key a curator gave the permission to write to the wiki.',
-    inputSchema: obj({ id: str('The proposal id.') }, ['id']),
+      'A proposal as a curator reviews it: each operation with the page before and after, its reason and sources, dependencies, warnings and decision fingerprint. Large reviews return reviewChunk: append its text in offset order, call again with offset=next and snapshot until next is null, then parse the joined JSON and review it before deciding. A changed snapshot returns 409: restart. Only for a key allowed to write to the wiki.',
+    inputSchema: obj(
+      {
+        id: str('The proposal id.'),
+        offset: { type: 'integer', minimum: 0, description: 'The next text offset returned by reviewChunk.' },
+        snapshot: str('The snapshot from the preceding reviewChunk; required after offset 0.'),
+        max: {
+          type: 'integer',
+          minimum: 1024,
+          maximum: 120000,
+          description: 'Characters per review chunk (default 120000).',
+        },
+      },
+      ['id'],
+    ),
     writes: false,
     annotations: { readOnlyHint: true },
     call: async (a) => ({
       method: 'GET',
       path: `/v1/proposals/${enc(text(a, 'id', true) as string)}/review`,
+      query: query(a, { offset: 'offset', snapshot: 'snapshot', max: 'max' }),
     }),
   },
   {

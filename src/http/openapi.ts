@@ -1817,7 +1817,27 @@ const HAND: Record<string, Op> = {
   'GET /v1/proposals/{id}/review': {
     summary:
       'A proposal as a person reviews it in the web: each operation with the page before and after, what it depends on, and an old base in three versions. Any member reads it in the web; only a curator decides. A key reads it, and decides, only with the permission to write to the wiki (403 web_only otherwise).',
-    reply: REVIEW,
+    query: {
+      offset: 'Text offset from reviewChunk.next; 0 starts explicit chunking.',
+      snapshot:
+        'The preceding reviewChunk.snapshot, required for a nonzero offset. A changed review returns 409 review_changed: restart.',
+      max: 'Characters per JSON text chunk (1024–120000; default 120000).',
+    },
+    reply: {
+      oneOf: [
+        REVIEW,
+        obj({
+          reviewChunk: obj({
+            text: s('Append these JSON characters in offset order; parse only after next is null.'),
+            offset: n('Start offset in the serialized review.'),
+            next: nul(n('Offset for the next request; null means the review is complete.')),
+            total: n('Total characters in the serialized review.'),
+            snapshot: s('Hash of the whole review, including page states. Send it with every continuation.'),
+          }),
+          howToProceed: s('How to obtain and read the whole review before deciding.'),
+        }),
+      ],
+    },
   },
   'POST /v1/proposals/{id}/approve': {
     summary:

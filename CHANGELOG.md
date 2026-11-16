@@ -4,6 +4,18 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.7.1
+
+Review and approve linked pages and large maintenance proposals reliably.
+
+- New pages that link to each other can be approved together. Later unlink, status and merge operations
+  keep their effects; moves wait for their source, and supersedes links keep their operation order.
+- Large proposal reviews load completely in the web, including a single large edit and its old base.
+  The API and `brain_review` return bounded parts with a snapshot; a change during loading asks the
+  client to restart. Small reviews keep their ordinary response.
+- An incomplete server reply now shows a recoverable error in the web instead of leaving the page loading.
+- A popover or tablet side bar can be dismissed as soon as it opens, including with Escape.
+
 ## v0.7.0
 
 A trusted agent clears the queue of proposals without opening the web.

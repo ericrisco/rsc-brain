@@ -76,6 +76,67 @@ const create = (address: string) => ({
   reason: 'One learning.',
 })
 
+test('a large review loads all changes and the curator approves them without a page error', async ({
+  page,
+  request,
+  baseURL,
+}) => {
+  await signedInAdmin(page, baseURL as string)
+  const slug = 'large-review-e2e'
+  expect(
+    (await page.request.post('/v1/brains', { headers: WEB, data: { slug, name: 'Large reviews' } })).status(),
+  ).toBe(201)
+  const token = await page.request.post('/v1/me/tokens', {
+    headers: WEB,
+    data: { name: 'large review agent', perm: 'write', brains: [slug], days: 30 },
+  })
+  const key = (await token.json()).token.secret as string
+  const proposeLarge = async (ops: unknown[]) => {
+    const r = await request.post(`/v1/brains/${slug}/proposals`, {
+      headers: { authorization: `Bearer ${key}` },
+      data: { title: 'Review all links', ops },
+    })
+    expect(r.status(), await r.text()).toBe(201)
+    return (await r.json()).proposal.id as string
+  }
+  for (let i = 0; i < 24; i += 6) {
+    const id = await proposeLarge(
+      Array.from({ length: 6 }, (_, n) => ({
+        ...create(`large/${i + n}`),
+        body: 'Words '.repeat(1000),
+        sources: [{ url: 'https://example.test/evidence' }],
+      })),
+    )
+    const review = await (await page.request.get(`/v1/proposals/${id}/review`)).json()
+    expect(
+      (
+        await page.request.post(`/v1/proposals/${id}/approve`, {
+          headers: WEB,
+          data: { fingerprint: review.fingerprint },
+        })
+      ).status(),
+    ).toBe(200)
+  }
+  const id = await proposeLarge(
+    Array.from({ length: 24 }, (_, i) => ({
+      op: 'link',
+      address: `large/${i}`,
+      to: `large/${(i + 1) % 24}`,
+      kind: 'related',
+      reason: 'Connect',
+    })),
+  )
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  await page.goto(`/b/${slug}/proposals/${id}`)
+  await expect(page.getByRole('article', { name: /^Change \d+:/ })).toHaveCount(24)
+  await page.getByRole('button', { name: 'Approve all', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Approved' })).toBeVisible()
+  expect(errors).toEqual([])
+  const result = await request.get(`/v1/proposals/${id}`, { headers: { authorization: `Bearer ${key}` } })
+  expect((await result.json()).proposal.status).toBe('approved')
+})
+
 async function propose(request: APIRequestContext, title: string, ops: unknown[]): Promise<string> {
   const r = await request.post(`/v1/brains/${SLUG}/proposals`, {
     headers: { authorization: `Bearer ${agent}` },
