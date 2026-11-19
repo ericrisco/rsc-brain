@@ -69,7 +69,8 @@ export function Shell({
         const bring = () => {
           const cur = el.querySelector('[aria-current]')?.getBoundingClientRect()
           const box = el.getBoundingClientRect()
-          if (cur && cur.right > box.right) el.scrollLeft += cur.right - box.right + 24
+          // Start the row at the current tab: no tab is left cut in half at the edge.
+          if (cur && cur.right > box.right) el.scrollLeft += cur.left - box.left
           mark(el)
         }
         requestAnimationFrame(() => requestAnimationFrame(bring))

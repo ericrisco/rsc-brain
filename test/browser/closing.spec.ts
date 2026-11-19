@@ -289,6 +289,17 @@ for (const name of ['proposals', 'admin · people', 'settings · archive', 'page
     await page.goto(row.path)
     await expect(row.ready(page)).toBeVisible()
     await page.waitForLoadState('networkidle')
+    // The row brings the current tab into view a frame or two after it appears.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const nav = document.querySelector('nav.tabs') as HTMLElement
+          const cur = nav.querySelector('[aria-current]')?.getBoundingClientRect()
+          const box = nav.getBoundingClientRect()
+          return cur ? cur.left >= box.left - 1 && cur.right <= box.right + 1 : true
+        }),
+      )
+      .toBe(true)
     const r = await page.evaluate(() => {
       const nav = document.querySelector('nav.tabs') as HTMLElement
       const links = [...nav.querySelectorAll<HTMLElement>('a')]
@@ -299,11 +310,12 @@ for (const name of ['proposals', 'admin · people', 'settings · archive', 'page
         lines: tops.size,
         overflowing: nav.scrollWidth > nav.clientWidth + 1,
         more: nav.hasAttribute('data-more'),
+        moreRight: nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 1,
         inView: cur ? cur.left >= box.left - 1 && cur.right <= box.right + 1 : true,
       }
     })
     expect(r.lines).toBe(1)
     expect(r.inView).toBe(true)
     // When there is more to the right, the row says so.
-    if (r.overflowing) expect(r.more || !r.inView).toBe(true)
+    expect(r.more, 'the row says so while there is more to the right').toBe(r.moreRight)
   })
