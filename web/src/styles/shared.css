@@ -1,7 +1,7 @@
 /* shared.css v3 — the tokens rsc-brain and rsc-factory share. The same file lives in both repositories, byte for
    byte: change it in one, copy it (and fonts/ beside it) to the other, and raise the version above.
 
-   The style is "framed sheet": the app chrome is one tinted L-shaped frame (sidebar and top bar on one ground, no
+   The look: the app chrome is one tinted L-shaped frame (sidebar and top bar on one ground, no
    rule between them) and the work sits on a white sheet with a hairline edge and soft corners. Depth comes from one
    tone step, never from a shadow; only what floats (a menu, a dialog, a toast) casts one.
 

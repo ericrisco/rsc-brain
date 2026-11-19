@@ -28,6 +28,7 @@ const FORBIDDEN = [
   'YWkgb3MgbWFwcw==',
   'bjhu',
   'ZnJhbWVkLXNoZWV0',
+  'ZnJhbWVkIHNoZWV0',
   'dGFzdGUtc2tpbGw=',
 ].map((b) => Buffer.from(b, 'base64').toString('utf8'))
 
