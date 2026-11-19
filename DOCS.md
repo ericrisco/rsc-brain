@@ -446,6 +446,11 @@ A change to the proposal or page states returns `409 review_changed`; restart fr
 Every part checks access again. Small reviews keep their ordinary response. The web assembles parts
 automatically and only enables decisions after the complete review has loaded.
 
+Large wiki maps use the same paging parameters. `brain_map` and `GET /v1/brains/:slug/wiki/map`
+return `mapChunk` when the map exceeds the response limit. Keep the same brain and status filter for
+every part. On `409 map_changed`, request the first part again. The web loads the complete map
+automatically, including page summaries and tags.
+
 ## Connect your agent
 
 `GET /v1/connect` (any key) gives, for Claude Code, Codex, OpenCode, Cursor and other agents:

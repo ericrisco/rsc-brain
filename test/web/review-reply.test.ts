@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { it } from 'node:test'
 import { MAX_REPLY_CHARS } from '../../src/http/bounds.ts'
-import { reviewReply } from '../../src/http/review-reply.ts'
+import { chunkedReply } from '../../src/http/chunked-reply.ts'
 import { MAX_ID_CHARS, toolResult } from '../../src/mcp/server.ts'
 import { ApiError, createClient } from '../../web/src/api/client.ts'
 
@@ -27,10 +27,12 @@ it('review parts survive JSON escaping and the maximum MCP envelope without losi
     here: () => '/',
     onSignedOut: () => assert.fail('unexpected sign-out'),
     transport: async (url) => {
-      const reply = reviewReply(review, new URL(url, 'https://example.test').searchParams) as Record<
-        string,
-        unknown
-      >
+      const reply = chunkedReply(
+        'review',
+        review,
+        new URL(url, 'https://example.test').searchParams,
+        true,
+      ) as Record<string, unknown>
       const mcp = toolResult(reply, MAX_ID_CHARS)
       const text = (mcp.content as { text: string }[])[0]?.text as string
       assert.deepEqual(JSON.parse(text), reply, 'MCP returns complete JSON rather than a cut text')
