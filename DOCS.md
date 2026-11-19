@@ -175,6 +175,18 @@ The way back runs in a session of its own, so a Ctrl-C at the terminal cannot cu
 `setsid`, or with `perl` where there is no `setsid` (macOS). A machine with neither runs it like any
 other step: there, do not press Ctrl-C while it goes back.
 
+### Publishing a version
+
+Every pull request merged into `main` publishes a stable version once CI passes. By default,
+GitHub Actions increments the patch number and writes release notes from the merged change.
+To choose a version explicitly, raise it in `src/core/version.ts`, `package.json` and its lockfile
+and add notes under the matching `## vX.Y.Z` heading in `CHANGELOG.md`.
+
+CI tests the release tree before publishing its tag, launcher and SHA-256 checksum. For an
+automatic patch, Actions also fast-forwards `main` to the versioned commit while the merged PR
+is still the tip. Concurrent merges keep their own versions. Existing installations discover
+a release on their next update check. Each administrator chooses when to apply it.
+
 ### Updating from the web (off until you turn it on)
 
 By default only the terminal updates. To let an administrator do it from the web:

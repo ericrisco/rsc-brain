@@ -6,12 +6,32 @@ permissions: { contents: read }
 jobs:
   verify:
     runs-on: ubuntu-latest
+    permissions: { contents: read, pull-requests: read }
+    outputs:
+      release: ${{ steps.prepare.outputs.release }}
+      bundle: ${{ steps.bundle.outputs.artifact-id }}
+      version: ${{ steps.prepare.outputs.version }}
     env:
       CI: "1"
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0, persist-credentials: false }
       - uses: actions/setup-node@v4
         with: { node-version: "25", cache: npm }
+      - id: prepare
+        name: Prepare the version to verify
+        if: github.event_name == 'push'
+        env:
+          BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release=$(node scripts/prepare-release.mjs "$BEFORE")
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
+          if [[ $release != "$GITHUB_SHA" ]]; then
+            git branch ci-release "$release"
+            git bundle create "$RUNNER_TEMP/brain.bundle" refs/heads/ci-release "^$GITHUB_SHA"
+          fi
       - run: npm ci
       # Only Chromium, cached by the pinned Playwright version (plan §5.1).
       - id: pw
@@ -26,10 +46,43 @@ jobs:
       - if: steps.pw-cache.outputs.cache-hit == 'true'
         run: npx --no-install playwright install-deps chromium
       # Lint, types, build, node:test, Playwright + axe against the fixture API, audit. No PostgreSQL.
+      - run: bash test/deploy/publish.sh
       - run: bash scripts/verify.sh
+      - id: bundle
+        uses: actions/upload-artifact@v4
+        if: steps.prepare.outputs.release != '' && steps.prepare.outputs.release != github.sha
+        with:
+          name: brain-release-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/brain.bundle
+          if-no-files-found: error
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-traces
           path: test-results/
           retention-days: 7
+
+  publish:
+    needs: verify
+    if: github.event_name == 'push' && needs.verify.outputs.release != ''
+    runs-on: ubuntu-latest
+    concurrency: brain-release-${{ needs.verify.outputs.version }}
+    permissions: { contents: write, actions: read }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        if: needs.verify.outputs.release != github.sha
+        with:
+          artifact-ids: ${{ needs.verify.outputs.bundle }}
+          path: ${{ runner.temp }}
+          merge-multiple: true
+      - name: Publish the verified version
+        env:
+          RELEASE: ${{ needs.verify.outputs.release }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ $RELEASE != "$GITHUB_SHA" ]]; then
+            git fetch "$RUNNER_TEMP/brain.bundle" refs/heads/ci-release
+            git checkout --detach "$RELEASE"
+          fi
+          bash scripts/publish.sh "$RELEASE" "$GITHUB_SHA"
