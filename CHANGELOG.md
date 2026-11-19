@@ -4,6 +4,12 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.7.2
+
+Large wiki maps now load completely in the web, including every group, summary and tag.
+The API and `brain_map` return large maps in parts and check that the map stays consistent
+while the client reads them. Small maps still load in a single request.
+
 ## v0.7.1
 
 Review and approve linked pages and large maintenance proposals reliably.
