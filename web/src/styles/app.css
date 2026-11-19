@@ -3495,6 +3495,15 @@ label.op-head:hover {
     max-width: calc(100% - 48px);
   }
 
+  /* The tools are two rows tall with the legend: Graph | List rises over them. */
+  .graph-screen:has(.graph-mark) .graph-center {
+    bottom: 106px;
+  }
+
+  .graph-screen:has(.graph-mark) .graph-communities {
+    bottom: 166px;
+  }
+
   .graph-mark {
     flex: 1 1 100%;
     border-left: 0;
