@@ -95,7 +95,7 @@ function Status({ m, onSaid }: { m: Meaning; onSaid: (t: string) => void }) {
         <FormAlert error={error} />
         <div class="actions">
           <Button
-            kind="primary"
+            kind="danger"
             pending={pending}
             pendingLabel={T.states.pending}
             blocked={blocked()}
@@ -223,7 +223,7 @@ function ProviderPart({ p, onSaid }: { p: Provider; onSaid: (t: string) => void 
         <FormAlert error={askError} />
         <div class="actions">
           <Button
-            kind="primary"
+            kind="danger"
             pending={pending}
             pendingLabel={T.states.pending}
             blocked={blocked()}

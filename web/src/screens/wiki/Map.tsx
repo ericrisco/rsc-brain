@@ -164,7 +164,7 @@ export function WikiMap({ slug }: { slug: string }) {
         <Empty title={w.emptyTitle} filtered onClear={f.clear} />
       ) : (
         <div class="map">
-          {byType.map((x, _k) => (
+          {byType.map((x) => (
             <section key={x.type} class="map-type card pad" aria-labelledby={`type-${x.type}`}>
               <SectionHead
                 id={`type-${x.type}`}

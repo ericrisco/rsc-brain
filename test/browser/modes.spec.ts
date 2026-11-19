@@ -19,10 +19,11 @@ async function firstFrame(page: Page) {
 }
 
 async function pick(page: Page, name: 'System' | 'Light' | 'Dark' | 'High contrast') {
-  await page
-    .locator('.rail')
-    .getByRole('button', { name: /Account/ })
-    .click()
+  if (!(await page.getByRole('group', { name: 'Mode' }).isVisible()))
+    await page
+      .locator('.rail')
+      .getByRole('button', { name: /Account/ })
+      .click()
   await page.getByRole('group', { name: 'Mode' }).getByRole('button', { name, exact: true }).click()
 }
 

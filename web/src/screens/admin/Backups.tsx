@@ -429,7 +429,7 @@ function RestoreDialog({ copy, onClose }: { copy: CopyItem | null; onClose: () =
           <div class="actions">
             <Button
               type="submit"
-              kind="primary"
+              kind="danger"
               pending={pending}
               pendingLabel={A.restoring}
               blocked={blocked()}

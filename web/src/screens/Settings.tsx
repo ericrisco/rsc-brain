@@ -275,7 +275,7 @@ function MemberItem({
         <p>{S.demoteSelfLead(brain.name, pick)}</p>
         <div class="actions">
           <Button
-            kind="primary"
+            kind="danger"
             onClick={() => {
               setSelfDemote(false)
               void save()
@@ -1029,7 +1029,7 @@ function Archive({ brain }: { brain: BrainInfo }) {
         <FormAlert error={error} />
         <div class="actions">
           <Button
-            kind="primary"
+            kind="danger"
             pending={pending}
             pendingLabel={T.states.pending}
             blocked={blocked()}
@@ -1419,7 +1419,7 @@ function Delete({ brain }: { brain: BrainInfo }) {
           <div class="actions">
             <Button
               type="submit"
-              kind="primary"
+              kind="danger"
               pending={pending}
               pendingLabel={T.states.pending}
               blocked={blocked()}

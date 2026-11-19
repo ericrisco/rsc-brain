@@ -147,15 +147,17 @@ function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
     <section class="card pad" aria-labelledby="numbers-title">
       <SectionHead id="numbers-title" title={o.numbers} about={o.numbersAbout} />
       <ul class="tiles">
-        {items.map(([n, label, href], _k) => (
+        {items.map(([n, label, href]) => (
           <li key={label}>
             {href ? (
               <a class="tile" href={href}>
-                <strong class="tile-n">{n}</strong> <span class="tile-label">{label}</span>
+                <strong class="tile-n">{n}</strong>{' '}
+                <span class="tile-label">{label.charAt(0).toUpperCase() + label.slice(1)}</span>
               </a>
             ) : (
               <span class="tile">
-                <strong class="tile-n">{n}</strong> <span class="tile-label">{label}</span>
+                <strong class="tile-n">{n}</strong>{' '}
+                <span class="tile-label">{label.charAt(0).toUpperCase() + label.slice(1)}</span>
               </span>
             )}
           </li>

@@ -55,7 +55,7 @@ test.describe('the frame and the sheet (CA2, CA34)', () => {
     await scenario(context, baseURL as string, 'signed-in')
     await open(page, '/b/growth', (p) => p.getByRole('region', { name: "Today's sessions" }))
     expect((await frame(page)).rail?.width).toBe(228)
-    await page.getByRole('button', { name: 'Fold the side bar' }).click()
+    await page.getByRole('button', { name: 'Collapse the side bar' }).click()
     await expect.poll(async () => (await frame(page)).rail?.width).toBe(56)
     await page.reload()
     await expect(page.getByRole('region', { name: "Today's sessions" })).toBeVisible()
@@ -131,7 +131,7 @@ test.describe('type, case and colour on every screen (CA3, CA6, CA9, Annex C 14)
       p.getByRole('table', { name: /Pages of the wiki/ }),
     )
     const fams = await page.evaluate(() => ({
-      address: getComputedStyle(document.querySelector('table .address') as Element).fontFamily,
+      address: getComputedStyle(document.querySelector('table .mono') as Element).fontFamily,
       figure: getComputedStyle(document.querySelector('table td.num') as Element).fontFamily,
       tabular: getComputedStyle(document.querySelector('table td.num') as Element).fontVariantNumeric,
     }))
@@ -188,7 +188,7 @@ test.describe('no numbered panels, one main action, a neutral rail (CA11, CA12, 
   }) => {
     await scenario(context, baseURL as string, 'signed-in')
     await open(page, '/b/growth/proposals', (p) => p.getByRole('heading', { name: 'Proposals', level: 1 }))
-    const item = page.locator('.rail a[aria-current]').filter({ hasText: 'Proposals' })
+    const item = page.locator('.rail').getByRole('link', { name: /^Proposals/ })
     const s = await item.evaluate((el) => ({
       bg: getComputedStyle(el).backgroundColor,
       bar: getComputedStyle(el, '::before').content,
@@ -277,7 +277,7 @@ test.describe('the values (CA33)', () => {
     const v = await page.evaluate(() => {
       const cur = document.querySelector('main nav.tabs a[aria-current]') as Element
       const row = document.querySelector('main ul.list > li') as Element
-      const btn = document.querySelector('main .button') as Element
+      const btn = document.querySelector('main .button, main select, .topbar-search') as Element
       return {
         tab: [getComputedStyle(cur).borderBottomWidth, getComputedStyle(cur).borderBottomColor],
         rule: getComputedStyle(row).borderBottomColor,
@@ -497,7 +497,7 @@ test.describe('the clauses of Annex C', () => {
       p.getByRole('table', { name: /Pages of the wiki/ }),
     )
     await page.evaluate(() => {
-      const a = document.querySelector('main .address') as HTMLElement
+      const a = document.querySelector('main table .mono') as HTMLElement
       a.textContent = `audience/${'very-long-address-without-a-break-'.repeat(6)}end`
     })
     const r = await page.evaluate(() => ({

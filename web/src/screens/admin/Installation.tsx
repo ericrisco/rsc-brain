@@ -301,7 +301,7 @@ function Factory({ account }: { account: string }) {
             <div class="actions">
               <Button
                 type="submit"
-                kind="primary"
+                kind="secondary"
                 pending={pending}
                 pendingLabel={A.saving}
                 blocked={blocked()}
@@ -632,7 +632,7 @@ function Logo() {
         <FormAlert error={error} />
         <div class="actions">
           <Button
-            kind="primary"
+            kind="danger"
             pending={pending}
             pendingLabel={T.states.pending}
             blocked={blocked()}

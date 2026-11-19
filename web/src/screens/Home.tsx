@@ -221,7 +221,7 @@ function Totals({ brains }: { brains: BrainRow[] }) {
     <section aria-label={h.totals} class="home-tiles card pad">
       <SectionHead title={h.totalsTitle} about={h.totalsAbout} />
       <ul class="tiles">
-        {items.map(([label, n, href], _k) => (
+        {items.map(([label, n, href]) => (
           <li key={label}>
             {href ? (
               <a href={href}>
