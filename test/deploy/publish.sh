@@ -133,6 +133,7 @@ git switch -q --detach "$second_release"
 git commit -q --allow-empty -m 'Third change'
 third=$(git rev-parse HEAD)
 pr "$third" 62
+git fetch -q --tags origin
 third_release=$(prepare "$second_release")
 [[ $(jq -r .version package.json) == 0.7.5 ]]
 git --git-dir="$tmp/origin" tag v0.7.5 "$second_release"
@@ -171,7 +172,11 @@ git push -q origin "$explicit:refs/heads/main"
 git commit -q --allow-empty -m 'Small follow-up'
 follow=$(git rev-parse HEAD)
 pr "$follow" 64
+mv "$tmp/$inner.json" "$tmp/late-rebase-association"
+(sleep 2; mv "$tmp/late-rebase-association" "$tmp/$inner.json") &
+lookup=$!
 prepare "$explicit" >/dev/null
+wait "$lookup"
 [[ $(jq -r .version package.json) == 0.8.1 ]]
 [[ $(grep -c '^## v0.8.0$' CHANGELOG.md) == 1 ]]
 git switch -q --detach "$explicit"

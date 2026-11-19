@@ -41,7 +41,7 @@ async function unstamped(before, version) {
     if (versionAt(commits[i + 1]) !== version) {
       // With a rebase, the commit that set an explicit version can precede its PR's merge SHA.
       if (!pending.length) return []
-      const owners = new Set(pullsAt(sha).map((pr) => pr.number))
+      const owners = new Set((await confirmedPulls(sha, () => true)).map((pr) => pr.number))
       return pending.filter(({ pr }) => !owners.has(pr.number)).reverse()
     }
     const associated = await confirmedPulls(sha, () => true)
