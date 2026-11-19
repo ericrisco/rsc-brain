@@ -507,3 +507,50 @@ test.describe('the clauses of Annex C', () => {
     expect(r.doc).toBeLessThanOrEqual(r.win)
   })
 })
+
+// CA5: nothing is asked of a third party. Every request a screen makes, fonts and pictures included, goes to
+// the installation's own origin.
+for (const row of ROWS)
+  test(`CA5: ${row.name} asks nothing of a server other than the installation`, async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    const mine = new URL(baseURL as string).origin
+    const strangers: string[] = []
+    page.on('request', (req) => {
+      const u = new URL(req.url())
+      if (u.protocol === 'data:' || u.protocol === 'blob:' || u.protocol === 'about:') return
+      if (u.origin !== mine) strangers.push(req.url())
+    })
+    await scenario(context, baseURL as string, row.preset ?? 'signed-in')
+    await page.goto(row.path)
+    await expect(row.ready(page)).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    await page.evaluate(() => document.fonts.ready)
+    expect(strangers).toEqual([])
+  })
+
+// CA8: the styles as served hold no gradient (on a ground, a button, a card or text), no glow, no blur behind
+// anything; a shadow is only the floating one (a menu, a dialog, the suggestion) or an inset line.
+test('CA8: the served styles hold no gradient, glow or blur, and no shadow but the floating one', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.goto('/b/growth')
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  const css = await page.evaluate(async () => {
+    const hrefs = [...document.querySelectorAll('link[rel="stylesheet"]')].map(
+      (l) => (l as HTMLLinkElement).href,
+    )
+    return (await Promise.all(hrefs.map((h) => fetch(h).then((r) => r.text())))).join('\n')
+  })
+  expect(css.length).toBeGreaterThan(10_000)
+  expect(css).not.toMatch(/gradient\(/)
+  expect(css).not.toMatch(/backdrop-filter|filter:\s*(blur|drop-shadow)|text-shadow|drop-shadow\(/)
+  const shadows = [...css.matchAll(/box-shadow:\s*([^;}]+)/g)].map((m) => (m[1] as string).trim())
+  const stray = shadows.filter((s) => !/^(none|var\(--shadow-float\)|inset [^,]+)$/.test(s))
+  expect(stray).toEqual([])
+})
