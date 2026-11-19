@@ -12,7 +12,14 @@ function pullsAt(sha) {
       pr.merged_at && pr.base.ref === 'main' && pr.base.repo.full_name === process.env.GITHUB_REPOSITORY,
   )
 }
-const mergedAt = (sha) => pullsAt(sha).find((pr) => pr.merge_commit_sha === sha)
+async function confirmedPulls(sha, match) {
+  for (const wait of [0, 1000, 3000, 6000, 10000]) {
+    if (wait) await new Promise((resolve) => setTimeout(resolve, wait))
+    const matches = pullsAt(sha).filter(match)
+    if (matches.length) return matches
+  }
+  throw Error(`No merged PR confirmed for ${sha}. Rerun after GitHub indexes the merge.`)
+}
 const patch = (version) => version.replace(/\d+$/, (n) => String(BigInt(n) + 1n))
 const note = (sha, pr) => {
   const subject = git('show', '-s', '--format=%s', sha)
@@ -25,18 +32,20 @@ const note = (sha, pr) => {
 
 // Usually the preceding main commit already carries its release number. For overlapping
 // runs, count each as-yet unstamped PR at its merge SHA, including a multi-commit rebase just once.
-function unstamped(before, version) {
+async function unstamped(before, version) {
   const commits = git('rev-list', '--first-parent', before).split('\n')
   const pending = []
   for (let i = 0; i < commits.length - 1; i++) {
     const sha = commits[i]
+    if (git('tag', '--points-at', sha, '--list', `v${version}`)) break
     if (versionAt(commits[i + 1]) !== version) {
       // With a rebase, the commit that set an explicit version can precede its PR's merge SHA.
       if (!pending.length) return []
       const owners = new Set(pullsAt(sha).map((pr) => pr.number))
       return pending.filter(({ pr }) => !owners.has(pr.number)).reverse()
     }
-    const pr = mergedAt(sha)
+    const associated = await confirmedPulls(sha, () => true)
+    const pr = associated.find((candidate) => candidate.merge_commit_sha === sha)
     if (pr) pending.push({ sha, pr })
   }
   return pending.reverse()
@@ -44,28 +53,44 @@ function unstamped(before, version) {
 
 async function prepare(before) {
   const source = git('rev-parse', 'HEAD')
-  let pr = mergedAt(source)
-  // The push can reach Actions before GitHub associates its commit with the merged PR.
-  for (const ms of [1000, 3000, 6000, 10000]) {
-    if (pr) break
-    await new Promise((resolve) => setTimeout(resolve, ms))
-    pr = mergedAt(source)
-  }
-  if (!pr) throw Error('No merged PR associated with this push. Rerun after GitHub indexes the merge.')
+  const [pr] = await confirmedPulls(source, (candidate) => candidate.merge_commit_sha === source)
   git('merge-base', '--is-ancestor', before, source)
   const declared = versionAt(source)
   const previous = versionAt(before)
   if (![declared, previous].every((v) => isPublished(`v${v}`))) throw Error('Expected stable versions')
-  const missing = unstamped(before, previous)
+  const missing = await unstamped(before, previous)
   const last = missing.reduce((v) => patch(v), previous)
-  if (declared !== previous) {
+  const automatic = declared === previous
+  const version = automatic ? patch(last) : declared
+  const log = read('CHANGELOG.md')
+  if (!automatic) {
     if (compareVersions(`v${last}`, `v${declared}`) !== 'newer')
       throw Error(`Expected a version above ${last}`)
-    if (!notesFor(read('CHANGELOG.md'), `v${declared}`)) throw Error(`Missing release notes for v${declared}`)
-    return source
+    if (!notesFor(log, `v${declared}`)) throw Error(`Missing release notes for v${declared}`)
+    if (!missing.length) return source
+  } else {
+    stampVersion(declared, version)
   }
+  let current = previous
+  const entries = automatic ? [...missing, { sha: source, pr }] : missing
+  const sections = entries
+    .map(({ sha, pr }) => {
+      current = patch(current)
+      if (notesFor(log, `v${current}`)) return ''
+      return `## v${current}\n\n${note(sha, pr)}\n\n`
+    })
+    .reverse()
+    .join('')
+  if (!sections && !automatic) return source
+  const headings = [...log.matchAll(/^## v\d+\.\d+\.\d+[ \t]*$/gm)]
+  if (!headings.length) throw Error('Could not find the published changelog')
+  const insert = headings[automatic ? 0 : 1]?.index ?? log.length
+  const prefix = log.slice(0, insert).trimEnd()
+  writeFileSync('CHANGELOG.md', `${prefix}\n\n${sections}${log.slice(insert)}`)
+  return commitRelease(source, version, pr.number)
+}
 
-  const version = patch(last)
+function stampVersion(declared, version) {
   for (const file of ['package.json', 'package-lock.json']) {
     const pkg = JSON.parse(read(file))
     pkg.version = version
@@ -80,19 +105,9 @@ async function prepare(before) {
   )
   if (original === changed) throw Error('Could not update server version')
   writeFileSync(versionFile, changed)
-  const log = read('CHANGELOG.md')
-  const firstSection = log.search(/^## v\d+\.\d+\.\d+\s*$/m)
-  if (firstSection < 0) throw Error('Could not find the published changelog')
-  let current = previous
-  const sections = [...missing, { sha: source, pr }].map(({ sha, pr }) => {
-    current = patch(current)
-    return `## v${current}\n\n${note(sha, pr)}\n\n`
-  })
-  writeFileSync(
-    'CHANGELOG.md',
-    log.slice(0, firstSection) + sections.reverse().join('') + log.slice(firstSection),
-  )
-  git('add', '--', 'package.json', 'package-lock.json', versionFile, 'CHANGELOG.md')
+}
+function commitRelease(source, version, number) {
+  git('add', '--', 'package.json', 'package-lock.json', 'src/core/version.ts', 'CHANGELOG.md')
   const date = git('show', '-s', '--format=%cI', source)
   const env = { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date }
   execFileSync(
@@ -104,7 +119,7 @@ async function prepare(before) {
       'user.email=41898282+github-actions[bot]@users.noreply.github.com',
       'commit',
       '-qm',
-      `Release Brain v${version} for PR #${pr.number}`,
+      `Release Brain v${version} for PR #${number}`,
     ],
     { env },
   )

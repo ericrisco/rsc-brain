@@ -84,9 +84,11 @@ git switch -q --detach "$first"
 # A second PR can merge and finish before the first publication. Model a two-commit rebase.
 git switch -q --detach "$first"
 git commit -q --allow-empty -m 'Intermediate rebase commit'
+intermediate=$(git rev-parse HEAD)
 git commit -q --allow-empty -m 'Second change'
 second=$(git rev-parse HEAD)
 pr "$second" 61
+cp "$tmp/$second.json" "$tmp/$intermediate.json"
 git push -q origin "$second:refs/heads/main"
 second_release=$(prepare "$first")
 [[ $(jq -r .version package.json) == 0.7.4 ]]
@@ -135,6 +137,22 @@ third_release=$(prepare "$second_release")
 [[ $(jq -r .version package.json) == 0.7.5 ]]
 git --git-dir="$tmp/origin" tag v0.7.5 "$second_release"
 refuse 'already points to another commit' publish "$third_release" "$third"
+
+# A version selected while an older patch is in CI keeps both changelog sections.
+git switch -q --detach "$first"
+echo '{"version":"0.9.0"}' > package.json
+printf '# Changelog\n\n## v0.9.0\n\nExplicit notes.\n\n## v0.7.2\n\nOld.\n' > CHANGELOG.md
+git commit -qam 'Overlapping version choice'
+overlap=$(git rev-parse HEAD)
+pr "$overlap" 67
+mv "$tmp/$first.json" "$tmp/late-association"
+(sleep 2; mv "$tmp/late-association" "$tmp/$first.json") &
+lookup=$!
+overlap_release=$(prepare "$first")
+wait "$lookup"
+[[ $overlap_release != "$overlap" ]]
+grep -Fq '## v0.7.3' CHANGELOG.md
+grep -Fq 'Explicit notes.' CHANGELOG.md
 
 git switch -q --detach "$second_release"
 echo '{"version":"0.8.0"}' > package.json
