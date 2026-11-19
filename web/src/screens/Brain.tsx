@@ -151,13 +151,11 @@ function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
           <li key={label}>
             {href ? (
               <a class="tile" href={href}>
-                <strong class="tile-n">{n}</strong>{' '}
-                <span class="tile-label">{label}</span>
+                <strong class="tile-n">{n}</strong> <span class="tile-label">{label}</span>
               </a>
             ) : (
               <span class="tile">
-                <strong class="tile-n">{n}</strong>{' '}
-                <span class="tile-label">{label}</span>
+                <strong class="tile-n">{n}</strong> <span class="tile-label">{label}</span>
               </span>
             )}
           </li>
