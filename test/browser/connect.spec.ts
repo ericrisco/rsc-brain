@@ -306,7 +306,7 @@ test('at 320 px nothing scrolls sideways outside the code blocks', async ({ page
 
 // The page before the token, and the token's region after: once the focus goes to the new token, what is
 // above has scrolled under the sticky top bar, a layout of the test that axe would read as overlapping.
-for (const theme of ['dark', 'light'] as const) {
+for (const theme of ['light', 'dark', 'contrast'] as const) {
   test(`axe: connect your agent, then with a token shown, ${theme}`, async ({ page, context, baseURL }) => {
     await scenario(context, baseURL as string, 'signed-in')
     await page.addInitScript((t) => localStorage.setItem('rscb.theme', t), theme)

@@ -502,7 +502,7 @@ for (const width of [320, 375] as const) {
 
 // The two states are audited apart, each in view: with both open, the second factor's code field takes the
 // focus and scrolls the token under the sticky top bar, which is a layout of the test, not of a person.
-for (const theme of ['dark', 'light'] as const) {
+for (const theme of ['light', 'dark', 'contrast'] as const) {
   test(`axe: profile with a token shown, then the second factor being set up, ${theme}`, async ({
     page,
     context,
