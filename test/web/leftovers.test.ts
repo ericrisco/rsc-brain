@@ -41,6 +41,11 @@ export const RULES: Rule[] = [
     what: 'the accent icon of the current section',
     re: /aria-current\]\s*>\s*\.icon\s*\{[^}]*--accent/,
   },
+  {
+    group: 5,
+    what: 'a coloured side stripe on a notice or card',
+    re: /border-left(-color)?:\s*\d+px solid (var\(--(negative|positive|warning|accent)\)|currentColor)|box-shadow:\s*inset \d+px 0 0 var\(--accent\)/,
+  },
   { group: 6, what: 'the dotted ground of the graph', re: /--grid-dot|radial-gradient/ },
   { group: 7, what: 'glow and pulse', re: /--glow|--pulse(-len|-speed)?\b/ },
   { group: 7, what: 'the shimmer of a skeleton', re: /@keyframes\s+(shimmer|shine|sheen)/ },

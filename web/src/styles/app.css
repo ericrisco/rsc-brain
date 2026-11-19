@@ -172,7 +172,8 @@ kbd,
 .account-menu .menu-alert {
   margin: 6px 0 0;
   padding: 8px 10px;
-  border-left: 2px solid var(--negative);
+  border: var(--line) solid var(--negative);
+  border-radius: var(--radius-control);
   color: var(--text);
   font-size: 13px;
 }
@@ -459,8 +460,7 @@ legend .step {
   padding: 12px 14px;
   background: var(--pill-negative-bg);
   color: var(--text);
-  border: var(--line) solid var(--pill-line);
-  border-left: 3px solid var(--negative);
+  border: var(--line) solid var(--negative);
   border-radius: var(--radius-card);
 }
 
@@ -471,7 +471,7 @@ legend .step {
 
 .alert.warn {
   background: var(--pill-warning-bg);
-  border-left-color: var(--warning);
+  border-color: var(--warning);
 }
 
 .alert.warn .kind {
@@ -480,7 +480,7 @@ legend .step {
 
 .alert.ok {
   background: var(--pill-positive-bg);
-  border-left-color: var(--positive);
+  border-color: var(--positive);
 }
 
 .alert.ok .kind {
@@ -1522,8 +1522,7 @@ select:disabled {
   display: grid;
   gap: 8px;
   padding: 18px 20px;
-  border: var(--line) solid var(--border);
-  border-left: 3px solid var(--positive);
+  border: var(--line) solid var(--positive);
   border-radius: var(--radius-card);
 }
 
@@ -1553,8 +1552,7 @@ select:disabled {
 .list > li > .link-card {
   grid-column: 1 / -1;
   padding: 12px 14px;
-  border: var(--line) solid var(--border);
-  border-left: 3px solid var(--positive);
+  border: var(--line) solid var(--positive);
   border-radius: var(--radius-card);
 }
 
@@ -2501,11 +2499,11 @@ form.filter-box > .actions {
 
 .op-card:has(> .op-head input:checked) {
   border-color: var(--accent);
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 0 0 0 var(--line) var(--accent);
 }
 
 .op-card.stale {
-  border-left: 3px solid var(--warning);
+  border-color: var(--warning);
 }
 
 .op-head {
