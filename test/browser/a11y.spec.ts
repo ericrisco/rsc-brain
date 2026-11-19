@@ -48,7 +48,8 @@ for (const theme of ['light', 'dark', 'contrast'] as const) {
     await page.locator('canvas.graph-canvas').focus()
     await page.keyboard.press('Enter')
     await expect(page.getByRole('link', { name: 'Open page' })).toBeVisible()
-    // The Communities panel open, with its boxes, is audited with the rest.
+    // The Communities panel folds when the inspector opens; opened again, with its boxes, it is audited too.
+    await page.getByText('Communities', { exact: true }).click()
     await expect(page.getByRole('checkbox', { name: 'Select all' })).toBeVisible()
     await audit(page, `${theme} graph`)
     await page.getByRole('button', { name: 'List', exact: true }).click()

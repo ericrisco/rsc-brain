@@ -206,8 +206,8 @@ test('CA9: the canvas by keyboard: Tab to it, arrows walk the pages, Enter opens
   await page.goto(GRAPH)
   await settled(page)
   const canvas = page.getByRole('application', { name: /^Graph of \d+ items$/ })
-  // The zoom tools come just before it: Tab from the last one reaches the canvas.
-  await page.getByRole('button', { name: 'Zoom out', exact: true }).focus()
+  // The tools come just before it (the last is the keys help): Tab from it reaches the canvas.
+  await page.getByRole('button', { name: 'Keys and gestures' }).focus()
   await page.keyboard.press('Tab')
   await expect(canvas).toBeFocused()
   const said = page.locator('[aria-live="polite"]').filter({ hasText: /Enter to inspect/ })

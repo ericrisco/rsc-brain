@@ -3484,7 +3484,7 @@ label.op-head:hover {
 }
 
 /* What the strike through a page means, beside the tools. */
-.graph-legend {
+.graph-mark {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -3522,6 +3522,31 @@ label.op-head:hover {
   transform: none;
   width: max-content;
   max-width: 100%;
+}
+
+/* In the list the open filters are part of the page, under the control, not a panel over a picture. */
+.graph-center.in-page {
+  flex-wrap: wrap;
+}
+
+.graph-center.in-page:has(.graph-filters[open]) {
+  width: 100%;
+  margin-inline: 0;
+  transform: none;
+}
+
+.graph-center.in-page .graph-filters[open] {
+  flex: 1 1 100%;
+  border-left: 0;
+}
+
+.graph-center.in-page .graph-filters > search {
+  position: static;
+  width: auto;
+  max-height: none;
+  margin-top: 8px;
+  transform: none;
+  box-shadow: none;
 }
 
 /* The list's inspector starts level with the table. */

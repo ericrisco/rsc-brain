@@ -145,7 +145,7 @@ for (const mode of ['light', 'dark', 'contrast'] as const)
     await page.goto(GRAPH)
     await settled(page)
     // The legend of the struck-through pages, and the help behind its button, not over the picture.
-    await expect(page.locator('.graph-legend')).toContainText('superseded')
+    await expect(page.locator('.graph-mark')).toContainText('superseded')
     await expect(page.locator('#graph-keys')).toBeHidden()
     const canvas = page.locator('canvas.graph-canvas')
     await canvas.focus()

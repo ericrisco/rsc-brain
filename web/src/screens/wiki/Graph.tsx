@@ -1230,7 +1230,8 @@ function GraphCanvas({
       const sb = side?.getBoundingClientRect()
       if (sb?.width && r.right - sb.right < r.width * 0.5) {
         const above = sb.top + sb.bottom < r.top + r.bottom
-        if (sb.height > 64) {
+        // Folded because the inspector opened: the column stays reserved, so opening it moves nothing.
+        if (sb.height > 64 || screen?.querySelector('.graph-inspector[data-open]')) {
           if (!narrow()) right = Math.ceil(r.right - sb.left) + BAND_GAP
         } else if (above) top = Math.max(top, Math.ceil(sb.bottom - r.top) + BAND_GAP)
         else bottom = Math.max(bottom, Math.ceil(r.bottom - sb.top) + BAND_GAP)
@@ -1694,7 +1695,7 @@ function GraphCanvas({
               <Icon name="help" />
             </button>
             {anySuperseded ? (
-              <span class="graph-legend">
+              <span class="graph-mark">
                 <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
                   <circle cx="7" cy="7" r="5" fill="currentColor" opacity="0.45" />
                   <path d="M2 12L12 2" stroke="currentColor" stroke-width="1.5" />
