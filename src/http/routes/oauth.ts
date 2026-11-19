@@ -87,14 +87,15 @@ a{color:inherit;text-underline-offset:3px}strong,b{font-weight:600}.error{color:
 @media (forced-colors:active){.card,button,input{border-color:CanvasText}}`
 
 // The installation's name on these pages (they are drawn without the web's script, so the server says it). Read
-// once per request that draws a page; the default until an administrator names it.
+// once per request that draws a page; the default until an administrator names it. A read that fails keeps the
+// last name read, so one failing request never relabels another drawn at the same time.
 let installation = 'rsc-brain'
 async function readName(db: PublicReq['db']): Promise<void> {
   try {
     const r = await db.one<{ name: string | null }>('SELECT name FROM installation WHERE id = 1')
     installation = r?.name?.trim() || 'rsc-brain'
   } catch {
-    installation = 'rsc-brain'
+    // keep the last name read
   }
 }
 
@@ -126,7 +127,7 @@ async function maintenancePage(r: PublicReq, q: Record<string, string>): Promise
   const again = `/oauth/authorize?${new URLSearchParams(q).toString()}`
   return page(
     'Updating',
-    `<h1>rsc-brain is updating</h1><p>rsc-brain is updating. Try again in ${seconds} seconds.</p><p><a href="${esc(again)}">Try again</a></p><p class="muted">Nothing was changed.</p>`,
+    `<h1>${esc(installation)} is updating</h1><p>${esc(installation)} is updating. Try again in ${seconds} seconds.</p><p><a href="${esc(again)}">Try again</a></p><p class="muted">Nothing was changed.</p>`,
     503,
     { 'retry-after': String(seconds) },
   )

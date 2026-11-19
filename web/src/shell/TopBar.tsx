@@ -52,7 +52,7 @@ export function TopBar({ brain }: { brain: BrainNav | null }) {
       <nav class="where" aria-label={T.shell.whereYouAre}>
         <ol>
           {where.map((c, k) => (
-            <li key={c.label}>
+            <li key={k}>
               {c.href && k < where.length - 1 ? (
                 <a href={c.href}>{c.label}</a>
               ) : (

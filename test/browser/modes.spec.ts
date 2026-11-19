@@ -163,10 +163,6 @@ test('CA10c: dark — the sheet a step lighter than the frame, no blue tint, the
     grounds: [...document.querySelectorAll('body *')]
       .map((el) => getComputedStyle(el).backgroundColor)
       .filter((c) => c !== 'rgba(0, 0, 0, 0)'),
-    primary: (() => {
-      const b = document.querySelector('main .button.primary')
-      return b ? [getComputedStyle(b).backgroundColor, getComputedStyle(b).color] : null
-    })(),
   }))
   expect(v.frame).toBe(DARK.ground)
   expect(v.sheet).toBe(DARK.surface)
@@ -177,10 +173,16 @@ test('CA10c: dark — the sheet a step lighter than the frame, no blue tint, the
     const [r, , b] = parseRgb(g)
     if (luminance(g) < 0.2) expect(b - r, `${g} has a blue tint`).toBeLessThanOrEqual(6)
   }
-  if (v.primary) {
-    expect(luminance(v.primary[0] as string)).toBeGreaterThan(0.7)
-    expect(luminance(v.primary[1] as string)).toBeLessThan(0.05)
-  }
+  // The main button, on a screen that always has one.
+  await page.goto('/admin/limits')
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
+  const primary = await page.evaluate(() => {
+    const b = document.querySelector('main .button.primary')
+    return b ? [getComputedStyle(b).backgroundColor, getComputedStyle(b).color] : null
+  })
+  expect(primary, 'a main button on the limits screen').not.toBeNull()
+  expect(luminance(primary?.[0] as string)).toBeGreaterThan(0.7)
+  expect(luminance(primary?.[1] as string)).toBeLessThan(0.05)
 })
 
 test('CA10d: high contrast — every word at 7:1, every control edged at 4.5:1, a 3px focus', async ({
