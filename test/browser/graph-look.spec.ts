@@ -152,6 +152,9 @@ for (const mode of ['light', 'dark', 'contrast'] as const)
     await page.keyboard.press('Enter')
     await expect(page.getByRole('link', { name: 'Open page' })).toBeVisible()
     await expect(page.locator('#graph-keys')).toBeHidden()
+    // The name of the chosen page is placed a frame after the inspector opens.
+    await expect(page.locator('.graph-tip')).toBeVisible()
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))))
     const v = await page.evaluate(() => {
       const r = (q: string) => document.querySelector(q)?.getBoundingClientRect() ?? null
       const tip = r('.graph-tip')
@@ -235,6 +238,13 @@ test('an inspect address that names nothing opens no inspector and leaves the co
 // How the picture reads, from its pixels: the ground is the commonest colour; the nodes are the commonest colour
 // that stands at 3:1 or more against it; the links are the commonest colour between 1.05:1 and 1.5:1.
 async function legibility(page: Page) {
+  // Only the picture: every panel and control over it is hidden for the shot.
+  await page.evaluate(() => {
+    for (const el of document.querySelectorAll<HTMLElement>(
+      '.graph-communities,.graph-strip,.graph-over,.graph-center,.graph-tools,.graph-tip,.inspector-toggle',
+    ))
+      el.style.setProperty('visibility', 'hidden', 'important')
+  })
   const shot = (await page.locator('canvas.graph-canvas').screenshot()).toString('base64')
   return page.evaluate(async (shot) => {
     const img = new Image()
@@ -273,7 +283,10 @@ async function legibility(page: Page) {
     }
     const nodes = colours.find(([k, n]) => n > 40 && ratio(k) >= 3)
     const links = colours.find(([k, n]) => n > 200 && ratio(k) >= 1.05 && ratio(k) < 1.5)
-    return { nodes: nodes ? ratio(nodes[0]) : 0, links: links ? ratio(links[0]) : 0 }
+    const linkPixels = colours
+      .filter(([k]) => ratio(k) >= 1.05 && ratio(k) < 1.5)
+      .reduce((a, [, n]) => a + n, 0)
+    return { nodes: nodes ? ratio(nodes[0]) : 0, links: links ? ratio(links[0]) : 0, linkPixels }
   }, shot)
 }
 
@@ -290,4 +303,20 @@ for (const mode of ['light', 'dark', 'contrast'] as const)
     const v = await legibility(page)
     expect(v.nodes, 'pages against the ground').toBeGreaterThanOrEqual(3)
     expect(v.links, 'links against the ground').toBeGreaterThanOrEqual(1.06)
+    // Links are drawn: with their colour made equal to the ground, the same crop loses most of those pixels.
+    const ground = await page.evaluate(() =>
+      getComputedStyle(document.documentElement).getPropertyValue('--raised').trim(),
+    )
+    await page.evaluate((g) => {
+      document.documentElement.style.setProperty('--edge', g)
+      // The picture repaints when the mode attribute is set (even to the same value).
+      document.documentElement.setAttribute(
+        'data-theme',
+        document.documentElement.getAttribute('data-theme') ?? '',
+      )
+    }, ground)
+    await page.waitForTimeout(600)
+    const off = await legibility(page)
+    expect(v.linkPixels, 'link pixels with the links drawn').toBeGreaterThan(off.linkPixels * 3)
+    expect(v.linkPixels - off.linkPixels, 'link pixels the links add').toBeGreaterThan(500)
   })

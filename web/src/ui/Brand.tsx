@@ -7,6 +7,8 @@ import { Mark } from './Mark.tsx'
 // How light the logo is, so its plate can be the other tone and the logo always stands out from it. Read from the
 // picture itself, the one the installation serves: its mean luminance over a small copy.
 function tone(img: HTMLImageElement) {
+  // A new picture starts with no tone: one that cannot be read never keeps the last one's.
+  delete img.dataset.tone
   try {
     const c = document.createElement('canvas')
     c.width = c.height = 8
@@ -35,7 +37,16 @@ export function Brand({ href = '/' }: { href?: string | null }) {
   const logo = b.data.value?.logo
   const inside = (
     <>
-      {logo ? <img src={logo.url} alt="" onLoad={(e) => tone(e.currentTarget)} /> : <Mark />}
+      {logo ? (
+        <img
+          src={logo.url}
+          alt=""
+          onLoad={(e) => tone(e.currentTarget)}
+          onError={(e) => delete e.currentTarget.dataset.tone}
+        />
+      ) : (
+        <Mark />
+      )}
       <span class="name">{name}</span>
     </>
   )

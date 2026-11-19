@@ -319,3 +319,29 @@ for (const name of ['proposals', 'admin · people', 'settings · archive', 'page
     // When there is more to the right, the row says so.
     expect(r.more, 'the row says so while there is more to the right').toBe(r.moreRight)
   })
+
+// A logo replaced by one that cannot be read ends with no stale tone (the plate goes back to the light one).
+test('a logo replaced by one that cannot be read keeps no stale tone', async ({ page, context, baseURL }) => {
+  await scenario(context, baseURL as string, 'signed-in')
+  await page.route('**/v1/branding', async (route) => {
+    const res = await route.fetch()
+    const body = (await res.json()) as Record<string, unknown>
+    await route.fulfill({
+      response: res,
+      json: { ...body, logo: { url: '/logo-test.png', updatedAt: '2026-10-01T10:00:00.000Z' } },
+    })
+  })
+  await page.route('**/logo-test.png', (route) =>
+    route.fulfill({ contentType: 'image/png', body: png([250, 250, 250]) }),
+  )
+  await page.route('**/logo-broken.png', (route) =>
+    route.fulfill({ contentType: 'image/png', body: Buffer.from('not a picture') }),
+  )
+  await page.goto('/b/growth')
+  const logo = page.locator('header.rail .brand img')
+  await expect(logo).toHaveAttribute('data-tone', 'light')
+  await logo.evaluate((el) => {
+    ;(el as HTMLImageElement).src = '/logo-broken.png'
+  })
+  await expect(logo).not.toHaveAttribute('data-tone', /.+/)
+})

@@ -220,8 +220,12 @@ test('CA10d: high contrast — every word at 7:1, every control edged at 4.5:1, 
         let k = 1
         for (let p: Element | null = el; p; p = p.parentElement) k *= Number(getComputedStyle(p).opacity)
         const m = /rgba?\(([^)]+)\)/.exec(getComputedStyle(el).color)
+        if (!m)
+          throw new Error(
+            `the ink ${getComputedStyle(el).color} is not rgb() or rgba(): the check cannot read it`,
+          )
         const [r, g, b, a] = (
-          (m?.[1] ?? '0,0,0')
+          (m[1] as string)
             .split(/[,\s/]+/)
             .filter(Boolean)
             .map(Number) as number[]
