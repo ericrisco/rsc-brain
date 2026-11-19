@@ -4,6 +4,10 @@ What each published version of rsc-brain changes. Every release carries the same
 `rsc-brain.sh` as a file of the release and its SHA-256. Versions follow `vX.Y.Z`; updates only move
 forward.
 
+## v0.7.3
+
+- Publish Brain automatically after every merged pull request (#60)
+
 ## v0.7.2
 
 Large wiki maps now load completely in the web, including every group, summary and tag.
