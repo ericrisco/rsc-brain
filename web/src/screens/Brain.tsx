@@ -152,12 +152,12 @@ function Numbers({ slug, stats }: { slug: string; stats: Stats }) {
             {href ? (
               <a class="tile" href={href}>
                 <strong class="tile-n">{n}</strong>{' '}
-                <span class="tile-label">{label.charAt(0).toUpperCase() + label.slice(1)}</span>
+                <span class="tile-label">{label}</span>
               </a>
             ) : (
               <span class="tile">
                 <strong class="tile-n">{n}</strong>{' '}
-                <span class="tile-label">{label.charAt(0).toUpperCase() + label.slice(1)}</span>
+                <span class="tile-label">{label}</span>
               </span>
             )}
           </li>

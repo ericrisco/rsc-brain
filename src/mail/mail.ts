@@ -71,6 +71,16 @@ function smtp(s: MailSettings, secret: string | undefined): Transport {
 
 export const LOGO_CID = 'logo@rsc-brain'
 
+// The web's light values, the only ones a mail uses.
+export const MAIL = {
+  ground: '#f9fbfc',
+  surface: '#ffffff',
+  border: '#e8eaec',
+  text: '#131416',
+  muted: '#5d5f60',
+  accent: '#1b6c80',
+} as const
+
 const esc = (t: string) =>
   t
     .replace(/&/g, '&amp;')
@@ -96,16 +106,24 @@ export async function branded(db: Db, m: Message): Promise<Message> {
           cid: LOGO_CID,
         }
       : null
-  const body = esc(m.text).replace(/https?:\/\/[^\s<>"]+/g, (u) => `<a href="${u}">${u}</a>`)
+  const body = esc(m.text).replace(
+    /https?:\/\/[^\s<>"]+/g,
+    (u) => `<a href="${u}" style="color:${MAIL.accent};text-decoration:underline">${u}</a>`,
+  )
+  // The look of the web in a mail: the frame's ground, the text on a white sheet with a hairline edge and 16px
+  // corners, the ink and the accent of the web, in the system's face (a mail cannot load the web's reliably).
+  // One light version; it says so, so a client in dark mode keeps it legible rather than inverting it.
   const html = [
-    '<!doctype html><html><body style="margin:0;padding:24px;font-family:system-ui,sans-serif;color:#1b1d22;background:#ffffff">',
-    '<p style="margin:0 0 20px;font-size:18px;font-weight:600">',
+    '<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light only"></head>',
+    `<body style="margin:0;padding:24px 12px;background:${MAIL.ground};color:${MAIL.text};font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif">`,
+    `<div style="max-width:560px;margin:0 auto;padding:24px;background:${MAIL.surface};border:1px solid ${MAIL.border};border-radius:16px">`,
+    `<p style="margin:0 0 20px;font-size:16px;line-height:22px;font-weight:600;color:${MAIL.text}">`,
     logo
       ? `<img src="cid:${LOGO_CID}" alt="" height="32" style="height:32px;width:auto;vertical-align:middle;margin-right:10px">`
       : '',
     `${esc(name)}</p>`,
-    `<div style="white-space:pre-wrap;font-size:15px;line-height:1.5">${body}</div>`,
-    '</body></html>',
+    `<div style="white-space:pre-wrap;font-size:14px;line-height:22px;color:${MAIL.text}">${body}</div>`,
+    '</div></body></html>',
   ].join('')
   return { ...m, html, attachments: logo ? [logo] : [] }
 }

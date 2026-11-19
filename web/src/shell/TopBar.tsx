@@ -48,7 +48,7 @@ export function TopBar({ brain }: { brain: BrainNav | null }) {
   const { path } = useLocation()
   const where = whereOf(path, brain)
   return (
-    <header class="topbar">
+    <div class="topbar">
       <nav class="where" aria-label={T.shell.whereYouAre}>
         <ol>
           {where.map((c, k) => (
@@ -72,6 +72,6 @@ export function TopBar({ brain }: { brain: BrainNav | null }) {
         <span class="topbar-search-label">{T.shell.searchHint}</span>
         <kbd>⌘K</kbd>
       </button>
-    </header>
+    </div>
   )
 }

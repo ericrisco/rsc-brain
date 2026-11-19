@@ -20,7 +20,7 @@ export const RULES: Rule[] = [
   {
     group: 2,
     what: 'the system face on the server-drawn pages',
-    re: /body\{[^}]*font:[^;}]*\b(ui-sans-serif|system-ui)/,
+    re: /body\{[^}]*font:[^;}"]*\b(ui-sans-serif|system-ui)/,
     only: /oauth\.ts$/,
   },
   { group: 3, what: 'a panel number', re: /panel-num|PanelHead|panelNumber/ },

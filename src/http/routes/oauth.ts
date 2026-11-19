@@ -31,7 +31,7 @@ const PAGE_HEADERS = {
   'content-type': 'text/html; charset=utf-8',
   'x-frame-options': 'DENY',
   'content-security-policy':
-    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+    "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'",
   'referrer-policy': 'no-referrer',
 }
 const FORM_COOKIE = 'rscb_form'
@@ -54,20 +54,49 @@ const sameText = (a: string, b: string) => {
   return x.length === y.length && timingSafeEqual(x, y)
 }
 
-// The tokens of DESIGN.md (spec B6): dark first, the brand's graphite and terminal green, system fonts,
-// elevation by lightness, the main action inverted. Nothing is loaded from elsewhere.
-export const PAGE_STYLE = `:root{color-scheme:dark light;--bg:oklch(0.165 0.012 260);--card:oklch(0.205 0.013 260);--raised:oklch(0.25 0.012 260);--fg:oklch(0.96 0.004 95);--muted:oklch(0.76 0.008 260);--accent:oklch(0.8 0.17 156);--line:oklch(0.56 0.01 260);--rule:oklch(0.27 0.012 260);--warn:oklch(0.85 0.13 85);--error:oklch(0.76 0.15 25)}
-@media (prefers-color-scheme:light){:root{--bg:oklch(0.975 0.004 95);--card:oklch(0.995 0.002 95);--raised:oklch(0.935 0.005 260);--fg:oklch(0.2 0.012 260);--muted:oklch(0.44 0.01 260);--accent:oklch(0.5 0.13 156);--rule:oklch(0.9 0.006 260);--warn:oklch(0.5 0.12 70);--error:oklch(0.5 0.19 25)}}
-*{box-sizing:border-box}input{accent-color:var(--accent)}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow-wrap:anywhere}
-main{max-width:30rem;margin:8vh auto;padding:0 16px}.card{background:var(--card);border-radius:12px;padding:28px}
-h1{font:550 23px/1.2 ui-monospace,"SF Mono",Menlo,Consolas,monospace;letter-spacing:-.035em;margin:0 0 8px}p{margin:8px 0}.muted{color:var(--muted);font-size:12px}
-label{display:block;margin:14px 0 4px;font-weight:550;font-size:13px}input[type=email],input[type=password],input[type=text]{width:100%;height:40px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:inherit;font:inherit}
-fieldset{border:0;border-top:1px solid var(--rule);margin:14px 0;padding:10px 0 0}legend{font:550 13px ui-monospace,Menlo,monospace;color:var(--muted);padding:0 8px 0 0}
-.opt{display:flex;gap:8px;align-items:baseline;margin:6px 0;font-weight:400;font-size:14px}.warn{background:var(--raised);border-left:3px solid var(--warn);border-radius:8px;padding:10px 12px;font-size:13px;margin:12px 0}
-.domain{font-family:ui-monospace,Menlo,monospace;font-weight:700}.row{display:flex;flex-wrap:wrap;gap:12px;margin-top:20px}
-button{min-height:36px;padding:0 18px;border-radius:18px;border:1px solid var(--line);font:inherit;font-weight:550;cursor:pointer;background:transparent;color:inherit}
-button.primary{background:var(--fg);border-color:var(--fg);color:var(--bg)}button:disabled{opacity:.55;cursor:not-allowed}button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.error{color:var(--error);font-weight:550}`
+// The look of the web, drawn by the server without JavaScript: the frame's tinted ground, the form on a white
+// sheet with a hairline edge and 16px corners, IBM Plex served by this installation (/fonts, the same files as
+// the web's), sentence case, the one main action near black. With no script there is no choice to read, so the
+// page follows the system: light, dark, or high contrast when it asks for more contrast.
+const FONTS = [
+  ['IBM Plex Sans', 400, 'ibm-plex-sans-latin1-400'],
+  ['IBM Plex Sans', 500, 'ibm-plex-sans-latin1-500'],
+  ['IBM Plex Sans', 600, 'ibm-plex-sans-latin1-600'],
+  ['IBM Plex Mono', 400, 'ibm-plex-mono-latin1-400'],
+] as const
+const LIGHT =
+  '--ground:#f9fbfc;--surface:#ffffff;--raised:#f4f6f8;--border:#e8eaec;--rule:#f0f1f2;--control:#878a8e;--text:#131416;--muted:#5d5f60;--focus:#1b6c80;--negative:#c4242a;--warn-bg:#fffbeb;--warn-ink:#92400e;--primary:#131416;--primary-ink:#ffffff;--focus-w:2px'
+const DARK =
+  '--ground:#0f1011;--surface:#17181a;--raised:#1e2022;--border:#2a2c2f;--rule:#202224;--control:#6b6f75;--text:#f2f3f4;--muted:#a4a7ab;--focus:#5fb3c7;--negative:#f0787c;--warn-bg:#36260f;--warn-ink:#f3cd94;--primary:#f2f3f4;--primary-ink:#131416'
+const CONTRAST =
+  '--ground:#ffffff;--surface:#ffffff;--raised:#f2f2f2;--border:#595959;--rule:#767676;--control:#595959;--text:#000000;--muted:#3d3d3d;--focus:#000000;--negative:#a3161b;--warn-bg:#fff6dd;--warn-ink:#4d2203;--primary:#000000;--primary-ink:#ffffff;--focus-w:3px'
+export const PAGE_STYLE = `${FONTS.map(([family, weight, file]) => `@font-face{font-family:"${family}";font-style:normal;font-weight:${weight};font-display:swap;src:url("/fonts/${file}.woff2") format("woff2")}`).join('\n')}
+:root{color-scheme:light;${LIGHT}}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;${DARK}}}
+@media (prefers-contrast:more){:root{color-scheme:light;${CONTRAST}}.card,fieldset,.warn{border-color:var(--border)}}
+*{box-sizing:border-box}input{accent-color:var(--text)}body{margin:0;background:var(--ground);color:var(--text);font:14px/20px "IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow-wrap:anywhere}
+main{max-width:30rem;margin:8vh auto;padding:0 16px}.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px}
+h1{font:600 22px/28px "IBM Plex Sans",system-ui,sans-serif;margin:0 0 8px}p{margin:8px 0}.muted{color:var(--muted);font-size:12px;line-height:16px}
+label{display:block;margin:16px 0 8px;font-weight:500;font-size:14px}input[type=email],input[type=password],input[type=text]{width:100%;height:32px;padding:0 10px;border:1px solid var(--control);border-radius:6px;background:var(--surface);color:inherit;font:inherit}
+fieldset{border:0;border-top:1px solid var(--rule);margin:16px 0;padding:12px 0 0}legend{font-weight:500;font-size:14px;color:var(--text);padding:0 8px 0 0}
+.opt{display:flex;gap:8px;align-items:baseline;margin:6px 0;font-weight:400;font-size:14px}.warn{background:var(--warn-bg);color:var(--warn-ink);border:1px solid transparent;border-left:3px solid currentColor;border-radius:8px;padding:10px 12px;font-size:13px;margin:12px 0}
+.domain{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-weight:400}.row{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}
+button{min-height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--control);font:inherit;font-weight:500;cursor:pointer;background:var(--surface);color:inherit}
+button.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}button:disabled{opacity:.55;cursor:not-allowed}button:focus-visible,input:focus-visible,a:focus-visible{outline:var(--focus-w,2px) solid var(--focus);outline-offset:2px}
+a{color:inherit;text-underline-offset:3px}.error{color:var(--negative);font-weight:500}.error::before{content:"! ";font-weight:600}.foot{text-align:center;margin-top:16px}
+@media (forced-colors:active){.card,button,input{border-color:CanvasText}}`
+
+// The installation's name on these pages (they are drawn without the web's script, so the server says it). Read
+// once per request that draws a page; the default until an administrator names it.
+let installation = 'rsc-brain'
+async function readName(db: PublicReq['db']): Promise<void> {
+  try {
+    const r = await db.one<{ name: string | null }>('SELECT name FROM installation WHERE id = 1')
+    installation = r?.name?.trim() || 'rsc-brain'
+  } catch {
+    installation = 'rsc-brain'
+  }
+}
 
 function page(
   title: string,
@@ -76,8 +105,8 @@ function page(
   headers: Record<string, string | string[]> = {},
 ): Reply {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · rsc-brain</title><style>
-${PAGE_STYLE}</style></head><body><main><div class="card">${body}</div><p class="muted">rsc-brain</p></main></body></html>`
+<title>${esc(title)} · ${esc(installation)}</title><style>
+${PAGE_STYLE}</style></head><body><main><div class="card">${body}</div><p class="muted foot">${esc(installation)}</p></main></body></html>`
   return { status, body: html, headers: { ...PAGE_HEADERS, ...headers } }
 }
 
@@ -278,6 +307,7 @@ export const oauthRoutes: Route[] = [
     }
   }),
   publicRoute('GET /oauth/authorize', async (r) => {
+    await readName(r.db)
     let q: Record<string, string>
     let step: Awaited<ReturnType<typeof authorize>>
     try {
@@ -295,6 +325,7 @@ export const oauthRoutes: Route[] = [
   publicRoute(
     'POST /oauth/login',
     async (r) => {
+      await readName(r.db)
       const b = obj(r.body) as Record<string, unknown>
       const text = (k: string) => (typeof b[k] === 'string' ? (b[k] as string) : '')
       const paused = await maintenancePage(
@@ -348,6 +379,7 @@ export const oauthRoutes: Route[] = [
   publicRoute(
     'POST /oauth/authorize',
     async (r) => {
+      await readName(r.db)
       const b = obj(r.body) as Record<string, string>
       const q: Record<string, string> = {}
       for (const k of AUTHZ_KEYS) if (typeof b[k] === 'string') q[k] = b[k]

@@ -910,6 +910,10 @@ dialog::backdrop {
     --pad: 16px;
   }
 
+  .card.pad {
+    padding: 12px 14px 16px;
+  }
+
   .only-narrow {
     display: inline-flex;
   }
@@ -1053,11 +1057,11 @@ dialog::backdrop {
   margin-bottom: var(--gap);
 }
 
-/* A tile whose number comes first in the words ("37 not in the wiki yet") and is drawn under them. */
+/* A tile whose number comes first in the words ("37 not in the wiki yet"): the figure, its words under it. */
 .tiles .tile {
   display: flex;
-  flex-direction: column-reverse;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .tiles a.tile .tile-n {
@@ -3111,9 +3115,8 @@ label.op-head:hover {
   top: 12px;
   z-index: 4;
   background: var(--surface);
-  border: 1px solid var(--rule);
+  border: var(--line) solid var(--border);
   border-radius: var(--r-card);
-  box-shadow: var(--shadow-float);
 }
 
 .graph-over {
@@ -4503,6 +4506,7 @@ input[type="file"]::file-selector-button {
 /* A section of a screen that holds its own block: a card (the third level), white with a hairline edge and 8px
    corners, no shadow; its head a 16px title in sentence case with its figure in grey at the right. */
 .card.pad {
+  min-width: 0;
   padding: 16px 20px 20px;
   background: var(--surface);
   border: var(--line) solid var(--border);

@@ -19,9 +19,17 @@ const SKIP = new Set([
   'package-lock.json',
   'test-results',
 ])
-const FORBIDDEN = ['ZW5ncmFt', 'Z2VudGxlbWFuIHByb2dyYW1taW5n', 'Z2JyYWlu', 'YWkgb3MgbWFwcw==', 'bjhu'].map(
-  (b) => Buffer.from(b, 'base64').toString('utf8'),
-)
+// The last two (spec web redesign, constitution P3): the name of the visual style the web was drawn in, and of
+// the tool that measured it.
+const FORBIDDEN = [
+  'ZW5ncmFt',
+  'Z2VudGxlbWFuIHByb2dyYW1taW5n',
+  'Z2JyYWlu',
+  'YWkgb3MgbWFwcw==',
+  'bjhu',
+  'ZnJhbWVkLXNoZWV0',
+  'dGFzdGUtc2tpbGw=',
+].map((b) => Buffer.from(b, 'base64').toString('utf8'))
 
 async function* files(dir: string, skip: Set<string>): AsyncGenerator<string> {
   for (const e of await readdir(dir, { withFileTypes: true })) {
@@ -55,6 +63,7 @@ describe('forbidden names', () => {
     assert.ok(findForbidden(`inspired by ${FORBIDDEN[3]?.toUpperCase()}`))
     // The product the canvas interface was studied from (plan canvas-ui D12).
     assert.ok(findForbidden(`looks like ${Buffer.from('Tjhu', 'base64').toString('utf8')}`))
+    assert.ok(findForbidden(`the ${Buffer.from('ZnJhbWVkLXNoZWV0', 'base64').toString('utf8')} style`))
     assert.equal(findForbidden('a journal for agents'), undefined)
   })
 

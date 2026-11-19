@@ -52,11 +52,20 @@ for (const [w, h, seeded] of [
     await tools.evaluate((el) => {
       ;(el as HTMLElement).style.visibility = 'hidden'
     })
+    // Inside the picture only: past its edge is the sheet's hairline and the frame, not the picture.
+    const cv = (await page.locator('canvas.graph-canvas').boundingBox()) as {
+      x: number
+      y: number
+      width: number
+      height: number
+    }
+    const x0 = Math.max(r.x - 4, cv.x)
+    const y1 = Math.min(r.y + r.height + 4, cv.y + cv.height)
     const shot = await page.screenshot({
-      clip: { x: r.x - 4, y: r.y, width: r.width + 4, height: r.height + 4 },
+      clip: { x: x0, y: r.y, width: r.x + r.width - x0, height: y1 - r.y },
     })
-    // Read the capture in the page: how many pixels differ from the picture's ground. The ground is dotted
-    // (canvas-ui D8): a pixel the colour of the ground or of its dots is ground.
+    // Read the capture in the page: how many pixels differ from the picture's ground, a flat well (the web
+    // redesign took its dots away): a pixel the colour of the well is ground.
     const inked = await page.evaluate(async (b64) => {
       const css = getComputedStyle(document.documentElement)
       const swatch = document.createElement('canvas').getContext('2d') as CanvasRenderingContext2D
@@ -67,7 +76,7 @@ for (const [w, h, seeded] of [
         const d = swatch.getImageData(0, 0, 1, 1).data
         return [d[0] as number, d[1] as number, d[2] as number]
       }
-      const grounds = [rgb('--ground'), rgb('--grid-dot')]
+      const grounds = [rgb('--raised')]
       const img = new Image()
       img.src = `data:image/png;base64,${b64}`
       await img.decode()
