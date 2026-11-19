@@ -97,8 +97,8 @@ export function CommunitiesPanel({
   return (
     <details class="graph-communities" open={openAtStart}>
       <summary class="com-head">
-        <span class="panel-title">{g.communities}</span>
-        <span class="panel-meta">{rows.length.toLocaleString('en')}</span>
+        <span class="sec-title">{g.communities}</span>
+        <span class="sec-meta">{rows.length.toLocaleString('en')}</span>
       </summary>
       <fieldset class="com-list">
         <legend class="sr-only">{g.communitiesShown}</legend>
@@ -118,13 +118,12 @@ export function CommunitiesPanel({
         <ul class="plain">
           {rows.map((r) => (
             <li key={r.key}>
-              <label class="com-row" data-com={r.colour}>
+              <label class="com-row">
                 <input
                   type="checkbox"
                   checked={!hidden.has(r.key)}
                   onChange={(e) => set(r.key, (e.currentTarget as HTMLInputElement).checked)}
                 />
-                <span class="com-dot" aria-hidden="true" />
                 <span class="com-name">{r.name}</span>
                 <span class="com-count">{r.count.toLocaleString('en')}</span>
               </label>

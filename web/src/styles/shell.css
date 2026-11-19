@@ -1,72 +1,181 @@
-/* The frame of a signed-in screen (plan canvas-ui D1–D3): the rail at the left, 56px of icons or 220px with
-   their names, and the screen in the rest of the width. On a phone the rail is a bar across the top. */
+/* The frame of a signed-in screen: the rail at the left and the top bar share one tinted ground, an L with no
+   line in it; the screen sits on a white sheet with a hairline edge and 16px corners, 8px in from the window's
+   right and bottom edges, with no shadow. The sheet scrolls; the frame stays. On a phone the frame goes and the
+   sheet is the screen, under a 48px bar. */
+
+html,
+body {
+  background: var(--ground);
+}
 
 .frame {
-  --rail-w: var(--rail-w-folded);
+  --rail-w: var(--sidebar-folded);
   --rail-col: var(--rail-w);
-  min-height: 100dvh;
+  height: 100dvh;
   display: grid;
   grid-template-columns: var(--rail-col) minmax(0, 1fr);
+  background: var(--ground);
+  overflow: hidden;
   transition: grid-template-columns var(--t) var(--ease);
 }
 
 .frame[data-rail="open"] {
-  --rail-w: var(--rail-w-open);
+  --rail-w: var(--sidebar-width);
 }
 
-/* The line between rail and screen belongs to the screen, as tall as the page (a full-page capture too). */
 .stage {
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  border-left: 1px solid var(--rail-line);
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 
+/* The sheet. */
 .stage > .content {
-  flex: 1;
+  grid-row: 4;
+  min-height: 0;
+  margin: 0 var(--sheet-inset) var(--sheet-inset) 0;
+  background: var(--surface);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-sheet);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.stage > .content:focus {
+  outline: none;
+}
+
+/* ── The top bar ──────────────────────────────────────────────────────── */
+
+.topbar {
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 548px) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--topbar-height);
+  padding: 0 var(--sheet-inset) 0 var(--space-2);
+  background: var(--ground);
+  color: var(--muted);
+}
+
+.where ol {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-body);
+  white-space: nowrap;
+}
+
+.where li {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.where li + li::before {
+  content: "/" / "";
+  margin-right: var(--space-2);
+  color: var(--control-strong);
+}
+
+.where a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.where a:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.where [aria-current] {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.topbar-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: var(--control-height);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  background: var(--surface);
+  color: var(--muted);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--fs-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.topbar-search:hover {
+  border-color: var(--control-strong);
+}
+
+.topbar-search-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-search kbd {
+  flex: none;
+  min-width: 0;
+  padding: 0 6px;
+  line-height: 18px;
 }
 
 /* ── The rail ─────────────────────────────────────────────────────────── */
 
 .rail {
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 25;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   width: var(--rail-w);
   height: 100dvh;
   padding: 0 var(--space-2) var(--space-2);
-  background: var(--rail-bg);
-  color: var(--rail-ink);
+  background: var(--ground);
+  color: var(--muted);
   transition: width var(--t) var(--ease);
 }
 
 .rail-head {
   display: flex;
   align-items: center;
-  height: 56px;
+  height: var(--topbar-height);
   flex: none;
 }
 
 .rail .brand {
   flex: 1 1 auto;
-  height: 40px;
-  padding: 0 8px;
-  gap: 12px;
-  border-right: 0;
-  border-radius: var(--r-control);
+  height: 36px;
+  padding: 0 var(--space-2);
+  gap: 10px;
+  color: var(--text);
+  border-radius: var(--radius-control);
 }
 
 .rail .brand:hover {
-  background: var(--rail-hover);
+  background: var(--active);
 }
 
 .rail .brand img,
 .rail .brand svg {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
 }
 
 .rail-tools,
@@ -77,13 +186,12 @@
 
 .rail-tools {
   padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--rail-line);
 }
 
 .rail-nav {
   display: grid;
   align-content: start;
-  gap: var(--space-2);
+  gap: var(--space-4);
   padding-top: var(--space-1);
 }
 
@@ -92,32 +200,26 @@
   gap: 2px;
 }
 
-.rail-group {
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--rail-line);
-}
-
 .rail-foot {
   margin-top: auto;
   padding-top: var(--space-2);
-  border-top: 1px solid var(--rail-line);
 }
 
-/* An item: its icon in a 40×36 box at the left, its name beside it. */
+/* An item: its 16px icon and its name, on a 32px row. */
 .rail-item {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   width: 100%;
-  min-height: 34px;
+  min-height: var(--control-height);
   padding: 0 10px;
   background: transparent;
-  color: var(--rail-ink);
-  border: 0;
-  border-radius: var(--r-control);
+  color: var(--muted);
+  border: var(--line) solid transparent;
+  border-radius: var(--radius-control);
   font: inherit;
-  font-size: 13.5px;
+  font-size: var(--fs-body);
   text-align: left;
   text-decoration: none;
   white-space: nowrap;
@@ -129,34 +231,20 @@
 
 .rail-item > .icon {
   flex: none;
+  width: 16px;
+  height: 16px;
 }
 
 .rail-item:hover {
-  background: var(--rail-hover);
+  background: var(--active);
   color: var(--text);
 }
 
+/* The current section: a neutral grey pill, the name in ink. */
 .rail-item[aria-current] {
-  background: var(--rail-hover);
+  background: var(--active);
   color: var(--text);
-  font-weight: 550;
-}
-
-.rail-item[aria-current] > .icon {
-  color: var(--accent);
-}
-
-/* The current section, or the one the screen is inside, is also marked by a bar at the left edge: never
-   colour alone. */
-.rail-item[aria-current]::before {
-  content: "";
-  position: absolute;
-  left: -8px;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: var(--accent);
+  font-weight: 500;
 }
 
 .rail-label {
@@ -178,21 +266,19 @@
   line-height: 18px;
 }
 
-/* A count beside its section (what waits): the accent marks data. */
+/* A count beside its section, on a queue that needs action: a figure in ink on the neutral pill. */
 .rail-badge {
   flex: none;
   min-width: 20px;
   height: 18px;
   padding: 0 5px;
-  border-radius: 9px;
-  background: var(--accent);
-  color: var(--primary-fg);
-  font: 650 11px / 18px var(--mono);
+  border-radius: var(--radius-pill);
+  background: var(--pill-neutral-bg);
+  color: var(--pill-neutral-ink);
+  box-shadow: inset 0 0 0 var(--line) var(--pill-line);
+  font: 500 11px / 18px var(--font-mono);
   text-align: center;
-}
-
-.rail .searchbox {
-  color: var(--rail-ink);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The brain this screen is in. */
@@ -209,12 +295,13 @@
   display: grid;
   flex: none;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--r-control);
-  background: color-mix(in oklch, var(--accent) 22%, var(--rail-bg));
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 var(--line) var(--border);
   color: var(--text);
-  font: 650 13px / 1 var(--mono);
+  font: 600 12px / 1 var(--font-sans);
 }
 
 .brain-avatar.small {
@@ -239,7 +326,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 .initial {
@@ -248,28 +335,29 @@
   place-items: center;
   width: 24px;
   height: 24px;
-  margin: 0 -2px;
+  margin: 0 -4px;
   border-radius: 50%;
-  background: var(--raised);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 var(--line) var(--border);
   color: var(--text);
-  font: 600 11px / 1 var(--mono);
+  font: 600 11px / 1 var(--font-sans);
 }
 
 .account {
   position: relative;
 }
 
-/* ── Menus that open from the rail ────────────────────────────────────── */
+/* ── Menus that open from the rail: they float, so they cast the one shadow ── */
 
 .popover {
   position: absolute;
   z-index: 40;
   width: 260px;
   padding: 6px;
-  background: var(--raised);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-card);
-  box-shadow: 0 12px 32px -12px oklch(0 0 0 / 0.45);
+  background: var(--surface);
+  border: var(--line) solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-float);
   white-space: normal;
 }
 
@@ -286,7 +374,7 @@
 .popover-title {
   padding: 6px 10px 8px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-small);
 }
 
 .switcher-menu ul {
@@ -298,34 +386,34 @@
 
 .switcher-menu a,
 .switcher-menu button,
-.account-menu button,
-.account-menu a {
+.account-menu > button,
+.account-menu > a {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 36px;
+  min-height: var(--control-height);
   padding: 0 10px;
   background: transparent;
   color: var(--text);
   border: 0;
-  border-radius: var(--r-control);
+  border-radius: var(--radius-control);
   font: inherit;
   text-align: left;
   text-decoration: none;
   cursor: pointer;
 }
 
-.account-menu button,
-.account-menu a {
+.account-menu > button,
+.account-menu > a {
   justify-content: space-between;
 }
 
 .switcher-menu a:hover,
 .switcher-menu button:hover,
-.account-menu button:hover,
-.account-menu a:hover {
-  background: var(--surface);
+.account-menu > button:hover,
+.account-menu > a:hover {
+  background: var(--active);
 }
 
 .switcher-menu a[aria-current] {
@@ -345,13 +433,51 @@
   gap: 2px;
   margin-top: 6px;
   padding-top: 6px;
-  border-top: 1px solid var(--rule);
+  border-top: var(--line) solid var(--rule);
 }
 
 .account-menu .who {
   padding: 8px 10px 10px;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: var(--line) solid var(--rule);
   margin-bottom: 6px;
+}
+
+/* The mode: four choices side by side, the one in use pressed. */
+.mode-picker {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border-top: var(--line) solid var(--rule);
+  border-bottom: var(--line) solid var(--rule);
+}
+
+.mode-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.mode-choices button {
+  min-height: var(--control-height);
+  padding: 0 8px;
+  background: var(--surface);
+  color: var(--text);
+  border: var(--line) solid var(--control);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--fs-small);
+  cursor: pointer;
+}
+
+.mode-choices button:hover {
+  border-color: var(--control-strong);
+}
+
+.mode-choices button[aria-pressed="true"] {
+  background: var(--active);
+  border-color: var(--text);
+  font-weight: 600;
 }
 
 /* ── Folded: icons, and their names as tooltips ───────────────────────── */
@@ -385,12 +511,12 @@
   /* The count sits on the icon's corner. */
   .frame[data-rail="folded"] .rail .rail-badge {
     position: absolute;
-    top: 1px;
-    right: 1px;
+    top: -2px;
+    right: 0;
     min-width: 16px;
     height: 16px;
     padding: 0 4px;
-    font-size: 10px;
+    font-size: 11px;
     line-height: 16px;
   }
 
@@ -414,14 +540,14 @@
     overflow: visible;
     clip-path: none;
     transform: translateY(-50%);
-    background: var(--primary-bg);
-    color: var(--primary-fg);
-    border-radius: var(--r-control);
-    font-size: 12.5px;
+    background: var(--primary);
+    color: var(--primary-ink);
+    border-radius: var(--radius-control);
+    font-size: var(--fs-small);
     font-weight: 500;
     line-height: 1.4;
     pointer-events: auto;
-    box-shadow: 0 6px 18px -6px oklch(0 0 0 / 0.4);
+    box-shadow: var(--shadow-float);
   }
 
   .frame[data-rail="folded"] .rail .switcher-button:is(:hover, :focus-visible) .brain-name,
@@ -441,8 +567,8 @@
 }
 
 /* A short window: the sections scroll, the head and foot stay. A box that scrolls cuts off what leaves it
-   sideways, so the scroll box reaches past the rail on both sides by the room the current bar and a
-   tooltip need; that room lets the pointer through to the screen under it (review R1). */
+   sideways, so the scroll box reaches past the rail on the right by the room a tooltip needs; that room lets
+   the pointer through to the screen under it. */
 @media (max-height: 759px) and (min-width: 768px) {
   .rail-nav {
     --nav-out: 300px;
@@ -460,45 +586,59 @@
   }
 }
 
-/* Open, the search reads as a field. */
-.frame[data-rail="open"] .rail .searchbox {
-  background: var(--ground);
-  box-shadow: inset 0 0 0 1px var(--rail-line);
-}
-
 /* ── A tablet: the rail opens over the screen instead of pushing it ───── */
 
 @media (min-width: 768px) and (max-width: 1099px) {
   .frame {
-    --rail-col: var(--rail-w-folded);
+    --rail-col: var(--sidebar-folded);
   }
 
   .frame[data-rail="open"] .rail {
-    box-shadow: 12px 0 32px -16px oklch(0 0 0 / 0.5);
+    box-shadow: var(--shadow-float);
+  }
+
+  .topbar {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
   }
 }
 
-/* ── A phone: a bar across the top; the sections in a menu ─────────────── */
+/* ── A phone: no frame; the sheet is the screen, under a 48px bar ─────── */
 
 @media (max-width: 767px) {
   .frame {
     --rail-col: 1fr;
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto 1fr;
   }
 
   .stage {
-    border-left: 0;
+    display: block;
+  }
+
+  .topbar {
+    display: none;
+  }
+
+  .stage > .content {
+    margin: 0;
+    min-height: calc(100dvh - var(--topbar-height));
+    border: 0;
+    border-radius: 0;
+    overflow: visible;
   }
 
   .rail {
+    position: sticky;
+    top: 0;
     flex-direction: row;
     align-items: center;
     gap: 4px;
     width: auto;
-    height: 56px;
+    height: var(--topbar-height);
     padding: 0 8px;
-    border-bottom: 1px solid var(--rail-line);
   }
 
   .rail-head {
@@ -531,7 +671,8 @@
 
   .rail .rail-item {
     width: auto;
-    min-width: 40px;
+    min-width: var(--touch);
+    min-height: var(--touch);
     justify-content: center;
     padding: 0 8px;
   }
@@ -569,10 +710,6 @@
     bottom: auto;
     top: calc(100% + 8px);
   }
-
-  .rail-item[aria-current]::before {
-    display: none;
-  }
 }
 
 @media (min-width: 400px) and (max-width: 767px) {
@@ -592,21 +729,13 @@
 }
 
 .sheet .rail-item {
-  min-height: 40px;
-}
-
-.sheet .rail-item[aria-current]::before {
-  left: -12px;
+  min-height: var(--touch);
 }
 
 /* A window under 820px tall (a 1366×768 laptop): the rail tightens so its foot stays in view. */
 @media (max-height: 819px) and (min-width: 768px) {
-  .rail-head {
-    height: 48px;
-  }
-
   .rail .rail-item {
-    min-height: 32px;
+    min-height: 30px;
   }
 
   .rail .switcher-button {
@@ -614,12 +743,22 @@
   }
 
   .rail-tools,
-  .rail-group,
   .rail-foot {
-    padding-top: 6px;
+    padding-top: 4px;
   }
 
   .rail-tools {
-    padding-bottom: 6px;
+    padding-bottom: 4px;
+  }
+}
+
+/* Forced colours: the current section and the sheet keep an edge the system draws. */
+@media (forced-colors: active) {
+  .rail-item[aria-current] {
+    border-color: CanvasText;
+  }
+
+  .stage > .content {
+    border-color: CanvasText;
   }
 }

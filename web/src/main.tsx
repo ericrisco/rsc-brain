@@ -4,10 +4,10 @@ import './styles/tokens.css'
 import './styles/app.css'
 import './styles/shell.css'
 import { App } from './app.tsx'
+import { startMode } from './lib/mode.ts'
 import { startRail } from './lib/rail.ts'
-import { startTheme } from './lib/theme.ts'
 
-startTheme()
+startMode()
 startRail()
 // The first screen is drawn in a task of its own, after the code is read: reading it and drawing the screen
 // never add up to one long task that blocks the page (spec B6 CA6).

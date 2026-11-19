@@ -1,6 +1,6 @@
-// The frame of every signed-in screen (spec B6 «Mapa de la web», plan canvas-ui D1–D3): the rail at the
-// left, and the screen in all the width it leaves. On a phone the rail is a bar across the top and the
-// sections of a brain fold into a menu.
+// The frame of every signed-in screen: the rail at the left and the top bar, on one tinted ground, and the
+// screen on a white sheet in all the width they leave. On a phone the frame goes: the rail is a bar across the
+// top, the sections of a brain fold into a menu, and the sheet is the screen.
 import type { ComponentChildren } from 'preact'
 import { useEffect, useState } from 'preact/hooks'
 import { useLocation } from 'preact-iso'
@@ -17,6 +17,7 @@ import { Keyboard } from './Keyboard.tsx'
 import { MaintenanceStrip } from './Maintenance.tsx'
 import { BrainLinks, type BrainNav, Rail } from './Rail.tsx'
 import { SearchDialog } from './SearchDialog.tsx'
+import { TopBar } from './TopBar.tsx'
 
 export type { BrainNav } from './Rail.tsx'
 
@@ -60,6 +61,7 @@ export function Shell({
       </a>
       <Rail me={me} brain={brain ?? null} menu={menu} onMenu={() => setMenu(true)} />
       <div class="stage">
+        <TopBar brain={brain ?? null} />
         <OfflineStrip />
         <MaintenanceStrip />
         <main id="main" class="content" tabIndex={-1}>

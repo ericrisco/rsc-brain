@@ -595,18 +595,15 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
     // Over the canvas: its name and where you are at the top left; Graph | List and the filters at the top in
     // the middle (plan canvas-ui B.2); the communities at the right (v0.5.0).
     <>
-      {/* The strip along the top of the canvas, as a panel's head: its number, its name and what it is about,
-          and how much it holds; Graph | List, the filters and the inspector's switch sit in it. */}
-      <div class="graph-strip panel-head">
-        <span class="panel-num" aria-hidden="true">
-          01
-        </span>
-        <h1 class="title panel-title">{g.title}</h1>
-        <span class="panel-about">
+      {/* The strip along the top of the canvas: its name and what it is about, and how much it holds;
+          Graph | List, the filters and the inspector's switch sit in it. */}
+      <div class="graph-strip sec-head">
+        <h1 class="title sec-title">{g.title}</h1>
+        <span class="sec-about">
           <span aria-hidden="true">· </span>
           {g.stripAbout(brainName)}
         </span>
-        {vis && model ? <span class="panel-meta">{g.stripMeta(vis.pages, linksDrawn)}</span> : null}
+        {vis && model ? <span class="sec-meta">{g.stripMeta(vis.pages, linksDrawn)}</span> : null}
       </div>
       <div class="graph-left">
         <div class="graph-over">
@@ -747,7 +744,7 @@ function GraphScreen({ slug, brainName }: { slug: string; brainName: string }) {
       </>
     )
   return (
-    <div class="graph-screen panel" data-c="orange">
+    <div class="graph-screen">
       {head}
       {layout}
     </div>
@@ -763,9 +760,12 @@ function palette(): Palette {
     accent: v('--accent'),
     ground: v('--ground'),
     edge: v('--edge'),
-    com: Array.from({ length: COLOURS }, (_, k) => v(`--com-${k}`)),
-    other: v('--com-other'),
-    lone: v('--com-lone'),
+    // Every page in one neutral grey, whatever its community: the communities are told apart by where they
+    // sit, their names and the panel. The pages without links in a lighter grey.
+    com: Array.from({ length: COLOURS }, () => v('--graph-node')),
+    other: v('--graph-node'),
+    lone: v('--graph-lone'),
+    ring: Number.parseFloat(v('--graph-ring')) || 2.5,
   }
 }
 
@@ -987,7 +987,9 @@ function GraphCanvas({
     if (d.selected) c.dataset.selected = `${d.selected[0]},${d.selected[1]}`
     else delete c.dataset.selected
     if (d.rings)
-      c.dataset.rings = d.rings.map((r) => `${r.what}:${r.dashed ? 'dashed' : 'solid'}:${r.r}`).join(' ')
+      c.dataset.rings = d.rings
+        .map((r) => `${r.what}:${r.dashed ? 'dashed' : 'solid'}:${r.r}:${r.width}`)
+        .join(' ')
     // Where the page's own copy of the positions puts the keyboard's page: the pointer works on it (review R2).
     const here = probe ? onScreen(latest.current.active) : null
     if (here) c.dataset.activeHere = `${Math.round(here[0])},${Math.round(here[1])}`

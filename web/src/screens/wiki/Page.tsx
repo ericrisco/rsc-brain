@@ -14,7 +14,7 @@ import { groupLinks, groupReaders } from '../../lib/wiki.ts'
 import { online } from '../../session.ts'
 import { T } from '../../text.ts'
 import { Dialog } from '../../ui/Dialog.tsx'
-import { colourAt, PanelHead } from '../../ui/Panel.tsx'
+import { SectionHead } from '../../ui/Section.tsx'
 import { viewState } from '../../ui/state.ts'
 import { ErrorState, Skeleton } from '../../ui/states.tsx'
 import type { BrainOne } from '../Brain.tsx'
@@ -118,17 +118,7 @@ function LinkGroups({
   )
 }
 
-function Sources({
-  slug,
-  reading,
-  curator,
-  n,
-}: {
-  slug: string
-  reading: Reading
-  curator: boolean
-  n: number
-}) {
+function Sources({ slug, reading, curator }: { slug: string; reading: Reading; curator: boolean }) {
   const w = T.wiki
   const { path, url, route } = useLocation()
   const open = (id: string) => {
@@ -140,8 +130,8 @@ function Sources({
     route(`${path}?${q.toString()}`)
   }
   return (
-    <section class="aside-block panel pad" data-c={colourAt(n - 1)} aria-labelledby="sources-title">
-      <PanelHead n={n} id="sources-title" title={w.sources} meta={reading.sources.length} />
+    <section class="aside-block card pad" aria-labelledby="sources-title">
+      <SectionHead id="sources-title" title={w.sources} meta={reading.sources.length} />
       {reading.sources.length === 0 ? (
         <p class="muted small">{w.noSources}</p>
       ) : (
@@ -239,13 +229,13 @@ export function SourcePanel({ slug, id, onClose }: { slug: string; id: string; o
   )
 }
 
-function Readers({ slug, address, n }: { slug: string; address: string; n: number }) {
+function Readers({ slug, address }: { slug: string; address: string }) {
   const r = readersResource(slug, address)
   const w = T.wiki
   const d = r.data.value
   return (
-    <section class="aside-block panel pad" data-c={colourAt(n - 1)} aria-labelledby="readers-title">
-      <PanelHead n={n} id="readers-title" title={w.readers} />
+    <section class="aside-block card pad" aria-labelledby="readers-title">
+      <SectionHead id="readers-title" title={w.readers} />
       <p class="muted small">{w.readersLead}</p>
       {d ? (
         d.items.length === 0 && !d.older ? (
@@ -338,14 +328,14 @@ const mayCorrect = (brain: BrainOne) =>
 const wrongShown = (brain: BrainOne, reading: Reading) =>
   mayCorrect(brain) || (reading.corrections ?? []).length > 0
 
-function Wrong({ slug, brain, reading, n }: { slug: string; brain: BrainOne; reading: Reading; n: number }) {
+function Wrong({ slug, brain, reading }: { slug: string; brain: BrainOne; reading: Reading }) {
   const w = T.wiki
   const open = reading.corrections ?? []
   const may = mayCorrect(brain)
   if (!wrongShown(brain, reading)) return null
   return (
-    <section class="aside-block panel pad" data-c={colourAt(n - 1)} aria-labelledby="wrong-title">
-      <PanelHead n={n} id="wrong-title" title={w.wrongTitle} meta={open.length || undefined} />
+    <section class="aside-block card pad" aria-labelledby="wrong-title">
+      <SectionHead id="wrong-title" title={w.wrongTitle} meta={open.length || undefined} />
       {open.length ? (
         <ul class="plain relations" aria-label={w.openCorrections}>
           {open.map((c) => (
@@ -382,9 +372,8 @@ function ReadView({ slug, brain, reading }: { slug: string; brain: BrainOne; rea
   const source = query.source
   return (
     <div class="wiki-page">
-      <article class="page-main panel pad" data-c="orange" aria-labelledby="page-panel-title">
-        <PanelHead
-          n={1}
+      <article class="page-main card pad" aria-labelledby="page-panel-title">
+        <SectionHead
           id="page-panel-title"
           title={w.types[page.type] ?? page.type}
           about={<span class="mono">{page.address}</span>}
@@ -406,10 +395,9 @@ function ReadView({ slug, brain, reading }: { slug: string; brain: BrainOne; rea
         ) : null}
       </article>
       <aside class="page-aside" aria-label={w.aside}>
-        <Sources slug={slug} reading={reading} curator={brain.role === 'curator'} n={2} />
-        <section class="aside-block panel pad" data-c={colourAt(2)} aria-labelledby="links-title">
-          <PanelHead
-            n={3}
+        <Sources slug={slug} reading={reading} curator={brain.role === 'curator'} />
+        <section class="aside-block card pad" aria-labelledby="links-title">
+          <SectionHead
             id="links-title"
             title={w.links}
             meta={reading.links.out.length + reading.links.in.length}
@@ -429,11 +417,9 @@ function ReadView({ slug, brain, reading }: { slug: string; brain: BrainOne; rea
             names={w.kindsIn}
           />
         </section>
-        <Wrong slug={slug} brain={brain} reading={reading} n={4} />
-        <RecentHistory slug={slug} address={page.address} n={wrongShown(brain, reading) ? 5 : 4} />
-        {isCurator(brain) ? (
-          <Readers slug={slug} address={page.address} n={wrongShown(brain, reading) ? 6 : 5} />
-        ) : null}
+        <Wrong slug={slug} brain={brain} reading={reading} />
+        <RecentHistory slug={slug} address={page.address} />
+        {isCurator(brain) ? <Readers slug={slug} address={page.address} /> : null}
       </aside>
       {source ? (
         <SourcePanel
