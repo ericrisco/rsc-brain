@@ -339,7 +339,10 @@ export function Brain({ slug }: { slug: string }) {
     online: online.value,
   })
   if (state === 'loading') return <Skeleton rows={3} />
-  if (!b) return r.error.value ? <ErrorState error={r.error.value} onRetry={() => void r.reload()} /> : null
+  if (!b)
+    return r.error.value ? (
+      <ErrorState error={r.error.value} onRetry={() => void r.reload()} title="h1" />
+    ) : null
   const o = ov.data.value
   if (o && !(o.firstSteps.agentConnected && o.firstSteps.firstEntry)) stepsShown.current = slug
   const fresh = o !== undefined && stepsShown.current === slug

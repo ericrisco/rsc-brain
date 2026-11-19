@@ -494,6 +494,7 @@ legend .step {
   max-width: 72ch;
 }
 
+.state h1,
 .state h2 {
   font: 600 var(--fs-section) / var(--lh-section) var(--font-sans);
 }
@@ -2230,6 +2231,11 @@ pre.version {
 
 .filter-box .filters {
   margin: 8px 0 0;
+}
+
+/* The button of a filter form sits apart from the last field. */
+form.filter-box > .actions {
+  margin-top: var(--space-4);
 }
 
 .check-line {
@@ -4488,6 +4494,18 @@ input[type="file"]::file-selector-button {
     background: var(--surface);
     border-radius: var(--r-card);
   }
+
+  /* The sessions of Activity sit in a narrow column: what it is above, its facts below. */
+  .act-sessions .list > li:not(.with-actions):has(> .meta:last-child) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .act-sessions .list > li:not(.with-actions):has(> .meta:last-child) > .meta:last-child {
+    grid-column: 1;
+    grid-row: auto;
+    max-width: none;
+    text-align: left;
+  }
 }
 
 /* A section of a screen that holds its own block: a card (the third level), white with a hairline edge and 8px
@@ -4800,13 +4818,13 @@ input[type="file"]::file-selector-button {
     grid-template-columns: minmax(0, 320px) minmax(0, 1fr);
     gap: var(--gap);
     align-items: start;
-    padding: var(--gap) 0;
-    border-top: var(--line) solid var(--rule);
+    padding: 0;
   }
 
-  .settings-part:first-child {
-    padding-top: 0;
-    border-top: 0;
+  .settings-part + .settings-part {
+    margin-top: var(--gap);
+    padding-top: var(--gap);
+    border-top: var(--line) solid var(--rule);
   }
 
   .settings-part > .part-label,
@@ -4824,6 +4842,20 @@ input[type="file"]::file-selector-button {
     background: var(--surface);
     border: var(--line) solid var(--border);
     border-radius: var(--r-card);
+  }
+
+  /* A part that holds a table needs the whole width: its label goes above. */
+  .settings-part:has(.table-scroll) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-part:has(.table-scroll) > .part-label,
+  .settings-part:has(.table-scroll) > .part-body {
+    grid-column: 1;
+  }
+
+  .settings-part:has(.table-scroll) > .part-body {
+    grid-row: 2;
   }
 
   .part-body :is(input[type="text"], input[type="email"], input[type="url"], input[type="number"], select) {

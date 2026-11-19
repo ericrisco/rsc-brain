@@ -31,11 +31,15 @@ export function ErrorState({
   error,
   onRetry,
   focus = true,
+  title = 'h2',
 }: {
   error: ApiError
   onRetry?: () => void
   focus?: boolean
+  // 'h1' when the state is the whole screen (a brain that cannot be opened has no screen title of its own).
+  title?: 'h1' | 'h2'
 }) {
+  const Title = title
   const v = errorView(error, online.value)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -44,7 +48,7 @@ export function ErrorState({
   return (
     <div class={`state ${v.kind}`} role="alert" tabIndex={-1} ref={ref} data-state={v.kind}>
       <span class="kind">{KIND[v.kind]}</span>
-      <h2>{v.title}</h2>
+      <Title>{v.title}</Title>
       <p>{v.message}</p>
       <p class="how">{v.howToProceed}</p>
       {v.retry && onRetry ? (

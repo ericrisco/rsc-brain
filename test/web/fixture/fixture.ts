@@ -603,7 +603,7 @@ function freshScenario(id: string, preset: Preset): Scen {
     roleChanges: new Map(),
     resent: new Map(),
     repos: new Map([
-      ['growth', [{ repo: 'github.com/acme/growth-site', linkedAt: '2026-10-02T10:00:00.000Z' }]],
+      ['growth', [{ repo: 'github.com/lumen-labs/growth-site', linkedAt: '2026-10-02T10:00:00.000Z' }]],
     ]),
     settings: new Map(),
     services: [
