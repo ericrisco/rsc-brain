@@ -83,7 +83,7 @@ fieldset{border:0;border-top:1px solid var(--rule);margin:16px 0;padding:12px 0 
 .domain{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-weight:400}.row{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}
 button{min-height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--control);font:inherit;font-weight:500;cursor:pointer;background:var(--surface);color:inherit}
 button.primary{background:var(--primary);border-color:var(--primary);color:var(--primary-ink)}button:disabled{opacity:.55;cursor:not-allowed}button:focus-visible,input:focus-visible,a:focus-visible{outline:var(--focus-w,2px) solid var(--focus);outline-offset:2px}
-a{color:inherit;text-underline-offset:3px}.error{color:var(--negative);font-weight:500}.error::before{content:"! ";font-weight:600}.foot{text-align:center;margin-top:16px}
+a{color:inherit;text-underline-offset:3px}strong,b{font-weight:600}.error{color:var(--negative);font-weight:500}.error::before{content:"! ";font-weight:600}.foot{text-align:center;margin-top:16px}
 @media (forced-colors:active){.card,button,input{border-color:CanvasText}}`
 
 // The installation's name on these pages (they are drawn without the web's script, so the server says it). Read

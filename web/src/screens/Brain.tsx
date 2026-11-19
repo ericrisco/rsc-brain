@@ -15,6 +15,7 @@ import { online } from '../session.ts'
 import { connectHref } from '../shell/dialogs.ts'
 import { T } from '../text.ts'
 import { CopyButton } from '../ui/CopyButton.tsx'
+import { Icon } from '../ui/icons.tsx'
 import { SectionHead } from '../ui/Section.tsx'
 import { viewState } from '../ui/state.ts'
 import { ErrorState, Skeleton } from '../ui/states.tsx'
@@ -71,7 +72,7 @@ function Step({
     <li class={done ? 'done' : undefined}>
       <div class="step-head">
         <span class={`status ${done ? 'ok' : ''}`} aria-hidden="true">
-          {done ? '✓' : ''}
+          {done ? <Icon name="check" size={14} /> : null}
         </span>
         <h3>
           <span class="n">{n}.</span> {title}
