@@ -131,3 +131,71 @@ test('CA14: a mode change repaints the graph at once, keeping the page picked', 
   await expect.poll(() => canvas.getAttribute('data-draws')).not.toBe(before)
   await expect(page.getByRole('link', { name: 'Open page' })).toBeVisible()
 })
+
+// With the inspector open: the page chosen and its name stay in the clear, the help for the keys is not over the
+// drawing, the strike-through has its legend, and the focus ring of the picture is whole on four sides.
+for (const mode of ['light', 'dark', 'contrast'] as const)
+  test(`graph with the inspector open (${mode}): the chosen page and its name are clear of every panel`, async ({
+    page,
+    context,
+    baseURL,
+  }) => {
+    await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+    await page.addInitScript((m) => localStorage.setItem('rscb.theme', m), mode)
+    await page.goto(GRAPH)
+    await settled(page)
+    // The legend of the struck-through pages, and the help behind its button, not over the picture.
+    await expect(page.locator('.graph-legend')).toContainText('superseded')
+    await expect(page.locator('#graph-keys')).toBeHidden()
+    const canvas = page.locator('canvas.graph-canvas')
+    await canvas.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('link', { name: 'Open page' })).toBeVisible()
+    await expect(page.locator('#graph-keys')).toBeHidden()
+    const v = await page.evaluate(() => {
+      const r = (q: string) => document.querySelector(q)?.getBoundingClientRect() ?? null
+      const tip = r('.graph-tip')
+      const over = [
+        '.graph-communities',
+        '.graph-inspector',
+        '.graph-strip',
+        '.graph-tools',
+        '.graph-center',
+      ].map((q) => [q, r(q)] as const)
+      const hits = over
+        .filter(([, b]) => b && tip && b.width > 0)
+        .filter(([, b]) => {
+          const t = tip as DOMRect
+          const o = b as DOMRect
+          return !(t.right <= o.left || t.left >= o.right || t.bottom <= o.top || t.top >= o.bottom)
+        })
+        .map(([q]) => q)
+      const ring = getComputedStyle(document.querySelector('.graph-box') as Element, '::after')
+      return {
+        tipShown: Boolean(tip && tip.width > 0),
+        hits,
+        folded: !(document.querySelector('.graph-communities') as HTMLDetailsElement).open,
+        ring: [ring.borderTopWidth, ring.borderRightWidth, ring.borderBottomWidth, ring.borderLeftWidth],
+      }
+    })
+    expect(v.tipShown, 'the name of the chosen page is drawn').toBe(true)
+    expect(v.hits, 'a panel lies over the name of the chosen page').toEqual([])
+    expect(v.folded, 'the communities fold when the inspector opens').toBe(true)
+    // The ring is drawn on all four sides of what is seen of the picture.
+    expect(v.ring.every((w) => Number.parseFloat(w) >= 2)).toBe(true)
+  })
+
+test('the keys button opens the help over the picture and Escape closes it', async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await scenario(context, baseURL as string, 'signed-in', {}, { seeded: 300 })
+  await page.goto(GRAPH)
+  await settled(page)
+  const button = page.getByRole('button', { name: 'Keys and gestures' })
+  await button.click()
+  await expect(page.locator('#graph-keys')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('#graph-keys')).toBeHidden()
+})

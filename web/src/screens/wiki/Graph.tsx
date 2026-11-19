@@ -878,6 +878,14 @@ function GraphCanvas({
   const [said, setSaid] = useState('')
   // The help for the keys and gestures: a button in the tools opens it; it never lies over the drawing unasked.
   const [keysOpen, setKeysOpen] = useState(false)
+  useLayoutEffect(() => {
+    if (!keysOpen) return
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setKeysOpen(false)
+    }
+    window.addEventListener('keydown', esc, true)
+    return () => window.removeEventListener('keydown', esc, true)
+  }, [keysOpen])
   const anySuperseded = useMemo(
     () => model.items.some((it) => it.kind === 'page' && it.status === 'superseded'),
     [model],
@@ -1695,14 +1703,7 @@ function GraphCanvas({
               </span>
             ) : null}
           </div>
-          <p
-            id="graph-keys"
-            class="graph-keys"
-            hidden={!keysOpen}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') setKeysOpen(false)
-            }}
-          >
+          <p id="graph-keys" class="graph-keys" hidden={!keysOpen}>
             {coarse() ? g.touchHelp : g.canvasHelp}
           </p>
           {/* biome-ignore lint/a11y/noInteractiveElementToNoninteractiveRole: "application" makes a screen reader hand the arrow keys to the canvas, which walks the graph with them */}
