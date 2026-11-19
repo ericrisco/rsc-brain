@@ -41,6 +41,12 @@ const obj = (properties: Json, required: string[] = []) => ({
   ...(required.length ? { required } : {}),
   additionalProperties: false,
 })
+const chunkArgs = (kind: 'review' | 'map') => ({
+  offset: { type: 'integer', minimum: 0, description: `The next text offset returned by ${kind}Chunk.` },
+  snapshot: str(`The snapshot from the preceding ${kind}Chunk; required after offset 0.`),
+  max: { type: 'integer', minimum: 1024, maximum: 120000, description: 'Maximum characters per chunk.' },
+})
+const chunkQuery = { offset: 'offset', snapshot: 'snapshot', max: 'max' }
 const enc = (s: string) => encodeURIComponent(s)
 
 function text(a: Json, k: string, required = false): string | undefined {
@@ -403,11 +409,21 @@ export const TOOLS: Tool[] = [
   {
     name: 'brain_map',
     title: 'The map',
-    description: 'The map of the brain’s wiki: its areas and main pages.',
-    inputSchema: obj({ brain: BRAIN, session: SESSION }),
+    description:
+      'The map of the brain’s wiki. For a large map, append mapChunk.text in order, passing next as offset with the same snapshot until next is null. Parse the joined JSON.',
+    inputSchema: obj({
+      brain: BRAIN,
+      session: SESSION,
+      status: str('Use all to include every page whatever its status.', { enum: ['all'] }),
+      ...chunkArgs('map'),
+    }),
     writes: false,
     annotations: { readOnlyHint: true },
-    call: async (a, k) => ({ method: 'GET', path: `/v1/brains/${enc(await k.brain(a))}/wiki/map` }),
+    call: async (a, k) => ({
+      method: 'GET',
+      path: `/v1/brains/${enc(await k.brain(a))}/wiki/map`,
+      query: query(a, { status: 'status', ...chunkQuery }),
+    }),
   },
   {
     name: 'brain_health',
@@ -575,14 +591,7 @@ export const TOOLS: Tool[] = [
     inputSchema: obj(
       {
         id: str('The proposal id.'),
-        offset: { type: 'integer', minimum: 0, description: 'The next text offset returned by reviewChunk.' },
-        snapshot: str('The snapshot from the preceding reviewChunk; required after offset 0.'),
-        max: {
-          type: 'integer',
-          minimum: 1024,
-          maximum: 120000,
-          description: 'Characters per review chunk (default 120000).',
-        },
+        ...chunkArgs('review'),
       },
       ['id'],
     ),
@@ -591,7 +600,7 @@ export const TOOLS: Tool[] = [
     call: async (a) => ({
       method: 'GET',
       path: `/v1/proposals/${enc(text(a, 'id', true) as string)}/review`,
-      query: query(a, { offset: 'offset', snapshot: 'snapshot', max: 'max' }),
+      query: query(a, chunkQuery),
     }),
   },
   {

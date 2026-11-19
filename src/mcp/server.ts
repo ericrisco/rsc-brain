@@ -397,7 +397,14 @@ async function callTool(
     }
     // A tool that reads but lands on a route that writes is still a write.
     if (isWrite(found.route)) refuseDuringMaintenance(r, who)
-    const reply = await found.route.handler({ ...r, params: found.params, query, body: call.body, who })
+    const reply = await found.route.handler({
+      ...r,
+      params: found.params,
+      query,
+      body: call.body,
+      who,
+      viaMcp: true,
+    })
     const body = reply.body as Json
     return toolResult(body, idChars)
   } catch (err) {

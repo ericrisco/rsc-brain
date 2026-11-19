@@ -505,6 +505,22 @@ const PAGE_STATE = {
   description:
     'The page: address, revision, type, title, summary, body, tags, status, sources, links, mentions.',
 }
+const chunkQuery = (kind: 'map' | 'review') => ({
+  offset: `Text offset from ${kind}Chunk.next; 0 starts explicit chunking.`,
+  snapshot: `The preceding ${kind}Chunk.snapshot, required for a nonzero offset. On 409 ${kind}_changed restart with the same filters.`,
+  max: 'Characters per JSON text chunk (1024–120000; default 120000).',
+})
+const chunkSchema = (kind: 'map' | 'review') =>
+  obj({
+    [`${kind}Chunk`]: obj({
+      text: s('Append these JSON characters in offset order; parse only after next is null.'),
+      offset: n('Start offset in the serialized JSON.'),
+      next: nul(n('Offset for the next request; null means the response is complete.')),
+      total: n('Total characters in the serialized JSON.'),
+      snapshot: s('Hash of the whole response. Send it with every continuation.'),
+    }),
+    howToProceed: s('How to obtain the whole response.'),
+  })
 const REVIEW = obj({
   proposal: PROPOSAL_NAMED,
   fingerprint: s('The version seen: approving and returning send it back.'),
@@ -779,26 +795,31 @@ const HAND: Record<string, Op> = {
   'GET /v1/brains/{slug}/wiki/map': {
     summary:
       'The map: every current page by type and first part of its address, with its summary; status=all for every page whatever its status.',
-    query: { status: '"all" for every status; left out, current pages only.' },
-    reply: obj({
-      intro: s('The curators’ introduction.'),
-      groups: list(
+    query: { status: '"all" for every status; left out, current pages only.', ...chunkQuery('map') },
+    reply: {
+      oneOf: [
         obj({
-          type: PAGE_TYPE,
-          area: s('First part of the address.'),
-          pages: list(
+          intro: s('The curators’ introduction.'),
+          groups: list(
             obj({
-              address: s('Address.'),
-              title: s('Title.'),
-              summary: s('Summary.'),
-              tags: list(s('Tag.')),
-              status: PAGE_STATUS,
+              type: PAGE_TYPE,
+              area: s('First part of the address.'),
+              pages: list(
+                obj({
+                  address: s('Address.'),
+                  title: s('Title.'),
+                  summary: s('Summary.'),
+                  tags: list(s('Tag.')),
+                  status: PAGE_STATUS,
+                }),
+              ),
             }),
           ),
+          count: n('Pages on the map.'),
         }),
-      ),
-      count: n('Pages on the map.'),
-    }),
+        chunkSchema('map'),
+      ],
+    },
   },
   'GET /v1/brains/{slug}/wiki/decisions': {
     summary: 'The decision pages, newest first, with their status (retired ones left out).',
@@ -1817,27 +1838,8 @@ const HAND: Record<string, Op> = {
   'GET /v1/proposals/{id}/review': {
     summary:
       'A proposal as a person reviews it in the web: each operation with the page before and after, what it depends on, and an old base in three versions. Any member reads it in the web; only a curator decides. A key reads it, and decides, only with the permission to write to the wiki (403 web_only otherwise).',
-    query: {
-      offset: 'Text offset from reviewChunk.next; 0 starts explicit chunking.',
-      snapshot:
-        'The preceding reviewChunk.snapshot, required for a nonzero offset. A changed review returns 409 review_changed: restart.',
-      max: 'Characters per JSON text chunk (1024–120000; default 120000).',
-    },
-    reply: {
-      oneOf: [
-        REVIEW,
-        obj({
-          reviewChunk: obj({
-            text: s('Append these JSON characters in offset order; parse only after next is null.'),
-            offset: n('Start offset in the serialized review.'),
-            next: nul(n('Offset for the next request; null means the review is complete.')),
-            total: n('Total characters in the serialized review.'),
-            snapshot: s('Hash of the whole review, including page states. Send it with every continuation.'),
-          }),
-          howToProceed: s('How to obtain and read the whole review before deciding.'),
-        }),
-      ],
-    },
+    query: chunkQuery('review'),
+    reply: { oneOf: [REVIEW, chunkSchema('review')] },
   },
   'POST /v1/proposals/{id}/approve': {
     summary:

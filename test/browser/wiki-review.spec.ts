@@ -4,6 +4,7 @@
 // both when it can; who read a page, grouped, and one visit is one read; history by part and by line;
 // drafts that never outlive the session. Against the fixture API.
 import type { BrowserContext, Page } from '@playwright/test'
+import { chunkedReply } from '../../src/http/chunked-reply.ts'
 import { expect, noSideScroll, scenario, test } from './fixture.ts'
 
 const RETENTION = '/b/growth/pages/audience/retention'
@@ -379,6 +380,29 @@ test.describe('the map (M3)', () => {
     await status.selectOption('')
     await page.getByLabel('Filter by words').fill('consent')
     await expect(page.getByRole('link', { name: 'Consent in 2024' })).toBeVisible()
+  })
+
+  test('a map over the reply limit includes pages from the last part', async ({ page, context, baseURL }) => {
+    await scenario(context, baseURL as string, 'signed-in')
+    const pages = Array.from({ length: 588 }, (_, i) => ({
+      address: `area/page-${i}`,
+      title: `Catalogue page ${i}`,
+      summary: '😀"'.repeat(95),
+      tags: ['catalogue'],
+      status: 'current',
+    }))
+    const map = { intro: 'Catalogue', count: pages.length, groups: [{ type: 'topic', area: 'area', pages }] }
+    const offsets: string[] = []
+    await page.route('**/v1/brains/growth/wiki/map*', async (route) => {
+      const q = new URL(route.request().url()).searchParams
+      expect(q.get('status')).toBe('all')
+      offsets.push(q.get('offset') ?? '0')
+      await route.fulfill({ json: chunkedReply('map', map, q, false) })
+    })
+    await page.goto('/b/growth/wiki')
+    await page.getByLabel('Filter by words').fill('Catalogue page 587')
+    await expect(page.getByRole('link', { name: 'Catalogue page 587' })).toBeVisible()
+    expect(new Set(offsets).size).toBeGreaterThan(1)
   })
 
   test('no tag in the wiki: no tag filter', async ({ page, context, baseURL }) => {
