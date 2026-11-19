@@ -23,6 +23,10 @@ export { MAX_REPLY_CHARS }
 
 const SERVER_INFO = { name: 'rsc-brain', title: 'rsc-brain', version: VERSION }
 const CAPABILITIES = { tools: { listChanged: false }, prompts: { listChanged: false } }
+// MCP 2026-07-28 (server/utilities/caching): complete results of these methods carry caching hints. Private,
+// because what a key sees depends on its role; a TTL of 0 keeps clients re-fetching, as they did before.
+const CACHEABLE = new Set(['server/discover', 'tools/list', 'prompts/list'])
+const CACHE_HINTS = { ttlMs: 0, cacheScope: 'private' }
 
 type Msg = { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: Record<string, unknown> }
 type Json = Record<string, unknown>
@@ -254,7 +258,9 @@ export function mcpRoutes(routes: () => Route[]): Route[] {
       return rpc(200, {
         jsonrpc: '2.0',
         id: m.id,
-        result: modern ? { resultType: 'complete', ...result } : result,
+        result: modern
+          ? { resultType: 'complete', ...(CACHEABLE.has(m.method as string) ? CACHE_HINTS : {}), ...result }
+          : result,
       })
     } catch (err) {
       if (err instanceof RpcError) return failure(m.id, err)
